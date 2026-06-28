@@ -2,398 +2,164 @@
 
 ## Goal
 
-A `FoundationModelsRouter` that, at startup, profiles the host machine and picks
-the best-fit, best-performance local models for it. The constraint that drives
-every decision is **unified memory**: on Apple Silicon, RAM is shared by CPU and
-GPU and is the ceiling on what can run at all. The router selects models whose
-in-memory footprint fits the machine's memory budget, prefers the highest quality
-that still fits, and exposes them as a `LanguageModelProfile`.
+A `FoundationModelsRouter` that profiles the host's **unified memory** at startup
+and picks the best-fit local models for it, exposing them as a
+`LanguageModelProfile` of three slots: `.standard`, `.flash`, `.embedding`.
 
-The router is constructed **early** in application lifecycle and shared. Tools
-take a reference to it (or to a profile/model it vends) in their constructors so
-that many tools make coordinated use of a small, controlled set of resident
-models.
+The hard constraint is RAM: on Apple Silicon, memory is shared by CPU and GPU and
+there is no swap we're willing to use, so a model is viable only if its in-memory
+footprint fits the machine's budget.
+
+The router is constructed **early** and shared. Tools take it (or a model it
+vends) in their constructors so many tools reuse a small set of resident models.
 
 ## Foundation: mlx-swift-lm
 
-This rides on top of [`ml-explore/mlx-swift-lm`](https://github.com/ml-explore/mlx-swift-lm).
-The router does **not** implement model loading or inference — it sits above
-mlx-swift-lm and decides *which* model to load and *when*, then drives those
-libraries. Modules we build on:
+Rides on [`ml-explore/mlx-swift-lm`](https://github.com/ml-explore/mlx-swift-lm) —
+**MLX is the only runtime** (no llama backend). We don't load or run models
+ourselves; we decide *which* and *when*, then drive its modules:
 
-- **MLXLMCommon** — common API for LLM/VLM; the model-loading and generation
-  foundation (e.g. `ModelContainer` for safe concurrent access, `ChatSession`).
-- **MLXLLM** — large language model implementations → backs `standard` and `flash`.
-- **MLXEmbedders** — encoder/embedding models → backs `embedding`.
-- **MLXHuggingFace** — model download/resolution from Hugging Face.
-- **MLX** GPU/memory APIs (cache limit, memory limit) → used by residency and
-  memory-pressure handling.
+- **MLXLMCommon** — `ModelContainer`, `ChatSession` (loading + generation).
+- **MLXLLM** -> `standard` / `flash`. **MLXEmbedders** -> `embedding`.
+- **MLXHuggingFace** — download/resolve from Hugging Face.
 
-Consequence for routing: MLX is the runtime, so the candidate catalog is the set
-of **MLX-format (Hugging Face) models** mlx-swift-lm can load and quantize. This
-narrows §5 (see "Backend Choice").
+The candidate catalog is therefore MLX-format Hugging Face repos. On
+`mlx-community` **one repo is one quant** (`…-8bit`, `…-4bit` are separate repos),
+so the router never picks or produces a quant — it only loads the repos the
+author listed.
 
-## Named Profiles & Auto-Sizing
+## Named Profiles
 
-The primary authoring experience: **you name a profile and list the models you
-like** (by Hugging Face repo id) for each slot, mixing and matching freely. You
-do **not** specify quants, RAM, or which machine it runs on — the router figures
-out the footprint and picks what fits *this* machine automatically.
-
-A profile is declarative. **For v1 the manifest format is Swift literals**
-(`ProfileDefinition` values defined in code) — a data-file format (JSON/TOML) for
-user-editable profiles is a later addition. Each slot takes a **preference-ordered
-list of candidates**, and on `mlx-community` **one repo = one quant** (e.g.
-`…-8bit`, `…-4bit` are separate repos). So the author **interleaves quant repos
-and model sizes in the one list**, biggest/best first, and the router picks the
-first that fits.
+You name a profile and list the HF repos you like, biggest/best first, per slot.
+You don't specify quants, RAM, or machine — the router sizes it automatically.
+Manifest format is **Swift literals** for v1.
 
 ```swift
 let coding = ProfileDefinition(
     name: "coding",
     description: "Code generation & review. Wants a big standard model — best on 64 GB+.",
-    standard:  ["mlx-community/Qwen2.5-Coder-32B-Instruct-8bit",   // try 8-bit first
+    standard:  ["mlx-community/Qwen2.5-Coder-32B-Instruct-8bit",   // try first
                 "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit",   // then 4-bit
-                "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit"],  // then a smaller model
+                "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit"],  // then smaller
     flash:     ["mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"],
     embedding: ["mlx-community/bge-large-en-v1.5"]
 )
 
-// Resolve against the current machine → concrete, ready-to-use models:
-let profile: LanguageModelProfile = try await router.resolve(coding)
+let profile = try await router.resolve(coding)   // LanguageModelProfile
+let summarizer = SummarizeTool(model: profile.flash)
 ```
 
-Resolution rules per slot:
+The same named profile is **portable**: it resolves to the 32B on a 128 GB
+machine and the 14B on a 32 GB machine — author once, run anywhere. The
+`description` is shown in pickers to nudge users about what the profile is for
+and whether their machine does it justice.
 
-- Candidates (each a specific `repo` = a specific quant) are tried in
-  **preference order** (best/biggest first).
-- For each candidate, the router reads that repo's actual quantization and
-  estimates its footprint (§3); a candidate is viable iff it fits the budget.
-- The first viable candidate wins. Stepping down in quality (8-bit → 4-bit →
-  smaller model) happens **across candidates**, exactly as the author ordered
-  them — the router never picks a quant the author didn't list.
-- If none fit, resolution fails with a clear diagnostic (which repos were
-  considered, their footprints, the budget) rather than silently degrading.
+## Resolution (per slot)
 
-This keeps profiles **portable**: the same named profile resolves to the 32B on a
-128 GB machine and to the 14B on a 32 GB machine — author once, run anywhere.
+1. Compute the budget: `budget = min(recommendedMaxWorkingSetSize,
+   totalRAM − headroomReserve)`. Profiled once, cached to disk.
+2. Walk the slot's candidates in order. For each repo, read its quant + weight
+   bytes from HF metadata and estimate footprint:
+   `footprint ≈ quantized weights + KV cache(default context) + overhead`.
+3. A candidate is viable iff `footprint × 1.2 ≤ budget` (the 1.2 margin keeps the
+   estimate conservative so a pick doesn't OOM on load).
+4. The **first viable candidate wins**. The router only accepts or skips — it
+   never substitutes a quant the author didn't list. If none fit, fail with a
+   clear diagnostic (repos considered, their footprints, the budget).
 
-## Core Types
+## Residency
 
-### `ProfileDefinition`
+- **Embedding (and any small model) is co-resident** in a keep-warm lane: loads
+  once, never evicted by large-model switches, so RAG (embed -> generate) never
+  thrashes. Its footprint is reserved from the budget:
+  `large_budget = budget − Σ(resident small footprints)`.
+- **One large model resident at a time** (standard/flash), fit against
+  `large_budget`. Switching evicts the resident one first, then loads the next.
+- **Load on demand, keep warm**, idle-timer unload. Apple-managed models (e.g.
+  `SystemLanguageModel`) are always resident and not charged against the budget.
+- Downloaded weights are **cached on disk** and reused across runs; a model is
+  fetched from Hugging Face at most once.
 
-The authored, named spec described above: a name, a human-facing description, and
-a preference-ordered list of Hugging Face model refs per slot. Pure data, no
-machine knowledge.
+## Access API
+
+The router and residency manager are Swift **actors**. Tools touch the
+underlying `ModelContainer` only through a **scoped lease**, which loads on
+demand, pins the model against eviction for the closure's duration, and resets
+the idle timer on return:
 
 ```swift
-struct ProfileDefinition {
-    let name: String
-    let description: String      // human-facing; shown in pickers to nudge users
-    let standard:  [ModelRef]    // preference order, biggest/best first
-    let flash:     [ModelRef]
-    let embedding: [ModelRef]
+try await profile.standard.withModel { container in
+    try await container.generate(prompt, ...)   // full mlx-swift-lm API inside
 }
 ```
 
-`description` is for **nudging users** — surfaced in the picker UI alongside what
-the profile actually resolved to on this machine (model, quant, est. tok/s, §8),
-so a user can tell at a glance what a profile is for and whether their machine
-does it justice (e.g. "your RAM only fits the 14B fallback — a 64 GB machine runs
-the 32B").
-
-`ModelRef` is a Hugging Face repo id (optionally pinned to a revision). On
-`mlx-community` a repo *is* a specific quant, so a `ModelRef` denotes one
-`(model, quant)`; the author lists multiple refs to express quant preference.
-It is `ExpressibleByStringLiteral`, so a bare repo-id string is a valid
-`ModelRef` in the manifest (as in the example above).
-
-### `LanguageModelProfile`
-
-The **resolved** result of `router.resolve(definition)` for *this* machine — a
-coherent set of concrete models chosen to fit the budget:
-
-- `standard` — the highest-quality general model from its candidate list that fits.
-- `flash` — a smaller/faster model for latency-sensitive or high-volume work.
-- `embedding` — an embedding model for retrieval / similarity.
-
-Each slot is a `RoutedModel` (see below), not a raw handle, so callers can ask
-for capabilities and the router controls residency.
+## Core Types
 
 ```swift
-struct LanguageModelProfile {
+struct ProfileDefinition {        // authored, pure data, no machine knowledge
+    let name: String
+    let description: String
+    let standard:  [ModelRef]     // preference order, biggest/best first
+    let flash:     [ModelRef]
+    let embedding: [ModelRef]
+}
+
+struct LanguageModelProfile {     // resolved for THIS machine
     let definitionName: String
-    let standard: RoutedModel
-    let flash: RoutedModel
+    let standard:  RoutedModel
+    let flash:     RoutedModel
     let embedding: RoutedModel
 }
 ```
 
-### `RoutedModel`
-
-A handle to a chosen (model, quant, backend, context) that the router knows how
-to load, keep warm, and evict. It is not necessarily resident — asking it to
-generate triggers load-on-demand through the residency manager.
-
-Tools access the underlying mlx-swift-lm `ModelContainer` only through a
-**scoped lease**:
-
-```swift
-try await profile.standard.withModel { container in
-    // full mlx-swift-lm API inside: streaming, sampling, tool-use, embeddings
-    try await container.generate(prompt, ...)
-}
-```
-
-`withModel` loads-on-demand before the closure, registers an **active lease** for
-its duration (so the residency manager never evicts a model mid-use), and resets
-the idle timer when it returns. Tools get the full library API inside the closure;
-residency control stays centralized. The router/residency manager are Swift
-**actors**; `RoutedModel` methods are `async`.
-
-Carries the routing *decision and reasoning* so it can be surfaced in UI/logs
-(chosen quant, backend, estimated tok/s, footprint, why this tier).
-
-### `FoundationModelsRouter`
-
-The entry point. Constructed once, early. Responsibilities:
-
-1. Profile the host (cached to disk).
-2. Compute the memory budget.
-3. **Resolve a `ProfileDefinition`** → pick the first listed candidate (a
-   model+quant repo) per slot that fits → build the `LanguageModelProfile` (§4).
-4. Own the residency manager (lifecycle of resident models).
-
-```swift
-let router = try await FoundationModelsRouter()
-// Resolve a named definition for this machine:
-let profile = try await router.resolve(coding)   // LanguageModelProfile
-// Tools take the router or specific resolved models:
-let summarizer = SummarizeTool(model: profile.flash)
-let searcher   = SemanticSearchTool(model: profile.embedding)
-```
-
-## Model Cache
-
-Downloaded model weights are **cached on disk and reused across runs** — a model
-is fetched from Hugging Face at most once, then loaded locally on every
-subsequent resolve/launch. This is separate from in-memory residency (§7): the
-cache is the on-disk tier, residency is the in-RAM tier.
-
-- **Weights cache** — the resolved `(repo, revision, quant)` files, stored under
-  a versioned cache directory. Reused across app runs, profiles, and machines'
-  user accounts; survives eviction. mlx-swift-lm / HF Hub already cache
-  downloads — we sit on top of that and treat the cache as the source of truth
-  for "is this model available offline?".
-- **Repo metadata cache** — each candidate repo's quant + weight-byte metadata
-  (§3), cached so resolution does not hit the network every launch. Refreshed
-  lazily / on explicit request; falls back to the cached metadata when offline.
-- **Offline-first resolution** — prefer already-cached models during resolve so a
-  profile resolves with no network when its weights are present; only fetch when
-  a chosen candidate is missing.
-- **Eviction policy (disk)** — bounded cache with LRU/size cap and a manual
-  "purge" so large weights don't accumulate unbounded; distinct from the SSD
-  prefix cache (§7) which stores KV prefixes, not weights.
-
-## 1. Host Profiling
-
-Profile the machine **once** and cache to disk; re-validate cheaply on launch.
-
-Collect:
-
-- Total unified memory.
-- GPU recommended max working set (`recommendedMaxWorkingSetSize`).
-- Memory bandwidth (for throughput labels).
-- GPU core count.
-- Chip identification (for future per-chip tuning).
-
-Cache file is versioned; invalidate on OS/hardware change.
-
-## 2. Memory Budget
-
-The usable budget is the GPU's recommended working set, held under
-`total RAM − headroom reserve` (a few GB for macOS and other apps, tunable).
-Loading a model must never drive the machine into memory pressure or swap.
-
-```
-budget = min(recommendedMaxWorkingSetSize, totalRAM − headroomReserve)
-```
-
-## 3. Footprint Estimation
-
-For a `(model, quant, context)`:
-
-```
-footprint ≈ quantized weights + KV cache(at context) + runtime overhead
-```
-
-KV grows with context, so compute the budget at a **sane default context with
-room to grow** rather than max context.
-
-Each candidate repo's quantization is **read from its Hugging Face metadata**
-(the `quantization` block in `config.json`, plus weight-file sizes), so the
-router knows the bit-width and weight bytes without the author stating them.
-Quant *choice* is the author's ordered list of repos (above), not per-repo
-discovery — one repo, one quant.
-
-### Conservative estimate + verify-on-load
-
-Because unified memory has no swap safety net, an under-estimate is the worst
-failure mode. The estimate is therefore deliberately pessimistic on the way in
-and reconciled with reality on the way out:
-
-- **Picking** uses a safety margin: a `(model, quant)` is viable iff
-  `footprint_est × margin ≤ budget` (margin ≈ 1.2, tunable). This absorbs
-  allocator/Metal-buffer overhead, KV growth past the default context, and
-  weight files whose in-memory size exceeds their on-disk size.
-- **Verify-on-load**: after the model loads, read MLX's actual reported resident
-  bytes. If reality exceeds the budget, back off — evict and advance to the next
-  listed candidate (§4) — rather than risk memory pressure.
-- **Correction caching**: the measured actual footprint is cached per
-  `(model, quant, context)` so future picks use the real number instead of the
-  estimate. The first load of a model is conservative; subsequent picks are exact.
-
-## 4. Routing Decision (Candidate Fit)
-
-This runs **per slot**, over that slot's preference-ordered candidate list from
-the `ProfileDefinition` (see "Named Profiles & Auto-Sizing").
-
-Hard rule: a `(model, quant)` is **viable iff `footprint_est × margin ≤ budget`**
-(§3, margin ≈ 1.2), with a verify-on-load guard that backs off if the loaded
-model's real footprint still exceeds the budget.
-
-1. Walk candidates in **preference order** (the author's biggest/best first).
-   Each candidate is one `(model, quant)` repo, so the author's ordering already
-   encodes the quality ladder (8-bit → 4-bit → smaller model).
-2. A candidate is viable iff it fits the budget (the §3 margin rule). The router
-   never substitutes a quant the author didn't list — it only accepts or skips.
-3. The first viable candidate wins; otherwise advance. If the list is exhausted,
-   fail with a diagnostic (§ Named Profiles).
-
-This is a pure size/RAM decision. Throughput never overrides it. The author's
-preference order is the only quality signal — the router does not reorder
-candidates, it only filters by what fits.
-
-## 5. Backend Choice
-
-Because we ride on mlx-swift-lm, **MLX is the runtime** and there is no llama
-backend in scope (see Foundation). The original "low-bit → MLX, GGUF-only →
-llama" rule from the design notes is therefore collapsed: the candidate catalog
-is restricted to repos that have an MLX build, and there is no backend or quant
-decision left for the router — the quant is fixed by which repo the author
-listed, and §4 only decides which listed repo fits.
-
-Implication: the largest GGUF-only quants (e.g. UD-IQ2 of very large models) are
-**not reachable** and are excluded from the catalog. If those models become
-important later, a separate llama-backed runtime would be a future extension —
-explicitly out of scope for v1.
-
-## 6. Throughput (label only)
-
-Token generation is memory-bandwidth-bound:
-
-```
-tok/s ≈ bandwidth ÷ active-bytes-per-token
-```
-
-Use this for **honest speed labels** in the picker UI. It is **never** a routing
-input.
-
-Calibration is **passive**, mirroring the footprint correction-caching (§3):
-every `withModel` lease is already running real generation, so we observe actual
-tok/s and cache it per `(model, quant, machine)`. No separate benchmark runs.
-
-```
-label = cached_measured_tok_s ?? analytic_estimate
-```
-
-The label shows the analytic estimate until a model's first real generation, then
-the measured rate thereafter.
-
-Expose the chosen backend/quant and the reasoning (see §8).
-
-## 7. Residency Management
-
-Routing picks *which* models; residency decides *what stays in memory*. There are
-two lanes:
-
-**Small / co-resident lane.** The embedding model (and any model small enough)
-lives here: it loads once, stays warm, and is **never evicted** by large-model
-switches — so RAG (embed query → generate) never thrashes. Its measured footprint
-is **reserved from the budget**, so the large lane fits around it:
-
-```
-large_budget = budget − Σ(resident small-model footprints)
-```
-
-Apple-managed models (e.g. `SystemLanguageModel`) are the exception — always
-resident and **not** charged against the budget.
-
-**Large / single-resident lane.** The standard model (and flash, unless small
-enough to co-reside) lives here:
-
-- **At most one large model resident at a time**, fit against `large_budget`.
-- **Load on demand, keep warm.** A model loads on first use and stays resident
-  with its KV cache so follow-up turns are instant; an idle timer unloads it.
-- **Evict to fit.** Switching models (user choice, subagent on a different model,
-  scheduler job) unloads the resident one before loading the next when both
-  won't fit. Eviction drops in-memory KV but **not** the SSD-tiered prefix cache,
-  so reload re-warms fast.
-- **Serialize large loads.** Two large loads never overlap; concurrent requests
-  for different large models queue (the router never re-quantizes a model to make
-  room; it only evicts the resident one and loads a listed candidate).
-
-**Both lanes — react to pressure.** On a system memory-pressure signal, shrink KV
-context or unload proactively rather than letting the OS swap — swap on unified
-memory is exactly what this design avoids.
-
-## 8. Observability
-
-Every routed model exposes its decision and reasoning:
-
-- chosen model, quant, backend, context
-- estimated footprint vs budget
-- estimated tok/s (label)
-- why this candidate was chosen / why higher-preference candidates were skipped
-- current residency state (resident / warm / evicted)
+- `ModelRef` is a HF repo id (optionally revision-pinned). It is
+  `ExpressibleByStringLiteral`, so a bare string is a valid `ModelRef`.
+- `RoutedModel` is a handle to a chosen `(model, quant)` the router loads / keeps
+  warm / evicts; it exposes `withModel` and the resolution reasoning (chosen
+  model, quant, footprint vs budget, why higher-preference candidates were
+  skipped, residency state) for UI/logs.
 
 ## Decisions
 
-- **Runtime:** MLX only (via mlx-swift-lm); no llama backend in v1.
-- **Manifest:** Swift-literal `ProfileDefinition` values in v1; data-file
-  (JSON/TOML) for user-editable profiles deferred.
-- **Model weights:** cached on disk, reused across runs (see Model Cache).
-- **Repo metadata:** cached so resolution is offline-first; refreshed lazily.
-- **Quant model:** `mlx-community` ships one quant per repo, so a `ModelRef` =
-  one `(model, quant)`. Authors interleave quant repos in the candidate list;
-  the router never substitutes an unlisted quant — it only accepts or skips.
-- **Footprint safety:** pick with a conservative `× margin` (≈1.2) estimate, then
-  verify-on-load against MLX's real reported bytes and back off if it overflows;
-  cache the measured footprint for exact future picks (see §3).
-- **Residency lanes:** the embedding model (and any small-enough model) is
-  co-resident in its own keep-warm lane, never evicted by large-model switches;
-  its footprint is reserved from the budget. One large model resident at a time
-  fits against `large_budget = budget − resident smalls` (see §7).
-- **Access API:** router/residency are Swift actors; tools touch a model only via
-  `await model.withModel { container in … }` — a scoped lease that load-on-demands,
-  pins against eviction for its duration, and resets the idle timer on return.
-- **Throughput calibration:** passive — observe actual tok/s during real
-  `withModel` generations and cache per `(model, quant, machine)`; the label
-  falls back to the analytic estimate only until first real use (see §6).
+- **Runtime:** MLX only (mlx-swift-lm); no llama backend.
+- **Manifest:** Swift-literal `ProfileDefinition` in v1.
+- **Quant model:** one repo = one quant; `ModelRef` = one `(model, quant)`;
+  author interleaves quant repos; router only accepts or skips.
+- **Footprint safety:** conservative `× 1.2` margin on the estimate.
+- **Residency:** embedding co-resident with reserved footprint; one large at a
+  time against `large_budget`; `withModel` lease pins against eviction.
+- **Weights:** cached on disk, reused across runs.
+
+## Deferred (v2+)
+
+Kept out of v1 to keep it small and obviously correct; the approach for each is
+already decided:
+
+- **Verify-on-load + correction caching** — after load, read MLX's real resident
+  bytes; if over budget, evict and advance to the next listed candidate; cache
+  the measured footprint per `(model, quant, machine)` for exact future picks.
+  (v1 relies on the `× 1.2` margin alone.)
+- **Throughput labels** — `tok/s ≈ bandwidth ÷ active-bytes-per-token` as an
+  honest speed label, sharpened by **passive** calibration (measure tok/s during
+  real `withModel` leases, cache per `(model, quant, machine)`). Label only,
+  never a routing input.
+- **SSD-tiered prefix cache** — persist KV prefixes so a reload re-warms fast.
+- **Memory-pressure handling** — on a system pressure signal, shrink KV context
+  or unload proactively rather than swap.
+- **Per-chip tuning** and a **data-file manifest** (JSON/TOML) for user-editable
+  profiles.
 
 ## Milestones
 
-1. **Profiling + budget** — host profile, cache, budget computation. Unit-testable
-   with injected machine specs.
-2. **Footprint math** — pure footprint/budget functions given a repo's quant +
-   weight bytes as inputs; unit-testable with injected values.
-3. **Repo metadata + fit** — read each candidate repo's quant + weight bytes from
-   HF metadata, feed them to milestone 2, and decide fit (depends on 2; no llama
-   backend in v1).
-4. **Named profile resolution** — `ProfileDefinition` authoring + Swift-literal
-   manifest, `router.resolve()` walking candidate lists into a
-   `LanguageModelProfile` (with failure diagnostics).
-5. **Residency manager** — load/warm/evict, serialization, idle timer.
-6. **Memory-pressure handling** — react to signals.
-7. **Throughput labels + observability** — expose decisions/reasoning.
-8. **Tool integration** — constructors take router/profile; shared use validated.
+1. **Profiling + budget** — host profile, disk cache, budget. Unit-testable with
+   injected machine specs.
+2. **Footprint math** — pure footprint/budget functions given quant + weight
+   bytes; unit-testable with injected values.
+3. **Repo metadata + fit** — read each repo's quant + weight bytes from HF, feed
+   milestone 2, decide fit (depends on 2).
+4. **Named profile resolution** — `ProfileDefinition` + `router.resolve()`
+   walking candidate lists into a `LanguageModelProfile`, with failure
+   diagnostics.
+5. **Residency + access** — co-resident embedding lane, single large lane,
+   load-on-demand, evict-to-fit, idle unload, `withModel` lease.
+6. **Tool integration** — constructors take router/profile; shared use validated.
