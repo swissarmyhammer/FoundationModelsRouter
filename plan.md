@@ -105,6 +105,8 @@ the 32B").
 `ModelRef` is a Hugging Face repo id (optionally pinned to a revision). On
 `mlx-community` a repo *is* a specific quant, so a `ModelRef` denotes one
 `(model, quant)`; the author lists multiple refs to express quant preference.
+It is `ExpressibleByStringLiteral`, so a bare repo-id string is a valid
+`ModelRef` in the manifest (as in the example above).
 
 ### `LanguageModelProfile`
 
@@ -338,8 +340,8 @@ enough to co-reside) lives here:
   won't fit. Eviction drops in-memory KV but **not** the SSD-tiered prefix cache,
   so reload re-warms fast.
 - **Serialize large loads.** Two large loads never overlap; concurrent requests
-  for different large models queue. (If both genuinely fit, they may co-reside —
-  but the router never re-quantizes a model; it only loads listed candidates.)
+  for different large models queue (the router never re-quantizes a model to make
+  room; it only evicts the resident one and loads a listed candidate).
 
 **Both lanes — react to pressure.** On a system memory-pressure signal, shrink KV
 context or unload proactively rather than letting the OS swap — swap on unified
@@ -383,9 +385,11 @@ Every routed model exposes its decision and reasoning:
 
 1. **Profiling + budget** — host profile, cache, budget computation. Unit-testable
    with injected machine specs.
-2. **Footprint + fit** — pure functions over a slot's candidate repos.
+2. **Footprint math** — pure footprint/budget functions given a repo's quant +
+   weight bytes as inputs; unit-testable with injected values.
 3. **Repo metadata + fit** — read each candidate repo's quant + weight bytes from
-   HF metadata, estimate footprint, decide fit (no llama backend in v1).
+   HF metadata, feed them to milestone 2, and decide fit (depends on 2; no llama
+   backend in v1).
 4. **Named profile resolution** — `ProfileDefinition` authoring + Swift-literal
    manifest, `router.resolve()` walking candidate lists into a
    `LanguageModelProfile` (with failure diagnostics).
