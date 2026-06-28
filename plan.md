@@ -245,8 +245,8 @@ and reconciled with reality on the way out:
   allocator/Metal-buffer overhead, KV growth past the default context, and
   weight files whose in-memory size exceeds their on-disk size.
 - **Verify-on-load**: after the model loads, read MLX's actual reported resident
-  bytes. If reality exceeds the budget, back off — evict, then step down a quant
-  / advance to the next candidate (§4) — rather than risk memory pressure.
+  bytes. If reality exceeds the budget, back off — evict and advance to the next
+  listed candidate (§4) — rather than risk memory pressure.
 - **Correction caching**: the measured actual footprint is cached per
   `(model, quant, context)` so future picks use the real number instead of the
   estimate. The first load of a model is conservative; subsequent picks are exact.
@@ -338,8 +338,8 @@ enough to co-reside) lives here:
   won't fit. Eviction drops in-memory KV but **not** the SSD-tiered prefix cache,
   so reload re-warms fast.
 - **Serialize large loads.** Two large loads never overlap; concurrent requests
-  for different large models queue. (Optionally down-quant one to co-resident
-  size only if both genuinely fit.)
+  for different large models queue. (If both genuinely fit, they may co-reside —
+  but the router never re-quantizes a model; it only loads listed candidates.)
 
 **Both lanes — react to pressure.** On a system memory-pressure signal, shrink KV
 context or unload proactively rather than letting the OS swap — swap on unified
@@ -352,7 +352,7 @@ Every routed model exposes its decision and reasoning:
 - chosen model, quant, backend, context
 - estimated footprint vs budget
 - estimated tok/s (label)
-- why this tier / why this quant was stepped down
+- why this candidate was chosen / why higher-preference candidates were skipped
 - current residency state (resident / warm / evicted)
 
 ## Decisions
