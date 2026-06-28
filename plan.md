@@ -158,8 +158,8 @@ The entry point. Constructed once, early. Responsibilities:
 
 1. Profile the host (cached to disk).
 2. Compute the memory budget.
-3. **Resolve a `ProfileDefinition`** → choose model + quant per slot → build the
-   `LanguageModelProfile` (§4).
+3. **Resolve a `ProfileDefinition`** → pick the first listed candidate (a
+   model+quant repo) per slot that fits → build the `LanguageModelProfile` (§4).
 4. Own the residency manager (lifecycle of resident models).
 
 ```swift
@@ -251,7 +251,7 @@ and reconciled with reality on the way out:
   `(model, quant, context)` so future picks use the real number instead of the
   estimate. The first load of a model is conservative; subsequent picks are exact.
 
-## 4. Routing Decision (Fit & Quant Selection)
+## 4. Routing Decision (Candidate Fit)
 
 This runs **per slot**, over that slot's preference-ordered candidate list from
 the `ProfileDefinition` (see "Named Profiles & Auto-Sizing").
@@ -383,7 +383,7 @@ Every routed model exposes its decision and reasoning:
 
 1. **Profiling + budget** — host profile, cache, budget computation. Unit-testable
    with injected machine specs.
-2. **Footprint + fit/quant selection** — pure functions over a model catalog.
+2. **Footprint + fit** — pure functions over a slot's candidate repos.
 3. **Repo metadata + fit** — read each candidate repo's quant + weight bytes from
    HF metadata, estimate footprint, decide fit (no llama backend in v1).
 4. **Named profile resolution** — `ProfileDefinition` authoring + Swift-literal
