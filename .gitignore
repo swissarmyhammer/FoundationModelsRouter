@@ -1,0 +1,16 @@
+# Local agent / tooling state
+.claude/
+.sah/
+.shell/
+.code-context/
+.ralph/
+
+# macOS
+.DS_Store
+
+# Swift / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+Package.resolved
