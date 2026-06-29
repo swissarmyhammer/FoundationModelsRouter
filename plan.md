@@ -226,7 +226,8 @@ struct RoutedLLM {
     let chosen: ModelRef
     let footprintBytes: Int64
     let resolution: SlotResolution           // why it won; what was skipped
-    func makeSession(instructions: String? = nil) -> RoutedSession
+    func makeSession(instructions: String? = nil,
+                     workingDirectory: URL = .uniqueSessionDirectory) -> RoutedSession
 }
 
 // A resolved, resident embedding model.
@@ -238,15 +239,18 @@ struct RoutedEmbedder {
     func embed(_ texts: [String]) async throws -> [[Float]]
 }
 
-// A session owns its KV cache (layered on the pinned weights) and **retains its
-// creating profile**, so the resident models stay alive for the session's lifetime.
-// `fork` is the primitive: a child inherits this session's cache (a copy of the
-// prefilled prefix) and diverges. Releasing a session frees its cache.
-protocol RoutedSession {
+// A session is an `actor`: it isolates its mutable state (KV cache, transcript,
+// working directory, optional container) and serializes its own calls. It owns its KV
+// cache (layered on the pinned weights) and **retains its creating profile**, so the
+// resident models stay alive for the session's lifetime. `fork` is the primitive: a
+// child inherits this session's cache (a copy of the prefilled prefix), gets a fresh
+// working directory, and diverges. Releasing a session frees its cache.
+protocol RoutedSession: Actor {
     var profile: LanguageModelProfile { get }    // retained: keeps the models resident
+    var workingDirectory: URL { get }            // session's filesystem scope (host)
     func respond(to prompt: String) async throws -> String
-    func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error>
-    func fork() -> RoutedSession                 // child shares the same profile
+    func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error>  // unconstrained text only
+    func fork(workingDirectory: URL?) -> RoutedSession   // nil ⇒ fresh subdirectory
 }
 
 // Guided generation — constrain output to a grammar (xgrammar via MLXGuidedGeneration).
@@ -269,14 +273,16 @@ extension RoutedLLM {
     // Raw: any grammar (JSON Schema or EBNF); unparsed constrained text out.
     func respond(to prompt: String, following grammar: Grammar) async throws -> String
     // A session whose every response obeys `grammar` (forkable; returns raw text).
-    func makeGuidedSession(_ grammar: Grammar, instructions: String? = nil) -> RoutedSession
+    func makeGuidedSession(_ grammar: Grammar, instructions: String? = nil,
+                           workingDirectory: URL = .uniqueSessionDirectory) -> RoutedSession
 }
 
 // Built once at app start, shared everywhere (see Goal). Holds the profiling +
 // repo-metadata caches; resolution is async with UI-bindable progress.
 actor Router {
-    init(headroomReserve: Int64 = 4 << 30,   // 4 GB held out of the budget
-         cacheDir: URL? = nil)               // host profile + repo-metadata cache
+    init(headroomReserve: Int64 = 4 << 30,    // 4 GB held out of the budget
+         maxConcurrentForks: Int = 4,         // in-flight fork sessions per profile
+         cacheDir: URL? = nil)                // host profile + repo-metadata cache
 
     func resolve(_ def: ProfileDefinition,
                  reporting: ResolutionProgress) async throws -> LanguageModelProfile
@@ -399,7 +405,7 @@ let value: JSONValue = try await profile.standard.respond(to: prompt,
 // Subagent fan-out: one template (shared prefix + grammar), many short-lived forks.
 let template = profile.flash.makeGuidedSession(.jsonSchema(schema),
                                                instructions: "Emit only JSON for the schema.")
-for diff in diffs.prefix(maxConcurrentForks) {
+for diff in diffs {                            // forks past maxConcurrentForks queue
     let sub = template.fork()                  // inherits the prefilled prefix + grammar
     // sub.respond(to: diff) → raw JSON text; decode to Review or JSONValue.
 }                                              // each `sub` + its cache freed at scope exit
@@ -437,6 +443,54 @@ the footprint math budgets only one cache per model — so a wide fan-out needs 
 budget carved from headroom and a bound on concurrent forks, or it OOMs a machine
 that held the models comfortably.
 
+## Concurrency
+
+Generation on a resident model is **serialized** — one at a time per model, FIFO.
+Concurrent `respond()` calls (including from forks of the same model) **queue** rather
+than run in parallel: MLX generation isn't safe to interleave on a single model's
+weights, and the GPU runs one stream anyway. Each `RoutedLLM` owns a serial gate.
+
+**Fork fan-out is bounded** by `maxConcurrentForks` (a `Router` setting): at most that
+many fork sessions are in flight at once, capping the K× prefix-KV cost of `copy()`.
+`fork()` past the limit **awaits a free slot**, which frees when a fork is released —
+so a wide subagent fan-out self-throttles instead of OOMing.
+
+Both gates are the same primitive: a **fair (FIFO) async semaphore** (await-based, not
+a thread-blocking `DispatchSemaphore`) — value 1 for the per-model serial gate, value
+`maxConcurrentForks` for fork admission.
+
+**Guided output is whole-chunk, not streamed:** `respond(to:generating:)` / `matching:`
+/ `following:` return the complete, schema-valid result. Token streaming
+(`streamResponse`) stays for *unconstrained* text only.
+
+## Sessions: working directory & isolation
+
+Every session has a **`workingDirectory`** (host filesystem) — where its tools,
+relative paths, and outputs resolve. It defaults to a fresh per-session temp
+subdirectory; pass one explicitly to pin it. A session is an **`actor`**, so its
+mutable state (KV cache, transcript, working directory, any container handle) is
+isolated and its own calls serialize.
+
+**Many sessions in one process** is the normal case: the process holds the router and
+the shared, resident models (host-side), and each session is a separate actor with its
+own working directory, all generating against the same weights through the per-model
+serial gate (see Concurrency). Without containers, separate working directories are
+*cooperative* isolation.
+
+### Optional container confinement (deferred)
+
+A session's **tool / exec side** can be confined to a per-session lightweight Linux
+container via [`apple/containerization`](https://github.com/apple/containerization)
+(Apache-2.0; one VM per container; macOS 26+ / Apple Silicon; Linux guests), with the
+session's `workingDirectory` bind-mounted.
+
+The hard split: **the model runs host-side** — MLX needs Metal and the Linux guest has
+no GPU/Metal — so the container sandboxes what the agent *does* (file ops, shell / code
+execution, MCP tool servers), **not** inference. The host generates (including guided
+tool calls); the container executes them against the mounted directory. Per-session VMs
+give strong, enforced isolation across many concurrent sessions — heavier than
+cooperative workdirs, hence deferred and opt-in.
+
 ## Decisions
 
 - **Runtime:** MLX only (mlx-swift-lm); no llama backend.
@@ -452,6 +506,14 @@ that held the models comfortably.
   `fork()` copies the prefilled prefix into a child; a session's cache frees on
   release. KV is pooled/reclaimable (separate from pinned weights); wide fork fan-out
   needs a KV budget + concurrency bound.
+- **Concurrency:** generation is serialized per resident model (FIFO, one at a time);
+  `fork()` fan-out is bounded by `maxConcurrentForks` and queues for admission — both
+  on a fair async semaphore. Guided output is whole-chunk; only unconstrained text
+  streams.
+- **Sessions:** each session is an `actor` with its own `workingDirectory` (host;
+  default a fresh temp subdir); many coexist in one process over the shared resident
+  models. Optional per-session **Linux container** (`apple/containerization`)
+  sandboxes the tool/exec side only — the model stays host-side. (Deferred.)
 - **Manifest:** Swift-literal `ProfileDefinition` in v1.
 - **Quant model:** one repo = one quant; `ModelRef` = one `(model, quant)`;
   author interleaves quant repos; router only accepts or skips.
@@ -485,6 +547,10 @@ already decided:
   profiles.
 - **Quantized KV cache** — store the KV cache at lower precision (via
   `QuantizedKVCache`) to fit longer contexts / more concurrent forks; v1 uses fp16.
+- **Containerized sessions** — confine a session's tool/exec side to a per-session
+  lightweight Linux container (`apple/containerization`) with its `workingDirectory`
+  bind-mounted; the model stays host-side (no Metal in the guest). macOS 26+ / Apple
+  Silicon / Linux images. See "Sessions: working directory & isolation".
 
 ## Milestones
 
@@ -505,8 +571,9 @@ already decided:
 8. **Guided generation** — grammar-constrained sessions over a routed model
    (`respond(to:following:)` / `makeGuidedSession`, `Grammar` = JSON Schema or EBNF)
    via `GrammarConstraint`.
-9. **Session fork + KV cache** — `RoutedSession.fork()` via `KVCache.copy()`, cache
-   freed on session release, and a KV-pool budget bounding concurrent forks.
+9. **Session fork + concurrency** — `RoutedSession.fork()` via `KVCache.copy()` (cache
+   freed on release); per-model serial generation queue and a `maxConcurrentForks`
+   admission gate, both on a fair async semaphore.
 
 ## Testing
 
