@@ -28,6 +28,32 @@ The candidate catalog is therefore MLX-format Hugging Face repos. On
 so the router never picks or produces a quant — it only loads the repos the
 author listed.
 
+### Dependency tracking: `MLXFoundationModels` (pre-release)
+
+WWDC26 opened Apple's **FoundationModels** framework to third-party providers via
+a `LanguageModel` protocol. `MLXFoundationModels` is the MLX-backed conformance
+(`MLXLanguageModel`), letting MLX models run behind Apple's `LanguageModelSession`
+with chat, tool calling, and xgrammar-backed guided generation. It is **not yet
+merged upstream** — it lives in open PR
+[ml-explore/mlx-swift-lm#334](https://github.com/ml-explore/mlx-swift-lm/pull/334)
+(author `ctymoszek`).
+
+We track it via our own fork so the dependency is stable and under our control:
+
+- **Fork:** [`swissarmyhammer/mlx-swift-lm`](https://github.com/swissarmyhammer/mlx-swift-lm)
+  (forked from `ctymoszek/mlx-swift-lm`).
+- **Correct branch / dependency:** `mlx-foundationmodels`
+  (tip `234787d` as of 2026-06-29).
+- **SwiftPM:**
+  `.package(url: "https://github.com/swissarmyhammer/mlx-swift-lm", branch: "mlx-foundationmodels")`
+  — SwiftPM supports branch dependencies (pinned by commit in `Package.resolved`);
+  consider pinning a `.revision(...)` once the API settles.
+- **Platform: macOS 27+ / FoundationModels v2 SDK.** We commit to the whole stack —
+  `MLXFoundationModels` (`MLXLanguageModel`) + `MLXGuidedGeneration` (xgrammar) — and
+  keep **no** pre-27 fallback, so nothing in the design is conditional on OS version.
+  The one live caveat is that this is a **branch dependency** (`mlx-foundationmodels`)
+  until PR #334 merges upstream — a pin to manage, not an OS gate.
+
 ## Named Profiles
 
 You name a profile and list the HF repos you like, biggest/best first, per slot.
@@ -45,7 +71,9 @@ let coding = ProfileDefinition(
     embedding: ["mlx-community/bge-large-en-v1.5"]
 )
 
-let profile = try await router.resolve(coding)   // LanguageModelProfile
+// Resolution is async and reports progress for the UI (see Access API).
+let progress = ResolutionProgress()                  // @MainActor @Observable
+let profile  = try await router.resolve(coding, reporting: progress)
 let summarizer = SummarizeTool(model: profile.flash)
 ```
 
@@ -54,44 +82,121 @@ machine and the 14B on a 32 GB machine — author once, run anywhere. The
 `description` is shown in pickers to nudge users about what the profile is for
 and whether their machine does it justice.
 
-## Resolution (per slot)
+## Resolution (joint — all three slots co-fit)
 
-1. Compute the budget: `budget = min(recommendedMaxWorkingSetSize,
-   totalRAM − headroomReserve)`. Profiled once, cached to disk.
-2. Walk the slot's candidates in order. For each repo, read its quant + weight
-   bytes from HF metadata and estimate footprint:
+The profile holds **all three slots resident at once**, so resolution finds the
+highest-preference *combination* that co-fits one budget — not three independent
+picks.
+
+1. Compute the budget once (cached to disk):
+   `budget = min(recommendedMaxWorkingSetSize, totalRAM − headroomReserve)`.
+2. Size each candidate from HF metadata:
    `footprint ≈ quantized weights + KV cache(default context) + overhead`.
-3. A candidate is viable iff `footprint × 1.2 ≤ budget` (the 1.2 margin keeps the
-   estimate conservative so a pick doesn't OOM on load).
-4. The **first viable candidate wins**. The router only accepts or skips — it
-   never substitutes a quant the author didn't list. If none fit, fail with a
-   clear diagnostic (repos considered, their footprints, the budget).
+   A candidate is viable in a *remaining* budget iff `footprint × 1.2 ≤ remaining`
+   (the 1.2 margin keeps the estimate conservative so load doesn't OOM).
+3. Allocate in preference order against the shared budget:
+   1. **embedding** — first viable candidate; reserve its footprint.
+   2. **standard** — largest viable candidate in `budget − embedding`.
+   3. **flash** — largest viable candidate in `budget − embedding − standard`.
+4. The router only accepts or skips — it never substitutes a quant the author
+   didn't list. If any slot has no viable candidate in what's left, the **whole
+   resolution fails** with a diagnostic (slots, candidates considered, their
+   footprints, the budget). Sizing a profile to co-fit is the author's job.
+5. Once the trio is chosen, download + `preload()` all three, reporting progress
+   throughout (see Access API).
+
+## Sizing: profiling, metadata, footprint
+
+The numbers behind Resolution steps 1–2. Each is pure given its inputs, so each is
+unit-testable with injected values (milestones 1–3).
+
+### Host profile & budget (milestone 1)
+
+Measured once at startup, cached to disk keyed by `(chip, totalRAM)`:
+
+- `totalRAM` — `ProcessInfo.physicalMemory` (≡ sysctl `hw.memsize`).
+- `recommendedMaxWorkingSetSize` — `MTLDevice.recommendedMaxWorkingSetSize`, the GPU
+  working set the system is willing to back (≈ 70–75% of RAM on Apple Silicon).
+- `headroomReserve` — fixed OS/app slack held out of the budget (default 4 GB).
+- `budget = min(recommendedMaxWorkingSetSize, totalRAM − headroomReserve)`.
+
+### Repo metadata — no weights downloaded (milestone 3)
+
+Per candidate, read two small things from the HF repo at its revision, cached per
+`(repo, revision)`:
+
+- **`config.json`** — architecture for the KV math: `num_hidden_layers`,
+  `num_attention_heads`, `num_key_value_heads` (GQA; falls back to attention heads),
+  `head_dim` (or `hidden_size / num_attention_heads`), plus the `quantization` block.
+- **Weight file sizes** — from the repo tree listing (`…/tree/{rev}`, LFS `size`),
+  summed over `*.safetensors`. Quantized weights load ≈ 1:1 from disk, so this sum is
+  the resident weight bytes directly — no need to derive them from the quant bits.
+
+A repo missing either ⇒ `CandidateReport.metadataUnavailable`; the router skips it.
+
+### Footprint estimate (milestone 2)
+
+```
+weightBytes  = Σ size(*.safetensors)                      // ≈ resident, 1:1
+kvBytes(ctx) = 2 × layers × ctx × kvHeads × headDim × 2   // K+V, fp16 cache
+footprint    = weightBytes + kvBytes(defaultContext)      // overhead via margin
+```
+
+- `defaultContext` is the profile's `context` (default **8K**) — the same value
+  used to size the KV cache at load, so the estimate matches reality. A long-context
+  profile raises it, which inflates `kvBytes` and therefore fits smaller models.
+- The KV cache is **fp16 regardless of weight quant** (2 bytes/elt); quantized-KV is
+  a Deferred lever.
+- Activation / compute / framework **overhead** is not modeled term-by-term — the
+  conservative `× 1.2` margin in Resolution absorbs it.
+- **Embedders** have no autoregressive KV cache: `footprint ≈ weightBytes` (+ margin).
 
 ## Residency
 
-- **Embedding (and any small model) is co-resident** in a keep-warm lane: loads
-  once, never evicted by large-model switches, so RAG (embed -> generate) never
-  thrashes. Its footprint is reserved from the budget:
-  `large_budget = budget − Σ(resident small footprints)`.
-- **One large model resident at a time** (standard/flash), fit against
-  `large_budget`. Switching evicts the resident one first, then loads the next.
-- **Load on demand, keep warm**, idle-timer unload. Apple-managed models (e.g.
-  `SystemLanguageModel`) are always resident and not charged against the budget.
+A resolved `LanguageModelProfile` **holds its three models resident for its whole
+lifetime** — no leases, no idle unload, no auto-eviction. An app picks a profile
+and goes; residency is exactly as predictable as the object's lifetime.
+
+- `resolve` `preload()`s all three slots; they stay in memory until teardown.
+- Profile teardown (`deinit`, or an explicit `release()`) `evict()`s all three. Live
+  sessions **retain their profile**, so models aren't freed while any session or fork
+  is alive — `deinit` fires only once the profile handle and all its sessions are gone.
+- Because everything is always resident, the budget must fit standard + flash +
+  embedding **simultaneously** (see Resolution).
+- **One active profile at a time** in v1: the budget is sized for a single profile,
+  so release the current one before resolving another. Resolving a profile that
+  wouldn't co-fit already-resident models fails rather than over-committing RAM.
+- Apple-managed models (e.g. `SystemLanguageModel`) are always resident and not
+  charged against the budget.
 - Downloaded weights are **cached on disk** and reused across runs; a model is
   fetched from Hugging Face at most once.
 
 ## Access API
 
-The router and residency manager are Swift **actors**. Tools touch the
-underlying `ModelContainer` only through a **scoped lease**, which loads on
-demand, pins the model against eviction for the closure's duration, and resets
-the idle timer on return:
+The router is a Swift **actor**; resolution is async and reports progress. Because
+the models are always resident, access needs no lease or scope — a slot is just a
+ready model. A `RoutedLLM` vends a session and a `RoutedEmbedder` embeds, directly:
 
 ```swift
-try await profile.standard.withModel { container in
-    try await container.generate(prompt, ...)   // full mlx-swift-lm API inside
-}
+// Generation — a session over the resident standard model (backend-neutral)
+let session = profile.standard.makeSession(instructions: "You are…")
+let reply   = try await session.respond(to: "…")
+
+// Embedding
+let vectors = try await profile.embedding.embed(["…", "…"])
 ```
+
+Resolution is the only slow, awaited step, and it surfaces progress for the UI via
+a `@MainActor @Observable` object bound straight into SwiftUI:
+
+```swift
+@State private var progress = ResolutionProgress()
+// in the view body: ProgressView(value: progress.fraction) + per-slot rows
+.task { profile = try await router.resolve(coding, reporting: progress) }
+```
+
+(v1-on-`MLXLMCommon` vends the same surface over `ChatSession` / `ModelContainer`;
+the FoundationModels-session form lands with `MLXFoundationModels` — see Deferred.)
 
 ## Core Types
 
@@ -102,32 +207,262 @@ struct ProfileDefinition {        // authored, pure data, no machine knowledge
     let standard:  [ModelRef]     // preference order, biggest/best first
     let flash:     [ModelRef]
     let embedding: [ModelRef]
+    var context: Int = 8192       // working context; scales KV footprint & fit
 }
 
-struct LanguageModelProfile {     // resolved for THIS machine
+final class LanguageModelProfile {  // resolved for THIS machine; holds models resident
     let definitionName: String
-    let standard:  RoutedModel
-    let flash:     RoutedModel
-    let embedding: RoutedModel
+    let standard:  RoutedLLM
+    let flash:     RoutedLLM
+    let embedding: RoutedEmbedder
+    func release()                  // evict all three; also runs on deinit
+}
+
+enum ModelSlot { case standard, flash, embedding }
+
+// A resolved, resident generation model. Vends sessions — never a closure/lease.
+struct RoutedLLM {
+    let slot: ModelSlot                      // .standard or .flash
+    let chosen: ModelRef
+    let footprintBytes: Int64
+    let resolution: SlotResolution           // why it won; what was skipped
+    func makeSession(instructions: String? = nil) -> RoutedSession
+}
+
+// A resolved, resident embedding model.
+struct RoutedEmbedder {
+    let chosen: ModelRef
+    let footprintBytes: Int64
+    let resolution: SlotResolution
+    let dimension: Int                       // vector length, for callers/tests
+    func embed(_ texts: [String]) async throws -> [[Float]]
+}
+
+// A session owns its KV cache (layered on the pinned weights) and **retains its
+// creating profile**, so the resident models stay alive for the session's lifetime.
+// `fork` is the primitive: a child inherits this session's cache (a copy of the
+// prefilled prefix) and diverges. Releasing a session frees its cache.
+protocol RoutedSession {
+    var profile: LanguageModelProfile { get }    // retained: keeps the models resident
+    func respond(to prompt: String) async throws -> String
+    func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error>
+    func fork() -> RoutedSession                 // child shares the same profile
+}
+
+// Guided generation — constrain output to a grammar (xgrammar via MLXGuidedGeneration).
+enum Grammar {
+    case jsonSchema(String)   // a JSON Schema document (runtime; e.g. an MCP tool's)
+    case ebnf(String)         // a raw xgrammar grammar
+}
+
+// Dynamic JSON — for schemas known only at runtime, with no Swift type.
+enum JSONValue: Sendable, Codable {
+    case null, bool(Bool), number(Double), string(String)
+    case array([JSONValue]), object([String: JSONValue])
+}
+
+extension RoutedLLM {
+    // Typed: schema derived from the Generable type; result decoded into it.
+    func respond<T: Generable>(to prompt: String, generating: T.Type) async throws -> T
+    // Dynamic JSON: runtime JSON Schema (e.g. an MCP tool's), parsed — no Swift type.
+    func respond(to prompt: String, matching jsonSchema: String) async throws -> JSONValue
+    // Raw: any grammar (JSON Schema or EBNF); unparsed constrained text out.
+    func respond(to prompt: String, following grammar: Grammar) async throws -> String
+    // A session whose every response obeys `grammar` (forkable; returns raw text).
+    func makeGuidedSession(_ grammar: Grammar, instructions: String? = nil) -> RoutedSession
+}
+
+// Built once at app start, shared everywhere (see Goal). Holds the profiling +
+// repo-metadata caches; resolution is async with UI-bindable progress.
+actor Router {
+    init(headroomReserve: Int64 = 4 << 30,   // 4 GB held out of the budget
+         cacheDir: URL? = nil)               // host profile + repo-metadata cache
+
+    func resolve(_ def: ProfileDefinition,
+                 reporting: ResolutionProgress) async throws -> LanguageModelProfile
+}
+
+@MainActor @Observable            // bind straight into SwiftUI; updates on main actor
+final class ResolutionProgress {
+    enum Phase { case sizing, downloading, loading, ready, failed(String) }
+    var phase: Phase = .sizing
+    var fraction: Double = 0       // 0…1 overall — drives a ProgressView
+    var slots: [ModelSlot: SlotProgress] = [:]
+}
+
+struct SlotProgress {
+    enum State { case pending, sizing, downloading, loading, ready, failed(String) }
+    var state: State = .pending
+    var chosen: ModelRef?          // candidate that won the joint fit
+    var bytesDownloaded: Int64 = 0
+    var bytesTotal: Int64 = 0
+}
+
+// Per-slot resolution reasoning — attached to each routed model on success, and
+// collected into ResolutionFailure when a slot can't be satisfied.
+struct SlotResolution {
+    let slot: ModelSlot
+    let remainingBudgetBytes: Int64          // budget left when this slot was allocated
+    let chosen: ModelRef?                    // nil ⇒ this slot is why resolution failed
+    let considered: [CandidateReport]        // every candidate, in preference order
+}
+
+struct CandidateReport {
+    let ref: ModelRef
+    let estimatedFootprintBytes: Int64?      // already ×1.2; nil if metadata unread
+    let verdict: Verdict
+    enum Verdict {
+        case chosen
+        case tooLarge                        // footprint > remaining budget
+        case skippedHigherPreferenceChosen   // a better candidate already won the slot
+        case metadataUnavailable(String)     // HF metadata read failed
+    }
+}
+
+struct ResolutionFailure: Error {            // thrown by resolve when a slot has no fit
+    let profileName: String
+    let budgetBytes: Int64
+    let slots: [SlotResolution]              // includes the unsatisfiable slot(s)
+    // `description` renders slots → candidates → footprints vs budget for logs/UI.
 }
 ```
 
 - `ModelRef` is a HF repo id (optionally revision-pinned). It is
   `ExpressibleByStringLiteral`, so a bare string is a valid `ModelRef`.
-- `RoutedModel` is a handle to a chosen `(model, quant)` the router loads / keeps
-  warm / evicts; it exposes `withModel` and the resolution reasoning (chosen
-  model, quant, footprint vs budget, why higher-preference candidates were
-  skipped, residency state) for UI/logs.
+- `RoutedLLM` / `RoutedEmbedder` are handles to a resident `(model, quant)`. The
+  LLM vends sessions (`makeSession`); the embedder vends `embed`. Both carry their
+  `SlotResolution` (chosen model, footprint vs budget, why higher-preference
+  candidates were skipped) for UI/logs.
+- On failure `resolve` throws `ResolutionFailure` carrying the same per-slot
+  reasoning, so a UI can show exactly why no profile fit this machine.
+
+## Backends
+
+One stack, macOS 27+. Generation and embedding run on `MLXLMCommon`
+(`ChatSession` / `ModelContainer`) and `MLXEmbedders`; guided generation runs on
+`MLXGuidedGeneration` (xgrammar). **Our session owns its KV cache** at this layer —
+that's what makes `fork()` real (see "Sessions & KV cache").
+
+FoundationModels interop is available but not load-bearing: a routed model can also
+back a native `LanguageModelSession` (via `MLXLanguageModel`) for callers who want
+Apple's `@Generable` / `Tool` ergonomics. That path delegates cache management to
+FoundationModels, so it does **not** expose our cache-level `fork()` — use our
+session when you want forking.
+
+## Guided generation
+
+xgrammar gives us **grammar-constrained decoding**: output is forced to be valid for
+a grammar, so structured results are correct *by construction*, not by
+hope-and-parse. The primitive is a **guided session** — a session whose responses
+are constrained to a `Grammar` (a JSON Schema or a raw EBNF grammar).
+
+### The engine
+
+`MLXGuidedGeneration` (PR #334) provides the xgrammar engine: its entry points take
+a **runtime grammar string** (`GrammarConstraint(jsonSchema:)` +
+`GuidedGenerationLoop.run(…)`) and constrain MLX sampling directly over a resident
+`ModelContainer`. `RoutedLLM` exposes it as `respond(to:following:)` and
+`makeGuidedSession(_:)` (see Core Types).
+
+### Three response shapes
+
+Pick by whether the caller has a Swift type for the result:
+
+- **Typed** — `respond(to:generating: T.self) -> T` for a `@Generable` type. The
+  schema is *derived from the type* and the result decoded into it. One source of
+  truth; use when the shape is known at compile time.
+- **Dynamic JSON** — `respond(to:matching: jsonSchema) -> JSONValue` for a schema
+  known only at runtime with **no Swift type** — e.g. an MCP tool that "returns JSON"
+  against its advertised schema. The result is valid for the schema but introspected
+  dynamically (`JSONValue`), never decoded into a fixed type.
+- **Raw** — `respond(to:following: Grammar) -> String` for any grammar (JSON Schema
+  *or* EBNF); unparsed constrained text out. This is also what a guided session binds,
+  so `makeGuidedSession(_:).respond(to:)` and its forks return raw text the caller
+  decodes (to a type or to `JSONValue`).
+
+The grammar source is always the caller's — hand-written, `@Generable`-derived, or
+discovered from a catalog like MCP. The router supplies the guided session; callers
+decide the source and whether to wrap a tool-call loop on top.
+
+### Worked example
+
+```swift
+// Known type → typed result (schema derived from the @Generable type).
+@Generable struct Review { let verdict: String; let issues: [String] }
+let review = try await profile.standard.respond(to: "Review:\n\(diff)",
+                                                generating: Review.self)
+
+// Runtime schema, no Swift type (e.g. an MCP tool's) → a JSON ball, schema-valid.
+let value: JSONValue = try await profile.standard.respond(to: prompt,
+                                                          matching: tool.inputSchema)
+
+// Subagent fan-out: one template (shared prefix + grammar), many short-lived forks.
+let template = profile.flash.makeGuidedSession(.jsonSchema(schema),
+                                               instructions: "Emit only JSON for the schema.")
+for diff in diffs.prefix(maxConcurrentForks) {
+    let sub = template.fork()                  // inherits the prefilled prefix + grammar
+    // sub.respond(to: diff) → raw JSON text; decode to Review or JSONValue.
+}                                              // each `sub` + its cache freed at scope exit
+```
+
+Caveat: xgrammar covers a **subset of JSON Schema**; grammars using `$ref` / `allOf`
+/ `format` need normalization or are rejected with a clear error (surfaced like a
+metadata failure, not a crash).
+
+## Sessions & KV cache
+
+A session owns its KV cache, layered on the model's pinned weights (weights stay
+resident; caches come and go). `fork()` is the primitive for the "many subagents,
+common instructions + tools" pattern:
+
+1. Build a **template session** with the shared instructions (and grammar/tools);
+   priming it prefills that common prefix once into its cache.
+2. `template.fork()` returns a child whose cache **begins as a copy of the template's**
+   (`KVCache.copy()`), so it inherits the prefix's compute and diverges on its own
+   prompt. Forks are independent and may run concurrently.
+3. **A session's cache dies with the session** (ARC) — releasing a fork frees its KV.
+   A session also **retains its creating profile** (`session.profile`), so resident
+   models can't be freed out from under it; the profile evicts only once its handle
+   and all sessions/forks are released. No keyed pool or LRU: the live template *is*
+   the warm prefix; forks are explicit and short-lived.
+
+Substrate (verified on the branch): `KVCache.copy()` (fork), `trim(_:)` (optional
+serial reuse — recycle one cache instead of copying), `savePromptCache` /
+`loadPromptCache` (spill a warm prefix to disk — grounds the Deferred SSD-tiered
+prefix cache).
+
+**Budget caveat:** `copy()` is a *deep* copy, so K concurrent forks hold K× the
+prefix KV. KV is a **reclaimable, pooled** resource separate from pinned weights, and
+the footprint math budgets only one cache per model — so a wide fan-out needs a KV
+budget carved from headroom and a bound on concurrent forks, or it OOMs a machine
+that held the models comfortably.
 
 ## Decisions
 
 - **Runtime:** MLX only (mlx-swift-lm); no llama backend.
+- **Platform:** macOS 27+ / FoundationModels v2 SDK; full `MLXFoundationModels` +
+  `MLXGuidedGeneration` stack, no pre-27 fallback (branch dep until PR #334 merges).
+- **Guided generation:** xgrammar via `MLXGuidedGeneration`, in three shapes — typed
+  (`generating: T.self`, `@Generable`, decoded), dynamic JSON (`matching: jsonSchema`
+  → `JSONValue`, for runtime schemas with no Swift type, e.g. an MCP tool), and raw
+  (`following: Grammar` → text, also what a guided session binds). Grammar source is
+  the caller's.
+- **Sessions & KV cache:** a session owns its KV cache and **retains its creating
+  profile** (`session.profile`), so resident models stay alive for its lifetime;
+  `fork()` copies the prefilled prefix into a child; a session's cache frees on
+  release. KV is pooled/reclaimable (separate from pinned weights); wide fork fan-out
+  needs a KV budget + concurrency bound.
 - **Manifest:** Swift-literal `ProfileDefinition` in v1.
 - **Quant model:** one repo = one quant; `ModelRef` = one `(model, quant)`;
   author interleaves quant repos; router only accepts or skips.
-- **Footprint safety:** conservative `× 1.2` margin on the estimate.
-- **Residency:** embedding co-resident with reserved footprint; one large at a
-  time against `large_budget`; `withModel` lease pins against eviction.
+- **Footprint safety:** conservative `× 1.2` margin per candidate.
+- **Budget:** the profile holds all three slots resident at once, so they must
+  **co-fit one budget**; allocate embedding → standard → flash in preference order.
+- **Residency:** profile holds its models resident for its lifetime — no lease, no
+  idle unload, no auto-eviction (simplicity over RAM efficiency). One active
+  profile at a time; teardown evicts. Access is direct (no scope/closure).
+- **Resolution:** async, reporting `ResolutionProgress` (`@MainActor @Observable`)
+  for direct SwiftUI binding.
 - **Weights:** cached on disk, reused across runs.
 
 ## Deferred (v2+)
@@ -148,6 +483,8 @@ already decided:
   or unload proactively rather than swap.
 - **Per-chip tuning** and a **data-file manifest** (JSON/TOML) for user-editable
   profiles.
+- **Quantized KV cache** — store the KV cache at lower precision (via
+  `QuantizedKVCache`) to fit longer contexts / more concurrent forks; v1 uses fp16.
 
 ## Milestones
 
@@ -157,9 +494,35 @@ already decided:
    bytes; unit-testable with injected values.
 3. **Repo metadata + fit** — read each repo's quant + weight bytes from HF, feed
    milestone 2, decide fit (depends on 2).
-4. **Named profile resolution** — `ProfileDefinition` + `router.resolve()`
-   walking candidate lists into a `LanguageModelProfile`, with failure
-   diagnostics.
-5. **Residency + access** — co-resident embedding lane, single large lane,
-   load-on-demand, evict-to-fit, idle unload, `withModel` lease.
+4. **Joint resolution + progress** — `ProfileDefinition` + async `router.resolve`
+   doing the embedding → standard → flash joint fit into a `LanguageModelProfile`,
+   reporting `ResolutionProgress`, with failure diagnostics.
+5. **Residency + access** — `preload()` all three on resolve, hold resident for the
+   profile's lifetime, `evict()` on teardown; direct session/embed access.
 6. **Tool integration** — constructors take router/profile; shared use validated.
+7. **Integration test** — Swift Testing suite with tiny real models exercising a
+   FoundationModels session + embedding while co-resident (see Testing).
+8. **Guided generation** — grammar-constrained sessions over a routed model
+   (`respond(to:following:)` / `makeGuidedSession`, `Grammar` = JSON Schema or EBNF)
+   via `GrammarConstraint`.
+9. **Session fork + KV cache** — `RoutedSession.fork()` via `KVCache.copy()`, cache
+   freed on session release, and a KV-pool budget bounding concurrent forks.
+
+## Testing
+
+Unit-testable pieces (profiling, footprint math, joint allocation, diagnostics)
+take injected machine specs / metadata and need no models — covered per milestone.
+
+A separate **integration suite** (Swift Testing, `import Testing`) proves the real
+path end-to-end with **deliberately tiny models** to keep download/CI cost low:
+
+- A small 4-bit generation model and a small embedding model from `mlx-community`.
+- **Gated** (needs real download + GPU): `@available(macOS 27, …)` and an opt-in env
+  var so it never fires on a CI box without network/GPU (`.enabled(if:)`).
+- **`.serialized`** suite + `.timeLimit` — these load real models under the budget
+  and must not run concurrently.
+- Asserts, in one resolved profile: progress advances `sizing → downloading →
+  loading → ready`; a `profile.standard` session returns non-empty text;
+  `profile.embedding.embed` returns vectors of the expected dimension; a guided
+  session honors its grammar; and a `fork()` reuses the prefix and frees its cache on
+  release — all three models co-resident.
