@@ -46,8 +46,7 @@ We track it via our own fork so the dependency is stable and under our control:
   (tip `234787d` as of 2026-06-29).
 - **SwiftPM:**
   `.package(url: "https://github.com/swissarmyhammer/mlx-swift-lm", branch: "mlx-foundationmodels")`
-  — SwiftPM supports branch dependencies (pinned by commit in `Package.resolved`);
-  consider pinning a `.revision(...)` once the API settles.
+  — SwiftPM supports branch dependencies, pinned by commit in `Package.resolved`.
 - **Platform: macOS 27+ / FoundationModels v2 SDK.** We commit to the whole stack —
   `MLXFoundationModels` (`MLXLanguageModel`) + `MLXGuidedGeneration` (xgrammar) — and
   keep **no** pre-27 fallback, so nothing in the design is conditional on OS version.
@@ -58,7 +57,7 @@ We track it via our own fork so the dependency is stable and under our control:
 
 You name a profile and list the HF repos you like, biggest/best first, per slot.
 You don't specify quants, RAM, or machine — the router sizes it automatically.
-Manifest format is **Swift literals** for v1.
+Manifest format is **Swift literals**.
 
 ```swift
 let coding = ProfileDefinition(
@@ -145,8 +144,7 @@ footprint    = weightBytes + kvBytes(defaultContext)      // overhead via margin
 - `defaultContext` is the profile's `context` (default **8K**) — the same value
   used to size the KV cache at load, so the estimate matches reality. A long-context
   profile raises it, which inflates `kvBytes` and therefore fits smaller models.
-- The KV cache is **fp16 regardless of weight quant** (2 bytes/elt); quantized-KV is
-  a Deferred lever.
+- The KV cache is **fp16 regardless of weight quant** (2 bytes/elt).
 - Activation / compute / framework **overhead** is not modeled term-by-term — the
   conservative `× 1.2` margin in Resolution absorbs it.
 - **Embedders** have no autoregressive KV cache: `footprint ≈ weightBytes` (+ margin).
@@ -163,7 +161,7 @@ and goes; residency is exactly as predictable as the object's lifetime.
   is alive — `deinit` fires only once the profile handle and all its sessions are gone.
 - Because everything is always resident, the budget must fit standard + flash +
   embedding **simultaneously** (see Resolution).
-- **One active profile at a time** in v1: the budget is sized for a single profile,
+- **One active profile at a time:** the budget is sized for a single profile,
   so release the current one before resolving another. Resolving a profile that
   wouldn't co-fit already-resident models fails rather than over-committing RAM.
 - Apple-managed models (e.g. `SystemLanguageModel`) are always resident and not
@@ -195,8 +193,8 @@ a `@MainActor @Observable` object bound straight into SwiftUI:
 .task { profile = try await router.resolve(coding, reporting: progress) }
 ```
 
-(v1-on-`MLXLMCommon` vends the same surface over `ChatSession` / `ModelContainer`;
-the FoundationModels-session form lands with `MLXFoundationModels` — see Deferred.)
+(Sessions are vended over `MLXLMCommon`'s `ChatSession` / `ModelContainer`; a routed
+model can also back a native `LanguageModelSession` via `MLXFoundationModels` — see Backends.)
 
 ## Core Types
 
@@ -240,7 +238,7 @@ struct RoutedEmbedder {
 }
 
 // A session is an `actor`: it isolates its mutable state (KV cache, transcript,
-// working directory, optional container) and serializes its own calls. It owns its KV
+// working directory) and serializes its own calls. It owns its KV
 // cache (layered on the pinned weights) and **retains its creating profile**, so the
 // resident models stay alive for the session's lifetime. `fork` is the primitive: a
 // child inherits this session's cache (a copy of the prefilled prefix), gets a fresh
@@ -432,10 +430,9 @@ common instructions + tools" pattern:
    and all sessions/forks are released. No keyed pool or LRU: the live template *is*
    the warm prefix; forks are explicit and short-lived.
 
-Substrate (verified on the branch): `KVCache.copy()` (fork), `trim(_:)` (optional
-serial reuse — recycle one cache instead of copying), `savePromptCache` /
-`loadPromptCache` (spill a warm prefix to disk — grounds the Deferred SSD-tiered
-prefix cache).
+Substrate (verified on the branch): `KVCache.copy()` (fork), `trim(_:)` (serial
+reuse — recycle one cache instead of copying), `savePromptCache` /
+`loadPromptCache` (spill a warm prefix to disk).
 
 **Budget caveat:** `copy()` is a *deep* copy, so K concurrent forks hold K× the
 prefix KV. KV is a **reclaimable, pooled** resource separate from pinned weights, and
@@ -468,28 +465,14 @@ a thread-blocking `DispatchSemaphore`) — value 1 for the per-model serial gate
 Every session has a **`workingDirectory`** (host filesystem) — where its tools,
 relative paths, and outputs resolve. It defaults to a fresh per-session temp
 subdirectory; pass one explicitly to pin it. A session is an **`actor`**, so its
-mutable state (KV cache, transcript, working directory, any container handle) is
-isolated and its own calls serialize.
+mutable state (KV cache, transcript, working directory) is isolated and its own
+calls serialize.
 
 **Many sessions in one process** is the normal case: the process holds the router and
 the shared, resident models (host-side), and each session is a separate actor with its
 own working directory, all generating against the same weights through the per-model
-serial gate (see Concurrency). Without containers, separate working directories are
-*cooperative* isolation.
-
-### Optional container confinement (deferred)
-
-A session's **tool / exec side** can be confined to a per-session lightweight Linux
-container via [`apple/containerization`](https://github.com/apple/containerization)
-(Apache-2.0; one VM per container; macOS 26+ / Apple Silicon; Linux guests), with the
-session's `workingDirectory` bind-mounted.
-
-The hard split: **the model runs host-side** — MLX needs Metal and the Linux guest has
-no GPU/Metal — so the container sandboxes what the agent *does* (file ops, shell / code
-execution, MCP tool servers), **not** inference. The host generates (including guided
-tool calls); the container executes them against the mounted directory. Per-session VMs
-give strong, enforced isolation across many concurrent sessions — heavier than
-cooperative workdirs, hence deferred and opt-in.
+serial gate (see Concurrency). Separate working directories give *cooperative*
+isolation between sessions.
 
 ## Decisions
 
@@ -512,9 +495,8 @@ cooperative workdirs, hence deferred and opt-in.
   streams.
 - **Sessions:** each session is an `actor` with its own `workingDirectory` (host;
   default a fresh temp subdir); many coexist in one process over the shared resident
-  models. Optional per-session **Linux container** (`apple/containerization`)
-  sandboxes the tool/exec side only — the model stays host-side. (Deferred.)
-- **Manifest:** Swift-literal `ProfileDefinition` in v1.
+  models, with separate working directories as cooperative isolation.
+- **Manifest:** Swift-literal `ProfileDefinition`.
 - **Quant model:** one repo = one quant; `ModelRef` = one `(model, quant)`;
   author interleaves quant repos; router only accepts or skips.
 - **Footprint safety:** conservative `× 1.2` margin per candidate.
@@ -526,31 +508,6 @@ cooperative workdirs, hence deferred and opt-in.
 - **Resolution:** async, reporting `ResolutionProgress` (`@MainActor @Observable`)
   for direct SwiftUI binding.
 - **Weights:** cached on disk, reused across runs.
-
-## Deferred (v2+)
-
-Kept out of v1 to keep it small and obviously correct; the approach for each is
-already decided:
-
-- **Verify-on-load + correction caching** — after load, read MLX's real resident
-  bytes; if over budget, evict and advance to the next listed candidate; cache
-  the measured footprint per `(model, quant, machine)` for exact future picks.
-  (v1 relies on the `× 1.2` margin alone.)
-- **Throughput labels** — `tok/s ≈ bandwidth ÷ active-bytes-per-token` as an
-  honest speed label, sharpened by **passive** calibration (measure tok/s during
-  real `withModel` leases, cache per `(model, quant, machine)`). Label only,
-  never a routing input.
-- **SSD-tiered prefix cache** — persist KV prefixes so a reload re-warms fast.
-- **Memory-pressure handling** — on a system pressure signal, shrink KV context
-  or unload proactively rather than swap.
-- **Per-chip tuning** and a **data-file manifest** (JSON/TOML) for user-editable
-  profiles.
-- **Quantized KV cache** — store the KV cache at lower precision (via
-  `QuantizedKVCache`) to fit longer contexts / more concurrent forks; v1 uses fp16.
-- **Containerized sessions** — confine a session's tool/exec side to a per-session
-  lightweight Linux container (`apple/containerization`) with its `workingDirectory`
-  bind-mounted; the model stays host-side (no Metal in the guest). macOS 26+ / Apple
-  Silicon / Linux images. See "Sessions: working directory & isolation".
 
 ## Milestones
 
