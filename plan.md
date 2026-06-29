@@ -225,7 +225,7 @@ struct RoutedLLM {
     let footprintBytes: Int64
     let resolution: SlotResolution           // why it won; what was skipped
     func makeSession(instructions: String? = nil,
-                     workingDirectory: URL = .uniqueSessionDirectory) -> RoutedSession
+                     workingDirectory: URL? = nil) -> RoutedSession   // nil ⇒ the session's recording dir
 }
 
 // A resolved, resident embedding model.
@@ -238,17 +238,23 @@ struct RoutedEmbedder {
 }
 
 // A session is an `actor`: it isolates its mutable state (KV cache, transcript,
-// working directory) and serializes its own calls. It owns its KV
-// cache (layered on the pinned weights) and **retains its creating profile**, so the
-// resident models stay alive for the session's lifetime. `fork` is the primitive: a
-// child inherits this session's cache (a copy of the prefilled prefix), gets a fresh
-// working directory, and diverges. Releasing a session frees its cache.
+// working directory) and serializes its own calls. It owns its KV cache (layered on
+// the pinned weights), **retains its creating profile** (so resident models stay alive
+// for its lifetime), and is **born holding the Router's recorder** — there is no public
+// init, so an unrecorded session can't exist (see Transcripts & recording). `fork` is
+// the primitive: a child inherits this session's cache (a copy of the prefilled
+// prefix) and recorder, sets `parentID = self.id`, nests its directory under the
+// parent, and diverges. Releasing a session frees its cache.
 protocol RoutedSession: Actor {
     var profile: LanguageModelProfile { get }    // retained: keeps the models resident
-    var workingDirectory: URL { get }            // session's filesystem scope (host)
+    var routerID: ULID { get }                   // the recording group
+    var id: ULID { get }                         // this session's span; sortable by creation
+    var parentID: ULID? { get }                  // nil ⇒ a root session under the Router
+    var recordingDirectory: URL { get }          // lineage-derived (…/<parent>/<id>/); NOT caller-set
+    var workingDirectory: URL { get }            // tools' filesystem scope; defaults to recordingDirectory
     func respond(to prompt: String) async throws -> String
     func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error>  // unconstrained text only
-    func fork(workingDirectory: URL?) -> RoutedSession   // nil ⇒ fresh subdirectory
+    func fork(workingDirectory: URL?) -> RoutedSession   // nil ⇒ default; transcript nests regardless
 }
 
 // Guided generation — constrain output to a grammar (xgrammar via MLXGuidedGeneration).
@@ -272,15 +278,19 @@ extension RoutedLLM {
     func respond(to prompt: String, following grammar: Grammar) async throws -> String
     // A session whose every response obeys `grammar` (forkable; returns raw text).
     func makeGuidedSession(_ grammar: Grammar, instructions: String? = nil,
-                           workingDirectory: URL = .uniqueSessionDirectory) -> RoutedSession
+                           workingDirectory: URL? = nil) -> RoutedSession   // nil ⇒ the session's recording dir
 }
 
 // Built once at app start, shared everywhere (see Goal). Holds the profiling +
 // repo-metadata caches; resolution is async with UI-bindable progress.
 actor Router {
-    init(headroomReserve: Int64 = 4 << 30,    // 4 GB held out of the budget
+    let id: ULID                              // recording root; sortable by construction time
+    init(id: ULID = .generate(),              // pass one in to continue a prior recording root
+         headroomReserve: Int64 = 4 << 30,    // 4 GB held out of the budget
          maxConcurrentForks: Int = 4,         // in-flight fork sessions per profile
-         cacheDir: URL? = nil)                // host profile + repo-metadata cache
+         cacheDir: URL? = nil,                // host profile + repo-metadata cache (disposable)
+         recordingsDir: URL? = nil,           // durable transcripts root (NOT the cache)
+         recorder: TranscriptRecorder = .jsonl)  // .jsonl | .inMemory | .none (a no-op sink)
 
     func resolve(_ def: ProfileDefinition,
                  reporting: ResolutionProgress) async throws -> LanguageModelProfile
@@ -333,6 +343,8 @@ struct ResolutionFailure: Error {            // thrown by resolve when a slot ha
 
 - `ModelRef` is a HF repo id (optionally revision-pinned). It is
   `ExpressibleByStringLiteral`, so a bare string is a valid `ModelRef`.
+- `ULID` is a 128-bit, lexicographically time-sortable identifier (Crockford base32);
+  it names the Router's recording root and each session (see Transcripts & recording).
 - `RoutedLLM` / `RoutedEmbedder` are handles to a resident `(model, quant)`. The
   LLM vends sessions (`makeSession`); the embedder vends `embed`. Both carry their
   `SlotResolution` (chosen model, footprint vs budget, why higher-preference
@@ -463,16 +475,89 @@ a thread-blocking `DispatchSemaphore`) — value 1 for the per-model serial gate
 ## Sessions: working directory & isolation
 
 Every session has a **`workingDirectory`** (host filesystem) — where its tools,
-relative paths, and outputs resolve. It defaults to a fresh per-session temp
-subdirectory; pass one explicitly to pin it. A session is an **`actor`**, so its
-mutable state (KV cache, transcript, working directory) is isolated and its own
-calls serialize.
+relative paths, and outputs resolve. It defaults to the session's **recording
+directory** (lineage-nested under the Router — see Transcripts & recording); pass one
+explicitly to move the files elsewhere, and the transcript stays in the tree. A session
+is an **`actor`**, so its mutable state (KV cache, transcript, working directory) is
+isolated and its own calls serialize.
 
 **Many sessions in one process** is the normal case: the process holds the router and
 the shared, resident models (host-side), and each session is a separate actor with its
 own working directory, all generating against the same weights through the per-model
 serial gate (see Concurrency). Separate working directories give *cooperative*
 isolation between sessions.
+
+## Transcripts & recording
+
+Every session from a Router is recorded, and the wiring is **structural** — an
+unrecorded session can't be constructed.
+
+**The Router is the recording root.** It carries an `id: ULID` assigned at
+construction. ULIDs are lexicographically time-sortable, so recording roots and the
+sessions under them sort chronologically with no separate timestamp. One Router
+instance = one recording aggregate = one `recordings/<routerID>/` tree; a fresh `id`
+each construction makes every process/router lifetime its own root. Pass an `id` in to
+continue a prior root.
+
+**A session is born holding its recorder — it can't be attached late or skipped:**
+
+- **No public initializers.** A `RoutedSession` is only vended by `RoutedLLM` (from a
+  resolved profile, from `Router.resolve`). The Router is the single root of session
+  creation, so the recorder and `routerID` flow down that chain automatically —
+  callers never pass or see a recorder.
+- **The recorder is a non-optional `let`; "off" is a sink, not `nil`.** Disabling
+  recording is `.none` (a no-op `TranscriptRecorder`) chosen once at the Router. The
+  code path is identical whether recording or not — no branch can forget to record.
+- **One bracketed generation chokepoint.** Every public method (`respond`,
+  `streamResponse`, the guided variants) funnels through a single private `generate`,
+  which runs the model *inside* a recorder bracket: open event → body → close/error
+  event in `defer`. A new API can't bypass recording, and the close can't be skipped
+  on `throw`.
+- **`fork()` inherits.** The child takes `routerID`, the recorder, and
+  `parentID = self.id` from `self`. No fork overload accepts a recorder, so you can't
+  fork into an unrecorded or ungrouped state.
+- **No side door.** The raw `ChatSession` / `LanguageModelSession` is never vended;
+  `RoutedSession` is the only generation surface.
+- **The recorder actor assigns `seq` + `ts` at append**, so concurrent forks across
+  models still produce a totally-ordered log.
+
+**Forks nest on disk to mirror the lineage** — a session's directory sits under its
+parent's, so the path *is* the fork tree:
+
+```
+recordings/
+  01J…ROUTER/
+    manifest.json                 # router config, profiles resolved, start/end
+    01J…A/                        # root session (parentID = nil)
+      transcript.jsonl            # A's turns; first line is a `session` meta event
+      01J…B/                      # fork of A
+        transcript.jsonl
+        01J…C/                    # fork of B
+          transcript.jsonl
+```
+
+Each session writes its own `transcript.jsonl`; siblings are separate files (no write
+contention). The "what did this whole Router do" view is `**/transcript.jsonl` merged
+by `(ts, seq)` — and the ULID-ordered paths already give near-order. Provenance on
+every line keeps it self-describing across files:
+
+```
+{ routerId, sessionId, parentId, slot, model, seq, ts,
+  kind: "session"|"prompt"|"response"|"toolCall"|"toolOutput"|"embedding",
+  grammar?, tokensIn, tokensOut, ms, … }
+```
+
+**Transcript nesting is lineage-derived and not caller-controllable.** The recording
+directory is computed from the `parentID` chain inside the session, so a fork's
+transcript always lands under its parent regardless of what the caller passes.
+`workingDirectory` (where the agent's tools resolve files) is a *separate*,
+overridable thing that defaults to the session's recording directory — override it and
+the files move, but the transcript stays in the tree.
+
+Recording stays **off the hot path and best-effort**: appends happen after the turn
+returns, through the recorder actor; a sink failure logs but never fails generation. A
+redaction hook and a level (`off` / `metadata-only` / `full`) gate what's written,
+since local models still see sensitive prompts.
 
 ## Decisions
 
@@ -496,6 +581,12 @@ isolation between sessions.
 - **Sessions:** each session is an `actor` with its own `workingDirectory` (host;
   default a fresh temp subdir); many coexist in one process over the shared resident
   models, with separate working directories as cooperative isolation.
+- **Transcripts:** the Router is the recording root (`id: ULID`, time-sortable); every
+  session is **born holding** the Router's recorder (non-optional; `.none` is a no-op
+  sink) and records through one bracketed generation chokepoint, so an unrecorded
+  session can't exist. Forks **nest on disk** to mirror the fork tree; transcript
+  location is lineage-derived, not caller-controllable. JSONL, best-effort, off the hot
+  path.
 - **Manifest:** Swift-literal `ProfileDefinition`.
 - **Quant model:** one repo = one quant; `ModelRef` = one `(model, quant)`;
   author interleaves quant repos; router only accepts or skips.
@@ -531,6 +622,10 @@ isolation between sessions.
 9. **Session fork + concurrency** — `RoutedSession.fork()` via `KVCache.copy()` (cache
    freed on release); per-model serial generation queue and a `maxConcurrentForks`
    admission gate, both on a fair async semaphore.
+10. **Transcripts & recording** — Router `id: ULID` + `TranscriptRecorder` sink;
+    sessions emit tagged events through the bracketed generation chokepoint; per-session
+    `transcript.jsonl` nested by fork lineage; `.jsonl` / `.inMemory` / `.none` sinks.
+    Unit-testable with `.inMemory`.
 
 ## Testing
 
@@ -549,4 +644,5 @@ path end-to-end with **deliberately tiny models** to keep download/CI cost low:
   loading → ready`; a `profile.standard` session returns non-empty text;
   `profile.embedding.embed` returns vectors of the expected dimension; a guided
   session honors its grammar; and a `fork()` reuses the prefix and frees its cache on
-  release — all three models co-resident.
+  release — all three models co-resident. Recording asserts a fork's `transcript.jsonl`
+  nests under its parent's directory and the merged log is totally ordered by `seq`.
