@@ -14,8 +14,8 @@ comments:
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
 - 01KWC5BTMHH3K50437WBVFG9NT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8380'
 title: Replace hand-rolled ULID with yaslab/ULID.swift library
 ---
 ## What
