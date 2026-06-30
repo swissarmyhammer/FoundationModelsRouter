@@ -15,6 +15,16 @@ comments:
 
     Build env: export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer. `swift test --filter JointFitTests` -> 8/8 pass. Full `swift test` -> 47 pass + 1 gated integration skipped. GREEN. Left in doing.
   timestamp: 2026-06-30T19:29:33.644784+00:00
+- actor: wballard
+  id: 01kwd0xz4kq8tq0azzvp9kek4s
+  text: |-
+    Addressed both 2026-06-30 14:34 review findings.
+
+    1. JointFit.swift: removed the standalone `candidates(of:for:)` helper (single call site, no abstraction). `resolveSlot()` now accepts `profile: ProfileDefinition` directly and derives candidates inline via a switch expression. Behavior unchanged.
+    2. JointFitTests.swift: extracted `private static let coderProfileName = "coder"` and referenced it in all three sites (ladderProfile name, profileName assertion, description assertion).
+
+    Verified GREEN: `swift test --filter JointFitTests` → 8/8 pass; full `swift test` → 47 tests pass + gated integration suite (1 skipped).
+  timestamp: 2026-06-30T19:43:37.619627+00:00
 depends_on:
 - 01KWC5C3B35X6N0DYZJYZ044BE
 - 01KWC5CQ49ZCF1VVP9FW6T4QZF
@@ -49,3 +59,8 @@ The pure allocation that picks the highest-preference *combination* of three slo
 
 ## Workflow
 - Use `/tdd` — write failing allocation + diagnostics tests with injected footprints first.
+
+## Review Findings (2026-06-30 14:34)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:133` — The `candidates()` function wraps a single call site (line 99) with a simple switch statement that adds no meaningful abstraction beyond naming. The switch could be inlined or the caller could directly access the profile properties. Inline the switch statement or modify `resolveSlot()` to accept the profile directly instead of pre-extracted candidates. RESOLVED: removed the standalone `candidates(of:for:)` helper; `resolveSlot()` now takes `profile: ProfileDefinition` and computes its candidates inline via a switch expression. Behavior identical.
+- [x] `Tests/FoundationModelsRouterTests/JointFitTests.swift:60` — The string literal "coder" appears three times as a test constant (the profile name) and is checked in multiple test assertions. This meets the rule-of-three threshold for extracting a named constant so changes occur in one place. Extract "coder" as a private static let constant at the top of the test suite, e.g., `private static let coderProfileName = "coder"`, and reference it in all three locations (the profile definition and both assertions). RESOLVED: added `private static let coderProfileName = "coder"` and replaced all three occurrences (profile definition, profileName assertion, description assertion).

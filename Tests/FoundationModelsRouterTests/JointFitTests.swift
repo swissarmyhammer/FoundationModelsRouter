@@ -23,6 +23,9 @@ struct JointFitTests {
     /// A candidate whose sizing metadata cannot be read.
     private static let unsizable: ModelRef = "org/no-config"
 
+    /// The name shared by the portability profile and its diagnostics assertions.
+    private static let coderProfileName = "coder"
+
     // MARK: Raw footprints (multiples of 5 so the ×1.2 margin is exact)
 
     private static let raw: [ModelRef: Int64] = [
@@ -54,7 +57,7 @@ struct JointFitTests {
     /// one flash, one embedding.
     private static func ladderProfile() -> ProfileDefinition {
         ProfileDefinition(
-            name: "coder",
+            name: coderProfileName,
             description: "portability ladder",
             standard: [std32b8, std32b4, std14b4],
             flash: [flash3b],
@@ -178,7 +181,7 @@ struct JointFitTests {
                 footprint: Self.provider()
             )
         }
-        #expect(error.profileName == "coder")
+        #expect(error.profileName == Self.coderProfileName)
         #expect(error.budgetBytes == 5_000)
 
         // The failure carries every slot's resolution, not just the unsatisfiable one.
@@ -202,7 +205,7 @@ struct JointFitTests {
             )
         }
         let text = error.description
-        #expect(text.contains("coder"))
+        #expect(text.contains(Self.coderProfileName))
         #expect(text.contains("5000"))
         #expect(text.contains(Self.std14b4.stringValue))
         #expect(text.contains("10800"))   // a candidate's ×1.2 footprint

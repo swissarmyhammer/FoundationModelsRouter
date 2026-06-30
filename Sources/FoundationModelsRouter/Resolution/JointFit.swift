@@ -98,7 +98,7 @@ public enum JointFit {
         for slot in allocationOrder {
             let resolution = resolveSlot(
                 slot,
-                candidates: candidates(of: profile, for: slot),
+                profile: profile,
                 remaining: remaining,
                 footprint: footprint
             )
@@ -136,17 +136,24 @@ public enum JointFit {
     ///
     /// - Parameters:
     ///   - slot: The slot being resolved.
-    ///   - candidates: The slot's candidates in author preference order.
+    ///   - profile: The authored profile supplying the slot's candidates in
+    ///     preference order.
     ///   - remaining: The budget available to this slot.
     ///   - footprint: The injected per-candidate raw footprint.
     /// - Returns: The slot's resolution, with one ``CandidateReport`` per
     ///   candidate.
     private static func resolveSlot(
         _ slot: ModelSlot,
-        candidates: [ModelRef],
+        profile: ProfileDefinition,
         remaining: Int64,
         footprint: (ModelRef) -> Result<Int64, RepoMetadataError>
     ) -> SlotResolution {
+        let candidates: [ModelRef] = switch slot {
+        case .embedding: profile.embedding
+        case .standard: profile.standard
+        case .flash: profile.flash
+        }
+
         var chosen: ModelRef?
         var considered: [CandidateReport] = []
 
@@ -186,18 +193,6 @@ public enum JointFit {
             chosen: chosen,
             considered: considered
         )
-    }
-
-    /// The candidates a profile lists for a slot, in author preference order.
-    private static func candidates(of profile: ProfileDefinition, for slot: ModelSlot) -> [ModelRef] {
-        switch slot {
-        case .embedding:
-            return profile.embedding
-        case .standard:
-            return profile.standard
-        case .flash:
-            return profile.flash
-        }
     }
 
     /// The chosen reference for a slot among resolved slots, if any.
