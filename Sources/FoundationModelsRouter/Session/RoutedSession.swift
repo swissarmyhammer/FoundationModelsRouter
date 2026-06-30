@@ -147,20 +147,39 @@ actor RoutedSessionActor: RoutedSession {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.generate {
-                        for try await chunk in self.container.streamResponse(
-                            to: prompt,
-                            instructions: self.instructions
-                        ) {
-                            continuation.yield(chunk)
-                        }
-                    }
+                    try await self.streamGenerating(prompt, into: continuation)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    /// Runs the recorder-bracketed streaming generation, forwarding each chunk
+    /// the model produces to `continuation`.
+    ///
+    /// Extracted from ``streamResponse(to:)`` so that method's stream/`Task`
+    /// scaffolding stays shallow: the bracketed `for`-loop lives here instead of
+    /// nesting inside the continuation closure.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - continuation: The stream continuation each produced chunk is yielded to.
+    /// - Throws: Any error thrown by the model, after the chokepoint records the
+    ///   close event.
+    private func streamGenerating(
+        _ prompt: String,
+        into continuation: AsyncThrowingStream<String, Error>.Continuation
+    ) async throws {
+        try await generate {
+            for try await chunk in self.container.streamResponse(
+                to: prompt,
+                instructions: self.instructions
+            ) {
+                continuation.yield(chunk)
+            }
         }
     }
 
@@ -181,38 +200,34 @@ actor RoutedSessionActor: RoutedSession {
     /// - Returns: Whatever `body` returns.
     /// - Throws: Whatever `body` throws, after recording the close event.
     private func generate<R>(_ body: () async throws -> R) async throws -> R {
-        await recorder.append(openEvent)
+        await recorder.append(makePartialEvent(kind: .prompt))
         do {
             let result = try await body()
-            await recorder.append(closeEvent)
+            await recorder.append(makePartialEvent(kind: .response))
             return result
         } catch {
-            await recorder.append(closeEvent)
+            await recorder.append(makePartialEvent(kind: .response))
             throw error
         }
     }
 
-    /// The open event recorded as a generation begins.
-    private var openEvent: TranscriptEvent.Partial {
+    /// Builds a bracket event of the given kind stamped with this session's
+    /// provenance.
+    ///
+    /// The open (`.prompt`) and close (`.response`) events the chokepoint records
+    /// are identical but for their kind, so both come from this one helper.
+    ///
+    /// - Parameter kind: The event kind to stamp — `.prompt` to open, `.response`
+    ///   to close.
+    /// - Returns: The partial event for the recorder to stamp and append.
+    private func makePartialEvent(kind: TranscriptEvent.Kind) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
             routerId: routerID,
             sessionId: id,
             parentId: parentID,
             slot: slot,
             model: model,
-            kind: .prompt
-        )
-    }
-
-    /// The close event recorded as a generation ends (success or throw).
-    private var closeEvent: TranscriptEvent.Partial {
-        TranscriptEvent.Partial(
-            routerId: routerID,
-            sessionId: id,
-            parentId: parentID,
-            slot: slot,
-            model: model,
-            kind: .response
+            kind: kind
         )
     }
 }

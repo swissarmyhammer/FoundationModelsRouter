@@ -33,6 +33,29 @@ comments:
 
     Re-verified GREEN after the fixes (DEVELOPER_DIR=Xcode-beta): swift build clean (no warnings), full swift test = 67 + 1 integration placeholder, zero failures. Leaving task in `doing` for /review.
   timestamp: 2026-06-30T22:32:57.343660+00:00
+- actor: wballard
+  id: 01kwdbj382evnteb37xv96dnam
+  text: 'Picked up review findings (6 source reuse/clarity items). Pulled review→doing. Plan: (1) extract ModelConfiguration construction in LiveModelLoader shared by loadLLM/loadEmbedder; (2) inline defaultRecordingsBase() at its single makeSession call site; (3) extract Router.makeRoutedLLM helper used by both standard+flash; (4) flatten RoutedSession.streamResponse to <=4 levels via extracted streamGenerating helper; (5+6) extract makePartialEvent(kind:) shared by open/close events. All pure refactors, behavior identical; existing SessionChokepointTests/ResolveTests/ProfileLifecycleTests are the safety net.'
+  timestamp: 2026-06-30T22:49:22.946099+00:00
+- actor: wballard
+  id: 01kwdbt3gr4yp2h6hkag37p4gf
+  text: |-
+    All 6 source review findings resolved (pure refactors, behavior identical) and checked off:
+    1. LiveModelLoader — extracted private `configuration(for:)` shared by loadLLM + loadEmbedder (removed the duplicated ModelConfiguration construction).
+    2. RoutedLLM — inlined the single-call `defaultRecordingsBase()` into makeSession and deleted the helper (grep confirms zero leftover refs).
+    3. Router.buildProfile — extracted `makeRoutedLLM(slot:chosen:container:resolution:)` used for BOTH standard and flash; footprint now computed inside via chosenFootprint(resolution), eliminating that duplication too. Embedding (RoutedEmbedder) path untouched.
+    4. RoutedSession.streamResponse — flattened 5→3 nesting levels by extracting `streamGenerating(_:into:)`; finish/finish(throwing:)/onTermination semantics unchanged.
+    5+6. RoutedSession — replaced openEvent/closeEvent computed vars with one `makePartialEvent(kind:)`; generate opens .prompt, both close paths (success+catch) use .response.
+
+    Deliberate seams untouched (notWiredForLiveInference, fork placeholder, weak owningProfileBox back-ref). Test stubs not modified.
+
+    Verification (DEVELOPER_DIR=Xcode-beta):
+    - `swift test --filter SessionChokepointTests` → 6/6 green.
+    - full `swift test` → 67/67 green across 12 suites (ResolveTests + ProfileLifecycleTests both green), integration suite gated/skipped as expected.
+    - Adversarial double-check agent: PASS (confirmed all six behavior-preserving, no regressions/dead code, seams intact).
+
+    Left in `doing` for /review.
+  timestamp: 2026-06-30T22:53:45.368678+00:00
 depends_on:
 - 01KWC5FTDFTSW3BA82MXE6CGP0
 - 01KWC5ECCZYEAH49J635KC9QH5
@@ -63,3 +86,12 @@ The generation session surface, born holding a recorder. Plan "Access API", "Ses
 
 ## Workflow
 - Use `/tdd` — write failing chokepoint + retention + workingDirectory tests with stubs first.
+
+## Review Findings (2026-06-30 17:34)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:114` — LiveModelLoader.loadEmbedder duplicates the initialization pattern from loadLLM; see line 98 finding. See line 98 finding; extract shared helper.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:87` — Needless single-call helper: `defaultRecordingsBase()` is called exactly once and wraps a simple, non-confusing FileManager expression. Inlining it directly at the call site would eliminate the indirection. Inline the path construction directly into `makeSession`, replacing `(recordingsRoot ?? Self.defaultRecordingsBase())` with `(recordingsRoot ?? FileManager.default.temporaryDirectory.appendingPathComponent("FoundationModelsRouter/Transcripts", isDirectory: true))` to eliminate single-call wrapper indirection.
+- [x] `Sources/FoundationModelsRouter/Router.swift:383` — buildProfile flash RoutedLLM construction duplicates the standard one; see line 373 finding. See line 373 finding; extract helper.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:110` — streamResponse function has 5 levels of nesting (AsyncThrowingStream closure → Task closure → do/catch → generate closure → for loop), exceeding the 4-level threshold. The deeply nested structure makes control flow and variable scoping difficult to follow. Extract the streaming loop into a helper function or refactor to reduce nesting. For example, move the generate-wrapped stream iteration into a separate private function that the Task can call, or flatten the structure by separating Task creation from do/catch handling.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:199` — RoutedSessionActor.openEvent and closeEvent are near-duplicates; they differ only in the `kind` value (.prompt vs .response), all other fields are identical. Extract a shared private helper `_makePartialEvent(kind:) -> TranscriptEvent.Partial` that captures the common field setup, then call it from both openEvent and closeEvent with the appropriate kind argument.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:210` — RoutedSessionActor.closeEvent duplicates openEvent; see line 199 finding. See line 199 finding; extract shared helper.

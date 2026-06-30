@@ -104,11 +104,10 @@ public struct LiveModelLoader: ModelLoader {
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        let configuration = ModelConfiguration(id: ref.repo, revision: ref.revision ?? Self.defaultRevision)
-        return try await loadModelContainer(
+        try await loadModelContainer(
             from: downloader,
             using: tokenizerLoader,
-            configuration: configuration,
+            configuration: configuration(for: ref),
             progressHandler: Self.handler(reporting)
         )
     }
@@ -119,13 +118,19 @@ public struct LiveModelLoader: ModelLoader {
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        let configuration = ModelConfiguration(id: ref.repo, revision: ref.revision ?? Self.defaultRevision)
-        return try await EmbedderModelFactory.shared.loadContainer(
+        try await EmbedderModelFactory.shared.loadContainer(
             from: downloader,
             using: tokenizerLoader,
-            configuration: configuration,
+            configuration: configuration(for: ref),
             progressHandler: Self.handler(reporting)
         )
+    }
+
+    /// Builds the MLX `ModelConfiguration` for a model ref, pinning the ref's
+    /// revision or falling back to ``defaultRevision`` — shared by the
+    /// generation and embedding load paths.
+    private func configuration(for ref: ModelRef) -> ModelConfiguration {
+        ModelConfiguration(id: ref.repo, revision: ref.revision ?? Self.defaultRevision)
     }
 
     /// Warms a loaded container.

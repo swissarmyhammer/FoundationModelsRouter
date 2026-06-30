@@ -411,30 +411,20 @@ public actor Router {
         embeddingContainer: any LoadedEmbeddingContainer,
         residencyToken: ULID
     ) -> LanguageModelProfile {
-        let standardRes = Self.slotResolution(resolution, slot: .standard)
-        let flashRes = Self.slotResolution(resolution, slot: .flash)
         let embeddingRes = Self.slotResolution(resolution, slot: .embedding)
         return LanguageModelProfile(
             definitionName: def.name,
-            standard: RoutedLLM(
+            standard: makeRoutedLLM(
                 slot: .standard,
                 chosen: resolution.standard,
-                footprintBytes: Self.chosenFootprint(standardRes),
-                resolution: standardRes,
                 container: standardContainer,
-                routerID: id,
-                recorder: recorder,
-                recordingsRoot: recordingsDir
+                resolution: Self.slotResolution(resolution, slot: .standard)
             ),
-            flash: RoutedLLM(
+            flash: makeRoutedLLM(
                 slot: .flash,
                 chosen: resolution.flash,
-                footprintBytes: Self.chosenFootprint(flashRes),
-                resolution: flashRes,
                 container: flashContainer,
-                routerID: id,
-                recorder: recorder,
-                recordingsRoot: recordingsDir
+                resolution: Self.slotResolution(resolution, slot: .flash)
             ),
             embedding: RoutedEmbedder(
                 slot: .embedding,
@@ -448,6 +438,37 @@ public actor Router {
             ),
             router: self,
             residencyToken: residencyToken
+        )
+    }
+
+    /// Builds a generation handle for a slot, stamping it with this router's id,
+    /// recorder, and transcripts root.
+    ///
+    /// The `.standard` and `.flash` slots construct identical ``RoutedLLM``
+    /// handles differing only by slot, chosen ref, container, and resolution, so
+    /// both go through this one helper.
+    ///
+    /// - Parameters:
+    ///   - slot: The slot this handle fills.
+    ///   - chosen: The chosen model reference for the slot.
+    ///   - container: The loaded, resident generation container.
+    ///   - resolution: Why this model won its slot.
+    /// - Returns: The routed generation handle.
+    private func makeRoutedLLM(
+        slot: ModelSlot,
+        chosen: ModelRef,
+        container: any LoadedLLMContainer,
+        resolution: SlotResolution
+    ) -> RoutedLLM {
+        RoutedLLM(
+            slot: slot,
+            chosen: chosen,
+            footprintBytes: Self.chosenFootprint(resolution),
+            resolution: resolution,
+            container: container,
+            routerID: id,
+            recorder: recorder,
+            recordingsRoot: recordingsDir
         )
     }
 

@@ -56,7 +56,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         }
 
         let sessionID = ULID.generate()
-        let recordingDirectory = (recordingsRoot ?? Self.defaultRecordingsBase())
+        // When the router has no durable transcripts root (recording to
+        // memory/none), nest the session directory under a per-process temporary
+        // location, so the directory is still well-defined.
+        let recordingsBase = recordingsRoot
+            ?? FileManager.default.temporaryDirectory
+                .appendingPathComponent("FoundationModelsRouter/Transcripts", isDirectory: true)
+        let recordingDirectory = recordingsBase
             .appendingPathComponent(routerID.description, isDirectory: true)
             .appendingPathComponent(sessionID.description, isDirectory: true)
 
@@ -73,13 +79,5 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             recorder: recorder,
             instructions: instructions
         )
-    }
-
-    /// The base a session's recording directory nests under when the router has
-    /// no durable transcripts root (recording to memory/none): a per-process
-    /// temporary location, so the directory is still well-defined.
-    private static func defaultRecordingsBase() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("FoundationModelsRouter/Transcripts", isDirectory: true)
     }
 }
