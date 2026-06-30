@@ -65,8 +65,8 @@ depends_on:
 - 01KWC5DK4AXYHFBK2TJRPK88KW
 - 01KWC5E1APGYR4D8G574H2KQ3F
 - 01KWC5BTMHH3K50437WBVFG9NT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8a80
 title: Router actor + resolve orchestration + ResolutionProgress (milestone 4b)
 ---
 ## What

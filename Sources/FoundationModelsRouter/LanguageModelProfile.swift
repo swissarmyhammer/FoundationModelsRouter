@@ -90,8 +90,14 @@ public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
 ///
 /// The slots are the joint-fit trio — ``standard`` and ``flash`` generation
 /// models and an ``embedding`` model — each a handle to a loaded container with
-/// its resolution reasoning. Lifecycle (`release()`) and the session surface
-/// land in milestones 5a/5b; this type is storage only for now.
+/// its resolution reasoning.
+///
+/// Residency is bounded: the resolving ``Router`` allows only one active profile
+/// at a time, so a profile must be released before another can be resolved.
+/// ``release()`` evicts all three models through the router's loader and frees
+/// the router's residency slot; `deinit` runs the same release best-effort, so a
+/// dropped profile cannot strand resident memory. The session surface lands in
+/// milestone 5b.
 public final class LanguageModelProfile: Sendable {
     /// The name of the ``ProfileDefinition`` this was resolved from.
     public let definitionName: String
@@ -105,6 +111,20 @@ public final class LanguageModelProfile: Sendable {
     /// The resident `.embedding` model.
     public let embedding: RoutedEmbedder
 
+    /// The router that resolved this profile and owns its residency slot;
+    /// ``release()`` routes eviction back through it.
+    private let router: Router
+
+    /// The router-minted residency token identifying this profile's residency.
+    ///
+    /// A unique, never-reused id (unlike an `ObjectIdentifier`, which a freed
+    /// profile's address — and therefore identity — could hand to a later
+    /// profile). The router matches on it in ``Router/release(token:containers:)``
+    /// so a stale `deinit` firing after this profile has been released and a
+    /// *different* profile resolved cannot match, and so cannot evict the wrong
+    /// models or clear the newer profile's residency.
+    let residencyToken: ULID
+
     /// Creates a resolved profile.
     ///
     /// - Parameters:
@@ -112,15 +132,54 @@ public final class LanguageModelProfile: Sendable {
     ///   - standard: The resident `.standard` model.
     ///   - flash: The resident `.flash` model.
     ///   - embedding: The resident `.embedding` model.
+    ///   - router: The resolving router, which owns the residency slot and the
+    ///     loader eviction runs through.
+    ///   - residencyToken: The router-minted token identifying this residency.
     public init(
         definitionName: String,
         standard: RoutedLLM,
         flash: RoutedLLM,
-        embedding: RoutedEmbedder
+        embedding: RoutedEmbedder,
+        router: Router,
+        residencyToken: ULID
     ) {
         self.definitionName = definitionName
         self.standard = standard
         self.flash = flash
         self.embedding = embedding
+        self.router = router
+        self.residencyToken = residencyToken
+    }
+
+    /// The three resident containers, in slot order, for eviction.
+    private var containers: [any LoadedModelContainer] {
+        [standard.container, flash.container, embedding.container]
+    }
+
+    /// Evicts all three resident models and frees the router's residency slot,
+    /// so the next ``Router/resolve(_:reporting:)`` can proceed.
+    ///
+    /// Idempotent: the router only evicts and clears while this profile is the
+    /// resident one, so calling ``release()`` more than once — or after `deinit`
+    /// has already run it — is a safe no-op. The eviction runs through the
+    /// injected loader, so it carries no MLX dependency of its own.
+    public func release() async {
+        await router.release(token: residencyToken, containers: containers)
+    }
+
+    /// Runs ``release()`` best-effort when the profile is dropped, so a profile
+    /// that goes out of scope without an explicit release still frees its
+    /// resident models and the router's residency slot.
+    ///
+    /// The eviction is dispatched onto an unstructured task because it is async;
+    /// the task captures only the router, the residency token, and the containers
+    /// as values — never `self` — so it cannot resurrect the deallocating
+    /// profile. The token (not the profile's address) is what the router matches,
+    /// so a `deinit` racing a newer profile's residency is a safe no-op.
+    deinit {
+        let router = self.router
+        let residencyToken = self.residencyToken
+        let containers = self.containers
+        Task { await router.release(token: residencyToken, containers: containers) }
     }
 }

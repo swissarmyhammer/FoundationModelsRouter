@@ -42,8 +42,23 @@ public protocol LoadedModelContainer: Sendable {}
 /// A loaded generation (`standard`/`flash`) model container.
 public protocol LoadedLLMContainer: LoadedModelContainer {}
 
-/// A loaded embedding model container.
-public protocol LoadedEmbeddingContainer: LoadedModelContainer {}
+/// A loaded embedding model container — the seam the embedding computation runs
+/// through, so ``RoutedEmbedder`` is unit-testable without a GPU.
+///
+/// Tests substitute a stub that returns fixed-length vectors; the live
+/// ``EmbedderModelContainer`` conformance wires the real MLX pipeline in the
+/// gated integration suite (milestone 7).
+public protocol LoadedEmbeddingContainer: LoadedModelContainer {
+    /// The length of every embedding vector this model produces.
+    var dimension: Int { get }
+
+    /// Embeds each input string into a ``dimension``-length vector.
+    ///
+    /// - Parameter texts: The strings to embed.
+    /// - Returns: One ``dimension``-length vector per input, in order.
+    /// - Throws: If the embedding computation fails.
+    func embed(_ texts: [String]) async throws -> [[Float]]
+}
 
 /// The download-and-load step behind ``Router/resolve(_:reporting:)``,
 /// abstracted so the orchestration is unit-testable without network or GPU.
@@ -90,4 +105,23 @@ public protocol ModelLoader: Sendable {
     /// - Parameter container: The container to warm.
     /// - Throws: If warm-up fails.
     func preload(_ container: any LoadedModelContainer) async throws
+
+    /// Evicts a resident container, releasing the memory it holds.
+    ///
+    /// Called from ``LanguageModelProfile/release()`` (and its `deinit`) so the
+    /// router's one-active-profile rule can free RAM before another profile is
+    /// resolved. Routing eviction through the loader keeps it stubbable: unit
+    /// tests inject a loader whose ``evict(_:)`` counts calls, with no real MLX
+    /// unload required. Best-effort and non-throwing.
+    ///
+    /// - Parameter container: The container to evict.
+    func evict(_ container: any LoadedModelContainer) async
+}
+
+extension ModelLoader {
+    /// A no-op eviction: a loader that holds nothing reclaimable (or defers real
+    /// unload to a later milestone) inherits this default, so only loaders that
+    /// truly manage residency — and the test stubs that spy on eviction —
+    /// override it.
+    public func evict(_ container: any LoadedModelContainer) async {}
 }

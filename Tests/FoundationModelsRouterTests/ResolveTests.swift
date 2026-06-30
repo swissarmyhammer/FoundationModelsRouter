@@ -16,7 +16,12 @@ struct ResolveTests {
     private struct StubLLMContainer: LoadedLLMContainer {}
 
     /// A stand-in for a loaded embedder container, with no MLX dependency.
-    private struct StubEmbeddingContainer: LoadedEmbeddingContainer {}
+    private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
+        let dimension = 8
+        func embed(_ texts: [String]) async throws -> [[Float]] {
+            texts.map { _ in [Float](repeating: 0, count: dimension) }
+        }
+    }
 
     // MARK: - Stub machine probe
 

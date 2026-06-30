@@ -8,7 +8,26 @@ import MLXLMCommon
 // simply lets ``LiveModelLoader`` vend them where the orchestration expects an
 // `any LoadedLLMContainer` / `any LoadedEmbeddingContainer`.
 extension ModelContainer: LoadedLLMContainer {}
-extension EmbedderModelContainer: LoadedEmbeddingContainer {}
+
+// The MLX `EmbedderModelContainer` exposes its model only through an async
+// `perform` closure over non-`Sendable` MLX tensors, so the real embedding
+// pipeline (and the dimension it produces) is GPU work that lands in the gated
+// integration suite (milestone 7). This conformance is the deferred seam: the
+// unit suite drives a stub embedder, while the live path makes its unwired
+// state explicit rather than returning fabricated vectors.
+extension EmbedderModelContainer: LoadedEmbeddingContainer {
+    /// The embedding dimension, derived from the loaded model when the live
+    /// pipeline is wired (milestone 7). Until then it reports `0` (unknown),
+    /// matching the ``DownloadProgress`` "unknown total" sentinel.
+    public var dimension: Int { 0 }
+
+    /// Embeds through the real `MLXEmbedders` pipeline — wired in the gated
+    /// integration suite (milestone 7). Until then it throws, so no caller
+    /// mistakes an unwired live container for a working one.
+    public func embed(_ texts: [String]) async throws -> [[Float]] {
+        throw EmbeddingError.notWiredForLiveInference
+    }
+}
 
 /// A failure constructing or invoking a ``ModelLoader``.
 public enum ModelLoaderError: Error, Equatable {
@@ -89,6 +108,13 @@ public struct LiveModelLoader: ModelLoader {
     /// already brings the model resident; this hook is the seam for any future
     /// explicit warm-up (e.g. a throwaway forward pass).
     public func preload(_ container: any LoadedModelContainer) async throws {}
+
+    /// Evicts a loaded container.
+    ///
+    /// Real MLX unload is not required at this milestone (the lifecycle only
+    /// needs eviction to route through the loader so it is stubbable); this is
+    /// the no-op seam where an explicit unload lands later.
+    public func evict(_ container: any LoadedModelContainer) async {}
 
     /// The revision used when a ``ModelRef`` does not pin one.
     private static let defaultRevision = "main"

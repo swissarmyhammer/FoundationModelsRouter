@@ -14,6 +14,14 @@ public enum RecordingLevel: Sendable {
     case full
 }
 
+/// A failure operating the ``Router`` lifecycle.
+public enum RouterError: Error, Equatable {
+    /// A profile is already resident: the router admits one active profile at a
+    /// time so it never over-commits RAM. Release the resident profile (see
+    /// ``LanguageModelProfile/release()``) before resolving another.
+    case profileAlreadyResident
+}
+
 /// The shared entry point: built once at app start, it resolves authored
 /// ``ProfileDefinition``s into resident ``LanguageModelProfile``s for *this*
 /// machine, reporting UI-bindable progress.
@@ -64,6 +72,18 @@ public actor Router {
 
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
+
+    /// The residency token of the currently resident profile, or `nil` when none
+    /// is resolved. A unique, never-reused ``ULID`` (not an `ObjectIdentifier`,
+    /// whose address-derived value a freed profile could hand to a later one), so
+    /// it imposes the one-active-profile rule without keeping a dropped profile
+    /// alive and without a stale release ever matching a newer profile.
+    private var residentToken: ULID?
+
+    /// Whether a resolution is in flight. Set synchronously before the first
+    /// suspension so a second ``resolve(_:reporting:)`` entering during the
+    /// download/load awaits is rejected rather than racing to over-commit.
+    private var resolutionInFlight = false
 
     /// Creates a router.
     ///
@@ -135,6 +155,12 @@ public actor Router {
         _ def: ProfileDefinition,
         reporting progress: ResolutionProgress
     ) async throws -> LanguageModelProfile {
+        guard residentToken == nil, !resolutionInFlight else {
+            throw RouterError.profileAlreadyResident
+        }
+        resolutionInFlight = true
+        defer { resolutionInFlight = false }
+
         await beginSizing(progress)
         let budget = hostBudget()
         let footprints = await sizeCandidates(def)
@@ -160,18 +186,49 @@ public actor Router {
             try await finalize(.embedding, container: embeddingContainer, progress: progress)
 
             await complete(progress)
-            return buildProfile(
+            let residencyToken = ULID.generate()
+            let profile = buildProfile(
                 def,
                 resolution: resolution,
                 standardContainer: standardContainer,
                 flashContainer: flashContainer,
-                embeddingContainer: embeddingContainer
+                embeddingContainer: embeddingContainer,
+                residencyToken: residencyToken
             )
+            residentToken = residencyToken
+            return profile
         } catch {
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow.
             await recordLoadFailure(error, progress: progress)
             throw error
+        }
+    }
+
+    // MARK: - Residency
+
+    /// Evicts a resident profile's three containers through the loader and frees
+    /// the residency slot, so the next ``resolve(_:reporting:)`` can proceed.
+    ///
+    /// Called by ``LanguageModelProfile/release()`` (and its `deinit`). Matching
+    /// on the unique residency `token` makes it idempotent and safe against a
+    /// stale caller: it only evicts and clears while `token` is the token
+    /// currently resident, so a double release — or a `deinit` firing after an
+    /// explicit release, or after a *different* profile has since been resolved —
+    /// is a no-op that cannot evict the wrong models or clobber another profile's
+    /// residency. Because the token is never reused (unlike an address-derived
+    /// `ObjectIdentifier`), a freed profile's `deinit` can never collide with a
+    /// later profile's token. The slot is cleared before eviction so a concurrent
+    /// release of the same profile cannot double-evict.
+    ///
+    /// - Parameters:
+    ///   - token: The residency token of the profile asking to be released.
+    ///   - containers: That profile's three resident containers, to evict.
+    func release(token: ULID, containers: [any LoadedModelContainer]) async {
+        guard residentToken == token else { return }
+        residentToken = nil
+        for container in containers {
+            await loader.evict(container)
         }
     }
 
@@ -351,7 +408,8 @@ public actor Router {
         resolution: JointResolution,
         standardContainer: any LoadedLLMContainer,
         flashContainer: any LoadedLLMContainer,
-        embeddingContainer: any LoadedEmbeddingContainer
+        embeddingContainer: any LoadedEmbeddingContainer,
+        residencyToken: ULID
     ) -> LanguageModelProfile {
         let standardRes = Self.slotResolution(resolution, slot: .standard)
         let flashRes = Self.slotResolution(resolution, slot: .flash)
@@ -384,7 +442,9 @@ public actor Router {
                 container: embeddingContainer,
                 routerID: id,
                 recorder: recorder
-            )
+            ),
+            router: self,
+            residencyToken: residencyToken
         )
     }
 
