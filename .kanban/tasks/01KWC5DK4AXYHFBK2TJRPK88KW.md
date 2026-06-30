@@ -29,8 +29,8 @@ comments:
 depends_on:
 - 01KWC5C3B35X6N0DYZJYZ044BE
 - 01KWC5CQ49ZCF1VVP9FW6T4QZF
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8880'
 title: HF repo metadata reader + fit (milestone 3)
 ---
 ## What

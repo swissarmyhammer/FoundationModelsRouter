@@ -1,9 +1,25 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwd046ycw0h784nbt76jjebt
+  text: |-
+    Implemented milestone 4a (pure joint-fit + diagnostics) TDD-style.
+
+    Files:
+    - Sources/FoundationModelsRouter/Resolution/SlotResolution.swift: Verdict enum (chosen/tooLarge/skippedHigherPreferenceChosen/metadataUnavailable(String)), CandidateReport, SlotResolution, ResolutionFailure (CustomStringConvertible description renders slots -> candidates -> footprints vs budget).
+    - Sources/FoundationModelsRouter/Resolution/JointFit.swift: enum JointFit with static resolve(profile:budgetBytes:footprint:). Footprint injected as closure (ModelRef) -> Result<Int64, RepoMetadataError> (reuses existing RepoMetadataError.metadataUnavailable). x1.2 margin applied exactly once via withMargin() (ceil of raw*6/5, conservative); estimatedFootprintBytes is the scaled value. Allocation order embedding -> standard -> flash against shared budget; reserved amount is the scaled footprint so later slots see less budget. First viable in author preference order wins; never substitutes a quant. All three slots are always resolved (even on failure) so ResolutionFailure carries every slot's SlotResolution; unsatisfiable slot has chosen==nil.
+
+    Design notes: budget reservation subtracts the x1.2 (scaled) footprint, consistent with the viability test, so the margin is applied once per candidate and never double-counted. Skipped lower-preference candidates are recorded with estimatedFootprintBytes==nil (not sized).
+
+    Tests Tests/FoundationModelsRouterTests/JointFitTests.swift (8 tests, all injected footprints, no I/O): portability (32B on big budget, 14B on small, same profile); embedding-first reservation changes standard's pick; x1.2 reflected in report; inclusive x1.2 boundary (exact sum resolves, -1 throws); failure diagnostics shape (unsatisfiable slot chosen==nil, all tooLarge); description lists profile/budget/refs/footprints; metadataUnavailable skipped+recorded, next viable chosen.
+
+    Build env: export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer. `swift test --filter JointFitTests` -> 8/8 pass. Full `swift test` -> 47 pass + 1 gated integration skipped. GREEN. Left in doing.
+  timestamp: 2026-06-30T19:29:33.644784+00:00
 depends_on:
 - 01KWC5C3B35X6N0DYZJYZ044BE
 - 01KWC5CQ49ZCF1VVP9FW6T4QZF
-position_column: todo
-position_ordinal: '8780'
+position_column: doing
+position_ordinal: '80'
 title: Joint-fit resolution algorithm + diagnostics types (milestone 4a)
 ---
 ## What
