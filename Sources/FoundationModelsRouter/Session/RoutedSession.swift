@@ -52,6 +52,16 @@ public protocol RoutedSession: Actor {
     /// recording directory.
     nonisolated var workingDirectory: URL { get }
 
+    /// The grammar constraining every ``respond(to:)`` on this session, or `nil`
+    /// for an unconstrained session.
+    ///
+    /// Set when the session is vended by
+    /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)`` and
+    /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:)``.
+    /// It travels with the session so a milestone-9 ``fork(workingDirectory:)``
+    /// inherits it; ``streamResponse(to:)`` stays unconstrained regardless.
+    nonisolated var grammar: Grammar? { get }
+
     /// Generates a complete text response to a prompt, recording the call.
     ///
     /// - Parameter prompt: The prompt to respond to.
@@ -109,8 +119,13 @@ actor RoutedSessionActor: RoutedSession {
     /// The session's system instructions, passed to the model on each call.
     private nonisolated let instructions: String?
 
+    /// The grammar constraining every ``respond(to:)``, or `nil` for an
+    /// unconstrained session. Travels with the session for milestone-9 forks.
+    nonisolated let grammar: Grammar?
+
     /// Creates a session. Internal: construction is only via
-    /// ``RoutedModel/makeSession(instructions:workingDirectory:)``.
+    /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
+    /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)``.
     init(
         profile: LanguageModelProfile,
         routerID: ULID,
@@ -122,7 +137,8 @@ actor RoutedSessionActor: RoutedSession {
         slot: ModelSlot,
         model: ModelRef,
         recorder: any TranscriptRecorder,
-        instructions: String?
+        instructions: String?,
+        grammar: Grammar? = nil
     ) {
         self.profile = profile
         self.routerID = routerID
@@ -135,10 +151,24 @@ actor RoutedSessionActor: RoutedSession {
         self.model = model
         self.recorder = recorder
         self.instructions = instructions
+        self.grammar = grammar
     }
 
     func respond(to prompt: String) async throws -> String {
-        try await generate {
+        // A guided session constrains every response to its grammar, through the
+        // container's whole-chunk xgrammar entry point; an unguided session takes
+        // the plain path. Both funnel through the same chokepoint, which stamps the
+        // grammar (or `nil`) onto each event.
+        if let grammar {
+            return try await generate(grammar: grammar) {
+                try await self.container.respond(
+                    to: prompt,
+                    instructions: self.instructions,
+                    following: grammar
+                )
+            }
+        }
+        return try await generate {
             try await self.container.respond(to: prompt, instructions: self.instructions)
         }
     }
@@ -196,17 +226,23 @@ actor RoutedSessionActor: RoutedSession {
     /// detail) and lineage nesting land in milestone 10; here it proves the
     /// bracket emits exactly one open and one close.
     ///
-    /// - Parameter body: The model work to run inside the bracket.
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force for this turn, stamped
+    ///     onto both bracket events, or `nil` for an unconstrained turn.
+    ///   - body: The model work to run inside the bracket.
     /// - Returns: Whatever `body` returns.
     /// - Throws: Whatever `body` throws, after recording the close event.
-    private func generate<R>(_ body: () async throws -> R) async throws -> R {
-        await recorder.append(makePartialEvent(kind: .prompt))
+    private func generate<R>(
+        grammar: Grammar? = nil,
+        _ body: () async throws -> R
+    ) async throws -> R {
+        await recorder.append(makePartialEvent(kind: .prompt, grammar: grammar))
         do {
             let result = try await body()
-            await recorder.append(makePartialEvent(kind: .response))
+            await recorder.append(makePartialEvent(kind: .response, grammar: grammar))
             return result
         } catch {
-            await recorder.append(makePartialEvent(kind: .response))
+            await recorder.append(makePartialEvent(kind: .response, grammar: grammar))
             throw error
         }
     }
@@ -217,17 +253,24 @@ actor RoutedSessionActor: RoutedSession {
     /// The open (`.prompt`) and close (`.response`) events the chokepoint records
     /// are identical but for their kind, so both come from this one helper.
     ///
-    /// - Parameter kind: The event kind to stamp — `.prompt` to open, `.response`
-    ///   to close.
+    /// - Parameters:
+    ///   - kind: The event kind to stamp — `.prompt` to open, `.response` to
+    ///     close.
+    ///   - grammar: The guided-generation grammar in force, recorded as its
+    ///     source, or `nil` for an unconstrained turn.
     /// - Returns: The partial event for the recorder to stamp and append.
-    private func makePartialEvent(kind: TranscriptEvent.Kind) -> TranscriptEvent.Partial {
+    private func makePartialEvent(
+        kind: TranscriptEvent.Kind,
+        grammar: Grammar? = nil
+    ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
             routerId: routerID,
             sessionId: id,
             parentId: parentID,
             slot: slot,
             model: model,
-            kind: kind
+            kind: kind,
+            grammar: grammar?.source
         )
     }
 }

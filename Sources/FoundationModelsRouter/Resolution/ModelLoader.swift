@@ -70,6 +70,32 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
         to prompt: String,
         instructions: String?
     ) -> AsyncThrowingStream<String, Error>
+
+    /// Generates a complete, grammar-constrained text response — the guided
+    /// (xgrammar) entry point a guided ``RoutedSession`` runs through.
+    ///
+    /// Guided output is whole-chunk: there is no constrained streaming variant.
+    /// The xgrammar engine — grammar compilation and constrained decode — lives
+    /// behind this seam, so unit tests inject a stub that performs the real
+    /// (GPU-free) grammar validation and returns canned text. A default
+    /// implementation (see ``LoadedLLMContainer/respond(to:instructions:following:)``)
+    /// validates the grammar then surfaces ``GenerationError/notWiredForLiveInference``,
+    /// so the live container's real constrained decode can land in the gated
+    /// integration suite (milestone 7) without every conformer reimplementing the
+    /// seam.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - grammar: The grammar constraining the output.
+    /// - Returns: The constrained text response.
+    /// - Throws: ``GuidedGenerationError`` for an invalid grammar, or if the
+    ///   generation fails.
+    func respond(
+        to prompt: String,
+        instructions: String?,
+        following grammar: Grammar
+    ) async throws -> String
 }
 
 /// A loaded embedding model container — the seam the embedding computation runs

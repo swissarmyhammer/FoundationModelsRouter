@@ -79,8 +79,8 @@ comments:
 depends_on:
 - 01KWC5FTDFTSW3BA82MXE6CGP0
 - 01KWC5ECCZYEAH49J635KC9QH5
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8c80
 title: RoutedSession actor + recording chokepoint + makeSession (milestone 5b)
 ---
 ## What

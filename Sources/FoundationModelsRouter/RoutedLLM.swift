@@ -44,6 +44,30 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         instructions: String? = nil,
         workingDirectory: URL? = nil
     ) -> RoutedSession {
+        makeSession(grammar: nil, instructions: instructions, workingDirectory: workingDirectory)
+    }
+
+    /// The shared builder behind the plain and guided session surfaces.
+    ///
+    /// ``makeSession(instructions:workingDirectory:)`` calls this with `grammar`
+    /// `nil`; ``makeGuidedSession(_:instructions:workingDirectory:)`` (in
+    /// GuidedGeneration.swift) calls it with a grammar that then constrains every
+    /// `respond` on the vended session and is stamped onto each recorded turn. It
+    /// is `internal` so the guided surface in another file in this module can
+    /// reuse it.
+    ///
+    /// - Parameters:
+    ///   - grammar: The grammar constraining the session, or `nil` for an
+    ///     unconstrained session.
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - workingDirectory: A working directory override, or `nil` to default to
+    ///     the recording directory.
+    /// - Returns: A new ``RoutedSession`` over this model.
+    func makeSession(
+        grammar: Grammar?,
+        instructions: String?,
+        workingDirectory: URL?
+    ) -> RoutedSession {
         // The handle references its profile weakly (no retain cycle with the
         // profile's strong hold on its models). The session is what retains the
         // profile, so the profile must still be alive at this point; if a caller
@@ -77,7 +101,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             slot: slot,
             model: chosen,
             recorder: recorder,
-            instructions: instructions
+            instructions: instructions,
+            grammar: grammar
         )
     }
 }
