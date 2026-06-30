@@ -56,6 +56,26 @@ comments:
 
     Left in `doing` for /review.
   timestamp: 2026-06-30T22:53:45.368678+00:00
+- actor: wballard
+  id: 01kwdcg06qafxwwz12bvz7h32k
+  text: |-
+    Resolved the 2026-06-30 17:55 review finding (Router.swift download-call duplication) and checked it off. Pulled review→doing.
+
+    Change (Router.resolve, pure refactor, behavior byte-identical):
+    - Collapsed the two near-verbatim generation download calls (.standard, .flash) into one loop over `[(resolution.standard, .standard), (resolution.flash, .flash)]` accumulating into `var generationContainers: [ModelSlot: any LoadedLLMContainer]`, then read back `standardContainer`/`flashContainer` via documented total-by-construction force-unwrap (the loop populates both keys; consistent with the existing `slotResolution` `!` pattern and the finding's own example). Standard-before-flash order preserved by array order; the embedding download stays separate (loadEmbedder, no `context`), as the finding directs.
+
+    Convergence scan for OTHER standard/flash parallelism in `resolve` (so a re-review finds no symmetric pair):
+    - buildProfile standard/flash: already routed through `makeRoutedLLM` in the prior (17:34) round — untouched.
+    - finalize(.standard)/finalize(.flash)/finalize(.embedding): left as three plain helper-call lines. These are single-line invocations of one helper with different args (not copy-paste blocks), and the same reviewer left them unflagged across both prior rounds. Folding them into a loop would require a heterogeneous `[any LoadedModelContainer]` array literal needing an `as` cast on the first element — a worse smell — so per the "if doing so is clean" guidance I left them. No remaining standard/flash duplicate BLOCK exists in resolve.
+
+    Verification (DEVELOPER_DIR=Xcode-beta):
+    - `swift test --filter ResolveTests` → 8/8 green.
+    - `swift test --filter ProfileLifecycleTests` → 6/6 green.
+    - full `swift test` → 67/67 green across 12 suites, integration suite gated/skipped, clean build no warnings.
+    - Adversarial double-check agent: PASS — confirmed download order (standard→flash→embedding) byte-identical, same refs/slots/closures/progress reporting, force-unwrap genuinely total (loadLLM returns non-optional, both keys set before read, throw propagates before reads), finalize/buildProfile/error path unchanged.
+
+    Left in `doing` for /review.
+  timestamp: 2026-06-30T23:05:42.871248+00:00
 depends_on:
 - 01KWC5FTDFTSW3BA82MXE6CGP0
 - 01KWC5ECCZYEAH49J635KC9QH5
@@ -95,3 +115,18 @@ The generation session surface, born holding a recorder. Plan "Access API", "Ses
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:110` — streamResponse function has 5 levels of nesting (AsyncThrowingStream closure → Task closure → do/catch → generate closure → for loop), exceeding the 4-level threshold. The deeply nested structure makes control flow and variable scoping difficult to follow. Extract the streaming loop into a helper function or refactor to reduce nesting. For example, move the generate-wrapped stream iteration into a separate private function that the Task can call, or flatten the structure by separating Task creation from do/catch handling.
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:199` — RoutedSessionActor.openEvent and closeEvent are near-duplicates; they differ only in the `kind` value (.prompt vs .response), all other fields are identical. Extract a shared private helper `_makePartialEvent(kind:) -> TranscriptEvent.Partial` that captures the common field setup, then call it from both openEvent and closeEvent with the appropriate kind argument.
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:210` — RoutedSessionActor.closeEvent duplicates openEvent; see line 199 finding. See line 199 finding; extract shared helper.
+
+## Review Findings (2026-06-30 17:55)
+
+- [x] `Sources/FoundationModelsRouter/Router.swift:161` — The download calls for standard and flash slots (lines 161–168) are near-verbatim duplicates differing only by model reference, slot, and variable name. According to the duplication rule, blocks that differ only by substituted values should be extracted as a single function with parameters. Extract a helper function parameterized by the model reference and slot, or collect both into a loop over (ref, slot) pairs to eliminate the duplication. Example:
+```swift
+let models = [(resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash)]
+var containers: [ModelSlot: any LoadedLLMContainer] = [:]
+for (ref, slot) in models {
+  containers[slot] = try await download(ref, slot: slot, progress: progress) {
+    try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
+  }
+}
+let standardContainer = containers[.standard]!
+let flashContainer = containers[.flash]!
+```.

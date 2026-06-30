@@ -170,12 +170,19 @@ public actor Router {
 
         do {
             await setPhase(.downloading, progress)
-            let standardContainer = try await download(resolution.standard, slot: .standard, progress: progress) {
-                try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
+            // Both generation slots download and load identically — only the chosen
+            // ref and slot differ — so they run through one loop over the (ref, slot)
+            // pairs in standard-before-flash order. The embedding slot uses a
+            // different loader call (no `context`) and stays separate.
+            var generationContainers: [ModelSlot: any LoadedLLMContainer] = [:]
+            for (chosen, slot) in [(resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash)] {
+                generationContainers[slot] = try await download(chosen, slot: slot, progress: progress) {
+                    try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
+                }
             }
-            let flashContainer = try await download(resolution.flash, slot: .flash, progress: progress) {
-                try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
-            }
+            // Total by construction: the loop above populates both generation slots.
+            let standardContainer = generationContainers[.standard]!
+            let flashContainer = generationContainers[.flash]!
             let embeddingContainer = try await download(resolution.embedding, slot: .embedding, progress: progress) {
                 try await loader.loadEmbedder($0, slot: $1, reporting: $2)
             }
