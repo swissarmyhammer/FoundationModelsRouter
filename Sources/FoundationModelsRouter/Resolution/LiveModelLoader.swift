@@ -1,0 +1,145 @@
+import Foundation
+import MLXEmbedders
+import MLXLLM
+import MLXLMCommon
+
+// The MLX container types are the live loaded handles. They are `final class …:
+// Sendable`, so conforming them to the router's marker protocols is a no-op that
+// simply lets ``LiveModelLoader`` vend them where the orchestration expects an
+// `any LoadedLLMContainer` / `any LoadedEmbeddingContainer`.
+extension ModelContainer: LoadedLLMContainer {}
+extension EmbedderModelContainer: LoadedEmbeddingContainer {}
+
+/// A failure constructing or invoking a ``ModelLoader``.
+public enum ModelLoaderError: Error, Equatable {
+    /// No real loader was configured: the ``Router`` was built without a
+    /// ``LiveModelLoader`` (which requires a `Downloader` and `TokenizerLoader`)
+    /// and without an injected stub. See ``UnconfiguredModelLoader``.
+    case notConfigured
+}
+
+/// The live ``ModelLoader``: downloads weights from a Hugging Face-compatible
+/// source and materializes MLX containers for generation and embedding.
+///
+/// This fork of `mlx-swift-lm` intentionally does **not** bundle a default Hub
+/// client — integration packages "inject their own `Downloader` and
+/// `TokenizerLoader`" (the `MLXHuggingFace` `#hubDownloader()` /
+/// `#huggingFaceTokenizerLoader()` macros pull in `swift-huggingface` /
+/// `swift-transformers`, which are not in this package's dependency graph). So
+/// ``LiveModelLoader`` is the real wiring over the **core** loader API and takes
+/// the `Downloader` and `TokenizerLoader` as construction parameters; the
+/// integration suite (milestone 7) supplies concrete Hub-backed instances.
+///
+/// Generation models load through `MLXLMCommon`'s `loadModelContainer`, which
+/// resolves the configuration against the registered `MLXLLM` factories;
+/// embedding models load through `MLXEmbedders`' `EmbedderModelFactory`. Both
+/// map the Foundation `Progress` into ``DownloadProgress``.
+public struct LiveModelLoader: ModelLoader {
+    /// The source that fetches model and tokenizer files.
+    private let downloader: any Downloader
+
+    /// The factory that loads a tokenizer from downloaded files.
+    private let tokenizerLoader: any TokenizerLoader
+
+    /// Creates a live loader over an injected downloader and tokenizer loader.
+    ///
+    /// - Parameters:
+    ///   - downloader: The source that fetches model and tokenizer files (e.g. a
+    ///     Hub client supplied by the integration suite).
+    ///   - tokenizerLoader: The factory that loads a tokenizer from those files.
+    public init(downloader: any Downloader, tokenizerLoader: any TokenizerLoader) {
+        self.downloader = downloader
+        self.tokenizerLoader = tokenizerLoader
+    }
+
+    /// Downloads and loads a generation model into a `ModelContainer`.
+    public func loadLLM(
+        _ ref: ModelRef,
+        slot: ModelSlot,
+        context: Int,
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) async throws -> any LoadedLLMContainer {
+        let configuration = ModelConfiguration(id: ref.repo, revision: ref.revision ?? Self.defaultRevision)
+        return try await loadModelContainer(
+            from: downloader,
+            using: tokenizerLoader,
+            configuration: configuration,
+            progressHandler: Self.handler(reporting)
+        )
+    }
+
+    /// Downloads and loads an embedding model into an `EmbedderModelContainer`.
+    public func loadEmbedder(
+        _ ref: ModelRef,
+        slot: ModelSlot,
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) async throws -> any LoadedEmbeddingContainer {
+        let configuration = ModelConfiguration(id: ref.repo, revision: ref.revision ?? Self.defaultRevision)
+        return try await EmbedderModelFactory.shared.loadContainer(
+            from: downloader,
+            using: tokenizerLoader,
+            configuration: configuration,
+            progressHandler: Self.handler(reporting)
+        )
+    }
+
+    /// Warms a loaded container.
+    ///
+    /// The MLX containers materialize their weights at load time, so loading
+    /// already brings the model resident; this hook is the seam for any future
+    /// explicit warm-up (e.g. a throwaway forward pass).
+    public func preload(_ container: any LoadedModelContainer) async throws {}
+
+    /// The revision used when a ``ModelRef`` does not pin one.
+    private static let defaultRevision = "main"
+
+    /// Adapts the router's ``DownloadProgress`` callback to MLX's Foundation
+    /// `Progress` progress handler.
+    private static func handler(
+        _ reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) -> @Sendable (Progress) -> Void {
+        { progress in
+            reporting(
+                DownloadProgress(
+                    bytesDownloaded: progress.completedUnitCount,
+                    bytesTotal: progress.totalUnitCount
+                )
+            )
+        }
+    }
+}
+
+/// The default ``ModelLoader`` when none is supplied: it cannot load anything and
+/// throws ``ModelLoaderError/notConfigured`` on first use.
+///
+/// Because the live download path requires an injected `Downloader` /
+/// `TokenizerLoader` (see ``LiveModelLoader``), a `Router` built with no loader
+/// can size and joint-fit a profile but cannot download or load models — callers
+/// that want real loading pass a configured ``LiveModelLoader``, and unit tests
+/// pass a stub. This makes that requirement explicit rather than silently
+/// loading nothing.
+public struct UnconfiguredModelLoader: ModelLoader {
+    /// Creates the unconfigured sentinel loader.
+    public init() {}
+
+    public func loadLLM(
+        _ ref: ModelRef,
+        slot: ModelSlot,
+        context: Int,
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) async throws -> any LoadedLLMContainer {
+        throw ModelLoaderError.notConfigured
+    }
+
+    public func loadEmbedder(
+        _ ref: ModelRef,
+        slot: ModelSlot,
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) async throws -> any LoadedEmbeddingContainer {
+        throw ModelLoaderError.notConfigured
+    }
+
+    public func preload(_ container: any LoadedModelContainer) async throws {
+        throw ModelLoaderError.notConfigured
+    }
+}

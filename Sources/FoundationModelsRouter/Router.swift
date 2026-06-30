@@ -1,0 +1,511 @@
+import Foundation
+
+/// How much of a session's activity is recorded.
+///
+/// The level (and the ``Router``'s `redact` hook) are carried from construction
+/// so the recording seam exists now; the actual enforcement — trimming or
+/// redacting events at record time — lands in milestone 10b.
+public enum RecordingLevel: Sendable {
+    /// Record nothing.
+    case off
+    /// Record event metadata (slots, models, metering) but not prompt/response text.
+    case metadataOnly
+    /// Record everything, including prompt and response text.
+    case full
+}
+
+/// The shared entry point: built once at app start, it resolves authored
+/// ``ProfileDefinition``s into resident ``LanguageModelProfile``s for *this*
+/// machine, reporting UI-bindable progress.
+///
+/// The router holds the disposable host-profile and repo-metadata caches and the
+/// injected seams that keep resolution unit-testable: a ``MachineProbe`` for the
+/// budget, a ``MetadataSource`` for sizing, and a ``ModelLoader`` for the
+/// download+load. Its ``id`` is the recording root every session and transcript
+/// hangs off of, sortable by construction time.
+public actor Router {
+    /// The recording root id; sortable by construction time.
+    ///
+    /// `nonisolated` because it is immutable and is read synchronously from
+    /// outside the actor (vended handles, recorded events, tests).
+    public nonisolated let id: ULID
+
+    /// Bytes held out of the budget for OS/app headroom.
+    let headroomReserve: Int64
+
+    /// The in-flight fork-session ceiling per resolved profile (enforced later).
+    let maxConcurrentForks: Int
+
+    /// The disposable cache directory for host profiles and repo metadata.
+    let cacheDir: URL
+
+    /// The durable transcripts root, or `nil` when recording to memory/none.
+    let recordingsDir: URL?
+
+    /// The recorder every vended session and embed call is born holding.
+    let recorder: any TranscriptRecorder
+
+    /// How much of a session's activity is recorded (enforced in milestone 10b).
+    let recordingLevel: RecordingLevel
+
+    /// An optional redaction hook applied to recorded text (enforced in milestone 10b).
+    let redact: (@Sendable (String) -> String)?
+
+    /// The machine probe behind the budget.
+    private let probe: any MachineProbe
+
+    /// The disposable host-profile cache.
+    private let hostProfileCache: HostProfileCache
+
+    /// The repo-metadata reader (fetch + parse + cache) behind sizing.
+    private let metadataReader: RepoMetadataReader
+
+    /// The download+load step behind resolution.
+    private let loader: any ModelLoader
+
+    /// Creates a router.
+    ///
+    /// - Parameters:
+    ///   - id: The recording root id; pass one in to continue a prior recording
+    ///     root. Defaults to a fresh ULID.
+    ///   - headroomReserve: Bytes held out of the budget. Defaults to 4 GB.
+    ///   - maxConcurrentForks: In-flight fork sessions per profile. Defaults to 4.
+    ///   - cacheDir: The disposable cache directory. Defaults to the user caches
+    ///     directory under `FoundationModelsRouter`.
+    ///   - recordingsDir: The durable transcripts root, or `nil`.
+    ///   - recorder: The recorder vended sessions are born holding. When `nil`,
+    ///     a JSONL recorder under `recordingsDir` is used if one is set,
+    ///     otherwise the no-op ``NoneRecorder``.
+    ///   - recordingLevel: How much to record. Defaults to ``RecordingLevel/full``.
+    ///   - redact: An optional redaction hook applied to recorded text.
+    ///   - probe: The machine probe behind the budget. Defaults to ``SystemMachineProbe``.
+    ///   - metadataSource: The metadata fetch behind sizing. Defaults to
+    ///     ``HuggingFaceMetadataSource``.
+    ///   - loader: The download+load step. Defaults to
+    ///     ``UnconfiguredModelLoader`` — pass a configured ``LiveModelLoader``
+    ///     (or, in tests, a stub) for real loading, since the live download path
+    ///     requires an injected `Downloader`/`TokenizerLoader`.
+    public init(
+        id: ULID = .generate(),
+        headroomReserve: Int64 = 4 << 30,
+        maxConcurrentForks: Int = 4,
+        cacheDir: URL? = nil,
+        recordingsDir: URL? = nil,
+        recorder: (any TranscriptRecorder)? = nil,
+        recordingLevel: RecordingLevel = .full,
+        redact: (@Sendable (String) -> String)? = nil,
+        probe: any MachineProbe = SystemMachineProbe(),
+        metadataSource: any MetadataSource = HuggingFaceMetadataSource(),
+        loader: any ModelLoader = UnconfiguredModelLoader()
+    ) {
+        self.id = id
+        self.headroomReserve = headroomReserve
+        self.maxConcurrentForks = maxConcurrentForks
+        let resolvedCacheDir = cacheDir ?? Self.defaultCacheDir()
+        self.cacheDir = resolvedCacheDir
+        self.recordingsDir = recordingsDir
+        self.recorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
+        self.recordingLevel = recordingLevel
+        self.redact = redact
+        self.probe = probe
+        self.hostProfileCache = HostProfileCache(cacheDir: resolvedCacheDir)
+        self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
+        self.loader = loader
+    }
+
+    /// Resolves an authored profile into a resident ``LanguageModelProfile`` for
+    /// this machine, reporting progress through `sizing → downloading → loading →
+    /// ready` (or `failed`).
+    ///
+    /// Computes the budget from the host profile, sizes every candidate via repo
+    /// metadata, runs joint fit to pick the trio, then downloads, loads, and
+    /// preloads the chosen three. On an unsatisfiable profile it sets the
+    /// progress phase to ``ResolutionProgress/Phase/failed(_:)`` and throws
+    /// ``ResolutionFailure`` carrying the per-slot diagnostics.
+    ///
+    /// - Parameters:
+    ///   - def: The authored profile to resolve.
+    ///   - progress: The UI-bindable progress to drive (mutated on the main actor).
+    /// - Returns: The resolved, resident profile.
+    /// - Throws: ``ResolutionFailure`` when no trio co-fits the budget, or any
+    ///   download/load error from the ``ModelLoader``.
+    public func resolve(
+        _ def: ProfileDefinition,
+        reporting progress: ResolutionProgress
+    ) async throws -> LanguageModelProfile {
+        await beginSizing(progress)
+        let budget = hostBudget()
+        let footprints = await sizeCandidates(def)
+
+        let resolution = try await runJointFit(def, budget: budget, footprints: footprints, progress: progress)
+        await markChosen(resolution, progress: progress)
+
+        do {
+            await setPhase(.downloading, progress)
+            let standardContainer = try await downloadLLM(resolution.standard, slot: .standard, def: def, progress: progress)
+            let flashContainer = try await downloadLLM(resolution.flash, slot: .flash, def: def, progress: progress)
+            let embeddingContainer = try await downloadEmbedder(resolution.embedding, slot: .embedding, def: def, progress: progress)
+
+            await setPhase(.loading, progress)
+            try await finalize(.standard, container: standardContainer, progress: progress)
+            try await finalize(.flash, container: flashContainer, progress: progress)
+            try await finalize(.embedding, container: embeddingContainer, progress: progress)
+
+            await complete(progress)
+            return buildProfile(
+                def,
+                resolution: resolution,
+                standardContainer: standardContainer,
+                flashContainer: flashContainer,
+                embeddingContainer: embeddingContainer
+            )
+        } catch {
+            // A download/load/preload failure must move the bound progress to
+            // `.failed` so a UI does not hang mid-pipeline, then rethrow.
+            await recordLoadFailure(error, progress: progress)
+            throw error
+        }
+    }
+
+    // MARK: - Budget
+
+    /// The RAM budget for this machine, measuring and caching the host profile.
+    private func hostBudget() -> Int64 {
+        let chip = probe.chip
+        let ram = probe.totalRAM
+        let profile: HostProfile
+        if let cached = try? hostProfileCache.load(chip: chip, totalRAM: ram) {
+            profile = cached
+        } else {
+            profile = HostProfile(probe: probe)
+            try? hostProfileCache.save(profile)
+        }
+        return profile.budget(headroomReserve: headroomReserve)
+    }
+
+    // MARK: - Sizing
+
+    /// Sizes every candidate across all slots into raw footprint bytes at the
+    /// profile's context, ready for the joint-fit closure.
+    private func sizeCandidates(
+        _ def: ProfileDefinition
+    ) async -> [ModelRef: Result<Int64, RepoMetadataError>] {
+        var out: [ModelRef: Result<Int64, RepoMetadataError>] = [:]
+        for (slot, refs) in def.candidatesBySlot {
+            for ref in refs {
+                let result = await footprintBytes(for: ref, slot: slot, context: def.context)
+                if let existing = out[ref] {
+                    out[ref] = Self.preferLarger(existing, result)
+                } else {
+                    out[ref] = result
+                }
+            }
+        }
+        return out
+    }
+
+    /// The raw footprint bytes for one candidate at a context, slot-aware: the
+    /// embedding slot has no KV cache, so it is sized by weights alone.
+    private func footprintBytes(
+        for ref: ModelRef,
+        slot: ModelSlot,
+        context: Int
+    ) async -> Result<Int64, RepoMetadataError> {
+        do {
+            let metadata = try await metadataReader.metadata(for: ref)
+            let bytes: Int64
+            if slot == .embedding {
+                bytes = Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context)
+            } else {
+                bytes = metadata.footprint.footprint(context: context)
+            }
+            return .success(bytes)
+        } catch let error as RepoMetadataError {
+            return .failure(error)
+        } catch {
+            return .failure(.metadataUnavailable(error.localizedDescription))
+        }
+    }
+
+    /// Merges two footprint results for the same ref, keeping the larger
+    /// (more conservative) successful figure and preferring success over failure.
+    private static func preferLarger(
+        _ lhs: Result<Int64, RepoMetadataError>,
+        _ rhs: Result<Int64, RepoMetadataError>
+    ) -> Result<Int64, RepoMetadataError> {
+        switch (lhs, rhs) {
+        case let (.success(a), .success(b)):
+            return .success(max(a, b))
+        case (.success, .failure):
+            return lhs
+        case (.failure, .success):
+            return rhs
+        case (.failure, .failure):
+            return lhs
+        }
+    }
+
+    // MARK: - Joint fit
+
+    /// Runs the pure joint fit and, on failure, records the diagnostics into the
+    /// progress before rethrowing.
+    private func runJointFit(
+        _ def: ProfileDefinition,
+        budget: Int64,
+        footprints: [ModelRef: Result<Int64, RepoMetadataError>],
+        progress: ResolutionProgress
+    ) async throws -> JointResolution {
+        do {
+            return try JointFit.resolve(profile: def, budgetBytes: budget) { ref in
+                footprints[ref] ?? .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized"))
+            }
+        } catch let failure as ResolutionFailure {
+            await recordFailure(failure, progress: progress)
+            throw failure
+        }
+    }
+
+    // MARK: - Download & load
+
+    /// Downloads and loads the chosen generation model for a slot.
+    private func downloadLLM(
+        _ chosen: ModelRef,
+        slot: ModelSlot,
+        def: ProfileDefinition,
+        progress: ResolutionProgress
+    ) async throws -> any LoadedLLMContainer {
+        await setSlotState(slot, .downloading, progress: progress)
+        return try await loader.loadLLM(
+            chosen,
+            slot: slot,
+            context: def.context,
+            reporting: Self.reporter(slot: slot, progress: progress)
+        )
+    }
+
+    /// Downloads and loads the chosen embedding model for a slot.
+    private func downloadEmbedder(
+        _ chosen: ModelRef,
+        slot: ModelSlot,
+        def: ProfileDefinition,
+        progress: ResolutionProgress
+    ) async throws -> any LoadedEmbeddingContainer {
+        await setSlotState(slot, .downloading, progress: progress)
+        return try await loader.loadEmbedder(
+            chosen,
+            slot: slot,
+            reporting: Self.reporter(slot: slot, progress: progress)
+        )
+    }
+
+    /// Preloads a downloaded container and marks its slot ready.
+    private func finalize(
+        _ slot: ModelSlot,
+        container: any LoadedModelContainer,
+        progress: ResolutionProgress
+    ) async throws {
+        await setSlotState(slot, .loading, progress: progress)
+        try await loader.preload(container)
+        await MainActor.run {
+            var sp = progress.slots[slot] ?? SlotProgress()
+            sp.state = .ready
+            progress.slots[slot] = sp
+            progress.refreshFraction()
+        }
+    }
+
+    /// A best-effort download-progress callback that updates a slot's byte counts
+    /// on the main actor.
+    ///
+    /// The update is dispatched onto the main actor and is therefore unordered
+    /// with respect to the awaited phase transitions, so it only applies while
+    /// the slot is still ``SlotProgress/State/downloading`` — a late callback
+    /// must never clobber a slot the orchestration has already moved to loading,
+    /// ready, or failed.
+    private static func reporter(
+        slot: ModelSlot,
+        progress: ResolutionProgress
+    ) -> @Sendable (DownloadProgress) -> Void {
+        { dp in
+            Task { @MainActor in
+                guard var sp = progress.slots[slot], sp.state == .downloading else { return }
+                sp.bytesDownloaded = dp.bytesDownloaded
+                sp.bytesTotal = dp.bytesTotal
+                progress.slots[slot] = sp
+                progress.refreshFraction()
+            }
+        }
+    }
+
+    // MARK: - Profile assembly
+
+    /// Assembles the resolved profile from the loaded containers and the
+    /// per-slot resolutions, stamping each handle with the router's id and recorder.
+    private func buildProfile(
+        _ def: ProfileDefinition,
+        resolution: JointResolution,
+        standardContainer: any LoadedLLMContainer,
+        flashContainer: any LoadedLLMContainer,
+        embeddingContainer: any LoadedEmbeddingContainer
+    ) -> LanguageModelProfile {
+        let standardRes = Self.slotResolution(resolution, slot: .standard)
+        let flashRes = Self.slotResolution(resolution, slot: .flash)
+        let embeddingRes = Self.slotResolution(resolution, slot: .embedding)
+        return LanguageModelProfile(
+            definitionName: def.name,
+            standard: RoutedLLM(
+                slot: .standard,
+                chosen: resolution.standard,
+                footprintBytes: Self.chosenFootprint(standardRes),
+                resolution: standardRes,
+                container: standardContainer,
+                routerID: id,
+                recorder: recorder
+            ),
+            flash: RoutedLLM(
+                slot: .flash,
+                chosen: resolution.flash,
+                footprintBytes: Self.chosenFootprint(flashRes),
+                resolution: flashRes,
+                container: flashContainer,
+                routerID: id,
+                recorder: recorder
+            ),
+            embedding: RoutedEmbedder(
+                slot: .embedding,
+                chosen: resolution.embedding,
+                footprintBytes: Self.chosenFootprint(embeddingRes),
+                resolution: embeddingRes,
+                container: embeddingContainer,
+                routerID: id,
+                recorder: recorder
+            )
+        )
+    }
+
+    // MARK: - Resolution lookups
+
+    /// The ``SlotResolution`` for a slot in a joint resolution.
+    ///
+    /// Force-unwrapped because a ``JointResolution`` only exists on the success
+    /// path, where ``JointFit`` always records a resolution for every slot in
+    /// allocation order — the lookup is total by construction.
+    private static func slotResolution(_ resolution: JointResolution, slot: ModelSlot) -> SlotResolution {
+        resolution.slots.first { $0.slot == slot }!
+    }
+
+    /// The chosen candidate's `× 1.2` footprint estimate for a slot, or `0` when
+    /// unrecorded.
+    private static func chosenFootprint(_ slotRes: SlotResolution) -> Int64 {
+        slotRes.considered.first { $0.verdict == .chosen }?.estimatedFootprintBytes ?? 0
+    }
+
+    // MARK: - Progress mutations (main actor)
+
+    /// Enters the sizing phase with all slots sizing.
+    private func beginSizing(_ progress: ResolutionProgress) async {
+        await MainActor.run {
+            progress.phase = .sizing
+            progress.slots = [
+                .standard: SlotProgress(state: .sizing),
+                .flash: SlotProgress(state: .sizing),
+                .embedding: SlotProgress(state: .sizing),
+            ]
+            progress.refreshFraction()
+        }
+    }
+
+    /// Records the chosen candidate per slot, resetting each to pending for the
+    /// download phase.
+    private func markChosen(_ resolution: JointResolution, progress: ResolutionProgress) async {
+        await MainActor.run {
+            for slotRes in resolution.slots {
+                var sp = progress.slots[slotRes.slot] ?? SlotProgress()
+                sp.chosen = slotRes.chosen
+                sp.state = .pending
+                progress.slots[slotRes.slot] = sp
+            }
+            progress.refreshFraction()
+        }
+    }
+
+    /// Sets the overall phase.
+    private func setPhase(_ phase: ResolutionProgress.Phase, _ progress: ResolutionProgress) async {
+        await MainActor.run { progress.phase = phase }
+    }
+
+    /// Sets a single slot's state and refreshes the overall fraction.
+    private func setSlotState(
+        _ slot: ModelSlot,
+        _ state: SlotProgress.State,
+        progress: ResolutionProgress
+    ) async {
+        await MainActor.run {
+            var sp = progress.slots[slot] ?? SlotProgress()
+            sp.state = state
+            progress.slots[slot] = sp
+            progress.refreshFraction()
+        }
+    }
+
+    /// Marks the resolution complete: every slot ready, the bar full.
+    private func complete(_ progress: ResolutionProgress) async {
+        await MainActor.run {
+            for (slot, var sp) in progress.slots {
+                sp.state = .ready
+                progress.slots[slot] = sp
+            }
+            progress.phase = .ready
+            progress.refreshFraction()
+            progress.fraction = 1.0
+        }
+    }
+
+    /// Records a joint-fit failure into the progress: the unsatisfiable slots are
+    /// marked failed and the phase carries the diagnostic description.
+    private func recordFailure(_ failure: ResolutionFailure, progress: ResolutionProgress) async {
+        await MainActor.run {
+            for slotRes in failure.slots {
+                var sp = progress.slots[slotRes.slot] ?? SlotProgress()
+                sp.chosen = slotRes.chosen
+                sp.state = slotRes.chosen == nil
+                    ? .failed("no candidate fit the remaining budget")
+                    : .sizing
+                progress.slots[slotRes.slot] = sp
+            }
+            progress.phase = .failed(failure.description)
+            progress.refreshFraction()
+        }
+    }
+
+    /// Records a download/load/preload failure into the progress: every slot not
+    /// already resident is marked failed and the phase carries the error text.
+    private func recordLoadFailure(_ error: Error, progress: ResolutionProgress) async {
+        let message = String(describing: error)
+        await MainActor.run {
+            for (slot, var sp) in progress.slots where sp.state != .ready {
+                sp.state = .failed(message)
+                progress.slots[slot] = sp
+            }
+            progress.phase = .failed(message)
+            progress.refreshFraction()
+        }
+    }
+
+    // MARK: - Defaults
+
+    /// The default disposable cache directory under the user caches directory.
+    private static func defaultCacheDir() -> URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("FoundationModelsRouter", isDirectory: true)
+    }
+
+    /// The default recorder: JSONL under `recordingsDir` when set, else the no-op sink.
+    private static func defaultRecorder(recordingsDir: URL?) -> any TranscriptRecorder {
+        if let recordingsDir {
+            return JSONLRecorder(directory: recordingsDir)
+        }
+        return NoneRecorder()
+    }
+}

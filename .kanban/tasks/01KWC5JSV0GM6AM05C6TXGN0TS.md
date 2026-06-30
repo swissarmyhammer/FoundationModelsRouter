@@ -1,4 +1,9 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwd3mnr9f8n2zm5sy7dgjy38
+  text: 'IMPORTANT (discovered during milestone 4b / Router resolve): real model loading is gated behind loader configuration. The `mlx-foundationmodels` fork does NOT bundle a default Hub client — `LiveModelLoader` takes an injected `Downloader` + `TokenizerLoader`, and `Router` defaults to `UnconfiguredModelLoader` which throws `ModelLoaderError.notConfigured`. So THIS integration suite must construct a configured `LiveModelLoader` (real Downloader + TokenizerLoader), which likely requires adding the `swift-huggingface` (HubClient/Downloader) and `swift-transformers` (Tokenizers) SwiftPM deps to Package.swift — they are intentionally NOT in the graph yet. Confirm/scope that dep addition here in milestone 7, not earlier. Live load API used: `loadModelContainer(from:using:configuration:progressHandler:)` (LLM) and `EmbedderModelFactory.shared.loadContainer(...)` (embedder).'
+  timestamp: 2026-06-30T20:30:58.825304+00:00
 depends_on:
 - 01KWC5HV9BBARA3HJA26MMV0YC
 - 01KWC5H7Y7NVG4771FR9ZKW5M0
