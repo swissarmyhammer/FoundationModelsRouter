@@ -19,6 +19,10 @@ comments:
   id: 01kwcy6krq6sv1ejz897v7gs0g
   text: 'Adversarial double-check: VERDICT PASS. Confirmed concurrency/seq monotonicity is deterministic (500-append TaskGroup asserting Array(0..<500), no sleeps), JSONL line-per-event holds (compact encoder, control chars escaped, lone trailing 0x0A), forced-write-error catch path genuinely exercised (blocker file stays empty/regular), and all 12 provenance fields round-trip (deferredToDate exact at 1000.5). No defects. Only build warnings are pre-existing mlx-swift/HostProfile noise, none in the new code. ModelSlot change has zero external blast radius. Task left in `doing`, green, ready for /review.'
   timestamp: 2026-06-30T18:55:55.159729+00:00
+- actor: wballard
+  id: 01kwcyp6ksacjq0g9dd663vm3m
+  text: 'Resolved review finding: inlined the single-call-site `appendAll` helper into `noneRecordsNothing` in RecorderTests.swift and removed the helper. The protocol-existential intent is preserved by binding `let recorder: any TranscriptRecorder = NoneRecorder.none` and looping `await recorder.append(partial)`, with a comment explaining the existential is used to exercise the shared append path. Test-only change; production Recording/ sources untouched. `swift test --filter RecorderTests` green (6/6); full `swift test` green (31 tests, integration skipped, exit 0). Task left in `doing` for review.'
+  timestamp: 2026-06-30T19:04:25.977258+00:00
 depends_on:
 - 01KWC5BTMHH3K50437WBVFG9NT
 position_column: doing
@@ -49,3 +53,7 @@ The recording plumbing that sessions are *born holding* (plan "Transcripts & rec
 
 ## Workflow
 - Use `/tdd` — write failing ordering + sink tests first.
+
+## Review Findings (2026-06-30 13:57)
+
+- [x] `Tests/FoundationModelsRouterTests/RecorderTests.swift:37` — Needless helper with a single call site. The appendAll function wraps a trivial for loop and is called only once (in noneRecordsNothing), making it indirection without payoff. Inline appendAll into its single call site in noneRecordsNothing. The test's intent (exercising the recorder through the protocol existential) can be preserved with a comment on the inlined loop.

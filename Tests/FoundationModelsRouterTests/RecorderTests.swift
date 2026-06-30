@@ -37,17 +37,6 @@ struct RecorderTests {
         )
     }
 
-    /// Drives an arbitrary recorder through its protocol existential, proving
-    /// every sink shares the identical append call path.
-    private func appendAll(
-        to recorder: any TranscriptRecorder,
-        _ partials: [TranscriptEvent.Partial]
-    ) async {
-        for partial in partials {
-            await recorder.append(partial)
-        }
-    }
-
     @Test("inMemory stamps a contiguous, monotonic seq under concurrent appends")
     func inMemoryTotalOrdering() async {
         let recorder: InMemoryRecorder = .inMemory
@@ -117,12 +106,12 @@ struct RecorderTests {
 
     @Test("none is a no-op that shares the identical call path")
     func noneRecordsNothing() async {
-        let recorder: NoneRecorder = .none
-        // Exercised through the protocol existential to prove the shared path.
-        await appendAll(
-            to: recorder,
-            [samplePartial(kind: .prompt), samplePartial(kind: .response)]
-        )
+        // Bound as the protocol existential so the appends go through the shared
+        // `TranscriptRecorder` call path, not NoneRecorder's concrete type.
+        let recorder: any TranscriptRecorder = NoneRecorder.none
+        for partial in [samplePartial(kind: .prompt), samplePartial(kind: .response)] {
+            await recorder.append(partial)
+        }
         // A no-op sink keeps no state; the call simply completes.
     }
 
