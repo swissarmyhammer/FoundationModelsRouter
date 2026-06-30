@@ -25,6 +25,18 @@ comments:
 
     Verified GREEN: `swift test --filter JointFitTests` → 8/8 pass; full `swift test` → 47 tests pass + gated integration suite (1 skipped).
   timestamp: 2026-06-30T19:43:37.619627+00:00
+- actor: wballard
+  id: 01kwd1mbvhjh3j9vbt47c5g85c
+  text: |-
+    Resolved review finding (2026-06-30 14:46): made the slot→candidates mapping data-driven.
+
+    - Added a total computed property `candidatesBySlot: [ModelSlot: [ModelRef]]` on `ProfileDefinition` returning `[.standard: standard, .flash: flash, .embedding: embedding]` (one entry per ModelSlot case; each list keeps the author's preference order).
+    - `JointFit.resolveSlot()` now does `let candidates = profile.candidatesBySlot[slot] ?? []`, replacing the 3-arm `switch slot`.
+
+    No new smell: genuine dictionary + keyed lookup (not a relocated switch), no force-unwrap. The `?? []` is a never-taken fallback since the map is total over all three ModelSlot cases. Behavior byte-for-byte identical.
+
+    Verification: `swift test --filter JointFitTests` -> 8/8 green; full `swift test` -> 47 tests/9 suites green + integration target. double-check agent verdict: PASS. Finding checked off; task left in `doing` for /review.
+  timestamp: 2026-06-30T19:55:51.537384+00:00
 depends_on:
 - 01KWC5C3B35X6N0DYZJYZ044BE
 - 01KWC5CQ49ZCF1VVP9FW6T4QZF
@@ -64,3 +76,7 @@ The pure allocation that picks the highest-preference *combination* of three slo
 
 - [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:133` — The `candidates()` function wraps a single call site (line 99) with a simple switch statement that adds no meaningful abstraction beyond naming. The switch could be inlined or the caller could directly access the profile properties. Inline the switch statement or modify `resolveSlot()` to accept the profile directly instead of pre-extracted candidates. RESOLVED: removed the standalone `candidates(of:for:)` helper; `resolveSlot()` now takes `profile: ProfileDefinition` and computes its candidates inline via a switch expression. Behavior identical.
 - [x] `Tests/FoundationModelsRouterTests/JointFitTests.swift:60` — The string literal "coder" appears three times as a test constant (the profile name) and is checked in multiple test assertions. This meets the rule-of-three threshold for extracting a named constant so changes occur in one place. Extract "coder" as a private static let constant at the top of the test suite, e.g., `private static let coderProfileName = "coder"`, and reference it in all three locations (the profile definition and both assertions). RESOLVED: added `private static let coderProfileName = "coder"` and replaced all three occurrences (profile definition, profileName assertion, description assertion).
+
+## Review Findings (2026-06-30 14:46)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:115` — The switch statement maps from a known enum (ModelSlot) to properties of the ProfileDefinition struct. This is a match over a known set with arms that differ only in which property is accessed—a pattern that should be expressed as data rather than as parallel code paths a human must keep in lockstep. Extract this mapping as data: replace the switch with a dictionary lookup. For example: `let slotCandidates: [ModelSlot: [ModelRef]] = [.embedding: profile.embedding, .standard: profile.standard, .flash: profile.flash]` followed by `let candidates = slotCandidates[slot]!`. RESOLVED: added a total computed `candidatesBySlot: [ModelSlot: [ModelRef]]` mapping on `ProfileDefinition` (`[.standard: standard, .flash: flash, .embedding: embedding]` — one entry per `ModelSlot` case, each preserving the author's order) and changed `resolveSlot()` to `let candidates = profile.candidatesBySlot[slot] ?? []`. The mapping is genuine data (dictionary + keyed lookup), not a relocated switch; no force-unwrap (the `?? []` is a never-taken safety net since the map is total). Behavior byte-for-byte identical. `swift test --filter JointFitTests` 8/8 green; full `swift test` green.

@@ -148,11 +148,10 @@ public enum JointFit {
         remaining: Int64,
         footprint: (ModelRef) -> Result<Int64, RepoMetadataError>
     ) -> SlotResolution {
-        let candidates: [ModelRef] = switch slot {
-        case .embedding: profile.embedding
-        case .standard: profile.standard
-        case .flash: profile.flash
-        }
+        // The slot's candidates come from the profile's per-slot data map; the
+        // map is total over ``ModelSlot``, so the `?? []` is a never-taken
+        // safety net rather than a real branch.
+        let candidates = profile.candidatesBySlot[slot] ?? []
 
         var chosen: ModelRef?
         var considered: [CandidateReport] = []

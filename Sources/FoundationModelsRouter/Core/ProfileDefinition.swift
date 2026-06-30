@@ -54,4 +54,13 @@ public struct ProfileDefinition: Sendable {
         self.embedding = embedding
         self.context = context
     }
+
+    /// The per-slot candidate lists keyed by ``ModelSlot``, exposing the slot
+    /// candidates as data so callers resolve a slot's candidates by lookup
+    /// rather than by branching over the slot. The mapping is total — it
+    /// contains an entry for every ``ModelSlot`` case — and each list preserves
+    /// the author's preference order.
+    public var candidatesBySlot: [ModelSlot: [ModelRef]] {
+        [.standard: standard, .flash: flash, .embedding: embedding]
+    }
 }
