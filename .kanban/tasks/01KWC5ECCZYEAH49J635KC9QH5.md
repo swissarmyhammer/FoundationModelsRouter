@@ -1,8 +1,28 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwcxzf33jsyemtxsfe2gdcvx
+  text: |-
+    Implemented the recording substrate TDD-style (failing RecorderTests first, watched RED = missing symbols, then GREEN).
+
+    Files:
+    - Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift — struct TranscriptEvent: Sendable, Codable, Equatable with all provenance fields (routerId/sessionId/parentId?/slot?/model?/seq/ts/kind/grammar?/tokensIn?/tokensOut?/ms?), nested enum Kind: String (session/prompt/response/toolCall/toolOutput/embedding), and nested struct Partial (everything minus seq/ts) with .stamped(seq:ts:) -> TranscriptEvent.
+    - Sources/FoundationModelsRouter/Recording/TranscriptRecorder.swift — protocol TranscriptRecorder: Sendable { func append(_:) async }; dot-syntax factories via `where Self ==` extensions: .jsonl(directory:now:), .inMemory, .none.
+    - Sources/FoundationModelsRouter/Recording/Sinks.swift — JSONLRecorder (actor; lazy-opened reused FileHandle; one compact JSON line + \n per append; best-effort: catches I/O errors and logs via os.Logger, never throws), InMemoryRecorder (actor; events in seq order), NoneRecorder (stateless struct no-op sharing the async append path). seq assigned monotonically by the actor at append; ts from injectable @Sendable () -> Date clock (defaults to Date()).
+    - Sources/FoundationModelsRouter/Core/ModelSlot.swift — added String raw value + Codable (was Sendable, Hashable only; required so TranscriptEvent.slot is Codable; ModelSlot had no other callers). Encodes as clean string matching ModelRef style.
+
+    Design notes: recorder is an actor so seq stamping + storage happen in one isolated critical section -> contiguous 0..<n total order under concurrent appends, asserted deterministically (no sleeps). Forced-error test points JSONLRecorder.directory at a regular file so createDirectory throws every append -> swallowed; asserts the file is untouched and append returns.
+
+    Results (DEVELOPER_DIR=Xcode-beta): `swift build` clean; `swift test --filter RecorderTests` 6/6 pass; full `swift test` 31 tests + 1 integration placeholder all green, no warnings from new code. Left in `doing`. Adversarial double-check running.
+  timestamp: 2026-06-30T18:52:00.995988+00:00
+- actor: wballard
+  id: 01kwcy6krq6sv1ejz897v7gs0g
+  text: 'Adversarial double-check: VERDICT PASS. Confirmed concurrency/seq monotonicity is deterministic (500-append TaskGroup asserting Array(0..<500), no sleeps), JSONL line-per-event holds (compact encoder, control chars escaped, lone trailing 0x0A), forced-write-error catch path genuinely exercised (blocker file stays empty/regular), and all 12 provenance fields round-trip (deferredToDate exact at 1000.5). No defects. Only build warnings are pre-existing mlx-swift/HostProfile noise, none in the new code. ModelSlot change has zero external blast radius. Task left in `doing`, green, ready for /review.'
+  timestamp: 2026-06-30T18:55:55.159729+00:00
 depends_on:
 - 01KWC5BTMHH3K50437WBVFG9NT
-position_column: todo
-position_ordinal: '8880'
+position_column: doing
+position_ordinal: '80'
 title: 'Recording substrate: TranscriptRecorder protocol + sinks + event model'
 ---
 ## What

@@ -24,8 +24,8 @@ comments:
   timestamp: 2026-06-30T18:39:22.965190+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8680'
 title: Fair async FIFO semaphore primitive
 ---
 ## What
