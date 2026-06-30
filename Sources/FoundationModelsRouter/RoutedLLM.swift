@@ -14,7 +14,7 @@ public enum GenerationError: Error, Equatable {
 /// generation-only API arrives here as a container-constrained extension — it is
 /// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(instructions:workingDirectory:)``
 /// is the *only* way to obtain a ``RoutedSession``: the vended session inherits
-/// this handle's ``RoutedModel/routerID`` and non-optional
+/// this handle's ``RoutedModel/routerId`` and non-optional
 /// ``RoutedModel/recorder``, retains the owning ``LanguageModelProfile`` so the
 /// resident models stay alive for its lifetime, and runs generation through the
 /// resident container.
@@ -79,7 +79,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             )
         }
 
-        let sessionID = ULID.generate()
+        let sessionId = ULID.generate()
         // When the router has no durable transcripts root (recording to
         // memory/none), nest the session directory under a per-process temporary
         // location, so the directory is still well-defined.
@@ -87,14 +87,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             ?? FileManager.default.temporaryDirectory
                 .appendingPathComponent("FoundationModelsRouter/Transcripts", isDirectory: true)
         let recordingDirectory = recordingsBase
-            .appendingPathComponent(routerID.description, isDirectory: true)
-            .appendingPathComponent(sessionID.description, isDirectory: true)
+            .appendingPathComponent(routerId.description, isDirectory: true)
+            .appendingPathComponent(sessionId.description, isDirectory: true)
 
         return RoutedSessionActor(
             profile: owningProfile,
-            routerID: routerID,
-            id: sessionID,
-            parentID: nil,
+            routerId: routerId,
+            id: sessionId,
+            parentId: nil,
             recordingDirectory: recordingDirectory,
             workingDirectory: workingDirectory ?? recordingDirectory,
             container: container,

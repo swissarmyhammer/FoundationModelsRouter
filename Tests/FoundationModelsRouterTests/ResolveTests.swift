@@ -230,9 +230,9 @@ struct ResolveTests {
 
         let resolved = try await router.resolve(Self.profile, reporting: progress)
 
-        #expect(resolved.standard.routerID == router.id)
-        #expect(resolved.flash.routerID == router.id)
-        #expect(resolved.embedding.routerID == router.id)
+        #expect(resolved.standard.routerId == router.id)
+        #expect(resolved.flash.routerId == router.id)
+        #expect(resolved.embedding.routerId == router.id)
         #expect(resolved.standard.recorder as? InMemoryRecorder === recorder)
         #expect(resolved.flash.recorder as? InMemoryRecorder === recorder)
         #expect(resolved.embedding.recorder as? InMemoryRecorder === recorder)

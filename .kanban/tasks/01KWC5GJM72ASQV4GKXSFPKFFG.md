@@ -31,6 +31,30 @@ comments:
 
     Verification (DEVELOPER_DIR=Xcode-beta): swift build clean (no warnings); swift test --filter GuidedGenerationTests = 13/13; full swift test = 80 unit tests + 1 gated integration, all green. Task left in `doing`.
   timestamp: 2026-06-30T23:33:21.620369+00:00
+- actor: wballard
+  id: 01kwdf2j1y4a6vqkdnq5df3m4y
+  text: |-
+    Resolved all 8 review findings (rename + nesting-flatten only; behavior unchanged).
+
+    JSON-casing (GuidedGeneration.swift): invalidJSONSchema→invalidJsonSchema, validateJSONSchema→validateJsonSchema (case + doc refs).
+
+    Nesting flatten: collectUnsupportedKeywords reduced from 5 to 2-3 levels by early-return on the array branch and extracting a collectFromSubschemaMap(_:into:) helper for the subschema-map case. Equivalent logic (instance-data still skipped, everything else recursed).
+
+    id-family rename made as a CONSISTENT ROOT FIX across the whole codebase to align with TranscriptEvent's existing routerId/sessionId/parentId spelling. routerID→routerId, parentID→parentId, sessionID→sessionId (properties, init params, local vars, and all doc refs) in:
+    - Sources/FoundationModelsRouter/Session/RoutedSession.swift (protocol + actor props, init params, doc refs; call sites that build TranscriptEvent.Partial now pass routerId:/parentId: with the lowercase values)
+    - Sources/FoundationModelsRouter/LanguageModelProfile.swift (RoutedModel handle property + init param + docs)
+    - Sources/FoundationModelsRouter/RoutedLLM.swift (handle ref, local sessionID→sessionId, parentID: label, path-component build)
+    - Sources/FoundationModelsRouter/RoutedEmbedder.swift (routerID ref + doc; routerId: label now passes routerId)
+    - Sources/FoundationModelsRouter/Router.swift (routerID: labels at both vend sites)
+    - Tests/FoundationModelsRouterTests/ResolveTests.swift (.routerID assertions)
+    No handle.routerID vs session.routerId mismatch remains.
+
+    configJSON: only the LOCAL static fixture in GuidedGenerationTests.swift renamed configJSON→configJson. Public RawRepoMetadata.configJSON / JSONValue left untouched (type/public-API names).
+
+    KEPT as-is per instructions: `id` (Identifiable), `ULID` type, `JSONValue` type.
+
+    Verification (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer): full `swift test` GREEN — 80 tests / 13 suites passed, plus gated integration target compiles (1 skipped). `swift build` clean; only warning is dependency build-bundle noise in .build (mlx-swift Cmlx.bundle), not our code.
+  timestamp: 2026-06-30T23:50:48.126369+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 position_column: doing
@@ -62,3 +86,14 @@ Grammar-constrained decoding via xgrammar (`MLXGuidedGeneration`, PR #334): the 
 
 ## Workflow
 - Use `/tdd` — write failing grammar-compile + error-mapping + recording tests first.
+
+## Review Findings (2026-06-30 18:34)
+
+- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:9` — Enum case `invalidJSONSchema` uses uppercase `JSON`, but the related enum case `jsonSchema` in Grammar.swift uses lowercase `json`. Per Swift naming conventions, acronyms in camelCase should be lowercase: `invalidJsonSchema`. Rename to `invalidJsonSchema` for consistency.
+- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:39` — Function name `validateJSONSchema` uses uppercase `JSON`. Per Swift naming conventions and for consistency with `.jsonSchema(...)`, this should be lowercase: `validateJsonSchema`. Rename to `validateJsonSchema`.
+- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:110` — Function `collectUnsupportedKeywords` has deep nesting of 5 levels (if → for → if → if → for), exceeding the 3-level threshold. The nested conditionals and loops within the schema tree walk make it hard to understand the execution flow at a glance. Extract the nested conditional logic into a separate helper function like `processSubschemaMap` that handles the subschema-map keywords case, reducing nesting in the main loop.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:45` — Property name `parentID` uses uppercase `ID`, inconsistent with the lowercase `id` property. Per Swift conventions, all ID references should be lowercase: `parentId`. Rename to `parentId` for consistency.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:83` — Actor property `routerID` uses uppercase `ID`, inconsistent with the `id` property (lowercase). Should be lowercase `routerId`. Rename to `routerId` for consistency.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:111` — Init parameter name `routerID` uses uppercase `ID`, inconsistent with the lowercase `id` parameter and violating Swift conventions. Should be `routerId`. Rename parameter to `routerId`.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:113` — Init parameter name `parentID` uses uppercase `ID`, inconsistent with the lowercase `id` parameter. Should be `parentId`. Rename parameter to `parentId`.
+- [x] `Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:76` — Static property `configJSON` uses uppercase `JSON`. Per Swift naming conventions, acronyms in camelCase should be lowercase: `configJson`. Rename to `configJson`.

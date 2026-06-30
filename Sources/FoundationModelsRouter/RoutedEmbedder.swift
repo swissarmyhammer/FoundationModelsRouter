@@ -25,7 +25,7 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     ///
     /// The computation runs through the resident embedder container. On success
     /// exactly one ``TranscriptEvent/Kind/embedding`` event is appended to the
-    /// recorder — stamped with this handle's ``RoutedModel/routerID``, the
+    /// recorder — stamped with this handle's ``RoutedModel/routerId``, the
     /// `.embedding` slot, the chosen model, and the measured duration. Recording
     /// is best-effort: the recorder swallows any sink failure (see
     /// ``TranscriptRecorder``), so a failed write is logged, never surfaced, and
@@ -42,7 +42,7 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
 
         await recorder.append(
             TranscriptEvent.Partial(
-                routerId: routerID,
+                routerId: routerId,
                 sessionId: .generate(),
                 slot: .embedding,
                 model: chosen,

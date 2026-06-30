@@ -107,7 +107,7 @@ struct GuidedGenerationTests {
 
     // MARK: - Fixtures
 
-    private static let configJSON = Data("""
+    private static let configJson = Data("""
         {
             "num_hidden_layers": 2,
             "num_attention_heads": 8,
@@ -124,7 +124,7 @@ struct GuidedGenerationTests {
         """.utf8)
 
     private static var rawMetadata: RawRepoMetadata {
-        RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
+        RawRepoMetadata(configJSON: configJson, treeJSON: treeJSON)
     }
 
     private static let profile = ProfileDefinition(

@@ -13,7 +13,7 @@ public enum SessionError: Error, Equatable {
 ///
 /// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:)``
 /// — there is no public initializer — so it is born holding the router's
-/// recording root (``routerID``) and the non-optional ``TranscriptRecorder`` the
+/// recording root (``routerId``) and the non-optional ``TranscriptRecorder`` the
 /// vending handle carried, and it **retains its ``profile``** so the resident
 /// models cannot be evicted out from under an in-flight session.
 ///
@@ -35,14 +35,14 @@ public protocol RoutedSession: Actor {
     nonisolated var profile: LanguageModelProfile { get }
 
     /// The recording root id — the router instance that owns this transcript.
-    nonisolated var routerID: ULID { get }
+    nonisolated var routerId: ULID { get }
 
     /// This session's span id.
     nonisolated var id: ULID { get }
 
     /// The span id of the session that forked this one, or `nil` for a root
     /// session.
-    nonisolated var parentID: ULID? { get }
+    nonisolated var parentId: ULID? { get }
 
     /// The directory this session's transcript is recorded under.
     nonisolated var recordingDirectory: URL { get }
@@ -93,14 +93,14 @@ public protocol RoutedSession: Actor {
 ///
 /// It is `internal` with an `internal` initializer so the only way to obtain one
 /// is ``RoutedModel/makeSession(instructions:workingDirectory:)`` — there is no
-/// public initializer. The recorder and `routerID` flow down from the vending
+/// public initializer. The recorder and `routerId` flow down from the vending
 /// handle; the `container`, `slot`, `model`, and `instructions` are what the
 /// single ``generate(_:)`` chokepoint runs the model with.
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
-    nonisolated let routerID: ULID
+    nonisolated let routerId: ULID
     nonisolated let id: ULID
-    nonisolated let parentID: ULID?
+    nonisolated let parentId: ULID?
     nonisolated let recordingDirectory: URL
     nonisolated let workingDirectory: URL
 
@@ -128,9 +128,9 @@ actor RoutedSessionActor: RoutedSession {
     /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)``.
     init(
         profile: LanguageModelProfile,
-        routerID: ULID,
+        routerId: ULID,
         id: ULID,
-        parentID: ULID?,
+        parentId: ULID?,
         recordingDirectory: URL,
         workingDirectory: URL,
         container: any LoadedLLMContainer,
@@ -141,9 +141,9 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar? = nil
     ) {
         self.profile = profile
-        self.routerID = routerID
+        self.routerId = routerId
         self.id = id
-        self.parentID = parentID
+        self.parentId = parentId
         self.recordingDirectory = recordingDirectory
         self.workingDirectory = workingDirectory
         self.container = container
@@ -264,9 +264,9 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
-            routerId: routerID,
+            routerId: routerId,
             sessionId: id,
-            parentId: parentID,
+            parentId: parentId,
             slot: slot,
             model: model,
             kind: kind,

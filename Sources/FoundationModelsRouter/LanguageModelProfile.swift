@@ -44,7 +44,7 @@ final class OwningProfileBox: @unchecked Sendable {
 ///
 /// It carries why the model won (its ``SlotResolution``), what it cost
 /// (``footprintBytes``), the loaded container, and — populated by the router at
-/// resolve time — the router's recording root (``routerID``) and
+/// resolve time — the router's recording root (``routerId``) and
 /// ``TranscriptRecorder`` so a vended session or embed call is born recorded.
 ///
 /// The two concrete handles are the distinct typealiases ``RoutedLLM`` and
@@ -76,7 +76,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     public let container: Container
 
     /// The recording root id of the router that resolved this model.
-    public let routerID: ULID
+    public let routerId: ULID
 
     /// The recorder a vended session or embed call is born holding.
     public let recorder: any TranscriptRecorder
@@ -99,7 +99,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - footprintBytes: The chosen candidate's `× 1.2` footprint estimate.
     ///   - resolution: Why this model won its slot.
     ///   - container: The loaded, resident container.
-    ///   - routerID: The resolving router's recording root id.
+    ///   - routerId: The resolving router's recording root id.
     ///   - recorder: The recorder a vended session or embed call is born holding.
     ///   - recordingsRoot: The router's durable transcripts root, or `nil`.
     public init(
@@ -108,7 +108,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         footprintBytes: Int64,
         resolution: SlotResolution,
         container: Container,
-        routerID: ULID,
+        routerId: ULID,
         recorder: any TranscriptRecorder,
         recordingsRoot: URL? = nil
     ) {
@@ -117,7 +117,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.footprintBytes = footprintBytes
         self.resolution = resolution
         self.container = container
-        self.routerID = routerID
+        self.routerId = routerId
         self.recorder = recorder
         self.recordingsRoot = recordingsRoot
     }

@@ -439,7 +439,7 @@ public actor Router {
                 footprintBytes: Self.chosenFootprint(embeddingRes),
                 resolution: embeddingRes,
                 container: embeddingContainer,
-                routerID: id,
+                routerId: id,
                 recorder: recorder,
                 recordingsRoot: recordingsDir
             ),
@@ -473,7 +473,7 @@ public actor Router {
             footprintBytes: Self.chosenFootprint(resolution),
             resolution: resolution,
             container: container,
-            routerID: id,
+            routerId: id,
             recorder: recorder,
             recordingsRoot: recordingsDir
         )

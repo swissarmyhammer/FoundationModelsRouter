@@ -14,7 +14,7 @@ public enum GuidedGenerationError: Error, Equatable {
     case unsupportedSchemaConstructs([String])
 
     /// The JSON-schema source was not a parseable JSON object.
-    case invalidJSONSchema(String)
+    case invalidJsonSchema(String)
 
     /// The grammar source was empty.
     case emptyGrammar
@@ -49,12 +49,12 @@ extension Grammar {
     ///
     /// - Throws: ``GuidedGenerationError/unsupportedSchemaConstructs(_:)`` for a
     ///   JSON schema using `$ref`/`allOf`/`format`,
-    ///   ``GuidedGenerationError/invalidJSONSchema(_:)`` for a schema that is not
+    ///   ``GuidedGenerationError/invalidJsonSchema(_:)`` for a schema that is not
     ///   valid JSON, or ``GuidedGenerationError/emptyGrammar`` for empty source.
     func validateForXGrammar() throws {
         switch self {
         case .jsonSchema(let schema):
-            try Grammar.validateJSONSchema(schema)
+            try Grammar.validateJsonSchema(schema)
         case .ebnf(let source):
             guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw GuidedGenerationError.emptyGrammar
@@ -66,17 +66,17 @@ extension Grammar {
     /// found anywhere in the schema tree.
     ///
     /// - Parameter schema: The JSON Schema source string.
-    /// - Throws: ``GuidedGenerationError/invalidJSONSchema(_:)`` when the source
+    /// - Throws: ``GuidedGenerationError/invalidJsonSchema(_:)`` when the source
     ///   is not parseable JSON, or
     ///   ``GuidedGenerationError/unsupportedSchemaConstructs(_:)`` when it uses
     ///   keywords outside the supported subset.
-    private static func validateJSONSchema(_ schema: String) throws {
+    private static func validateJsonSchema(_ schema: String) throws {
         let trimmed = schema.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw GuidedGenerationError.emptyGrammar }
         guard let data = schema.data(using: .utf8),
             let root = try? JSONSerialization.jsonObject(with: data)
         else {
-            throw GuidedGenerationError.invalidJSONSchema(schema)
+            throw GuidedGenerationError.invalidJsonSchema(schema)
         }
 
         var found: Set<String> = []
@@ -101,29 +101,42 @@ extension Grammar {
     ///   - node: A parsed JSON value occupying a schema position.
     ///   - found: The accumulating set of unsupported keywords encountered.
     private static func collectUnsupportedKeywords(in node: Any, into found: inout Set<String>) {
-        if let object = node as? [String: Any] {
-            for (key, value) in object {
-                if unsupportedSchemaKeywords.contains(key) {
-                    found.insert(key)
-                }
-                if subschemaMapKeywords.contains(key) {
-                    // The value's keys are names; only its values are subschemas.
-                    if let submap = value as? [String: Any] {
-                        for subschema in submap.values {
-                            collectUnsupportedKeywords(in: subschema, into: &found)
-                        }
-                    }
-                } else if instanceDataKeywords.contains(key) {
-                    // Instance data, not a subschema — do not walk its contents.
-                    continue
-                } else {
-                    collectUnsupportedKeywords(in: value, into: &found)
-                }
-            }
-        } else if let array = node as? [Any] {
+        if let array = node as? [Any] {
+            // An array node is a list of subschemas (e.g. under `anyOf`/`oneOf`).
             for element in array {
                 collectUnsupportedKeywords(in: element, into: &found)
             }
+            return
+        }
+        guard let object = node as? [String: Any] else { return }
+        for (key, value) in object {
+            if unsupportedSchemaKeywords.contains(key) {
+                found.insert(key)
+            }
+            if subschemaMapKeywords.contains(key) {
+                // The value's keys are names; only its values are subschemas.
+                collectFromSubschemaMap(value, into: &found)
+            } else if !instanceDataKeywords.contains(key) {
+                // Instance data is never walked; everything else is a subschema.
+                collectUnsupportedKeywords(in: value, into: &found)
+            }
+        }
+    }
+
+    /// Recurses into the *values* of a ``subschemaMapKeywords`` map, whose keys
+    /// are property/definition names rather than schema keywords.
+    ///
+    /// Extracted from ``collectUnsupportedKeywords(in:into:)`` so the main walk
+    /// stays shallow: the map's values are each walked as a subschema, while its
+    /// keys (data) are ignored.
+    ///
+    /// - Parameters:
+    ///   - value: The keyword's value, expected to be a map of names to subschemas.
+    ///   - found: The accumulating set of unsupported keywords encountered.
+    private static func collectFromSubschemaMap(_ value: Any, into found: inout Set<String>) {
+        guard let submap = value as? [String: Any] else { return }
+        for subschema in submap.values {
+            collectUnsupportedKeywords(in: subschema, into: &found)
         }
     }
 }
