@@ -22,6 +22,10 @@ comments:
   id: 01kwcn3asqscmb5zczm7byp25r
   text: 'Resolved the review finding (case-insensitive decode coverage). Added a lowercase round-trip assertion to roundTrip() in ULIDTests.swift: `let lowercase = text.lowercased(); #expect(ULID(lowercase) == ulid)`. TDD RED verified by temporarily removing the lowercase mapping in ULID.swift (decodeTable) — the new assertion failed at ULIDTests.swift:26 as expected — then reverted ULID.swift (confirmed not in git diff). ULID.swift behavior unchanged; test-only coverage. GREEN: `swift test --filter ULIDTests` → 7 tests, 1 suite, all passed. Leaving task in doing for /review.'
   timestamp: 2026-06-30T16:16:50.487739+00:00
+- actor: wballard
+  id: 01kwcnj8secj24aw5bcdx3en4t
+  text: 'Resolved 2026-06-30 11:17 review finding: added `#expect(ULID(lowercase)?.description == text)` immediately after the existing lowercase decode assertion in roundTrip(), making the lowercase input shape a full round-trip (decode direction equality + encode direction back to canonical uppercase). Test-only change; ULID.swift untouched. `swift test --filter ULIDTests` → 7 tests, all green (exit 0). Finding flipped to [x]. Task left in doing for /review.'
+  timestamp: 2026-06-30T16:24:59.950162+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
 position_column: doing
@@ -55,3 +59,7 @@ A 128-bit, lexicographically time-sortable identifier (Crockford base32), used a
 ## Review Findings (2026-06-30 11:09)
 
 - [x] `Tests/FoundationModelsRouterTests/ULIDTests.swift:12` — The init?(_ string:) method accepts lowercase characters via the case-insensitive decodeTable (per Crockford base32 spec), but the roundTrip test only verifies uppercase — lowercase input parsing should be tested to lock in the case-insensitive contract. Add a lowercase round-trip assertion in roundTrip(): `let lowercase = text.lowercased(); #expect(ULID(lowercase) == ulid)`.
+
+## Review Findings (2026-06-30 11:17)
+
+- [x] `Tests/FoundationModelsRouterTests/ULIDTests.swift:24` — The test adds a new input variant (lowercase ULID string) and tests its decode direction (`ULID(lowercase) == ulid`) but does not explicitly test the encode direction. The test is named `roundTrip()`, indicating a round-trip should be verified for all variants tested. While the round-trip property can be inferred through equality, it is not explicitly verified for the lowercase variant. Add `#expect(ULID(lowercase)?.description == text)` after line 24 to explicitly verify the encode direction for the lowercase variant, completing the round-trip for this new input shape.

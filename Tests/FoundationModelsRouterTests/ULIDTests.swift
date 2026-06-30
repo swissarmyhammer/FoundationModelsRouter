@@ -24,6 +24,7 @@ struct ULIDTests {
         // string must decode to the same ULID as its uppercase form.
         let lowercase = text.lowercased()
         #expect(ULID(lowercase) == ulid)
+        #expect(ULID(lowercase)?.description == text)
     }
 
     @Test("ids sort chronologically by timestamp prefix")
