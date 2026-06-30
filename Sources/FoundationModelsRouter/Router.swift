@@ -33,7 +33,9 @@ public actor Router {
     /// Bytes held out of the budget for OS/app headroom.
     let headroomReserve: Int64
 
-    /// The in-flight fork-session ceiling per resolved profile (enforced later).
+    /// The in-flight fork-session ceiling per resolved profile (consumed for
+    /// fork admission in milestone 9, "Session fork + per-model concurrency
+    /// gates").
     let maxConcurrentForks: Int
 
     /// The disposable cache directory for host profiles and repo metadata.
@@ -267,6 +269,16 @@ public actor Router {
 
     // MARK: - Download & load
 
+    /// Marks a slot downloading and vends its byte-progress reporter — the shared
+    /// prelude both model kinds run before handing off to the loader.
+    private func beginDownload(
+        _ slot: ModelSlot,
+        progress: ResolutionProgress
+    ) async -> @Sendable (DownloadProgress) -> Void {
+        await setSlotState(slot, .downloading, progress: progress)
+        return Self.reporter(slot: slot, progress: progress)
+    }
+
     /// Downloads and loads the chosen generation model for a slot.
     private func downloadLLM(
         _ chosen: ModelRef,
@@ -274,13 +286,8 @@ public actor Router {
         def: ProfileDefinition,
         progress: ResolutionProgress
     ) async throws -> any LoadedLLMContainer {
-        await setSlotState(slot, .downloading, progress: progress)
-        return try await loader.loadLLM(
-            chosen,
-            slot: slot,
-            context: def.context,
-            reporting: Self.reporter(slot: slot, progress: progress)
-        )
+        let reporting = await beginDownload(slot, progress: progress)
+        return try await loader.loadLLM(chosen, slot: slot, context: def.context, reporting: reporting)
     }
 
     /// Downloads and loads the chosen embedding model for a slot.
@@ -290,12 +297,8 @@ public actor Router {
         def: ProfileDefinition,
         progress: ResolutionProgress
     ) async throws -> any LoadedEmbeddingContainer {
-        await setSlotState(slot, .downloading, progress: progress)
-        return try await loader.loadEmbedder(
-            chosen,
-            slot: slot,
-            reporting: Self.reporter(slot: slot, progress: progress)
-        )
+        let reporting = await beginDownload(slot, progress: progress)
+        return try await loader.loadEmbedder(chosen, slot: slot, reporting: reporting)
     }
 
     /// Preloads a downloaded container and marks its slot ready.

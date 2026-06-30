@@ -32,6 +32,21 @@ comments:
 
     Verification after revisions: swift build clean; swift test --filter ResolveTests = 8/8; full swift test = 55 tests + 1 gated, no errors/warnings (only the unrelated mlx-swift_Cmlx.bundle infra warning). Still in `doing`, ready for /review.
   timestamp: 2026-06-30T20:30:14.084307+00:00
+- actor: wballard
+  id: 01kwd4ndf9t0hrsffytnwygpb9
+  text: |-
+    Resolved all 4 review findings (structural cleanup, no behavior change):
+
+    1. LanguageModelProfile.swift — De-duplicated RoutedLLM/RoutedEmbedder into one generic `public final class RoutedModel<Container: Sendable>: Sendable`, with `RoutedLLM = RoutedModel<any LoadedLLMContainer>` and `RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>` as DISTINCT typealiases (different generic specializations → future per-handle methods via `where Container == ...` extensions stay clean; neither carries the other's API). All 7 public stored fields and their access preserved, so tests are unchanged. NOTE: the generic is constrained to `Sendable`, NOT `LoadedModelContainer` — an existential `any LoadedLLMContainer` cannot satisfy a non-marker protocol generic constraint (compiler error "type 'any LoadedLLMContainer' cannot conform to 'LoadedModelContainer'"), but it does satisfy the `Sendable` marker. Since `LoadedModelContainer: Sendable`, this loses nothing vs the original concrete existential field types.
+
+    2. Router.swift — `maxConcurrentForks` doc now cites milestone 9 ("Session fork + per-model concurrency gates") as the consumer, mirroring the recordingLevel/redact 10b markers. Property still stored + passed through init unchanged.
+
+    3. Router.swift — Factored the shared download prelude (setSlotState(.downloading) + reporter construction) out of downloadLLM/downloadEmbedder into `beginDownload(_:progress:)`. Each download method keeps its distinct loader call (loadLLM with context vs loadEmbedder without). Byte-equivalent.
+
+    4. ResolveTests.swift — De-duplicated StubModelLoader.loadLLM/loadEmbedder via a generic `stubLoad<C>(_:reporting:record:container:)` helper parameterized by the ref-list append closure and stub-container factory. Same observe→record→report→return sequence.
+
+    Verification: swift build clean (only the unrelated mlx-swift_Cmlx.bundle infra warning); `swift test --filter ResolveTests` = 8/8 green; full `swift test` = 55 + 1 gated, all green. Advisory double-check returned PASS. Left in `doing` for review.
+  timestamp: 2026-06-30T20:48:51.689800+00:00
 depends_on:
 - 01KWC5CDXEMC7DBSV8JV81ECY9
 - 01KWC5DK4AXYHFBK2TJRPK88KW
@@ -74,3 +89,10 @@ The `Router` actor and its async `resolve`, wiring host profile + repo metadata 
 
 ## Workflow
 - Use `/tdd` — write failing progress-phase + selection + handle-wiring tests with a stubbed loader first.
+
+## Review Findings (2026-06-30 15:31)
+
+- [x] `Sources/FoundationModelsRouter/LanguageModelProfile.swift:72` — RoutedEmbedder is nearly verbatim identical to RoutedLLM, differing only in the container type (LoadedEmbeddingContainer vs LoadedLLMContainer). Both classes have identical property declarations, documentation structure, and init implementation. Extract a generic class `RoutedModel<Container: LoadedModelContainer>` or use a shared base class, parameterized by the container type, to eliminate the structural duplication.
+- [x] `Sources/FoundationModelsRouter/Router.swift:37` — The `maxConcurrentForks` property is stored but never referenced in any method, test, or caller within the provided files; while the docstring indicates 'enforced later', there is no explicit forward marker (named milestone or follow-up task) like `recordingLevel` and `redact` have ('milestone 10b'). Update the docstring to explicitly name the milestone or task that will enforce fork-session limiting with this property (e.g., 'enforced in milestone X'), or delete the property to remove dead-code ambiguity.
+- [x] `Sources/FoundationModelsRouter/Router.swift:313` — downloadEmbedder method is nearly verbatim identical to downloadLLM, differing only in calling loader.loadEmbedder vs loader.loadLLM and the context parameter. Both perform identical slot state setting and progress reporter setup. Extract a shared helper method parameterized by which loader method to call, eliminating the duplicated slot state transition and parameter structure.
+- [x] `Tests/FoundationModelsRouterTests/ResolveTests.swift:96` — StubModelLoader.loadEmbedder is nearly verbatim identical to loadLLM, differing only in which ref list to append to and which stub container type to return. Both follow identical observation, reporting, and container creation logic. Extract a shared helper method parameterized by the ref list to append to and stub container type/factory to return, eliminating the nearly identical method bodies.

@@ -70,10 +70,7 @@ struct ResolveTests {
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
-            observedLoadPhases.append(await MainActor.run { progress.phase })
-            loadedLLMRefs.append(ref)
-            reporting(DownloadProgress(bytesDownloaded: 1_000, bytesTotal: 1_000))
-            return StubLLMContainer()
+            await stubLoad(ref, reporting: reporting, record: { loadedLLMRefs.append($0) }) { StubLLMContainer() }
         }
 
         func loadEmbedder(
@@ -81,14 +78,26 @@ struct ResolveTests {
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
-            observedLoadPhases.append(await MainActor.run { progress.phase })
-            loadedEmbedderRefs.append(ref)
-            reporting(DownloadProgress(bytesDownloaded: 1_000, bytesTotal: 1_000))
-            return StubEmbeddingContainer()
+            await stubLoad(ref, reporting: reporting, record: { loadedEmbedderRefs.append($0) }) { StubEmbeddingContainer() }
         }
 
         func preload(_ container: any LoadedModelContainer) async throws {
             observedPreloadPhases.append(await MainActor.run { progress.phase })
+        }
+
+        /// The shared body of both loaders: observe the live phase, record the
+        /// ref via `record`, report a single fake byte total, then return the
+        /// stub container built by `container`.
+        private func stubLoad<C: LoadedModelContainer>(
+            _ ref: ModelRef,
+            reporting: @escaping @Sendable (DownloadProgress) -> Void,
+            record: (ModelRef) -> Void,
+            container: () -> C
+        ) async -> C {
+            observedLoadPhases.append(await MainActor.run { progress.phase })
+            record(ref)
+            reporting(DownloadProgress(bytesDownloaded: 1_000, bytesTotal: 1_000))
+            return container()
         }
     }
 
