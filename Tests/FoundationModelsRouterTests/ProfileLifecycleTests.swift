@@ -16,8 +16,20 @@ import Testing
 struct ProfileLifecycleTests {
     // MARK: - Stub containers
 
-    /// A stand-in for a loaded LLM container, with no MLX dependency.
-    private struct StubLLMContainer: LoadedLLMContainer {}
+    /// A stand-in for a loaded LLM container, with no MLX dependency. These
+    /// lifecycle tests never generate, so the generation entry points throw.
+    private struct StubLLMContainer: LoadedLLMContainer {
+        func respond(to prompt: String, instructions: String?) async throws -> String {
+            throw GenerationError.notWiredForLiveInference
+        }
+
+        func streamResponse(
+            to prompt: String,
+            instructions: String?
+        ) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { $0.finish(throwing: GenerationError.notWiredForLiveInference) }
+        }
+    }
 
     /// A stand-in for a loaded embedder container that returns fixed-length
     /// vectors, with no MLX dependency.

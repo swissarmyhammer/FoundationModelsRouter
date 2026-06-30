@@ -1,5 +1,44 @@
 import Foundation
 
+/// A lock-guarded, weak holder for a routed model's owning ``LanguageModelProfile``.
+///
+/// A ``RoutedModel`` is constructed before the profile that owns it (the profile
+/// receives the three models in its initializer), so the owning profile is
+/// registered after the fact through this box. The held reference is **weak**:
+/// the profile already holds its models strongly for residency, and a strong
+/// reference back would form a retain cycle that defeats the profile's
+/// `deinit`-driven eviction. A session vended by ``RoutedModel/makeSession(instructions:workingDirectory:)``
+/// reads the profile here and retains it strongly, so the resident models stay
+/// alive for the session's lifetime even after the caller drops its profile
+/// handle.
+///
+/// `@unchecked Sendable` because the weak reference is mutated through the lock,
+/// which the compiler cannot verify; the lock makes the access data-race free.
+final class OwningProfileBox: @unchecked Sendable {
+    /// Serializes the single registration against any later reads.
+    private let lock = NSLock()
+
+    /// The owning profile, weakly held, or `nil` before registration / after the
+    /// profile is released.
+    private weak var stored: LanguageModelProfile?
+
+    /// Creates an empty box, filled later by ``register(_:)``.
+    init() {}
+
+    /// Records the owning profile. Called once, from ``LanguageModelProfile``'s
+    /// initializer, before the profile escapes to any other thread.
+    ///
+    /// - Parameter profile: The profile that owns the model holding this box.
+    func register(_ profile: LanguageModelProfile) {
+        lock.withLock { stored = profile }
+    }
+
+    /// The owning profile if it is still alive, else `nil`.
+    var current: LanguageModelProfile? {
+        lock.withLock { stored }
+    }
+}
+
 /// A resolved, resident model — the storage a profile exposes for one slot,
 /// generic over the kind of loaded container it holds.
 ///
@@ -42,6 +81,16 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// The recorder a vended session or embed call is born holding.
     public let recorder: any TranscriptRecorder
 
+    /// The router's durable transcripts root, or `nil` when recording to
+    /// memory/none. A vended session's ``RoutedSession/recordingDirectory`` nests
+    /// under this root by router id and session id.
+    public let recordingsRoot: URL?
+
+    /// The weak back-reference to the profile that owns this model, registered by
+    /// ``LanguageModelProfile``'s initializer. A session vended from this handle
+    /// reads it to retain the profile (see ``makeSession(instructions:workingDirectory:)``).
+    let owningProfileBox = OwningProfileBox()
+
     /// Creates a routed model handle.
     ///
     /// - Parameters:
@@ -52,6 +101,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - container: The loaded, resident container.
     ///   - routerID: The resolving router's recording root id.
     ///   - recorder: The recorder a vended session or embed call is born holding.
+    ///   - recordingsRoot: The router's durable transcripts root, or `nil`.
     public init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -59,7 +109,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         resolution: SlotResolution,
         container: Container,
         routerID: ULID,
-        recorder: any TranscriptRecorder
+        recorder: any TranscriptRecorder,
+        recordingsRoot: URL? = nil
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -68,6 +119,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.container = container
         self.routerID = routerID
         self.recorder = recorder
+        self.recordingsRoot = recordingsRoot
     }
 }
 
@@ -149,6 +201,13 @@ public final class LanguageModelProfile: Sendable {
         self.embedding = embedding
         self.router = router
         self.residencyToken = residencyToken
+
+        // Register the weak back-reference now that `self` is fully initialized,
+        // so a session vended from any of these handles can retain this profile
+        // and keep the resident models alive for its lifetime.
+        standard.owningProfileBox.register(self)
+        flash.owningProfileBox.register(self)
+        embedding.owningProfileBox.register(self)
     }
 
     /// The three resident containers, in slot order, for eviction.

@@ -1,0 +1,85 @@
+import Foundation
+
+/// A failure producing text from a resident generation model.
+public enum GenerationError: Error, Equatable {
+    /// The live `ModelContainer` generation pipeline is not wired yet — real
+    /// text lands in the gated integration suite (milestone 7). The unit suite
+    /// exercises the surface through a stub container instead.
+    case notWiredForLiveInference
+}
+
+/// The session-creation surface on the generation handle.
+///
+/// ``RoutedLLM`` is `RoutedModel<any LoadedLLMContainer>`, so the
+/// generation-only API arrives here as a container-constrained extension — it is
+/// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(instructions:workingDirectory:)``
+/// is the *only* way to obtain a ``RoutedSession``: the vended session inherits
+/// this handle's ``RoutedModel/routerID`` and non-optional
+/// ``RoutedModel/recorder``, retains the owning ``LanguageModelProfile`` so the
+/// resident models stay alive for its lifetime, and runs generation through the
+/// resident container.
+extension RoutedModel where Container == any LoadedLLMContainer {
+    /// Vends a new generation session over this resident model.
+    ///
+    /// The session is born holding this handle's recorder and router id and a
+    /// strong reference to the owning profile. Its
+    /// ``RoutedSession/recordingDirectory`` nests under the router's recordings
+    /// root (or a temporary base when recording to memory/none) by router id and
+    /// the new session id; its ``RoutedSession/workingDirectory`` defaults to the
+    /// recording directory and can be overridden without moving it.
+    ///
+    /// - Precondition: The owning ``LanguageModelProfile`` must still be alive
+    ///   when this is called. A handle holds its profile only *weakly*, so the
+    ///   profile is not kept alive by caching `profile.standard` / `profile.flash`
+    ///   on its own — the session retains it only once created. Calling this after
+    ///   the profile has been released (and its models evicted) is a programmer
+    ///   error and traps.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - workingDirectory: A working directory override, or `nil` to default to
+    ///     the recording directory.
+    /// - Returns: A new ``RoutedSession`` over this model.
+    public func makeSession(
+        instructions: String? = nil,
+        workingDirectory: URL? = nil
+    ) -> RoutedSession {
+        // The handle references its profile weakly (no retain cycle with the
+        // profile's strong hold on its models). The session is what retains the
+        // profile, so the profile must still be alive at this point; if a caller
+        // cached the handle and released the profile first, that is misuse — fail
+        // loudly with a clear message rather than an opaque nil-unwrap trap.
+        guard let owningProfile = owningProfileBox.current else {
+            preconditionFailure(
+                "makeSession requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
+            )
+        }
+
+        let sessionID = ULID.generate()
+        let recordingDirectory = (recordingsRoot ?? Self.defaultRecordingsBase())
+            .appendingPathComponent(routerID.description, isDirectory: true)
+            .appendingPathComponent(sessionID.description, isDirectory: true)
+
+        return RoutedSessionActor(
+            profile: owningProfile,
+            routerID: routerID,
+            id: sessionID,
+            parentID: nil,
+            recordingDirectory: recordingDirectory,
+            workingDirectory: workingDirectory ?? recordingDirectory,
+            container: container,
+            slot: slot,
+            model: chosen,
+            recorder: recorder,
+            instructions: instructions
+        )
+    }
+
+    /// The base a session's recording directory nests under when the router has
+    /// no durable transcripts root (recording to memory/none): a per-process
+    /// temporary location, so the directory is still well-defined.
+    private static func defaultRecordingsBase() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("FoundationModelsRouter/Transcripts", isDirectory: true)
+    }
+}

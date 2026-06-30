@@ -39,8 +39,38 @@ public struct DownloadProgress: Sendable, Equatable {
 /// later milestones (5a/5b).
 public protocol LoadedModelContainer: Sendable {}
 
-/// A loaded generation (`standard`/`flash`) model container.
-public protocol LoadedLLMContainer: LoadedModelContainer {}
+/// A loaded generation (`standard`/`flash`) model container — the seam the text
+/// generation a ``RoutedSession`` performs runs through, so the session surface
+/// is unit-testable without a GPU.
+///
+/// Tests substitute a stub that returns canned text (and can be made to throw);
+/// the live `ModelContainer` conformance (see ``LiveModelLoader``) throws
+/// ``GenerationError/notWiredForLiveInference`` until the real `MLXLMCommon`
+/// pipeline is wired in the gated integration suite (milestone 7). A vended
+/// session funnels every public generation method through one recorder-bracketed
+/// chokepoint that calls into these entry points.
+public protocol LoadedLLMContainer: LoadedModelContainer {
+    /// Generates a complete text response to a prompt.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - instructions: The session's system instructions, or `nil`.
+    /// - Returns: The model's complete text response.
+    /// - Throws: If the generation fails.
+    func respond(to prompt: String, instructions: String?) async throws -> String
+
+    /// Streams a text response to a prompt as it is produced.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - instructions: The session's system instructions, or `nil`.
+    /// - Returns: A stream of response fragments, finishing when generation
+    ///   completes or throwing if it fails.
+    func streamResponse(
+        to prompt: String,
+        instructions: String?
+    ) -> AsyncThrowingStream<String, Error>
+}
 
 /// A loaded embedding model container — the seam the embedding computation runs
 /// through, so ``RoutedEmbedder`` is unit-testable without a GPU.

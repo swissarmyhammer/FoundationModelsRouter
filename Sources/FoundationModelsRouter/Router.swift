@@ -423,7 +423,8 @@ public actor Router {
                 resolution: standardRes,
                 container: standardContainer,
                 routerID: id,
-                recorder: recorder
+                recorder: recorder,
+                recordingsRoot: recordingsDir
             ),
             flash: RoutedLLM(
                 slot: .flash,
@@ -432,7 +433,8 @@ public actor Router {
                 resolution: flashRes,
                 container: flashContainer,
                 routerID: id,
-                recorder: recorder
+                recorder: recorder,
+                recordingsRoot: recordingsDir
             ),
             embedding: RoutedEmbedder(
                 slot: .embedding,
@@ -441,7 +443,8 @@ public actor Router {
                 resolution: embeddingRes,
                 container: embeddingContainer,
                 routerID: id,
-                recorder: recorder
+                recorder: recorder,
+                recordingsRoot: recordingsDir
             ),
             router: self,
             residencyToken: residencyToken

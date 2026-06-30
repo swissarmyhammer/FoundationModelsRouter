@@ -4,10 +4,36 @@ import MLXLLM
 import MLXLMCommon
 
 // The MLX container types are the live loaded handles. They are `final class …:
-// Sendable`, so conforming them to the router's marker protocols is a no-op that
-// simply lets ``LiveModelLoader`` vend them where the orchestration expects an
+// Sendable`, so conforming them to the router's marker protocols lets
+// ``LiveModelLoader`` vend them where the orchestration expects an
 // `any LoadedLLMContainer` / `any LoadedEmbeddingContainer`.
-extension ModelContainer: LoadedLLMContainer {}
+//
+// The `ModelContainer` exposes its model only through an async `perform` closure
+// over non-`Sendable` MLX state, so the real text-generation pipeline is GPU
+// work that lands in the gated integration suite (milestone 7). These
+// conformances are the deferred seam: the unit suite drives a stub container,
+// while the live path makes its unwired state explicit (throwing
+// ``GenerationError/notWiredForLiveInference``) rather than returning fabricated
+// text — mirroring the embedder seam below.
+extension ModelContainer: LoadedLLMContainer {
+    /// Generates a complete text response — wired through the real `MLXLMCommon`
+    /// pipeline in the gated integration suite (milestone 7). Until then it
+    /// throws, so no caller mistakes an unwired live container for a working one.
+    public nonisolated func respond(to prompt: String, instructions: String?) async throws -> String {
+        throw GenerationError.notWiredForLiveInference
+    }
+
+    /// Streams a text response — wired through the real `MLXLMCommon` pipeline in
+    /// the gated integration suite (milestone 7). Until then the stream finishes
+    /// by throwing, so no caller mistakes an unwired live container for a working
+    /// one.
+    public nonisolated func streamResponse(
+        to prompt: String,
+        instructions: String?
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { $0.finish(throwing: GenerationError.notWiredForLiveInference) }
+    }
+}
 
 // The MLX `EmbedderModelContainer` exposes its model only through an async
 // `perform` closure over non-`Sendable` MLX tensors, so the real embedding

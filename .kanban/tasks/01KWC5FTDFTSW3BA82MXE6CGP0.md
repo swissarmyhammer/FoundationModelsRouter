@@ -19,8 +19,8 @@ comments:
 depends_on:
 - 01KWC5F41MNA2PA3K45Z86CRQ0
 - 01KWC5ECCZYEAH49J635KC9QH5
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8b80
 title: Profile residency lifecycle + recorded embedding access (milestone 5a)
 ---
 ## What

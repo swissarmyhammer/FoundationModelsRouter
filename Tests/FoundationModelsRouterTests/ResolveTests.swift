@@ -13,7 +13,19 @@ struct ResolveTests {
     // MARK: - Stub container handles
 
     /// A stand-in for a loaded LLM `ModelContainer`, with no MLX dependency.
-    private struct StubLLMContainer: LoadedLLMContainer {}
+    /// These resolve tests never generate, so the generation entry points throw.
+    private struct StubLLMContainer: LoadedLLMContainer {
+        func respond(to prompt: String, instructions: String?) async throws -> String {
+            throw GenerationError.notWiredForLiveInference
+        }
+
+        func streamResponse(
+            to prompt: String,
+            instructions: String?
+        ) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { $0.finish(throwing: GenerationError.notWiredForLiveInference) }
+        }
+    }
 
     /// A stand-in for a loaded embedder container, with no MLX dependency.
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
