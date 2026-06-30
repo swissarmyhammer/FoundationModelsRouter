@@ -12,6 +12,10 @@ comments:
   id: 01kwd83prdxmd3hm2s8p6h71dm
   text: 'Fix landed and re-verified. Residency now keyed on a unique, never-reused ULID token minted at resolve and stored on the profile; Router.release(token:containers:) matches on it, so a stale deinit after a newer profile is resolved is a guaranteed no-op (closes the ObjectIdentifier address-reuse hole). Removed ObjectIdentifier entirely; deinit captures only Sendable values (router, token, containers). Added deterministic test staleReleaseDoesNotClobberResident. Corrected doc wording ("monotonic" -> "unique", and "detached" -> "unstructured" task). Advisory double-check re-run: PASS (address-reuse closed; no regressions; new test exercises the token-mismatch no-op path, not vacuous). Verification: swift build clean (no warnings/errors); swift test green — 61 tests in 11 suites + 1 gated integration suite. Leaving task in doing for /review.'
   timestamp: 2026-06-30T21:49:05.677854+00:00
+- actor: wballard
+  id: 01kwd8z88d8w9k992gh4vadxvv
+  text: Resolved both review findings in Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift. Added `///` doc comments to the UnconfiguredModelLoader sentinel members noting each always throws ModelLoaderError.notConfigured (real loading configured/injected via LiveModelLoader, milestone 7). Documented loadLLM and preload per the findings, plus loadEmbedder for consistency (was also undocumented) to avoid a follow-up finding. Doc-only change, no behavior change. swift build green; swift test green (61 tests pass + gated integration suite skips as expected). Ticked Acceptance Criteria and Tests checkboxes (work satisfies them and tests pass). Task left in doing for review.
+  timestamp: 2026-06-30T22:04:08.333033+00:00
 depends_on:
 - 01KWC5F41MNA2PA3K45Z86CRQ0
 - 01KWC5ECCZYEAH49J635KC9QH5
@@ -30,14 +34,19 @@ Give a resolved profile a residency lifetime and a recorded embedding surface. P
   - **Recorded:** `RoutedEmbedder` carries `routerID: ULID` + a non-optional `TranscriptRecorder` (populated by the Router at resolve — see milestone 4b). `embed` emits one `embedding` `TranscriptEvent` (provenance `{routerId, slot: .embedding, model, seq, ts, tokensIn?, ms}`) into a directory under the router recordings root (e.g. `recordings/<routerID>/embeddings/transcript.jsonl`). Best-effort: a sink failure logs, never fails `embed`.
 
 ## Acceptance Criteria
-- [ ] `release()` evicts all three (assert via an eviction spy/counter); after release, residency is clear.
-- [ ] Calling `resolve` a second time while a profile is resident throws (one-active-profile); it succeeds after `release()`.
-- [ ] `embed` returns vectors of length `dimension` (real vectors asserted in the gated integration suite; unit test uses a stub embedder).
-- [ ] `embed` emits exactly one `embedding` event with correct provenance to an `InMemoryRecorder`; a forced sink failure is swallowed and `embed` still returns.
+- [x] `release()` evicts all three (assert via an eviction spy/counter); after release, residency is clear.
+- [x] Calling `resolve` a second time while a profile is resident throws (one-active-profile); it succeeds after `release()`.
+- [x] `embed` returns vectors of length `dimension` (real vectors asserted in the gated integration suite; unit test uses a stub embedder).
+- [x] `embed` emits exactly one `embedding` event with correct provenance to an `InMemoryRecorder`; a forced sink failure is swallowed and `embed` still returns.
 
 ## Tests
-- [ ] `Tests/FoundationModelsRouterTests/ProfileLifecycleTests.swift` (Swift Testing) with a stub embedder/loader + `InMemoryRecorder`: evict-all on release; one-active-profile enforcement (second resolve throws, then succeeds after release); embed records one `embedding` event + swallowed sink error.
-- [ ] Run `swift test --filter ProfileLifecycleTests` — all pass.
+- [x] `Tests/FoundationModelsRouterTests/ProfileLifecycleTests.swift` (Swift Testing) with a stub embedder/loader + `InMemoryRecorder`: evict-all on release; one-active-profile enforcement (second resolve throws, then succeeds after release); embed records one `embedding` event + swallowed sink error.
+- [x] Run `swift test --filter ProfileLifecycleTests` — all pass.
 
 ## Workflow
 - Use `/tdd` — write failing evict / one-active-profile / embed-recording tests with stubs first.
+
+## Review Findings (2026-06-30 16:50)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:150` — Public function `loadLLM` lacks documentation. Even though it implements a protocol requirement, the concrete implementation throws an error rather than performing the documented behavior, which warrants explicit documentation of this deviation. Add a doc comment explaining that this sentinel implementation always throws `.notConfigured`.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:167` — Public function `preload` lacks documentation. Even though it implements a protocol requirement, the concrete implementation throws an error rather than performing the documented behavior, which warrants explicit documentation of this deviation. Add a doc comment explaining that this sentinel implementation always throws `.notConfigured`.

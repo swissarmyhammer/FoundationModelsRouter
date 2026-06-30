@@ -148,6 +148,9 @@ public struct UnconfiguredModelLoader: ModelLoader {
     /// Creates the unconfigured sentinel loader.
     public init() {}
 
+    /// Always throws ``ModelLoaderError/notConfigured``: this sentinel cannot
+    /// load a generation model. Real loading is configured/injected via
+    /// ``LiveModelLoader`` (milestone 7).
     public func loadLLM(
         _ ref: ModelRef,
         slot: ModelSlot,
@@ -157,6 +160,9 @@ public struct UnconfiguredModelLoader: ModelLoader {
         throw ModelLoaderError.notConfigured
     }
 
+    /// Always throws ``ModelLoaderError/notConfigured``: this sentinel cannot
+    /// load an embedding model. Real loading is configured/injected via
+    /// ``LiveModelLoader`` (milestone 7).
     public func loadEmbedder(
         _ ref: ModelRef,
         slot: ModelSlot,
@@ -165,6 +171,9 @@ public struct UnconfiguredModelLoader: ModelLoader {
         throw ModelLoaderError.notConfigured
     }
 
+    /// Always throws ``ModelLoaderError/notConfigured``: this sentinel has no
+    /// container to warm. Real loading is configured/injected via
+    /// ``LiveModelLoader`` (milestone 7).
     public func preload(_ container: any LoadedModelContainer) async throws {
         throw ModelLoaderError.notConfigured
     }
