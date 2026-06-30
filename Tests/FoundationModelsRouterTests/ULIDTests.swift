@@ -34,6 +34,13 @@ struct ULIDTests {
         let decoded = ULID(text)
         #expect(decoded == ulid)
         #expect(decoded?.description == text)
+
+        // Crockford base32 decoding is case-insensitive, so the lowercased form
+        // must parse to the same value (decode) and re-encode to the canonical
+        // uppercase string (encode).
+        let lowercase = text.lowercased()
+        #expect(ULID(lowercase) == ulid)
+        #expect(ULID(lowercase)?.description == text)
     }
 
     @Test("ids sort chronologically by timestamp")

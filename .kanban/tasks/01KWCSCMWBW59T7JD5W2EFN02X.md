@@ -7,6 +7,10 @@ comments:
 
     Note: the MCP `files` write op silently no-ops in this environment (returns stale content); wrote files via shell heredoc instead.
   timestamp: 2026-06-30T17:39:56.650660+00:00
+- actor: wballard
+  id: 01kwctf939dcym1haqv9hsvyrs
+  text: 'Addressed open review finding (case-insensitive ULID parse not covered). Added a complete lowercase round-trip to roundTrip() in Tests/FoundationModelsRouterTests/ULIDTests.swift covering both directions: decode (`#expect(ULID(lowercase) == ulid)`) and re-encode to canonical uppercase (`#expect(ULID(lowercase)?.description == text)`), where `lowercase = text.lowercased()`. Library accepts lowercase per Crockford spec — no shim change needed; Core/ULID.swift untouched. `swift test --filter ULIDTests` → 3/3 green. Finding flipped to [x]. Task stays in doing for /review.'
+  timestamp: 2026-06-30T17:50:44.841301+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
 - 01KWC5BTMHH3K50437WBVFG9NT
@@ -19,7 +23,7 @@ Per user decision (2026-06-30), swap the in-house `Core/ULID.swift` for the main
 
 Verified library facts: package `https://github.com/yaslab/ULID.swift.git`, product/module `ULID`, latest `1.3.1`, MIT, swift-tools 5.9. Type conforms to `Hashable, Equatable, Comparable, CustomStringConvertible, Sendable, Codable` (Codable = 26-char Crockford base32 string). Deterministic init: `init<T: RandomNumberGenerator>(timestamp:generator:)` and `init?(timestamp:randomPartData:)`.
 
-- `Package.swift`: add `.package(url: "https://github.com/yaslab/ULID.swift.git", from: "1.3.1")` and add product `"ULID"` to the `FoundationModelsRouter` target deps. Reuse the existing top-level constant style if natural. Commit the updated `Package.resolved` (pins the new dep).
+- `Package.swift`: add `.package(url: \"https://github.com/yaslab/ULID.swift.git\", from: \"1.3.1\")` and add product `\"ULID\"` to the `FoundationModelsRouter` target deps. Reuse the existing top-level constant style if natural. Commit the updated `Package.resolved` (pins the new dep).
 - `Sources/FoundationModelsRouter/Core/ULID.swift`: delete the hand-rolled implementation and instead re-export the library type plus a thin compatibility shim so our design's API holds:
   - Re-export: `@_exported import ULID` (or a module-qualified `public typealias`).
   - Shim extension preserving our planned call sites: `static func generate() -> ULID { ULID() }`, `init?(_ s: String) { self.init(ulidString: s) }`. Confirm `description` (via `CustomStringConvertible`) returns the 26-char string and `Comparable` orders by timestamp — both already true in the library, so no reimplementation.
@@ -38,3 +42,7 @@ Verified library facts: package `https://github.com/yaslab/ULID.swift.git`, prod
 
 ## Workflow
 - Use `/tdd` — write the shim smoke tests first (against the intended re-exported API), then wire the dependency + shim to green.
+
+## Review Findings (2026-06-30 12:44)
+
+- [x] `Sources/FoundationModelsRouter/Core/ULID.swift:28` — The new init?(_ string: String) parses ULID strings using a case-insensitive format (Crockford base32 per spec), but no test verifies lowercase input is accepted. roundTrip() only exercises the canonical uppercase form, leaving the format's case-insensitive contract unverified. Add one assertion in roundTrip() verifying lowercase round-trips identically—e.g., #expect(ULID(ulid.description.lowercased()) == ulid). RESOLVED (2026-06-30): added a full lowercase round-trip in roundTrip() covering both directions — `#expect(ULID(lowercase) == ulid)` (decode) and `#expect(ULID(lowercase)?.description == text)` (re-encode to canonical uppercase). Test-only change; shim untouched. `swift test --filter ULIDTests` → 3/3 green.
