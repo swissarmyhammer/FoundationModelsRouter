@@ -36,7 +36,7 @@ comments:
   id: 01kwcksv42ky4t50y9g2yzn922
   text: Resolved all 12 review findings. Package.swift now declares two top-level constants (let mlxPackage = "mlx-swift-lm", let packageName = "FoundationModelsRouter") and references them everywhere — product packages, dependency URL (interpolated), package/library/target names, and all path + test-target-name strings (interpolated). grep of Package.swift finds the literals only in their two declarations. swift build green, swift test green (Bootstrap import/link test passed; integration test skipped as designed). Package.resolved unchanged — resolution identical.
   timestamp: 2026-06-30T15:54:10.946712+00:00
-position_column: doing
+position_column: done
 position_ordinal: '80'
 title: Bootstrap Swift package + MLX fork dependency
 ---
