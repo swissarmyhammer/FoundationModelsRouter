@@ -47,6 +47,15 @@ comments:
 
     Verification: swift build clean (only the unrelated mlx-swift_Cmlx.bundle infra warning); `swift test --filter ResolveTests` = 8/8 green; full `swift test` = 55 + 1 gated, all green. Advisory double-check returned PASS. Left in `doing` for review.
   timestamp: 2026-06-30T20:48:51.689800+00:00
+- actor: wballard
+  id: 01kwd5bqm4m24p162fcbg62tj5
+  text: |-
+    Resolved Review Finding (2026-06-30 15:50): unified downloadLLM/downloadEmbedder into a single generic helper `download<C>(_:slot:progress:load:)` in Router.swift. It runs the shared beginDownload prelude then delegates to a passed-in `load` closure; call sites in resolve pass `{ loader.loadLLM($0, slot: $1, context: def.context, reporting: $2) }` for the two generation slots and `{ loader.loadEmbedder($0, slot: $1, reporting: $2) }` for embedding. Both near-verbatim wrappers are now gone (no duplicated body left). C is inferred as the concrete container existential per call site (LoadedLLMContainer / LoadedEmbeddingContainer) and flows unchanged into finalize/buildProfile — Sendable-bound generic design preserved.
+
+    One compiler subtlety: the reporter parameter inside the load closure was implicitly non-escaping, so loadLLM/loadEmbedder (which require @escaping) rejected it. Fix: declared the nested reporter param @escaping in the closure type — `load: (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void) async throws -> C`. Not a contradiction; unification succeeded with identical behavior.
+
+    Tests green: `swift test --filter ResolveTests` 8/8; full `swift test` 55 passed + 1 gated integration suite skipped (milestone 7).
+  timestamp: 2026-06-30T21:01:02.980968+00:00
 depends_on:
 - 01KWC5CDXEMC7DBSV8JV81ECY9
 - 01KWC5DK4AXYHFBK2TJRPK88KW
@@ -96,3 +105,7 @@ The `Router` actor and its async `resolve`, wiring host profile + repo metadata 
 - [x] `Sources/FoundationModelsRouter/Router.swift:37` — The `maxConcurrentForks` property is stored but never referenced in any method, test, or caller within the provided files; while the docstring indicates 'enforced later', there is no explicit forward marker (named milestone or follow-up task) like `recordingLevel` and `redact` have ('milestone 10b'). Update the docstring to explicitly name the milestone or task that will enforce fork-session limiting with this property (e.g., 'enforced in milestone X'), or delete the property to remove dead-code ambiguity.
 - [x] `Sources/FoundationModelsRouter/Router.swift:313` — downloadEmbedder method is nearly verbatim identical to downloadLLM, differing only in calling loader.loadEmbedder vs loader.loadLLM and the context parameter. Both perform identical slot state setting and progress reporter setup. Extract a shared helper method parameterized by which loader method to call, eliminating the duplicated slot state transition and parameter structure.
 - [x] `Tests/FoundationModelsRouterTests/ResolveTests.swift:96` — StubModelLoader.loadEmbedder is nearly verbatim identical to loadLLM, differing only in which ref list to append to and which stub container type to return. Both follow identical observation, reporting, and container creation logic. Extract a shared helper method parameterized by the ref list to append to and stub container type/factory to return, eliminating the nearly identical method bodies.
+
+## Review Findings (2026-06-30 15:50)
+
+- [x] `Sources/FoundationModelsRouter/Router.swift:211` — downloadLLM and downloadEmbedder are near-verbatim copies differing only in return type, loader method name, and parameters to the loader. Both follow the identical pattern of calling beginDownload then delegating to a loader method — extract into a shared function. Extract a shared generic function parameterized by the loader method and return type, or define a wrapper that unifies the two load paths.

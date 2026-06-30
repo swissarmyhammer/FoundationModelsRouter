@@ -144,9 +144,15 @@ public actor Router {
 
         do {
             await setPhase(.downloading, progress)
-            let standardContainer = try await downloadLLM(resolution.standard, slot: .standard, def: def, progress: progress)
-            let flashContainer = try await downloadLLM(resolution.flash, slot: .flash, def: def, progress: progress)
-            let embeddingContainer = try await downloadEmbedder(resolution.embedding, slot: .embedding, def: def, progress: progress)
+            let standardContainer = try await download(resolution.standard, slot: .standard, progress: progress) {
+                try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
+            }
+            let flashContainer = try await download(resolution.flash, slot: .flash, progress: progress) {
+                try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
+            }
+            let embeddingContainer = try await download(resolution.embedding, slot: .embedding, progress: progress) {
+                try await loader.loadEmbedder($0, slot: $1, reporting: $2)
+            }
 
             await setPhase(.loading, progress)
             try await finalize(.standard, container: standardContainer, progress: progress)
@@ -279,26 +285,31 @@ public actor Router {
         return Self.reporter(slot: slot, progress: progress)
     }
 
-    /// Downloads and loads the chosen generation model for a slot.
-    private func downloadLLM(
+    /// Downloads and loads the chosen model for a slot through the given loader
+    /// call: runs the shared ``beginDownload(_:progress:)`` prelude, then hands
+    /// the ref, slot, and byte-progress reporter to `load`.
+    ///
+    /// The container type `C` is inferred from the loader call at each site —
+    /// ``LoadedLLMContainer`` for the generation slots, ``LoadedEmbeddingContainer``
+    /// for the embedding slot — so the generation and embedding load paths share
+    /// one body and differ only in the closure passed in.
+    ///
+    /// - Parameters:
+    ///   - chosen: The chosen model reference.
+    ///   - slot: The slot the model is being loaded for.
+    ///   - progress: The progress to mark downloading before loading.
+    ///   - load: The loader call producing the resident container, invoked with
+    ///     the ref, slot, and a best-effort download-progress reporter.
+    /// - Returns: The resident container produced by `load`.
+    /// - Throws: Any error thrown by `load`.
+    private func download<C>(
         _ chosen: ModelRef,
         slot: ModelSlot,
-        def: ProfileDefinition,
-        progress: ResolutionProgress
-    ) async throws -> any LoadedLLMContainer {
+        progress: ResolutionProgress,
+        load: (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void) async throws -> C
+    ) async throws -> C {
         let reporting = await beginDownload(slot, progress: progress)
-        return try await loader.loadLLM(chosen, slot: slot, context: def.context, reporting: reporting)
-    }
-
-    /// Downloads and loads the chosen embedding model for a slot.
-    private func downloadEmbedder(
-        _ chosen: ModelRef,
-        slot: ModelSlot,
-        def: ProfileDefinition,
-        progress: ResolutionProgress
-    ) async throws -> any LoadedEmbeddingContainer {
-        let reporting = await beginDownload(slot, progress: progress)
-        return try await loader.loadEmbedder(chosen, slot: slot, reporting: reporting)
+        return try await load(chosen, slot, reporting)
     }
 
     /// Preloads a downloaded container and marks its slot ready.
