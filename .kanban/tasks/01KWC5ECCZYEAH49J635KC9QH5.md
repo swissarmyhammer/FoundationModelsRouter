@@ -25,8 +25,8 @@ comments:
   timestamp: 2026-06-30T19:04:25.977258+00:00
 depends_on:
 - 01KWC5BTMHH3K50437WBVFG9NT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8780'
 title: 'Recording substrate: TranscriptRecorder protocol + sinks + event model'
 ---
 ## What
