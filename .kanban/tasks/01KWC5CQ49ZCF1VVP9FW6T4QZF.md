@@ -1,8 +1,25 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwcw3zzyqkvwg12pahsqsp6b
+  text: |-
+    Implemented milestone-2 footprint math TDD-style.
+
+    Sources/FoundationModelsRouter/Sizing/Footprint.swift — pure value struct (Sendable, Equatable), no I/O, no MLX:
+    - Stored resolved fields: weightBytes, layers, kvHeads, headDim.
+    - Designated init takes resolved values; a config-shaped init applies the two fallbacks (GQA: numKeyValueHeads ?? numAttentionHeads; head-dim: head_dim ?? hidden_size/num_attention_heads).
+    - kvBytes(context:) = 2(K+V) * layers * context * kvHeads * headDim * 2(fp16). Named constants keyValueTensors/cacheElementBytes.
+    - footprint(context:) = weightBytes + kvBytes. NO x1.2 margin (left for fit step, per plan).
+    - embedder(weightBytes:) factory: zero KV dims so kvBytes==0 and footprint==weightBytes via a single code path (no autoregressive cache).
+
+    Tests/FoundationModelsRouterTests/FootprintTests.swift (Swift Testing, 7 tests): hand-computed kvBytes (2/4/8 arch, ctx 16 => 4096); footprint = weights+KV; monotonicity over an explicitly-typed [Int] context array; GQA fallback equals explicit MHA; GQA<MHA; head-dim fallback from hidden_size; embedder = weightBytes with KV term 0.
+
+    Verified RED first (cannot find type 'Footprint'), then GREEN. swift test --filter FootprintTests => 7/7 pass. Full swift test => 20 pass + 1 gated integration skip. DEVELOPER_DIR=Xcode-beta. Left in doing for review.
+  timestamp: 2026-06-30T18:19:32.222155+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
-position_column: todo
-position_ordinal: '8480'
+position_column: doing
+position_ordinal: '80'
 title: Footprint math (milestone 2)
 ---
 ## What

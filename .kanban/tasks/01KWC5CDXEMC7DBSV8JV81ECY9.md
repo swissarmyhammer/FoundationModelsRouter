@@ -12,8 +12,8 @@ comments:
   timestamp: 2026-06-30T17:58:43.994375+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8480'
 title: Host profiling + budget + disk cache (milestone 1)
 ---
 ## What
