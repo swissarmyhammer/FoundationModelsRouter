@@ -41,3 +41,8 @@ Measure the machine once and compute the RAM budget; cache to disk keyed by `(ch
 
 ## Workflow
 - Use `/tdd` — write failing budget + cache tests with injected specs first.
+
+## Review Findings (2026-06-30 13:01)
+
+- [x] `Sources/FoundationModelsRouter/Sizing/HostProfile.swift:36` — First line of documentation for `recommendedMaxWorkingSetSize` is verbatim copy of protocol definition (line 17); near-verbatim duplication where both start identically but provide different specifics. Remove the duplicated opening line from struct documentation or consolidate; keep only the implementation-specific details (protocol specifies the contract, struct documents how it's obtained).
+- [x] `Tests/FoundationModelsRouterTests/HostProfileTests.swift:62` — Setup code for temp directory and cache instantiation is verbatim duplicate of cacheRoundTrip test (lines 48-50); identical three-line blocks create maintenance burden when changes are needed. Extract this setup pattern into a helper method, e.g. `private func makeCacheDir() -> (HostProfileCache, URL)` that returns the cache instance and defers cleanup, eliminating the duplication and making the test logic clearer.

@@ -60,9 +60,8 @@ struct HostProfileTests {
 
     @Test("a profile persists to and reloads from the cache dir unchanged")
     func cacheRoundTrip() throws {
-        let dir = Self.makeTempDir()
+        let (cache, dir) = Self.makeCache()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let cache = HostProfileCache(cacheDir: dir)
 
         let profile = HostProfile(
             chip: "Apple M1 Pro",
@@ -80,9 +79,8 @@ struct HostProfileTests {
 
     @Test("the cache key distinguishes different (chip, totalRAM) machines")
     func cacheKeySeparation() throws {
-        let dir = Self.makeTempDir()
+        let (cache, dir) = Self.makeCache()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let cache = HostProfileCache(cacheDir: dir)
 
         let m1 = HostProfile(chip: "Apple M1", totalRAM: 16 * Self.gb, recommendedMaxWorkingSetSize: 11 * Self.gb)
         let m2 = HostProfile(chip: "Apple M2", totalRAM: 16 * Self.gb, recommendedMaxWorkingSetSize: 11 * Self.gb)
@@ -95,6 +93,13 @@ struct HostProfileTests {
         #expect(try cache.load(chip: "Apple M1", totalRAM: 16 * Self.gb) == m1)
         #expect(try cache.load(chip: "Apple M2", totalRAM: 16 * Self.gb) == m2)
         #expect(try cache.load(chip: "Apple M1", totalRAM: 64 * Self.gb) == m1Big)
+    }
+
+    /// Creates a cache over a fresh temporary directory, returning both so the
+    /// caller can remove the directory when the test finishes.
+    private static func makeCache() -> (cache: HostProfileCache, dir: URL) {
+        let dir = makeTempDir()
+        return (HostProfileCache(cacheDir: dir), dir)
     }
 
     /// Creates a unique temporary directory for cache tests.

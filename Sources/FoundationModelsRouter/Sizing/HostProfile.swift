@@ -27,14 +27,13 @@ public protocol MachineProbe: Sendable {
 /// the type is pure data — `Sendable` and `Codable` — with no dependency on the
 /// hardware it describes, so it serializes and round-trips cleanly.
 public struct HostProfile: Sendable, Codable, Equatable {
-    /// The chip / machine identifier, e.g. `"Apple M3 Max"`.
+    /// The chip / machine identifier.
     public let chip: String
 
     /// Total physical RAM in bytes.
     public let totalRAM: Int64
 
-    /// The GPU working set the system is willing to back, in bytes
-    /// (≈ 70–75% of RAM on Apple Silicon).
+    /// The GPU working set in bytes; typically ≈ 70–75% of RAM on Apple Silicon.
     public let recommendedMaxWorkingSetSize: Int64
 
     /// Creates a host profile from explicit measurements.
