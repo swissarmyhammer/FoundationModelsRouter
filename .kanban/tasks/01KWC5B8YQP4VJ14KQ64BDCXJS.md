@@ -1,5 +1,38 @@
 ---
-position_column: todo
+comments:
+- actor: wballard
+  id: 01kwcjmz03rzkjmznx6whgcryd
+  text: 'Picked up by /finish (scoped-batch, first ready task). Host verified: Swift 6.4, macOS 27.0, arm64 — stack is buildable here. Iteration 1: delegating to /implement. Note: this task resolves the swissarmyhammer/mlx-swift-lm `mlx-foundationmodels` branch dep (PR #334, pre-merge) and needs network access to fetch it.'
+  timestamp: 2026-06-30T15:34:02.499496+00:00
+- actor: wballard
+  id: 01kwck10kxgvw1fxy8gddywrgt
+  text: |-
+    GREEN in doing. Bootstrap complete via TDD (wrote BootstrapTests import smoke test, watched it fail on missing sources, then created Package.swift + module).
+
+    Built:
+    - Package.swift (swift-tools 6.1), platforms [.macOS(\"27.0\")], branch dep on swissarmyhammer/mlx-swift-lm@mlx-foundationmodels. All 6 MLX product names confirmed against the fork's Package.swift and verified to compile: MLXLMCommon, MLXLLM, MLXEmbedders, MLXHuggingFace, MLXFoundationModels, MLXGuidedGeneration. Fork uses a default-on package trait `FoundationModelsIntegration` (gates MLXFoundationModels on macOS 27) — picked up automatically via default traits.
+    - Sources/FoundationModelsRouter/FoundationModelsRouter.swift (module marker: `public let moduleName`). Plan dir layout created: Core/ Sizing/ Resolution/ Session/ Concurrency/ Guided/ Recording/ each with a .gitkeep (SwiftPM emits no unhandled-files warning for them).
+    - Tests/FoundationModelsRouterTests/BootstrapTests.swift (Swift Testing @Test: @testable import + all 6 MLX imports; compilation is the real assertion).
+    - Tests/FoundationModelsRouterIntegrationTests/ placeholder target (one .disabled @Test, gated suite lands in milestone 7).
+    - Package.resolved committed (un-ignored in .gitignore); pins mlx-swift-lm to revision e6ccd2721ab3b236b92e436bee2130086f48041c. (Note: task mentioned tip 234787d; current branch HEAD is e6ccd27.)
+
+    CRITICAL ENV NOTE for next agent / CI: the active developer dir is Command Line Tools, which has no `metal` compiler, so a bare `swift build` FAILS compiling mlx-swift's Metal shaders (error: unable to spawn process 'metal'). Fix applied: build/test with `export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`, AND the Metal Toolchain component had to be downloaded once via `xcodebuild -downloadComponent MetalToolchain` (838MB, no sudo needed). With that in place both succeed:
+    - `swift build` -> Build complete (exit 0).
+    - `swift test` -> 1 test passed (Bootstrap), 1 skipped (Integration placeholder), 0 failures.
+    Only build warning is from the upstream mlx-swift bundle graph (\"missing creator for mutated node\"), not our package.
+  timestamp: 2026-06-30T15:40:37.373123+00:00
+- actor: wballard
+  id: 01kwck5wmxwnepk3282k8cpgcb
+  text: 'really-done: adversarial double-check returned PASS. All 7 acceptance criteria verified against a fresh green `swift build` + `swift test` (with DEVELOPER_DIR set). Two advisory notes, both non-defects: (1) the whole package is still untracked in git — the commit step must explicitly `git add` Package.swift, Package.resolved, Sources/ (incl .gitkeep files), Tests/, and the .gitignore change, since `git commit -am` would miss untracked files; (2) pinned commit e6ccd27 differs from plan.md''s cited tip 234787d — expected, Package.resolved correctly pins the current branch HEAD. Task is GREEN, left in `doing` for /review.'
+  timestamp: 2026-06-30T15:43:17.149713+00:00
+- actor: wballard
+  id: 01kwck7j76exta33fhm3155x2d
+  text: |-
+    Iteration 1 implement landed GREEN in doing (double-check PASS). `swift build` → Build complete; `swift test` → 1 passed, 1 skipped (integration placeholder), 0 failures. Pinned mlx-swift-lm @ e6ccd27.
+
+    CRITICAL BUILD ENV (applies to every future task in this repo): a bare `swift build` FAILS — active xcode-select is CommandLineTools which lacks `metal`, so mlx-swift Metal shaders won't compile. Must `export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer` (Metal Toolchain already downloaded on this host). Test gate for this iteration = implementer's fresh green swift test. Proceeding to checkpoint commit + review.
+  timestamp: 2026-06-30T15:44:12.006323+00:00
+position_column: doing
 position_ordinal: '80'
 title: Bootstrap Swift package + MLX fork dependency
 ---
