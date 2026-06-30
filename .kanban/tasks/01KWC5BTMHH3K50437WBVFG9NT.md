@@ -28,8 +28,8 @@ comments:
   timestamp: 2026-06-30T16:24:59.950162+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8180'
 title: ULID value type (time-sortable id)
 ---
 ## What

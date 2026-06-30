@@ -1,8 +1,13 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwcp4mr4cr76k7n7ptmdkbq0
+  text: 'Implemented core value types TDD-style. Wrote failing CoreTypesTests.swift first (RED: types not in scope), then added four files under Sources/FoundationModelsRouter/Core/: ModelRef.swift (Sendable/Hashable/ExpressibleByStringLiteral/Codable; parses "repo@rev" on first ''@''; singleValueContainer Codable of canonical string form, matching ULID.swift convention), ModelSlot.swift (enum standard/flash/embedding), ProfileDefinition.swift (Sendable struct, public init with context defaulting to defaultContext=8192), JSONValue.swift (Sendable/Equatable/Codable; custom Codable encoding native JSON per case via singleValueContainer). GREEN: swift test --filter CoreTypesTests = 5/5 pass; full suite = 13/13 pass, no regressions, no warnings. Build env DEVELOPER_DIR=Xcode-beta. Left in doing for review.'
+  timestamp: 2026-06-30T16:35:02.020127+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
-position_column: todo
-position_ordinal: '8280'
+position_column: doing
+position_ordinal: '80'
 title: 'Core value types: ModelRef, ModelSlot, ProfileDefinition, JSONValue'
 ---
 ## What
