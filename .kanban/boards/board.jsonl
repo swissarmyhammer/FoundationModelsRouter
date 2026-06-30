@@ -1,0 +1,1 @@
+{"id":"01KWC56ZM0WSYYF2V3W09E6JR3","timestamp":"2026-06-30T11:39:12.896461Z","op":"create","item_id":"board","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1 @@\n+name: Untitled Board\n","reverse_patch":"--- original\n+++ modified\n@@ -1 +0,0 @@\n-name: Untitled Board\n","transaction_id":null}
