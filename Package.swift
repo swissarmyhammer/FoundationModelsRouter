@@ -4,8 +4,9 @@
 import PackageDescription
 
 // Repeated identifiers extracted to named constants so the manifest has a single
-// source of truth: the dependency package name and this package's own name.
+// source of truth: the dependency package names and this package's own name.
 let mlxPackage = "mlx-swift-lm"
+let ulidPackage = "ULID.swift"
 let packageName = "FoundationModelsRouter"
 
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
@@ -19,6 +20,11 @@ let mlxProducts: [Target.Dependency] = [
     .product(name: "MLXFoundationModels", package: mlxPackage),
     .product(name: "MLXGuidedGeneration", package: mlxPackage),
 ]
+
+// Time-sortable identifier library (yaslab/ULID.swift). Our `Core/ULID.swift`
+// re-exports this module and adds a thin compatibility shim, so the router's
+// `ULID` API surface stays the same while correctness lives in the library.
+let ulidProduct: Target.Dependency = .product(name: "ULID", package: ulidPackage)
 
 let package = Package(
     name: packageName,
@@ -36,12 +42,16 @@ let package = Package(
         .package(
             url: "https://github.com/swissarmyhammer/\(mlxPackage)",
             branch: "mlx-foundationmodels"
-        )
+        ),
+        .package(
+            url: "https://github.com/yaslab/\(ulidPackage).git",
+            from: "1.3.1"
+        ),
     ],
     targets: [
         .target(
             name: packageName,
-            dependencies: mlxProducts,
+            dependencies: mlxProducts + [ulidProduct],
             path: "Sources/\(packageName)"
         ),
         .testTarget(

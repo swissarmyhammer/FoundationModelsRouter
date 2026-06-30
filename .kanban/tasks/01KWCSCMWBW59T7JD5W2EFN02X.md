@@ -1,9 +1,17 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwcsvg3apeg6xm44f2zev4jb
+  text: |-
+    Implemented via TDD. Replaced hand-rolled Core/ULID.swift with yaslab/ULID.swift (resolved & pinned at 1.3.1 in Package.resolved). Package.swift adds the dependency via a top-level `ulidPackage`/`ulidProduct` constant style matching the existing manifest, and the product is on the FoundationModelsRouter target deps. Core/ULID.swift is now `@_exported import ULID` plus a thin shim: `static func generate() -> ULID { ULID() }` and `init?(_ string:) { self.init(ulidString:) }`. Sendable/Hashable/Comparable/Codable/CustomStringConvertible all come from the library, no reimplementation. Tests trimmed to a 3-test smoke suite (generate->26-char round-trip via ULID(_:), deterministic timestamp ordering via init(timestamp:generator:), Codable round-trip). No downstream code referenced ULID yet (grep confirmed), so no callers needed editing. swift build + swift test both green (DEVELOPER_DIR=Xcode-beta): 9 tests/3 suites + gated integration suite all pass.
+
+    Note: the MCP `files` write op silently no-ops in this environment (returns stale content); wrote files via shell heredoc instead.
+  timestamp: 2026-06-30T17:39:56.650660+00:00
 depends_on:
 - 01KWC5B8YQP4VJ14KQ64BDCXJS
 - 01KWC5BTMHH3K50437WBVFG9NT
-position_column: todo
-position_ordinal: '9380'
+position_column: doing
+position_ordinal: '80'
 title: Replace hand-rolled ULID with yaslab/ULID.swift library
 ---
 ## What
