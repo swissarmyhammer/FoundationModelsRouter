@@ -275,19 +275,9 @@ public actor Router {
 
     // MARK: - Download & load
 
-    /// Marks a slot downloading and vends its byte-progress reporter — the shared
-    /// prelude both model kinds run before handing off to the loader.
-    private func beginDownload(
-        _ slot: ModelSlot,
-        progress: ResolutionProgress
-    ) async -> @Sendable (DownloadProgress) -> Void {
-        await setSlotState(slot, .downloading, progress: progress)
-        return Self.reporter(slot: slot, progress: progress)
-    }
-
     /// Downloads and loads the chosen model for a slot through the given loader
-    /// call: runs the shared ``beginDownload(_:progress:)`` prelude, then hands
-    /// the ref, slot, and byte-progress reporter to `load`.
+    /// call: marks the slot downloading, then hands the ref, slot, and
+    /// byte-progress reporter to `load`.
     ///
     /// The container type `C` is inferred from the loader call at each site —
     /// ``LoadedLLMContainer`` for the generation slots, ``LoadedEmbeddingContainer``
@@ -308,7 +298,8 @@ public actor Router {
         progress: ResolutionProgress,
         load: (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void) async throws -> C
     ) async throws -> C {
-        let reporting = await beginDownload(slot, progress: progress)
+        await setSlotState(slot, .downloading, progress: progress)
+        let reporting = Self.reporter(slot: slot, progress: progress)
         return try await load(chosen, slot, reporting)
     }
 

@@ -56,6 +56,10 @@ comments:
 
     Tests green: `swift test --filter ResolveTests` 8/8; full `swift test` 55 passed + 1 gated integration suite skipped (milestone 7).
   timestamp: 2026-06-30T21:01:02.980968+00:00
+- actor: wballard
+  id: 01kwd65py3e5e56jke6mwfjq1g
+  text: 'Resolved 2026-06-30 16:03 finding: inlined `beginDownload`''s body into `download<C>` and deleted the single-caller wrapper. `download<C>` now does `await setSlotState(slot, .downloading, ...)` then `let reporting = Self.reporter(...)` then `return try await load(...)` — byte-identical behavior, same transition/reporter/order. Updated `download<C>`''s docstring to drop the `beginDownload` reference. No new duplication; RoutedLLM/flash construction untouched. `swift test --filter ResolveTests` green (8/8); full `swift test` green (55/55 + gated integration skips).'
+  timestamp: 2026-06-30T21:15:14.243380+00:00
 depends_on:
 - 01KWC5CDXEMC7DBSV8JV81ECY9
 - 01KWC5DK4AXYHFBK2TJRPK88KW
@@ -109,3 +113,7 @@ The `Router` actor and its async `resolve`, wiring host profile + repo metadata 
 ## Review Findings (2026-06-30 15:50)
 
 - [x] `Sources/FoundationModelsRouter/Router.swift:211` — downloadLLM and downloadEmbedder are near-verbatim copies differing only in return type, loader method name, and parameters to the loader. Both follow the identical pattern of calling beginDownload then delegating to a loader method — extract into a shared function. Extract a shared generic function parameterized by the loader method and return type, or define a wrapper that unifies the two load paths.
+
+## Review Findings (2026-06-30 16:03)
+
+- [x] `Sources/FoundationModelsRouter/Router.swift:280` — After this delta unified `downloadLLM`/`downloadEmbedder` into the generic `download<C>`, `beginDownload` is now a single-caller helper — its only caller is `download<C>` (line 311). Its 2-line body (the `setSlotState(.downloading)` call plus returning the byte-progress reporter) no longer warrants its own function now that the two former callers have collapsed to one. Inline the body of `beginDownload` into `download<C>` to eliminate the single-caller wrapper.
