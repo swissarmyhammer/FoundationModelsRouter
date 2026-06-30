@@ -32,6 +32,10 @@ comments:
 
     CRITICAL BUILD ENV (applies to every future task in this repo): a bare `swift build` FAILS — active xcode-select is CommandLineTools which lacks `metal`, so mlx-swift Metal shaders won't compile. Must `export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer` (Metal Toolchain already downloaded on this host). Test gate for this iteration = implementer's fresh green swift test. Proceeding to checkpoint commit + review.
   timestamp: 2026-06-30T15:44:12.006323+00:00
+- actor: wballard
+  id: 01kwcksv42ky4t50y9g2yzn922
+  text: Resolved all 12 review findings. Package.swift now declares two top-level constants (let mlxPackage = "mlx-swift-lm", let packageName = "FoundationModelsRouter") and references them everywhere — product packages, dependency URL (interpolated), package/library/target names, and all path + test-target-name strings (interpolated). grep of Package.swift finds the literals only in their two declarations. swift build green, swift test green (Bootstrap import/link test passed; integration test skipped as designed). Package.resolved unchanged — resolution identical.
+  timestamp: 2026-06-30T15:54:10.946712+00:00
 position_column: doing
 position_ordinal: '80'
 title: Bootstrap Swift package + MLX fork dependency
@@ -61,3 +65,21 @@ Create the SwiftPM package that everything else builds on. Greenfield — no `Pa
 
 ## Workflow
 - Use `/tdd` — write the failing import/build smoke test first, then make it pass.
+
+## Review Findings (2026-06-30 10:45)
+
+- [x] `Package.swift:10` — The package name "mlx-swift-lm" is hardcoded and repeated 6 times in the mlxProducts array (lines 10-15), creating maintenance burden if the dependency name changes. Extract to a named constant: let mlxPackageName = "mlx-swift-lm" and reuse it in each product.
+- [x] `Package.swift:11` — Repeated package name literal; part of the 6-fold repetition of "mlx-swift-lm". Use the extracted named constant.
+- [x] `Package.swift:12` — Repeated package name literal; part of the 6-fold repetition of "mlx-swift-lm". Use the extracted named constant.
+- [x] `Package.swift:13` — Repeated package name literal; part of the 6-fold repetition of "mlx-swift-lm". Use the extracted named constant.
+- [x] `Package.swift:14` — Repeated package name literal; part of the 6-fold repetition of "mlx-swift-lm". Use the extracted named constant.
+- [x] `Package.swift:15` — Repeated package name literal; part of the 6-fold repetition of "mlx-swift-lm". Use the extracted named constant.
+- [x] `Package.swift:19` — The package name "FoundationModelsRouter" is hardcoded and repeated 6 times throughout the Package definition (lines 19, 26, 27, 38, 44, 51), creating maintenance burden if the package name changes. Extract to a named constant at the top of the file and reuse it.
+- [x] `Package.swift:26` — Repeated package name literal; part of the 6-fold repetition of "FoundationModelsRouter". Use the extracted named constant.
+- [x] `Package.swift:27` — Repeated package name literal; part of the 6-fold repetition of "FoundationModelsRouter". Use the extracted named constant.
+- [x] `Package.swift:38` — Repeated package name literal; part of the 6-fold repetition of "FoundationModelsRouter". Use the extracted named constant.
+- [x] `Package.swift:44` — Repeated package name literal; part of the 6-fold repetition of "FoundationModelsRouter". Use the extracted named constant.
+- [x] `Package.swift:51` — Repeated package name literal; part of the 6-fold repetition of "FoundationModelsRouter". Use the extracted named constant.
+
+## Resolution (2026-06-30)
+Extracted two top-level `let` constants in `Package.swift` — `let mlxPackage = "mlx-swift-lm"` and `let packageName = "FoundationModelsRouter"` — and referenced them at every site, including the dependency URL and all target/path names via string interpolation. A grep of `Package.swift` now finds the literals ONLY in their two constant declarations (zero recurrences elsewhere). `swift build` and `swift test` both green; `Package.resolved` unchanged (same package, same products — resolution unaffected).
