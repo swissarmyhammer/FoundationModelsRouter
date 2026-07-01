@@ -114,29 +114,16 @@ extension Grammar {
                 found.insert(key)
             }
             if subschemaMapKeywords.contains(key) {
-                // The value's keys are names; only its values are subschemas.
-                collectFromSubschemaMap(value, into: &found)
+                // The value's keys are property/definition names, not schema
+                // keywords; only its values are subschemas to recurse into.
+                guard let submap = value as? [String: Any] else { continue }
+                for subschema in submap.values {
+                    collectUnsupportedKeywords(in: subschema, into: &found)
+                }
             } else if !instanceDataKeywords.contains(key) {
                 // Instance data is never walked; everything else is a subschema.
                 collectUnsupportedKeywords(in: value, into: &found)
             }
-        }
-    }
-
-    /// Recurses into the *values* of a ``subschemaMapKeywords`` map, whose keys
-    /// are property/definition names rather than schema keywords.
-    ///
-    /// Extracted from ``collectUnsupportedKeywords(in:into:)`` so the main walk
-    /// stays shallow: the map's values are each walked as a subschema, while its
-    /// keys (data) are ignored.
-    ///
-    /// - Parameters:
-    ///   - value: The keyword's value, expected to be a map of names to subschemas.
-    ///   - found: The accumulating set of unsupported keywords encountered.
-    private static func collectFromSubschemaMap(_ value: Any, into found: inout Set<String>) {
-        guard let submap = value as? [String: Any] else { return }
-        for subschema in submap.values {
-            collectUnsupportedKeywords(in: subschema, into: &found)
         }
     }
 }

@@ -55,6 +55,13 @@ comments:
 
     Verification (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer): full `swift test` GREEN — 80 tests / 13 suites passed, plus gated integration target compiles (1 skipped). `swift build` clean; only warning is dependency build-bundle noise in .build (mlx-swift Cmlx.bundle), not our code.
   timestamp: 2026-06-30T23:50:48.126369+00:00
+- actor: wballard
+  id: 01kwdg55csk7szyedz093ggwyg
+  text: |-
+    Resolved review finding (2026-06-30 18:54): inlined single-call-site helper `collectFromSubschemaMap` back into `collectUnsupportedKeywords` in GuidedGeneration.swift, and removed the helper + its doc comment. Kept the explanatory comment about subschema-map keys being property/definition names. Used `guard let submap = value as? [String: Any] else { continue }` so the walk nests `for → if → for` = 3 levels (byte-identical: the subschema-map branch has nothing after it, so continue == fall-through, matching the helper's `guard ... else { return }`). Behavior unchanged — same unsupported-keyword set, same position-aware $ref/allOf/format detection, same handling of genuine properties literally named format/$ref/allOf.
+
+    swift test --filter GuidedGenerationTests → 13/13 green (incl. position-aware cases). Full swift test → 80/80 green + 1 gated integration skip. DEVELOPER_DIR=Xcode-beta.
+  timestamp: 2026-07-01T00:09:42.041111+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 position_column: doing
@@ -97,3 +104,7 @@ Grammar-constrained decoding via xgrammar (`MLXGuidedGeneration`, PR #334): the 
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:111` — Init parameter name `routerID` uses uppercase `ID`, inconsistent with the lowercase `id` parameter and violating Swift conventions. Should be `routerId`. Rename parameter to `routerId`.
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:113` — Init parameter name `parentID` uses uppercase `ID`, inconsistent with the lowercase `id` parameter. Should be `parentId`. Rename parameter to `parentId`.
 - [x] `Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:76` — Static property `configJSON` uses uppercase `JSON`. Per Swift naming conventions, acronyms in camelCase should be lowercase: `configJson`. Rename to `configJson`.
+
+## Review Findings (2026-06-30 18:54)
+
+- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:129` — Needless helper with single call site: `collectFromSubschemaMap` is called exactly once (line 124) and does not name a genuinely confusing expression — the logic (type-check and iterate through subschema map values) is straightforward enough to inline. Inline the function body into the call site in `collectUnsupportedKeywords`. Keep the comment that explains the role of subschema map keys.
