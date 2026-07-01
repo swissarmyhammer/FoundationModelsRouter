@@ -1,9 +1,21 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwf557a2vkcwga036z6vd69n
+  text: |-
+    Renamed our public enum GuidedGenerationError -> GuidedRequestError (all four cases unchanged: unsupportedSchemaConstructs/invalidJsonSchema/emptyGrammar/decodingFailed). Updated every reference (throw sites, catch sites, type annotations, doc comments, test-name strings) in: Sources/Guided/GuidedGeneration.swift, Sources/Guided/Grammar.swift, Sources/Resolution/ModelLoader.swift, Tests/GuidedGenerationTests.swift, Tests/GuidedShapesTests.swift. Grep for GuidedGenerationError across Sources+Tests is now clean.
+
+    Note on the "module-qualify at the live seam for milestone 7" note: searched exhaustively (qualif/shadow/collision/MLXGuidedGeneration/live seam/both modules) — no such collision note exists in the tree. LiveModelLoader.swift imports MLXGuidedGeneration but never referenced our error type by name (its guided decode calls grammar.validateForXGrammar(), which throws the error without naming the type), so there was nothing to update there. Grammar & GuidedShapes left as-is.
+
+    Impl note: MCP files edit replace_all only performed 1 replacement per file (env no-op issue); completed the rename via sed and re-grepped to confirm.
+
+    Verified GREEN with DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer: swift build clean; swift test = 110 tests / 18 suites passed (gated milestone-7 integration test skipped). Both guided suites pass.
+  timestamp: 2026-07-01T15:35:58.530235+00:00
 depends_on:
 - 01KWC5GJM72ASQV4GKXSFPKFFG
 - 01KWC5HV9BBARA3HJA26MMV0YC
-position_column: todo
-position_ordinal: '9480'
+position_column: doing
+position_ordinal: '80'
 title: Rename our GuidedGenerationError to avoid MLX name collision
 ---
 ## What

@@ -47,8 +47,8 @@ depends_on:
 - 01KWC5HV9BBARA3HJA26MMV0YC
 - 01KWC5H7Y7NVG4771FR9ZKW5M0
 - 01KWC606RZSQ521RJY6VK80GA3
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9380'
 title: Gated integration suite with tiny real models (milestone 7)
 ---
 ## What

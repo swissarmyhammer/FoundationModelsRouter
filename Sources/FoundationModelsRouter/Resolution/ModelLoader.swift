@@ -90,7 +90,7 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - grammar: The grammar constraining the output.
     /// - Returns: The constrained text response.
-    /// - Throws: ``GuidedGenerationError`` for an invalid grammar, or if the
+    /// - Throws: ``GuidedRequestError`` for an invalid grammar, or if the
     ///   generation fails.
     func respond(
         to prompt: String,

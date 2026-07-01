@@ -9,7 +9,7 @@ import Foundation
 /// - ``jsonSchema(_:)`` — a standard JSON Schema source string, compiled through
 ///   xgrammar's JSON-schema path. Only the xgrammar-supported subset is accepted;
 ///   constructs that cannot be normalized (`$ref`, `allOf`, `format`) are rejected
-///   with a typed ``GuidedGenerationError`` rather than crashing.
+///   with a typed ``GuidedRequestError`` rather than crashing.
 /// - ``ebnf(_:)`` — a GBNF/EBNF grammar source string, compiled through xgrammar's
 ///   EBNF path, for shapes a JSON schema cannot express.
 ///

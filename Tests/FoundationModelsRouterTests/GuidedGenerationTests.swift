@@ -167,7 +167,7 @@ struct GuidedGenerationTests {
     }
 
     @Test(
-        "unsupported JSON-schema constructs raise a typed GuidedGenerationError",
+        "unsupported JSON-schema constructs raise a typed GuidedRequestError",
         arguments: [
             ("{\"$ref\":\"#/$defs/Y\"}", "$ref"),
             ("{\"allOf\":[{\"type\":\"string\"}]}", "allOf"),
@@ -178,7 +178,7 @@ struct GuidedGenerationTests {
         #expect {
             try Grammar.jsonSchema(schema).validateForXGrammar()
         } throws: { error in
-            guard case let GuidedGenerationError.unsupportedSchemaConstructs(found) = error else {
+            guard case let GuidedRequestError.unsupportedSchemaConstructs(found) = error else {
                 return false
             }
             return found.contains(keyword)
@@ -193,7 +193,7 @@ struct GuidedGenerationTests {
         #expect {
             try Grammar.jsonSchema(schema).validateForXGrammar()
         } throws: { error in
-            guard case let GuidedGenerationError.unsupportedSchemaConstructs(found) = error else {
+            guard case let GuidedRequestError.unsupportedSchemaConstructs(found) = error else {
                 return false
             }
             return found.contains("$ref")
@@ -202,7 +202,7 @@ struct GuidedGenerationTests {
 
     @Test("a JSON-schema grammar that is not valid JSON raises a typed error")
     func invalidJSONRejected() throws {
-        #expect(throws: GuidedGenerationError.self) {
+        #expect(throws: GuidedRequestError.self) {
             try Grammar.jsonSchema("not json at all").validateForXGrammar()
         }
     }
@@ -241,7 +241,7 @@ struct GuidedGenerationTests {
         #expect {
             try Grammar.jsonSchema(schema).validateForXGrammar()
         } throws: { error in
-            guard case let GuidedGenerationError.unsupportedSchemaConstructs(found) = error else {
+            guard case let GuidedRequestError.unsupportedSchemaConstructs(found) = error else {
                 return false
             }
             return found.contains("format")
@@ -316,7 +316,7 @@ struct GuidedGenerationTests {
         let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeGuidedSession(.jsonSchema("{\"$ref\":\"#/$defs/Y\"}"))
-        await #expect(throws: GuidedGenerationError.self) {
+        await #expect(throws: GuidedRequestError.self) {
             _ = try await session.respond(to: "hi")
         }
 
@@ -360,7 +360,7 @@ struct GuidedGenerationTests {
         }
 
         // An unsupported construct is rejected before the deferred seam.
-        await #expect(throws: GuidedGenerationError.self) {
+        await #expect(throws: GuidedRequestError.self) {
             _ = try await container.respond(
                 to: "hi",
                 instructions: nil,

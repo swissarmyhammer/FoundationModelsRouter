@@ -7,7 +7,7 @@ import Foundation
 /// metadata failure, not a crash — so a caller can correct the schema. The
 /// validation that raises these is pure (no GPU), so it runs and is asserted in
 /// the unit suite; real constrained decoding over MLX is gated to milestone 7.
-public enum GuidedGenerationError: Error, Equatable {
+public enum GuidedRequestError: Error, Equatable {
     /// The JSON-schema grammar used xgrammar-unsupported keywords that this layer
     /// cannot normalize (a sorted, de-duplicated subset of `$ref`, `allOf`,
     /// `format`).
@@ -49,7 +49,7 @@ extension Grammar {
         ["enum", "const", "default", "examples"]
 
     /// Validates this grammar against the xgrammar-supported subset, throwing a
-    /// typed ``GuidedGenerationError`` for anything that cannot be compiled.
+    /// typed ``GuidedRequestError`` for anything that cannot be compiled.
     ///
     /// This is the real, GPU-free half of "compiling" a grammar: it parses and
     /// checks the source so unsupported constructs fail loudly here rather than
@@ -57,17 +57,17 @@ extension Grammar {
     /// ``LoadedLLMContainer``'s guided entry point calls this before constraining
     /// decode.
     ///
-    /// - Throws: ``GuidedGenerationError/unsupportedSchemaConstructs(_:)`` for a
+    /// - Throws: ``GuidedRequestError/unsupportedSchemaConstructs(_:)`` for a
     ///   JSON schema using `$ref`/`allOf`/`format`,
-    ///   ``GuidedGenerationError/invalidJsonSchema(_:)`` for a schema that is not
-    ///   valid JSON, or ``GuidedGenerationError/emptyGrammar`` for empty source.
+    ///   ``GuidedRequestError/invalidJsonSchema(_:)`` for a schema that is not
+    ///   valid JSON, or ``GuidedRequestError/emptyGrammar`` for empty source.
     func validateForXGrammar() throws {
         switch self {
         case .jsonSchema(let schema):
             try Grammar.validateJsonSchema(schema)
         case .ebnf(let source):
             guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw GuidedGenerationError.emptyGrammar
+                throw GuidedRequestError.emptyGrammar
             }
         }
     }
@@ -76,23 +76,23 @@ extension Grammar {
     /// found anywhere in the schema tree.
     ///
     /// - Parameter schema: The JSON Schema source string.
-    /// - Throws: ``GuidedGenerationError/invalidJsonSchema(_:)`` when the source
+    /// - Throws: ``GuidedRequestError/invalidJsonSchema(_:)`` when the source
     ///   is not parseable JSON, or
-    ///   ``GuidedGenerationError/unsupportedSchemaConstructs(_:)`` when it uses
+    ///   ``GuidedRequestError/unsupportedSchemaConstructs(_:)`` when it uses
     ///   keywords outside the supported subset.
     private static func validateJsonSchema(_ schema: String) throws {
         let trimmed = schema.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw GuidedGenerationError.emptyGrammar }
+        guard !trimmed.isEmpty else { throw GuidedRequestError.emptyGrammar }
         guard let data = schema.data(using: .utf8),
             let root = try? JSONSerialization.jsonObject(with: data)
         else {
-            throw GuidedGenerationError.invalidJsonSchema(schema)
+            throw GuidedRequestError.invalidJsonSchema(schema)
         }
 
         var found: Set<String> = []
         collectUnsupportedKeywords(in: root, into: &found)
         guard found.isEmpty else {
-            throw GuidedGenerationError.unsupportedSchemaConstructs(found.sorted())
+            throw GuidedRequestError.unsupportedSchemaConstructs(found.sorted())
         }
     }
 
@@ -147,14 +147,14 @@ extension LoadedLLMContainer {
     /// real xgrammar `GuidedGenerationLoop` decode; the unit stubs either inherit
     /// this fallback or override it to return canned constrained text. Either way
     /// the grammar is validated first, so an unsupported grammar fails with a typed
-    /// ``GuidedGenerationError`` before any decode.
+    /// ``GuidedRequestError`` before any decode.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - grammar: The grammar constraining the output.
     /// - Returns: The constrained text response.
-    /// - Throws: ``GuidedGenerationError`` for an invalid grammar, otherwise
+    /// - Throws: ``GuidedRequestError`` for an invalid grammar, otherwise
     ///   ``GenerationError/notWiredForLiveInference`` until milestone 7.
     public func respond(
         to prompt: String,
@@ -186,7 +186,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - prompt: The prompt to respond to.
     ///   - grammar: The grammar constraining the output.
     /// - Returns: The constrained, unparsed text response.
-    /// - Throws: ``GuidedGenerationError`` for an invalid grammar, or any error
+    /// - Throws: ``GuidedRequestError`` for an invalid grammar, or any error
     ///   the model raises during constrained decoding.
     public func respond(to prompt: String, following grammar: Grammar) async throws -> String {
         try await makeGuidedSession(grammar).respond(to: prompt)
@@ -239,13 +239,13 @@ enum GuidedShapes {
     ///
     /// - Parameter raw: The raw constrained output text.
     /// - Returns: The parsed ``JSONValue``.
-    /// - Throws: ``GuidedGenerationError/decodingFailed(_:)`` if `raw` is not
+    /// - Throws: ``GuidedRequestError/decodingFailed(_:)`` if `raw` is not
     ///   parseable JSON.
     static func parse(_ raw: String) throws -> JSONValue {
         guard let data = raw.data(using: .utf8),
             let value = try? JSONDecoder().decode(JSONValue.self, from: data)
         else {
-            throw GuidedGenerationError.decodingFailed(raw)
+            throw GuidedRequestError.decodingFailed(raw)
         }
         return value
     }
@@ -271,8 +271,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - prompt: The prompt to respond to.
     ///   - jsonSchema: The runtime JSON Schema source constraining the output.
     /// - Returns: The schema-valid output parsed into a ``JSONValue``.
-    /// - Throws: ``GuidedGenerationError`` — an xgrammar-subset rejection for an
-    ///   over-spec schema, or ``GuidedGenerationError/decodingFailed(_:)`` if the
+    /// - Throws: ``GuidedRequestError`` — an xgrammar-subset rejection for an
+    ///   over-spec schema, or ``GuidedRequestError/decodingFailed(_:)`` if the
     ///   output does not parse as JSON — or any error the model raises during
     ///   constrained decoding.
     public func respond(to prompt: String, matching jsonSchema: String) async throws -> JSONValue {
@@ -312,13 +312,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         ///   - raw: The raw constrained output text.
         ///   - type: The `Generable` type to decode into.
         /// - Returns: The decoded value of type `T`.
-        /// - Throws: ``GuidedGenerationError/decodingFailed(_:)`` if `raw` is not
+        /// - Throws: ``GuidedRequestError/decodingFailed(_:)`` if `raw` is not
         ///   parseable as `T` — malformed JSON or a shape the type rejects.
         static func decode<T: Generable>(_ raw: String, as type: T.Type) throws -> T {
             do {
                 return try T(GeneratedContent(json: raw))
             } catch {
-                throw GuidedGenerationError.decodingFailed(raw)
+                throw GuidedRequestError.decodingFailed(raw)
             }
         }
     }
@@ -339,9 +339,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         ///   - prompt: The prompt to respond to.
         ///   - type: The `Generable` type to generate and decode into.
         /// - Returns: The decoded value of type `T`.
-        /// - Throws: ``GuidedGenerationError`` — an xgrammar-subset rejection for a
+        /// - Throws: ``GuidedRequestError`` — an xgrammar-subset rejection for a
         ///   schema `T` derives that the subset cannot express, or
-        ///   ``GuidedGenerationError/decodingFailed(_:)`` if the output does not
+        ///   ``GuidedRequestError/decodingFailed(_:)`` if the output does not
         ///   decode into `T` — or any error the model raises during constrained
         ///   decoding.
         public func respond<T: Generable>(

@@ -207,9 +207,9 @@
             #expect(person == Person(name: "Ada", age: 36))
         }
 
-        @Test("a malformed raw-JSON string surfaces a typed GuidedGenerationError")
+        @Test("a malformed raw-JSON string surfaces a typed GuidedRequestError")
         func decodeMalformedRaisesGuidedError() throws {
-            #expect(throws: GuidedGenerationError.self) {
+            #expect(throws: GuidedRequestError.self) {
                 _ = try GuidedShapes.decode("not json at all", as: Person.self)
             }
         }
@@ -224,9 +224,9 @@
             )
         }
 
-        @Test("a malformed dynamic response surfaces a typed GuidedGenerationError")
+        @Test("a malformed dynamic response surfaces a typed GuidedRequestError")
         func dynamicParseMalformedRaisesGuidedError() throws {
-            #expect(throws: GuidedGenerationError.self) {
+            #expect(throws: GuidedRequestError.self) {
                 _ = try GuidedShapes.parse("not json at all")
             }
         }
@@ -285,7 +285,7 @@
             #expect(events.allSatisfy { $0.grammar == Self.objectSchema })
         }
 
-        @Test("respond(to:matching:) with an over-spec schema throws a typed GuidedGenerationError")
+        @Test("respond(to:matching:) with an over-spec schema throws a typed GuidedRequestError")
         @MainActor
         func respondMatchingOverSpecSchemaThrows() async throws {
             let dir = Self.makeTempDir()
@@ -298,7 +298,7 @@
             )
             let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
 
-            await #expect(throws: GuidedGenerationError.self) {
+            await #expect(throws: GuidedRequestError.self) {
                 _ = try await profile.standard.respond(
                     to: "hi",
                     matching: "{\"$ref\":\"#/$defs/Y\"}"
