@@ -8,45 +8,52 @@ private let recordingLogger = Logger(
 )
 
 /// A ``TranscriptRecorder`` that appends each event as one JSON object per line
-/// to `transcript.jsonl` under a directory.
+/// to a `transcript.jsonl`, routing each event to a per-session directory while
+/// keeping one globally monotonic `seq`.
 ///
-/// As an actor it serializes appends, so the `seq` it stamps and the order it
-/// writes lines in agree. Writing is best-effort: the directory and file are
-/// created lazily on first append, the open handle is reused, and any I/O
-/// failure is logged and the event dropped — ``append(_:)`` never throws.
+/// As an actor it serializes appends, so the single `seq` it stamps and the order
+/// lines land in agree across *every* directory it writes: concurrent sessions
+/// and forks appending into their own lineage-nested files still share one total
+/// order. Each event is written to its `directory`'s `transcript.jsonl` (or the
+/// recorder's own ``directory`` when the caller passes `nil`); the open handle
+/// per directory is created lazily and reused. Writing is best-effort: any I/O
+/// failure is logged and the event dropped — ``append(_:to:)`` never throws.
 public actor JSONLRecorder: TranscriptRecorder {
-    /// The directory `transcript.jsonl` is written into.
+    /// The default directory `transcript.jsonl` is written into when an append
+    /// carries no explicit session directory.
     private let directory: URL
-    /// The full path of the transcript file within ``directory``.
-    private let fileURL: URL
     /// The clock used to stamp each event's `ts`.
     private let now: @Sendable () -> Date
     /// Encodes each event to a single compact JSON line (no embedded newlines).
     private let encoder = JSONEncoder()
-    /// The next sequence number to stamp.
+    /// The next sequence number to stamp — global across all directories, so the
+    /// whole recorder is one monotonic log.
     private var seq = 0
-    /// The append handle, opened lazily and reused across appends.
-    private var handle: FileHandle?
+    /// The append handles, one per directory, opened lazily and reused across
+    /// appends and keyed by the directory's standardized path.
+    private var handles: [String: FileHandle] = [:]
 
-    /// Creates a JSONL recorder writing under `directory`.
+    /// Creates a JSONL recorder whose default directory is `directory`.
     ///
     /// - Parameters:
-    ///   - directory: The directory to write `transcript.jsonl` into; created on
-    ///     demand at first append.
+    ///   - directory: The directory to write `transcript.jsonl` into for appends
+    ///     that carry no explicit session directory; created on demand at first
+    ///     append. Per-session appends are written under their own directory.
     ///   - now: The clock used to stamp each event's `ts`.
     public init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         self.directory = directory
-        self.fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
         self.now = now
     }
 
-    /// Stamps and appends an event as one JSON line; logs and drops it on any
-    /// I/O failure.
-    public func append(_ partial: TranscriptEvent.Partial) async {
+    /// Stamps and appends an event as one JSON line into `directory`'s
+    /// `transcript.jsonl` (or the recorder's default directory when `nil`); logs
+    /// and drops it on any I/O failure.
+    public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
+        let target = directory ?? self.directory
         do {
-            let handle = try handleForAppending()
+            let handle = try handleForAppending(in: target)
             var line = try encoder.encode(event)
             line.append(0x0A)
             try handle.write(contentsOf: line)
@@ -57,20 +64,23 @@ public actor JSONLRecorder: TranscriptRecorder {
         }
     }
 
-    /// Returns the reusable append handle, creating the directory and file and
-    /// seeking to the end on first use.
+    /// Returns the reusable append handle for a directory, creating the directory
+    /// and its `transcript.jsonl` and seeking to the end on first use.
     ///
-    /// - Returns: A handle positioned at the end of `transcript.jsonl`.
+    /// - Parameter directory: The directory whose `transcript.jsonl` to append to.
+    /// - Returns: A handle positioned at the end of that file.
     /// - Throws: If the directory or file cannot be created or opened.
-    private func handleForAppending() throws -> FileHandle {
-        if let handle { return handle }
+    private func handleForAppending(in directory: URL) throws -> FileHandle {
+        let key = directory.standardizedFileURL.path
+        if let handle = handles[key] { return handle }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
         if !FileManager.default.fileExists(atPath: fileURL.path) {
             FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: fileURL)
         try handle.seekToEnd()
-        self.handle = handle
+        handles[key] = handle
         return handle
     }
 }
@@ -95,8 +105,9 @@ public actor InMemoryRecorder: TranscriptRecorder {
         self.now = now
     }
 
-    /// Stamps and stores an event.
-    public func append(_ partial: TranscriptEvent.Partial) async {
+    /// Stamps and stores an event; the session directory is ignored since this
+    /// sink keeps a single in-memory log rather than an on-disk layout.
+    public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
         events.append(partial.stamped(seq: seq, ts: now()))
         seq += 1
     }
@@ -112,6 +123,6 @@ public struct NoneRecorder: TranscriptRecorder {
     /// Creates the no-op sink.
     public init() {}
 
-    /// Accepts and discards an event.
-    public func append(_ partial: TranscriptEvent.Partial) async {}
+    /// Accepts and discards an event, ignoring the session directory.
+    public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {}
 }

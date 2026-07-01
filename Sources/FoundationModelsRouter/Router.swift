@@ -1,11 +1,18 @@
 import Foundation
+import os
+
+/// The logger the router reports best-effort manifest write failures to.
+private let manifestLogger = Logger(
+    subsystem: "FoundationModelsRouter",
+    category: "Manifest"
+)
 
 /// How much of a session's activity is recorded.
 ///
 /// The level (and the ``Router``'s `redact` hook) are carried from construction
 /// so the recording seam exists now; the actual enforcement — trimming or
 /// redacting events at record time — lands in milestone 10b.
-public enum RecordingLevel: Sendable {
+public enum RecordingLevel: String, Sendable, Codable, Equatable {
     /// Record nothing.
     case off
     /// Record event metadata (slots, models, metering) but not prompt/response text.
@@ -84,6 +91,13 @@ public actor Router {
     /// suspension so a second ``resolve(_:reporting:)`` entering during the
     /// download/load awaits is rejected rather than racing to over-commit.
     private var resolutionInFlight = false
+
+    /// When the router was constructed — the manifest's run-start instant.
+    private let startedAt = Date()
+
+    /// Every profile resolved during this run, in resolution order, recorded into
+    /// the manifest as each resolve completes.
+    private var resolvedProfiles: [RouterManifest.ResolvedProfile] = []
 
     /// Creates a router.
     ///
@@ -207,6 +221,8 @@ public actor Router {
                 residencyToken: residencyToken
             )
             residentToken = residencyToken
+            recordResolvedProfile(def, resolution: resolution)
+            writeManifest()
             return profile
         } catch {
             // A download/load/preload failure must move the bound progress to
@@ -240,6 +256,60 @@ public actor Router {
         residentToken = nil
         for container in containers {
             await loader.evict(container)
+        }
+    }
+
+    // MARK: - Manifest
+
+    /// Appends a resolved profile to the run's manifest record, capturing which
+    /// concrete models won each slot for this machine.
+    ///
+    /// - Parameters:
+    ///   - def: The authored profile that was resolved, for its name.
+    ///   - resolution: The joint resolution naming the chosen model per slot.
+    private func recordResolvedProfile(_ def: ProfileDefinition, resolution: JointResolution) {
+        resolvedProfiles.append(
+            RouterManifest.ResolvedProfile(
+                definitionName: def.name,
+                standard: resolution.standard,
+                flash: resolution.flash,
+                embedding: resolution.embedding
+            )
+        )
+    }
+
+    /// Writes the run manifest to `recordings/<routerId>/manifest.json`,
+    /// best-effort.
+    ///
+    /// A no-op when the router has no durable transcripts root (recording to
+    /// memory/none). Like transcript appends, a write failure is swallowed rather
+    /// than surfaced, so a manifest problem never fails a resolve. Each call
+    /// rewrites the whole file with the run's config, every profile resolved so
+    /// far, and the current time as the run's end so far.
+    private func writeManifest() {
+        guard let recordingsDir else { return }
+        let manifest = RouterManifest(
+            routerId: id,
+            config: RouterManifest.Config(
+                headroomReserve: headroomReserve,
+                maxConcurrentForks: maxConcurrentForks,
+                recordingLevel: recordingLevel
+            ),
+            profiles: resolvedProfiles,
+            start: startedAt,
+            end: Date()
+        )
+        let directory = recordingsDir.appendingPathComponent(id.description, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("manifest.json", isDirectory: false)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(manifest).write(to: fileURL, options: .atomic)
+        } catch {
+            manifestLogger.error(
+                "failed to write router manifest: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

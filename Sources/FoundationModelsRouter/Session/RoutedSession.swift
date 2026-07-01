@@ -74,10 +74,10 @@ public protocol RoutedSession: Actor {
     /// The child's KV cache **begins as a copy of this session's** (via
     /// ``SessionKVCache/copy()``), so it inherits the prefilled prefix's compute
     /// and then diverges independently rather than replaying the transcript. The
-    /// child takes a fresh id with ``parentId`` set to this session's id and nests
-    /// under the parent regardless of `workingDirectory` (full transcript nesting
-    /// lands in milestone 10, but `parentId` is set here); a guided session's fork
-    /// inherits its ``grammar``. The child retains the ``profile`` so resident
+    /// child takes a fresh id with ``parentId`` set to this session's id and its
+    /// ``recordingDirectory`` nested directly under the parent's, so the on-disk
+    /// transcript tree mirrors the fork lineage regardless of `workingDirectory`;
+    /// a guided session's fork inherits its ``grammar``. The child retains the ``profile`` so resident
     /// models stay alive, and its cache dies with it (ARC) — releasing a fork
     /// frees its KV.
     ///
@@ -146,6 +146,15 @@ actor RoutedSessionActor: RoutedSession {
     /// deallocated. `true` for a fork admitted through ``fork(workingDirectory:)``,
     /// `false` for a root session, which consumes no admission permit.
     private nonisolated let holdsAdmissionPermit: Bool
+
+    /// Whether the session's first-line `session` meta event has been recorded.
+    ///
+    /// The chokepoint emits the meta event lazily, before the first turn's open
+    /// event, so a session that never generates writes no file at all while one
+    /// that does always opens its transcript with a `session` line. Guarded by the
+    /// actor's isolation and flipped before the meta append, so no reentrant turn
+    /// can emit it twice.
+    private var didRecordSessionMeta = false
 
     /// Creates a session. Internal: construction is only via
     /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
@@ -266,12 +275,12 @@ actor RoutedSessionActor: RoutedSession {
         await forkAdmissionGate.wait()
 
         let childId = ULID.generate()
-        // The child nests as a sibling under the same router recording root
-        // (`recordingDirectory` is `<base>/<routerId>/<sessionId>`); full
-        // transcript nesting under the parent lands in milestone 10, but the
-        // lineage is recorded now through `parentId`.
+        // The child's transcript nests directly *under this session's* directory,
+        // so the on-disk tree mirrors the fork lineage: a root session lives at
+        // `<base>/<routerId>/<rootId>/`, its fork at `.../<rootId>/<childId>/`, a
+        // grandfork one level deeper again. Nesting is derived purely from the
+        // parent chain — the child's `workingDirectory` override never moves it.
         let childRecordingDirectory = recordingDirectory
-            .deletingLastPathComponent()
             .appendingPathComponent(childId.description, isDirectory: true)
 
         return RoutedSessionActor(
@@ -302,12 +311,14 @@ actor RoutedSessionActor: RoutedSession {
     /// The whole bracket runs inside the model's per-model serial gate
     /// (``RoutedModel/serialGate``), so concurrent generations on one model —
     /// including from forks that share the gate — queue in FIFO order rather than
-    /// interleave. Inside the gate it records an open event, runs `body`, then
-    /// records a close event — on the success path and on the throwing path alike,
-    /// so a transcript always pairs each open with a close. Rich event provenance
-    /// (token metering, error detail) and lineage nesting land in milestone 10;
-    /// here it proves the bracket emits exactly one open and one close and that
-    /// generations serialize.
+    /// interleave. Inside the gate it first lazily records the session's
+    /// first-line `session` meta event (once per session), then an open `.prompt`
+    /// event, runs `body`, then a close `.response` event — on the success path and
+    /// the throwing path alike, so a transcript always pairs each open with a
+    /// close. Every event is routed to this session's ``recordingDirectory``, so
+    /// the on-disk transcript tree mirrors the fork lineage, and the close event
+    /// carries the turn's measured wall-clock duration (`ms`). The single recorder
+    /// stamps a globally monotonic `seq` at append.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn, stamped
@@ -327,32 +338,59 @@ actor RoutedSessionActor: RoutedSession {
         await serialGate.wait()
         defer { serialGate.signal() }
 
-        await recorder.append(makePartialEvent(kind: .prompt, grammar: grammar))
+        await recordSessionMetaIfNeeded()
+        await append(makePartialEvent(kind: .prompt, grammar: grammar))
+        let started = Date()
         do {
             let result = try await body()
-            await recorder.append(makePartialEvent(kind: .response, grammar: grammar))
+            await append(makePartialEvent(kind: .response, grammar: grammar, since: started))
             return result
         } catch {
-            await recorder.append(makePartialEvent(kind: .response, grammar: grammar))
+            await append(makePartialEvent(kind: .response, grammar: grammar, since: started))
             throw error
         }
     }
 
-    /// Builds a bracket event of the given kind stamped with this session's
-    /// provenance.
+    /// Records the session's first-line `session` meta event the first time this
+    /// session records anything, so a generating session's transcript always opens
+    /// with a `session` line while a session that never generates writes no file.
     ///
-    /// The open (`.prompt`) and close (`.response`) events the chokepoint records
-    /// are identical but for their kind, so both come from this one helper.
+    /// The flag is flipped before the append so a reentrant turn during the meta
+    /// append's suspension cannot emit a second meta event.
+    private func recordSessionMetaIfNeeded() async {
+        guard !didRecordSessionMeta else { return }
+        didRecordSessionMeta = true
+        await append(makePartialEvent(kind: .session, grammar: grammar))
+    }
+
+    /// Appends a partial event through the recorder into this session's own
+    /// transcript directory, so siblings write separate files and the on-disk tree
+    /// mirrors the fork lineage.
+    ///
+    /// - Parameter partial: The event to record, minus its recorder-owned `seq`
+    ///   and `ts`.
+    private func append(_ partial: TranscriptEvent.Partial) async {
+        await recorder.append(partial, to: recordingDirectory)
+    }
+
+    /// Builds an event of the given kind stamped with this session's provenance.
+    ///
+    /// The `session` meta, open (`.prompt`), and close (`.response`) events share
+    /// this one helper; a close event passes `since` to record the turn's measured
+    /// duration.
     ///
     /// - Parameters:
-    ///   - kind: The event kind to stamp — `.prompt` to open, `.response` to
-    ///     close.
+    ///   - kind: The event kind to stamp — `.session` for meta, `.prompt` to open,
+    ///     `.response` to close.
     ///   - grammar: The guided-generation grammar in force, recorded as its
     ///     source, or `nil` for an unconstrained turn.
+    ///   - since: The turn's start instant for a close event, or `nil` to leave
+    ///     `ms` unset (meta and open events).
     /// - Returns: The partial event for the recorder to stamp and append.
     private func makePartialEvent(
         kind: TranscriptEvent.Kind,
-        grammar: Grammar? = nil
+        grammar: Grammar? = nil,
+        since: Date? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
             routerId: routerId,
@@ -361,7 +399,8 @@ actor RoutedSessionActor: RoutedSession {
             slot: slot,
             model: model,
             kind: kind,
-            grammar: grammar?.source
+            grammar: grammar?.source,
+            ms: since.map { Int(Date().timeIntervalSince($0) * 1_000) }
         )
     }
 }

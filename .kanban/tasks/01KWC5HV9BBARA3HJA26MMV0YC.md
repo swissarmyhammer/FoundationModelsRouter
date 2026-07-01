@@ -15,8 +15,8 @@ comments:
 depends_on:
 - 01KWC5GJM72ASQV4GKXSFPKFFG
 - 01KWC5C3B35X6N0DYZJYZ044BE
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9080'
 title: 'Guided generation: typed + dynamic-JSON response shapes (milestone 8b)'
 ---
 ## What

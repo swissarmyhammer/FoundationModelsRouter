@@ -199,8 +199,9 @@ struct SessionChokepointTests {
         #expect(text == Self.cannedText)
 
         let events = await recorder.events
-        #expect(events.count == 2)
-        #expect(events.map(\.kind) == [.prompt, .response])
+        // A first-line `session` meta event precedes the turn's open + close.
+        #expect(events.count == 3)
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.routerId == router.id })
         #expect(events.allSatisfy { $0.sessionId == session.id })
         #expect(events.allSatisfy { $0.slot == .standard })
@@ -226,8 +227,9 @@ struct SessionChokepointTests {
         #expect(collected == Self.cannedText)
 
         let events = await recorder.events
-        #expect(events.count == 2)
-        #expect(events.map(\.kind) == [.prompt, .response])
+        // A first-line `session` meta event precedes the turn's open + close.
+        #expect(events.count == 3)
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
     }
 
     @Test("the chokepoint emits a close event even when the body throws")
@@ -247,8 +249,10 @@ struct SessionChokepointTests {
         }
 
         let events = await recorder.events
-        #expect(events.count == 2)
-        #expect(events.map(\.kind) == [.prompt, .response])
+        // A first-line `session` meta event precedes the turn's open + close,
+        // which is still recorded on the throwing path.
+        #expect(events.count == 3)
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
     }
 
     // MARK: - Profile retention

@@ -23,14 +23,38 @@ import Foundation
 /// let off: NoneRecorder = .none
 /// ```
 public protocol TranscriptRecorder: Sendable {
-    /// Records an event, stamping it with the next monotonic `seq` and the
-    /// current `ts` before it lands in the log.
+    /// Records an event into a specific session directory, stamping it with the
+    /// next monotonic `seq` and the current `ts` before it lands in the log.
+    ///
+    /// A single recorder assigns `seq` and `ts` across *all* directories it is
+    /// asked to write, so the sequence is one globally monotonic total order even
+    /// when concurrent sessions and forks append into their own lineage-nested
+    /// transcript files. The `directory` selects *where* the event is persisted —
+    /// a session passes its ``RoutedSession/recordingDirectory`` — while `seq`
+    /// stays global; a sink that keeps no on-disk layout (in-memory, no-op) simply
+    /// ignores it.
     ///
     /// Best-effort and non-throwing: a persistence failure is logged and the
     /// event dropped, never raised to the caller.
     ///
+    /// - Parameters:
+    ///   - partial: The event to record, minus its `seq` and `ts`.
+    ///   - directory: The session directory to persist the event under, or `nil`
+    ///     to use the recorder's own default location.
+    func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async
+}
+
+extension TranscriptRecorder {
+    /// Records an event into the recorder's default location.
+    ///
+    /// The convenience for callers with no per-session directory — notably the
+    /// embedding path, whose events are not tied to a session — forwarding to
+    /// ``append(_:to:)`` with a `nil` directory.
+    ///
     /// - Parameter partial: The event to record, minus its `seq` and `ts`.
-    func append(_ partial: TranscriptEvent.Partial) async
+    public func append(_ partial: TranscriptEvent.Partial) async {
+        await append(partial, to: nil)
+    }
 }
 
 extension TranscriptRecorder where Self == JSONLRecorder {

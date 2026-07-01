@@ -265,7 +265,7 @@ struct GuidedGenerationTests {
         #expect(text == Self.canned)
 
         let events = await recorder.events
-        #expect(events.map(\.kind) == [.prompt, .response])
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == Self.smallSchema })
     }
 
@@ -301,7 +301,7 @@ struct GuidedGenerationTests {
         #expect(text == Self.canned)
 
         let events = await recorder.events
-        #expect(events.map(\.kind) == [.prompt, .response])
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.allSatisfy { $0.grammar == Self.smallSchema })
     }
 
@@ -320,9 +320,10 @@ struct GuidedGenerationTests {
             _ = try await session.respond(to: "hi")
         }
 
-        // The chokepoint still brackets the failed turn: one open + one close.
+        // The chokepoint still brackets the failed turn: a `session` meta line,
+        // then one open + one close.
         let events = await recorder.events
-        #expect(events.map(\.kind) == [.prompt, .response])
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
     }
 
     @Test("the grammar travels with the session so a milestone-9 fork inherits it")

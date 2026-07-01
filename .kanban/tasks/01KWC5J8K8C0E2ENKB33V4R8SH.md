@@ -1,10 +1,28 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwex1v7c2yzjeqjny9a8rmv3
+  text: |-
+    Implemented milestone 10a (TDD). Summary of the build:
+
+    NESTING (derived from parentId chain): `RoutedSessionActor.fork` now nests the child's `recordingDirectory` directly UNDER the parent's (`recordingDirectory.appendingPathComponent(childId)`), replacing the old flat sibling layout (`deletingLastPathComponent().appending(childId)`). Root stays `<recordingsDir>/<routerId>/<rootId>/` (from makeSession); fork → `.../<rootId>/<childId>/`; grandfork one deeper. `workingDirectory` override never affects `recordingDirectory`.
+
+    RECORDER ROUTING + GLOBAL SEQ: `TranscriptRecorder.append` gained `to directory: URL?` (with a convenience `append(_:)` extension forwarding `to: nil` so the embedder/existing callers are unchanged). `JSONLRecorder` keeps ONE `seq` counter but a `[path: FileHandle]` map, so it routes each event to that session's own `transcript.jsonl` while producing one globally-monotonic seq. InMemory/None ignore the directory.
+
+    EVENTS AT CHOKEPOINT: `generate` now emits a first-line `.session` meta event once per session (lazy, flag-guarded before the await so reentrancy can't double-emit), routes every append to `recordingDirectory`, and stamps measured `ms` on the `.response` close event. Kinds per turn: `[.session, .prompt, .response]`.
+
+    MANIFEST: new `RouterManifest` (Codable) written by the Router to `<recordingsDir>/<routerId>/manifest.json` on each successful resolve — router config (headroomReserve, maxConcurrentForks, recordingLevel), resolved profiles (name + chosen std/flash/embedding refs), and start (init)/end (write time). Best-effort. `RecordingLevel` is now `String, Codable, Equatable`.
+
+    Updated stale event-kind expectations in SessionChokepoint/GuidedGeneration/GuidedShapes/ToolIntegration tests to include the leading `.session` line (intentional behavior change per this milestone).
+
+    Tests: `Tests/.../TranscriptNestingTests.swift` (5 tests) green. Full `swift test` green (101 tests, 0 failures/warnings). Task left in `doing`.
+  timestamp: 2026-07-01T13:14:19.244091+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 - 01KWC5ECCZYEAH49J635KC9QH5
 - 01KWC5H7Y7NVG4771FR9ZKW5M0
-position_column: todo
-position_ordinal: 8f80
+position_column: doing
+position_ordinal: '80'
 title: 'Transcripts: lineage-nested dirs + events + manifest (milestone 10a)'
 ---
 ## What
