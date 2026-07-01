@@ -475,7 +475,8 @@ public actor Router {
             container: container,
             routerId: id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            recordingsRoot: recordingsDir,
+            maxConcurrentForks: maxConcurrentForks
         )
     }
 

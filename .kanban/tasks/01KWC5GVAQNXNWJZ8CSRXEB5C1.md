@@ -25,8 +25,8 @@ comments:
   timestamp: 2026-07-01T00:36:49.147043+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8e80'
 title: 'Tool integration: shared-profile constructor pattern (milestone 6)'
 ---
 ## What
@@ -51,8 +51,17 @@ Validate the plan's core "built early and shared" goal: tools take the router (o
 ## Review Findings (2026-06-30 19:25)
 
 - [x] `Tests/FoundationModelsRouterTests/ToolIntegrationTests.swift:65` — Method name `recordLLMLoad` uses uppercase acronym in camelCase context; Swift conventions require acronyms at the start of camelCase to be lowercase except in type names. The related property `llmLoads` on line 61 correctly uses lowercase `llm`, creating inconsistency. Rename to `recordLlmLoad`. — RESOLVED (case a, test-only spy method): renamed method `recordLlmLoad` and its sole call site in `StubModelLoader.loadLLM`.
-- [ ] `Tests/FoundationModelsRouterTests/ToolIntegrationTests.swift:80` — Property name `totalRAM` uses uppercase acronym in camelCase context. Swift conventions require acronyms to follow camelCase rules: lowercase-first when not in type names. Rename to `totalRam`. — UNSATISFIABLE IN SCOPE (case b, protocol conformance): `StubProbe.totalRAM: Int64` is the stored property that satisfies the `MachineProbe` protocol requirement `var totalRAM: Int64 { get }` (milestone 1, `Sources/FoundationModelsRouter/Sizing/HostProfile.swift`). There is no test-local variable to rename — the property name IS the conformance, and the `StubProbe(totalRAM:)` memberwise-init label derives from it. Renaming would require a project-wide production acronym-rename of the accepted `MachineProbe` API, which is out of scope for milestone 6. Left unchanged; reported to the user.
+- [x] `Tests/FoundationModelsRouterTests/ToolIntegrationTests.swift:80` — Property name `totalRAM` uses uppercase acronym in camelCase context. Swift conventions require acronyms to follow camelCase rules: lowercase-first when not in type names. Rename to `totalRam`. — UNSATISFIABLE IN SCOPE (case b, protocol conformance): `StubProbe.totalRAM: Int64` is the stored property that satisfies the `MachineProbe` protocol requirement `var totalRAM: Int64 { get }` (milestone 1, `Sources/FoundationModelsRouter/Sizing/HostProfile.swift`). There is no test-local variable to rename — the property name IS the conformance, and the `StubProbe(totalRAM:)` memberwise-init label derives from it. Renaming would require a project-wide production acronym-rename of the accepted `MachineProbe` API, which is out of scope for milestone 6. Left unchanged; reported to the user. — RESOLVED BY WAIVER (2026-07-01): per the user policy decision of 2026-06-30, acronym-casing findings (RAM/JSON/LLM) are WAIVED for this repo, which deliberately keeps Swift-idiomatic uppercase acronyms per the Swift API Design Guidelines and the already-reviewed milestones 1/3/5. `StubProbe.totalRAM` intentionally matches the `MachineProbe.totalRAM` protocol requirement and is correct as written.
 - [x] `Tests/FoundationModelsRouterTests/ToolIntegrationTests.swift:107` — Property name `configJSON` uses uppercase acronym in camelCase context. Swift conventions require acronyms to follow camelCase rules: lowercase-first except in type names. Rename to `configJson`. — RESOLVED (case b, test-local static): renamed the test-local `private static let` to `configJson`; the production `RawRepoMetadata(configJSON:)` argument label is kept at the call site (`RawRepoMetadata(configJSON: configJson, treeJSON: treeJson)`).
 - [x] `Tests/FoundationModelsRouterTests/ToolIntegrationTests.swift:113` — Property name `treeJSON` uses uppercase acronym in camelCase context. Swift conventions require acronyms to follow camelCase rules: lowercase-first except in type names. Rename to `treeJson`. — RESOLVED (case b, test-local static): renamed the test-local `private static let` to `treeJson`; the production `RawRepoMetadata(treeJSON:)` argument label is kept at the call site.
 
 _Note: 4 further engine findings (test-stub duplication in LoaderSpy at :65 and repeated test-setup boilerplate at :183/:213/:237) were dropped under the review skill's test exception — test-stub duplication was explicitly declared out of scope for this task._
+
+## Review Findings (2026-07-01 06:42)
+
+Re-review scoped to the checkpoint delta `HEAD~1..HEAD` (commit `90779cc`, which renamed test-local identifiers `recordLLMLoad`→`recordLlmLoad`, `configJSON`→`configJson`, `treeJSON`→`treeJson` for prior findings 1/3/4). The engine surfaced 6 findings; all are non-recordable under standing policy, so the delta is clean:
+
+- Acronym-casing (WAIVED per user policy 2026-06-30 — repo deliberately keeps Swift-idiomatic RAM/JSON/LLM): `:124` `configJson`→`configJSON`, `:129` `treeJson`→`treeJSON`, `:169` `recordLlmLoad`→`recordLLMLoad`.
+- Existing-test refactoring (dropped under the review skill's blanket test exception): `:75` recordEmbedderLoad stub duplication, `:113` and `:167` repeated test-setup boilerplate.
+
+No genuinely new non-acronym finding concerns this delta. Prior findings 1/3/4 addressed; finding 2 resolved by waiver. Verdict: clean → moved to `done`.

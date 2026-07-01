@@ -1,10 +1,46 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwerp8tr2hbpyj805arfm35n
+  text: |-
+    Picked up (milestone 9). Research done. Design:
+    - New `SessionKVCache` protocol (class-bound, Sendable) with `copy()`; `makeCache()` added as a requirement on `LoadedLLMContainer` with a default returning an inert cache (real MLX `KVCache.copy()` deferred to milestone 7 — live `ModelContainer.respond` already throws notWiredForLiveInference, so no MLX reachable without GPU; abstraction + stub-tested here).
+    - Gates live on the shared `RoutedModel` handle (RoutedLLM is a typealias, can't add stored props to a specialization): `serialGate = AsyncSemaphore(value:1)` and `forkAdmissionGate = AsyncSemaphore(value: maxConcurrentForks)`. Router.makeRoutedLLM passes maxConcurrentForks.
+    - `RoutedSessionActor` gains `cache`, `serialGate`, `forkAdmissionGate`, `holdsAdmissionPermit`. `generate` wraps body in `serialGate.withPermit`. `fork()` awaits admission permit, then builds child with parentId=self.id, cache=parent.cache.copy(), inherited grammar/instructions, holdsAdmissionPermit=true. `deinit` signals the admission gate iff it holds a permit; the child's cache dies with the actor (ARC) -> free.
+    - Remove now-obsolete `SessionError.forkNotWiredUntilMilestone9` + the SessionChokepointTests.forkNotYetWired test (fork now wired).
+    Tests deterministic via AsyncSemaphore waiterCount/availablePermits + a Mutex-based CacheCensus (synchronous births/copies/frees) — no sleeps for the core assertions.
+  timestamp: 2026-07-01T11:58:05.656071+00:00
+- actor: wballard
+  id: 01kwesad1x8waeems9hnnwxfy6
+  text: |-
+    Implementation landed (TDD: wrote ForkConcurrencyTests first -> RED via missing SessionKVCache/gates/fork, then implemented -> GREEN).
+
+    Results (export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer):
+    - `swift test --filter ForkConcurrencyTests`: 5/5 pass (copy-on-fork+parentId, KV-free-on-release + parent unaffected, guided-fork grammar inheritance, serial-gate non-overlap+FIFO, fork-admission bound).
+    - Full `swift test`: 88 tests + 1 gated suite, all pass. `swift build --build-tests`: zero warnings from changed files.
+
+    Notes / design decisions worth recording for the next agent:
+    - KV abstraction: `SessionKVCache` protocol (class-bound, Sendable, `copy()`); `makeCache()` added as a REQUIREMENT on `LoadedLLMContainer` (with a default returning `InertKVCache`) so a test stub can override it and dynamic-dispatch through `any LoadedLLMContainer`. Real MLX `KVCache.copy()` stays a documented milestone-7 seam (live `ModelContainer.respond` already throws notWiredForLiveInference; MLX not reachable without GPU).
+    - Gates live on the shared `RoutedModel` (serialGate value 1; forkAdmissionGate value maxConcurrentForks) since RoutedLLM is a typealias and can't hold stored props on its own. The embedder inherits them unused (documented).
+    - Serial gate: acquired via `wait()`/`defer signal()` inside `generate` (NOT `withPermit` — sending the closure into AsyncSemaphore tripped region isolation; wait/defer keeps the recording bracket in the actor's isolation region and pairs identically, no leak).
+    - Admission permit released in the fork's `deinit` (only when holdsAdmissionPermit). KNOWN micro-ordering: ARC runs the deinit body (signal) before releasing the `cache` member (free), so a freed slot can admit a waiter before the releasing fork's KV is reclaimed — a transient K+1 during teardown. The plan only requires "freed when a fork is released", so this is acceptable; the admission-bound test asserts the ceiling via the parked-state (two admitted + third blocked on waiterCount), not a post-release high-water mark, to stay non-flaky.
+    - Removed obsolete `SessionError.forkNotWiredUntilMilestone9` and SessionChokepointTests.forkNotYetWired.
+
+    Left in `doing` for /review (adversarial double-check running).
+  timestamp: 2026-07-01T12:09:05.341641+00:00
+- actor: wballard
+  id: 01kwesjsnvpehk193qxt1vxgzd
+  text: |-
+    Adversarial double-check: VERDICT PASS (no findings). Confirmed: makeCache() is a real protocol requirement (dynamic dispatch through `any LoadedLLMContainer` works, stub override hit); serial gate releases on return/throw/cancel and the FIFO test is deterministic (spins on availablePermits/waiterCount, no sleeps); admission permit is one-acquire/one-release with no suspension between acquire and child construction (cancellation cannot strand it); no retain cycle (profile held weakly via OwningProfileBox; deinit touches only Sendable/nonisolated state, cannot resurrect self); clean strict-concurrency build; no dangling refs to removed SessionError/forkNotYetWired. Ran `swift test --filter ForkConcurrencyTests` 8x — all green, no flakiness/hangs; full `swift test` 88+1 green.
+
+    Work is done and GREEN; left in `doing` for /review.
+  timestamp: 2026-07-01T12:13:40.411494+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 - 01KWC5CYM8AFB1MBV7DR9KW83K
 - 01KWC5GJM72ASQV4GKXSFPKFFG
-position_column: todo
-position_ordinal: 8d80
+position_column: doing
+position_ordinal: '80'
 title: Session fork + per-model concurrency gates (milestone 9)
 ---
 ## What

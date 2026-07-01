@@ -102,7 +102,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             model: chosen,
             recorder: recorder,
             instructions: instructions,
-            grammar: grammar
+            grammar: grammar,
+            // A fresh session owns an empty cache; the serial and fork-admission
+            // gates are the model handle's, shared across all its sessions and
+            // forks. A root session holds no fork-admission permit.
+            cache: container.makeCache(),
+            serialGate: serialGate,
+            forkAdmissionGate: forkAdmissionGate,
+            holdsAdmissionPermit: false
         )
     }
 }

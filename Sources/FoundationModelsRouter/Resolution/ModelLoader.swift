@@ -96,6 +96,19 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
         instructions: String?,
         following grammar: Grammar
     ) async throws -> String
+
+    /// Creates a fresh, empty KV cache for a new session over this model.
+    ///
+    /// A vended ``RoutedSession`` owns the returned cache for its lifetime and
+    /// frees it on release; a ``RoutedSession/fork(workingDirectory:)`` instead
+    /// copies the parent's via ``SessionKVCache/copy()``. A default
+    /// implementation (see ``LoadedLLMContainer/makeCache()``) returns an inert
+    /// cache, so the live container's real MLX cache can land in the gated
+    /// milestone 7 integration suite without every conformer implementing the
+    /// seam; unit tests inject a stub that records `copy()` and free-on-release.
+    ///
+    /// - Returns: A new, empty KV cache for the session.
+    func makeCache() -> any SessionKVCache
 }
 
 /// A loaded embedding model container — the seam the embedding computation runs

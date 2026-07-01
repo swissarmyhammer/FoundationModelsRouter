@@ -304,22 +304,4 @@ struct SessionChokepointTests {
         #expect(overridden.recordingDirectory != custom)
         #expect(overridden.recordingDirectory.lastPathComponent == overridden.id.description)
     }
-
-    // MARK: - Fork (gated to milestone 9)
-
-    @Test("fork is declared but not yet wired (milestone 9)")
-    @MainActor
-    func forkNotYetWired() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let spy = EvictionSpy()
-        let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
-        await #expect(throws: SessionError.self) {
-            _ = try await session.fork(workingDirectory: nil)
-        }
-    }
 }

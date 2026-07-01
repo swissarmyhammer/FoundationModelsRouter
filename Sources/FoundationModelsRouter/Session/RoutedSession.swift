@@ -1,13 +1,5 @@
 import Foundation
 
-/// A failure operating a ``RoutedSession``.
-public enum SessionError: Error, Equatable {
-    /// Forking — copying the parent's KV cache into a child session so the child
-    /// continues the conversation without replaying it — lands in milestone 9.
-    /// The surface is declared now; the copy is not yet wired.
-    case forkNotWiredUntilMilestone9
-}
-
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
@@ -21,11 +13,12 @@ public enum SessionError: Error, Equatable {
 /// funnels through one private recorder-bracketed chokepoint: an open event is
 /// recorded, the model runs, and a close event is recorded whether the model
 /// returns or throws. Each call's bracket is individually balanced — exactly one
-/// open and one close — but because generation suspends at `await` points, the
-/// actor is reentrant: two concurrent calls on the same session may interleave
-/// their (still balanced) events in the transcript. Strict per-session
-/// serialization of generations lands with the concurrency gates in milestone 9.
-/// The raw model/`ChatSession` is never vended.
+/// open and one close. Concurrent generations on one model do not interleave:
+/// the chokepoint runs inside the model's per-model serial gate
+/// (``RoutedModel/serialGate``, a fair FIFO ``AsyncSemaphore`` at value 1) that a
+/// session shares with all its forks, so calls on one model queue rather than
+/// overlap — MLX generation runs a single GPU stream. The raw model/`ChatSession`
+/// is never vended.
 ///
 /// Its identity and directory accessors are `nonisolated` immutables readable
 /// without awaiting.
@@ -58,8 +51,8 @@ public protocol RoutedSession: Actor {
     /// Set when the session is vended by
     /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)`` and
     /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:)``.
-    /// It travels with the session so a milestone-9 ``fork(workingDirectory:)``
-    /// inherits it; ``streamResponse(to:)`` stays unconstrained regardless.
+    /// It travels with the session so ``fork(workingDirectory:)`` inherits it;
+    /// ``streamResponse(to:)`` stays unconstrained regardless.
     nonisolated var grammar: Grammar? { get }
 
     /// Generates a complete text response to a prompt, recording the call.
@@ -78,14 +71,23 @@ public protocol RoutedSession: Actor {
 
     /// Forks a child session that continues this one's conversation.
     ///
-    /// The real behavior — copying the parent's KV cache so the child resumes
-    /// without replaying the transcript — lands in milestone 9; until then this
-    /// throws ``SessionError/forkNotWiredUntilMilestone9``.
+    /// The child's KV cache **begins as a copy of this session's** (via
+    /// ``SessionKVCache/copy()``), so it inherits the prefilled prefix's compute
+    /// and then diverges independently rather than replaying the transcript. The
+    /// child takes a fresh id with ``parentId`` set to this session's id and nests
+    /// under the parent regardless of `workingDirectory` (full transcript nesting
+    /// lands in milestone 10, but `parentId` is set here); a guided session's fork
+    /// inherits its ``grammar``. The child retains the ``profile`` so resident
+    /// models stay alive, and its cache dies with it (ARC) — releasing a fork
+    /// frees its KV.
+    ///
+    /// At most the router's `maxConcurrentForks` fork sessions over one model may
+    /// be in flight at once; a fork past that ceiling awaits a free slot, freed
+    /// when an outstanding fork is released.
     ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
-    ///   inherit a default.
+    ///   default to its recording directory.
     /// - Returns: The forked child session.
-    /// - Throws: ``SessionError/forkNotWiredUntilMilestone9`` until milestone 9.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 }
 
@@ -95,7 +97,7 @@ public protocol RoutedSession: Actor {
 /// is ``RoutedModel/makeSession(instructions:workingDirectory:)`` — there is no
 /// public initializer. The recorder and `routerId` flow down from the vending
 /// handle; the `container`, `slot`, `model`, and `instructions` are what the
-/// single ``generate(_:)`` chokepoint runs the model with.
+/// single ``generate(grammar:_:)`` chokepoint runs the model with.
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
     nonisolated let routerId: ULID
@@ -120,12 +122,35 @@ actor RoutedSessionActor: RoutedSession {
     private nonisolated let instructions: String?
 
     /// The grammar constraining every ``respond(to:)``, or `nil` for an
-    /// unconstrained session. Travels with the session for milestone-9 forks.
+    /// unconstrained session. Travels with the session so a fork inherits it.
     nonisolated let grammar: Grammar?
+
+    /// This session's KV cache — the prefilled-prefix compute it accumulates.
+    ///
+    /// Owned for the session's lifetime and freed with the session (ARC); a
+    /// ``fork(workingDirectory:)`` seeds the child from a ``SessionKVCache/copy()``
+    /// of this one, so the child inherits the prefix and then diverges.
+    private nonisolated let cache: any SessionKVCache
+
+    /// The per-model serial generation gate, shared with the owning model's other
+    /// sessions and forks. Every ``generate(grammar:_:)`` runs inside it, so
+    /// generations on one model serialize rather than interleave.
+    private nonisolated let serialGate: AsyncSemaphore
+
+    /// The fork-admission gate, shared with the owning model.
+    /// ``fork(workingDirectory:)`` acquires a permit to admit the child; a fork
+    /// releases it on deinit (see ``holdsAdmissionPermit``).
+    private nonisolated let forkAdmissionGate: AsyncSemaphore
+
+    /// Whether this session holds a fork-admission permit to release when it is
+    /// deallocated. `true` for a fork admitted through ``fork(workingDirectory:)``,
+    /// `false` for a root session, which consumes no admission permit.
+    private nonisolated let holdsAdmissionPermit: Bool
 
     /// Creates a session. Internal: construction is only via
     /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
-    /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)``.
+    /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)`` or by
+    /// ``fork(workingDirectory:)``.
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -138,7 +163,11 @@ actor RoutedSessionActor: RoutedSession {
         model: ModelRef,
         recorder: any TranscriptRecorder,
         instructions: String?,
-        grammar: Grammar? = nil
+        grammar: Grammar? = nil,
+        cache: any SessionKVCache,
+        serialGate: AsyncSemaphore,
+        forkAdmissionGate: AsyncSemaphore,
+        holdsAdmissionPermit: Bool = false
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -152,6 +181,22 @@ actor RoutedSessionActor: RoutedSession {
         self.recorder = recorder
         self.instructions = instructions
         self.grammar = grammar
+        self.cache = cache
+        self.serialGate = serialGate
+        self.forkAdmissionGate = forkAdmissionGate
+        self.holdsAdmissionPermit = holdsAdmissionPermit
+    }
+
+    /// Releases this session's fork-admission permit when it is deallocated, so a
+    /// fork blocked on the ceiling can proceed.
+    ///
+    /// Only a fork holds a permit; a root session's `deinit` is a no-op here. The
+    /// session's KV cache is freed by ARC as the actor is torn down — releasing a
+    /// fork frees its KV.
+    deinit {
+        if holdsAdmissionPermit {
+            forkAdmissionGate.signal()
+        }
     }
 
     func respond(to prompt: String) async throws -> String {
@@ -214,17 +259,55 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     func fork(workingDirectory: URL?) async throws -> RoutedSession {
-        throw SessionError.forkNotWiredUntilMilestone9
+        // Admission: at most the router's `maxConcurrentForks` fork sessions over
+        // this model may be in flight at once. Past the ceiling this suspends
+        // (FIFO) until an outstanding fork is released and frees its slot. The
+        // permit is held for the child's lifetime and released in its `deinit`.
+        await forkAdmissionGate.wait()
+
+        let childId = ULID.generate()
+        // The child nests as a sibling under the same router recording root
+        // (`recordingDirectory` is `<base>/<routerId>/<sessionId>`); full
+        // transcript nesting under the parent lands in milestone 10, but the
+        // lineage is recorded now through `parentId`.
+        let childRecordingDirectory = recordingDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent(childId.description, isDirectory: true)
+
+        return RoutedSessionActor(
+            profile: profile,
+            routerId: routerId,
+            id: childId,
+            parentId: id,
+            recordingDirectory: childRecordingDirectory,
+            workingDirectory: workingDirectory ?? childRecordingDirectory,
+            container: container,
+            slot: slot,
+            model: model,
+            recorder: recorder,
+            instructions: instructions,
+            grammar: grammar,
+            // The child begins with a copy of this session's prefilled prefix,
+            // inheriting its compute and then diverging independently.
+            cache: cache.copy(),
+            serialGate: serialGate,
+            forkAdmissionGate: forkAdmissionGate,
+            holdsAdmissionPermit: true
+        )
     }
 
     /// The single recorder-bracketed generation chokepoint every public method
     /// funnels through.
     ///
-    /// Records an open event, runs `body`, then records a close event — on the
-    /// success path and on the throwing path alike, so a transcript always pairs
-    /// each open with a close. Rich event provenance (token metering, error
-    /// detail) and lineage nesting land in milestone 10; here it proves the
-    /// bracket emits exactly one open and one close.
+    /// The whole bracket runs inside the model's per-model serial gate
+    /// (``RoutedModel/serialGate``), so concurrent generations on one model —
+    /// including from forks that share the gate — queue in FIFO order rather than
+    /// interleave. Inside the gate it records an open event, runs `body`, then
+    /// records a close event — on the success path and on the throwing path alike,
+    /// so a transcript always pairs each open with a close. Rich event provenance
+    /// (token metering, error detail) and lineage nesting land in milestone 10;
+    /// here it proves the bracket emits exactly one open and one close and that
+    /// generations serialize.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn, stamped
@@ -236,6 +319,14 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar? = nil,
         _ body: () async throws -> R
     ) async throws -> R {
+        // Acquire the serial permit for the whole bracket, releasing it on every
+        // path with a `defer` (the recording bracket stays in this actor's
+        // isolation region, so the gated work is not sent across an isolation
+        // boundary as a `withPermit` closure would be). `wait()`/`signal()` pair
+        // exactly like `withPermit`, so no permit can leak.
+        await serialGate.wait()
+        defer { serialGate.signal() }
+
         await recorder.append(makePartialEvent(kind: .prompt, grammar: grammar))
         do {
             let result = try await body()

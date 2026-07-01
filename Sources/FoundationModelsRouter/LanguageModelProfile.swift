@@ -91,6 +91,26 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// reads it to retain the profile (see ``makeSession(instructions:workingDirectory:)``).
     let owningProfileBox = OwningProfileBox()
 
+    /// The per-model serial generation gate (a fair FIFO ``AsyncSemaphore`` at
+    /// value `1`).
+    ///
+    /// Every ``RoutedSession`` vended from this handle — the root session and all
+    /// its forks alike — shares this one gate, so their generations serialize
+    /// rather than interleave: MLX generation runs a single GPU stream and is not
+    /// safe to interleave. Only the generation-session surface acquires it; the
+    /// embedding handle never does.
+    let serialGate = AsyncSemaphore(value: 1)
+
+    /// The fork-admission gate (a fair FIFO ``AsyncSemaphore`` at value
+    /// `maxConcurrentForks`).
+    ///
+    /// At most `maxConcurrentForks` fork sessions over this model may be in flight
+    /// at once; a ``RoutedSession/fork(workingDirectory:)`` past the ceiling awaits
+    /// a free slot, which is freed when a fork is released. This caps the K×
+    /// prefix-KV cost of copying the parent's cache on each fork. Only the
+    /// generation-session fork surface acquires it.
+    let forkAdmissionGate: AsyncSemaphore
+
     /// Creates a routed model handle.
     ///
     /// - Parameters:
@@ -102,6 +122,10 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - routerId: The resolving router's recording root id.
     ///   - recorder: The recorder a vended session or embed call is born holding.
     ///   - recordingsRoot: The router's durable transcripts root, or `nil`.
+    ///   - maxConcurrentForks: The in-flight fork ceiling this model's
+    ///     ``forkAdmissionGate`` admits (the router's `maxConcurrentForks`).
+    ///     Consumed only by the generation-session fork surface; the embedding
+    ///     handle never forks.
     public init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -110,7 +134,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         container: Container,
         routerId: ULID,
         recorder: any TranscriptRecorder,
-        recordingsRoot: URL? = nil
+        recordingsRoot: URL? = nil,
+        maxConcurrentForks: Int = 4
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -120,6 +145,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.routerId = routerId
         self.recorder = recorder
         self.recordingsRoot = recordingsRoot
+        self.forkAdmissionGate = AsyncSemaphore(value: maxConcurrentForks)
     }
 }
 
