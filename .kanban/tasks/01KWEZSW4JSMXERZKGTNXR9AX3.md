@@ -14,8 +14,8 @@ comments:
 depends_on:
 - 01KWC5GJM72ASQV4GKXSFPKFFG
 - 01KWC5HV9BBARA3HJA26MMV0YC
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9480'
 title: Rename our GuidedGenerationError to avoid MLX name collision
 ---
 ## What
