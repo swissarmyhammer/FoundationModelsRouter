@@ -22,8 +22,8 @@ comments:
   timestamp: 2026-07-01T20:11:10.414511+00:00
 depends_on:
 - 01KWFDEMZ9ZGWQHFFWWYRJV0PV
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9780'
 title: 'ResolutionProgress: real incremental byte-percentage during download'
 ---
 ## What
