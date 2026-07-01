@@ -52,6 +52,15 @@ extension ModelContainer: LoadedLLMContainer {
     /// ``GrammarConstraint`` over the model's own tokenizer, then drives
     /// ``GuidedGenerationLoop`` to whole-chunk constrained decode, accumulating the
     /// emitted deltas.
+    ///
+    /// - Parameters:
+    ///   - prompt: The user prompt to generate a response for.
+    ///   - instructions: Optional system instructions, folded in as a leading
+    ///     system chat turn.
+    ///   - grammar: The grammar constraining the generated output.
+    /// - Returns: The complete grammar-constrained response text.
+    /// - Throws: If the grammar fails validation or constraint compilation, or the
+    ///   constrained generation pipeline errors.
     public nonisolated func respond(
         to prompt: String,
         instructions: String?,
@@ -267,6 +276,15 @@ public struct LiveModelLoader: ModelLoader {
     }
 
     /// Downloads and loads a generation model into a `ModelContainer`.
+    ///
+    /// - Parameters:
+    ///   - ref: The model reference to download and load.
+    ///   - slot: The slot the model is being loaded for.
+    ///   - context: The context length to size the model for.
+    ///   - reporting: The byte-based download-progress callback, invoked as
+    ///     weights stream in.
+    /// - Returns: The loaded generation container.
+    /// - Throws: If the download or MLX container load fails.
     public func loadLLM(
         _ ref: ModelRef,
         slot: ModelSlot,
@@ -287,6 +305,14 @@ public struct LiveModelLoader: ModelLoader {
     /// `EmbedderModelContainer` only exposes its model through an async closure, so
     /// the dimension is not available synchronously; a single probe embedding
     /// establishes it (and warms the model) before the container is vended.
+    ///
+    /// - Parameters:
+    ///   - ref: The embedding model reference to download and load.
+    ///   - slot: The slot the model is being loaded for.
+    ///   - reporting: The byte-based download-progress callback, invoked as
+    ///     weights stream in.
+    /// - Returns: The loaded ``LiveEmbeddingContainer`` with its probed dimension.
+    /// - Throws: If the download, MLX container load, or dimension probe fails.
     public func loadEmbedder(
         _ ref: ModelRef,
         slot: ModelSlot,
@@ -353,6 +379,11 @@ public struct LiveModelLoader: ModelLoader {
     /// ``SlotProgress/progressFraction`` treats as an unknown total (fraction `0`)
     /// rather than a divide-by-zero; the ``Router/reporter(slot:progress:)`` this
     /// feeds only adopts a `bytesTotal` once it is reported (`> 0`).
+    ///
+    /// - Parameter reporting: The router's byte-based progress callback to invoke
+    ///   for each Foundation `Progress` update.
+    /// - Returns: A `@Sendable` `Progress` observer that maps each update into a
+    ///   byte-based ``DownloadProgress`` and forwards it to `reporting`.
     static func handler(
         _ reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) -> @Sendable (Progress) -> Void {
@@ -382,6 +413,14 @@ public struct UnconfiguredModelLoader: ModelLoader {
     /// Always throws ``ModelLoaderError/notConfigured``: this sentinel cannot
     /// load a generation model. Real loading is configured/injected via
     /// ``LiveModelLoader`` (milestone 7).
+    ///
+    /// - Parameters:
+    ///   - ref: The model reference that would be loaded.
+    ///   - slot: The slot the model would be loaded for.
+    ///   - context: The context length the model would be sized for.
+    ///   - reporting: The download-progress callback (never invoked).
+    /// - Returns: Never returns normally — this sentinel always throws.
+    /// - Throws: ``ModelLoaderError/notConfigured``, always.
     public func loadLLM(
         _ ref: ModelRef,
         slot: ModelSlot,
@@ -394,6 +433,13 @@ public struct UnconfiguredModelLoader: ModelLoader {
     /// Always throws ``ModelLoaderError/notConfigured``: this sentinel cannot
     /// load an embedding model. Real loading is configured/injected via
     /// ``LiveModelLoader`` (milestone 7).
+    ///
+    /// - Parameters:
+    ///   - ref: The embedding model reference that would be loaded.
+    ///   - slot: The slot the model would be loaded for.
+    ///   - reporting: The download-progress callback (never invoked).
+    /// - Returns: Never returns normally — this sentinel always throws.
+    /// - Throws: ``ModelLoaderError/notConfigured``, always.
     public func loadEmbedder(
         _ ref: ModelRef,
         slot: ModelSlot,

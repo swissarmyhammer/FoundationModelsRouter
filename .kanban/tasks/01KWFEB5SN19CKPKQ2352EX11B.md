@@ -16,6 +16,10 @@ comments:
 
     Verify: `swift build` clean; full `swift test` = 128 unit tests pass, gated integration suite skipped by default. GREEN, left in doing.
   timestamp: 2026-07-01T19:46:44.663172+00:00
+- actor: wballard
+  id: 01kwfmx46eva9v2amm85h8d1mv
+  text: 'Addressed all 7 review findings (2026-07-01 14:52) — doc-comment-only, no behavior change. Added formal DocC sections (`- Parameters:`/`- Parameter:`/`- Returns:`/`- Throws:`) to: LiveModelLoader `respond(to:instructions:following:)`, `loadLLM`, `loadEmbedder`, `handler`, `UnconfiguredModelLoader.loadLLM`, `UnconfiguredModelLoader.loadEmbedder`; and Router `reporter(slot:progress:)`. Matched existing style (Router.init / resolve param blocks). Verified: `swift build` clean (no new warnings), `swift test` green — 128/128 unit tests pass, gated integration suite skips by default. All 7 finding checkboxes flipped to [x]. Task left in `doing` for /review.'
+  timestamp: 2026-07-01T20:11:10.414511+00:00
 depends_on:
 - 01KWFDEMZ9ZGWQHFFWWYRJV0PV
 position_column: doing
@@ -49,3 +53,13 @@ Gaps to close:
 
 ## Workflow
 - Use `/tdd` — write the incremental + monotonic progress tests first (they should fail against the current single-tick behavior / lack of a monotonic guard), then implement the `reporter` hardening to make them pass.
+
+## Review Findings (2026-07-01 14:52)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:45` — The `respond(to:instructions:following:)` function has three parameters and a non-`Void` return type, but lacks formal documentation sections. The rule requires `- Parameters:` block and `- Returns:` section for functions with multiple parameters and non-void returns. Add a formal `- Parameters:` block documenting `prompt`, `instructions`, and `grammar`, plus a `- Returns:` section, following the structure demonstrated in `Router.init()` documentation.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:232` — The `loadLLM(_:slot:context:reporting:)` function has four parameters and a non-`Void` return type, but lacks formal documentation sections. Functions with multiple parameters require a `- Parameters:` block. Add a formal `- Parameters:` block documenting all four parameters and a `- Returns:` section.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:241` — The `loadEmbedder(_:slot:reporting:)` function has three parameters and a non-`Void` return type, but lacks formal documentation sections. Functions with multiple parameters require a `- Parameters:` block. Add a formal `- Parameters:` block documenting all three parameters and a `- Returns:` section.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:310` — The `handler` static function has one parameter (`reporting`) and a non-`Void` return type, but lacks formal documentation sections. The rule requires `- Parameter reporting:` and `- Returns:` sections, not just prose explanation. Add formal `- Parameter reporting:` and `- Returns:` sections within the existing doc comment, following the style used in other functions like `Router.init()` at Router.swift:89-92.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:323` — `UnconfiguredModelLoader.loadLLM(_:slot:context:reporting:)` has four parameters and throws, but lacks formal documentation sections. Public functions with multiple parameters require `- Parameters:` block and `- Throws:` section. Add a formal `- Parameters:` block for all four parameters, `- Returns:` section, and `- Throws:` section.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:331` — `UnconfiguredModelLoader.loadEmbedder(_:slot:reporting:)` has three parameters and throws, but lacks formal documentation sections. Public functions with multiple parameters require `- Parameters:` block and `- Throws:` section. Add a formal `- Parameters:` block for all three parameters, `- Returns:` section, and `- Throws:` section.
+- [x] `Sources/FoundationModelsRouter/Router.swift:418` — The `reporter` static function has two parameters (`slot` and `progress`) and a non-`Void` return type, but lacks formal documentation sections. The rule requires a `- Parameters:` block and `- Returns:` section. Add a formal `- Parameters:` block documenting `slot` and `progress`, and a `- Returns:` section, following the structure demonstrated in the `init` method's documentation.

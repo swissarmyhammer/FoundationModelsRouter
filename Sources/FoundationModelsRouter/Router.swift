@@ -519,6 +519,13 @@ public actor Router {
     ///   `bytesTotal` is adopted only when the tick actually reports one
     ///   (`> 0`), so a later tick that has not yet learned the total (`0`)
     ///   cannot erase it.
+    ///
+    /// - Parameters:
+    ///   - slot: The slot whose byte counts this callback advances.
+    ///   - progress: The UI-bindable progress whose slot is mutated (on the main
+    ///     actor) and refreshed on each tick.
+    /// - Returns: A `@Sendable` closure that applies one ``DownloadProgress`` tick
+    ///   to the slot — monotonically, and only while it is still downloading.
     static func reporter(
         slot: ModelSlot,
         progress: ResolutionProgress
