@@ -52,8 +52,8 @@ depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 - 01KWC5CYM8AFB1MBV7DR9KW83K
 - 01KWC5GJM72ASQV4GKXSFPKFFG
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8f80
 title: Session fork + per-model concurrency gates (milestone 9)
 ---
 ## What

@@ -1,9 +1,22 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwev96mcat4g0s53x5wvctcq
+  text: 'Picked up 8b. Research done. Confirmed against Xcode-beta FoundationModels SDK interface: Generable exposes `static var generationSchema: GenerationSchema`; `GenerationSchema: Codable` (so JSONEncoder().encode → JSON Schema string, same trick MLXFoundationModels'' internal SchemaConverter uses); `GeneratedContent(json:) throws`; `ConvertibleFromGeneratedContent.init(_ content:) throws`. So schema-derivation + decode are pure/GPU-free and unit-testable — only real constrained generation stays gated (m7). Plan: add `.decodingFailed(String)` to GuidedGenerationError (8a type); dynamic `respond(to:matching:)` (ungated) parses raw→JSONValue; typed `respond(to:generating:)` gated `#if canImport(FoundationModels)` derives schema from T, routes through raw `respond(to:following:.jsonSchema)`, decodes via GeneratedContent+T.init. Pure helpers in enum GuidedShapes for direct unit assertions.'
+  timestamp: 2026-07-01T12:43:23.148591+00:00
+- actor: wballard
+  id: 01kwevg13wz9rvkhehayd22p16
+  text: 'Implemented 8b (TDD). GuidedGeneration.swift: added GuidedGenerationError.decodingFailed(String); ungated enum GuidedShapes.parse(_:)->JSONValue; ungated respond(to:matching jsonSchema:)->JSONValue; #if canImport(FoundationModels) block with GuidedShapes.derivedSchema<T:Generable>(for:) (encodes T.generationSchema, which is Codable, to JSON Schema) + GuidedShapes.decode<T:Generable>(_:as:) (GeneratedContent(json:)+T.init, mapping failures to .decodingFailed) + respond<T:Generable>(to:generating:). Both shapes route through raw respond(to:following:.jsonSchema); over-spec schemas already surface GuidedGenerationError via validateForXGrammar in the raw layer. New test suite GuidedShapesTests.swift (Swift Testing, stub container, no GPU): derived-schema shape, canned raw JSON->T decode, dynamic JSON->JSONValue parse, decode/parse malformed->GuidedGenerationError, over-spec dynamic schema->GuidedGenerationError, plus e2e typed+dynamic through the chokepoint. Note: GenerationSchema JSON encoding has nondeterministic key order, so the e2e stamped-grammar assertion compares parsed JSONValue (order-independent) not raw bytes. GREEN: swift test --filter GuidedShapesTests = 8/8; full swift test = 96/96 + gated integration suite. Reviewer flag: the Generable/FoundationModels-facing halves (derivedSchema/decode) are pure and unit-tested; only the actual constrained decode between them stays gated to milestone 7 via the raw layer''s notWiredForLiveInference seam.'
+  timestamp: 2026-07-01T12:47:06.876130+00:00
+- actor: wballard
+  id: 01kwevm5w20m0b4dqp10k7fbjj
+  text: 'really-done: verification green (swift test --filter GuidedShapesTests 8/8; full swift test 96/96 + gated integration). Advisory double-check verdict = PASS. It independently re-ran the filtered suite (8/8), confirmed all 5 requirements met (typed shape derives+routes+decodes; dynamic shape parses to JSONValue never fixed type; decode failures + xgrammar-subset rejections both surface as GuidedGenerationError; no GPU/network; acronym casing OK — jsonSchema label is lower-cased leading acronym matching existing Grammar.jsonSchema), verified tests are not tautological (over-spec test really hits validateForXGrammar; .number(1)==1.0 sound since JSONValue tries Bool before Double), and found no dead code / gating mistakes / signature breakage. Leaving task in doing for /review.'
+  timestamp: 2026-07-01T12:49:22.818089+00:00
 depends_on:
 - 01KWC5GJM72ASQV4GKXSFPKFFG
 - 01KWC5C3B35X6N0DYZJYZ044BE
-position_column: todo
-position_ordinal: '8e80'
+position_column: doing
+position_ordinal: '80'
 title: 'Guided generation: typed + dynamic-JSON response shapes (milestone 8b)'
 ---
 ## What

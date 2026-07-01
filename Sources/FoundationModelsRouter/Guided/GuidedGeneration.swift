@@ -18,6 +18,16 @@ public enum GuidedGenerationError: Error, Equatable {
 
     /// The grammar source was empty.
     case emptyGrammar
+
+    /// The constrained model output could not be turned into the requested shape:
+    /// the raw text did not decode into the caller's `Generable` type (typed
+    /// shape) or did not parse into a ``JSONValue`` (dynamic shape). The
+    /// associated value is the offending raw output.
+    ///
+    /// This makes the higher-level shapes (milestone 8b) surface a decode failure
+    /// through the *same* typed error as an xgrammar-subset rejection, so a caller
+    /// handles both kinds of guided-generation failure in one `catch`.
+    case decodingFailed(String)
 }
 
 extension Grammar {
@@ -208,3 +218,142 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         makeSession(grammar: grammar, instructions: instructions, workingDirectory: workingDirectory)
     }
 }
+
+/// The pure, GPU-free steps behind the two higher-level guided response shapes
+/// (milestone 8b): deriving a JSON Schema from a `@Generable` type, decoding raw
+/// constrained output into that type, and parsing raw constrained output into a
+/// dynamically-typed ``JSONValue``.
+///
+/// These are factored out of the ``RoutedModel`` shapes so they can be exercised
+/// directly in the unit suite without a model: the only gated part of guided
+/// generation is the constrained decode itself (milestone 7), which the shapes
+/// reach through the raw ``RoutedModel/respond(to:following:)`` layer. The
+/// `Generable`-facing steps are compiled only where Apple's FoundationModels
+/// framework is available (see the `canImport(FoundationModels)` extension below).
+enum GuidedShapes {
+    /// Parses raw constrained model output into a dynamically-typed ``JSONValue``.
+    ///
+    /// Used by the dynamic-JSON shape, whose schema has no Swift type, so the
+    /// output is introspected as a ``JSONValue`` rather than decoded into a fixed
+    /// type. The constrained output is already schema-valid; a parse failure here
+    /// means the raw text was not JSON at all.
+    ///
+    /// - Parameter raw: The raw constrained output text.
+    /// - Returns: The parsed ``JSONValue``.
+    /// - Throws: ``GuidedGenerationError/decodingFailed(_:)`` if `raw` is not
+    ///   parseable JSON.
+    static func parse(_ raw: String) throws -> JSONValue {
+        guard let data = raw.data(using: .utf8),
+            let value = try? JSONDecoder().decode(JSONValue.self, from: data)
+        else {
+            throw GuidedGenerationError.decodingFailed(raw)
+        }
+        return value
+    }
+}
+
+/// The dynamic-JSON guided response shape (milestone 8b).
+///
+/// Like the raw guided surface, it arrives as a container-constrained extension so
+/// it is invisible on ``RoutedEmbedder``.
+extension RoutedModel where Container == any LoadedLLMContainer {
+    /// Generates a response constrained to a runtime JSON schema that has no Swift
+    /// type, parsed into a dynamically-typed ``JSONValue``.
+    ///
+    /// This is the shape for a schema known only at runtime — an MCP tool's
+    /// `inputSchema`, say — where there is no `Generable` type to decode into. The
+    /// caller's schema string is wrapped as a ``Grammar/jsonSchema(_:)`` and
+    /// routed through the raw ``respond(to:following:)`` layer (which validates it
+    /// against the xgrammar subset), then the constrained output is parsed into a
+    /// ``JSONValue`` the caller introspects dynamically — never decoded to a fixed
+    /// type.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - jsonSchema: The runtime JSON Schema source constraining the output.
+    /// - Returns: The schema-valid output parsed into a ``JSONValue``.
+    /// - Throws: ``GuidedGenerationError`` — an xgrammar-subset rejection for an
+    ///   over-spec schema, or ``GuidedGenerationError/decodingFailed(_:)`` if the
+    ///   output does not parse as JSON — or any error the model raises
+    ///   (``GenerationError/notWiredForLiveInference`` over a live container until
+    ///   milestone 7).
+    public func respond(to prompt: String, matching jsonSchema: String) async throws -> JSONValue {
+        let raw = try await respond(to: prompt, following: .jsonSchema(jsonSchema))
+        return try GuidedShapes.parse(raw)
+    }
+}
+
+#if canImport(FoundationModels)
+    import FoundationModels
+
+    extension GuidedShapes {
+        /// Derives a JSON Schema source string from a `@Generable` type — the one
+        /// source of truth for the typed shape's constraint.
+        ///
+        /// A `Generable` type carries a `GenerationSchema`, which is itself
+        /// `Codable` and encodes to a standard JSON Schema, so encoding it yields
+        /// the schema string the raw guided layer constrains against. This is a
+        /// pure transform (no GPU), so it is asserted directly in the unit suite.
+        ///
+        /// - Parameter type: The `Generable` type to derive a schema from.
+        /// - Returns: The derived JSON Schema source string.
+        /// - Throws: An encoding error if the schema cannot be encoded (not
+        ///   expected for a valid `Generable` type).
+        static func derivedSchema<T: Generable>(for type: T.Type) throws -> String {
+            let data = try JSONEncoder().encode(T.generationSchema)
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        /// Decodes raw constrained output into a `Generable` type.
+        ///
+        /// The raw text is parsed into `GeneratedContent` and then initialized into
+        /// `T` through its `Generable` conformance. This is a pure transform (no
+        /// GPU), so it is asserted directly in the unit suite.
+        ///
+        /// - Parameters:
+        ///   - raw: The raw constrained output text.
+        ///   - type: The `Generable` type to decode into.
+        /// - Returns: The decoded value of type `T`.
+        /// - Throws: ``GuidedGenerationError/decodingFailed(_:)`` if `raw` is not
+        ///   parseable as `T` — malformed JSON or a shape the type rejects.
+        static func decode<T: Generable>(_ raw: String, as type: T.Type) throws -> T {
+            do {
+                return try T(GeneratedContent(json: raw))
+            } catch {
+                throw GuidedGenerationError.decodingFailed(raw)
+            }
+        }
+    }
+
+    /// The typed guided response shape (milestone 8b).
+    extension RoutedModel where Container == any LoadedLLMContainer {
+        /// Generates a response constrained to a `@Generable` type's schema and
+        /// decoded back into that type — one source of truth for the shape.
+        ///
+        /// The schema is *derived from* `T` (its `GenerationSchema` encoded to JSON
+        /// Schema), wrapped as a ``Grammar/jsonSchema(_:)``, and routed through the
+        /// raw ``respond(to:following:)`` layer; the constrained output is then
+        /// decoded into `T`. Both the derivation and the decode are pure and
+        /// unit-tested; only the constrained decode in between is gated to
+        /// milestone 7.
+        ///
+        /// - Parameters:
+        ///   - prompt: The prompt to respond to.
+        ///   - type: The `Generable` type to generate and decode into.
+        /// - Returns: The decoded value of type `T`.
+        /// - Throws: ``GuidedGenerationError`` — an xgrammar-subset rejection for a
+        ///   schema `T` derives that the subset cannot express, or
+        ///   ``GuidedGenerationError/decodingFailed(_:)`` if the output does not
+        ///   decode into `T` — or any error the model raises
+        ///   (``GenerationError/notWiredForLiveInference`` over a live container
+        ///   until milestone 7).
+        public func respond<T: Generable>(
+            to prompt: String,
+            generating type: T.Type
+        ) async throws -> T {
+            let schema = try GuidedShapes.derivedSchema(for: T.self)
+            let raw = try await respond(to: prompt, following: .jsonSchema(schema))
+            return try GuidedShapes.decode(raw, as: T.self)
+        }
+    }
+#endif  // canImport(FoundationModels)
