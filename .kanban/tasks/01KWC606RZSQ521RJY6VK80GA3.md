@@ -29,6 +29,19 @@ comments:
 
     Ready for /review.
   timestamp: 2026-07-01T14:10:22.428169+00:00
+- actor: wballard
+  id: 01kwf1f8w86h364erb23z7j6y6
+  text: |-
+    Resolved all 5 review findings (2026-07-01 09:11 batch):
+
+    1. RoutedEmbedder.embed — added explicit `to: nil` label on `recorder.append(...)`, matching the RoutedSession call-site convention. The label-less overload forwarded to `to: nil` anyway, so behavior is identical.
+    2. Router.resolve finalize — CLEAN LOOP achieved (no casts). `finalize` already takes the common `any LoadedModelContainer` base, and both `LoadedLLMContainer`/`LoadedEmbeddingContainer` refine it, so `[(ModelSlot, any LoadedModelContainer)]` upcasts implicitly. Replaced the three calls with a loop over that pair list in the same standard→flash→embedding order. No heterogeneous `as` casts were needed — the prior pass's cast concern didn't apply because finalize's parameter is already the base type.
+    3. Router.init — inlined the single-call-site `gated(...)` helper as an if/else on `self.recorder` (base when `.full && redact == nil`, else GatingRecorder), preserved the "why" doc as an inline comment, and deleted the static helper.
+    4. Router.slotResolution — replaced `.first { }!` force-unwrap with `guard let ... first(where:) else { preconditionFailure(...) }`; documents the total-by-construction invariant, traps identically to `!`.
+    5. MergedAndRedactionTests.mergedTotalOrderAcrossConcurrentSessions — added `#expect(merged.allSatisfy { $0.text == "body" })` asserting the body survives the JSONL round-trip, not just seq order.
+
+    Full `swift test` green: 110 tests / 18 suites pass, plus the gated integration suite (1 skipped as expected). No warnings.
+  timestamp: 2026-07-01T14:31:33.512293+00:00
 depends_on:
 - 01KWC5J8K8C0E2ENKB33V4R8SH
 position_column: doing
@@ -56,3 +69,11 @@ The two cross-cutting recording features layered on the core nesting/events (mil
 
 ## Workflow
 - Use `/tdd` — write failing merge-ordering, level-gating, and redaction tests first.
+
+## Review Findings (2026-07-01 09:11)
+
+- [x] `Sources/FoundationModelsRouter/RoutedEmbedder.swift:33` — The `recorder.append` call is missing the explicit `to:` parameter label that is required by the signature, unlike the pattern used in RoutedSession. Add explicit `to:` parameter: `await recorder.append(..., to: nil)` or pass the appropriate directory if available.
+- [x] `Sources/FoundationModelsRouter/Router.swift:183` — Three identical finalize calls for .standard, .flash, and .embedding slots should be consolidated into a loop. Parallel code paths that differ only in constants (slot and container parameters) should instead be a single code path interpreting data, consistent with the download section's loop pattern earlier in the method. Replace the three separate finalize calls with a loop: `let finalizePairs: [(ModelSlot, any LoadedModelContainer)] = [(.standard, standardContainer), (.flash, flashContainer), (.embedding, embeddingContainer)]; for (slot, container) in finalizePairs { try await finalize(slot, container: container, progress: progress) }`.
+- [x] `Sources/FoundationModelsRouter/Router.swift:280` — Needless helper with single call site. The `gated` method wraps the router's recorder in a GatingRecorder when needed, but is called only once from the init method. The conditional logic (`if level == .full && redact == nil { return base } else { return GatingRecorder(...) }`) is straightforward enough to inline without loss of clarity. Inline the gating logic directly in the Router.init method where `self.recorder` is assigned (around line 135). Replace the call `Self.gated(baseRecorder, level: recordingLevel, redact: redact)` with the conditional expression inline.
+- [x] `Sources/FoundationModelsRouter/Router.swift:596` — Force unwrap `!` on `first { }` result violates the no-force-unwrap rule in non-test code, even though the comment explains it is safe by construction. Replace with proper error handling: guard or fatalError/preconditionFailure only if truly unreachable, or redesign to return Optional and let caller handle.
+- [x] `Tests/FoundationModelsRouterTests/MergedAndRedactionTests.swift:49` — The test `mergedTotalOrderAcrossConcurrentSessions` writes TranscriptEvent.Partial objects with `text: "body"` to JSONLRecorder and then reads them back through MergedTranscript.merged(), but only verifies the seq ordering is preserved — it does not verify that the text field is correctly decoded and preserved in the round-trip. With the new text field on TranscriptEvent and the new MergedTranscript.merged() read operation, a round-trip test should verify both directions work together, especially since GatingRecorder will modify or drop text during writing. Add an assertion after line 72 to verify the text field is preserved: `#expect(merged.allSatisfy { $0.text == "body" })` to confirm the round-trip encoding/decoding of text works correctly.

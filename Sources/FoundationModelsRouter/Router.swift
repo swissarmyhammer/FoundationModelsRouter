@@ -144,7 +144,16 @@ public actor Router {
         self.cacheDir = resolvedCacheDir
         self.recordingsDir = recordingsDir
         let baseRecorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
-        self.recorder = Self.gated(baseRecorder, level: recordingLevel, redact: redact)
+        // Verbatim recording — `.full` with no `redact` hook — needs no gate, so
+        // the base sink is threaded down directly; this keeps a session and embed
+        // call *born holding the router's recorder itself* in the common case. Any
+        // trimming (`.metadataOnly`, `.off`) or redaction wraps the base sink so
+        // every event source honors it.
+        if recordingLevel == .full, redact == nil {
+            self.recorder = baseRecorder
+        } else {
+            self.recorder = GatingRecorder(level: recordingLevel, redact: redact, wrapping: baseRecorder)
+        }
         self.recordingLevel = recordingLevel
         self.redact = redact
         self.probe = probe
@@ -210,9 +219,17 @@ public actor Router {
             }
 
             await setPhase(.loading, progress)
-            try await finalize(.standard, container: standardContainer, progress: progress)
-            try await finalize(.flash, container: flashContainer, progress: progress)
-            try await finalize(.embedding, container: embeddingContainer, progress: progress)
+            // `finalize` takes the common `any LoadedModelContainer` base, so the
+            // heterogeneous LLM/embedding containers upcast into one pair list and
+            // finalize through a single loop — matching the download section above.
+            let finalizePairs: [(ModelSlot, any LoadedModelContainer)] = [
+                (.standard, standardContainer),
+                (.flash, flashContainer),
+                (.embedding, embeddingContainer),
+            ]
+            for (slot, container) in finalizePairs {
+                try await finalize(slot, container: container, progress: progress)
+            }
 
             await complete(progress)
             let residencyToken = ULID.generate()
@@ -562,11 +579,16 @@ public actor Router {
 
     /// The ``SlotResolution`` for a slot in a joint resolution.
     ///
-    /// Force-unwrapped because a ``JointResolution`` only exists on the success
+    /// Total by construction: a ``JointResolution`` only exists on the success
     /// path, where ``JointFit`` always records a resolution for every slot in
-    /// allocation order — the lookup is total by construction.
+    /// allocation order — a missing slot is a broken invariant, not a runtime
+    /// condition, so it traps rather than returning an optional the callers would
+    /// have to unwrap.
     private static func slotResolution(_ resolution: JointResolution, slot: ModelSlot) -> SlotResolution {
-        resolution.slots.first { $0.slot == slot }!
+        guard let slotRes = resolution.slots.first(where: { $0.slot == slot }) else {
+            preconditionFailure("JointResolution records a resolution for every slot; missing \(slot)")
+        }
+        return slotRes
     }
 
     /// The chosen candidate's `× 1.2` footprint estimate for a slot, or `0` when
@@ -682,30 +704,5 @@ public actor Router {
             return JSONLRecorder(directory: recordingsDir)
         }
         return NoneRecorder()
-    }
-
-    /// Wraps a base recorder in a ``GatingRecorder`` that enforces the recording
-    /// level and redaction, unless neither would change what is recorded.
-    ///
-    /// Verbatim recording — ``RecordingLevel/full`` with no `redact` hook — needs
-    /// no gate, so the base sink is threaded down directly; this keeps a session
-    /// and embed call *born holding the router's recorder itself* in the common
-    /// case. Any trimming (``RecordingLevel/metadataOnly``, ``RecordingLevel/off``)
-    /// or redaction wraps the base sink so every event source honors it.
-    ///
-    /// - Parameters:
-    ///   - base: The concrete sink to record into.
-    ///   - level: How much of each event to record.
-    ///   - redact: The redaction hook for body text, or `nil`.
-    /// - Returns: The base sink, or a ``GatingRecorder`` wrapping it.
-    private static func gated(
-        _ base: any TranscriptRecorder,
-        level: RecordingLevel,
-        redact: (@Sendable (String) -> String)?
-    ) -> any TranscriptRecorder {
-        if level == .full, redact == nil {
-            return base
-        }
-        return GatingRecorder(level: level, redact: redact, wrapping: base)
     }
 }

@@ -51,7 +51,8 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
                 // recording-level and redaction gating as prompt/response text.
                 text: texts.joined(separator: "\n"),
                 ms: ms
-            )
+            ),
+            to: nil
         )
 
         return vectors

@@ -90,6 +90,9 @@ struct MergedAndRedactionTests {
         #expect(merged.map(\.seq) == Array(0..<merged.count))
         // The events were physically spread across every session file.
         #expect(Set(merged.map(\.sessionId)).count >= 1)
+        // The body survives the full JSONL round-trip: every merged event decodes
+        // back to the `text` that was written, not just the correct `seq`.
+        #expect(merged.allSatisfy { $0.text == "body" })
     }
 
     // MARK: - Level gating (unit)
