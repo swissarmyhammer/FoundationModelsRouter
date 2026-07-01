@@ -1,7 +1,24 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwfkgcsqm9bnweytbn6e1b66
+  text: |-
+    Implemented TDD. Two production changes:
+
+    1. Router.reporter (Router.swift): monotonic — `sp.bytesDownloaded = max(sp.bytesDownloaded, dp.bytesDownloaded)`, adopt `bytesTotal` only when `> 0`, kept the `state == .downloading` guard. Reporter made internal for direct test driving.
+
+    2. LiveModelLoader.handler (LiveModelLoader.swift): LIVE-PROGRESS FINDING — the injected Hub downloader (`#hubDownloader()` -> swift-huggingface `HubClient.downloadSnapshot`) builds a byte-weighted Foundation Progress: `totalUnitCount` = sum of file byte sizes (real byte total), children weighted by byte size. BUT Foundation only aggregates a parent-with-children Progress through `fractionCompleted`; the parent's `completedUnitCount` counts only WHOLE completed children — a streaming multi-GB shard reads 0 until it finishes then jumps by its full size (verified empirically: parent completed stays 0 at a child's 50%, jumps on child completion). So the old `completedUnitCount` mapping WAS the exact single 0->100 jump the task warns about. Fixed: `bytesTotal = totalUnitCount` (real byte total, unchanged) and `bytesDownloaded = round(fractionCompleted * totalUnitCount)` — byte-accurate incremental, reaching exactly bytesTotal at completion. Handler made internal + fully documented.
+
+    Tests (all new @Test, no existing test refactored):
+    - ResolveTests.swift: ascending monotonic ticks (strictly increasing fraction), regressing tick ignored (bytes+total+fraction never decrease), late-tick-after-.loading ignored. Deterministic sync via a main-actor flush barrier (`await Task { @MainActor in }.value`), no sleep.
+    - LiveModelLoaderTests.swift (new file): drives handler with a byte-weighted Progress tree, proves byte-accurate incremental mapping (RED with completedUnitCount, GREEN with fractionCompleted).
+    - IntegrationTests.swift (gated): DownloadByteObserver + DownloadObservingLoader wrapper assert each downloaded slot sees bytesTotal>0 and bytesDownloaded reaches bytesTotal.
+
+    Verify: `swift build` clean; full `swift test` = 128 unit tests pass, gated integration suite skipped by default. GREEN, left in doing.
+  timestamp: 2026-07-01T19:46:44.663172+00:00
 depends_on:
 - 01KWFDEMZ9ZGWQHFFWWYRJV0PV
-position_column: todo
+position_column: doing
 position_ordinal: '80'
 title: 'ResolutionProgress: real incremental byte-percentage during download'
 ---

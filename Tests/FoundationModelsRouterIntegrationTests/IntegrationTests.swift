@@ -111,6 +111,90 @@ private actor PhaseRecordingLoader: ModelLoader {
     }
 }
 
+// MARK: - Download-byte observation
+
+/// A thread-safe recorder of the raw ``DownloadProgress`` ticks a slot's download
+/// forwards, so the gated suite can prove the live byte percentage is real —
+/// `bytesTotal > 0` and `bytesDownloaded` reaching `bytesTotal` across the ticks,
+/// not a single `0 → 100` jump.
+///
+/// `@unchecked Sendable` with a lock because the loader's `@Sendable` reporting
+/// closure records into it from the download's own execution context.
+private final class DownloadByteObserver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ticksBySlot: [ModelSlot: [DownloadProgress]] = [:]
+
+    /// Wraps a slot's reporting closure so every tick is recorded before being
+    /// forwarded to the router's own reporter.
+    func capturing(
+        slot: ModelSlot,
+        forwarding reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) -> @Sendable (DownloadProgress) -> Void {
+        { dp in
+            self.lock.lock()
+            self.ticksBySlot[slot, default: []].append(dp)
+            self.lock.unlock()
+            reporting(dp)
+        }
+    }
+
+    /// The slots that observed at least one download tick.
+    var observedSlots: [ModelSlot] {
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(ticksBySlot.keys)
+    }
+
+    /// The ticks recorded for a slot, in arrival order.
+    func ticks(for slot: ModelSlot) -> [DownloadProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return ticksBySlot[slot] ?? []
+    }
+}
+
+/// Wraps a real ``ModelLoader`` and captures the ``DownloadProgress`` ticks each
+/// slot's download forwards into a ``DownloadByteObserver``, without disturbing
+/// the router's own reporting.
+private struct DownloadObservingLoader: ModelLoader {
+    let wrapped: any ModelLoader
+    let observer: DownloadByteObserver
+
+    func loadLLM(
+        _ ref: ModelRef,
+        slot: ModelSlot,
+        context: Int,
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) async throws -> any LoadedLLMContainer {
+        try await wrapped.loadLLM(
+            ref,
+            slot: slot,
+            context: context,
+            reporting: observer.capturing(slot: slot, forwarding: reporting)
+        )
+    }
+
+    func loadEmbedder(
+        _ ref: ModelRef,
+        slot: ModelSlot,
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
+    ) async throws -> any LoadedEmbeddingContainer {
+        try await wrapped.loadEmbedder(
+            ref,
+            slot: slot,
+            reporting: observer.capturing(slot: slot, forwarding: reporting)
+        )
+    }
+
+    func preload(_ container: any LoadedModelContainer) async throws {
+        try await wrapped.preload(container)
+    }
+
+    func evict(_ container: any LoadedModelContainer) async {
+        await wrapped.evict(container)
+    }
+}
+
 // MARK: - Suite
 
 /// The gated end-to-end integration suite (milestone 7).
@@ -155,10 +239,14 @@ struct IntegrationTests {
             wrapping: HuggingFaceMetadataSource(),
             progress: progress
         )
+        let byteObserver = DownloadByteObserver()
         let loader = PhaseRecordingLoader(
-            wrapping: LiveModelLoader(
-                downloader: #hubDownloader(),
-                tokenizerLoader: #huggingFaceTokenizerLoader()
+            wrapping: DownloadObservingLoader(
+                wrapped: LiveModelLoader(
+                    downloader: #hubDownloader(),
+                    tokenizerLoader: #huggingFaceTokenizerLoader()
+                ),
+                observer: byteObserver
             ),
             progress: progress
         )
@@ -185,6 +273,20 @@ struct IntegrationTests {
         #expect(await loader.observedLoadPhases.count == 3)
         #expect(await loader.observedPreloadPhases.allSatisfy { $0 == .loading })
         #expect(await loader.observedPreloadPhases.count == 3)
+
+        // 1b. The live byte percentage is real: every slot that downloaded
+        //     observed a known byte total (> 0) and its byte count reached that
+        //     total across the ticks — a true percentage, not a single 0 -> 100
+        //     jump. (Cached weights still emit a full 0 -> total progression.)
+        let downloadedSlots = byteObserver.observedSlots.filter { !byteObserver.ticks(for: $0).isEmpty }
+        #expect(!downloadedSlots.isEmpty)
+        for slot in downloadedSlots {
+            let ticks = byteObserver.ticks(for: slot)
+            let maxTotal = ticks.map(\.bytesTotal).max() ?? 0
+            let maxDownloaded = ticks.map(\.bytesDownloaded).max() ?? 0
+            #expect(maxTotal > 0)
+            #expect(maxDownloaded == maxTotal)
+        }
 
         // 2. A standard session returns non-empty text.
         let session = profile.standard.makeSession(

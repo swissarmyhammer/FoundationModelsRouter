@@ -350,4 +350,98 @@ struct ResolveTests {
         // (1.0 + 0.5 + 0.25) / 3
         #expect(progress.fraction == (1.0 + 0.5 + 0.25) / 3.0)
     }
+
+    // MARK: - Reporter monotonicity (multi-GB downloads)
+
+    /// Flushes the main actor's queue so a ``Router/reporter(slot:progress:)``
+    /// tick — which applies its update inside a `Task { @MainActor }` — has
+    /// definitely run before the test inspects the observable.
+    ///
+    /// The reporter enqueues its update job on the main-actor serial executor
+    /// when the tick fires; enqueuing one more main-actor job here and awaiting
+    /// it drains that earlier job first (serial FIFO), so a single `await`
+    /// deterministically observes the tick with no polling or `sleep`.
+    @MainActor
+    private func flushMainActor() async {
+        await Task { @MainActor in }.value
+    }
+
+    /// Ascending byte ticks (0 → 2 GB → 5 GB → 8 GB of an 8 GB model) drive the
+    /// slot's byte counts to the latest values and make the overall fraction
+    /// strictly increase while the slot is `.downloading`.
+    @Test("reporter applies ascending byte ticks and the fraction strictly increases")
+    @MainActor
+    func reporterAscendingBytesMonotonic() async {
+        let progress = ResolutionProgress()
+        progress.slots[.standard] = SlotProgress(state: .downloading)
+        let report = Router.reporter(slot: .standard, progress: progress)
+
+        let total: Int64 = 8 << 30
+        let ticks: [Int64] = [0, 2 << 30, 5 << 30, 8 << 30]
+
+        var lastFraction = -1.0
+        for bytes in ticks {
+            report(DownloadProgress(bytesDownloaded: bytes, bytesTotal: total))
+            await flushMainActor()
+
+            let sp = try! #require(progress.slots[.standard])
+            #expect(sp.bytesDownloaded == bytes)
+            #expect(sp.bytesTotal == total)
+            #expect(progress.fraction > lastFraction)
+            lastFraction = progress.fraction
+        }
+        // The final tick reached the full byte total.
+        #expect(progress.slots[.standard]?.bytesDownloaded == total)
+    }
+
+    /// An out-of-order tick — a lower `bytesDownloaded`, and a total that reverts
+    /// to the not-yet-known `0` — must not reduce the slot's byte count, drop its
+    /// known total, or lower the overall fraction (monotonic).
+    @Test("reporter ignores a regressing tick: bytes, total, and fraction never decrease")
+    @MainActor
+    func reporterIgnoresRegressingTick() async {
+        let progress = ResolutionProgress()
+        progress.slots[.standard] = SlotProgress(state: .downloading)
+        let report = Router.reporter(slot: .standard, progress: progress)
+
+        let total: Int64 = 8 << 30
+        report(DownloadProgress(bytesDownloaded: 5 << 30, bytesTotal: total))
+        await flushMainActor()
+        let high = try! #require(progress.slots[.standard]).bytesDownloaded
+        let highFraction = progress.fraction
+        #expect(high == 5 << 30)
+
+        // A regressing tick with a lower byte count and an unknown (0) total.
+        report(DownloadProgress(bytesDownloaded: 2 << 30, bytesTotal: 0))
+        await flushMainActor()
+
+        let sp = try! #require(progress.slots[.standard])
+        #expect(sp.bytesDownloaded == high)
+        #expect(sp.bytesTotal == total)
+        #expect(progress.fraction == highFraction)
+    }
+
+    /// A late tick arriving after the slot has left `.downloading` (now
+    /// `.loading`) is ignored — the existing state guard is preserved so a
+    /// stale callback cannot clobber a slot the orchestration has advanced.
+    @Test("reporter ignores a tick after the slot has left .downloading")
+    @MainActor
+    func reporterIgnoresLateTickAfterLoading() async {
+        let progress = ResolutionProgress()
+        progress.slots[.standard] = SlotProgress(
+            state: .downloading,
+            bytesDownloaded: 5 << 30,
+            bytesTotal: 8 << 30
+        )
+        let report = Router.reporter(slot: .standard, progress: progress)
+
+        // The orchestration advances the slot to loading before a late tick lands.
+        progress.slots[.standard]?.state = .loading
+        report(DownloadProgress(bytesDownloaded: 8 << 30, bytesTotal: 8 << 30))
+        await flushMainActor()
+
+        let sp = try! #require(progress.slots[.standard])
+        #expect(sp.state == .loading)
+        #expect(sp.bytesDownloaded == 5 << 30)
+    }
 }

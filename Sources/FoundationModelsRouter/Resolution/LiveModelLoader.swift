@@ -326,17 +326,41 @@ public struct LiveModelLoader: ModelLoader {
     /// The revision used when a ``ModelRef`` does not pin one.
     private static let defaultRevision = "main"
 
-    /// Adapts the router's ``DownloadProgress`` callback to MLX's Foundation
-    /// `Progress` progress handler.
-    private static func handler(
+    /// Adapts the injected Hub downloader's Foundation `Progress` to the router's
+    /// byte-based ``DownloadProgress`` callback.
+    ///
+    /// The unit contract is **bytes**: `bytesTotal` is the snapshot's total byte
+    /// size and `bytesDownloaded` is the bytes streamed so far, so the surfaced
+    /// percentage is byte-accurate for the multi-GB weight downloads a UI bar
+    /// tracks. The concrete Hub downloader the integration wiring injects
+    /// (`#hubDownloader()`, forwarding `HubClient.downloadSnapshot`) builds its
+    /// snapshot `Progress` byte-weighted: `totalUnitCount` is the sum of every
+    /// entry's byte size, and each file is a child progress whose unit weight is
+    /// that file's byte size. So `totalUnitCount` is the real byte total (mapped
+    /// straight to ``DownloadProgress/bytesTotal``, no synthetic total).
+    ///
+    /// The downloaded count, however, is **not** `completedUnitCount`. Foundation
+    /// aggregates a parent-with-children `Progress` only through
+    /// `fractionCompleted`; its `completedUnitCount` counts only *whole completed
+    /// children* — a shard streaming through reads `0` until it finishes and then
+    /// jumps by its full size. For a multi-GB single-shard model that is a single
+    /// `0 → 100` leap, not a live percentage. The honest incremental byte count is
+    /// therefore `fractionCompleted × totalUnitCount`, rounded — which streams
+    /// smoothly and still reaches exactly `bytesTotal` at completion
+    /// (`fractionCompleted == 1`).
+    ///
+    /// Before any total is known the parent reports `0` bytes, which
+    /// ``SlotProgress/progressFraction`` treats as an unknown total (fraction `0`)
+    /// rather than a divide-by-zero; the ``Router/reporter(slot:progress:)`` this
+    /// feeds only adopts a `bytesTotal` once it is reported (`> 0`).
+    static func handler(
         _ reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) -> @Sendable (Progress) -> Void {
         { progress in
+            let bytesTotal = progress.totalUnitCount
+            let bytesDownloaded = Int64((progress.fractionCompleted * Double(bytesTotal)).rounded())
             reporting(
-                DownloadProgress(
-                    bytesDownloaded: progress.completedUnitCount,
-                    bytesTotal: progress.totalUnitCount
-                )
+                DownloadProgress(bytesDownloaded: bytesDownloaded, bytesTotal: bytesTotal)
             )
         }
     }

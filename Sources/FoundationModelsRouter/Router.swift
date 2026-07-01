@@ -502,23 +502,34 @@ public actor Router {
         }
     }
 
-    /// A best-effort download-progress callback that updates a slot's byte counts
-    /// on the main actor.
+    /// A best-effort, monotonic download-progress callback that updates a slot's
+    /// byte counts on the main actor.
     ///
-    /// The update is dispatched onto the main actor and is therefore unordered
-    /// with respect to the awaited phase transitions, so it only applies while
-    /// the slot is still ``SlotProgress/State/downloading`` — a late callback
-    /// must never clobber a slot the orchestration has already moved to loading,
-    /// ready, or failed.
-    private static func reporter(
+    /// Each tick applies its update in its own `Task { @MainActor }`, so ticks
+    /// are unordered with respect to one another *and* to the awaited phase
+    /// transitions. Two guards keep the surfaced progress trustworthy for the
+    /// multi-GB downloads a UI bar tracks:
+    ///
+    /// - **State guard**: the update only applies while the slot is still
+    ///   ``SlotProgress/State/downloading``, so a late callback never clobbers a
+    ///   slot the orchestration has already moved to loading, ready, or failed.
+    /// - **Monotonicity**: `bytesDownloaded` only ever advances
+    ///   (`max(current, tick)`), so an out-of-order tick that arrives with a
+    ///   smaller count cannot flick the bar backward; and a known
+    ///   `bytesTotal` is adopted only when the tick actually reports one
+    ///   (`> 0`), so a later tick that has not yet learned the total (`0`)
+    ///   cannot erase it.
+    static func reporter(
         slot: ModelSlot,
         progress: ResolutionProgress
     ) -> @Sendable (DownloadProgress) -> Void {
         { dp in
             Task { @MainActor in
                 guard var sp = progress.slots[slot], sp.state == .downloading else { return }
-                sp.bytesDownloaded = dp.bytesDownloaded
-                sp.bytesTotal = dp.bytesTotal
+                sp.bytesDownloaded = max(sp.bytesDownloaded, dp.bytesDownloaded)
+                if dp.bytesTotal > 0 {
+                    sp.bytesTotal = dp.bytesTotal
+                }
                 progress.slots[slot] = sp
                 progress.refreshFraction()
             }
