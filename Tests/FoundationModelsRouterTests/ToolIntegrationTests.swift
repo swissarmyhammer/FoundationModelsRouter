@@ -62,7 +62,7 @@ struct ToolIntegrationTests {
         private(set) var embedderLoads: [ModelRef: Int] = [:]
         private(set) var evictions = 0
 
-        func recordLLMLoad(_ ref: ModelRef) { llmLoads[ref, default: 0] += 1 }
+        func recordLlmLoad(_ ref: ModelRef) { llmLoads[ref, default: 0] += 1 }
         func recordEmbedderLoad(_ ref: ModelRef) { embedderLoads[ref, default: 0] += 1 }
         func recordEviction() { evictions += 1 }
 
@@ -101,7 +101,7 @@ struct ToolIntegrationTests {
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            await spy.recordLLMLoad(ref)
+            await spy.recordLlmLoad(ref)
             return CannedLLMContainer(text: text)
         }
 
@@ -124,7 +124,7 @@ struct ToolIntegrationTests {
 
     // MARK: - Fixtures
 
-    private static let configJSON = Data("""
+    private static let configJson = Data("""
         {
             "num_hidden_layers": 2,
             "num_attention_heads": 8,
@@ -134,14 +134,14 @@ struct ToolIntegrationTests {
         }
         """.utf8)
 
-    private static let treeJSON = Data("""
+    private static let treeJson = Data("""
         [
             {"type": "file", "path": "model.safetensors", "size": 10000000}
         ]
         """.utf8)
 
     private static var rawMetadata: RawRepoMetadata {
-        RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
+        RawRepoMetadata(configJSON: configJson, treeJSON: treeJson)
     }
 
     private static let profile = ProfileDefinition(
