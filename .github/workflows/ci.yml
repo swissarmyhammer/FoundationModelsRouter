@@ -10,35 +10,21 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # The MLX stack compiles Metal shaders, so the build needs a full Xcode with
-  # the Metal toolchain — a bare `swift build` under Command Line Tools fails
-  # ("no `metal` compiler"). Point at the Xcode beta on the self-hosted runner.
-  # Adjust this path if the beta is installed elsewhere.
-  DEVELOPER_DIR: /Applications/Xcode-beta.app/Contents/Developer
-
 jobs:
   unit:
     name: Build & unit tests
-    # Self-hosted Apple Silicon runner on macOS 27 beta + Xcode beta.
-    # MLX requires Apple Silicon; add `ARM64` to the labels if you run mixed hosts.
-    runs-on: [self-hosted, macOS]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Toolchain versions
-        run: |
-          sw_vers
-          swift --version
-          echo "DEVELOPER_DIR=$DEVELOPER_DIR"
-
-      - name: Build (incl. tests)
-        run: swift build --build-tests
-
-      - name: Unit tests
-        # The gated real-model integration suite skips automatically because
-        # FM_ROUTER_INTEGRATION_TESTS is unset — this job stays fast and offline.
-        run: swift test
+    # Shared reusable workflow (swissarmyhammer/workflows): self-hosted
+    # Apple Silicon macOS runner, `swift build --build-tests` + `swift test`.
+    # The gated real-model integration suite skips automatically because
+    # FM_ROUTER_INTEGRATION_TESTS is unset — this job stays fast and offline.
+    uses: swissarmyhammer/workflows/.github/workflows/swift-ci.yaml@main
+    with:
+      # The MLX stack compiles Metal shaders, so the build needs a full Xcode
+      # with the Metal toolchain — a bare `swift build` under Command Line
+      # Tools fails ("no `metal` compiler"). Point at the Xcode beta on the
+      # self-hosted runner. Adjust this path if the beta is installed
+      # elsewhere.
+      developer-dir: /Applications/Xcode-beta.app/Contents/Developer
 
   integration:
     name: Integration (tiny real models, opt-in)
@@ -46,6 +32,8 @@ jobs:
     # GPU, and runs for ~30s+. Not run on every push.
     if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, macOS]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode-beta.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
 
