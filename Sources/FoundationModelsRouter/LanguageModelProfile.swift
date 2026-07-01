@@ -126,15 +126,18 @@ public final class RoutedModel<Container: Sendable>: Sendable {
 /// A resolved, resident generation model — the handle a profile exposes for its
 /// `.standard` or `.flash` slot.
 ///
-/// The session-creation surface (`makeSession`) lands in milestone 5b; this is
-/// storage only for now.
+/// This is the handle to pass into a tool's constructor: it references one
+/// resident model loaded once at resolve, so many tools built from the same
+/// `profile.standard` / `profile.flash` share the identical loaded container
+/// rather than each re-resolving. See ``SummarizeTool`` for the pattern.
 public typealias RoutedLLM = RoutedModel<any LoadedLLMContainer>
 
 /// A resolved, resident embedding model — the handle a profile exposes for its
 /// `.embedding` slot.
 ///
-/// The `embed` surface and `dimension` land in milestone 5a; this is storage
-/// only for now.
+/// Like ``RoutedLLM``, this is the handle to pass into a tool's constructor:
+/// tools built from the same `profile.embedding` share its one resident model
+/// rather than each re-resolving. See ``EmbedTool`` for the pattern.
 public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
 
 /// A profile resolved for *this* machine: the three models that co-fit the

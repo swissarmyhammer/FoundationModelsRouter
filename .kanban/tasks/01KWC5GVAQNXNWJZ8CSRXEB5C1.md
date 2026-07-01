@@ -1,8 +1,20 @@
 ---
+comments:
+- actor: wballard
+  id: 01kwdgpyb64gmh6p5bpw4n0dh9
+  text: 'Picked up. Read RoutedLLM/RoutedEmbedder (RoutedModel<Container> final class - reference identity works with ===), LanguageModelProfile, RoutedSession, and the stub-loader/InMemoryRecorder patterns in ResolveTests/SessionChokepointTests/ProfileLifecycleTests. Plan: add SummarizeTool(model: RoutedLLM) + EmbedTool(model: RoutedEmbedder) in Sources/, plus ToolIntegrationTests with a load-counting loader spy. TDD: writing failing tests first.'
+  timestamp: 2026-07-01T00:19:24.646332+00:00
+- actor: wballard
+  id: 01kwdh0erbknffvvzcf73gg630
+  text: |-
+    Done (TDD, GREEN). Added Sources/FoundationModelsRouter/Tools.swift with SummarizeTool(model: RoutedLLM) (summarize -> makeSession(instructions:).respond) and EmbedTool(model: RoutedEmbedder) (embed/dimension -> model.embed), plus a module doc comment documenting the shared-handle constructor pattern (pass slot handle in; do not re-resolve per tool). Cross-referenced the pattern from the RoutedLLM/RoutedEmbedder typealias docs in LanguageModelProfile.swift. Added Tests/FoundationModelsRouterTests/ToolIntegrationTests.swift with a load-counting LoaderSpy + canned containers + InMemoryRecorder: (1) two tools from profile.flash share one resident model via === identity and the loader's flash-slot load count stays 1 (no reload on construction); (2) a summarize call records [.prompt,.response] and an embed call records one .embedding event through the handle's recorder with correct provenance; (3) constructing tools leaves one-active-profile residency intact (second resolve throws RouterError; resolve succeeds after release).
+
+    Verification (DEVELOPER_DIR=Xcode-beta): `swift test --filter ToolIntegrationTests` -> 4/4 pass. Full `swift test` -> 84 tests + 1, all pass, no new warnings. Adversarial double-check verdict: PASS. Left in doing for /review.
+  timestamp: 2026-07-01T00:24:36.363864+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
-position_column: todo
-position_ordinal: 8c80
+position_column: doing
+position_ordinal: '80'
 title: 'Tool integration: shared-profile constructor pattern (milestone 6)'
 ---
 ## What

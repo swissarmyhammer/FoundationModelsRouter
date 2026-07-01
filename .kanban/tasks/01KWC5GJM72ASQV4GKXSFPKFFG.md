@@ -64,8 +64,8 @@ comments:
   timestamp: 2026-07-01T00:09:42.041111+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8d80
 title: 'Guided generation: Grammar + raw guided sessions (milestone 8a)'
 ---
 ## What
