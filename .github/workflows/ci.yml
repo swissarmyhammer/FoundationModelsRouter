@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift build --build-tests
-      - name: Run gated integration suite (xctest: swift test can't find MLX's metallib)
+      - name: Run gated integration suite (xctest workaround for MLX metallib)
         run: |
           set -euo pipefail
           METALLIB="$(find .build -name default.metallib -path '*Cmlx*' | head -n 1)"
