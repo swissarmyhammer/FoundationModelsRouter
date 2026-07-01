@@ -11,8 +11,8 @@ comments:
     - `swift test`: 124 tests / 19 suites PASS (gated integration suite skipped as designed). No compiler warnings from our code.
     Leaving task in `doing` for review.
   timestamp: 2026-07-01T18:18:09.487481+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9680'
 title: Review of whole codebase (swift validator)
 ---
 Scope: `**/*.swift` (whole codebase), validators: [`swift`]. Range-mode review, 2026-07-01. Engine returned 61 findings; ~43 test-refactoring findings were dropped under the review skill's blanket exception (deduplicating/restructuring/renaming EXISTING test code is out of scope). The surviving source + new-coverage findings are below.
