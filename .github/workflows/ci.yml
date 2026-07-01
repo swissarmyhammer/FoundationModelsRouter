@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The MLX stack compiles Metal shaders, so the build needs a full Xcode with
+  # the Metal toolchain — a bare `swift build` under Command Line Tools fails
+  # ("no `metal` compiler"). Point at the Xcode beta on the self-hosted runner.
+  # Adjust this path if the beta is installed elsewhere.
+  DEVELOPER_DIR: /Applications/Xcode-beta.app/Contents/Developer
+
+jobs:
+  unit:
+    name: Build & unit tests
+    # Self-hosted Apple Silicon runner on macOS 27 beta + Xcode beta.
+    # MLX requires Apple Silicon; add `ARM64` to the labels if you run mixed hosts.
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          sw_vers
+          swift --version
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+
+      - name: Build (incl. tests)
+        run: swift build --build-tests
+
+      - name: Unit tests
+        # The gated real-model integration suite skips automatically because
+        # FM_ROUTER_INTEGRATION_TESTS is unset — this job stays fast and offline.
+        run: swift test
+
+  integration:
+    name: Integration (tiny real models, opt-in)
+    # Manual only (Actions ▸ Run workflow): downloads real models + needs the
+    # GPU, and runs for ~30s+. Not run on every push.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build tests
+        run: swift build --build-tests
+
+      - name: Run gated integration suite
+        # `swift test` cannot locate mlx-swift's `default.metallib` under the
+        # SwiftPM test runner ("Failed to load the default metallib"), so run the
+        # test bundle directly with `xcrun xctest` after placing the metallib next
+        # to the bundle. Paths are discovered dynamically; if the layout differs
+        # on your runner, tune the two `find` calls below.
+        run: |
+          set -euo pipefail
+          METALLIB="$(find .build -name default.metallib -path '*Cmlx*' | head -n 1)"
+          XCTEST="$(find .build -name '*IntegrationTests.xctest' -type d | head -n 1)"
+          echo "metallib: ${METALLIB:?not found}"
+          echo "xctest:   ${XCTEST:?not found}"
+          # Place the metallib next to the bundle's executable (Contents/MacOS),
+          # falling back to the bundle's parent directory.
+          cp "$METALLIB" "$XCTEST/Contents/MacOS/" 2>/dev/null \
+            || cp "$METALLIB" "$(dirname "$XCTEST")/"
+          FM_ROUTER_INTEGRATION_TESTS=1 xcrun xctest "$XCTEST"
