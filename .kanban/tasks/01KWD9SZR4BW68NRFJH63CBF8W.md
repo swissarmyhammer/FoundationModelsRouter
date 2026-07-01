@@ -35,8 +35,8 @@ depends_on:
 - 01KWC5HV9BBARA3HJA26MMV0YC
 - 01KWC5H7Y7NVG4771FR9ZKW5M0
 - 01KWC5JSV0GM6AM05C6TXGN0TS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9580'
 title: 'Capstone: example/usage unit tests as living API documentation'
 ---
 ## What
