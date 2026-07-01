@@ -165,6 +165,36 @@ struct MergedAndRedactionTests {
         #expect(await inner.events.first?.text == "top *** plan")
     }
 
+    @Test("the redact hook is applied verbatim: case-sensitivity is the caller's contract")
+    func redactHookIsAppliedVerbatim() async throws {
+        // The `redact` hook is caller-supplied, so its matching semantics are the
+        // caller's concern. A hook targeting lowercase "secret" leaves other
+        // spellings untouched — the gate does not case-fold on the caller's behalf.
+        let inner: InMemoryRecorder = .inMemory
+        let caseSensitive: @Sendable (String) -> String = { $0.replacingOccurrences(of: "secret", with: "***") }
+        let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: caseSensitive, wrapping: inner)
+
+        await recorder.append(samplePartial(kind: .prompt, text: "Secret and SECRET and secret"))
+
+        // Only the exact-case token is replaced; "Secret"/"SECRET" pass through.
+        #expect(await inner.events.first?.text == "Secret and SECRET and ***")
+    }
+
+    @Test("a caller wanting case-insensitive redaction supplies a case-insensitive hook")
+    func callerSuppliesCaseInsensitiveRedaction() async throws {
+        // If the contract a caller wants is case-insensitive, they express it in
+        // their own hook — the router applies whatever hook it is handed.
+        let inner: InMemoryRecorder = .inMemory
+        let caseInsensitive: @Sendable (String) -> String = {
+            $0.replacingOccurrences(of: "secret", with: "***", options: .caseInsensitive)
+        }
+        let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: caseInsensitive, wrapping: inner)
+
+        await recorder.append(samplePartial(kind: .prompt, text: "Secret and SECRET and secret"))
+
+        #expect(await inner.events.first?.text == "*** and *** and ***")
+    }
+
     // MARK: - Wiring through the router (session + embed)
 
     @Test("metadataOnly wired through the router drops bodies on both session turns and embeddings")

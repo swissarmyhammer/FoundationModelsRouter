@@ -14,7 +14,7 @@ public enum GuidedRequestError: Error, Equatable {
     case unsupportedSchemaConstructs([String])
 
     /// The JSON-schema source was not a parseable JSON object.
-    case invalidJsonSchema(String)
+    case invalidJSONSchema(String)
 
     /// The grammar source was empty.
     case emptyGrammar
@@ -59,12 +59,12 @@ extension Grammar {
     ///
     /// - Throws: ``GuidedRequestError/unsupportedSchemaConstructs(_:)`` for a
     ///   JSON schema using `$ref`/`allOf`/`format`,
-    ///   ``GuidedRequestError/invalidJsonSchema(_:)`` for a schema that is not
+    ///   ``GuidedRequestError/invalidJSONSchema(_:)`` for a schema that is not
     ///   valid JSON, or ``GuidedRequestError/emptyGrammar`` for empty source.
     func validateForXGrammar() throws {
         switch self {
         case .jsonSchema(let schema):
-            try Grammar.validateJsonSchema(schema)
+            try Grammar.validateJSONSchema(schema)
         case .ebnf(let source):
             guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw GuidedRequestError.emptyGrammar
@@ -76,17 +76,17 @@ extension Grammar {
     /// found anywhere in the schema tree.
     ///
     /// - Parameter schema: The JSON Schema source string.
-    /// - Throws: ``GuidedRequestError/invalidJsonSchema(_:)`` when the source
+    /// - Throws: ``GuidedRequestError/invalidJSONSchema(_:)`` when the source
     ///   is not parseable JSON, or
     ///   ``GuidedRequestError/unsupportedSchemaConstructs(_:)`` when it uses
     ///   keywords outside the supported subset.
-    private static func validateJsonSchema(_ schema: String) throws {
+    private static func validateJSONSchema(_ schema: String) throws {
         let trimmed = schema.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw GuidedRequestError.emptyGrammar }
         guard let data = schema.data(using: .utf8),
             let root = try? JSONSerialization.jsonObject(with: data)
         else {
-            throw GuidedRequestError.invalidJsonSchema(schema)
+            throw GuidedRequestError.invalidJSONSchema(schema)
         }
 
         var found: Set<String> = []

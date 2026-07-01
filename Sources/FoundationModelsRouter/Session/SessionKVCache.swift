@@ -51,9 +51,6 @@ extension LoadedLLMContainer {
 /// its release frees nothing. It exists so the fork/copy/free surface is
 /// well-defined for every container without a GPU-backed cache.
 final class InertKVCache: SessionKVCache {
-    /// Creates an inert cache.
-    init() {}
-
     /// Returns another inert cache — there is no prefix state to carry.
     func copy() -> any SessionKVCache {
         InertKVCache()

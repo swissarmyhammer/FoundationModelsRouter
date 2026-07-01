@@ -83,17 +83,36 @@ public actor Router {
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
 
-    /// The residency token of the currently resident profile, or `nil` when none
-    /// is resolved. A unique, never-reused ``ULID`` (not an `ObjectIdentifier`,
-    /// whose address-derived value a freed profile could hand to a later one), so
-    /// it imposes the one-active-profile rule without keeping a dropped profile
-    /// alive and without a stale release ever matching a newer profile.
-    private var residentToken: ULID?
+    /// The router's mutually-exclusive residency state, making impossible states
+    /// unrepresentable: it is either idle, resolving, or resident — never, say,
+    /// "resident and resolving" at once.
+    ///
+    /// The ``ResidencyState/resident(_:)`` case carries the residency token of the
+    /// currently resident profile: a unique, never-reused ``ULID`` (not an
+    /// `ObjectIdentifier`, whose address-derived value a freed profile could hand
+    /// to a later one), so it imposes the one-active-profile rule without keeping a
+    /// dropped profile alive and without a stale release ever matching a newer
+    /// profile. The ``ResidencyState/resolving`` case is entered synchronously
+    /// before the first suspension so a second ``resolve(_:reporting:)`` entering
+    /// during the download/load awaits is rejected rather than racing to
+    /// over-commit.
+    private var residencyState: ResidencyState = .idle
 
-    /// Whether a resolution is in flight. Set synchronously before the first
-    /// suspension so a second ``resolve(_:reporting:)`` entering during the
-    /// download/load awaits is rejected rather than racing to over-commit.
-    private var resolutionInFlight = false
+    /// The router's mutually-exclusive residency lifecycle.
+    ///
+    /// Modeling the states as one enum makes the impossible combinations — such
+    /// as "resident while resolving" — unrepresentable, unlike a separate
+    /// residency-token optional and in-flight flag.
+    private enum ResidencyState {
+        /// No profile is resident and none is being resolved.
+        case idle
+        /// A ``Router/resolve(_:reporting:)`` is in flight; a second concurrent
+        /// resolve is rejected until it settles.
+        case resolving
+        /// A profile is resident, carrying its unique residency token so a stale
+        /// release cannot clobber a newer profile.
+        case resident(ULID)
+    }
 
     /// When the router was constructed — the manifest's run-start instant.
     private let startedAt = Date()
@@ -182,11 +201,16 @@ public actor Router {
         _ def: ProfileDefinition,
         reporting progress: ResolutionProgress
     ) async throws -> LanguageModelProfile {
-        guard residentToken == nil, !resolutionInFlight else {
+        guard case .idle = residencyState else {
             throw RouterError.profileAlreadyResident
         }
-        resolutionInFlight = true
-        defer { resolutionInFlight = false }
+        residencyState = .resolving
+        // If resolution throws before reaching residency, return to idle; a
+        // successful resolve sets `.resident(token)` below, which this leaves
+        // untouched.
+        defer {
+            if case .resolving = residencyState { residencyState = .idle }
+        }
 
         await beginSizing(progress)
         let budget = hostBudget()
@@ -241,7 +265,7 @@ public actor Router {
                 embeddingContainer: embeddingContainer,
                 residencyToken: residencyToken
             )
-            residentToken = residencyToken
+            residencyState = .resident(residencyToken)
             recordResolvedProfile(def, resolution: resolution)
             writeManifest()
             return profile
@@ -273,8 +297,8 @@ public actor Router {
     ///   - token: The residency token of the profile asking to be released.
     ///   - containers: That profile's three resident containers, to evict.
     func release(token: ULID, containers: [any LoadedModelContainer]) async {
-        guard residentToken == token else { return }
-        residentToken = nil
+        guard case .resident(let current) = residencyState, current == token else { return }
+        residencyState = .idle
         for container in containers {
             await loader.evict(container)
         }

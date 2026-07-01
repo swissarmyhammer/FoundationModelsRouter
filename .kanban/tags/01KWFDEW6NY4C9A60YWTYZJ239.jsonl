@@ -1,0 +1,1 @@
+{"id":"01KWFDEW6NWJ6Z98KDKKPBMN9G","timestamp":"2026-07-01T18:01:03.445904Z","op":"create","item_id":"01KWFDEW6NY4C9A60YWTYZJ239","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: e36209\n+tag_name: review\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: e36209\n-tag_name: review\n","transaction_id":null}

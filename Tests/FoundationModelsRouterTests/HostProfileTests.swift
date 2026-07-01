@@ -58,6 +58,34 @@ struct HostProfileTests {
         #expect(profile.budget(headroomReserve: reserve) == expected)
     }
 
+    @Test("HostProfile Codable round-trips chip, RAM, and working set")
+    func codableRoundTrip() throws {
+        let profile = HostProfile(
+            chip: "Apple M4 Max",
+            totalRAM: 128 * Self.gb,
+            recommendedMaxWorkingSetSize: 96 * Self.gb
+        )
+
+        let data = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(HostProfile.self, from: data)
+
+        #expect(decoded == profile)
+    }
+
+    @Test("re-saving the same (chip, totalRAM) key overwrites; load returns the latest")
+    func cacheOverwriteRoundTrip() throws {
+        let (cache, dir) = Self.makeCache()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let original = HostProfile(chip: "Apple M3", totalRAM: 24 * Self.gb, recommendedMaxWorkingSetSize: 16 * Self.gb)
+        let updated = HostProfile(chip: "Apple M3", totalRAM: 24 * Self.gb, recommendedMaxWorkingSetSize: 18 * Self.gb)
+
+        try cache.save(original)
+        try cache.save(updated)
+
+        #expect(try cache.load(chip: "Apple M3", totalRAM: 24 * Self.gb) == updated)
+    }
+
     @Test("a profile persists to and reloads from the cache dir unchanged")
     func cacheRoundTrip() throws {
         let (cache, dir) = Self.makeCache()

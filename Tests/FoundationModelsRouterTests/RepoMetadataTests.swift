@@ -145,6 +145,23 @@ struct RepoMetadataTests {
         }
     }
 
+    @Test("RepoMetadata Codable round-trips every architecture field")
+    func codableRoundTrip() throws {
+        let metadata = RepoMetadata(
+            weightBytes: Self.expectedWeightBytes,
+            numHiddenLayers: 4,
+            numAttentionHeads: 32,
+            numKeyValueHeads: 8,
+            headDim: 128,
+            hiddenSize: 4096
+        )
+
+        let data = try JSONEncoder().encode(metadata)
+        let decoded = try JSONDecoder().decode(RepoMetadata.self, from: data)
+
+        #expect(decoded == metadata)
+    }
+
     @Test("a second read of the same (repo, revision) hits the cache; fetch runs once")
     func cacheHitFetchesOnce() async throws {
         let (reader, dir, source) = Self.makeReader(
