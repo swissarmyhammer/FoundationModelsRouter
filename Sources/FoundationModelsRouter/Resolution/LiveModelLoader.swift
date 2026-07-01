@@ -1,57 +1,226 @@
 import Foundation
+import MLX
 import MLXEmbedders
+import MLXGuidedGeneration
 import MLXLLM
 import MLXLMCommon
 
 // The MLX container types are the live loaded handles. They are `final class …:
 // Sendable`, so conforming them to the router's marker protocols lets
-// ``LiveModelLoader`` vend them where the orchestration expects an
-// `any LoadedLLMContainer` / `any LoadedEmbeddingContainer`.
-//
-// The `ModelContainer` exposes its model only through an async `perform` closure
-// over non-`Sendable` MLX state, so the real text-generation pipeline is GPU
-// work that lands in the gated integration suite (milestone 7). These
-// conformances are the deferred seam: the unit suite drives a stub container,
-// while the live path makes its unwired state explicit (throwing
-// ``GenerationError/notWiredForLiveInference``) rather than returning fabricated
-// text — mirroring the embedder seam below.
+// ``LiveModelLoader`` vend real generation and embedding through the same
+// orchestration the unit suite drives with stubs. These are the milestone-7
+// live seams: `ModelContainer` runs the real `MLXLMCommon` / xgrammar pipeline,
+// and ``LiveEmbeddingContainer`` wraps `MLXEmbedders` with a probed dimension.
+
+/// Bounded token budgets for the live generation paths, so a routed turn cannot
+/// run away. Guided decode is whole-chunk and structural, so it gets a larger
+/// ceiling than plain generation.
+private let liveGenerateMaxTokens = 1024
+private let liveGuidedMaxTokens = 2048
+
 extension ModelContainer: LoadedLLMContainer {
-    /// Generates a complete text response — wired through the real `MLXLMCommon`
-    /// pipeline in the gated integration suite (milestone 7). Until then it
-    /// throws, so no caller mistakes an unwired live container for a working one.
+    /// Generates a complete text response through the real `MLXLMCommon` pipeline
+    /// by accumulating a fresh ``ChatSession``'s stream.
+    ///
+    /// Each call is a one-shot session over the shared resident container: the
+    /// ``LoadedLLMContainer`` generation seam carries no per-turn cache, so
+    /// conversation state is not threaded through here (see ``makeCache()``).
     public nonisolated func respond(to prompt: String, instructions: String?) async throws -> String {
-        throw GenerationError.notWiredForLiveInference
+        try await ChatSession(
+            self,
+            instructions: instructions,
+            generateParameters: GenerateParameters(maxTokens: liveGenerateMaxTokens)
+        ).respond(to: prompt)
     }
 
-    /// Streams a text response — wired through the real `MLXLMCommon` pipeline in
-    /// the gated integration suite (milestone 7). Until then the stream finishes
-    /// by throwing, so no caller mistakes an unwired live container for a working
-    /// one.
+    /// Streams a text response through the real `MLXLMCommon` pipeline as a fresh
+    /// ``ChatSession``'s token stream.
     public nonisolated func streamResponse(
         to prompt: String,
         instructions: String?
     ) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { $0.finish(throwing: GenerationError.notWiredForLiveInference) }
+        ChatSession(
+            self,
+            instructions: instructions,
+            generateParameters: GenerateParameters(maxTokens: liveGenerateMaxTokens)
+        ).streamResponse(to: prompt)
+    }
+
+    /// Generates a grammar-constrained response through the real xgrammar engine.
+    ///
+    /// Validates the grammar (pure, GPU-free), compiles it into a
+    /// ``GrammarConstraint`` over the model's own tokenizer, then drives
+    /// ``GuidedGenerationLoop`` to whole-chunk constrained decode, accumulating the
+    /// emitted deltas.
+    public nonisolated func respond(
+        to prompt: String,
+        instructions: String?,
+        following grammar: Grammar
+    ) async throws -> String {
+        try grammar.validateForXGrammar()
+        return try await perform { context in
+            let hostTokenizer = context.tokenizer
+            let grammarVocab = TokenizerVocabExtractor.extractForGrammar(from: hostTokenizer)
+            let grammarTokenizer = try GrammarTokenizer(
+                vocab: grammarVocab.vocab,
+                vocabType: grammarVocab.vocabType,
+                eosTokenId: Int32(hostTokenizer.eosTokenId ?? 0)
+            )
+            let constraint = try Self.grammarConstraint(
+                for: grammar,
+                tokenizer: grammarTokenizer,
+                hostTokenizer: hostTokenizer
+            )
+            // `UserInput` is not `Sendable`, so it is built inside the `@Sendable`
+            // perform closure from the Sendable prompt/instructions rather than
+            // captured from outside.
+            let input = try await context.processor.prepare(
+                input: Self.guidedUserInput(prompt: prompt, instructions: instructions)
+            )
+            var output = ""
+            try GuidedGenerationLoop.run(
+                input: input,
+                context: context,
+                constraint: constraint,
+                maxTokens: liveGuidedMaxTokens,
+                vocabSize: grammarTokenizer.vocabSize
+            ) { delta in
+                output += delta
+                return true
+            }
+            return output
+        }
+    }
+
+    /// Allocates a fresh MLX-backed session KV cache.
+    ///
+    /// Backed by a real `KVCacheSimple`, so a ``RoutedSession/fork(workingDirectory:)``
+    /// copy runs the real MLX `KVCache.copy()` and the cache frees with the
+    /// session (ARC). The frozen ``LoadedLLMContainer`` generation entry points
+    /// carry no cache argument, so this cache is the fork/copy/free contract
+    /// rather than generation-threaded prefix state.
+    public nonisolated func makeCache() -> any SessionKVCache {
+        MLXSessionKVCache(caches: [KVCacheSimple()])
+    }
+
+    /// Builds the guided prompt input, folding any system instructions in as a
+    /// leading system chat turn.
+    private static func guidedUserInput(prompt: String, instructions: String?) -> UserInput {
+        if let instructions, !instructions.isEmpty {
+            return UserInput(chat: [.system(instructions), .user(prompt)])
+        }
+        return UserInput(prompt: prompt)
+    }
+
+    /// Compiles a router ``Grammar`` into an xgrammar ``GrammarConstraint`` over a
+    /// bound grammar tokenizer, routing JSON-schema and EBNF sources to their
+    /// respective xgrammar compile paths with fast-forward enabled.
+    private static func grammarConstraint(
+        for grammar: Grammar,
+        tokenizer: GrammarTokenizer,
+        hostTokenizer: any Tokenizer
+    ) throws -> GrammarConstraint {
+        switch grammar {
+        case .jsonSchema(let schema):
+            return try GrammarConstraint(
+                tokenizer: tokenizer,
+                jsonSchema: schema,
+                fastForward: true,
+                hostTokenizer: hostTokenizer
+            )
+        case .ebnf(let source):
+            return try GrammarConstraint(
+                tokenizer: tokenizer,
+                grammar: source,
+                fastForward: true,
+                hostTokenizer: hostTokenizer
+            )
+        }
     }
 }
 
-// The MLX `EmbedderModelContainer` exposes its model only through an async
-// `perform` closure over non-`Sendable` MLX tensors, so the real embedding
-// pipeline (and the dimension it produces) is GPU work that lands in the gated
-// integration suite (milestone 7). This conformance is the deferred seam: the
-// unit suite drives a stub embedder, while the live path makes its unwired
-// state explicit rather than returning fabricated vectors.
-extension EmbedderModelContainer: LoadedEmbeddingContainer {
-    /// The embedding dimension, derived from the loaded model when the live
-    /// pipeline is wired (milestone 7). Until then it reports `0` (unknown),
-    /// matching the ``DownloadProgress`` "unknown total" sentinel.
-    public var dimension: Int { 0 }
+/// A real MLX-backed ``SessionKVCache``: it owns a model KV cache and copies it
+/// through the real MLX `KVCache.copy()` on fork.
+///
+/// `@unchecked Sendable`: MLX `KVCache` is not `Sendable`, but a session (an
+/// actor) owns exactly one cache and only ``copy()``s it from its own isolation
+/// on ``RoutedSession/fork(workingDirectory:)`` — never touching a single
+/// instance concurrently — so the access is data-race free by construction.
+final class MLXSessionKVCache: SessionKVCache, @unchecked Sendable {
+    /// The owned MLX KV caches. A freshly-vended session default holds one empty
+    /// ``KVCacheSimple``; ``copy()`` snapshots each through the real MLX copy.
+    private let caches: [any KVCache]
 
-    /// Embeds through the real `MLXEmbedders` pipeline — wired in the gated
-    /// integration suite (milestone 7). Until then it throws, so no caller
-    /// mistakes an unwired live container for a working one.
-    public func embed(_ texts: [String]) async throws -> [[Float]] {
-        throw EmbeddingError.notWiredForLiveInference
+    /// Creates a session cache wrapping the given MLX caches.
+    init(caches: [any KVCache]) {
+        self.caches = caches
+    }
+
+    /// Returns an independent copy via the real MLX `KVCache.copy()`.
+    func copy() -> any SessionKVCache {
+        MLXSessionKVCache(caches: caches.map { $0.copy() })
+    }
+}
+
+/// The live embedding container: wraps a loaded `EmbedderModelContainer` and the
+/// embedding ``dimension`` probed once at load, so the router's synchronous
+/// ``LoadedEmbeddingContainer/dimension`` accessor reports a real value and
+/// ``embed(_:)`` runs the real `MLXEmbedders` pooling pipeline.
+///
+/// The wrapper exists because `EmbedderModelContainer` exposes its model only
+/// through an async `perform` closure, so the dimension is not knowable
+/// synchronously from the raw container; ``LiveModelLoader/loadEmbedder(_:slot:reporting:)``
+/// probes it once and stores it here.
+final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
+    /// The loaded MLX embedder container the computation runs through.
+    private let container: EmbedderModelContainer
+
+    /// The length of every embedding vector this model produces, probed at load.
+    let dimension: Int
+
+    /// Creates a live embedding container over a loaded MLX container and its
+    /// probed embedding dimension.
+    init(container: EmbedderModelContainer, dimension: Int) {
+        self.container = container
+        self.dimension = dimension
+    }
+
+    /// Embeds each input into a ``dimension``-length, L2-normalized vector through
+    /// the real `MLXEmbedders` pipeline.
+    func embed(_ texts: [String]) async throws -> [[Float]] {
+        try await Self.embed(texts, in: container)
+    }
+
+    /// The shared embedding computation: tokenize, pad to the batch max, run the
+    /// model, pool (normalized), and read the vectors back to `[[Float]]`. Static
+    /// so ``LiveModelLoader`` can probe the dimension at load without a wrapper
+    /// instance. Mirrors the fork's own `MLXEmbedders` usage example.
+    static func embed(_ texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {
+        guard !texts.isEmpty else { return [] }
+        return await container.perform { context in
+            let tokenizer = context.tokenizer
+            let encoded = texts.map { tokenizer.encode(text: $0, addSpecialTokens: true) }
+            let maxLength = encoded.reduce(into: 1) { $0 = max($0, $1.count) }
+            let padded = stacked(
+                encoded.map { tokens in
+                    MLXArray(
+                        tokens
+                            + Array(
+                                repeating: tokenizer.eosTokenId ?? 0,
+                                count: maxLength - tokens.count
+                            )
+                    )
+                }
+            )
+            let mask = padded .!= (tokenizer.eosTokenId ?? 0)
+            let tokenTypes = MLXArray.zeros(like: padded)
+            let output = context.model(
+                padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask
+            )
+            let pooled = context.pooling(output, normalize: true, applyLayerNorm: true)
+            pooled.eval()
+            return pooled.map { $0.asArray(Float.self) }
+        }
     }
 }
 
@@ -112,18 +281,25 @@ public struct LiveModelLoader: ModelLoader {
         )
     }
 
-    /// Downloads and loads an embedding model into an `EmbedderModelContainer`.
+    /// Downloads and loads an embedding model, wrapping it in a
+    /// ``LiveEmbeddingContainer`` with its embedding dimension probed once now.
+    ///
+    /// `EmbedderModelContainer` only exposes its model through an async closure, so
+    /// the dimension is not available synchronously; a single probe embedding
+    /// establishes it (and warms the model) before the container is vended.
     public func loadEmbedder(
         _ ref: ModelRef,
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
-        try await EmbedderModelFactory.shared.loadContainer(
+        let container = try await EmbedderModelFactory.shared.loadContainer(
             from: downloader,
             using: tokenizerLoader,
             configuration: configuration(for: ref),
             progressHandler: Self.handler(reporting)
         )
+        let probe = try await LiveEmbeddingContainer.embed(["dimension probe"], in: container)
+        return LiveEmbeddingContainer(container: container, dimension: probe.first?.count ?? 0)
     }
 
     /// Builds the MLX `ModelConfiguration` for a model ref, pinning the ref's

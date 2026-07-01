@@ -1,13 +1,5 @@
 import Foundation
 
-/// A failure producing embeddings from a resident model.
-public enum EmbeddingError: Error, Equatable {
-    /// The live ``EmbedderModelContainer`` embedding pipeline is not wired yet —
-    /// real vectors land in the gated integration suite (milestone 7). The unit
-    /// suite exercises the surface through a stub embedder instead.
-    case notWiredForLiveInference
-}
-
 /// The recorded embedding access surface on the embedding handle.
 ///
 /// ``RoutedEmbedder`` is `RoutedModel<any LoadedEmbeddingContainer>`, so the

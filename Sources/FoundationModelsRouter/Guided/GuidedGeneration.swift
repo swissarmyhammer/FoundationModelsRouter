@@ -139,15 +139,15 @@ extension Grammar {
 }
 
 extension LoadedLLMContainer {
-    /// The default guided-generation path: validate the grammar (real, GPU-free),
-    /// then surface the deferred live-inference seam.
+    /// The default guided-generation path for conformers without a real
+    /// constrained-decode pipeline: validate the grammar (real, GPU-free), then
+    /// surface the unwired seam.
     ///
-    /// The live `ModelContainer` inherits this, so a guided turn over a real model
-    /// still rejects unsupported grammars with a typed ``GuidedGenerationError``
-    /// before reaching the gated decode, and otherwise makes its unwired state
-    /// explicit by throwing ``GenerationError/notWiredForLiveInference`` (real
-    /// constrained decoding lands in the milestone 7 integration suite). Stub
-    /// containers override this to return canned constrained text.
+    /// The live `ModelContainer` overrides this (see ``LiveModelLoader``) with the
+    /// real xgrammar `GuidedGenerationLoop` decode; the unit stubs either inherit
+    /// this fallback or override it to return canned constrained text. Either way
+    /// the grammar is validated first, so an unsupported grammar fails with a typed
+    /// ``GuidedGenerationError`` before any decode.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -187,8 +187,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - grammar: The grammar constraining the output.
     /// - Returns: The constrained, unparsed text response.
     /// - Throws: ``GuidedGenerationError`` for an invalid grammar, or any error
-    ///   the model raises (``GenerationError/notWiredForLiveInference`` over a
-    ///   live container until milestone 7).
+    ///   the model raises during constrained decoding.
     public func respond(to prompt: String, following grammar: Grammar) async throws -> String {
         try await makeGuidedSession(grammar).respond(to: prompt)
     }
@@ -274,9 +273,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - Returns: The schema-valid output parsed into a ``JSONValue``.
     /// - Throws: ``GuidedGenerationError`` — an xgrammar-subset rejection for an
     ///   over-spec schema, or ``GuidedGenerationError/decodingFailed(_:)`` if the
-    ///   output does not parse as JSON — or any error the model raises
-    ///   (``GenerationError/notWiredForLiveInference`` over a live container until
-    ///   milestone 7).
+    ///   output does not parse as JSON — or any error the model raises during
+    ///   constrained decoding.
     public func respond(to prompt: String, matching jsonSchema: String) async throws -> JSONValue {
         let raw = try await respond(to: prompt, following: .jsonSchema(jsonSchema))
         return try GuidedShapes.parse(raw)
@@ -344,9 +342,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// - Throws: ``GuidedGenerationError`` — an xgrammar-subset rejection for a
         ///   schema `T` derives that the subset cannot express, or
         ///   ``GuidedGenerationError/decodingFailed(_:)`` if the output does not
-        ///   decode into `T` — or any error the model raises
-        ///   (``GenerationError/notWiredForLiveInference`` over a live container
-        ///   until milestone 7).
+        ///   decode into `T` — or any error the model raises during constrained
+        ///   decoding.
         public func respond<T: Generable>(
             to prompt: String,
             generating type: T.Type

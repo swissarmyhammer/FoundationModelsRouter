@@ -44,10 +44,10 @@ public protocol LoadedModelContainer: Sendable {}
 /// is unit-testable without a GPU.
 ///
 /// Tests substitute a stub that returns canned text (and can be made to throw);
-/// the live `ModelContainer` conformance (see ``LiveModelLoader``) throws
-/// ``GenerationError/notWiredForLiveInference`` until the real `MLXLMCommon`
-/// pipeline is wired in the gated integration suite (milestone 7). A vended
-/// session funnels every public generation method through one recorder-bracketed
+/// the live `ModelContainer` conformance (see ``LiveModelLoader``) runs the real
+/// `MLXLMCommon` generation and xgrammar constrained-decode pipelines, exercised
+/// end to end by the gated integration suite (milestone 7). A vended session
+/// funnels every public generation method through one recorder-bracketed
 /// chokepoint that calls into these entry points.
 public protocol LoadedLLMContainer: LoadedModelContainer {
     /// Generates a complete text response to a prompt.
@@ -80,9 +80,10 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// (GPU-free) grammar validation and returns canned text. A default
     /// implementation (see ``LoadedLLMContainer/respond(to:instructions:following:)``)
     /// validates the grammar then surfaces ``GenerationError/notWiredForLiveInference``,
-    /// so the live container's real constrained decode can land in the gated
-    /// integration suite (milestone 7) without every conformer reimplementing the
-    /// seam.
+    /// while the live `ModelContainer` (see ``LiveModelLoader``) overrides it with
+    /// the real constrained decode — exercised by the gated integration suite
+    /// (milestone 7) — so no conformer without a real pipeline has to reimplement
+    /// the seam.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -103,9 +104,10 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// frees it on release; a ``RoutedSession/fork(workingDirectory:)`` instead
     /// copies the parent's via ``SessionKVCache/copy()``. A default
     /// implementation (see ``LoadedLLMContainer/makeCache()``) returns an inert
-    /// cache, so the live container's real MLX cache can land in the gated
-    /// milestone 7 integration suite without every conformer implementing the
-    /// seam; unit tests inject a stub that records `copy()` and free-on-release.
+    /// cache, while the live `ModelContainer` (see ``LiveModelLoader``) overrides
+    /// it with a real MLX-backed cache — exercised by the gated integration suite
+    /// (milestone 7); unit tests inject a stub that records `copy()` and
+    /// free-on-release.
     ///
     /// - Returns: A new, empty KV cache for the session.
     func makeCache() -> any SessionKVCache
@@ -114,9 +116,10 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
 /// A loaded embedding model container — the seam the embedding computation runs
 /// through, so ``RoutedEmbedder`` is unit-testable without a GPU.
 ///
-/// Tests substitute a stub that returns fixed-length vectors; the live
-/// ``EmbedderModelContainer`` conformance wires the real MLX pipeline in the
-/// gated integration suite (milestone 7).
+/// Tests substitute a stub that returns fixed-length vectors; the live path
+/// (``LiveEmbeddingContainer``, wrapping an `MLXEmbedders` `EmbedderModelContainer`)
+/// runs the real embedding pipeline and reports a ``dimension`` probed once at
+/// load, exercised end to end by the gated integration suite (milestone 7).
 public protocol LoadedEmbeddingContainer: LoadedModelContainer {
     /// The length of every embedding vector this model produces.
     var dimension: Int { get }

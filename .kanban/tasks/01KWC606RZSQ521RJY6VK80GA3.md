@@ -44,8 +44,8 @@ comments:
   timestamp: 2026-07-01T14:31:33.512293+00:00
 depends_on:
 - 01KWC5J8K8C0E2ENKB33V4R8SH
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9280'
 title: 'Transcripts: merged-view helper + redaction/level gating (milestone 10b)'
 ---
 ## What
