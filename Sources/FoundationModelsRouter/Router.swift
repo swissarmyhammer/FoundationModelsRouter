@@ -180,9 +180,13 @@ public actor Router {
                     try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
                 }
             }
-            // Total by construction: the loop above populates both generation slots.
-            let standardContainer = generationContainers[.standard]!
-            let flashContainer = generationContainers[.flash]!
+            // Total by construction: the loop above populates both generation
+            // slots, and `loadLLM` returns a non-optional container.
+            guard let standardContainer = generationContainers[.standard],
+                  let flashContainer = generationContainers[.flash]
+            else {
+                preconditionFailure("download loop populates both .standard and .flash generation slots")
+            }
             let embeddingContainer = try await download(resolution.embedding, slot: .embedding, progress: progress) {
                 try await loader.loadEmbedder($0, slot: $1, reporting: $2)
             }

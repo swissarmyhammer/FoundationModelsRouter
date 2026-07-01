@@ -35,6 +35,19 @@ comments:
 
     Work is done and GREEN; left in `doing` for /review.
   timestamp: 2026-07-01T12:13:40.411494+00:00
+- actor: wballard
+  id: 01kwet8jx7cn5hy8yr4r33yzd9
+  text: |-
+    Review finding resolved (Router.swift force-unwrap). Pulled review→doing. Replaced the two bare `generationContainers[.standard]!` / `[.flash]!` force-unwraps (the readback after the standard/flash download loop) with a single documented guard:
+
+        guard let standardContainer = generationContainers[.standard],
+              let flashContainer = generationContainers[.flash]
+        else {
+            preconditionFailure("download loop populates both .standard and .flash generation slots")
+        }
+
+    Behavior is identical (still a hard failure if the invariant is ever violated); intent is now documented and there is no bare `!`. Both Review Findings checkboxes flipped to [x]. Tests green: `swift test --filter ResolveTests` (8), `swift test --filter ForkConcurrencyTests` (5), full `swift test` (88 tests + 1 gated skip). Left in doing for /review.
+  timestamp: 2026-07-01T12:25:34.375577+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 - 01KWC5CYM8AFB1MBV7DR9KW83K
@@ -66,3 +79,10 @@ The `fork()` primitive over the KV cache plus the two concurrency gates. Plan "S
 
 ## Workflow
 - Use `/tdd` — write failing serial-gate, admission-bound, and copy/free tests first.
+
+## Review Findings (2026-07-01 07:15)
+
+- [x] `Sources/FoundationModelsRouter/Router.swift:107` — Force unwrap `!` used in non-test code violates the no-force-unwrap rule. The rule explicitly prohibits force unwrap even when safe by construction—use guard with preconditionFailure instead to document the invariant clearly. Replace both lines 107–108 with: guard let standardContainer = generationContainers[.standard], let flashContainer = generationContainers[.flash] else { preconditionFailure("Both generation slots must be populated by the download loop") }.
+- [x] `Sources/FoundationModelsRouter/Router.swift:108` — Force unwrap `!` used in non-test code violates the no-force-unwrap rule. Combine this with the preceding unwrap into a single guard statement for clarity and to satisfy the rule. Merge lines 107–108 into a single guard-let statement: guard let standardContainer = generationContainers[.standard], let flashContainer = generationContainers[.flash] else { preconditionFailure(...) }.
+
+Resolved 2026-07-01: replaced the two bare force-unwraps (the readback after the standard/flash download loop) with a single documented `guard let ... else { preconditionFailure(...) }`. Behavior identical; no bare `!`. `swift test` green (88 tests + gated skip).
