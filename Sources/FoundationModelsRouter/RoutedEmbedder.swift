@@ -47,6 +47,9 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
                 slot: .embedding,
                 model: chosen,
                 kind: .embedding,
+                // The embedded inputs are the event's body, subject to the same
+                // recording-level and redaction gating as prompt/response text.
+                text: texts.joined(separator: "\n"),
                 ms: ms
             )
         )

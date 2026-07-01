@@ -9,9 +9,10 @@ private let manifestLogger = Logger(
 
 /// How much of a session's activity is recorded.
 ///
-/// The level (and the ``Router``'s `redact` hook) are carried from construction
-/// so the recording seam exists now; the actual enforcement — trimming or
-/// redacting events at record time — lands in milestone 10b.
+/// The level (and the ``Router``'s `redact` hook) are enforced by a
+/// ``GatingRecorder`` the router wraps its sink in, so every event source — the
+/// session ``generate`` chokepoint and ``RoutedEmbedder/embed(_:)`` alike —
+/// honors them at record time.
 public enum RecordingLevel: String, Sendable, Codable, Equatable {
     /// Record nothing.
     case off
@@ -59,13 +60,15 @@ public actor Router {
     /// The durable transcripts root, or `nil` when recording to memory/none.
     let recordingsDir: URL?
 
-    /// The recorder every vended session and embed call is born holding.
+    /// The recorder every vended session and embed call is born holding — the
+    /// base sink wrapped in a ``GatingRecorder`` when the level or `redact` hook
+    /// would trim or transform what is recorded.
     let recorder: any TranscriptRecorder
 
-    /// How much of a session's activity is recorded (enforced in milestone 10b).
+    /// How much of a session's activity is recorded, enforced through ``recorder``.
     let recordingLevel: RecordingLevel
 
-    /// An optional redaction hook applied to recorded text (enforced in milestone 10b).
+    /// An optional redaction hook applied to recorded text, enforced through ``recorder``.
     let redact: (@Sendable (String) -> String)?
 
     /// The machine probe behind the budget.
@@ -140,7 +143,8 @@ public actor Router {
         let resolvedCacheDir = cacheDir ?? Self.defaultCacheDir()
         self.cacheDir = resolvedCacheDir
         self.recordingsDir = recordingsDir
-        self.recorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
+        let baseRecorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
+        self.recorder = Self.gated(baseRecorder, level: recordingLevel, redact: redact)
         self.recordingLevel = recordingLevel
         self.redact = redact
         self.probe = probe
@@ -678,5 +682,30 @@ public actor Router {
             return JSONLRecorder(directory: recordingsDir)
         }
         return NoneRecorder()
+    }
+
+    /// Wraps a base recorder in a ``GatingRecorder`` that enforces the recording
+    /// level and redaction, unless neither would change what is recorded.
+    ///
+    /// Verbatim recording — ``RecordingLevel/full`` with no `redact` hook — needs
+    /// no gate, so the base sink is threaded down directly; this keeps a session
+    /// and embed call *born holding the router's recorder itself* in the common
+    /// case. Any trimming (``RecordingLevel/metadataOnly``, ``RecordingLevel/off``)
+    /// or redaction wraps the base sink so every event source honors it.
+    ///
+    /// - Parameters:
+    ///   - base: The concrete sink to record into.
+    ///   - level: How much of each event to record.
+    ///   - redact: The redaction hook for body text, or `nil`.
+    /// - Returns: The base sink, or a ``GatingRecorder`` wrapping it.
+    private static func gated(
+        _ base: any TranscriptRecorder,
+        level: RecordingLevel,
+        redact: (@Sendable (String) -> String)?
+    ) -> any TranscriptRecorder {
+        if level == .full, redact == nil {
+            return base
+        }
+        return GatingRecorder(level: level, redact: redact, wrapping: base)
     }
 }

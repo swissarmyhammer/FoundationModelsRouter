@@ -97,7 +97,7 @@ public protocol RoutedSession: Actor {
 /// is ``RoutedModel/makeSession(instructions:workingDirectory:)`` — there is no
 /// public initializer. The recorder and `routerId` flow down from the vending
 /// handle; the `container`, `slot`, `model`, and `instructions` are what the
-/// single ``generate(grammar:_:)`` chokepoint runs the model with.
+/// single ``generate(prompt:grammar:_:)`` chokepoint runs the model with.
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
     nonisolated let routerId: ULID
@@ -133,7 +133,7 @@ actor RoutedSessionActor: RoutedSession {
     private nonisolated let cache: any SessionKVCache
 
     /// The per-model serial generation gate, shared with the owning model's other
-    /// sessions and forks. Every ``generate(grammar:_:)`` runs inside it, so
+    /// sessions and forks. Every ``generate(prompt:grammar:_:)`` runs inside it, so
     /// generations on one model serialize rather than interleave.
     private nonisolated let serialGate: AsyncSemaphore
 
@@ -214,7 +214,7 @@ actor RoutedSessionActor: RoutedSession {
         // the plain path. Both funnel through the same chokepoint, which stamps the
         // grammar (or `nil`) onto each event.
         if let grammar {
-            return try await generate(grammar: grammar) {
+            return try await generate(prompt: prompt, grammar: grammar) {
                 try await self.container.respond(
                     to: prompt,
                     instructions: self.instructions,
@@ -222,7 +222,7 @@ actor RoutedSessionActor: RoutedSession {
                 )
             }
         }
-        return try await generate {
+        return try await generate(prompt: prompt) {
             try await self.container.respond(to: prompt, instructions: self.instructions)
         }
     }
@@ -257,13 +257,19 @@ actor RoutedSessionActor: RoutedSession {
         _ prompt: String,
         into continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
-        try await generate {
+        // Accumulate the streamed chunks so the close event can carry the full
+        // response body; the accumulated text is the recorded response, while the
+        // caller has already received each chunk through the continuation.
+        _ = try await generate(prompt: prompt) {
+            var response = ""
             for try await chunk in self.container.streamResponse(
                 to: prompt,
                 instructions: self.instructions
             ) {
                 continuation.yield(chunk)
+                response += chunk
             }
+            return response
         }
     }
 
@@ -321,15 +327,19 @@ actor RoutedSessionActor: RoutedSession {
     /// stamps a globally monotonic `seq` at append.
     ///
     /// - Parameters:
+    ///   - prompt: The prompt driving this turn, recorded as the open `.prompt`
+    ///     event's body text.
     ///   - grammar: The guided-generation grammar in force for this turn, stamped
     ///     onto both bracket events, or `nil` for an unconstrained turn.
-    ///   - body: The model work to run inside the bracket.
-    /// - Returns: Whatever `body` returns.
+    ///   - body: The model work to run inside the bracket, returning the response
+    ///     text recorded as the close `.response` event's body.
+    /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, after recording the close event.
-    private func generate<R>(
+    private func generate(
+        prompt: String,
         grammar: Grammar? = nil,
-        _ body: () async throws -> R
-    ) async throws -> R {
+        _ body: () async throws -> String
+    ) async throws -> String {
         // Acquire the serial permit for the whole bracket, releasing it on every
         // path with a `defer` (the recording bracket stays in this actor's
         // isolation region, so the gated work is not sent across an isolation
@@ -339,13 +349,14 @@ actor RoutedSessionActor: RoutedSession {
         defer { serialGate.signal() }
 
         await recordSessionMetaIfNeeded()
-        await append(makePartialEvent(kind: .prompt, grammar: grammar))
+        await append(makePartialEvent(kind: .prompt, grammar: grammar, text: prompt))
         let started = Date()
         do {
-            let result = try await body()
-            await append(makePartialEvent(kind: .response, grammar: grammar, since: started))
-            return result
+            let response = try await body()
+            await append(makePartialEvent(kind: .response, grammar: grammar, text: response, since: started))
+            return response
         } catch {
+            // The turn produced no response, so the close event carries no body.
             await append(makePartialEvent(kind: .response, grammar: grammar, since: started))
             throw error
         }
@@ -384,12 +395,16 @@ actor RoutedSessionActor: RoutedSession {
     ///     `.response` to close.
     ///   - grammar: The guided-generation grammar in force, recorded as its
     ///     source, or `nil` for an unconstrained turn.
+    ///   - text: The event's body text — the prompt or response — or `nil` for
+    ///     the bodyless `session` meta event. Recording-level and redaction
+    ///     trimming happen later, in the recorder.
     ///   - since: The turn's start instant for a close event, or `nil` to leave
     ///     `ms` unset (meta and open events).
     /// - Returns: The partial event for the recorder to stamp and append.
     private func makePartialEvent(
         kind: TranscriptEvent.Kind,
         grammar: Grammar? = nil,
+        text: String? = nil,
         since: Date? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
@@ -400,6 +415,7 @@ actor RoutedSessionActor: RoutedSession {
             model: model,
             kind: kind,
             grammar: grammar?.source,
+            text: text,
             ms: since.map { Int(Date().timeIntervalSince($0) * 1_000) }
         )
     }

@@ -29,8 +29,8 @@ depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 - 01KWC5ECCZYEAH49J635KC9QH5
 - 01KWC5H7Y7NVG4771FR9ZKW5M0
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9180'
 title: 'Transcripts: lineage-nested dirs + events + manifest (milestone 10a)'
 ---
 ## What

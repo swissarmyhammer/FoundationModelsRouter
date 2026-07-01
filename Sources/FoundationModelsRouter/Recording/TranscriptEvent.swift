@@ -53,6 +53,14 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let kind: Kind
     /// The guided-generation grammar in force, when applicable.
     public let grammar: String?
+    /// The event's body text — the prompt, response, or embedded input — when
+    /// the recording level keeps it.
+    ///
+    /// Present on a ``TranscriptEvent/Kind/full`` recording and `nil` once a
+    /// ``GatingRecorder`` at ``RecordingLevel/metadataOnly`` has trimmed it or a
+    /// ``RecordingLevel/off`` recorder dropped the event entirely; the ``Router``'s
+    /// `redact` hook, when set, transforms it before it is written.
+    public let text: String?
     /// Prompt/input tokens metered for this event, when applicable.
     public let tokensIn: Int?
     /// Completion/output tokens metered for this event, when applicable.
@@ -76,6 +84,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     ///   - ts: The instant the recorder stamped.
     ///   - kind: What kind of moment this records.
     ///   - grammar: The guided-generation grammar, or `nil`.
+    ///   - text: The event's body text, or `nil` when trimmed by the recording level.
     ///   - tokensIn: Input tokens metered, or `nil`.
     ///   - tokensOut: Output tokens metered, or `nil`.
     ///   - ms: Duration in milliseconds, or `nil`.
@@ -89,6 +98,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         ts: Date,
         kind: Kind,
         grammar: String? = nil,
+        text: String? = nil,
         tokensIn: Int? = nil,
         tokensOut: Int? = nil,
         ms: Int? = nil
@@ -102,6 +112,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         self.ts = ts
         self.kind = kind
         self.grammar = grammar
+        self.text = text
         self.tokensIn = tokensIn
         self.tokensOut = tokensOut
         self.ms = ms
@@ -128,6 +139,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         public let kind: Kind
         /// The guided-generation grammar, or `nil`.
         public let grammar: String?
+        /// The event's body text — the prompt, response, or embedded input — or
+        /// `nil` when the event carries no body.
+        public let text: String?
         /// Input tokens metered, or `nil`.
         public let tokensIn: Int?
         /// Output tokens metered, or `nil`.
@@ -145,6 +159,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         ///   - model: The concrete model reference, or `nil`.
         ///   - kind: What kind of moment this records.
         ///   - grammar: The guided-generation grammar, or `nil`.
+        ///   - text: The event's body text, or `nil` when the event carries no body.
         ///   - tokensIn: Input tokens metered, or `nil`.
         ///   - tokensOut: Output tokens metered, or `nil`.
         ///   - ms: Duration in milliseconds, or `nil`.
@@ -156,6 +171,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             model: ModelRef? = nil,
             kind: Kind,
             grammar: String? = nil,
+            text: String? = nil,
             tokensIn: Int? = nil,
             tokensOut: Int? = nil,
             ms: Int? = nil
@@ -167,9 +183,36 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             self.model = model
             self.kind = kind
             self.grammar = grammar
+            self.text = text
             self.tokensIn = tokensIn
             self.tokensOut = tokensOut
             self.ms = ms
+        }
+
+        /// Returns a copy of this partial with its ``text`` replaced by
+        /// `transform(text)`, leaving every other field untouched.
+        ///
+        /// The transform seam a ``GatingRecorder`` uses to enforce the recording
+        /// level and redaction before the event is stamped and written: mapping
+        /// the body to `nil` trims it (``RecordingLevel/metadataOnly``) and
+        /// mapping it through the ``Router``'s `redact` hook redacts it.
+        ///
+        /// - Parameter transform: The body-text transform to apply.
+        /// - Returns: A copy carrying the transformed body text.
+        func mapText(_ transform: (String?) -> String?) -> Partial {
+            Partial(
+                routerId: routerId,
+                sessionId: sessionId,
+                parentId: parentId,
+                slot: slot,
+                model: model,
+                kind: kind,
+                grammar: grammar,
+                text: transform(text),
+                tokensIn: tokensIn,
+                tokensOut: tokensOut,
+                ms: ms
+            )
         }
 
         /// Stamps this partial with a recorder-assigned `seq` and `ts`, yielding
@@ -190,6 +233,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 ts: ts,
                 kind: kind,
                 grammar: grammar,
+                text: text,
                 tokensIn: tokensIn,
                 tokensOut: tokensOut,
                 ms: ms
