@@ -3,7 +3,7 @@ import os
 
 /// The logger the router reports best-effort manifest write failures to.
 private let manifestLogger = Logger(
-    subsystem: "FoundationModelsRouter",
+    subsystem: moduleName,
     category: "Manifest"
 )
 
@@ -669,7 +669,7 @@ public actor Router {
     private static func defaultCacheDir() -> URL {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("FoundationModelsRouter", isDirectory: true)
+        return base.appendingPathComponent(moduleName, isDirectory: true)
     }
 
     /// The default recorder: JSONL under `recordingsDir` when set, else the no-op sink.

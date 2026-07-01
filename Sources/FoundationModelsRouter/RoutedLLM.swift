@@ -85,7 +85,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // location, so the directory is still well-defined.
         let recordingsBase = recordingsRoot
             ?? FileManager.default.temporaryDirectory
-                .appendingPathComponent("FoundationModelsRouter/Transcripts", isDirectory: true)
+                .appendingPathComponent(moduleName, isDirectory: true)
+                .appendingPathComponent("Transcripts", isDirectory: true)
         let recordingDirectory = recordingsBase
             .appendingPathComponent(routerId.description, isDirectory: true)
             .appendingPathComponent(sessionId.description, isDirectory: true)

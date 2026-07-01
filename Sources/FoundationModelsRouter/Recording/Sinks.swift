@@ -3,7 +3,7 @@ import os
 
 /// The logger best-effort sinks report dropped events to.
 private let recordingLogger = Logger(
-    subsystem: "FoundationModelsRouter",
+    subsystem: moduleName,
     category: "Recording"
 )
 

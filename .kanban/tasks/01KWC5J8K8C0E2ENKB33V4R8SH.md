@@ -17,6 +17,14 @@ comments:
 
     Tests: `Tests/.../TranscriptNestingTests.swift` (5 tests) green. Full `swift test` green (101 tests, 0 failures/warnings). Task left in `doing`.
   timestamp: 2026-07-01T13:14:19.244091+00:00
+- actor: wballard
+  id: 01kweymp7ae5nz2htsvmd8t1k4
+  text: 'Resolved both review findings (duplicated "FoundationModelsRouter" literal). Reused the existing module-level `public let moduleName = "FoundationModelsRouter"` (FoundationModelsRouter.swift) at all three value-literal sites instead of adding a new constant — adding one would have left `moduleName`''s literal as a second duplicate. Sites: Sinks.swift Logger `subsystem: moduleName`, Router.swift manifest Logger `subsystem: moduleName`, Router.swift `defaultCacheDir()` `appendingPathComponent(moduleName, ...)`. Behavior unchanged (same subsystem string, same cache path). Grep confirms only the single declaration literal remains in Sources/. Full `swift test` green: 101 tests, exit 0.'
+  timestamp: 2026-07-01T13:42:05.290898+00:00
+- actor: wballard
+  id: 01kweyrcqywyt1gp73gd6nj198
+  text: 'Double-check (adversarial) caught a fourth site my exact-string grep missed: RoutedLLM.swift makeSession had a compound literal `"FoundationModelsRouter/Transcripts"` used as the temp transcripts base path root. The task''s finding said scan the rest of Sources so no other bare module-name literal remains, so this is in scope. Fixed behavior-preserving: `.appendingPathComponent(moduleName, isDirectory: true).appendingPathComponent("Transcripts", isDirectory: true)` — yields the same `.../FoundationModelsRouter/Transcripts`. Broadened grep (`"FoundationModelsRouter` opening quote, catches compound literals) now confirms only the single `moduleName` declaration literal remains in Sources/. Full swift test still green: 101 tests, exit 0.'
+  timestamp: 2026-07-01T13:44:06.654221+00:00
 depends_on:
 - 01KWC5YV6WWKW3AXF39E7MRM58
 - 01KWC5ECCZYEAH49J635KC9QH5
@@ -46,3 +54,10 @@ The core recording behavior over the substrate (milestone 5b chokepoint + the re
 
 ## Workflow
 - Use `/tdd` — write failing nesting, event-kind, seq-monotonic, and manifest tests first.
+
+## Review Findings (2026-07-01 08:21)
+
+Scope: `HEAD~1..HEAD` (c3e6349). Findings on test-stub duplication across `Tests/` and acronym-casing (`Json`→`JSON`) were dropped per the blanket test-refactor exception and the 2026-06-30 standing waiver. The following production-source findings remain:
+
+- [x] `Sinks.swift:6` — Hardcoded string 'FoundationModelsRouter' appears 3 times across files (Sinks.swift:6, Router.swift:6, Router.swift:292) as the Logger subsystem and cache directory prefix — should be a named constant to avoid drift. Extract to a module-level constant, e.g., `private let FOUNDATION_MODELS_ROUTER = "FoundationModelsRouter"`, and use it in all three locations. RESOLVED: reused the existing module-level `moduleName` constant at all three sites (no new duplicate constant).
+- [x] `Router.swift:292` — Hardcoded string 'FoundationModelsRouter' appears 3 times as app identifier — should be a named constant. Extract to a module-level constant and use it in all three locations. RESOLVED: same fix — cache-dir prefix now `appendingPathComponent(moduleName, ...)`.
