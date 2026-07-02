@@ -11,19 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit:
+  ci:
     uses: swissarmyhammer/workflows/.github/workflows/swift-ci.yaml@main
-
-  integration:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, macOS]
-    steps:
-      - uses: actions/checkout@v4
-      - run: swift build --build-tests
-      - name: Run gated integration suite (xctest workaround for MLX metallib)
-        run: |
-          set -euo pipefail
-          METALLIB="$(find .build -name default.metallib -path '*Cmlx*' | head -n 1)"
-          XCTEST="$(find .build -name '*IntegrationTests.xctest' -type d | head -n 1)"
-          cp "$METALLIB" "$XCTEST/Contents/MacOS/" 2>/dev/null || cp "$METALLIB" "$(dirname "$XCTEST")/"
-          FM_ROUTER_INTEGRATION_TESTS=1 xcrun xctest "$XCTEST"
+    with:
+      integration-gate-env: FM_ROUTER_INTEGRATION_TESTS
+      integration-xctest-glob: "*IntegrationTests.xctest"
+      integration-metallib-glob: "*Cmlx*/default.metallib"
