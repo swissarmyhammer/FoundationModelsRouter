@@ -31,6 +31,28 @@ struct CoreTypesTests {
         #expect(decoded == ref)
     }
 
+    @Test("ModelRef.init(repo:revision:) sets fields and matches the string-literal form")
+    func modelRefMemberwiseInitWithRevision() {
+        let ref = ModelRef(repo: "org/repo", revision: "abc123")
+        let literal: ModelRef = "org/repo@abc123"
+
+        #expect(ref.repo == "org/repo")
+        #expect(ref.revision == "abc123")
+        #expect(ref.stringValue == "org/repo@abc123")
+        #expect(ref == literal)
+    }
+
+    @Test("ModelRef.init(repo:revision:) defaults revision to nil and matches the string-literal form")
+    func modelRefMemberwiseInitWithoutRevision() {
+        let ref = ModelRef(repo: "org/repo")
+        let literal: ModelRef = "org/repo"
+
+        #expect(ref.repo == "org/repo")
+        #expect(ref.revision == nil)
+        #expect(ref.stringValue == "org/repo")
+        #expect(ref == literal)
+    }
+
     @Test("ProfileDefinition defaults context to 8192")
     func profileDefinitionDefaultContext() {
         let profile = ProfileDefinition(
