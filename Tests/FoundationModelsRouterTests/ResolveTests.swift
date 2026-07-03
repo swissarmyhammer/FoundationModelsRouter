@@ -323,6 +323,23 @@ struct ResolveTests {
 
     // MARK: - Progress fraction math
 
+    @Test("DownloadProgress.fraction divides downloaded bytes by the known total")
+    func downloadProgressFractionDividesKnownTotal() {
+        #expect(DownloadProgress(bytesDownloaded: 5, bytesTotal: 10).fraction == 0.5)
+    }
+
+    @Test("DownloadProgress.fraction is 0 when the total is unknown, not a divide-by-zero")
+    func downloadProgressFractionZeroWhenTotalUnknown() {
+        let dp = DownloadProgress(bytesDownloaded: 42, bytesTotal: 0)
+        #expect(dp.fraction == 0)
+        #expect(dp.fraction.isNaN == false)
+    }
+
+    @Test("DownloadProgress.fraction is exactly 1.0 when downloaded equals total")
+    func downloadProgressFractionCompleteIsOne() {
+        #expect(DownloadProgress(bytesDownloaded: 100, bytesTotal: 100).fraction == 1.0)
+    }
+
     @Test("SlotProgress.progressFraction reflects state and download bytes")
     func slotProgressFractionMath() {
         #expect(SlotProgress(state: .pending).progressFraction == 0)
