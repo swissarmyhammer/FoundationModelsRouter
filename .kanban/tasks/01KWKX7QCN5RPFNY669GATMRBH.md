@@ -12,8 +12,8 @@ comments:
 
     No production code changed (fraction was already correct, just uncovered). Full suite: swift test -> 132/132 tests pass (plus 1 gated integration test skipped as expected), 0 failures. Adversarial double-check agent returned PASS with no findings. Leaving task in doing for review.
   timestamp: 2026-07-03T12:08:33.795981+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 9a80
 title: Add tests for DownloadProgress.fraction
 ---
 Sources/FoundationModelsRouter/Resolution/ModelLoader.swift:27-29
