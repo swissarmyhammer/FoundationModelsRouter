@@ -20,8 +20,8 @@ comments:
 
     Leaving task in doing per the implement skill — ready for /review.
   timestamp: 2026-07-03T15:28:12.803957+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9e80'
 title: Add tests for Router candidate-sizing merge and failure paths
 ---
 Sources/FoundationModelsRouter/Router.swift — `sizeCandidates`/`footprintBytes`/`preferLarger` (lines 389, 415-418, 426-437)

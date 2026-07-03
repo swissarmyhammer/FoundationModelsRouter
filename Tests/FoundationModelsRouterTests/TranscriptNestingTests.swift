@@ -289,6 +289,50 @@ struct TranscriptNestingTests {
         _ = fork
     }
 
+    // MARK: - Default recorder wiring
+
+    /// Unlike every other test in this file, this router is built directly
+    /// (not through ``makeRouter(recorder:cacheDir:recordingsDir:)``) with no
+    /// explicit `recorder:` — only `recordingsDir` — so the real
+    /// `Router.defaultRecorder(recordingsDir:)` wiring picks a live
+    /// `JSONLRecorder` under it, rather than a test double standing in for it.
+    @Test("a Router given recordingsDir but no explicit recorder defaults to a real JSONLRecorder")
+    @MainActor
+    func defaultRecorderWiresRealJSONLRecorder() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Router(
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: StubMetadataSource(raw: Self.rawMetadata),
+            loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText)
+        )
+        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+
+        let root = profile.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        // A real JSONLRecorder was wired: the session's transcript.jsonl exists
+        // under the router's recordingsDir with real, decodable events — not the
+        // no-op wiring that `recordingsDir: nil` would have produced.
+        let fileURL = root.recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+        #expect(FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(
+            fileURL.standardizedFileURL.path.hasPrefix(recordingsDir.standardizedFileURL.path)
+        )
+
+        let recorded = try events(in: root.recordingDirectory)
+        #expect(recorded.map(\.kind) == [.session, .prompt, .response])
+        #expect(recorded.allSatisfy { $0.routerId == router.id })
+        #expect(recorded.allSatisfy { $0.sessionId == root.id })
+    }
+
     // MARK: - Monotonic seq
 
     @Test("seq is monotonic across concurrent appends from multiple sessions and forks")
