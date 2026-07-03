@@ -44,8 +44,8 @@ comments:
 
     All 6 checklist items flipped to [x]. Task left in `doing` for /review per the implement skill (implement does not move tasks to review).
   timestamp: 2026-07-03T14:43:53.900381+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 9d80
 title: Add tests for HuggingFaceMetadataSource against a mocked URLSession
 ---
 Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift:336-390 (`HuggingFaceMetadataSource.fetchRawMetadata` / `optionalData`)

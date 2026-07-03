@@ -65,6 +65,48 @@ struct ResolveTests {
         }
     }
 
+    // MARK: - Scripted metadata source
+
+    /// A ``MetadataSource`` whose fetch outcome for a repo is scripted per
+    /// call, consumed in order — so a single ``ModelRef`` shared across two
+    /// slots (and therefore fetched twice by the router's sizing step, once
+    /// per slot) can be driven through a specific success/failure sequence.
+    /// A repo with no script, or an exhausted one, falls back to
+    /// ``defaultRaw``, so slots unrelated to the scripted candidate(s)
+    /// resolve normally with no extra setup.
+    private actor ScriptedMetadataSource: MetadataSource {
+        /// One scripted fetch outcome.
+        enum Outcome {
+            case success(RawRepoMetadata)
+            case failDirect(RepoMetadataError)
+            case failGeneric(URLError)
+        }
+
+        private var scripts: [String: [Outcome]]
+        private let defaultRaw: RawRepoMetadata
+
+        init(scripts: [String: [Outcome]], defaultRaw: RawRepoMetadata) {
+            self.scripts = scripts
+            self.defaultRaw = defaultRaw
+        }
+
+        func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
+            guard var queue = scripts[repo], !queue.isEmpty else {
+                return defaultRaw
+            }
+            let outcome = queue.removeFirst()
+            scripts[repo] = queue
+            switch outcome {
+            case .success(let raw):
+                return raw
+            case .failDirect(let error):
+                throw error
+            case .failGeneric(let error):
+                throw error
+            }
+        }
+    }
+
     // MARK: - Stub model loader
 
     /// A ``ModelLoader`` that returns stub containers without any download or GPU
@@ -319,6 +361,245 @@ struct ResolveTests {
             Issue.record("expected standard slot .failed, got \(standard.state)")
             return
         }
+    }
+
+    // MARK: - Candidate-sizing merge and failure paths
+
+    /// The generation-slot (`standard`/`flash`) margined footprint for
+    /// ``rawMetadata`` at the default context: raw `12_097_152` (10 MB weights
+    /// + a 2 MB KV cache at context 8192) × 1.2 = `14_516_583`.
+    private static let generationSlotMarginedFootprint: Int64 = 14_516_583
+
+    /// The embedding-slot margined footprint for ``rawMetadata``: weights
+    /// alone (no KV cache), raw `10_000_000` × 1.2 = `12_000_000` exactly.
+    private static let embeddingSlotMarginedFootprint: Int64 = 12_000_000
+
+    @Test(
+        """
+        sizeCandidates merges a ModelRef shared across slots by keeping the \
+        larger successful footprint (preferLarger .success/.success)
+        """
+    )
+    @MainActor
+    func mergeKeepsLargerSuccessfulFootprintAcrossSlots() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // The same ref is the sole candidate for both `embedding` and
+        // `standard`. Sized as an embedder it is only 10 MB (no KV cache);
+        // sized as a generation model at the default context it is ~11.5 MB
+        // (weights + KV cache). The merge in `sizeCandidates` must keep the
+        // larger of the two for *both* slots' fit test.
+        let shared: ModelRef = "org/shared-embed-std"
+        let profile = ProfileDefinition(
+            name: "shared-embed-std",
+            description: "one ref is a candidate for both the embedding and standard slots",
+            standard: [shared],
+            flash: ["org/flash-only"],
+            embedding: [shared]
+        )
+
+        let progress = ResolutionProgress()
+        let source = ScriptedMetadataSource(scripts: [:], defaultRaw: Self.rawMetadata)
+        let loader = StubModelLoader(progress: progress)
+        // A budget strictly between the embedding-only margined footprint
+        // (12_000_000) and the generation-slot margined footprint of the
+        // very same raw metadata (14_516_583): the shared candidate fits
+        // neither slot if the merge correctly kept the larger figure, but
+        // would fit both if it wrongly kept (or fell back to) the smaller
+        // embedding-only one.
+        let router = Router(
+            headroomReserve: 0,
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 13_000_000, recommendedMaxWorkingSetSize: 13_000_000),
+            metadataSource: source,
+            loader: loader
+        )
+
+        var caught: ResolutionFailure?
+        do {
+            _ = try await router.resolve(profile, reporting: progress)
+        } catch let failure as ResolutionFailure {
+            caught = failure
+        }
+        let failure = try #require(caught)
+
+        let embeddingSlot = try #require(failure.slots.first { $0.slot == .embedding })
+        let embeddingReport = try #require(embeddingSlot.considered.first { $0.ref == shared })
+        #expect(embeddingReport.estimatedFootprintBytes == Self.generationSlotMarginedFootprint)
+        #expect(embeddingReport.verdict == .tooLarge)
+
+        let standardSlot = try #require(failure.slots.first { $0.slot == .standard })
+        let standardReport = try #require(standardSlot.considered.first { $0.ref == shared })
+        #expect(standardReport.estimatedFootprintBytes == Self.generationSlotMarginedFootprint)
+        #expect(standardReport.verdict == .tooLarge)
+    }
+
+    @Test(
+        """
+        sizeCandidates merges a ModelRef shared across slots by preferring a \
+        later success over an earlier failure (preferLarger .failure/.success)
+        """
+    )
+    @MainActor
+    func mergePrefersSuccessOverAnEarlierFailure() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // The same ref is the sole candidate for both `standard` and `flash`.
+        // Its fetch fails the first time it is sized (whichever slot that
+        // is) and succeeds the second — the merge must keep the success so
+        // both slots still resolve to it, rather than the failure poisoning
+        // the merged entry.
+        let heals: ModelRef = "org/heals-after-one-failure"
+        let profile = ProfileDefinition(
+            name: "heals",
+            description: "one ref fails its first fetch, then sizes successfully",
+            standard: [heals],
+            flash: [heals],
+            embedding: ["org/emb-only"]
+        )
+
+        let progress = ResolutionProgress()
+        let source = ScriptedMetadataSource(
+            scripts: [
+                heals.repo: [.failDirect(.metadataUnavailable("transient")), .success(Self.rawMetadata)]
+            ],
+            defaultRaw: Self.rawMetadata
+        )
+        let loader = StubModelLoader(progress: progress)
+        let router = Router(
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: source,
+            loader: loader
+        )
+
+        let resolved = try await router.resolve(profile, reporting: progress)
+
+        #expect(resolved.standard.chosen == heals)
+        #expect(resolved.flash.chosen == heals)
+    }
+
+    @Test(
+        """
+        sizeCandidates merges a ModelRef shared across slots by keeping the \
+        first failure when every fetch fails (preferLarger .failure/.failure)
+        """
+    )
+    @MainActor
+    func mergeKeepsFirstFailureAcrossSlots() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // The same ref is the sole candidate for both `standard` and `flash`,
+        // and every fetch for it fails. `preferLarger`'s `.failure/.failure`
+        // branch keeps `lhs` — the chronologically-first computed result,
+        // which (since calls are sequential) is always whichever slot's
+        // fetch happens first, regardless of slot iteration order.
+        let dualFail: ModelRef = "org/dual-fail"
+        let profile = ProfileDefinition(
+            name: "dual-fail",
+            description: "one ref fails on every slot's fetch",
+            standard: [dualFail],
+            flash: [dualFail],
+            embedding: ["org/emb-only"]
+        )
+
+        let progress = ResolutionProgress()
+        let source = ScriptedMetadataSource(
+            scripts: [
+                dualFail.repo: [
+                    .failDirect(.metadataUnavailable("first attempt unavailable")),
+                    .failDirect(.metadataUnavailable("second attempt unavailable")),
+                ]
+            ],
+            defaultRaw: Self.rawMetadata
+        )
+        let loader = StubModelLoader(progress: progress)
+        let router = Router(
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: source,
+            loader: loader
+        )
+
+        var caught: ResolutionFailure?
+        do {
+            _ = try await router.resolve(profile, reporting: progress)
+        } catch let failure as ResolutionFailure {
+            caught = failure
+        }
+        let failure = try #require(caught)
+
+        let standardSlot = try #require(failure.slots.first { $0.slot == .standard })
+        let standardReport = try #require(standardSlot.considered.first { $0.ref == dualFail })
+        #expect(standardReport.verdict == .metadataUnavailable("first attempt unavailable"))
+
+        let flashSlot = try #require(failure.slots.first { $0.slot == .flash })
+        let flashReport = try #require(flashSlot.considered.first { $0.ref == dualFail })
+        #expect(flashReport.verdict == .metadataUnavailable("first attempt unavailable"))
+    }
+
+    @Test(
+        """
+        footprintBytes passes a thrown RepoMetadataError through unchanged and \
+        wraps a thrown generic Error into .metadataUnavailable(localizedDescription)
+        """
+    )
+    @MainActor
+    func footprintBytesPassesRepoMetadataErrorThroughAndWrapsGenericError() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let direct: ModelRef = "org/direct-repo-metadata-error"
+        let generic: ModelRef = "org/generic-error"
+        let genericError = URLError(.timedOut)
+
+        let profile = ProfileDefinition(
+            name: "sizing-failures",
+            description: "one candidate fails with a RepoMetadataError, one with a generic Error",
+            standard: [direct, generic],
+            flash: ["org/flash-only"],
+            embedding: ["org/emb-only"]
+        )
+
+        let progress = ResolutionProgress()
+        let source = ScriptedMetadataSource(
+            scripts: [
+                direct.repo: [.failDirect(.metadataUnavailable("direct: boom"))],
+                generic.repo: [.failGeneric(genericError)],
+            ],
+            defaultRaw: Self.rawMetadata
+        )
+        let loader = StubModelLoader(progress: progress)
+        let router = Router(
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: source,
+            loader: loader
+        )
+
+        var caught: ResolutionFailure?
+        do {
+            _ = try await router.resolve(profile, reporting: progress)
+        } catch let failure as ResolutionFailure {
+            caught = failure
+        }
+        let failure = try #require(caught)
+        let standardSlot = try #require(failure.slots.first { $0.slot == .standard })
+
+        // A thrown RepoMetadataError passes through footprintBytes untouched.
+        let directReport = try #require(standardSlot.considered.first { $0.ref == direct })
+        #expect(directReport.verdict == .metadataUnavailable("direct: boom"))
+
+        // A thrown generic Error is wrapped, carrying its localizedDescription.
+        let genericReport = try #require(standardSlot.considered.first { $0.ref == generic })
+        #expect(genericReport.verdict == .metadataUnavailable(genericError.localizedDescription))
+
+        // Both candidates are unavailable, not merely too large — the slot
+        // has no viable candidate at all.
+        #expect(standardSlot.chosen == nil)
     }
 
     // MARK: - Progress fraction math
