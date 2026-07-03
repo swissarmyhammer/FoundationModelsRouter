@@ -25,8 +25,8 @@ comments:
   timestamp: 2026-07-03T11:32:23.335394+00:00
 depends_on:
 - 01KWKRK11ADWX13C394RYJ9BBH
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9980'
 title: Add runnable Examples/ folder with a multi-model direct generation executable
 ---
 # Add runnable Examples/ folder with a multi-model direct generation executable
