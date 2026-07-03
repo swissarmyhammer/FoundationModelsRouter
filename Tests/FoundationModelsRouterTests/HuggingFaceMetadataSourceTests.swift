@@ -3,18 +3,22 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises ``HuggingFaceMetadataSource`` — the live ``MetadataSource`` — against
-/// a mocked `URLSession` so its pure routing logic (URL construction and mapping
-/// an HTTP 404 to `configJSON == nil` vs. surfacing other responses/errors) is
-/// covered without any real network access.
+/// Exercises ``HuggingFaceMetadataSource`` against a mocked `URLSession`.
+///
+/// ``HuggingFaceMetadataSource`` is the live ``MetadataSource``; this suite
+/// covers its pure routing logic (URL construction and mapping an HTTP 404 to
+/// `configJSON == nil` vs. surfacing other responses/errors) without any real
+/// network access.
 ///
 /// Tests run serialized because ``MockURLProtocol`` holds a single handler slot
 /// shared across the class (`URLSession` instantiates the protocol internally, so
 /// there is no per-test instance to hang the handler off of).
 @Suite("HuggingFaceMetadataSource", .serialized)
 struct HuggingFaceMetadataSourceTests {
-    /// A fake Hub origin; every request is intercepted by ``MockURLProtocol``, so
-    /// no real DNS/network resolution of this host ever happens.
+    /// A fake Hub origin.
+    ///
+    /// Every request is intercepted by ``MockURLProtocol``, so no real
+    /// DNS/network resolution of this host ever happens.
     private static let endpoint = URL(string: "https://hf.example.test")!
 
     /// Builds a source over a session whose only protocol is ``MockURLProtocol``.
@@ -104,6 +108,36 @@ struct HuggingFaceMetadataSourceTests {
         #expect(raw.configJSON == errorBody)
     }
 
+    @Test("a 404 HTTP status for tree.json is returned as data, since only config.json maps 404 to absent")
+    func tree404HTTPStatusIsReturnedAsData() async throws {
+        let treeBody = Data("not found".utf8)
+        MockURLProtocol.install { request in
+            if request.url!.path.hasSuffix("config.json") {
+                return (Self.response(for: request.url!, statusCode: 200), Data("{}".utf8))
+            }
+            return (Self.response(for: request.url!, statusCode: 404), treeBody)
+        }
+
+        let raw = try await Self.makeSource().fetchRawMetadata(repo: "org/model", revision: nil)
+
+        #expect(raw.treeJSON == treeBody)
+    }
+
+    @Test("a 500 HTTP status for tree.json is returned as data, not swallowed as absent")
+    func tree500HTTPStatusIsReturnedAsData() async throws {
+        let treeBody = Data("internal error".utf8)
+        MockURLProtocol.install { request in
+            if request.url!.path.hasSuffix("config.json") {
+                return (Self.response(for: request.url!, statusCode: 200), Data("{}".utf8))
+            }
+            return (Self.response(for: request.url!, statusCode: 500), treeBody)
+        }
+
+        let raw = try await Self.makeSource().fetchRawMetadata(repo: "org/model", revision: nil)
+
+        #expect(raw.treeJSON == treeBody)
+    }
+
     @Test("a thrown transport error on the config.json fetch propagates from fetchRawMetadata")
     func thrownTransportErrorOnConfigFetchPropagates() async throws {
         MockURLProtocol.install { request in
@@ -132,15 +166,17 @@ struct HuggingFaceMetadataSourceTests {
         }
     }
 
-    /// Builds a canned `HTTPURLResponse` for a status code, defaulting the
-    /// headers/protocol fields the tests don't care about.
+    /// Builds a canned `HTTPURLResponse` for a status code.
+    ///
+    /// Defaults the headers/protocol fields the tests don't care about.
     private static func response(for url: URL, statusCode: Int) -> HTTPURLResponse {
         HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
     }
 }
 
-/// A thread-safe recorder of the request URLs ``MockURLProtocol`` intercepts, so
-/// a `@Sendable` handler closure can record synchronously from the URL Loading
+/// A thread-safe recorder of the request URLs ``MockURLProtocol`` intercepts.
+///
+/// Lets a `@Sendable` handler closure record synchronously from the URL Loading
 /// System's own execution context.
 private final class RequestRecorder: @unchecked Sendable {
     private let lock = NSLock()
@@ -159,10 +195,11 @@ private final class RequestRecorder: @unchecked Sendable {
     }
 }
 
-/// A `URLProtocol` stub that hands canned responses (or throws) to `URLSession`
-/// requests without touching the network. The handler is installed per test via
-/// ``install(_:)``; the owning suite runs serialized so this single handler slot
-/// never races between concurrently-running tests.
+/// A `URLProtocol` stub that hands canned responses (or throws) to `URLSession` requests.
+///
+/// The handler is installed per test via ``install(_:)``; the owning suite runs
+/// serialized so this single handler slot never races between
+/// concurrently-running tests.
 private final class MockURLProtocol: URLProtocol {
     private static let handlerBox = HandlerBox()
 
@@ -189,9 +226,10 @@ private final class MockURLProtocol: URLProtocol {
 
     override func stopLoading() {}
 
-    /// Thread-safe single-slot holder for the current test's request handler,
-    /// since `URLSession` instantiates ``MockURLProtocol`` internally and there is
-    /// no per-test instance to hang the handler off of.
+    /// Thread-safe single-slot holder for the current test's request handler.
+    ///
+    /// `URLSession` instantiates ``MockURLProtocol`` internally, so there is no
+    /// per-test instance to hang the handler off of.
     private final class HandlerBox: @unchecked Sendable {
         private let lock = NSLock()
         private var handler: (@Sendable (URLRequest) throws -> (HTTPURLResponse, Data))?
