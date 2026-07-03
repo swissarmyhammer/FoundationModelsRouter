@@ -98,6 +98,7 @@ struct ExamplesTests {
         /// work, reporting a single fake byte total so progress advances.
         private struct StubModelLoader: ModelLoader {
             let canned: String
+            let perSlotCanned: [ModelSlot: String]
             let dimension: Int
 
             func loadLLM(
@@ -107,7 +108,7 @@ struct ExamplesTests {
                 reporting: @escaping @Sendable (DownloadProgress) -> Void
             ) async throws -> any LoadedLLMContainer {
                 reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-                return StubLLMContainer(canned: canned)
+                return StubLLMContainer(canned: perSlotCanned[slot] ?? canned)
             }
 
             func loadEmbedder(
@@ -149,12 +150,17 @@ struct ExamplesTests {
         /// Builds an offline `Router` for an example.
         ///
         /// - Parameters:
-        ///   - cannedResponse: The text every generation entry point returns.
+        ///   - cannedResponse: The text every generation entry point returns for
+        ///     any slot not overridden by `cannedResponses`.
+        ///   - cannedResponses: Per-slot overrides of `cannedResponse`, so an
+        ///     example can prove two calls really hit two different resident
+        ///     models by asserting on their distinct outputs.
         ///   - embeddingDimension: The length of every embedding vector.
         /// - Returns: A `Router` whose seams are offline stubs, recording to
         ///   memory under a throwaway temporary cache directory.
         static func makeRouter(
             cannedResponse: String = "OK",
+            cannedResponses: [ModelSlot: String] = [:],
             embeddingDimension: Int = 768
         ) -> Router {
             let cacheDir = FileManager.default.temporaryDirectory
@@ -169,7 +175,11 @@ struct ExamplesTests {
                     recommendedMaxWorkingSetSize: 48 << 30
                 ),
                 metadataSource: StubMetadataSource(raw: rawMetadata),
-                loader: StubModelLoader(canned: cannedResponse, dimension: embeddingDimension)
+                loader: StubModelLoader(
+                    canned: cannedResponse,
+                    perSlotCanned: cannedResponses,
+                    dimension: embeddingDimension
+                )
             )
         }
     }
@@ -255,6 +265,50 @@ struct ExamplesTests {
             streamed += fragment
         }
         #expect(streamed == "Hello, world!")
+    }
+
+    // MARK: - Multi-model direct generation
+
+    @Test("Route work across two resident models: flash triages, standard answers")
+    @MainActor
+    func multiModelDirectGeneration() async throws {
+        let router = ExampleHarness.makeRouter(cannedResponses: [
+            .flash: "billing",
+            .standard: "Refunds for Q3 invoices post within 5–7 business days.",
+        ])
+        let coding = ProfileDefinition(
+            name: "coding",
+            description: "Local coding assistant.",
+            standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
+            flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
+            embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
+        )
+
+        // One resolve makes both generation models resident together — no
+        // reload between the two calls below.
+        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        #expect(profile.standard.chosen != profile.flash.chosen)
+
+        // Cheap triage: route the light classification work to `flash`.
+        let triage = profile.flash.makeSession(
+            instructions: "Classify the support ticket into one category word."
+        )
+        let category = try await triage.respond(
+            to: "My Q3 invoice has a discrepancy in the refund total."
+        )
+        #expect(category == "billing")
+
+        // Heavyweight answer: route the full response to `standard`.
+        let answer = profile.standard.makeSession(
+            instructions: "You are a support agent. Write a helpful, precise reply."
+        )
+        let reply = try await answer.respond(
+            to: "Explain our \(category) policy for the customer's Q3 invoice."
+        )
+        #expect(reply == "Refunds for Q3 invoices post within 5–7 business days.")
+
+        // The two calls really hit two different resident models.
+        #expect(category != reply)
     }
 
     // MARK: - Embedding
