@@ -16,3 +16,4 @@ DerivedData/
 # Package.resolved is committed (not ignored): it pins the mlx-swift-lm branch
 # dependency to a specific commit so builds are reproducible.
 .validators/
+lcov.info
