@@ -28,6 +28,38 @@ struct HostProfileTests {
         let recommendedMaxWorkingSetSize: Int64
     }
 
+    @Test("SystemMachineProbe reports positive total RAM")
+    func systemMachineProbeReportsPositiveTotalRAM() {
+        let probe = SystemMachineProbe()
+
+        #expect(probe.totalRAM > 0)
+    }
+
+    @Test("SystemMachineProbe reports a non-empty chip identifier")
+    func systemMachineProbeReportsNonEmptyChip() {
+        let probe = SystemMachineProbe()
+
+        #expect(!probe.chip.isEmpty)
+    }
+
+    @Test("SystemMachineProbe reports a non-negative recommended working set")
+    func systemMachineProbeReportsNonNegativeWorkingSet() {
+        let probe = SystemMachineProbe()
+
+        #expect(probe.recommendedMaxWorkingSetSize >= 0)
+    }
+
+    @Test("HostProfile(probe: SystemMachineProbe()) matches the live probe's own values")
+    func hostProfileFromSystemMachineProbeMatchesProbe() {
+        let probe = SystemMachineProbe()
+
+        let profile = HostProfile(probe: probe)
+
+        #expect(profile.chip == probe.chip)
+        #expect(profile.totalRAM == probe.totalRAM)
+        #expect(profile.recommendedMaxWorkingSetSize == probe.recommendedMaxWorkingSetSize)
+    }
+
     @Test("HostProfile(probe:) copies the probed chip, RAM, and working set")
     func profileFromProbe() {
         let probe = StubMachineProbe(

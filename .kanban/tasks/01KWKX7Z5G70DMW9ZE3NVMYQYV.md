@@ -1,8 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01kwkyrxt62ps7ava1k4hztxs6
+  text: |-
+    Implemented: added 4 smoke tests to Tests/FoundationModelsRouterTests/HostProfileTests.swift covering the live SystemMachineProbe (no existing suite for it beyond the pure HostProfile type, confirmed by reading the file first):
+    - systemMachineProbeReportsPositiveTotalRAM: totalRAM > 0
+    - systemMachineProbeReportsNonEmptyChip: chip non-empty (exercises sysctlString success path / brand_string-then-hw.model fallback)
+    - systemMachineProbeReportsNonNegativeWorkingSet: recommendedMaxWorkingSetSize >= 0 (0 valid w/o Metal device)
+    - hostProfileFromSystemMachineProbeMatchesProbe: HostProfile(probe: SystemMachineProbe()) fields match the probe's own live values
+
+    No production code changed (Sources/FoundationModelsRouter/Sizing/HostProfile.swift untouched) — only test additions, following existing file's style/conventions (no new helpers needed).
+
+    Verification: `swift test` — full suite green, 136/136 passing + 1 gated integration test correctly skipped (Gated real-model integration (milestone 7)). `swift test --filter HostProfileTests` — 10/10 passing including the 4 new ones. double-check adversarial review returned PASS — confirmed tests exercise the real (non-stubbed) probe and its sysctlbyname/ProcessInfo/MTLCreateSystemDefaultDevice paths, no flakiness risk on the macOS-only CI target, all four task-specified invariants covered exactly.
+
+    Task left in `doing` per /implement contract for /review to pick up.
+  timestamp: 2026-07-03T12:20:36.294314+00:00
+position_column: doing
+position_ordinal: '80'
 title: Add smoke tests for SystemMachineProbe (live MachineProbe)
 ---
 Sources/FoundationModelsRouter/Sizing/HostProfile.swift:87-116
