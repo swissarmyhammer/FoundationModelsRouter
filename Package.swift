@@ -97,5 +97,17 @@ let package = Package(
             dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
             path: "Tests/\(packageName)IntegrationTests"
         ),
+        // Runnable demo (live twin of the offline `ExamplesTests` example): one
+        // `Router.resolve` makes two local generation models co-resident and the
+        // program routes a quick turn to `profile.flash` and a heavyweight turn to
+        // `profile.standard`. Links the same Hub client + tokenizer products as
+        // the gated integration test target, since it also constructs a live
+        // `LiveModelLoader` through the `MLXHuggingFace` macros.
+        .executableTarget(
+            name: "MultiModelGeneration",
+            dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
+            path: "Examples/MultiModelGeneration",
+            exclude: ["README.md"]
+        ),
     ]
 )

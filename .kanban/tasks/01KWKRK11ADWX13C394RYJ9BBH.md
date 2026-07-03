@@ -18,8 +18,8 @@ comments:
 
     Diff scope: only Tests/FoundationModelsRouterTests/ExamplesTests.swift (57 insertions, 3 deletions). Leaving task in `doing` for review per the implement/really-done workflow.
   timestamp: 2026-07-03T10:51:00.107425+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9880'
 title: Add multi-model direct generation example to ExamplesTests
 ---
 ## What
