@@ -16,8 +16,8 @@ comments:
 
     Leaving task in doing per /implement contract; ready for /review.
   timestamp: 2026-07-03T12:46:33.698731+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 9c80
 title: Add tests for RepoMetadata.init(raw:) error branches
 ---
 Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift:122-151 (error branches: 127, 133-135, 138-140)
