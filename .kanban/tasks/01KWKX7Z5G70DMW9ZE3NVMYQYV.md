@@ -17,8 +17,8 @@ comments:
 
     Task left in `doing` per /implement contract for /review to pick up.
   timestamp: 2026-07-03T12:20:36.294314+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 9b80
 title: Add smoke tests for SystemMachineProbe (live MachineProbe)
 ---
 Sources/FoundationModelsRouter/Sizing/HostProfile.swift:87-116

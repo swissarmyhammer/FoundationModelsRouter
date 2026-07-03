@@ -145,6 +145,47 @@ struct RepoMetadataTests {
         }
     }
 
+    @Test("config.json that is not valid JSON surfaces metadataUnavailable mentioning the parse failure")
+    func malformedConfigJSONUnavailable() throws {
+        let raw = RawRepoMetadata(configJSON: Data("not json".utf8), treeJSON: Self.weightTreeJSON)
+
+        #expect(throws: RepoMetadataError.metadataUnavailable("config.json could not be parsed")) {
+            _ = try RepoMetadata(raw: raw)
+        }
+    }
+
+    @Test("config.json missing num_hidden_layers or num_attention_heads surfaces metadataUnavailable")
+    func missingArchitectureFieldsUnavailable() throws {
+        let config = Data("""
+            {"head_dim": 128, "hidden_size": 4096}
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "config.json is missing num_hidden_layers or num_attention_heads"
+            )
+        ) {
+            _ = try RepoMetadata(raw: raw)
+        }
+    }
+
+    @Test("config.json with neither head_dim nor hidden_size surfaces metadataUnavailable")
+    func missingHeadSizingFieldsUnavailable() throws {
+        let config = Data("""
+            {"num_hidden_layers": 4, "num_attention_heads": 32}
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        #expect(
+            throws: RepoMetadataError.metadataUnavailable(
+                "config.json has neither head_dim nor hidden_size to size a head"
+            )
+        ) {
+            _ = try RepoMetadata(raw: raw)
+        }
+    }
+
     @Test("RepoMetadata Codable round-trips every architecture field")
     func codableRoundTrip() throws {
         let metadata = RepoMetadata(

@@ -1,8 +1,23 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8280'
+comments:
+- actor: claude-code
+  id: 01kwm08eq29f1zkfg1wwjnrrth
+  text: |-
+    Implemented. Added three @Test functions to Tests/FoundationModelsRouterTests/RepoMetadataTests.swift, each constructing a RawRepoMetadata directly and calling RepoMetadata(raw:) (no reader/cache, no I/O) with exact-string #expect(throws: RepoMetadataError.metadataUnavailable("...")) assertions:
+    - malformedConfigJSONUnavailable — non-JSON configJSON bytes -> "config.json could not be parsed" (line ~127)
+    - missingArchitectureFieldsUnavailable — valid JSON missing num_hidden_layers/num_attention_heads -> "config.json is missing num_hidden_layers or num_attention_heads" (lines ~133-135)
+    - missingHeadSizingFieldsUnavailable — valid JSON with layers/heads but neither head_dim nor hidden_size -> "config.json has neither head_dim nor hidden_size to size a head" (lines ~138-140)
+
+    No production code changes. Sanity-checked the tests are not vacuous: temporarily broke the parse-failure error message in RepoMetadata.swift, confirmed the corresponding test failed with a clear diff, then reverted (git diff on Sources/ now empty).
+
+    Verification: `swift test --filter RepoMetadataTests` -> 12/12 pass. Full `swift test` -> 139/139 pass (1 gated integration test skipped, unrelated). double-check agent adversarial review returned PASS, no findings.
+
+    Leaving task in doing per /implement contract; ready for /review.
+  timestamp: 2026-07-03T12:46:33.698731+00:00
+position_column: doing
+position_ordinal: '80'
 title: Add tests for RepoMetadata.init(raw:) error branches
 ---
 Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift:122-151 (error branches: 127, 133-135, 138-140)
