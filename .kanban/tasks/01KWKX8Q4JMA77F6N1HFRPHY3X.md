@@ -14,7 +14,7 @@ comments:
 
     No production code changes were needed — this was a pure coverage-gap task. Task left in `doing` per the implement/really-done workflow, ready for /review.
   timestamp: 2026-07-03T16:17:56.253917+00:00
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: Add test for Router's default JSONLRecorder wiring
 ---

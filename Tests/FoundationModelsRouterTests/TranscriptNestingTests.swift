@@ -291,6 +291,8 @@ struct TranscriptNestingTests {
 
     // MARK: - Default recorder wiring
 
+    /// This test verifies that a Router without an explicit recorder defaults to a real JSONLRecorder.
+    ///
     /// Unlike every other test in this file, this router is built directly
     /// (not through ``makeRouter(recorder:cacheDir:recordingsDir:)``) with no
     /// explicit `recorder:` — only `recordingsDir` — so the real
