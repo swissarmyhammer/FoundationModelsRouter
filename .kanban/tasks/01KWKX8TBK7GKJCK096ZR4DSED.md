@@ -15,8 +15,8 @@ comments:
 
     Task is green and ready for /review. Leaving in `doing` per the implement skill contract.
   timestamp: 2026-07-03T20:29:23.774815+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: a080
 title: Add test for ModelRef.init(repo:revision:)
 ---
 Sources/FoundationModelsRouter/Core/ModelRef.swift:36-39
