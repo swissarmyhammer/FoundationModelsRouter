@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 /// The two small artifacts a repo's sizing needs, fetched verbatim from the Hub
 /// without downloading any weights.
@@ -394,6 +395,13 @@ public struct RepoMetadataReader: Sendable {
     }
 }
 
+/// The logger the cache reports decode failures to, when a cached entry falls
+/// back to a clean re-fetch instead of throwing.
+private let repoMetadataCacheLogger = Logger(
+    subsystem: moduleName,
+    category: "RepoMetadataCache"
+)
+
 /// A disposable on-disk cache of parsed ``RepoMetadata``, keyed by
 /// `(repo, revision)`.
 ///
@@ -406,16 +414,38 @@ struct RepoMetadataCache: Sendable {
 
     /// Loads the cached metadata for a `(repo, revision)`, if present.
     ///
+    /// A cached file that fails to *decode* — most commonly a stale entry
+    /// written before ``RepoMetadata``'s `Codable` shape last changed (e.g. the
+    /// addition of `numFullAttentionLayers`), but also indistinguishable
+    /// genuine corruption — is treated as a cache miss (`nil`) rather than
+    /// thrown, so the caller falls back to a clean re-fetch instead of
+    /// surfacing a misleading "metadata unavailable" failure. A diagnostic is
+    /// logged on that fallback path so silent schema drift or real corruption
+    /// stays visible rather than being swallowed forever; the fallback
+    /// re-fetch then re-caches in the current schema, self-healing the entry.
+    ///
+    /// A file that exists but cannot even be *read* (e.g. a permissions or
+    /// disk I/O failure) still throws — that is not a decode problem and should
+    /// not be quietly papered over as an ordinary cache miss.
+    ///
     /// - Parameters:
     ///   - repo: The repository id.
     ///   - revision: The pinned revision, or `nil` for the default.
-    /// - Returns: The cached metadata, or `nil` when nothing is cached.
-    /// - Throws: If a cached file exists but cannot be read or decoded.
+    /// - Returns: The cached metadata, or `nil` when nothing is cached, or when
+    ///   a cached entry exists but fails to decode.
+    /// - Throws: If a cached file exists but cannot be read.
     func load(repo: String, revision: String?) throws -> RepoMetadata? {
         let url = fileURL(repo: repo, revision: revision)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(RepoMetadata.self, from: data)
+        do {
+            return try JSONDecoder().decode(RepoMetadata.self, from: data)
+        } catch {
+            repoMetadataCacheLogger.error(
+                "repo metadata cache entry failed to decode (stale schema or corruption); treating as a cache miss: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
     }
 
     /// Saves metadata under its `(repo, revision)` key, creating the cache
@@ -437,8 +467,10 @@ struct RepoMetadataCache: Sendable {
     ///
     /// The key components are hashed into a collision-resistant filename so
     /// arbitrary repo strings stay filesystem-safe and distinct keys map to
-    /// distinct files.
-    private func fileURL(repo: String, revision: String?) -> URL {
+    /// distinct files. Internal (not `private`) so tests can pre-seed a stale
+    /// or corrupt cache entry at the exact path ``load(repo:revision:)`` will
+    /// read from.
+    func fileURL(repo: String, revision: String?) -> URL {
         let key = "\(repo)\u{0}\(revision ?? "")"
         let digest = SHA256.hash(data: Data(key.utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()

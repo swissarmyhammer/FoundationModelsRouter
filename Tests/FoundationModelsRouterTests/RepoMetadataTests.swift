@@ -444,6 +444,58 @@ struct RepoMetadataTests {
         #expect(await source.fetchCount == 2)
     }
 
+    /// A cache entry written in the pre-fix schema, before `numFullAttentionLayers`
+    /// existed on `RepoMetadata` — missing the key entirely, rather than encoding
+    /// it as `null`, matching what a real on-disk entry from an older build looks
+    /// like.
+    private static let staleSchemaCacheJSON = Data("""
+        {
+            "weightBytes": 1750000,
+            "numHiddenLayers": 4,
+            "numAttentionHeads": 32,
+            "numKeyValueHeads": 8,
+            "headDim": 128,
+            "hiddenSize": 4096
+        }
+        """.utf8)
+
+    @Test("RepoMetadataCache.load given a cache entry missing numFullAttentionLayers returns nil rather than throwing")
+    func loadTreatsStaleSchemaEntryAsCacheMiss() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = RepoMetadataCache(cacheDir: dir)
+
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Self.staleSchemaCacheJSON.write(to: cache.fileURL(repo: "org/model", revision: "abc123"))
+
+        #expect(try cache.load(repo: "org/model", revision: "abc123") == nil)
+    }
+
+    @Test("RepoMetadataReader.metadata(for:) re-fetches and re-caches when the cached entry has the stale pre-fix schema")
+    func metadataReFetchesOnStaleSchemaCacheEntry() async throws {
+        let (reader, dir, source) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ref: ModelRef = "org/model@abc123"
+        let cache = RepoMetadataCache(cacheDir: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Self.staleSchemaCacheJSON.write(to: cache.fileURL(repo: ref.repo, revision: ref.revision))
+
+        let metadata = try await reader.metadata(for: ref)
+
+        // Re-fetched from source rather than throwing "metadata unavailable".
+        #expect(metadata.weightBytes == Self.expectedWeightBytes)
+        #expect(metadata.numFullAttentionLayers == 4)
+        #expect(await source.fetchCount == 1)
+
+        // Re-cached successfully in the current schema: a second read hits the
+        // cache without invoking the source again.
+        let second = try await reader.metadata(for: ref)
+        #expect(second == metadata)
+        #expect(await source.fetchCount == 1)
+    }
+
     /// Builds a reader over a fresh temp cache dir, returning the dir for cleanup
     /// and the stub source for fetch-count assertions.
     private static func makeReader(
