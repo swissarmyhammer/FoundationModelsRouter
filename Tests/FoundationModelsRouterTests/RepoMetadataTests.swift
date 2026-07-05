@@ -68,6 +68,8 @@ struct RepoMetadataTests {
         #expect(metadata.numAttentionHeads == 32)
         #expect(metadata.numKeyValueHeads == 8)
         #expect(metadata.headDim == 128)
+        // No layer_types present, so numFullAttentionLayers defaults to numHiddenLayers.
+        #expect(metadata.numFullAttentionLayers == 4)
     }
 
     @Test("happy-path footprint matches the hand-computed estimate")
@@ -214,6 +216,26 @@ struct RepoMetadataTests {
         #expect(metadata.numKeyValueHeads == 2)
         #expect(metadata.headDim == 256)
         #expect(metadata.hiddenSize == 2048)
+    }
+
+    @Test("hybrid linear/full-attention layer_types counts only full_attention layers for the KV cache")
+    func hybridAttentionLayerCounting() async throws {
+        let (reader, dir, _) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.qwenVLConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let metadata = try await reader.metadata(for: "mlx-community/Qwen3.5-2B-mxfp4")
+        let footprint = try await reader.footprint(for: "mlx-community/Qwen3.5-2B-mxfp4")
+
+        // layer_types has 24 entries, 6 of which are "full_attention" (every 4th, per
+        // full_attention_interval: 4); the other 18 are "linear_attention", a
+        // fixed-size recurrent state that does not grow with context.
+        #expect(metadata.numFullAttentionLayers == 6)
+
+        // kvBytes(16) = 2(K+V) * 6 layers * 16 ctx * 2 kvHeads * 256 headDim * 2(fp16)
+        // = 196608 — not the 786432 a naive num_hidden_layers (24) count would give.
+        #expect(footprint.kvBytes(context: 16) == 196_608)
     }
 
     @Test("a config with complete sizing fields at both levels resolves entirely from the top level")
@@ -379,17 +401,19 @@ struct RepoMetadataTests {
     func codableRoundTrip() throws {
         let metadata = RepoMetadata(
             weightBytes: Self.expectedWeightBytes,
-            numHiddenLayers: 4,
+            numHiddenLayers: 24,
             numAttentionHeads: 32,
             numKeyValueHeads: 8,
             headDim: 128,
-            hiddenSize: 4096
+            hiddenSize: 4096,
+            numFullAttentionLayers: 6
         )
 
         let data = try JSONEncoder().encode(metadata)
         let decoded = try JSONDecoder().decode(RepoMetadata.self, from: data)
 
         #expect(decoded == metadata)
+        #expect(decoded.numFullAttentionLayers == 6)
     }
 
     @Test("a second read of the same (repo, revision) hits the cache; fetch runs once")

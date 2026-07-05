@@ -84,6 +84,17 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     /// Model hidden size (`hidden_size`); used to derive `headDim` when absent.
     public let hiddenSize: Int?
 
+    /// Number of transformer layers that materialize a growing KV cache.
+    ///
+    /// Equal to `numHiddenLayers` for ordinary architectures. Hybrid
+    /// linear/full-attention models (e.g. Qwen3.5's `linear_attention` layers,
+    /// a fixed-size recurrent state that does not grow with context) declare a
+    /// `layer_types` array in their sizing source; this is the count of its
+    /// `"full_attention"` entries — the only layers whose KV cache actually
+    /// scales with context — so ``Footprint``'s KV-cache math is not
+    /// overestimated by counting every layer.
+    public let numFullAttentionLayers: Int
+
     /// Creates parsed metadata from already-resolved values.
     ///
     /// - Parameters:
@@ -93,13 +104,16 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     ///   - numKeyValueHeads: Key/value head count, or `nil` for MHA.
     ///   - headDim: Per-head dimension, or `nil` to derive from `hiddenSize`.
     ///   - hiddenSize: Hidden size, used only to derive `headDim` when absent.
+    ///   - numFullAttentionLayers: Count of layers with a growing KV cache;
+    ///     defaults to `numHiddenLayers` for non-hybrid architectures.
     public init(
         weightBytes: Int64,
         numHiddenLayers: Int,
         numAttentionHeads: Int,
         numKeyValueHeads: Int?,
         headDim: Int?,
-        hiddenSize: Int?
+        hiddenSize: Int?,
+        numFullAttentionLayers: Int? = nil
     ) {
         self.weightBytes = weightBytes
         self.numHiddenLayers = numHiddenLayers
@@ -107,6 +121,7 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         self.numKeyValueHeads = numKeyValueHeads
         self.headDim = headDim
         self.hiddenSize = hiddenSize
+        self.numFullAttentionLayers = numFullAttentionLayers ?? numHiddenLayers
     }
 
     /// Parses sizing metadata from raw fetched artifacts.
@@ -137,22 +152,34 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
             )
         }
         let weightBytes = try Self.residentWeightBytes(treeJSON: raw.treeJSON)
+        // Hybrid linear/full-attention models (e.g. Qwen3.5's linear_attention
+        // layers, a fixed-size recurrent state that does not grow with context)
+        // declare layer_types; only its "full_attention" entries materialize a
+        // growing KV cache. Absent layer_types (the common, non-hybrid case)
+        // falls back to numHiddenLayers, preserving prior behavior.
+        let numFullAttentionLayers = sizing.layerTypes?.filter { $0 == Self.fullAttentionLayerType }.count
+            ?? sizing.numHiddenLayers
         self.init(
             weightBytes: weightBytes,
             numHiddenLayers: sizing.numHiddenLayers,
             numAttentionHeads: sizing.numAttentionHeads,
             numKeyValueHeads: sizing.numKeyValueHeads,
             headDim: sizing.headDim,
-            hiddenSize: sizing.hiddenSize
+            hiddenSize: sizing.hiddenSize,
+            numFullAttentionLayers: numFullAttentionLayers
         )
     }
 
     /// The memory footprint estimate for this repo, applying the GQA and head-dim
     /// fallbacks via ``Footprint``'s config-shaped initializer.
+    ///
+    /// Passes ``numFullAttentionLayers`` — not ``numHiddenLayers`` — as the KV
+    /// cache's layer count, since hybrid linear/full-attention models only grow
+    /// their KV cache on the full-attention layers.
     public var footprint: Footprint {
         Footprint(
             weightBytes: weightBytes,
-            numHiddenLayers: numHiddenLayers,
+            numHiddenLayers: numFullAttentionLayers,
             numAttentionHeads: numAttentionHeads,
             numKeyValueHeads: numKeyValueHeads,
             headDim: headDim,
@@ -184,7 +211,11 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     /// The file extension that marks a weight shard in the tree listing.
     private static let safetensorsSuffix = ".safetensors"
 
-    /// The five architecture fields the KV math needs, resolved from one
+    /// The `layer_types` entry marking a layer as full attention — the only
+    /// kind that materializes a KV cache which grows with context.
+    private static let fullAttentionLayerType = "full_attention"
+
+    /// The six architecture fields the KV math needs, resolved from one
     /// coherent source — never mixed across the top level and `text_config`.
     ///
     /// `numHiddenLayers`/`numAttentionHeads` are non-optional by construction:
@@ -192,17 +223,19 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     /// which returns `nil` unless both are present. That makes "selected as a
     /// sizing source" and "has the two required fields" the same fact at the
     /// type level, so callers never need to force-unwrap them again.
-    /// `numKeyValueHeads`, `headDim`, and `hiddenSize` stay optional — they are
-    /// genuinely absent-or-derivable, per ``RepoMetadata``'s own fields.
+    /// `numKeyValueHeads`, `headDim`, `hiddenSize`, and `layerTypes` stay
+    /// optional — they are genuinely absent-or-derivable, per
+    /// ``RepoMetadata``'s own fields.
     private struct ResolvedSizing {
         let numHiddenLayers: Int
         let numAttentionHeads: Int
         let numKeyValueHeads: Int?
         let headDim: Int?
         let hiddenSize: Int?
+        let layerTypes: [String]?
     }
 
-    /// The five architecture fields the KV math needs, and their shared
+    /// The six architecture fields the KV math needs, and their shared
     /// snake_case `config.json` key mapping. Every field is optional so a
     /// sparse or unexpected config decodes without throwing; ``resolved``
     /// enforces which fields must be present to select this as a sizing
@@ -212,13 +245,17 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     /// such as the Qwen-VL family nest language-model sizing fields there
     /// instead of the top level, alongside a sibling `vision_config` that
     /// uses distinct field names) decode this same field set, so the field
-    /// list and JSON key mapping exist in exactly one place.
+    /// list and JSON key mapping exist in exactly one place. `layerTypes`
+    /// (`layer_types`) is present only on hybrid linear/full-attention models
+    /// (e.g. Qwen3.5's text config), where it alternates `"linear_attention"`
+    /// and `"full_attention"` entries per layer.
     private struct SizingFields: Decodable {
         let numHiddenLayers: Int?
         let numAttentionHeads: Int?
         let numKeyValueHeads: Int?
         let headDim: Int?
         let hiddenSize: Int?
+        let layerTypes: [String]?
 
         enum CodingKeys: String, CodingKey {
             case numHiddenLayers = "num_hidden_layers"
@@ -226,6 +263,7 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
             case numKeyValueHeads = "num_key_value_heads"
             case headDim = "head_dim"
             case hiddenSize = "hidden_size"
+            case layerTypes = "layer_types"
         }
 
         /// This field set as a ``ResolvedSizing``, or `nil` when the two
@@ -238,7 +276,8 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
                 numAttentionHeads: numAttentionHeads,
                 numKeyValueHeads: numKeyValueHeads,
                 headDim: headDim,
-                hiddenSize: hiddenSize
+                hiddenSize: hiddenSize,
+                layerTypes: layerTypes
             )
         }
     }

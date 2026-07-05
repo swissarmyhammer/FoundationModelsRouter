@@ -1,10 +1,33 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kwsdfzqfsd8358dv716h8906
+  text: |-
+    Implemented via TDD.
+
+    Changes in Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift:
+    - Added `layerTypes: [String]?` (`layer_types`) to the shared `SizingFields`/`ResolvedSizing` structs used by both the top-level config and `text_config`, so the "one coherent sizing source" invariant (never mixing fields across levels) extends to `layerTypes` too.
+    - Added `numFullAttentionLayers: Int` to `RepoMetadata`, threaded through the memberwise `init` as a defaulted optional parameter (`numFullAttentionLayers: Int? = nil`, defaulting to `numHiddenLayers`) so the many existing test call sites that construct `RepoMetadata` directly don't break. Codable is auto-synthesized on `RepoMetadata` (no explicit CodingKeys/encode/decode), so no separate Codable work was needed beyond adding the stored property.
+    - In `init(raw:)`, computed `numFullAttentionLayers = sizing.layerTypes?.filter { $0 == "full_attention" }.count ?? sizing.numHiddenLayers`.
+    - `RepoMetadata.footprint` now passes `numFullAttentionLayers` (not `numHiddenLayers`) as Footprint's `numHiddenLayers:` KV-layer-count argument. `Footprint.swift` itself is untouched, as scoped.
+
+    Tests added/updated in Tests/FoundationModelsRouterTests/RepoMetadataTests.swift:
+    - `happyPathMetadata`: added assertion `numFullAttentionLayers == 4` (equals numHiddenLayers) for the no-layer_types case — regression coverage.
+    - New test `hybridAttentionLayerCounting`, reusing the existing real `qwenVLConfigJSON` fixture (mlx-community/Qwen3.5-2B-mxfp4, 24-entry layer_types, 6 full_attention): asserts `numFullAttentionLayers == 6` and `footprint.kvBytes(context: 16) == 196_608` (vs. the wrong 786_432 that counting all 24 layers would give).
+    - `codableRoundTrip`: now passes numHiddenLayers: 24 and numFullAttentionLayers: 6 explicitly (distinct values) and asserts the round-tripped value survives.
+
+    Verification: watched all 3 new/changed assertions fail to compile first (RED: "value of type 'RepoMetadata' has no member 'numFullAttentionLayers'"), then implemented to GREEN. `swift build` and `swift build --build-tests` succeed. `swift test --filter RepoMetadataTests` 16/16 pass. `swift test --filter FootprintTests` 7/7 pass (Footprint.swift unchanged, confirmed no regression). Full `swift test`: 162/162 pass, zero regressions (1 unrelated gated-integration test skipped, as expected in this environment).
+
+    Adversarial double-check agent: PASS, no blocking findings. Noted one non-blocking observation (an empty/zero-full_attention layer_types array would zero out the KV term — a faithful literal reading of the spec, untested but not required by acceptance criteria).
+
+    Leaving in `doing` for /review per /implement process.
+  timestamp: 2026-07-05T15:14:04.143655+00:00
 depends_on:
 - 01KWS4MN1XR5Y76BTSKQH27HA7
-position_column: todo
-position_ordinal: '8280'
+position_column: doing
+position_ordinal: '80'
 title: 'Footprint: hybrid linear/full-attention models overcount KV-cache layers (e.g. Qwen3.5-2B-mxfp4)'
 ---
 ## What
