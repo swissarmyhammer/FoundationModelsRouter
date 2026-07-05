@@ -1,8 +1,43 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01kwsa77psgfhm98905gr3yyg0
+  text: |-
+    Implemented via TDD.
+
+    Changes in Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift:
+    - Added `RepoConfig.TextConfig: Decodable` nested struct decoding the same five sizing fields via the same snake_case CodingKeys.
+    - Added `let textConfig: TextConfig?` to `RepoConfig`, keyed "text_config".
+    - Added `RepoConfig.sizingSource` computed property (returns a private `SizingFields` tuple typealias) that selects a whole coherent source: top level if it has both `num_hidden_layers`/`num_attention_heads`, else `textConfig` if it has both, else nil. Never mixes fields across levels.
+    - `RepoMetadata.init(raw:)` now uses `config.sizingSource` instead of reading fields directly from the top level, preserving the existing `metadataUnavailable` error messages.
+
+    Tests added to Tests/FoundationModelsRouterTests/RepoMetadataTests.swift:
+    - `qwenVLTextConfigFallback`: uses the actual verbatim config.json fetched live from https://huggingface.co/mlx-community/Qwen3.5-2B-mxfp4/resolve/main/config.json (curl'd during implementation) as the canned fixture. Asserts numHiddenLayers==24, numAttentionHeads==8, numKeyValueHeads==2, headDim==256, hiddenSize==2048.
+    - `topLevelSizingFieldsWinOverTextConfig`: synthetic config with complete-but-different values at both levels; asserts every field resolves from the top level (proves no per-field mixing, e.g. numKeyValueHeads 8 not 2).
+
+    TDD: watched both new tests fail RED first (qwenVLTextConfigFallback failed with the expected metadataUnavailable; topLevelSizingFieldsWinOverTextConfig already passed against old code since it only exercises unaffected top-level behavior — expected, not a miss), then implemented to GREEN.
+
+    Verification: `swift build` clean, `swift build --build-tests` clean, `swift test --filter RepoMetadataTests` 14/14 pass, full `swift test` 160/160 pass across 21 suites (1 integration suite appropriately skipped as gated). Adversarial double-check dispatched for sign-off.
+  timestamp: 2026-07-05T14:16:51.673807+00:00
+- actor: claude-code
+  id: 01kwsaefnw5n68n8vx2ggsw49h
+  text: |-
+    Adversarial double-check verdict: PASS. One non-blocking suggestion — add coverage for the partial-top-level fall-through path (top level has only one of the two required fields, `textConfig` has both) — addressed by adding `partialTopLevelFallsThroughToTextConfig`.
+
+    Final verification (fresh run): `swift build` clean, `swift build --build-tests` clean, `swift test --filter RepoMetadataTests` 15/15 pass, full `swift test` 161/161 pass across 21 suites (1 integration suite appropriately skipped as gated). Zero regressions.
+
+    All acceptance criteria met:
+    - Qwen3.5-2B-mxfp4 VLM shape (sizing fields only under text_config, sibling vision_config with distinct field names) parses successfully.
+    - A config with both required fields at the top level is read entirely from the top level, ignoring text_config even when present (no per-field mixing) — covered by both the fully-complete-top-level case and the partial-top-level-falls-through case.
+    - A config with neither level having both required fields still throws metadataUnavailable (existing `missingArchitectureFieldsUnavailable` test, unchanged).
+    - All existing RepoMetadataTests pass unchanged.
+
+    Leaving in `doing` for `/review` per the implement workflow.
+  timestamp: 2026-07-05T14:20:49.212069+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'RepoMetadata: fall back to text_config for VLM configs (e.g. Qwen3.5-2B-mxfp4)'
 ---
 ## What

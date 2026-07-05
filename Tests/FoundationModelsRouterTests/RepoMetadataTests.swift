@@ -84,6 +84,195 @@ struct RepoMetadataTests {
         #expect(footprint.footprint(context: 16) == Self.expectedWeightBytes + 262_144)
     }
 
+    /// The verbatim `config.json` fetched from
+    /// `https://huggingface.co/mlx-community/Qwen3.5-2B-mxfp4/resolve/main/config.json`.
+    /// A VLM config: the transformer sizing fields live only under `text_config`
+    /// (`num_hidden_layers: 24`, `num_attention_heads: 8`, `num_key_value_heads: 2`,
+    /// `head_dim: 256`, `hidden_size: 2048`); the top level holds none of them, and
+    /// the sibling `vision_config` uses distinct field names (`depth`, `num_heads`)
+    /// so it cannot collide with the text-config fields.
+    private static let qwenVLConfigJSON = Data("""
+        {
+            "architectures": [
+                "Qwen3_5ForConditionalGeneration"
+            ],
+            "image_token_id": 248056,
+            "model_type": "qwen3_5",
+            "quantization": {
+                "group_size": 32,
+                "bits": 4,
+                "mode": "mxfp4"
+            },
+            "quantization_config": {
+                "group_size": 32,
+                "bits": 4,
+                "mode": "mxfp4"
+            },
+            "text_config": {
+                "attention_bias": false,
+                "attention_dropout": 0.0,
+                "attn_output_gate": true,
+                "dtype": "bfloat16",
+                "eos_token_id": 248044,
+                "full_attention_interval": 4,
+                "head_dim": 256,
+                "hidden_act": "silu",
+                "hidden_size": 2048,
+                "initializer_range": 0.02,
+                "intermediate_size": 6144,
+                "layer_types": [
+                    "linear_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "full_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "full_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "full_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "full_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "full_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "linear_attention",
+                    "full_attention"
+                ],
+                "linear_conv_kernel_dim": 4,
+                "linear_key_head_dim": 128,
+                "linear_num_key_heads": 16,
+                "linear_num_value_heads": 16,
+                "linear_value_head_dim": 128,
+                "max_position_embeddings": 262144,
+                "mlp_only_layers": [],
+                "model_type": "qwen3_5_text",
+                "mtp_num_hidden_layers": 1,
+                "mtp_use_dedicated_embeddings": false,
+                "num_attention_heads": 8,
+                "num_hidden_layers": 24,
+                "num_key_value_heads": 2,
+                "rms_norm_eps": 1e-06,
+                "tie_word_embeddings": true,
+                "use_cache": true,
+                "vocab_size": 248320,
+                "mamba_ssm_dtype": "float32",
+                "rope_parameters": {
+                    "mrope_interleaved": true,
+                    "mrope_section": [
+                        11,
+                        11,
+                        10
+                    ],
+                    "rope_type": "default",
+                    "rope_theta": 10000000,
+                    "partial_rotary_factor": 0.25
+                }
+            },
+            "tie_word_embeddings": true,
+            "transformers_version": "4.57.0.dev0",
+            "video_token_id": 248057,
+            "vision_config": {
+                "deepstack_visual_indexes": [],
+                "depth": 24,
+                "hidden_act": "gelu_pytorch_tanh",
+                "hidden_size": 1024,
+                "in_channels": 3,
+                "initializer_range": 0.02,
+                "intermediate_size": 4096,
+                "model_type": "qwen3_5",
+                "num_heads": 16,
+                "num_position_embeddings": 2304,
+                "out_hidden_size": 2048,
+                "patch_size": 16,
+                "spatial_merge_size": 2,
+                "temporal_patch_size": 2
+            },
+            "vision_end_token_id": 248054,
+            "vision_start_token_id": 248053
+        }
+        """.utf8)
+
+    @Test("VLM config with sizing fields only under text_config resolves via the text_config fallback")
+    func qwenVLTextConfigFallback() async throws {
+        let (reader, dir, _) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.qwenVLConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let metadata = try await reader.metadata(for: "mlx-community/Qwen3.5-2B-mxfp4")
+
+        #expect(metadata.numHiddenLayers == 24)
+        #expect(metadata.numAttentionHeads == 8)
+        #expect(metadata.numKeyValueHeads == 2)
+        #expect(metadata.headDim == 256)
+        #expect(metadata.hiddenSize == 2048)
+    }
+
+    @Test("a config with complete sizing fields at both levels resolves entirely from the top level")
+    func topLevelSizingFieldsWinOverTextConfig() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "text_config": {
+                    "num_hidden_layers": 24,
+                    "num_attention_heads": 8,
+                    "num_key_value_heads": 2,
+                    "head_dim": 256,
+                    "hidden_size": 2048
+                }
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.numHiddenLayers == 4)
+        #expect(metadata.numAttentionHeads == 32)
+        #expect(metadata.numKeyValueHeads == 8)
+        #expect(metadata.headDim == 128)
+        #expect(metadata.hiddenSize == 4096)
+    }
+
+    @Test("a top level with only one required field falls through entirely to a complete text_config")
+    func partialTopLevelFallsThroughToTextConfig() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "text_config": {
+                    "num_hidden_layers": 24,
+                    "num_attention_heads": 8,
+                    "num_key_value_heads": 2,
+                    "head_dim": 256,
+                    "hidden_size": 2048
+                }
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        // The top level has num_hidden_layers but not num_attention_heads, so it is
+        // not a coherent source; every field must come from text_config instead —
+        // including num_hidden_layers, not the top level's stray value of 4.
+        #expect(metadata.numHiddenLayers == 24)
+        #expect(metadata.numAttentionHeads == 8)
+        #expect(metadata.numKeyValueHeads == 2)
+        #expect(metadata.headDim == 256)
+        #expect(metadata.hiddenSize == 2048)
+    }
+
     @Test("GQA fallback: absent num_key_value_heads uses num_attention_heads")
     func gqaFallback() async throws {
         let config = Data("""

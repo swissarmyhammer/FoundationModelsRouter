@@ -126,15 +126,12 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         guard let config = try? JSONDecoder().decode(RepoConfig.self, from: configJSON) else {
             throw RepoMetadataError.metadataUnavailable("config.json could not be parsed")
         }
-        guard
-            let layers = config.numHiddenLayers,
-            let attentionHeads = config.numAttentionHeads
-        else {
+        guard let sizing = config.sizingSource else {
             throw RepoMetadataError.metadataUnavailable(
                 "config.json is missing num_hidden_layers or num_attention_heads"
             )
         }
-        guard config.headDim != nil || config.hiddenSize != nil else {
+        guard sizing.headDim != nil || sizing.hiddenSize != nil else {
             throw RepoMetadataError.metadataUnavailable(
                 "config.json has neither head_dim nor hidden_size to size a head"
             )
@@ -142,11 +139,11 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         let weightBytes = try Self.residentWeightBytes(treeJSON: raw.treeJSON)
         self.init(
             weightBytes: weightBytes,
-            numHiddenLayers: layers,
-            numAttentionHeads: attentionHeads,
-            numKeyValueHeads: config.numKeyValueHeads,
-            headDim: config.headDim,
-            hiddenSize: config.hiddenSize
+            numHiddenLayers: sizing.numHiddenLayers!,
+            numAttentionHeads: sizing.numAttentionHeads!,
+            numKeyValueHeads: sizing.numKeyValueHeads,
+            headDim: sizing.headDim,
+            hiddenSize: sizing.hiddenSize
         )
     }
 
@@ -187,15 +184,27 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     /// The file extension that marks a weight shard in the tree listing.
     private static let safetensorsSuffix = ".safetensors"
 
+    /// The five architecture fields the KV math needs, resolved from one
+    /// coherent source — never mixed across the top level and `text_config`.
+    private typealias SizingFields = (
+        numHiddenLayers: Int?, numAttentionHeads: Int?, numKeyValueHeads: Int?, headDim: Int?, hiddenSize: Int?
+    )
+
     /// The architecture subset of `config.json` the KV math needs. Every field
     /// is optional so a sparse or unexpected config decodes without throwing;
     /// ``init(raw:)`` enforces which fields must be present.
+    ///
+    /// VLM repos (e.g. the Qwen-VL family) nest the language-model sizing
+    /// fields under `text_config` instead of the top level, alongside a
+    /// sibling `vision_config` that uses distinct field names. `textConfig` is
+    /// decoded so ``sizingSource`` can fall back to it as a whole.
     private struct RepoConfig: Decodable {
         let numHiddenLayers: Int?
         let numAttentionHeads: Int?
         let numKeyValueHeads: Int?
         let headDim: Int?
         let hiddenSize: Int?
+        let textConfig: TextConfig?
 
         enum CodingKeys: String, CodingKey {
             case numHiddenLayers = "num_hidden_layers"
@@ -203,6 +212,51 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
             case numKeyValueHeads = "num_key_value_heads"
             case headDim = "head_dim"
             case hiddenSize = "hidden_size"
+            case textConfig = "text_config"
+        }
+
+        /// The coherent sizing source for this config: the top level when it
+        /// has both required fields (`numHiddenLayers`, `numAttentionHeads`);
+        /// otherwise `textConfig` when it has both; otherwise `nil`.
+        ///
+        /// This mirrors HF transformers' own `get_text_config()` semantics —
+        /// a composite config's language-model fields are read as a unit from
+        /// one object, never per-field merged across levels, which could
+        /// otherwise stitch together fields from different stacks (e.g. a
+        /// top-level projector `hidden_size` with `text_config`'s head
+        /// counts) and silently size the KV cache wrong.
+        var sizingSource: SizingFields? {
+            if numHiddenLayers != nil, numAttentionHeads != nil {
+                return (numHiddenLayers, numAttentionHeads, numKeyValueHeads, headDim, hiddenSize)
+            }
+            if let textConfig, textConfig.numHiddenLayers != nil, textConfig.numAttentionHeads != nil {
+                return (
+                    textConfig.numHiddenLayers,
+                    textConfig.numAttentionHeads,
+                    textConfig.numKeyValueHeads,
+                    textConfig.headDim,
+                    textConfig.hiddenSize
+                )
+            }
+            return nil
+        }
+
+        /// The nested VLM language-model config (`text_config`), decoding the
+        /// same five sizing fields as `RepoConfig`'s top level.
+        struct TextConfig: Decodable {
+            let numHiddenLayers: Int?
+            let numAttentionHeads: Int?
+            let numKeyValueHeads: Int?
+            let headDim: Int?
+            let hiddenSize: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case numHiddenLayers = "num_hidden_layers"
+                case numAttentionHeads = "num_attention_heads"
+                case numKeyValueHeads = "num_key_value_heads"
+                case headDim = "head_dim"
+                case hiddenSize = "hidden_size"
+            }
         }
     }
 
