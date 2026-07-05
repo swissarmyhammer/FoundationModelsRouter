@@ -39,13 +39,14 @@
         private struct GuidedStubContainer: LoadedLLMContainer {
             let canned: String
 
-            func respond(to prompt: String, instructions: String?) async throws -> String {
+            func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
                 canned
             }
 
             func streamResponse(
                 to prompt: String,
-                instructions: String?
+                instructions: String?,
+                maxTokens: Int?
             ) -> AsyncThrowingStream<String, Error> {
                 let canned = canned
                 return AsyncThrowingStream { continuation in
@@ -57,7 +58,8 @@
             func respond(
                 to prompt: String,
                 instructions: String?,
-                following grammar: Grammar
+                following grammar: Grammar,
+                maxTokens: Int?
             ) async throws -> String {
                 try grammar.validateForXGrammar()
                 return canned

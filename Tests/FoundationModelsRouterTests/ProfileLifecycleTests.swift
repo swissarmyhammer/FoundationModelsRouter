@@ -19,13 +19,14 @@ struct ProfileLifecycleTests {
     /// A stand-in for a loaded LLM container, with no MLX dependency. These
     /// lifecycle tests never generate, so the generation entry points throw.
     private struct StubLLMContainer: LoadedLLMContainer {
-        func respond(to prompt: String, instructions: String?) async throws -> String {
+        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
             throw GenerationError.notWiredForLiveInference
         }
 
         func streamResponse(
             to prompt: String,
-            instructions: String?
+            instructions: String?,
+            maxTokens: Int?
         ) -> AsyncThrowingStream<String, Error> {
             AsyncThrowingStream { $0.finish(throwing: GenerationError.notWiredForLiveInference) }
         }

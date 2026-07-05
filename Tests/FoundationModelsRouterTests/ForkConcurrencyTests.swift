@@ -145,7 +145,7 @@ struct ForkConcurrencyTests {
             SpyKVCache(census: census, isFork: false)
         }
 
-        func respond(to prompt: String, instructions: String?) async throws -> String {
+        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
             if let observer, let releaseGate {
                 let id = Int(prompt) ?? -1
                 await observer.enter(id)
@@ -158,7 +158,8 @@ struct ForkConcurrencyTests {
 
         func streamResponse(
             to prompt: String,
-            instructions: String?
+            instructions: String?,
+            maxTokens: Int?
         ) -> AsyncThrowingStream<String, Error> {
             AsyncThrowingStream { continuation in
                 continuation.yield("ok")
@@ -169,7 +170,8 @@ struct ForkConcurrencyTests {
         func respond(
             to prompt: String,
             instructions: String?,
-            following grammar: Grammar
+            following grammar: Grammar,
+            maxTokens: Int?
         ) async throws -> String {
             try grammar.validateForXGrammar()
             if let guidedProbe { await guidedProbe.record(grammar) }

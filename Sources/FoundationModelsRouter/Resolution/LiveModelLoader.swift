@@ -12,11 +12,11 @@ import MLXLMCommon
 // live seams: `ModelContainer` runs the real `MLXLMCommon` / xgrammar pipeline,
 // and ``LiveEmbeddingContainer`` wraps `MLXEmbedders` with a probed dimension.
 
-/// Bounded token budgets for the live generation paths, so a routed turn cannot
-/// run away. Guided decode is whole-chunk and structural, so it gets a larger
-/// ceiling than plain generation.
-private let liveGenerateMaxTokens = 1024
-private let liveGuidedMaxTokens = 2048
+/// The default token budget for the live generation paths when a caller does
+/// not supply its own `maxTokens`, so a routed turn cannot run away. Plain and
+/// guided generation share the same default — there is no principled reason
+/// for guided decode to get a different ceiling.
+private let defaultMaxTokens = 8192
 
 extension ModelContainer: LoadedLLMContainer {
     /// Generates a complete text response through the real `MLXLMCommon` pipeline
@@ -25,11 +25,15 @@ extension ModelContainer: LoadedLLMContainer {
     /// Each call is a one-shot session over the shared resident container: the
     /// ``LoadedLLMContainer`` generation seam carries no per-turn cache, so
     /// conversation state is not threaded through here (see ``makeCache()``).
-    public nonisolated func respond(to prompt: String, instructions: String?) async throws -> String {
+    public nonisolated func respond(
+        to prompt: String,
+        instructions: String?,
+        maxTokens: Int?
+    ) async throws -> String {
         try await ChatSession(
             self,
             instructions: instructions,
-            generateParameters: GenerateParameters(maxTokens: liveGenerateMaxTokens)
+            generateParameters: GenerateParameters(maxTokens: maxTokens ?? defaultMaxTokens)
         ).respond(to: prompt)
     }
 
@@ -37,12 +41,13 @@ extension ModelContainer: LoadedLLMContainer {
     /// ``ChatSession``'s token stream.
     public nonisolated func streamResponse(
         to prompt: String,
-        instructions: String?
+        instructions: String?,
+        maxTokens: Int?
     ) -> AsyncThrowingStream<String, Error> {
         ChatSession(
             self,
             instructions: instructions,
-            generateParameters: GenerateParameters(maxTokens: liveGenerateMaxTokens)
+            generateParameters: GenerateParameters(maxTokens: maxTokens ?? defaultMaxTokens)
         ).streamResponse(to: prompt)
     }
 
@@ -58,13 +63,16 @@ extension ModelContainer: LoadedLLMContainer {
     ///   - instructions: Optional system instructions, folded in as a leading
     ///     system chat turn.
     ///   - grammar: The grammar constraining the generated output.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     ``defaultMaxTokens``.
     /// - Returns: The complete grammar-constrained response text.
     /// - Throws: If the grammar fails validation or constraint compilation, or the
     ///   constrained generation pipeline errors.
     public nonisolated func respond(
         to prompt: String,
         instructions: String?,
-        following grammar: Grammar
+        following grammar: Grammar,
+        maxTokens: Int?
     ) async throws -> String {
         try grammar.validateForXGrammar()
         return try await perform { context in
@@ -91,7 +99,7 @@ extension ModelContainer: LoadedLLMContainer {
                 input: input,
                 context: context,
                 constraint: constraint,
-                maxTokens: liveGuidedMaxTokens,
+                maxTokens: maxTokens ?? defaultMaxTokens,
                 vocabSize: grammarTokenizer.vocabSize
             ) { delta in
                 output += delta

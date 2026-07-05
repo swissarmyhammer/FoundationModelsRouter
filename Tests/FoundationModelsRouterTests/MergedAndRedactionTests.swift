@@ -309,11 +309,12 @@ struct MergedAndRedactionTests {
     private struct CannedLLMContainer: LoadedLLMContainer {
         let text: String
 
-        func respond(to prompt: String, instructions: String?) async throws -> String { text }
+        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String { text }
 
         func streamResponse(
             to prompt: String,
-            instructions: String?
+            instructions: String?,
+            maxTokens: Int?
         ) -> AsyncThrowingStream<String, Error> {
             let text = text
             return AsyncThrowingStream { continuation in

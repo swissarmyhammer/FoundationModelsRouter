@@ -20,20 +20,31 @@ struct SessionChokepointTests {
         case boom
     }
 
+    /// Records the `maxTokens` value each generation call on a
+    /// ``CannedLLMContainer`` observed, so a test can assert it was threaded
+    /// through unmodified from the session's `respond(to:maxTokens:)` call.
+    private actor MaxTokensSpy {
+        private(set) var observed: [Int?] = []
+        func record(_ value: Int?) { observed.append(value) }
+    }
+
     /// A stand-in for a loaded LLM container that returns canned text (or throws
     /// a configured error), with no MLX dependency.
     private struct CannedLLMContainer: LoadedLLMContainer {
         let text: String
         let shouldThrow: Bool
+        var maxTokensSpy: MaxTokensSpy?
 
-        func respond(to prompt: String, instructions: String?) async throws -> String {
+        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
+            await maxTokensSpy?.record(maxTokens)
             if shouldThrow { throw StubGenerationError.boom }
             return text
         }
 
         func streamResponse(
             to prompt: String,
-            instructions: String?
+            instructions: String?,
+            maxTokens: Int?
         ) -> AsyncThrowingStream<String, Error> {
             let text = text
             let shouldThrow = shouldThrow
@@ -88,6 +99,7 @@ struct SessionChokepointTests {
         let dimension: Int
         let text: String
         let shouldThrow: Bool
+        var maxTokensSpy: MaxTokensSpy?
 
         func loadLLM(
             _ ref: ModelRef,
@@ -96,7 +108,7 @@ struct SessionChokepointTests {
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return CannedLLMContainer(text: text, shouldThrow: shouldThrow)
+            return CannedLLMContainer(text: text, shouldThrow: shouldThrow, maxTokensSpy: maxTokensSpy)
         }
 
         func loadEmbedder(
@@ -161,14 +173,21 @@ struct SessionChokepointTests {
         recorder: any TranscriptRecorder,
         cacheDir: URL,
         text: String = cannedText,
-        shouldThrow: Bool = false
+        shouldThrow: Bool = false,
+        maxTokensSpy: MaxTokensSpy? = nil
     ) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(spy: spy, dimension: stubDimension, text: text, shouldThrow: shouldThrow)
+            loader: StubModelLoader(
+                spy: spy,
+                dimension: stubDimension,
+                text: text,
+                shouldThrow: shouldThrow,
+                maxTokensSpy: maxTokensSpy
+            )
         )
     }
 
@@ -307,5 +326,34 @@ struct SessionChokepointTests {
         // The override must not move the recording directory.
         #expect(overridden.recordingDirectory != custom)
         #expect(overridden.recordingDirectory.lastPathComponent == overridden.id.description)
+    }
+
+    // MARK: - maxTokens threading
+
+    @Test("respond threads an explicit maxTokens override to the container; omitting it passes nil")
+    @MainActor
+    func respondThreadsMaxTokensOverride() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let spy = EvictionSpy()
+        let maxTokensSpy = MaxTokensSpy()
+        let router = Self.makeRouter(
+            spy: spy,
+            recorder: InMemoryRecorder(),
+            cacheDir: dir,
+            maxTokensSpy: maxTokensSpy
+        )
+        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+        _ = try await session.respond(to: "hello", maxTokens: 4096)
+        _ = try await session.respond(to: "hello")
+
+        // The router does not silently substitute its own default before the
+        // container boundary — an explicit override reaches the container
+        // unchanged, and omitting it reaches the container as `nil` (the
+        // default lives in `LiveModelLoader` only).
+        #expect(await maxTokensSpy.observed == [4096, nil])
     }
 }

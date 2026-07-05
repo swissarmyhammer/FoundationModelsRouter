@@ -15,19 +15,30 @@ import Testing
 struct GuidedGenerationTests {
     // MARK: - Stub containers
 
+    /// Records the `maxTokens` value each guided generation call on a
+    /// ``GuidedStubContainer`` observed, so a test can assert
+    /// ``RoutedModel/respond(to:following:maxTokens:)`` forwards an explicit
+    /// override down to the container's guided entry point.
+    private actor MaxTokensSpy {
+        private(set) var observed: [Int?] = []
+        func record(_ value: Int?) { observed.append(value) }
+    }
+
     /// A loaded LLM container that runs the real grammar validation behind its
     /// guided entry point and returns canned constrained text on success — the
     /// GPU-free stand-in for the xgrammar engine.
     private struct GuidedStubContainer: LoadedLLMContainer {
         let canned: String
+        var maxTokensSpy: MaxTokensSpy?
 
-        func respond(to prompt: String, instructions: String?) async throws -> String {
+        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
             canned
         }
 
         func streamResponse(
             to prompt: String,
-            instructions: String?
+            instructions: String?,
+            maxTokens: Int?
         ) -> AsyncThrowingStream<String, Error> {
             let canned = canned
             return AsyncThrowingStream { continuation in
@@ -39,9 +50,11 @@ struct GuidedGenerationTests {
         func respond(
             to prompt: String,
             instructions: String?,
-            following grammar: Grammar
+            following grammar: Grammar,
+            maxTokens: Int?
         ) async throws -> String {
             try grammar.validateForXGrammar()
+            await maxTokensSpy?.record(maxTokens)
             return canned
         }
     }
@@ -49,11 +62,12 @@ struct GuidedGenerationTests {
     /// A container that implements only the unconstrained surface, so its guided
     /// entry point is the protocol's default — validate, then defer live decode.
     private struct DefaultGuidedContainer: LoadedLLMContainer {
-        func respond(to prompt: String, instructions: String?) async throws -> String { "" }
+        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String { "" }
 
         func streamResponse(
             to prompt: String,
-            instructions: String?
+            instructions: String?,
+            maxTokens: Int?
         ) -> AsyncThrowingStream<String, Error> {
             AsyncThrowingStream { $0.finish() }
         }
@@ -71,6 +85,7 @@ struct GuidedGenerationTests {
     private struct StubModelLoader: ModelLoader {
         let dimension: Int
         let canned: String
+        var maxTokensSpy: MaxTokensSpy?
 
         func loadLLM(
             _ ref: ModelRef,
@@ -79,7 +94,7 @@ struct GuidedGenerationTests {
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return GuidedStubContainer(canned: canned)
+            return GuidedStubContainer(canned: canned, maxTokensSpy: maxTokensSpy)
         }
 
         func loadEmbedder(
@@ -148,13 +163,17 @@ struct GuidedGenerationTests {
         return dir
     }
 
-    private static func makeRouter(recorder: any TranscriptRecorder, cacheDir: URL) -> Router {
+    private static func makeRouter(
+        recorder: any TranscriptRecorder,
+        cacheDir: URL,
+        maxTokensSpy: MaxTokensSpy? = nil
+    ) -> Router {
         Router(
             cacheDir: cacheDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: 8, canned: canned)
+            loader: StubModelLoader(dimension: 8, canned: canned, maxTokensSpy: maxTokensSpy)
         )
     }
 
@@ -355,7 +374,8 @@ struct GuidedGenerationTests {
             _ = try await container.respond(
                 to: "hi",
                 instructions: nil,
-                following: .jsonSchema(Self.smallSchema)
+                following: .jsonSchema(Self.smallSchema),
+                maxTokens: nil
             )
         }
 
@@ -364,8 +384,31 @@ struct GuidedGenerationTests {
             _ = try await container.respond(
                 to: "hi",
                 instructions: nil,
-                following: .jsonSchema("{\"allOf\":[{\"type\":\"string\"}]}")
+                following: .jsonSchema("{\"allOf\":[{\"type\":\"string\"}]}"),
+                maxTokens: nil
             )
         }
+    }
+
+    // MARK: - maxTokens threading
+
+    @Test("respond(to:following:maxTokens:) forwards an explicit override to the guided container call")
+    @MainActor
+    func respondFollowingForwardsMaxTokensOverride() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let maxTokensSpy = MaxTokensSpy()
+        let router = Self.makeRouter(recorder: InMemoryRecorder(), cacheDir: dir, maxTokensSpy: maxTokensSpy)
+        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+
+        _ = try await profile.standard.respond(
+            to: "hi",
+            following: .jsonSchema(Self.smallSchema),
+            maxTokens: 2048
+        )
+        _ = try await profile.standard.respond(to: "hi", following: .jsonSchema(Self.smallSchema))
+
+        #expect(await maxTokensSpy.observed == [2048, nil])
     }
 }

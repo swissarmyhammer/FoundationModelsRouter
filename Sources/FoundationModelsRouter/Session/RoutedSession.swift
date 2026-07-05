@@ -57,17 +57,23 @@ public protocol RoutedSession: Actor {
 
     /// Generates a complete text response to a prompt, recording the call.
     ///
-    /// - Parameter prompt: The prompt to respond to.
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
     /// - Returns: The model's complete text response.
     /// - Throws: Any error thrown by the model.
-    func respond(to prompt: String) async throws -> String
+    func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced, recording the call.
     ///
-    /// - Parameter prompt: The prompt to respond to.
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
-    func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error>
+    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
     /// Forks a child session that continues this one's conversation.
     ///
@@ -89,6 +95,28 @@ public protocol RoutedSession: Actor {
     ///   default to its recording directory.
     /// - Returns: The forked child session.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
+}
+
+extension RoutedSession {
+    /// Generates a complete text response to a prompt using the underlying
+    /// model's own default token ceiling, recording the call.
+    ///
+    /// - Parameter prompt: The prompt to respond to.
+    /// - Returns: The model's complete text response.
+    /// - Throws: Any error thrown by the model.
+    public func respond(to prompt: String) async throws -> String {
+        try await respond(to: prompt, maxTokens: nil)
+    }
+
+    /// Streams a text response to a prompt as it is produced, using the
+    /// underlying model's own default token ceiling, recording the call.
+    ///
+    /// - Parameter prompt: The prompt to respond to.
+    /// - Returns: A stream of response fragments, finishing when generation
+    ///   completes or throwing if it fails.
+    public func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
+        streamResponse(to: prompt, maxTokens: nil)
+    }
 }
 
 /// The concrete ``RoutedSession``, backed by a loaded ``LoadedLLMContainer``.
@@ -208,7 +236,7 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
-    func respond(to prompt: String) async throws -> String {
+    func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         // A guided session constrains every response to its grammar, through the
         // container's whole-chunk xgrammar entry point; an unguided session takes
         // the plain path. Both funnel through the same chokepoint, which stamps the
@@ -218,20 +246,25 @@ actor RoutedSessionActor: RoutedSession {
                 try await self.container.respond(
                     to: prompt,
                     instructions: self.instructions,
-                    following: grammar
+                    following: grammar,
+                    maxTokens: maxTokens
                 )
             }
         }
         return try await generate(prompt: prompt) {
-            try await self.container.respond(to: prompt, instructions: self.instructions)
+            try await self.container.respond(
+                to: prompt,
+                instructions: self.instructions,
+                maxTokens: maxTokens
+            )
         }
     }
 
-    func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
+    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.streamGenerating(prompt, into: continuation)
+                    try await self.streamGenerating(prompt, maxTokens: maxTokens, into: continuation)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -250,11 +283,14 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
     ///   - continuation: The stream continuation each produced chunk is yielded to.
     /// - Throws: Any error thrown by the model, after the chokepoint records the
     ///   close event.
     private func streamGenerating(
         _ prompt: String,
+        maxTokens: Int?,
         into continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
         // Accumulate the streamed chunks so the close event can carry the full
@@ -264,7 +300,8 @@ actor RoutedSessionActor: RoutedSession {
             var response = ""
             for try await chunk in self.container.streamResponse(
                 to: prompt,
-                instructions: self.instructions
+                instructions: self.instructions,
+                maxTokens: maxTokens
             ) {
                 continuation.yield(chunk)
                 response += chunk

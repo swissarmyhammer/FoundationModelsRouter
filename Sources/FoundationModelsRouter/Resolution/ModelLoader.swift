@@ -55,20 +55,25 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - instructions: The session's system instructions, or `nil`.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the container's own default ceiling.
     /// - Returns: The model's complete text response.
     /// - Throws: If the generation fails.
-    func respond(to prompt: String, instructions: String?) async throws -> String
+    func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - instructions: The session's system instructions, or `nil`.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the container's own default ceiling.
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(
         to prompt: String,
-        instructions: String?
+        instructions: String?,
+        maxTokens: Int?
     ) -> AsyncThrowingStream<String, Error>
 
     /// Generates a complete, grammar-constrained text response — the guided
@@ -89,13 +94,16 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     ///   - prompt: The prompt to respond to.
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - grammar: The grammar constraining the output.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the container's own default ceiling.
     /// - Returns: The constrained text response.
     /// - Throws: ``GuidedRequestError`` for an invalid grammar, or if the
     ///   generation fails.
     func respond(
         to prompt: String,
         instructions: String?,
-        following grammar: Grammar
+        following grammar: Grammar,
+        maxTokens: Int?
     ) async throws -> String
 
     /// Creates a fresh, empty KV cache for a new session over this model.

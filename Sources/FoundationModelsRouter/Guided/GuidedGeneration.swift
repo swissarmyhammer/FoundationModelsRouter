@@ -153,13 +153,17 @@ extension LoadedLLMContainer {
     ///   - prompt: The prompt to respond to.
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - grammar: The grammar constraining the output.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the container's own default ceiling. Unused by this fallback, which
+    ///     never generates.
     /// - Returns: The constrained text response.
     /// - Throws: ``GuidedRequestError`` for an invalid grammar, otherwise
     ///   ``GenerationError/notWiredForLiveInference`` until milestone 7.
     public func respond(
         to prompt: String,
         instructions: String?,
-        following grammar: Grammar
+        following grammar: Grammar,
+        maxTokens: Int?
     ) async throws -> String {
         try grammar.validateForXGrammar()
         throw GenerationError.notWiredForLiveInference
@@ -185,11 +189,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - grammar: The grammar constraining the output.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the container's own default ceiling.
     /// - Returns: The constrained, unparsed text response.
     /// - Throws: ``GuidedRequestError`` for an invalid grammar, or any error
     ///   the model raises during constrained decoding.
-    public func respond(to prompt: String, following grammar: Grammar) async throws -> String {
-        try await makeGuidedSession(grammar).respond(to: prompt)
+    public func respond(
+        to prompt: String,
+        following grammar: Grammar,
+        maxTokens: Int? = nil
+    ) async throws -> String {
+        try await makeGuidedSession(grammar).respond(to: prompt, maxTokens: maxTokens)
     }
 
     /// Vends a guided generation session whose every ``RoutedSession/respond(to:)``
@@ -270,13 +280,19 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - jsonSchema: The runtime JSON Schema source constraining the output.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the container's own default ceiling.
     /// - Returns: The schema-valid output parsed into a ``JSONValue``.
     /// - Throws: ``GuidedRequestError`` — an xgrammar-subset rejection for an
     ///   over-spec schema, or ``GuidedRequestError/decodingFailed(_:)`` if the
     ///   output does not parse as JSON — or any error the model raises during
     ///   constrained decoding.
-    public func respond(to prompt: String, matching jsonSchema: String) async throws -> JSONValue {
-        let raw = try await respond(to: prompt, following: .jsonSchema(jsonSchema))
+    public func respond(
+        to prompt: String,
+        matching jsonSchema: String,
+        maxTokens: Int? = nil
+    ) async throws -> JSONValue {
+        let raw = try await respond(to: prompt, following: .jsonSchema(jsonSchema), maxTokens: maxTokens)
         return try GuidedShapes.parse(raw)
     }
 }
@@ -338,6 +354,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// - Parameters:
         ///   - prompt: The prompt to respond to.
         ///   - type: The `Generable` type to generate and decode into.
+        ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
+        ///     use the container's own default ceiling.
         /// - Returns: The decoded value of type `T`.
         /// - Throws: ``GuidedRequestError`` — an xgrammar-subset rejection for a
         ///   schema `T` derives that the subset cannot express, or
@@ -346,10 +364,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         ///   decoding.
         public func respond<T: Generable>(
             to prompt: String,
-            generating type: T.Type
+            generating type: T.Type,
+            maxTokens: Int? = nil
         ) async throws -> T {
             let schema = try GuidedShapes.derivedSchema(for: T.self)
-            let raw = try await respond(to: prompt, following: .jsonSchema(schema))
+            let raw = try await respond(to: prompt, following: .jsonSchema(schema), maxTokens: maxTokens)
             return try GuidedShapes.decode(raw, as: T.self)
         }
     }
