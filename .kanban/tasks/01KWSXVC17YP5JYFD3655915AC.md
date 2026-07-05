@@ -26,8 +26,8 @@ comments:
 
     Task complete and green. Leaving in `doing` per /implement process for /review to pick up.
   timestamp: 2026-07-05T20:08:22.562688+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: a480
 title: Fix stale RepoMetadataCache entries breaking decode after numFullAttentionLayers field addition
 ---
 ## What
