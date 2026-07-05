@@ -470,7 +470,15 @@ public struct HuggingFaceMetadataSource: MetadataSource {
     ///   - endpoint: The Hub origin. Defaults to `https://huggingface.co`.
     ///   - session: The URL session to use. Defaults to `.shared`.
     public init(
-        endpoint: URL = URL(string: "https://huggingface.co")!,
+        // The literal is a fixed, well-formed URL string, so a failed parse
+        // here can only mean the literal itself was typo'd — a programmer
+        // error, not a runtime condition to recover from.
+        endpoint: URL = {
+            guard let url = URL(string: "https://huggingface.co") else {
+                preconditionFailure("https://huggingface.co is a fixed, well-formed URL literal")
+            }
+            return url
+        }(),
         session: URLSession = .shared
     ) {
         self.endpoint = endpoint
