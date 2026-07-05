@@ -48,12 +48,20 @@ struct SessionChokepointTests {
         ) -> AsyncThrowingStream<String, Error> {
             let text = text
             let shouldThrow = shouldThrow
+            let maxTokensSpy = maxTokensSpy
             return AsyncThrowingStream { continuation in
-                if shouldThrow {
-                    continuation.finish(throwing: StubGenerationError.boom)
-                } else {
-                    continuation.yield(text)
-                    continuation.finish()
+                // `streamResponse` is a non-async protocol requirement, so the spy
+                // (an actor) can only be recorded from inside a `Task`. The record
+                // happens before any chunk is yielded/finished, so a consumer that
+                // has finished draining the stream is guaranteed to observe it.
+                Task {
+                    await maxTokensSpy?.record(maxTokens)
+                    if shouldThrow {
+                        continuation.finish(throwing: StubGenerationError.boom)
+                    } else {
+                        continuation.yield(text)
+                        continuation.finish()
+                    }
                 }
             }
         }
@@ -355,5 +363,32 @@ struct SessionChokepointTests {
         // unchanged, and omitting it reaches the container as `nil` (the
         // default lives in `LiveModelLoader` only).
         #expect(await maxTokensSpy.observed == [4096, nil])
+    }
+
+    @Test("streamResponse threads an explicit maxTokens override to the container; omitting it passes nil")
+    @MainActor
+    func streamResponseThreadsMaxTokensOverride() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let spy = EvictionSpy()
+        let maxTokensSpy = MaxTokensSpy()
+        let router = Self.makeRouter(
+            spy: spy,
+            recorder: InMemoryRecorder(),
+            cacheDir: dir,
+            maxTokensSpy: maxTokensSpy
+        )
+        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+        for try await _ in await session.streamResponse(to: "hello", maxTokens: 8192) {}
+        for try await _ in await session.streamResponse(to: "hello") {}
+
+        // Mirrors respondThreadsMaxTokensOverride for the streaming path: an
+        // explicit override reaches the container unchanged, and omitting it
+        // reaches the container as `nil` (the default lives in
+        // `LiveModelLoader` only).
+        #expect(await maxTokensSpy.observed == [8192, nil])
     }
 }
