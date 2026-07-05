@@ -139,8 +139,8 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         let weightBytes = try Self.residentWeightBytes(treeJSON: raw.treeJSON)
         self.init(
             weightBytes: weightBytes,
-            numHiddenLayers: sizing.numHiddenLayers!,
-            numAttentionHeads: sizing.numAttentionHeads!,
+            numHiddenLayers: sizing.numHiddenLayers,
+            numAttentionHeads: sizing.numAttentionHeads,
             numKeyValueHeads: sizing.numKeyValueHeads,
             headDim: sizing.headDim,
             hiddenSize: sizing.hiddenSize
@@ -186,14 +186,27 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
 
     /// The five architecture fields the KV math needs, resolved from one
     /// coherent source — never mixed across the top level and `text_config`.
-    private typealias ResolvedSizing = (
-        numHiddenLayers: Int?, numAttentionHeads: Int?, numKeyValueHeads: Int?, headDim: Int?, hiddenSize: Int?
-    )
+    ///
+    /// `numHiddenLayers`/`numAttentionHeads` are non-optional by construction:
+    /// the only way to produce a ``ResolvedSizing`` is ``SizingFields/resolved``,
+    /// which returns `nil` unless both are present. That makes "selected as a
+    /// sizing source" and "has the two required fields" the same fact at the
+    /// type level, so callers never need to force-unwrap them again.
+    /// `numKeyValueHeads`, `headDim`, and `hiddenSize` stay optional — they are
+    /// genuinely absent-or-derivable, per ``RepoMetadata``'s own fields.
+    private struct ResolvedSizing {
+        let numHiddenLayers: Int
+        let numAttentionHeads: Int
+        let numKeyValueHeads: Int?
+        let headDim: Int?
+        let hiddenSize: Int?
+    }
 
     /// The five architecture fields the KV math needs, and their shared
     /// snake_case `config.json` key mapping. Every field is optional so a
-    /// sparse or unexpected config decodes without throwing; ``init(raw:)``
-    /// enforces which fields must be present.
+    /// sparse or unexpected config decodes without throwing; ``resolved``
+    /// enforces which fields must be present to select this as a sizing
+    /// source.
     ///
     /// Both `RepoConfig`'s top level and its nested `text_config` (VLM repos
     /// such as the Qwen-VL family nest language-model sizing fields there
@@ -215,15 +228,18 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
             case hiddenSize = "hidden_size"
         }
 
-        /// Whether both fields required to select this as the coherent
-        /// sizing source (`numHiddenLayers`, `numAttentionHeads`) are present.
-        var hasRequiredFields: Bool {
-            numHiddenLayers != nil && numAttentionHeads != nil
-        }
-
-        /// This field set as a ``ResolvedSizing`` tuple.
-        var resolved: ResolvedSizing {
-            (numHiddenLayers, numAttentionHeads, numKeyValueHeads, headDim, hiddenSize)
+        /// This field set as a ``ResolvedSizing``, or `nil` when the two
+        /// fields required to select it as the coherent sizing source
+        /// (`numHiddenLayers`, `numAttentionHeads`) aren't both present.
+        var resolved: ResolvedSizing? {
+            guard let numHiddenLayers, let numAttentionHeads else { return nil }
+            return ResolvedSizing(
+                numHiddenLayers: numHiddenLayers,
+                numAttentionHeads: numAttentionHeads,
+                numKeyValueHeads: numKeyValueHeads,
+                headDim: headDim,
+                hiddenSize: hiddenSize
+            )
         }
     }
 
@@ -258,13 +274,7 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         /// top-level projector `hidden_size` with `text_config`'s head
         /// counts) and silently size the KV cache wrong.
         var sizingSource: ResolvedSizing? {
-            if fields.hasRequiredFields {
-                return fields.resolved
-            }
-            if let textFields = textConfig?.fields, textFields.hasRequiredFields {
-                return textFields.resolved
-            }
-            return nil
+            fields.resolved ?? textConfig?.fields.resolved
         }
 
         /// The nested VLM language-model config (`text_config`), decoding the
