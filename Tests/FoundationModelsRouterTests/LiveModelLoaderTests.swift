@@ -46,7 +46,13 @@ struct LiveModelLoaderTests {
     @Test("handler surfaces byte-accurate incremental progress, not a single 0 → 100 jump")
     func handlerMapsIncrementalBytes() throws {
         let sink = Sink()
-        let handler = LiveModelLoader.handler { sink.record($0) }
+        // `LiveModelLoader.handler(reporting:)` is `private` — it's just
+        // `@Sendable`-closure plumbing over `mapProgress(_:)` for `loadLLM`'s
+        // progress forwarding. `mapProgress(_:)` holds the actual byte-mapping
+        // logic under test here, and stays at the default (module-internal)
+        // access level for exactly this: `@testable import` gives this test
+        // direct access to it, no network, no GPU.
+        let handler: (Progress) -> Void = { sink.record(LiveModelLoader.mapProgress($0)) }
         let (parent, small, large) = byteWeightedProgress()
         let total: Int64 = 8 << 30
         let threeGB: Int64 = 3 << 30

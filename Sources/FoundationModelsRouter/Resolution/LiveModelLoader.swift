@@ -485,10 +485,8 @@ public struct LiveModelLoader: ModelLoader {
     /// The revision used when a ``ModelRef`` does not pin one.
     private static let defaultRevision = "main"
 
-    /// Adapts the injected Hub downloader's progress to the router's callback.
-    ///
-    /// Maps Foundation `Progress` to the router's byte-based
-    /// ``DownloadProgress`` callback.
+    /// Maps a single Foundation `Progress` snapshot to the router's byte-based
+    /// ``DownloadProgress``.
     ///
     /// The unit contract is **bytes**: `bytesTotal` is the snapshot's total byte
     /// size and `bytesDownloaded` is the bytes streamed so far, so the surfaced
@@ -515,19 +513,37 @@ public struct LiveModelLoader: ModelLoader {
     /// rather than a divide-by-zero; the ``Router/reporter(slot:progress:)`` this
     /// feeds only adopts a `bytesTotal` once it is reported (`> 0`).
     ///
+    /// Kept at the default (module-internal) access level, distinct from
+    /// ``handler(reporting:)`` below: this is the pure byte-accounting logic, and
+    /// ``LiveModelLoaderTests`` exercises it directly (no network, no GPU) via
+    /// `@testable import`. `handler(reporting:)` is just `@Sendable`-closure
+    /// plumbing over this function for `loadLLM`'s progress forwarding, used
+    /// nowhere else, so it stays `private`.
+    ///
+    /// - Parameter progress: The Foundation `Progress` snapshot to map.
+    /// - Returns: The equivalent byte-based ``DownloadProgress``.
+    static func mapProgress(_ progress: Progress) -> DownloadProgress {
+        let bytesTotal = progress.totalUnitCount
+        let bytesDownloaded = Int64((progress.fractionCompleted * Double(bytesTotal)).rounded())
+        return DownloadProgress(bytesDownloaded: bytesDownloaded, bytesTotal: bytesTotal)
+    }
+
+    /// Adapts the injected Hub downloader's progress to the router's callback.
+    ///
+    /// Thin `@Sendable`-closure plumbing over ``mapProgress(_:)``, used only by
+    /// `loadLLM` above to forward each downloaded-bytes update to its
+    /// `reporting` callback. See ``mapProgress(_:)`` for the actual byte-mapping
+    /// contract and rationale.
+    ///
     /// - Parameter reporting: The router's byte-based progress callback to invoke
     ///   for each Foundation `Progress` update.
     /// - Returns: A `@Sendable` `Progress` observer that maps each update into a
     ///   byte-based ``DownloadProgress`` and forwards it to `reporting`.
-    static func handler(
+    private static func handler(
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) -> @Sendable (Progress) -> Void {
         { progress in
-            let bytesTotal = progress.totalUnitCount
-            let bytesDownloaded = Int64((progress.fractionCompleted * Double(bytesTotal)).rounded())
-            reporting(
-                DownloadProgress(bytesDownloaded: bytesDownloaded, bytesTotal: bytesTotal)
-            )
+            reporting(Self.mapProgress(progress))
         }
     }
 }
