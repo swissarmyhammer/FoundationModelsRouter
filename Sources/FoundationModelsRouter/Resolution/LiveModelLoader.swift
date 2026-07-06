@@ -56,63 +56,81 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
     ///   ``RoutedSession`` drives for its lifetime.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-        MLXFoundationModelsSessionBackend(model: model, instructions: instructions)
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        return MLXFoundationModelsSessionBackend(session: session, model: model)
     }
 }
 
 /// The live ``LanguageModelSessionBackend``.
 ///
-/// Drives a real `LanguageModelSession` over a resident `MLXLanguageModel`.
+/// Wraps a real `LanguageModelSession` — held for this backend's entire
+/// lifetime, not rebuilt per call — so it accumulates conversation state (the
+/// transcript) across calls the way a real multi-turn chat does: a second
+/// ``respond(to:maxTokens:)`` sees the first turn's content in context.
 ///
-/// **Not yet conversation-preserving.** A fresh `LanguageModelSession` is
-/// constructed per call, mirroring this seam's prior one-shot contract (no
-/// per-turn conversation state is threaded across calls yet; see
-/// ``SessionKVCache``'s documentation for why a persistent, cheaply-forkable
-/// session is not yet wired through this seam). ``makeFork()`` correspondingly
-/// vends an equivalent fresh backend rather than seeding from an accumulated
-/// transcript — there is none yet to seed from.
-final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Sendable {
-    /// The `LanguageModel` conformance a fresh `LanguageModelSession` is built over for each call.
+/// `@unchecked Sendable`: `LanguageModelSession` is itself `@unchecked
+/// Sendable` (confirmed: `extension FoundationModels::LanguageModelSession :
+/// @unchecked Swift::Sendable` in the macOS 27 SDK interface), which only
+/// certifies the type as safe to *hold* across an isolation boundary, not
+/// safe for *concurrent* calls. Concurrent access to this backend's
+/// ``session`` is safe in practice because every call runs inside
+/// ``RoutedSessionActor``'s `serialGate` — an `AsyncSemaphore` at value 1,
+/// shared with the session's forks — so at most one generation call against a
+/// given model's family of sessions is ever in flight at a time; this
+/// backend's session is never actually touched from two tasks concurrently
+/// despite being a reference type.
+final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    /// The `LanguageModel` conformance ``makeFork()`` builds its forked session
+    /// over, seeded from this backend's own accumulated transcript.
     private let model: MLXLanguageModel
 
-    /// The system instructions every `LanguageModelSession` this backend constructs is given.
-    private let instructions: String?
+    /// The live session every call on this backend runs through, accumulating
+    /// conversation state (the transcript) for this backend's lifetime.
+    private let liveSession: LanguageModelSession
 
-    /// Creates a backend over a resident model and its session instructions.
-    init(model: MLXLanguageModel, instructions: String?) {
+    /// Test-only accessor onto ``liveSession``, for `@testable import` in the
+    /// gated integration suite (e.g. asserting `transcript.count` grows across
+    /// turns, or matches a fork's parent at fork time). Deliberately not part
+    /// of ``LanguageModelSessionBackend`` — this is test-only surface, not
+    /// something a caller of the protocol should drive.
+    internal var session: LanguageModelSession { liveSession }
+
+    /// Creates a backend over an already-constructed session and the model it
+    /// was built over. `model` is kept alongside so ``makeFork()`` can build a
+    /// forked session of the same type, continuing this session's transcript.
+    init(session: LanguageModelSession, model: MLXLanguageModel) {
+        self.liveSession = session
         self.model = model
-        self.instructions = instructions
     }
 
-    /// Generates a complete text response through a real `LanguageModelSession`.
+    /// Generates a complete text response through ``liveSession``.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         try await respond(to: prompt, schema: nil, maxTokens: maxTokens)
     }
 
-    /// Runs a real `LanguageModelSession` over ``model``/``instructions`` and
-    /// returns its response content, constrained to `schema` when one is given.
+    /// Runs ``liveSession`` and returns its response content, constrained to
+    /// `schema` when one is given.
     ///
     /// Shared by ``respond(to:maxTokens:)`` and the `.jsonSchema` case of
-    /// ``respond(to:following:maxTokens:)``: both build an identical session,
-    /// call the matching `session.respond` overload with the same prompt and
-    /// options, and differ only in whether a schema is supplied and in how the
-    /// resulting content is stringified.
+    /// ``respond(to:following:maxTokens:)``: both call the matching
+    /// `session.respond` overload with the same prompt and options, and differ
+    /// only in whether a schema is supplied and in how the resulting content is
+    /// stringified.
     private func respond(
         to prompt: String,
         schema: GenerationSchema?,
         maxTokens: Int?
     ) async throws -> String {
-        let session = LanguageModelSession(model: model, instructions: instructions)
         let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
         guard let schema else {
-            let response = try await session.respond(to: prompt, options: options)
+            let response = try await liveSession.respond(to: prompt, options: options)
             return response.content
         }
-        let response = try await session.respond(to: prompt, schema: schema, options: options)
+        let response = try await liveSession.respond(to: prompt, schema: schema, options: options)
         return response.content.jsonString
     }
 
-    /// Streams a text response through a real `LanguageModelSession`.
+    /// Streams a text response through ``liveSession``.
     ///
     /// Adapts its snapshot-based stream into this seam's delta (fragment)
     /// contract.
@@ -127,23 +145,15 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// of each snapshot, computed against the previous one.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
         let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
-        let model = self.model
-        let instructions = self.instructions
         return AsyncThrowingStream { continuation in
             let task = Task {
-                await Self.pumpStream(
-                    prompt: prompt,
-                    options: options,
-                    model: model,
-                    instructions: instructions,
-                    into: continuation
-                )
+                await self.pumpStream(prompt: prompt, options: options, into: continuation)
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 
-    /// Drives a fresh `LanguageModelSession`'s cumulative-snapshot stream to completion.
+    /// Drives ``liveSession``'s cumulative-snapshot stream to completion.
     ///
     /// Forwards each snapshot's new suffix into `continuation` and finishes
     /// (or fails) it when the underlying stream ends.
@@ -152,19 +162,16 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// `AsyncThrowingStream` closure only has to spawn a `Task` and await this
     /// helper — the do/catch, for-loop, and delta-check live here instead of
     /// stacked five levels deep inside the stream-building closure.
-    private static func pumpStream(
+    private func pumpStream(
         prompt: String,
         options: GenerationOptions,
-        model: MLXLanguageModel,
-        instructions: String?,
         into continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async {
-        let session = LanguageModelSession(model: model, instructions: instructions)
         var previous = ""
         do {
-            for try await snapshot in session.streamResponse(to: prompt, options: options) {
+            for try await snapshot in liveSession.streamResponse(to: prompt, options: options) {
                 let current = snapshot.content
-                let delta = suffix(of: current, after: previous)
+                let delta = Self.suffix(of: current, after: previous)
                 if !delta.isEmpty {
                     continuation.yield(delta)
                 }
@@ -189,7 +196,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         return String(current.dropFirst(previous.count))
     }
 
-    /// Generates a grammar-constrained response through a real `LanguageModelSession`.
+    /// Generates a grammar-constrained response through ``liveSession``.
     ///
     /// ``Grammar/jsonSchema(_:)`` compiles the caller's JSON Schema source into
     /// a `GenerationSchema` via ``RuntimeJSONSchemaConverter`` (see its
@@ -212,13 +219,19 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         }
     }
 
-    /// Vends a fresh backend over the same model and instructions.
+    /// Vends a fresh backend seeded from this session's accumulated transcript.
     ///
-    /// There is no accumulated transcript to seed from yet (see this type's
-    /// documentation), so a fork today is simply another independent backend —
-    /// equivalent to, not derived from, the parent.
+    /// `LanguageModelSession.init(model:tools:transcript:)` is the real
+    /// transcript-continuation primitive the FoundationModels v2 SDK provides
+    /// (see plan.md's "Sessions & KV cache" section for why this is a
+    /// correctness primitive, not a cheap-prefix-reuse one, against the pinned
+    /// `mlx-swift-lm` dependency): the forked session begins holding every
+    /// entry ``liveSession``'s transcript has accumulated so far, then
+    /// diverges independently as each session's own further turns append to
+    /// its own transcript.
     func makeFork() -> any LanguageModelSessionBackend {
-        MLXFoundationModelsSessionBackend(model: model, instructions: instructions)
+        let forkedSession = LanguageModelSession(model: model, tools: [], transcript: liveSession.transcript)
+        return MLXFoundationModelsSessionBackend(session: forkedSession, model: model)
     }
 }
 
