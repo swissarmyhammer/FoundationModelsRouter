@@ -28,6 +28,26 @@ public enum GuidedRequestError: Error, Equatable {
     /// through the *same* typed error as an xgrammar-subset rejection, so a caller
     /// handles both kinds of guided-generation failure in one `catch`.
     case decodingFailed(String)
+
+    /// A ``Grammar/ebnf(_:)`` grammar was routed to the `LanguageModelSession`-backed
+    /// live path, which has no raw-grammar entry point.
+    ///
+    /// Apple's `LanguageModelSession` only exposes guided generation through a
+    /// typed `schema: GenerationSchema` parameter — there is no API that accepts a
+    /// raw EBNF/GBNF grammar string. ``Grammar/jsonSchema(_:)`` *is* supported, but
+    /// **not** via `GenerationSchema`'s own `Codable` conformance: that decode was
+    /// tried and empirically fails on a caller's plain JSON Schema text — it
+    /// requires proprietary metadata (`x-order`, a mandatory `title`) only its own
+    /// encoder produces, and treats a titled string as a closed-enum carrier (see
+    /// `LanguageModelSessionBackendTests.GenerationSchemaDecodingTests`). Instead,
+    /// ``RuntimeJSONSchemaConverter`` hand-compiles the schema text into a
+    /// `GenerationSchema` via `DynamicGenerationSchema`. Raw EBNF has no equivalent
+    /// hook of either kind: implementing it would require driving xgrammar's EBNF
+    /// compiler ourselves outside of `LanguageModelSession` — exactly the
+    /// hand-rolled generation loop this pivot removes. So `.ebnf` is a real,
+    /// upstream-API-shaped limitation of the `LanguageModelSession` backend, not an
+    /// unimplemented convenience — see plan.md's "Guided generation" section.
+    case ebnfNotSupportedByLanguageModelSession
 }
 
 extension Grammar {

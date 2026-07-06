@@ -1,7 +1,8 @@
 import Foundation
+import FoundationModels
 import MLX
 import MLXEmbedders
-import MLXGuidedGeneration
+import MLXFoundationModels
 import MLXLLM
 import MLXLMCommon
 
@@ -9,8 +10,20 @@ import MLXLMCommon
 // Sendable`, so conforming them to the router's marker protocols lets
 // ``LiveModelLoader`` vend real generation and embedding through the same
 // orchestration the unit suite drives with stubs. These are the milestone-7
-// live seams: `ModelContainer` runs the real `MLXLMCommon` / xgrammar pipeline,
-// and ``LiveEmbeddingContainer`` wraps `MLXEmbedders` with a probed dimension.
+// live seams: ``MLXFoundationModelsContainer`` runs the real `LanguageModelSession`
+// (`FoundationModels`) pipeline over an `MLXLanguageModel` conformance, and
+// ``LiveEmbeddingContainer`` wraps `MLXEmbedders` with a probed dimension.
+//
+// **No `MLXLMCommon.ChatSession` and no hand-rolled generation loop.** The
+// session surface every generation call runs through is Apple's own
+// `LanguageModelSession`, backed by `MLXLanguageModel` (`MLXFoundationModels`,
+// our `swissarmyhammer/mlx-swift-lm` fork's `mlx-foundationmodels` branch,
+// tracking upstream PR ml-explore/mlx-swift-lm#334). Guided (JSON-Schema)
+// generation runs through `LanguageModelSession.respond(to:schema:)`, which
+// invokes `MLXLanguageModel`'s own `Executor` — the xgrammar-constrained decode
+// (`MLXGuidedGeneration`) happens *underneath* the `LanguageModel` conformance,
+// invoked by FoundationModels, not called directly here. See plan.md's
+// "Backends" and "Guided generation" sections.
 
 /// The default token budget for the live generation paths when a caller does
 /// not supply its own `maxTokens`, so a routed turn cannot run away. Plain and
@@ -18,165 +31,126 @@ import MLXLMCommon
 /// for guided decode to get a different ceiling.
 private let defaultMaxTokens = 8192
 
-extension ModelContainer: LoadedLLMContainer {
-    /// Generates a complete text response through the real `MLXLMCommon` pipeline
-    /// by accumulating a fresh ``ChatSession``'s stream.
-    ///
-    /// Each call is a one-shot session over the shared resident container: the
-    /// ``LoadedLLMContainer`` generation seam carries no per-turn cache, so
-    /// conversation state is not threaded through here (see ``makeCache()``).
-    public nonisolated func respond(
+/// The live ``LoadedLLMContainer``: wraps an `MLXLanguageModel` — the
+/// `FoundationModels.LanguageModel` protocol conformance `MLXFoundationModels`
+/// provides over a resident MLX `ModelContainer` — and drives every generation
+/// call through a real `LanguageModelSession` built over it.
+///
+/// A fresh `LanguageModelSession` is constructed per call, mirroring this
+/// seam's existing one-shot contract (no per-turn conversation state is
+/// threaded through ``LoadedLLMContainer``; see ``SessionKVCache``'s
+/// documentation for why a persistent, cheaply-forkable session is not yet
+/// wired through this seam). Constructing a session is cheap: `MLXLanguageModel`
+/// is a small `Sendable` value whose actual weights are loaded once and cached
+/// by its own process-global cache, keyed by model id — building a session over
+/// it does not reload anything.
+struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
+    /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
+    let model: MLXLanguageModel
+
+    /// Generates a complete text response through a real `LanguageModelSession`.
+    public func respond(
         to prompt: String,
         instructions: String?,
         maxTokens: Int?
     ) async throws -> String {
-        try await ChatSession(
-            self,
-            instructions: instructions,
-            generateParameters: GenerateParameters(maxTokens: maxTokens ?? defaultMaxTokens)
-        ).respond(to: prompt)
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        let response = try await session.respond(
+            to: prompt,
+            options: GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+        )
+        return response.content
     }
 
-    /// Streams a text response through the real `MLXLMCommon` pipeline as a fresh
-    /// ``ChatSession``'s token stream.
-    public nonisolated func streamResponse(
+    /// Streams a text response through a real `LanguageModelSession`, adapting
+    /// its snapshot-based stream into this seam's delta (fragment) contract.
+    ///
+    /// **Verified, not assumed** (per the FoundationModels v2 SDK's
+    /// `LanguageModelSession.ResponseStream`): each element the stream yields is
+    /// a `Snapshot` whose `content` is the *cumulative* response text so far
+    /// (`Content.PartiallyGenerated`, `= String` for `Content == String`) — not
+    /// a per-token delta. `RoutedSession/streamResponse(to:)`'s documented
+    /// contract is a stream of *fragments* a caller accumulates (mirroring the
+    /// prior `ChatSession`-backed behavior), so this yields only the new suffix
+    /// of each snapshot, computed against the previous one.
+    public func streamResponse(
         to prompt: String,
         instructions: String?,
         maxTokens: Int?
     ) -> AsyncThrowingStream<String, Error> {
-        ChatSession(
-            self,
-            instructions: instructions,
-            generateParameters: GenerateParameters(maxTokens: maxTokens ?? defaultMaxTokens)
-        ).streamResponse(to: prompt)
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var previous = ""
+                    for try await snapshot in session.streamResponse(to: prompt, options: options) {
+                        let current = snapshot.content
+                        let delta = Self.suffix(of: current, after: previous)
+                        if !delta.isEmpty {
+                            continuation.yield(delta)
+                        }
+                        previous = current
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
     }
 
-    /// Generates a grammar-constrained response through the real xgrammar engine.
+    /// The new suffix `current` has beyond `previous`, assuming `current`
+    /// extends `previous` the way a cumulative streaming snapshot does.
     ///
-    /// Validates the grammar (pure, GPU-free), compiles it into a
-    /// ``GrammarConstraint`` over the model's own tokenizer, then drives
-    /// ``GuidedGenerationLoop`` to whole-chunk constrained decode, accumulating the
-    /// emitted deltas.
+    /// - Returns: The whole of `current` if it does not have `previous` as a
+    ///   prefix — a defensive fallback for a non-monotonic snapshot, not
+    ///   expected in practice — otherwise just the new suffix.
+    private static func suffix(of current: String, after previous: String) -> String {
+        guard current.hasPrefix(previous) else { return current }
+        return String(current.dropFirst(previous.count))
+    }
+
+    /// Generates a grammar-constrained response through a real
+    /// `LanguageModelSession`.
     ///
-    /// - Parameters:
-    ///   - prompt: The user prompt to generate a response for.
-    ///   - instructions: Optional system instructions, folded in as a leading
-    ///     system chat turn.
-    ///   - grammar: The grammar constraining the generated output.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     ``defaultMaxTokens``.
-    /// - Returns: The complete grammar-constrained response text.
-    /// - Throws: If the grammar fails validation or constraint compilation, or the
-    ///   constrained generation pipeline errors.
-    public nonisolated func respond(
+    /// ``Grammar/jsonSchema(_:)`` compiles the caller's JSON Schema source into
+    /// a `GenerationSchema` via ``RuntimeJSONSchemaConverter`` (see its
+    /// documentation for why `GenerationSchema`'s own `Codable` conformance
+    /// cannot be used for this) and drives `LanguageModelSession.respond(to:schema:)`
+    /// — the xgrammar-constrained decode this produces runs entirely inside
+    /// `MLXLanguageModel`'s `Executor`, invoked by FoundationModels, never by a
+    /// loop of our own. ``Grammar/ebnf(_:)`` has no equivalent entry point on
+    /// `LanguageModelSession` (which only accepts a typed `schema:` parameter,
+    /// never a raw grammar string) and is not supported under this backend —
+    /// see ``GuidedRequestError/ebnfNotSupportedByLanguageModelSession``.
+    public func respond(
         to prompt: String,
         instructions: String?,
         following grammar: Grammar,
         maxTokens: Int?
     ) async throws -> String {
         try grammar.validateForXGrammar()
-        return try await perform { context in
-            let hostTokenizer = context.tokenizer
-            let grammarVocab = TokenizerVocabExtractor.extractForGrammar(from: hostTokenizer)
-            let grammarTokenizer = try GrammarTokenizer(
-                vocab: grammarVocab.vocab,
-                vocabType: grammarVocab.vocabType,
-                eosTokenId: Int32(hostTokenizer.eosTokenId ?? 0)
-            )
-            let constraint = try Self.grammarConstraint(
-                for: grammar,
-                tokenizer: grammarTokenizer,
-                hostTokenizer: hostTokenizer
-            )
-            // `UserInput` is not `Sendable`, so it is built inside the `@Sendable`
-            // perform closure from the Sendable prompt/instructions rather than
-            // captured from outside.
-            let input = try await context.processor.prepare(
-                input: Self.guidedUserInput(prompt: prompt, instructions: instructions)
-            )
-            var output = ""
-            try GuidedGenerationLoop.run(
-                input: input,
-                context: context,
-                constraint: constraint,
-                maxTokens: maxTokens ?? defaultMaxTokens,
-                vocabSize: grammarTokenizer.vocabSize
-            ) { delta in
-                output += delta
-                return true
-            }
-            return output
-        }
-    }
-
-    /// Allocates a fresh MLX-backed session KV cache.
-    ///
-    /// Backed by a real `KVCacheSimple`, so a ``RoutedSession/fork(workingDirectory:)``
-    /// copy runs the real MLX `KVCache.copy()` and the cache frees with the
-    /// session (ARC). The frozen ``LoadedLLMContainer`` generation entry points
-    /// carry no cache argument, so this cache is the fork/copy/free contract
-    /// rather than generation-threaded prefix state.
-    public nonisolated func makeCache() -> any SessionKVCache {
-        MLXSessionKVCache(caches: [KVCacheSimple()])
-    }
-
-    /// Builds the guided prompt input, folding any system instructions in as a
-    /// leading system chat turn.
-    private static func guidedUserInput(prompt: String, instructions: String?) -> UserInput {
-        if let instructions, !instructions.isEmpty {
-            return UserInput(chat: [.system(instructions), .user(prompt)])
-        }
-        return UserInput(prompt: prompt)
-    }
-
-    /// Compiles a router ``Grammar`` into an xgrammar ``GrammarConstraint`` over a
-    /// bound grammar tokenizer, routing JSON-schema and EBNF sources to their
-    /// respective xgrammar compile paths with fast-forward enabled.
-    private static func grammarConstraint(
-        for grammar: Grammar,
-        tokenizer: GrammarTokenizer,
-        hostTokenizer: any Tokenizer
-    ) throws -> GrammarConstraint {
         switch grammar {
-        case .jsonSchema(let schema):
-            return try GrammarConstraint(
-                tokenizer: tokenizer,
-                jsonSchema: schema,
-                fastForward: true,
-                hostTokenizer: hostTokenizer
+        case .ebnf:
+            throw GuidedRequestError.ebnfNotSupportedByLanguageModelSession
+        case .jsonSchema(let schemaText):
+            let schema = try RuntimeJSONSchemaConverter.compile(schemaText)
+            let session = LanguageModelSession(model: model, instructions: instructions)
+            let response = try await session.respond(
+                to: prompt,
+                schema: schema,
+                options: GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
             )
-        case .ebnf(let source):
-            return try GrammarConstraint(
-                tokenizer: tokenizer,
-                grammar: source,
-                fastForward: true,
-                hostTokenizer: hostTokenizer
-            )
+            return response.content.jsonString
         }
     }
-}
 
-/// A real MLX-backed ``SessionKVCache``: it owns a model KV cache and copies it
-/// through the real MLX `KVCache.copy()` on fork.
-///
-/// `@unchecked Sendable`: MLX `KVCache` is not `Sendable`, but a session (an
-/// actor) owns exactly one cache and only ``copy()``s it from its own isolation
-/// on ``RoutedSession/fork(workingDirectory:)`` — never touching a single
-/// instance concurrently — so the access is data-race free by construction.
-final class MLXSessionKVCache: SessionKVCache, @unchecked Sendable {
-    /// The owned MLX KV caches. A freshly-vended session default holds one empty
-    /// ``KVCacheSimple``; ``copy()`` snapshots each through the real MLX copy.
-    private let caches: [any KVCache]
-
-    /// Creates a session cache wrapping the given MLX caches.
-    init(caches: [any KVCache]) {
-        self.caches = caches
-    }
-
-    /// Returns an independent copy via the real MLX `KVCache.copy()`.
-    func copy() -> any SessionKVCache {
-        MLXSessionKVCache(caches: caches.map { $0.copy() })
-    }
+    // `makeCache()` is inherited from `LoadedLLMContainer`'s default (an inert,
+    // no-op `SessionKVCache`): a fresh `LanguageModelSession` per call (above)
+    // carries no cache of its own to wrap, so there is nothing real for this
+    // seam to back today — see ``SessionKVCache``'s documentation.
 }
 
 /// The live embedding container: wraps a loaded `EmbedderModelContainer` and the
@@ -187,7 +161,10 @@ final class MLXSessionKVCache: SessionKVCache, @unchecked Sendable {
 /// The wrapper exists because `EmbedderModelContainer` exposes its model only
 /// through an async `perform` closure, so the dimension is not knowable
 /// synchronously from the raw container; ``LiveModelLoader/loadEmbedder(_:slot:reporting:)``
-/// probes it once and stores it here.
+/// probes it once and stores it here. Embedding does not go through
+/// `LanguageModelSession` — `MLXEmbedders` has no `FoundationModels.LanguageModel`
+/// surface, so this stays on the direct `MLXEmbedders` pipeline (see plan.md's
+/// "Backends" section).
 final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
     /// The loaded MLX embedder container the computation runs through.
     private let container: EmbedderModelContainer
@@ -250,7 +227,9 @@ public enum ModelLoaderError: Error, Equatable {
 }
 
 /// The live ``ModelLoader``: downloads weights from a Hugging Face-compatible
-/// source and materializes MLX containers for generation and embedding.
+/// source and materializes an ``MLXFoundationModelsContainer`` for generation
+/// (backed by `MLXLanguageModel` + `LanguageModelSession`) and a
+/// ``LiveEmbeddingContainer`` for embedding.
 ///
 /// This fork of `mlx-swift-lm` intentionally does **not** bundle a default Hub
 /// client — integration packages "inject their own `Downloader` and
@@ -261,10 +240,12 @@ public enum ModelLoaderError: Error, Equatable {
 /// the `Downloader` and `TokenizerLoader` as construction parameters; the
 /// integration suite (milestone 7) supplies concrete Hub-backed instances.
 ///
-/// Generation models load through `MLXLMCommon`'s `loadModelContainer`, which
-/// resolves the configuration against the registered `MLXLLM` factories;
-/// embedding models load through `MLXEmbedders`' `EmbedderModelFactory`. Both
-/// map the Foundation `Progress` into ``DownloadProgress``.
+/// Generation models load through `MLXFoundationModels.MLXLanguageModel`, which
+/// wraps `MLXLMCommon`'s `loadModelContainer` (resolving the configuration
+/// against the registered `MLXLLM` factories) and caches the resident
+/// `ModelContainer` itself, keyed by model id; embedding models load through
+/// `MLXEmbedders`' `EmbedderModelFactory` directly. Both map the Foundation
+/// `Progress` into ``DownloadProgress``.
 public struct LiveModelLoader: ModelLoader {
     /// The source that fetches model and tokenizer files.
     private let downloader: any Downloader
@@ -272,18 +253,45 @@ public struct LiveModelLoader: ModelLoader {
     /// The factory that loads a tokenizer from downloaded files.
     private let tokenizerLoader: any TokenizerLoader
 
+    /// Resolves a model identifier to its on-disk weights directory, passed
+    /// through to `MLXLanguageModel` for its availability checks
+    /// (`modelExistsOnDisk()`, free-disk-space checks) — **not** consulted by
+    /// the load path itself, which always goes through `load`/`downloader`
+    /// below. Defaults to a harmless temporary-directory stub for callers that
+    /// don't need those availability checks to resolve real paths.
+    private let weightsLocation: @Sendable (String) -> URL
+
     /// Creates a live loader over an injected downloader and tokenizer loader.
     ///
     /// - Parameters:
     ///   - downloader: The source that fetches model and tokenizer files (e.g. a
     ///     Hub client supplied by the integration suite).
     ///   - tokenizerLoader: The factory that loads a tokenizer from those files.
-    public init(downloader: any Downloader, tokenizerLoader: any TokenizerLoader) {
+    ///   - weightsLocation: Resolves a model id to its on-disk weights
+    ///     directory, for `MLXLanguageModel`'s availability checks. Defaults to
+    ///     a stub that never resolves a real path — pass the Hub cache's real
+    ///     repo-directory resolver (e.g. `HubCache.repoDirectory(repo:kind:)`)
+    ///     when those checks matter.
+    public init(
+        downloader: any Downloader,
+        tokenizerLoader: any TokenizerLoader,
+        weightsLocation: @escaping @Sendable (String) -> URL = { _ in
+            FileManager.default.temporaryDirectory
+        }
+    ) {
         self.downloader = downloader
         self.tokenizerLoader = tokenizerLoader
+        self.weightsLocation = weightsLocation
     }
 
-    /// Downloads and loads a generation model into a `ModelContainer`.
+    /// Downloads and loads a generation model into an ``MLXFoundationModelsContainer``.
+    ///
+    /// Builds an `MLXLanguageModel` over the model's configuration and this
+    /// loader's downloader/tokenizer loader, then forces eager loading now
+    /// (`MLXLanguageModel` itself otherwise defers loading until first
+    /// inference), matching the router's residency model: `preload()`s and
+    /// holds every slot resident for the profile's lifetime (see plan.md's
+    /// "Residency" section).
     ///
     /// - Parameters:
     ///   - ref: The model reference to download and load.
@@ -299,12 +307,32 @@ public struct LiveModelLoader: ModelLoader {
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
-        try await loadModelContainer(
-            from: downloader,
-            using: tokenizerLoader,
-            configuration: configuration(for: ref),
-            progressHandler: Self.handler(reporting)
+        let downloader = self.downloader
+        let tokenizerLoader = self.tokenizerLoader
+        let modelConfiguration = configuration(for: ref)
+        let model = MLXLanguageModel(
+            configuration: modelConfiguration,
+            capabilities: [.guidedGeneration],
+            weightsLocation: weightsLocation,
+            load: { configuration, mlxProgressHandler in
+                try await loadModelContainer(
+                    from: downloader,
+                    using: tokenizerLoader,
+                    configuration: configuration,
+                    progressHandler: { progress in
+                        // Forward to both: `MLXLanguageModel`'s own global
+                        // `MLXDownloadProgress` broadcast (its usual signal for
+                        // e.g. a SwiftUI observer bound to `.shared`) and this
+                        // router's own byte-based progress plumbing, which is
+                        // what `Router`/`ResolutionProgress` actually consume.
+                        mlxProgressHandler(progress)
+                        Self.handler(reporting)(progress)
+                    }
+                )
+            }
         )
+        _ = try await model.loadContainer()
+        return MLXFoundationModelsContainer(model: model)
     }
 
     /// Downloads and loads an embedding model, wrapping it in a
@@ -345,17 +373,25 @@ public struct LiveModelLoader: ModelLoader {
 
     /// Warms a loaded container.
     ///
-    /// The MLX containers materialize their weights at load time, so loading
-    /// already brings the model resident; this hook is the seam for any future
-    /// explicit warm-up (e.g. a throwaway forward pass).
+    /// `loadLLM`/`loadEmbedder` already materialize weights eagerly (an
+    /// `MLXLanguageModel`'s `loadContainer()` is forced there; the embedder's
+    /// container loads synchronously in `loadEmbedder`), so this hook is a
+    /// no-op seam for any future explicit warm-up (e.g. a throwaway forward
+    /// pass beyond weight materialization).
     public func preload(_ container: any LoadedModelContainer) async throws {}
 
-    /// Evicts a loaded container.
+    /// Evicts a loaded container, freeing the GPU memory its weights hold.
     ///
-    /// Real MLX unload is not required at this milestone (the lifecycle only
-    /// needs eviction to route through the loader so it is stubbable); this is
-    /// the no-op seam where an explicit unload lands later.
-    public func evict(_ container: any LoadedModelContainer) async {}
+    /// Routed through ``MLXFoundationModelsContainer/model``'s real
+    /// `MLXLanguageModel.evict()` when the container is a live generation
+    /// container (dropping it from `MLXLanguageModel`'s process-global cache,
+    /// so a subsequent load reloads from the on-disk snapshot); a no-op for any
+    /// other container (e.g. the embedding container, which has no equivalent
+    /// eviction hook today).
+    public func evict(_ container: any LoadedModelContainer) async {
+        guard let generation = container as? MLXFoundationModelsContainer else { return }
+        await generation.model.evict()
+    }
 
     /// The revision used when a ``ModelRef`` does not pin one.
     private static let defaultRevision = "main"

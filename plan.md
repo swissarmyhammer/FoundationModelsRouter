@@ -16,12 +16,20 @@ vends) in their constructors so many tools reuse a small set of resident models.
 ## Foundation: mlx-swift-lm
 
 Rides on [`ml-explore/mlx-swift-lm`](https://github.com/ml-explore/mlx-swift-lm) —
-**MLX is the only runtime** (no llama backend). We don't load or run models
-ourselves; we decide *which* and *when*, then drive its modules:
+**MLX is the only runtime** (no llama backend) for weights and inference. We
+don't load or run models ourselves; we decide *which* and *when*, then drive its
+modules to supply a model — but we do **not** drive generation through MLX's own
+chat surface. The session a caller actually talks to is Apple's
+`LanguageModelSession` (see Backends), not `ChatSession`:
 
-- **MLXLMCommon** — `ModelContainer`, `ChatSession` (loading + generation).
+- **MLXLMCommon** — `ModelContainer` (loading; resident weights + KV cache
+  substrate). We construct this; we do not construct its `ChatSession`.
 - **MLXLLM** -> `standard` / `flash`. **MLXEmbedders** -> `embedding`.
 - **MLXHuggingFace** — download/resolve from Hugging Face.
+- **MLXFoundationModels** — `MLXLanguageModel`, the `LanguageModel`-protocol
+  conformance that lets a resident `ModelContainer` run behind a real
+  `LanguageModelSession`. This is the session backend, and it is **load-bearing**
+  — see Backends.
 
 The candidate catalog is therefore MLX-format Hugging Face repos. On
 `mlx-community` **one repo is one quant** (`…-8bit`, `…-4bit` are separate repos),
@@ -37,6 +45,13 @@ with chat, tool calling, and xgrammar-backed guided generation. It is **not yet
 merged upstream** — it lives in open PR
 [ml-explore/mlx-swift-lm#334](https://github.com/ml-explore/mlx-swift-lm/pull/334)
 (author `ctymoszek`).
+
+**This is not an optional interop path — it is *the* session backend.**
+`RoutedSession` is built directly on Apple's `LanguageModelSession`, conformed to
+our resident MLX model via `MLXLanguageModel`. We do not implement our own
+turn/tool-dispatch generation loop over `ModelContainer`/`ChatSession`; multi-turn
+state, tool calling, and `@Generable` decoding all belong to `LanguageModelSession`
+itself, not to code we wrote.
 
 We track it via our own fork so the dependency is stable and under our control:
 
@@ -176,7 +191,7 @@ the models are always resident, access needs no lease or scope — a slot is jus
 ready model. A `RoutedLLM` vends a session and a `RoutedEmbedder` embeds, directly:
 
 ```swift
-// Generation — a session over the resident standard model (backend-neutral)
+// Generation — a session over the resident standard model (LanguageModelSession-backed)
 let session = profile.standard.makeSession(instructions: "You are…")
 let reply   = try await session.respond(to: "…")
 
@@ -193,8 +208,10 @@ a `@MainActor @Observable` object bound straight into SwiftUI:
 .task { profile = try await router.resolve(coding, reporting: progress) }
 ```
 
-(Sessions are vended over `MLXLMCommon`'s `ChatSession` / `ModelContainer`; a routed
-model can also back a native `LanguageModelSession` via `MLXFoundationModels` — see Backends.)
+(Sessions are vended as Apple's own `LanguageModelSession`, backed by the resident
+`ModelContainer` conformed to the `LanguageModel` protocol via `MLXLanguageModel`
+(`MLXFoundationModels`) — see Backends. We do not construct `MLXLMCommon`'s
+`ChatSession` and do not run our own generation/tool-dispatch loop.)
 
 ## Core Types
 
@@ -237,14 +254,16 @@ struct RoutedEmbedder {
     func embed(_ texts: [String]) async throws -> [[Float]]
 }
 
-// A session is an `actor`: it isolates its mutable state (KV cache, transcript,
-// working directory) and serializes its own calls. It owns its KV cache (layered on
-// the pinned weights), **retains its creating profile** (so resident models stay alive
-// for its lifetime), and is **born holding the Router's recorder** — there is no public
-// init, so an unrecorded session can't exist (see Transcripts & recording). `fork` is
-// the primitive: a child inherits this session's cache (a copy of the prefilled
-// prefix) and recorder, sets `parentID = self.id`, nests its directory under the
-// parent, and diverges. Releasing a session frees its cache.
+// A session is an `actor`: it isolates its mutable state (transcript, working
+// directory) and serializes its own calls. It **retains its creating profile** (so
+// resident models stay alive for its lifetime), and is **born holding the Router's
+// recorder** — there is no public init, so an unrecorded session can't exist (see
+// Transcripts & recording). `fork` sets `parentID = self.id`, nests its directory
+// under the parent, and diverges into an independent child session — but does NOT
+// inherit the parent's prefilled-prefix compute cheaply: that mechanism is
+// split/blocked, verified against the pinned `mlx-swift-lm` dependency's
+// `MLXLanguageModel.Executor`, which has no persisted-cache state to copy at the
+// pinned revision (see Backends).
 protocol RoutedSession: Actor {
     var profile: LanguageModelProfile { get }    // retained: keeps the models resident
     var routerID: ULID { get }                   // the recording group
@@ -354,16 +373,58 @@ struct ResolutionFailure: Error {            // thrown by resolve when a slot ha
 
 ## Backends
 
-One stack, macOS 27+. Generation and embedding run on `MLXLMCommon`
-(`ChatSession` / `ModelContainer`) and `MLXEmbedders`; guided generation runs on
-`MLXGuidedGeneration` (xgrammar). **Our session owns its KV cache** at this layer —
-that's what makes `fork()` real (see "Sessions & KV cache").
+One stack, macOS 27+. `MLXLMCommon`'s `ModelContainer` loads and holds the
+resident weights; `MLXEmbedders` handles embedding. **The session surface is
+Apple's own `LanguageModelSession`** (`FoundationModels`, macOS 27+): a resident
+`ModelContainer` is conformed to Apple's `LanguageModel` protocol via
+`MLXLanguageModel` (`MLXFoundationModels`, our PR #334 fork), and `RoutedSession`
+constructs and forwards to a real `LanguageModelSession` built over that
+conformance. We do **not** construct `MLXLMCommon`'s `ChatSession` and do **not**
+implement our own turn/tool-dispatch loop — multi-turn state, tool calling, and
+`@Generable` decoding are `LanguageModelSession`'s, not ours. Guided generation
+still runs on `MLXGuidedGeneration` (xgrammar) beneath the `LanguageModel`
+conformance.
 
-FoundationModels interop is available but not load-bearing: a routed model can also
-back a native `LanguageModelSession` (via `MLXLanguageModel`) for callers who want
-Apple's `@Generable` / `Tool` ergonomics. That path delegates cache management to
-FoundationModels, so it does **not** expose our cache-level `fork()` — use our
-session when you want forking.
+This is a **load-bearing** dependency, not an optional interop path: `RoutedSession`
+has no `ChatSession`-backed fallback path. **Implemented**: `RoutedSession`'s live
+conformance (`MLXFoundationModelsContainer`, in `LiveModelLoader.swift`) constructs
+an `MLXLanguageModel` (wrapping this package's own `Downloader`/`TokenizerLoader`
+injection) and drives every call through a real `LanguageModelSession(model:)` —
+`respond`, `streamResponse`, and the guided (`schema:`) path. No code in
+`Sources/FoundationModelsRouter` constructs `MLXLMCommon.ChatSession`, and no code
+drives `MLXGuidedGeneration`'s `GuidedGenerationLoop` directly — that engine now
+runs *inside* `MLXLanguageModel`'s own `Executor`, invoked by `LanguageModelSession`
+when a caller passes a `schema:`, not by a loop we wrote.
+
+**Resolved — `fork()`.** The `fork()` design below was premised on owning
+`MLXLMCommon`'s KV cache directly (`KVCache.copy()`), which required sitting below
+`ChatSession`. Research against the real FoundationModels v2 SDK
+(`FoundationModels.swiftinterface`, macOS 27 SDK) found a genuine
+transcript-continuation primitive: `LanguageModelSession.init(model:tools:transcript:)`
+constructs a new session that continues a prior session's `Transcript`. This is a
+real, available mechanism for **conversation correctness** — a child that continues
+its parent's conversation — but it does **not** restore the "cheap prefix reuse"
+property `fork()` originally targeted. Verified by reading the pinned
+`swissarmyhammer/mlx-swift-lm` fork's `Libraries/MLXFoundationModels/MLXLanguageModel.swift`
+(branch `mlx-foundationmodels`, revision `e6ccd2721` as of 2026-06-29, tracking
+upstream PR #334): `MLXLanguageModel`'s `Executor.respond(to:model:streamingInto:)`
+re-derives its full `LMInput` from `TranscriptConverter.mlxMessages(for: request.transcript)`
+and runs a fresh `MLXLMCommon.generate(...)` call — there is no `KVCache`, prompt
+cache, or any other persisted-across-turns state anywhere in that module (confirmed
+by grep: zero `KVCache`/`promptCache`/`trim(`/`savePromptCache` references in
+`Libraries/MLXFoundationModels`). So **every turn of every session reprocesses its
+whole transcript from scratch** under this backend — `fork()`'s "inherits the
+parent's prefilled-prefix compute" performance goal is not achievable against this
+dependency today, not because of a gap in this router's own wiring, but because the
+upstream `MLXLanguageModel` executor itself has no persisted-cache mechanism to
+reuse. `RoutedSession.fork(workingDirectory:)` is kept as a correctness primitive
+(an independent child session, nested transcript, ARC-freed on release — see
+`SessionKVCache`'s documentation for why its cache stays inert) rather than wired to
+transcript-continuation, since doing so would add real complexity for zero
+performance benefit under the current dependency. **This is split/blocked
+specifically on the performance property**, with a concrete, cited reason in a
+dependency this router does not control; revisit if a future `mlx-swift-lm` release
+adds a persisted-cache executor.
 
 ## Guided generation
 
@@ -374,11 +435,54 @@ are constrained to a `Grammar` (a JSON Schema or a raw EBNF grammar).
 
 ### The engine
 
-`MLXGuidedGeneration` (PR #334) provides the xgrammar engine: its entry points take
-a **runtime grammar string** (`GrammarConstraint(jsonSchema:)` +
-`GuidedGenerationLoop.run(…)`) and constrain MLX sampling directly over a resident
-`ModelContainer`. `RoutedLLM` exposes it as `respond(to:following:)` and
-`makeGuidedSession(_:)` (see Core Types).
+**Resolved.** `MLXFoundationModels`' `MLXLanguageModel.Executor` (the
+`LanguageModelExecutor` witness invoked by `LanguageModelSession`) drives
+`MLXGuidedGeneration`'s xgrammar engine (`GrammarConstraint` +
+`GuidedGenerationLoop.run(…)`) **internally**, whenever the framework's
+`LanguageModelSession.respond(to:schema:)`/`streamResponse(to:schema:)` is called
+with a non-nil `schema:` — confirmed by reading
+`Libraries/MLXFoundationModels/MLXLanguageModel.swift`'s `Executor.respond(...)`,
+which branches on `request.schema` and, when present, compiles a
+`GrammarConstraint` and runs `GuidedGenerationLoop.run` itself. So the constrained
+decode is invoked *by FoundationModels*, underneath the `LanguageModel`
+conformance, not by a loop this router writes: `RoutedLLM`'s
+`respond(to:following:)`/`makeGuidedSession(_:)` (see Core Types) call
+`LanguageModelSession.respond(to:schema:)` and let `MLXLanguageModel` do the rest.
+
+**The missing piece was building the `schema:` itself.** `LanguageModelSession`'s
+guided API takes a typed `GenerationSchema`, not a raw grammar string — so turning
+a caller's runtime JSON Schema *text* into a `GenerationSchema` is this router's own
+work. The obvious approach — `JSONDecoder().decode(GenerationSchema.self, from:)`,
+since `GenerationSchema` is `Codable` and its *encoding* is a standard JSON Schema
+document — was tried and **empirically fails**: `GenerationSchema`'s decode
+requires proprietary metadata its own encoder adds (an `x-order` key recording
+property order, a mandatory `title` on every object/string node) and treats a
+*titled* string schema as a closed-enum carrier, rejecting a plain titled string
+outright (see `LanguageModelSessionBackendTests.GenerationSchemaDecodingTests`, a
+real, run assertion, not a comment). So `GenerationSchema`'s `Codable` conformance
+only round-trips *its own* encoding — it is not a general JSON-Schema ingestion path
+for a caller's foreign schema (e.g. an MCP tool's `inputSchema`).
+
+Instead, `RuntimeJSONSchemaConverter` (`Sources/FoundationModelsRouter/Guided/`)
+hand-walks the parsed JSON Schema tree into `DynamicGenerationSchema` nodes — a pure
+data transform, not a generation loop — covering exactly the subset
+`Grammar.validateForXGrammar()` already accepts: object (`properties`/`required`),
+string/number/integer/boolean leaves, closed string `enum`s (`DynamicGenerationSchema(name:anyOf:
+[String])`), and arrays (`items`, `minItems`/`maxItems`), nestable to any depth.
+Anything else (`oneOf`/discriminated unions, `$defs`-based recursion) throws a
+typed `ConversionError` rather than silently mis-converting — real-tested, not
+theoretical (`RuntimeJSONSchemaConverterTests`, 11 cases including the schema
+derived from a real `@Generable` type). The live `MLXFoundationModelsContainer`
+uses this converter for both the typed shape (round-tripping `T.generationSchema`
+through JSON) and the dynamic/raw shapes (a caller's own JSON Schema text).
+
+**`Grammar.ebnf(_:)` is genuinely blocked**, not deferred: `LanguageModelSession`
+has no entry point that accepts a raw grammar string — only a typed `schema:`
+parameter built from `GenerationSchema`/`DynamicGenerationSchema`. There is no way
+to drive an arbitrary EBNF/GBNF grammar through this session surface without
+compiling our own generation loop underneath it, which is exactly what this pivot
+removes. `MLXFoundationModelsContainer.respond(to:instructions:following:maxTokens:)`
+throws `GuidedRequestError.ebnfNotSupportedByLanguageModelSession` for this case.
 
 ### Three response shapes
 
@@ -391,9 +495,11 @@ Pick by whether the caller has a Swift type for the result:
   known only at runtime with **no Swift type** — e.g. an MCP tool that "returns JSON"
   against its advertised schema. The result is valid for the schema but introspected
   dynamically (`JSONValue`), never decoded into a fixed type.
-- **Raw** — `respond(to:following: Grammar) -> String` for any grammar (JSON Schema
-  *or* EBNF); unparsed constrained text out. This is also what a guided session binds,
-  so `makeGuidedSession(_:).respond(to:)` and its forks return raw text the caller
+- **Raw** — `respond(to:following: Grammar) -> String`; unparsed constrained text
+  out. `.jsonSchema(_)` works (see "The engine"); `.ebnf(_)` throws
+  `GuidedRequestError.ebnfNotSupportedByLanguageModelSession` — `LanguageModelSession`
+  has no raw-grammar entry point. This is also what a guided session binds, so
+  `makeGuidedSession(_:).respond(to:)` and its forks return raw text the caller
   decodes (to a type or to `JSONValue`).
 
 The grammar source is always the caller's — hand-written, `@Generable`-derived, or
@@ -416,20 +522,37 @@ let value: JSONValue = try await profile.standard.respond(to: prompt,
 let template = profile.flash.makeGuidedSession(.jsonSchema(schema),
                                                instructions: "Emit only JSON for the schema.")
 for diff in diffs {                            // forks past maxConcurrentForks queue
-    let sub = template.fork()                  // inherits the prefilled prefix + grammar
+    let sub = template.fork()                  // inherits the grammar; independent conversation
     // sub.respond(to: diff) → raw JSON text; decode to Review or JSONValue.
 }                                              // each `sub` + its cache freed at scope exit
 ```
 
-Caveat: xgrammar covers a **subset of JSON Schema**; grammars using `$ref` / `allOf`
-/ `format` need normalization or are rejected with a clear error (surfaced like a
-metadata failure, not a crash).
+Caveat: two layers reject unsupported schemas, both with typed errors rather than a
+crash. `Grammar.validateForXGrammar()` rejects `$ref` / `allOf` / `format` up front
+(xgrammar's own supported-subset boundary). `RuntimeJSONSchemaConverter` then
+compiles what's left into a `GenerationSchema`; it covers object/array/scalar/closed-enum
+constructs but rejects `oneOf`/discriminated unions and anything else it doesn't
+recognize with a typed `ConversionError` (see "The engine").
 
 ## Sessions & KV cache
 
-A session owns its KV cache, layered on the model's pinned weights (weights stay
-resident; caches come and go). `fork()` is the primitive for the "many subagents,
-common instructions + tools" pattern:
+**Resolved as split/blocked — not achievable against the pinned dependency today,
+verified rather than assumed.** The mechanism below was designed for owning MLX's
+KV cache directly below `ChatSession`, which we no longer construct. Under
+`LanguageModelSession`, a real transcript-continuation primitive exists
+(`LanguageModelSession.init(model:tools:transcript:)`), but reading the pinned
+`swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor` (branch
+`mlx-foundationmodels`, revision `e6ccd2721`) found it re-derives its full model
+input from the request's `Transcript` and runs a *fresh* `MLXLMCommon.generate(...)`
+on every single turn — there is no `KVCache`, prompt cache, or any persisted-across-turns
+state anywhere in `Libraries/MLXFoundationModels` (confirmed by grep: zero hits for
+`KVCache`/`promptCache`/`trim(`/`savePromptCache`). So the pattern below is
+**target/aspirational**, same as before the pivot — but now for a *different*,
+concretely-verified reason: it's not that we haven't wired it up, it's that the
+upstream executor this router depends on has no persisted-cache mechanism to wire up
+*to*, at the pinned revision. `RoutedSession.fork(workingDirectory:)` exists today
+as a correctness primitive only (independent child session, nested transcript,
+freed on release) — see plan's "Backends" section for the full citation.
 
 1. Build a **template session** with the shared instructions (and grammar/tools);
    priming it prefills that common prefix once into its cache.
@@ -442,15 +565,19 @@ common instructions + tools" pattern:
    and all sessions/forks are released. No keyed pool or LRU: the live template *is*
    the warm prefix; forks are explicit and short-lived.
 
-Substrate (verified on the branch): `KVCache.copy()` (fork), `trim(_:)` (serial
-reuse — recycle one cache instead of copying), `savePromptCache` /
-`loadPromptCache` (spill a warm prefix to disk).
+Substrate previously verified below `ChatSession` (**confirmed absent from the
+`LanguageModelSession`/`MLXLanguageModel` path at the pinned revision** — see
+above): `KVCache.copy()` (fork), `trim(_:)` (serial reuse — recycle one cache
+instead of copying), `savePromptCache` / `loadPromptCache` (spill a warm prefix to
+disk). None of these are reachable through `MLXLanguageModel.Executor` today.
 
-**Budget caveat:** `copy()` is a *deep* copy, so K concurrent forks hold K× the
-prefix KV. KV is a **reclaimable, pooled** resource separate from pinned weights, and
-the footprint math budgets only one cache per model — so a wide fan-out needs a KV
-budget carved from headroom and a bound on concurrent forks, or it OOMs a machine
-that held the models comfortably.
+**Budget caveat (moot at the pinned revision, kept for when this becomes real):**
+`copy()` is a *deep* copy, so K concurrent forks hold K× the prefix KV. KV is a
+**reclaimable, pooled** resource separate from pinned weights, and the footprint
+math budgets only one cache per model — so a wide fan-out would need a KV budget
+carved from headroom and a bound on concurrent forks, or it would OOM a machine
+that held the models comfortably, *if and when* a persisted-cache executor exists
+to make this a real cost.
 
 ## Concurrency
 
@@ -460,7 +587,8 @@ than run in parallel: MLX generation isn't safe to interleave on a single model'
 weights, and the GPU runs one stream anyway. Each `RoutedLLM` owns a serial gate.
 
 **Fork fan-out is bounded** by `maxConcurrentForks` (a `Router` setting): at most that
-many fork sessions are in flight at once, capping the K× prefix-KV cost of `copy()`.
+many fork sessions are in flight at once, capping the K× prefix-KV cost of `copy()`
+(mechanism per Backends' open question — see "Sessions & KV cache").
 `fork()` past the limit **awaits a free slot**, which frees when a fork is released —
 so a wide subagent fan-out self-throttles instead of OOMing.
 
@@ -478,8 +606,8 @@ Every session has a **`workingDirectory`** (host filesystem) — where its tools
 relative paths, and outputs resolve. It defaults to the session's **recording
 directory** (lineage-nested under the Router — see Transcripts & recording); pass one
 explicitly to move the files elsewhere, and the transcript stays in the tree. A session
-is an **`actor`**, so its mutable state (KV cache, transcript, working directory) is
-isolated and its own calls serialize.
+is an **`actor`**, so its mutable state (transcript, working directory, and whatever
+cache state `LanguageModelSession` carries) is isolated and its own calls serialize.
 
 **Many sessions in one process** is the normal case: the process holds the router and
 the shared, resident models (host-side), and each session is a separate actor with its
@@ -512,7 +640,22 @@ continue a prior root.
   `streamResponse`, the guided variants) funnels through a single private `generate`,
   which runs the model *inside* a recorder bracket: open event → body → close/error
   event in `defer`. A new API can't bypass recording, and the close can't be skipped
-  on `throw`.
+  on `throw`. **Tool-call recording gap — mechanism identified, not yet wired
+  (no tool support exists on `RoutedSession` to wire it to).** If
+  `LanguageModelSession` owns tool dispatch internally, per-tool-call
+  (`toolCall`/`toolOutput`) events are *not* automatically captured by wrapping the
+  outer `respond`/`streamResponse` call. Two real mechanisms were found in the
+  FoundationModels v2 SDK: (1) `LanguageModelSession.Response<Content>.transcriptEntries`
+  / `ResponseStream<Content>.Snapshot.transcriptEntries` return the `ArraySlice<Transcript.Entry>`
+  a turn *added*, which includes `.toolCalls`/`.toolOutput` entries when tools ran —
+  so the chokepoint could inspect this slice after each turn and emit
+  `toolCall`/`toolOutput` transcript events without touching `Tool` conformances at
+  all; (2) instrumenting each `Tool.call(arguments:)` directly, wrapping the caller's
+  tool in a recording decorator, is the fallback if (1)'s entries turn out to lack
+  enough detail. Neither is implemented: `RoutedSession`/`RoutedLLM` currently has no
+  `tools:` parameter anywhere in its API, so there is no tool-calling code path to
+  exercise or test yet — this is deferred until tool support is added, at which point
+  (1) is the preferred mechanism to wire in first.
 - **`fork()` inherits.** The child takes `routerID`, the recorder, and
   `parentID = self.id` from `self`. No fork overload accepts a recorder, so you can't
   fork into an unrecorded or ungrouped state.
@@ -561,26 +704,49 @@ since local models still see sensitive prompts.
 
 ## Decisions
 
-- **Runtime:** MLX only (mlx-swift-lm); no llama backend.
+- **Runtime:** MLX only (mlx-swift-lm) for weights/inference; no llama backend.
+- **Session engine:** Apple's `LanguageModelSession` (`FoundationModels`, macOS 27+)
+  is the load-bearing session surface, not `MLXLMCommon`'s `ChatSession` — **implemented**:
+  `MLXFoundationModelsContainer` (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`)
+  constructs and drives it, backed by `MLXLanguageModel` (`MLXFoundationModels`). No
+  `ChatSession` construction and no hand-rolled generation/tool-dispatch loop anywhere
+  in `Sources/FoundationModelsRouter`. `fork()`'s cheap-prefix-reuse mechanism under
+  this backend is **split/blocked** (see Backends) — verified against the pinned
+  `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`, which has no persisted-cache
+  mechanism at the pinned revision; `KVCache.copy()` does not apply and there is
+  currently nothing to re-derive it against.
 - **Platform:** macOS 27+ / FoundationModels v2 SDK; full `MLXFoundationModels` +
   `MLXGuidedGeneration` stack, no pre-27 fallback (branch dep until PR #334 merges).
-- **Guided generation:** xgrammar via `MLXGuidedGeneration`, in three shapes — typed
-  (`generating: T.self`, `@Generable`, decoded), dynamic JSON (`matching: jsonSchema`
+- **Guided generation:** xgrammar via `MLXGuidedGeneration`, invoked *underneath*
+  `MLXLanguageModel`'s `Executor` when `LanguageModelSession.respond(to:schema:)` is
+  called — never by a loop of our own (**implemented**, verified by reading the
+  Executor's source). Three shapes — typed (`generating: T.self`, `@Generable`,
+  decoded via `T.generationSchema` directly), dynamic JSON (`matching: jsonSchema`
   → `JSONValue`, for runtime schemas with no Swift type, e.g. an MCP tool), and raw
-  (`following: Grammar` → text, also what a guided session binds). Grammar source is
-  the caller's.
-- **Sessions & KV cache:** a session owns its KV cache and **retains its creating
-  profile** (`session.profile`), so resident models stay alive for its lifetime;
-  `fork()` copies the prefilled prefix into a child; a session's cache frees on
-  release. KV is pooled/reclaimable (separate from pinned weights); wide fork fan-out
-  needs a KV budget + concurrency bound.
+  JSON-Schema (`following: .jsonSchema(_)` → text, also what a guided session binds).
+  The dynamic/raw shapes compile a caller's JSON Schema text into a `GenerationSchema`
+  via the hand-written `RuntimeJSONSchemaConverter` (`DynamicGenerationSchema`-based,
+  not `JSONDecoder`-based — see Guided generation for why `GenerationSchema`'s own
+  `Codable` decode doesn't work for a foreign schema), covering object/array/scalar/enum
+  constructs. **`following: .ebnf(_)` is unsupported and throws a typed error** —
+  `LanguageModelSession` has no raw-grammar entry point, only a typed `schema:`
+  parameter.
+- **Sessions & KV cache:** a session **retains its creating profile**
+  (`session.profile`), so resident models stay alive for its lifetime. `fork()`
+  produces an independent, correctness-scoped child session (nested transcript,
+  freed on release) but does **not** reuse the parent's prefilled-prefix compute —
+  verified split/blocked against the pinned `mlx-swift-lm` dependency, which has no
+  persisted-cache executor to wire a reuse mechanism to (see Backends and "Sessions
+  & KV cache" for the citation). `SessionKVCache` stays an inert copy/free lifecycle
+  contract for every current conformer, live included.
 - **Concurrency:** generation is serialized per resident model (FIFO, one at a time);
   `fork()` fan-out is bounded by `maxConcurrentForks` and queues for admission — both
   on a fair async semaphore. Guided output is whole-chunk; only unconstrained text
   streams.
 - **Sessions:** each session is an `actor` with its own `workingDirectory` (host;
-  default a fresh temp subdir); many coexist in one process over the shared resident
-  models, with separate working directories as cooperative isolation.
+  defaults to the session's recording directory); many coexist in one process over
+  the shared resident models, with separate working directories as cooperative
+  isolation.
 - **Transcripts:** the Router is the recording root (`id: ULID`, time-sortable); every
   session is **born holding** the Router's recorder (non-optional; `.none` is a no-op
   sink) and records through one bracketed generation chokepoint, so an unrecorded
@@ -627,6 +793,19 @@ since local models still see sensitive prompts.
     `transcript.jsonl` nested by fork lineage; `.jsonl` / `.inMemory` / `.none` sinks.
     Unit-testable with `.inMemory`.
 
+**Pivot note (resolved):** milestones 6 (tool integration), 8 (guided generation),
+and 9 (session fork) were scoped against `ModelContainer`/`ChatSession` directly.
+`RoutedSession` is now built on `LanguageModelSession` (see Backends):
+milestone 8's guided generation is **implemented** against the real backend
+(`MLXFoundationModelsContainer` + `RuntimeJSONSchemaConverter`, `.ebnf` blocked with
+a typed error); milestone 9's `fork()` is **split/blocked** on the cheap-prefix-reuse
+half specifically (kept as a correctness-only primitive) — verified, not assumed,
+against the pinned `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`.
+Milestone 6 (tool integration) is unaffected in practice: `RoutedSession`/`RoutedLLM`
+still has no `tools:` parameter, so there is nothing tool-specific to re-scope yet
+beyond the transcript tool-call recording mechanism identified in "Transcripts &
+recording."
+
 ## Testing
 
 Unit-testable pieces (profiling, footprint math, joint allocation, diagnostics)
@@ -643,6 +822,21 @@ path end-to-end with **deliberately tiny models** to keep download/CI cost low:
 - Asserts, in one resolved profile: progress advances `sizing → downloading →
   loading → ready`; a `profile.standard` session returns non-empty text;
   `profile.embedding.embed` returns vectors of the expected dimension; a guided
-  session honors its grammar; and a `fork()` reuses the prefix and frees its cache on
-  release — all three models co-resident. Recording asserts a fork's `transcript.jsonl`
-  nests under its parent's directory and the merged log is totally ordered by `seq`.
+  session honors its grammar — all three models co-resident. Recording asserts a
+  fork's `transcript.jsonl` nests under its parent's directory and the merged log is
+  totally ordered by `seq`. Per the resolved "Sessions & KV cache" open question,
+  `fork()`'s assertion is lineage/independent-generation only (no prefix-reuse/cache-release
+  assertion is written, since that mechanism does not exist against the pinned
+  dependency — see Backends).
+
+Additionally, GPU-free unit coverage backs the guided-generation resolution
+directly (`Tests/FoundationModelsRouterTests/LanguageModelSessionBackendTests.swift`):
+`GenerationSchemaDecodingTests` proves — with real, run assertions against the
+actual `FoundationModels` types, not comments — that `GenerationSchema`'s `Codable`
+conformance rejects a caller's plain JSON Schema text; `RuntimeJSONSchemaConverterTests`
+proves the hand-written converter used instead actually compiles a real
+`GenerationSchema` for every construct it claims to support (object, nested object,
+array, string/number/integer/boolean, closed enum, plus the schema derived from a
+real `@Generable` type) and throws a typed error for what it doesn't (`oneOf`, a
+malformed array). None of this needs network or GPU: constructing a schema value
+never touches a model.

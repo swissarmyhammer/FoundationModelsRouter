@@ -17,8 +17,13 @@ import Foundation
 /// the chokepoint runs inside the model's per-model serial gate
 /// (``RoutedModel/serialGate``, a fair FIFO ``AsyncSemaphore`` at value 1) that a
 /// session shares with all its forks, so calls on one model queue rather than
-/// overlap — MLX generation runs a single GPU stream. The raw model/`ChatSession`
-/// is never vended.
+/// overlap — MLX generation runs a single GPU stream. The generation itself runs
+/// through Apple's own `LanguageModelSession` (`FoundationModels`, macOS 27+),
+/// backed by a resident MLX model conformed to the `LanguageModel` protocol via
+/// `MLXLanguageModel` (`MLXFoundationModels`) — never `MLXLMCommon`'s own
+/// `ChatSession`, and never a hand-rolled generation loop of our own (see
+/// plan.md's "Backends" section). The raw model/`LanguageModelSession` is never
+/// vended to callers; ``RoutedSession`` is the only generation surface.
 ///
 /// Its identity and directory accessors are `nonisolated` immutables readable
 /// without awaiting.
@@ -75,17 +80,25 @@ public protocol RoutedSession: Actor {
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
-    /// Forks a child session that continues this one's conversation.
+    /// Forks a child session over the same resident model.
     ///
-    /// The child's KV cache **begins as a copy of this session's** (via
-    /// ``SessionKVCache/copy()``), so it inherits the prefilled prefix's compute
-    /// and then diverges independently rather than replaying the transcript. The
-    /// child takes a fresh id with ``parentId`` set to this session's id and its
-    /// ``recordingDirectory`` nested directly under the parent's, so the on-disk
-    /// transcript tree mirrors the fork lineage regardless of `workingDirectory`;
-    /// a guided session's fork inherits its ``grammar``. The child retains the ``profile`` so resident
-    /// models stay alive, and its cache dies with it (ARC) — releasing a fork
-    /// frees its KV.
+    /// The child takes a fresh id with ``parentId`` set to this session's id and
+    /// its ``recordingDirectory`` nested directly under the parent's, so the
+    /// on-disk transcript tree mirrors the fork lineage regardless of
+    /// `workingDirectory`; a guided session's fork inherits its ``grammar``. The
+    /// child retains the ``profile`` so resident models stay alive, and its
+    /// (currently inert) ``SessionKVCache`` dies with it (ARC) — releasing a
+    /// fork frees whatever it holds.
+    ///
+    /// **Not yet a cheap prefix-reuse primitive.** The child's cache begins as a
+    /// ``SessionKVCache/copy()`` of the parent's, but under the real
+    /// `LanguageModelSession`-backed generation path that object carries no
+    /// actual MLX KV state to copy (see ``SessionKVCache``'s documentation) —
+    /// `fork()` gives independent, correctly-scoped child sessions, not the
+    /// "inherits the parent's prefilled-prefix compute" performance property
+    /// this primitive originally targeted. See plan.md's "Sessions & KV cache"
+    /// section for the open question and what was actually verified against the
+    /// pinned `mlx-swift-lm` dependency.
     ///
     /// At most the router's `maxConcurrentForks` fork sessions over one model may
     /// be in flight at once; a fork past that ceiling awaits a free slot, freed

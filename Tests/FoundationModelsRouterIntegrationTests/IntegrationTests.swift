@@ -244,7 +244,13 @@ struct IntegrationTests {
             wrapping: DownloadObservingLoader(
                 wrapped: LiveModelLoader(
                     downloader: #hubDownloader(),
-                    tokenizerLoader: #huggingFaceTokenizerLoader()
+                    tokenizerLoader: #huggingFaceTokenizerLoader(),
+                    weightsLocation: { id in
+                        HubClient.default.cache?.repoDirectory(
+                            repo: Repo.ID(rawValue: id) ?? Repo.ID(namespace: id, name: ""),
+                            kind: .model
+                        ) ?? FileManager.default.temporaryDirectory
+                    }
                 ),
                 observer: byteObserver
             ),
@@ -320,10 +326,13 @@ struct IntegrationTests {
         if case .string = object["city"] {} else { Issue.record("'city' should be a string") }
         if case .string = object["country"] {} else { Issue.record("'country' should be a string") }
 
-        // 5. A fork reuses the prefix (its cache begins as a real MLX
-        //    KVCache.copy() of the parent's) and frees its cache on release.
-        //    Fork lineage is observable through the public surface; the KV
-        //    copy/free object contract is asserted with a spy in the unit suite.
+        // 5. A fork continues the parent's conversation as an independent child
+        //    session. Its ``SessionKVCache`` is still just the copy/free object
+        //    contract (asserted with a spy in the unit suite) — under the real
+        //    `LanguageModelSession`-backed live path it is not yet wired to any
+        //    real prefix-compute reuse (see plan.md's "Sessions & KV cache" open
+        //    question); fork lineage and independent generation are what this
+        //    asserts here.
         var child: RoutedSession? = try await session.fork(workingDirectory: nil)
         #expect(child?.parentId == session.id)
         #expect(child?.id != session.id)
@@ -336,9 +345,9 @@ struct IntegrationTests {
         let childReply = try await #require(child).respond(to: "Say hi in one word.")
         #expect(!childReply.isEmpty)
 
-        // Dropping the only reference releases the fork, freeing its cache (ARC
-        // drops the real MLX cache). No other binding retains it, so this is a
-        // genuine release; the parent is unaffected and keeps generating.
+        // Dropping the only reference releases the fork, freeing its (inert)
+        // cache object. No other binding retains it, so this is a genuine
+        // release; the parent is unaffected and keeps generating.
         child = nil
         let afterRelease = try await session.respond(to: "Still there?")
         #expect(!afterRelease.isEmpty)
