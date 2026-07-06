@@ -19,7 +19,7 @@ import Foundation
 /// chokepoint the handle was born holding.
 ///
 /// ```swift
-/// let profile = try await router.resolve(definition, reporting: progress)
+/// let profile = try await router.resolve(profile: definition, reporting: progress)
 /// // Both tools share profile.flash's one resident model — no second load.
 /// let summarizer = SummarizeTool(model: profile.flash)
 /// let titler = SummarizeTool(model: profile.flash)
@@ -61,7 +61,7 @@ public struct SummarizeTool: Sendable {
     /// - Parameter text: The text to condense.
     /// - Returns: The model's summary.
     /// - Throws: Any error thrown by the underlying generation.
-    public func summarize(_ text: String) async throws -> String {
+    public func summarize(text: String) async throws -> String {
         let session = model.makeSession(instructions: instructions)
         return try await session.respond(to: text)
     }
@@ -95,7 +95,7 @@ public struct EmbedTool: Sendable {
     /// - Parameter texts: The strings to embed.
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the underlying embedder.
-    public func embed(_ texts: [String]) async throws -> [[Float]] {
+    public func embed(texts: [String]) async throws -> [[Float]] {
         try await model.embed(texts: texts)
     }
 }

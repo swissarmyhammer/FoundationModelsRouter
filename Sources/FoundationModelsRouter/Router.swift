@@ -198,7 +198,7 @@ public actor Router {
     /// - Throws: ``ResolutionFailure`` when no trio co-fits the budget, or any
     ///   download/load error from the ``ModelLoader``.
     public func resolve(
-        _ def: ProfileDefinition,
+        profile def: ProfileDefinition,
         reporting progress: ResolutionProgress
     ) async throws -> LanguageModelProfile {
         guard case .idle = residencyState else {
@@ -212,22 +212,22 @@ public actor Router {
             if case .resolving = residencyState { residencyState = .idle }
         }
 
-        await beginSizing(progress)
+        await beginSizing(progress: progress)
         let budget = hostBudget()
-        let footprints = await sizeCandidates(def)
+        let footprints = await sizeCandidates(profile: def)
 
-        let resolution = try await runJointFit(def, budget: budget, footprints: footprints, progress: progress)
-        await markChosen(resolution, progress: progress)
+        let resolution = try await runJointFit(profile: def, budget: budget, footprints: footprints, progress: progress)
+        await markChosen(resolution: resolution, progress: progress)
 
         do {
-            await setPhase(.downloading, progress)
+            await setPhase(.downloading, progress: progress)
             // Both generation slots download and load identically — only the chosen
             // ref and slot differ — so they run through one loop over the (ref, slot)
             // pairs in standard-before-flash order. The embedding slot uses a
             // different loader call (no `context`) and stays separate.
             var generationContainers: [ModelSlot: any LoadedLLMContainer] = [:]
             for (chosen, slot) in [(resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash)] {
-                generationContainers[slot] = try await download(chosen, slot: slot, progress: progress) {
+                generationContainers[slot] = try await download(ref: chosen, slot: slot, progress: progress) {
                     try await loader.loadLLM(ref: $0, slot: $1, context: def.context, reporting: $2)
                 }
             }
@@ -238,11 +238,11 @@ public actor Router {
             else {
                 preconditionFailure("download loop populates both .standard and .flash generation slots")
             }
-            let embeddingContainer = try await download(resolution.embedding, slot: .embedding, progress: progress) {
+            let embeddingContainer = try await download(ref: resolution.embedding, slot: .embedding, progress: progress) {
                 try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2)
             }
 
-            await setPhase(.loading, progress)
+            await setPhase(.loading, progress: progress)
             // `finalize` takes the common `any LoadedModelContainer` base, so the
             // heterogeneous LLM/embedding containers upcast into one pair list and
             // finalize through a single loop — matching the download section above.
@@ -252,13 +252,13 @@ public actor Router {
                 (.embedding, embeddingContainer),
             ]
             for (slot, container) in finalizePairs {
-                try await finalize(slot, container: container, progress: progress)
+                try await finalize(slot: slot, container: container, progress: progress)
             }
 
-            await complete(progress)
+            await complete(progress: progress)
             let residencyToken = ULID.generate()
             let profile = buildProfile(
-                def,
+                definition: def,
                 resolution: resolution,
                 standardContainer: standardContainer,
                 flashContainer: flashContainer,
@@ -266,13 +266,13 @@ public actor Router {
                 residencyToken: residencyToken
             )
             residencyState = .resident(residencyToken)
-            recordResolvedProfile(def, resolution: resolution)
+            recordResolvedProfile(definition: def, resolution: resolution)
             writeManifest()
             return profile
         } catch {
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow.
-            await recordLoadFailure(error, progress: progress)
+            await recordLoadFailure(error: error, progress: progress)
             throw error
         }
     }
@@ -312,7 +312,7 @@ public actor Router {
     /// - Parameters:
     ///   - def: The authored profile that was resolved, for its name.
     ///   - resolution: The joint resolution naming the chosen model per slot.
-    private func recordResolvedProfile(_ def: ProfileDefinition, resolution: JointResolution) {
+    private func recordResolvedProfile(definition def: ProfileDefinition, resolution: JointResolution) {
         resolvedProfiles.append(
             RouterManifest.ResolvedProfile(
                 definitionName: def.name,
@@ -379,14 +379,14 @@ public actor Router {
     /// Sizes every candidate across all slots into raw footprint bytes at the
     /// profile's context, ready for the joint-fit closure.
     private func sizeCandidates(
-        _ def: ProfileDefinition
+        profile def: ProfileDefinition
     ) async -> [ModelRef: Result<Int64, RepoMetadataError>] {
         var out: [ModelRef: Result<Int64, RepoMetadataError>] = [:]
         for (slot, refs) in def.candidatesBySlot {
             for ref in refs {
                 let result = await footprintBytes(for: ref, slot: slot, context: def.context)
                 if let existing = out[ref] {
-                    out[ref] = Self.preferLarger(existing, result)
+                    out[ref] = Self.preferLarger(left: existing, right: result)
                 } else {
                     out[ref] = result
                 }
@@ -421,8 +421,8 @@ public actor Router {
     /// Merges two footprint results for the same ref, keeping the larger
     /// (more conservative) successful figure and preferring success over failure.
     private static func preferLarger(
-        _ lhs: Result<Int64, RepoMetadataError>,
-        _ rhs: Result<Int64, RepoMetadataError>
+        left lhs: Result<Int64, RepoMetadataError>,
+        right rhs: Result<Int64, RepoMetadataError>
     ) -> Result<Int64, RepoMetadataError> {
         switch (lhs, rhs) {
         case let (.success(a), .success(b)):
@@ -441,7 +441,7 @@ public actor Router {
     /// Runs the pure joint fit and, on failure, records the diagnostics into the
     /// progress before rethrowing.
     private func runJointFit(
-        _ def: ProfileDefinition,
+        profile def: ProfileDefinition,
         budget: Int64,
         footprints: [ModelRef: Result<Int64, RepoMetadataError>],
         progress: ResolutionProgress
@@ -451,7 +451,7 @@ public actor Router {
                 footprints[ref] ?? .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized"))
             }
         } catch let failure as ResolutionFailure {
-            await recordFailure(failure, progress: progress)
+            await recordFailure(failure: failure, progress: progress)
             throw failure
         }
     }
@@ -476,30 +476,25 @@ public actor Router {
     /// - Returns: The resident container produced by `load`.
     /// - Throws: Any error thrown by `load`.
     private func download<C>(
-        _ chosen: ModelRef,
+        ref chosen: ModelRef,
         slot: ModelSlot,
         progress: ResolutionProgress,
         load: (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void) async throws -> C
     ) async throws -> C {
-        await setSlotState(slot, .downloading, progress: progress)
+        await setSlotState(slot, to: .downloading, progress: progress)
         let reporting = Self.reporter(slot: slot, progress: progress)
         return try await load(chosen, slot, reporting)
     }
 
     /// Preloads a downloaded container and marks its slot ready.
     private func finalize(
-        _ slot: ModelSlot,
+        slot: ModelSlot,
         container: any LoadedModelContainer,
         progress: ResolutionProgress
     ) async throws {
-        await setSlotState(slot, .loading, progress: progress)
+        await setSlotState(slot, to: .loading, progress: progress)
         try await loader.preload(container: container)
-        await MainActor.run {
-            var sp = progress.slots[slot] ?? SlotProgress()
-            sp.state = .ready
-            progress.slots[slot] = sp
-            progress.refreshFraction()
-        }
+        await setSlotState(slot, to: .ready, progress: progress)
     }
 
     /// A best-effort, monotonic download-progress callback that updates a slot's
@@ -548,32 +543,32 @@ public actor Router {
     /// Assembles the resolved profile from the loaded containers and the
     /// per-slot resolutions, stamping each handle with the router's id and recorder.
     private func buildProfile(
-        _ def: ProfileDefinition,
+        definition def: ProfileDefinition,
         resolution: JointResolution,
         standardContainer: any LoadedLLMContainer,
         flashContainer: any LoadedLLMContainer,
         embeddingContainer: any LoadedEmbeddingContainer,
         residencyToken: ULID
     ) -> LanguageModelProfile {
-        let embeddingRes = Self.slotResolution(resolution, slot: .embedding)
+        let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
         return LanguageModelProfile(
             definitionName: def.name,
             standard: makeRoutedLLM(
                 slot: .standard,
                 chosen: resolution.standard,
                 container: standardContainer,
-                resolution: Self.slotResolution(resolution, slot: .standard)
+                resolution: Self.slotResolution(for: resolution, slot: .standard)
             ),
             flash: makeRoutedLLM(
                 slot: .flash,
                 chosen: resolution.flash,
                 container: flashContainer,
-                resolution: Self.slotResolution(resolution, slot: .flash)
+                resolution: Self.slotResolution(for: resolution, slot: .flash)
             ),
             embedding: RoutedEmbedder(
                 slot: .embedding,
                 chosen: resolution.embedding,
-                footprintBytes: Self.chosenFootprint(embeddingRes),
+                footprintBytes: Self.chosenFootprint(for: embeddingRes),
                 resolution: embeddingRes,
                 container: embeddingContainer,
                 routerId: id,
@@ -607,7 +602,7 @@ public actor Router {
         RoutedLLM(
             slot: slot,
             chosen: chosen,
-            footprintBytes: Self.chosenFootprint(resolution),
+            footprintBytes: Self.chosenFootprint(for: resolution),
             resolution: resolution,
             container: container,
             routerId: id,
@@ -626,7 +621,7 @@ public actor Router {
     /// allocation order — a missing slot is a broken invariant, not a runtime
     /// condition, so it traps rather than returning an optional the callers would
     /// have to unwrap.
-    private static func slotResolution(_ resolution: JointResolution, slot: ModelSlot) -> SlotResolution {
+    private static func slotResolution(for resolution: JointResolution, slot: ModelSlot) -> SlotResolution {
         guard let slotRes = resolution.slots.first(where: { $0.slot == slot }) else {
             preconditionFailure("JointResolution records a resolution for every slot; missing \(slot)")
         }
@@ -635,14 +630,14 @@ public actor Router {
 
     /// The chosen candidate's `× 1.2` footprint estimate for a slot, or `0` when
     /// unrecorded.
-    private static func chosenFootprint(_ slotRes: SlotResolution) -> Int64 {
+    private static func chosenFootprint(for slotRes: SlotResolution) -> Int64 {
         slotRes.considered.first { $0.verdict == .chosen }?.estimatedFootprintBytes ?? 0
     }
 
     // MARK: - Progress mutations (main actor)
 
     /// Enters the sizing phase with all slots sizing.
-    private func beginSizing(_ progress: ResolutionProgress) async {
+    private func beginSizing(progress: ResolutionProgress) async {
         await MainActor.run {
             progress.phase = .sizing
             progress.slots = [
@@ -656,7 +651,7 @@ public actor Router {
 
     /// Records the chosen candidate per slot, resetting each to pending for the
     /// download phase.
-    private func markChosen(_ resolution: JointResolution, progress: ResolutionProgress) async {
+    private func markChosen(resolution: JointResolution, progress: ResolutionProgress) async {
         await MainActor.run {
             for slotRes in resolution.slots {
                 var sp = progress.slots[slotRes.slot] ?? SlotProgress()
@@ -669,14 +664,14 @@ public actor Router {
     }
 
     /// Sets the overall phase.
-    private func setPhase(_ phase: ResolutionProgress.Phase, _ progress: ResolutionProgress) async {
+    private func setPhase(_ phase: ResolutionProgress.Phase, progress: ResolutionProgress) async {
         await MainActor.run { progress.phase = phase }
     }
 
     /// Sets a single slot's state and refreshes the overall fraction.
     private func setSlotState(
         _ slot: ModelSlot,
-        _ state: SlotProgress.State,
+        to state: SlotProgress.State,
         progress: ResolutionProgress
     ) async {
         await MainActor.run {
@@ -688,7 +683,7 @@ public actor Router {
     }
 
     /// Marks the resolution complete: every slot ready, the bar full.
-    private func complete(_ progress: ResolutionProgress) async {
+    private func complete(progress: ResolutionProgress) async {
         await MainActor.run {
             for (slot, var sp) in progress.slots {
                 sp.state = .ready
@@ -702,7 +697,7 @@ public actor Router {
 
     /// Records a joint-fit failure into the progress: the unsatisfiable slots are
     /// marked failed and the phase carries the diagnostic description.
-    private func recordFailure(_ failure: ResolutionFailure, progress: ResolutionProgress) async {
+    private func recordFailure(failure: ResolutionFailure, progress: ResolutionProgress) async {
         await MainActor.run {
             for slotRes in failure.slots {
                 var sp = progress.slots[slotRes.slot] ?? SlotProgress()
@@ -719,7 +714,7 @@ public actor Router {
 
     /// Records a download/load/preload failure into the progress: every slot not
     /// already resident is marked failed and the phase carries the error text.
-    private func recordLoadFailure(_ error: Error, progress: ResolutionProgress) async {
+    private func recordLoadFailure(error: Error, progress: ResolutionProgress) async {
         let message = String(describing: error)
         await MainActor.run {
             for (slot, var sp) in progress.slots where sp.state != .ready {

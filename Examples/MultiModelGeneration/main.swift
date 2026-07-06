@@ -72,7 +72,7 @@ let progressTask = Task { @MainActor in
     }
 }
 
-let profile = try await router.resolve(demo, reporting: progress)
+let profile = try await router.resolve(profile: demo, reporting: progress)
 progressTask.cancel()
 
 print(

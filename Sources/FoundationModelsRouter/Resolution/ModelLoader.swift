@@ -150,5 +150,7 @@ extension ModelLoader {
     /// unload to a later milestone) inherits this default, so only loaders that
     /// truly manage residency — and the test stubs that spy on eviction —
     /// override it.
+    ///
+    /// - Parameter container: The container to evict.
     public func evict(container: any LoadedModelContainer) async {}
 }

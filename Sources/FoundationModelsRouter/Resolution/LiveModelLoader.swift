@@ -260,6 +260,12 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
     /// and reads the vectors back to `[[Float]]`. Static so ``LiveModelLoader``
     /// can probe the dimension at load without a wrapper instance. Mirrors the
     /// fork's own `MLXEmbedders` usage example.
+    ///
+    /// - Parameters:
+    ///   - texts: The strings to embed.
+    ///   - container: The embedder model container to use.
+    /// - Returns: One vector per input string.
+    /// - Throws: If embedding computation fails.
     static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {
         guard !texts.isEmpty else { return [] }
         return await container.perform { context in
@@ -456,6 +462,9 @@ public struct LiveModelLoader: ModelLoader {
     /// container loads synchronously in `loadEmbedder`), so this hook is a
     /// no-op seam for any future explicit warm-up (e.g. a throwaway forward
     /// pass beyond weight materialization).
+    ///
+    /// - Parameter container: The container to warm.
+    /// - Throws: If warm-up fails.
     public func preload(container: any LoadedModelContainer) async throws {}
 
     /// Evicts a loaded container, freeing the GPU memory its weights hold.
@@ -466,6 +475,8 @@ public struct LiveModelLoader: ModelLoader {
     /// so a subsequent load reloads from the on-disk snapshot); a no-op for any
     /// other container (e.g. the embedding container, which has no equivalent
     /// eviction hook today).
+    ///
+    /// - Parameter container: The container to evict.
     public func evict(container: any LoadedModelContainer) async {
         guard let generation = container as? MLXFoundationModelsContainer else { return }
         await generation.model.evict()
@@ -578,6 +589,9 @@ public struct UnconfiguredModelLoader: ModelLoader {
     ///
     /// This sentinel has no container to warm. Real loading is
     /// configured/injected via ``LiveModelLoader`` (milestone 7).
+    ///
+    /// - Parameter container: The container to warm.
+    /// - Throws: Always throws ``ModelLoaderError/notConfigured``.
     public func preload(container: any LoadedModelContainer) async throws {
         throw ModelLoaderError.notConfigured
     }
