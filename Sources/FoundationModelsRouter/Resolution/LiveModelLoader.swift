@@ -104,26 +104,52 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     /// prior `ChatSession`-backed behavior), so this yields only the new suffix
     /// of each snapshot, computed against the previous one.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-        let session = LanguageModelSession(model: model, instructions: instructions)
         let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+        let model = self.model
+        let instructions = self.instructions
         return AsyncThrowingStream { continuation in
             let task = Task {
-                do {
-                    var previous = ""
-                    for try await snapshot in session.streamResponse(to: prompt, options: options) {
-                        let current = snapshot.content
-                        let delta = Self.suffix(of: current, after: previous)
-                        if !delta.isEmpty {
-                            continuation.yield(delta)
-                        }
-                        previous = current
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+                await Self.pumpStream(
+                    prompt: prompt,
+                    options: options,
+                    model: model,
+                    instructions: instructions,
+                    into: continuation
+                )
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    /// Drives a fresh `LanguageModelSession`'s cumulative-snapshot stream to
+    /// completion, forwarding each snapshot's new suffix into `continuation`
+    /// and finishing (or failing) it when the underlying stream ends.
+    ///
+    /// Extracted out of ``streamResponse(to:maxTokens:)`` so that method's
+    /// `AsyncThrowingStream` closure only has to spawn a `Task` and await this
+    /// helper — the do/catch, for-loop, and delta-check live here instead of
+    /// stacked five levels deep inside the stream-building closure.
+    private static func pumpStream(
+        prompt: String,
+        options: GenerationOptions,
+        model: MLXLanguageModel,
+        instructions: String?,
+        into continuation: AsyncThrowingStream<String, Error>.Continuation
+    ) async {
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        var previous = ""
+        do {
+            for try await snapshot in session.streamResponse(to: prompt, options: options) {
+                let current = snapshot.content
+                let delta = suffix(of: current, after: previous)
+                if !delta.isEmpty {
+                    continuation.yield(delta)
+                }
+                previous = current
+            }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
         }
     }
 
