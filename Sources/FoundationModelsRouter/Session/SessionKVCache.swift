@@ -15,8 +15,10 @@ import Foundation
 /// `LanguageModelSession`-backed generation path (``MLXFoundationModelsContainer``),
 /// a fresh `LanguageModelSession` is constructed **per call** rather than held
 /// across calls on this seam, so there is no live per-session engine object
-/// here for a live conformance to wrap — the live container inherits the inert
-/// default below unchanged. This protocol is kept because the fork/copy/free
+/// here for a live conformance to wrap — every session (root or
+/// live-container-backed) is simply handed a directly-constructed
+/// ``InertKVCache`` at creation (see ``RoutedLLM``), not one vended through the
+/// container. This protocol is kept because the fork/copy/free
 /// *lifecycle* contract (a child's cache born from a copy, freed independently
 /// on release) is still real and still unit-tested; only the "backed by actual
 /// reusable compute" property is not currently true for any conformer. See
@@ -40,21 +42,6 @@ public protocol SessionKVCache: AnyObject, Sendable {
     ///
     /// - Returns: A new cache that starts as a copy of this one.
     func copy() -> any SessionKVCache
-}
-
-extension LoadedLLMContainer {
-    /// The default KV cache for a new session over this model: an inert cache
-    /// that holds nothing and frees nothing.
-    ///
-    /// Every current conformer — including the live ``MLXFoundationModelsContainer``
-    /// (see its documentation) — inherits this inert default so a vended
-    /// session always has a well-defined cache to own, copy on fork, and free
-    /// on release, with no GPU dependency.
-    ///
-    /// - Returns: A fresh inert ``SessionKVCache``.
-    public func makeCache() -> any SessionKVCache {
-        InertKVCache()
-    }
 }
 
 /// The inert ``SessionKVCache`` a container gets by default until it wires a real

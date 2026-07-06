@@ -33,27 +33,57 @@ private let defaultMaxTokens = 8192
 
 /// The live ``LoadedLLMContainer``: wraps an `MLXLanguageModel` — the
 /// `FoundationModels.LanguageModel` protocol conformance `MLXFoundationModels`
-/// provides over a resident MLX `ModelContainer` — and drives every generation
-/// call through a real `LanguageModelSession` built over it.
+/// provides over a resident MLX `ModelContainer` — and manufactures the
+/// ``LanguageModelSessionBackend`` every generation call actually runs through.
 ///
-/// A fresh `LanguageModelSession` is constructed per call, mirroring this
-/// seam's existing one-shot contract (no per-turn conversation state is
-/// threaded through ``LoadedLLMContainer``; see ``SessionKVCache``'s
-/// documentation for why a persistent, cheaply-forkable session is not yet
-/// wired through this seam). Constructing a session is cheap: `MLXLanguageModel`
-/// is a small `Sendable` value whose actual weights are loaded once and cached
-/// by its own process-global cache, keyed by model id — building a session over
-/// it does not reload anything.
+/// This container no longer invokes generation itself (see
+/// ``LoadedLLMContainer/makeSession(instructions:)``); ``makeSession(instructions:)``
+/// below vends a ``MLXFoundationModelsSessionBackend`` that drives a real
+/// `LanguageModelSession` built over ``model``. Constructing a session is
+/// cheap: `MLXLanguageModel` is a small `Sendable` value whose actual weights
+/// are loaded once and cached by its own process-global cache, keyed by model
+/// id — building a session over it does not reload anything.
 struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
 
+    /// Manufactures a live session backend over ``model``.
+    ///
+    /// - Parameter instructions: The session's system instructions, or `nil`.
+    /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
+    ///   ``RoutedSession`` drives for its lifetime.
+    func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+        MLXFoundationModelsSessionBackend(model: model, instructions: instructions)
+    }
+}
+
+/// The live ``LanguageModelSessionBackend``: drives a real `LanguageModelSession`
+/// over a resident `MLXLanguageModel`.
+///
+/// **Not yet conversation-preserving.** A fresh `LanguageModelSession` is
+/// constructed per call, mirroring this seam's prior one-shot contract (no
+/// per-turn conversation state is threaded across calls yet; see
+/// ``SessionKVCache``'s documentation for why a persistent, cheaply-forkable
+/// session is not yet wired through this seam). ``makeFork()`` correspondingly
+/// vends an equivalent fresh backend rather than seeding from an accumulated
+/// transcript — there is none yet to seed from.
+final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Sendable {
+    /// The `LanguageModel` conformance a fresh `LanguageModelSession` is built
+    /// over for each call.
+    private let model: MLXLanguageModel
+
+    /// The system instructions every `LanguageModelSession` this backend
+    /// constructs is given.
+    private let instructions: String?
+
+    /// Creates a backend over a resident model and its session instructions.
+    init(model: MLXLanguageModel, instructions: String?) {
+        self.model = model
+        self.instructions = instructions
+    }
+
     /// Generates a complete text response through a real `LanguageModelSession`.
-    public func respond(
-        to prompt: String,
-        instructions: String?,
-        maxTokens: Int?
-    ) async throws -> String {
+    func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         let session = LanguageModelSession(model: model, instructions: instructions)
         let response = try await session.respond(
             to: prompt,
@@ -73,11 +103,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// contract is a stream of *fragments* a caller accumulates (mirroring the
     /// prior `ChatSession`-backed behavior), so this yields only the new suffix
     /// of each snapshot, computed against the previous one.
-    public func streamResponse(
-        to prompt: String,
-        instructions: String?,
-        maxTokens: Int?
-    ) -> AsyncThrowingStream<String, Error> {
+    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
         let session = LanguageModelSession(model: model, instructions: instructions)
         let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
         return AsyncThrowingStream { continuation in
@@ -125,12 +151,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// `LanguageModelSession` (which only accepts a typed `schema:` parameter,
     /// never a raw grammar string) and is not supported under this backend —
     /// see ``GuidedRequestError/ebnfNotSupportedByLanguageModelSession``.
-    public func respond(
-        to prompt: String,
-        instructions: String?,
-        following grammar: Grammar,
-        maxTokens: Int?
-    ) async throws -> String {
+    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
         try grammar.validateForXGrammar()
         switch grammar {
         case .ebnf:
@@ -147,10 +168,14 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         }
     }
 
-    // `makeCache()` is inherited from `LoadedLLMContainer`'s default (an inert,
-    // no-op `SessionKVCache`): a fresh `LanguageModelSession` per call (above)
-    // carries no cache of its own to wrap, so there is nothing real for this
-    // seam to back today — see ``SessionKVCache``'s documentation.
+    /// Vends a fresh backend over the same model and instructions.
+    ///
+    /// There is no accumulated transcript to seed from yet (see this type's
+    /// documentation), so a fork today is simply another independent backend —
+    /// equivalent to, not derived from, the parent.
+    func makeFork() -> any LanguageModelSessionBackend {
+        MLXFoundationModelsSessionBackend(model: model, instructions: instructions)
+    }
 }
 
 /// The live embedding container: wraps a loaded `EmbedderModelContainer` and the

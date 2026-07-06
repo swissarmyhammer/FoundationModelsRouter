@@ -52,8 +52,8 @@ comments:
 
     Task is done and verified. Leaving in `doing` for `/review` per the implement skill's contract (not moving to review myself).
   timestamp: 2026-07-06T13:52:39.082615+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: a580
 title: Adopt Apple LanguageModelSession as the actual session engine; remove ChatSession-based session path
 ---
 ## What

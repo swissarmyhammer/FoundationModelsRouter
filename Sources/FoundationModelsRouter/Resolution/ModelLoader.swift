@@ -50,75 +50,22 @@ public protocol LoadedModelContainer: Sendable {}
 /// funnels every public generation method through one recorder-bracketed
 /// chokepoint that calls into these entry points.
 public protocol LoadedLLMContainer: LoadedModelContainer {
-    /// Generates a complete text response to a prompt.
+    /// Manufactures a new live session backend over this resident model.
     ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - instructions: The session's system instructions, or `nil`.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the container's own default ceiling.
-    /// - Returns: The model's complete text response.
-    /// - Throws: If the generation fails.
-    func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String
-
-    /// Streams a text response to a prompt as it is produced.
+    /// This container no longer runs generation itself: every generation call a
+    /// vended ``RoutedSession`` performs runs through the
+    /// ``LanguageModelSessionBackend`` this factory returns, which is born
+    /// carrying `instructions` and (once a real conversation-preserving
+    /// conformer lands) accumulates conversation state across calls. Unit tests
+    /// inject a stub container whose backend returns canned text (and can be
+    /// made to throw); the live `ModelContainer` (see ``LiveModelLoader``)
+    /// returns a backend wrapping a real `LanguageModelSession` — exercised by
+    /// the gated integration suite (milestone 7).
     ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - instructions: The session's system instructions, or `nil`.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the container's own default ceiling.
-    /// - Returns: A stream of response fragments, finishing when generation
-    ///   completes or throwing if it fails.
-    func streamResponse(
-        to prompt: String,
-        instructions: String?,
-        maxTokens: Int?
-    ) -> AsyncThrowingStream<String, Error>
-
-    /// Generates a complete, grammar-constrained text response — the guided
-    /// (xgrammar) entry point a guided ``RoutedSession`` runs through.
-    ///
-    /// Guided output is whole-chunk: there is no constrained streaming variant.
-    /// The xgrammar engine — grammar compilation and constrained decode — lives
-    /// behind this seam, so unit tests inject a stub that performs the real
-    /// (GPU-free) grammar validation and returns canned text. A default
-    /// implementation (see ``LoadedLLMContainer/respond(to:instructions:following:)``)
-    /// validates the grammar then surfaces ``GenerationError/notWiredForLiveInference``,
-    /// while the live `ModelContainer` (see ``LiveModelLoader``) overrides it with
-    /// the real constrained decode — exercised by the gated integration suite
-    /// (milestone 7) — so no conformer without a real pipeline has to reimplement
-    /// the seam.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - instructions: The session's system instructions, or `nil`.
-    ///   - grammar: The grammar constraining the output.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the container's own default ceiling.
-    /// - Returns: The constrained text response.
-    /// - Throws: ``GuidedRequestError`` for an invalid grammar, or if the
-    ///   generation fails.
-    func respond(
-        to prompt: String,
-        instructions: String?,
-        following grammar: Grammar,
-        maxTokens: Int?
-    ) async throws -> String
-
-    /// Creates a fresh, empty KV cache for a new session over this model.
-    ///
-    /// A vended ``RoutedSession`` owns the returned cache for its lifetime and
-    /// frees it on release; a ``RoutedSession/fork(workingDirectory:)`` instead
-    /// copies the parent's via ``SessionKVCache/copy()``. A default
-    /// implementation (see ``LoadedLLMContainer/makeCache()``) returns an inert
-    /// cache, while the live `ModelContainer` (see ``LiveModelLoader``) overrides
-    /// it with a real MLX-backed cache — exercised by the gated integration suite
-    /// (milestone 7); unit tests inject a stub that records `copy()` and
-    /// free-on-release.
-    ///
-    /// - Returns: A new, empty KV cache for the session.
-    func makeCache() -> any SessionKVCache
+    /// - Parameter instructions: The session's system instructions, or `nil`.
+    /// - Returns: A new backend a vended ``RoutedSession`` drives for its
+    ///   lifetime.
+    func makeSession(instructions: String?) -> any LanguageModelSessionBackend
 }
 
 /// A loaded embedding model container — the seam the embedding computation runs

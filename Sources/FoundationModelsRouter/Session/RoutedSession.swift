@@ -147,7 +147,8 @@ actor RoutedSessionActor: RoutedSession {
     nonisolated let recordingDirectory: URL
     nonisolated let workingDirectory: URL
 
-    /// The resident container the model generation runs through. Never vended.
+    /// The resident container that manufactures the ``LanguageModelSessionBackend``
+    /// every call's generation runs through. Never vended.
     private nonisolated let container: any LoadedLLMContainer
 
     /// The slot this session's model fills, stamped onto recorded events.
@@ -250,26 +251,20 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        // A guided session constrains every response to its grammar, through the
-        // container's whole-chunk xgrammar entry point; an unguided session takes
-        // the plain path. Both funnel through the same chokepoint, which stamps the
-        // grammar (or `nil`) onto each event.
+        // The container is only a factory now: each call manufactures the backend
+        // that actually runs generation. A guided session constrains every
+        // response to its grammar, through the backend's whole-chunk xgrammar
+        // entry point; an unguided session takes the plain path. Both funnel
+        // through the same chokepoint, which stamps the grammar (or `nil`) onto
+        // each event.
+        let backend = container.makeSession(instructions: instructions)
         if let grammar {
             return try await generate(prompt: prompt, grammar: grammar) {
-                try await self.container.respond(
-                    to: prompt,
-                    instructions: self.instructions,
-                    following: grammar,
-                    maxTokens: maxTokens
-                )
+                try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
             }
         }
         return try await generate(prompt: prompt) {
-            try await self.container.respond(
-                to: prompt,
-                instructions: self.instructions,
-                maxTokens: maxTokens
-            )
+            try await backend.respond(to: prompt, maxTokens: maxTokens)
         }
     }
 
@@ -309,13 +304,10 @@ actor RoutedSessionActor: RoutedSession {
         // Accumulate the streamed chunks so the close event can carry the full
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
+        let backend = container.makeSession(instructions: instructions)
         _ = try await generate(prompt: prompt) {
             var response = ""
-            for try await chunk in self.container.streamResponse(
-                to: prompt,
-                instructions: self.instructions,
-                maxTokens: maxTokens
-            ) {
+            for try await chunk in backend.streamResponse(to: prompt, maxTokens: maxTokens) {
                 continuation.yield(chunk)
                 response += chunk
             }

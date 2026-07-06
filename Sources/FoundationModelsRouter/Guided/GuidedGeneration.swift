@@ -172,38 +172,6 @@ extension Grammar {
     }
 }
 
-extension LoadedLLMContainer {
-    /// The default guided-generation path for conformers without a real
-    /// constrained-decode pipeline: validate the grammar (real, GPU-free), then
-    /// surface the unwired seam.
-    ///
-    /// The live `ModelContainer` overrides this (see ``LiveModelLoader``) with the
-    /// real xgrammar `GuidedGenerationLoop` decode; the unit stubs either inherit
-    /// this fallback or override it to return canned constrained text. Either way
-    /// the grammar is validated first, so an unsupported grammar fails with a typed
-    /// ``GuidedRequestError`` before any decode.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - instructions: The session's system instructions, or `nil`.
-    ///   - grammar: The grammar constraining the output.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the container's own default ceiling. Unused by this fallback, which
-    ///     never generates.
-    /// - Returns: The constrained text response.
-    /// - Throws: ``GuidedRequestError`` for an invalid grammar, otherwise
-    ///   ``GenerationError/notWiredForLiveInference`` until milestone 7.
-    public func respond(
-        to prompt: String,
-        instructions: String?,
-        following grammar: Grammar,
-        maxTokens: Int?
-    ) async throws -> String {
-        try grammar.validateForXGrammar()
-        throw GenerationError.notWiredForLiveInference
-    }
-}
-
 /// The guided-generation surface on the generation handle.
 ///
 /// Like ``RoutedModel/makeSession(instructions:workingDirectory:)``, these arrive
