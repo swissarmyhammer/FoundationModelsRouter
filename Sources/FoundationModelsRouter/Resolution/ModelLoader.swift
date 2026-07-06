@@ -106,7 +106,7 @@ public protocol ModelLoader: Sendable {
     /// - Returns: A resident generation container.
     /// - Throws: If the download or load fails.
     func loadLLM(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -121,7 +121,7 @@ public protocol ModelLoader: Sendable {
     /// - Returns: A resident embedding container.
     /// - Throws: If the download or load fails.
     func loadEmbedder(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer

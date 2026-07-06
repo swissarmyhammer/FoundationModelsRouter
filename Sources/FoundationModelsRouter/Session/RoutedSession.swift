@@ -54,7 +54,7 @@ public protocol RoutedSession: Actor {
     /// for an unconstrained session.
     ///
     /// Set when the session is vended by
-    /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)`` and
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)`` and
     /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:)``.
     /// It travels with the session so ``fork(workingDirectory:)`` inherits it;
     /// ``streamResponse(to:)`` stays unconstrained regardless.
@@ -200,7 +200,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Creates a session. Internal: construction is only via
     /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
-    /// ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)`` or by
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)`` or by
     /// ``fork(workingDirectory:)``.
     init(
         profile: LanguageModelProfile,
@@ -272,7 +272,7 @@ actor RoutedSessionActor: RoutedSession {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.streamGenerating(prompt, maxTokens: maxTokens, into: continuation)
+                    try await self.streamGenerating(prompt: prompt, maxTokens: maxTokens, into: continuation)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -297,7 +297,7 @@ actor RoutedSessionActor: RoutedSession {
     /// - Throws: Any error thrown by the model, after the chokepoint records the
     ///   close event.
     private func streamGenerating(
-        _ prompt: String,
+        prompt: String,
         maxTokens: Int?,
         into continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {

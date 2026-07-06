@@ -185,7 +185,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
 ///
 /// The wrapper exists because `EmbedderModelContainer` exposes its model only
 /// through an async `perform` closure, so the dimension is not knowable
-/// synchronously from the raw container; ``LiveModelLoader/loadEmbedder(_:slot:reporting:)``
+/// synchronously from the raw container; ``LiveModelLoader/loadEmbedder(ref:slot:reporting:)``
 /// probes it once and stores it here. Embedding does not go through
 /// `LanguageModelSession` — `MLXEmbedders` has no `FoundationModels.LanguageModel`
 /// surface, so this stays on the direct `MLXEmbedders` pipeline (see plan.md's
@@ -327,7 +327,7 @@ public struct LiveModelLoader: ModelLoader {
     /// - Returns: The loaded generation container.
     /// - Throws: If the download or MLX container load fails.
     public func loadLLM(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -375,7 +375,7 @@ public struct LiveModelLoader: ModelLoader {
     /// - Returns: The loaded ``LiveEmbeddingContainer`` with its probed dimension.
     /// - Throws: If the download, MLX container load, or dimension probe fails.
     public func loadEmbedder(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
@@ -491,7 +491,7 @@ public struct UnconfiguredModelLoader: ModelLoader {
     /// - Returns: Never returns normally — this sentinel always throws.
     /// - Throws: ``ModelLoaderError/notConfigured``, always.
     public func loadLLM(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -510,7 +510,7 @@ public struct UnconfiguredModelLoader: ModelLoader {
     /// - Returns: Never returns normally — this sentinel always throws.
     /// - Throws: ``ModelLoaderError/notConfigured``, always.
     public func loadEmbedder(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {

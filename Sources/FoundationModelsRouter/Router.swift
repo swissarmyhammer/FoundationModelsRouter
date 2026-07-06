@@ -228,7 +228,7 @@ public actor Router {
             var generationContainers: [ModelSlot: any LoadedLLMContainer] = [:]
             for (chosen, slot) in [(resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash)] {
                 generationContainers[slot] = try await download(chosen, slot: slot, progress: progress) {
-                    try await loader.loadLLM($0, slot: $1, context: def.context, reporting: $2)
+                    try await loader.loadLLM(ref: $0, slot: $1, context: def.context, reporting: $2)
                 }
             }
             // Total by construction: the loop above populates both generation
@@ -239,7 +239,7 @@ public actor Router {
                 preconditionFailure("download loop populates both .standard and .flash generation slots")
             }
             let embeddingContainer = try await download(resolution.embedding, slot: .embedding, progress: progress) {
-                try await loader.loadEmbedder($0, slot: $1, reporting: $2)
+                try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2)
             }
 
             await setPhase(.loading, progress)

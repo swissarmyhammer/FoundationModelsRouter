@@ -35,49 +35,24 @@ comments:
   id: 01kww1420ea595pkvft97a2250
   text: 'Implement landed green: production target (`swift build --target FoundationModelsRouter`) builds clean. `swift test` fails to build only because `StubLLMContainer` (ProfileLifecycleTests.swift) and `CannedLLMContainer` (ToolIntegrationTests.swift) don''t yet implement `makeSession(instructions:)` — this is the exact, documented, expected gap called out in this task''s own description ("Test targets are expected to fail to compile until task 4 — do not attempt to fix stubs here"). Fixing those stubs is task 01KWVWZJMYGB295V9C0QZWTM1M''s job, not this one''s. Treating this as the accepted test state and proceeding to commit + review.'
   timestamp: 2026-07-06T15:35:33.646462+00:00
+- actor: claude-code
+  id: 01kww21tszzcnqdhw9gtqc5bkc
+  text: |-
+    Addressed all 8 review findings (unlabeled first parameter on factory/method signatures). Changes:
+
+    - Sources/FoundationModelsRouter/Resolution/ModelLoader.swift: `ModelLoader.loadLLM(_ ref:...)` -> `loadLLM(ref:...)`, `loadEmbedder(_ ref:...)` -> `loadEmbedder(ref:...)` (protocol requirements).
+    - Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift: matching `ref:` label added to all 4 conforming implementations (`LiveModelLoader.loadLLM`, `LiveModelLoader.loadEmbedder`, `UnconfiguredModelLoader.loadLLM`, `UnconfiguredModelLoader.loadEmbedder`) — required for protocol conformance once the requirement's label changed. Also updated the stale `` ``LiveModelLoader/loadEmbedder(_:slot:reporting:)`` `` doc-link to `(ref:slot:reporting:)`.
+    - Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift: `makeGuidedSession(_ grammar:...)` -> `makeGuidedSession(grammar:...)`; updated its one call site (`makeGuidedSession(grammar).respond(...)` -> `makeGuidedSession(grammar: grammar).respond(...)`).
+    - Sources/FoundationModelsRouter/Session/RoutedSession.swift: private `streamGenerating(_ prompt:...)` -> `streamGenerating(prompt:...)`; updated its call site in `streamResponse(to:maxTokens:)`.
+    - Sources/FoundationModelsRouter/Router.swift: updated the two production call sites that invoke the now-relabeled protocol methods positionally: `loader.loadLLM($0,...)` -> `loader.loadLLM(ref: $0,...)`, `loader.loadEmbedder($0,...)` -> `loader.loadEmbedder(ref: $0,...)`.
+    - Sources/FoundationModelsRouter/RoutedLLM.swift and Session/RoutedSession.swift: fixed 3 stale doc-comment cross-references (`` ``RoutedModel/makeGuidedSession(_:instructions:workingDirectory:)`` ``) to the new `(grammar:instructions:workingDirectory:)` form.
+
+    Verified `swift build --target FoundationModelsRouter` still exits 0 ("Build complete!") — production build stayed green throughout.
+
+    Side effect worth flagging for whoever picks up the stub-fixing task (01KWVWZJMYGB295V9C0QZWTM1M or similar): relabeling the `ModelLoader` protocol's `loadLLM`/`loadEmbedder` first parameter means every test-double `ModelLoader` conformance (in Tests/FoundationModelsRouterTests/*.swift and Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift — roughly a dozen stub types) also needs its local `func loadLLM(_ ref: ...)`/`func loadEmbedder(_ ref: ...)` declarations relabeled to `ref:`, or the test target will report a *second*, distinct class of protocol-conformance error (label mismatch) on top of the already-documented missing-`makeSession` gap. Confirmed via `swift build --build-tests`: it still fails, now citing both the pre-existing missing-`makeSession` errors and this label-mismatch error in IntegrationTests.swift. Per this task's explicit scope (fix only the 8 cited production-file findings, do not touch test stubs), I left the test doubles alone — production build only, per the acceptance criterion.
+  timestamp: 2026-07-06T15:51:49.311613+00:00
 position_column: doing
 position_ordinal: '80'
 title: Define LanguageModelSessionBackend protocol and make LoadedLLMContainer a factory
 ---
-## What
-
-Replace the stateless generation methods on `LoadedLLMContainer` with a single factory method. The container no longer invokes generation directly — it manufactures session objects that do.
-
-**New file:** `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`
-
-```swift
-/// A live session object vended by a LoadedLLMContainer factory.
-/// Holds state (conversation transcript) across calls.
-public protocol LanguageModelSessionBackend: AnyObject, Sendable {
-    func respond(to prompt: String, maxTokens: Int?) async throws -> String
-    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
-    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String
-    /// Produces a new backend seeded from this session's accumulated transcript.
-    func makeFork() -> any LanguageModelSessionBackend
-}
-```
-
-**Modify** `Sources/FoundationModelsRouter/Resolution/ModelLoader.swift`:
-- Add `func makeSession(instructions: String?) -> any LanguageModelSessionBackend` to `LoadedLLMContainer`
-- Remove the three stateless generation methods: `respond(to:instructions:maxTokens:)`, `streamResponse(to:instructions:maxTokens:)`, `respond(to:instructions:following:maxTokens:)`
-- Remove `makeCache() -> any SessionKVCache`
-
-**Modify** `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift`:
-- Remove the `LoadedLLMContainer` default extension for `respond(to:instructions:following:grammar:maxTokens:)`
-
-**Modify** `Sources/FoundationModelsRouter/Session/SessionKVCache.swift`:
-- Remove the `LoadedLLMContainer.makeCache()` default extension
-
-**Note on compilation:** Removing the stateless protocol methods will cause test targets to fail to compile until task 4 updates the stubs. That is expected and accepted. Only `Sources/` production code must compile after this task.
-
-## Acceptance Criteria
-- [ ] `LanguageModelSessionBackend` protocol exists in `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`
-- [ ] `LoadedLLMContainer` in `ModelLoader.swift` has only `makeSession(instructions:) -> any LanguageModelSessionBackend`; the three stateless generation methods and `makeCache()` are gone from the protocol
-- [ ] `swift build --target FoundationModelsRouter` (production sources only) succeeds
-- [ ] Test targets are expected to fail to compile until task 4 — do not attempt to fix stubs here
-
-## Tests
-- [ ] `swift build --target FoundationModelsRouter` exits 0
-
-## Workflow
-- Use `/tdd` — define the protocol and strip the container seam, verify production target compiles, leave test failures for task 4.
+## What\n\nReplace the stateless generation methods on `LoadedLLMContainer` with a single factory method. The container no longer invokes generation directly — it manufactures session objects that do.\n\n**New file:** `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`\n\n```swift\n/// A live session object vended by a LoadedLLMContainer factory.\n/// Holds state (conversation transcript) across calls.\npublic protocol LanguageModelSessionBackend: AnyObject, Sendable {\n    func respond(to prompt: String, maxTokens: Int?) async throws -> String\n    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>\n    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String\n    /// Produces a new backend seeded from this session's accumulated transcript.\n    func makeFork() -> any LanguageModelSessionBackend\n}\n```\n\n**Modify** `Sources/FoundationModelsRouter/Resolution/ModelLoader.swift`:\n- Add `func makeSession(instructions: String?) -> any LanguageModelSessionBackend` to `LoadedLLMContainer`\n- Remove the three stateless generation methods: `respond(to:instructions:maxTokens:)`, `streamResponse(to:instructions:maxTokens:)`, `respond(to:instructions:following:maxTokens:)`\n- Remove `makeCache() -> any SessionKVCache`\n\n**Modify** `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift`:\n- Remove the `LoadedLLMContainer` default extension for `respond(to:instructions:following:grammar:maxTokens:)`\n\n**Modify** `Sources/FoundationModelsRouter/Session/SessionKVCache.swift`:\n- Remove the `LoadedLLMContainer.makeCache()` default extension\n\n**Note on compilation:** Removing the stateless protocol methods will cause test targets to fail to compile until task 4 updates the stubs. That is expected and accepted. Only `Sources/` production code must compile after this task.\n\n## Acceptance Criteria\n- [ ] `LanguageModelSessionBackend` protocol exists in `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`\n- [ ] `LoadedLLMContainer` in `ModelLoader.swift` has only `makeSession(instructions:) -> any LanguageModelSessionBackend`; the three stateless generation methods and `makeCache()` are gone from the protocol\n- [ ] `swift build --target FoundationModelsRouter` (production sources only) succeeds\n- [ ] Test targets are expected to fail to compile until task 4 — do not attempt to fix stubs here\n\n## Tests\n- [ ] `swift build --target FoundationModelsRouter` exits 0\n\n## Workflow\n- Use `/tdd` — define the protocol and strip the container seam, verify production target compiles, leave test failures for task 4.\n\n## Review Findings (2026-07-06 10:36)\n\n- [x] `ModelLoader.swift:66` — The first required parameter `ref` should have a label. Factory methods should label their parameters to form clear phrases at the call site. Omitting the label is only appropriate for value-preserving conversions. Change `_ ref: ModelRef,` to `ref: ModelRef,` to label the first required parameter and form a clearer phrase at the call site.\n- [x] `ModelLoader.swift:84` — The first required parameter `ref` should have a label. Factory methods should label their parameters to form clear phrases at the call site. Change `_ ref: ModelRef,` to `ref: ModelRef,` to label the first required parameter.\n- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:165` — The first required parameter `grammar` should have a label. Factory methods should label their parameters to form clear phrases at the call site. The pattern `makeGuidedSession(_ grammar:)` does not align with the fluent-usage convention, which reserves unlabeled first parameters for value-preserving conversions only. Change `makeGuidedSession(_ grammar: Grammar,` to `makeGuidedSession(grammar: Grammar,` to align with the fluent-usage convention and match the parameter-labeling pattern of `makeSession`.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:119` — The first required parameter `ref` should have a label. This implementation conforms to the protocol but the protocol method signature itself should be corrected to label all parameters per fluent-usage conventions. Change `_ ref: ModelRef,` to `ref: ModelRef,` to align with fluent-usage conventions.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:148` — The first required parameter `ref` should have a label in this factory method. Change `_ ref: ModelRef,` to `ref: ModelRef,`.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:253` — The first required parameter `ref` should have a label in this factory method. Change `_ ref: ModelRef,` to `ref: ModelRef,`.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:270` — The first required parameter `ref` should have a label in this factory method. Change `_ ref: ModelRef,` to `ref: ModelRef,`.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:232` — The first required parameter `prompt` should have a label. Private methods should follow the same fluent-usage conventions as public ones. Change `_ prompt: String,` to `prompt: String,` to follow fluent-usage conventions.\n

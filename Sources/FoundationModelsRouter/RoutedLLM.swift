@@ -50,7 +50,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// The shared builder behind the plain and guided session surfaces.
     ///
     /// ``makeSession(instructions:workingDirectory:)`` calls this with `grammar`
-    /// `nil`; ``makeGuidedSession(_:instructions:workingDirectory:)`` (in
+    /// `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:)`` (in
     /// GuidedGeneration.swift) calls it with a grammar that then constrains every
     /// `respond` on the vended session and is stamped onto each recorded turn. It
     /// is `internal` so the guided surface in another file in this module can

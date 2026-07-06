@@ -201,7 +201,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         following grammar: Grammar,
         maxTokens: Int? = nil
     ) async throws -> String {
-        try await makeGuidedSession(grammar).respond(to: prompt, maxTokens: maxTokens)
+        try await makeGuidedSession(grammar: grammar).respond(to: prompt, maxTokens: maxTokens)
     }
 
     /// Vends a guided generation session whose every ``RoutedSession/respond(to:)``
@@ -222,7 +222,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     the recording directory.
     /// - Returns: A new guided ``RoutedSession``.
     public func makeGuidedSession(
-        _ grammar: Grammar,
+        grammar: Grammar,
         instructions: String? = nil,
         workingDirectory: URL? = nil
     ) -> RoutedSession {
