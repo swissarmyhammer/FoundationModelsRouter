@@ -82,8 +82,107 @@ comments:
   id: 01kww5t8ngwwmqphw1d6wq4txf
   text: 'Adversarial double-check (via really-done) returned PASS, no blocking findings: independently confirmed (1) exactly one private respond(to:schema:maxTokens:) helper exists and BOTH call sites (respond(to:maxTokens:) and the .jsonSchema case of respond(to:following:maxTokens:)) route through it with no leftover inline duplication, (2) spot-checked well over 10 doc blocks spanning the whole file and confirmed no first line is left without a terminating period, (3) swift build --target FoundationModelsRouter exits 0 fresh, (4) only LiveModelLoader.swift (plus this task''s own kanban tracking files) changed. Task is green and ready for /review; leaving in doing.'
   timestamp: 2026-07-06T16:57:35.664608+00:00
+- actor: claude-code
+  id: 01kwwe36x51fvvh29hpd83jtx1
+  text: |-
+    Addressed the "Review Findings (2026-07-06 12:00)" round and reconciled the two older unchecked rounds:
+
+    New fixes (2 of 3):
+    1. `LiveEmbeddingContainer.embed(_:)` -> `embed(texts:)`. Also relabeled the `LoadedEmbeddingContainer` protocol requirement in ModelLoader.swift (conformance requires an exact label match) and the one call site outside LiveModelLoader.swift: RoutedEmbedder.swift's `container.embed(texts)` -> `container.embed(texts: texts)`.
+    2. static `embed(_:in:)` -> `embed(texts:in:)`. Updated both call sites in LiveModelLoader.swift (the instance method's body, and loadEmbedder's dimension probe).
+
+    Declined (with justification, documented on the card): marking `handler` `private`. It's already `internal` (module-only, not public API) so `private` only tightens visibility by one notch. Applying it breaks `Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift`'s `handlerMapsIncrementalBytes` test, which calls `LiveModelLoader.handler { ... }` directly via `@testable import` — `@testable` lifts `internal` access but never `private` (strictly file-scoped), so there's no way to satisfy both. Verified by making the change: `swift build --build-tests` produced a brand-new failure (`'handler' is inaccessible due to 'private' protection level`) that didn't exist before, distinct from the already-documented/deferred stub gaps. Reverted; `handler` stays `internal`. Tried asking via the question tool first; it was declined/no interactive answer was available, so proceeded with the lower-risk call (keep the test green over a marginal encapsulation gain).
+
+    Reconciled the two older unresolved rounds, which prior sessions had already fixed but left unchecked:
+    - 2026-07-06 11:17 duplication finding (LiveModelLoader.swift:61): confirmed `respond(to:maxTokens:)` and the `.jsonSchema` case of `respond(to:following:maxTokens:)` both delegate through the private `respond(to:schema:maxTokens:)` helper with no remaining duplicated session-construction logic. Checked off.
+    - 2026-07-06 11:17 doc-comment-period findings (6 cited lines + the file generally): read every `///` doc block in LiveModelLoader.swift; all first lines end in a period. Checked off.
+
+    `swift build --target FoundationModelsRouter` is green. `swift build --build-tests` fails only with the pre-existing, already-deferred gaps: missing `makeSession(instructions:)` on `StubLLMContainer`/`CannedLLMContainer`, and `loadLLM`/`loadEmbedder`/`embed` label mismatches on test-double conformances (the last one is new *in kind* but same *category* as the already-documented label-mismatch debt, and is explicitly covered by task 01KWW5MGY5CKV1NF8D0Q19R0EP's "relabel any test-double conformances" instruction) — task 01KWVWZJMYGB295V9C0QZWTM1M's scope, untouched here.
+
+    Leaving task in doing for review; one item (handler private) intentionally left unchecked with the justification above for the user/reviewer to weigh in on.
+  timestamp: 2026-07-06T19:22:17.381934+00:00
+- actor: claude-code
+  id: 01kwwe6jtfqgxvsams88h7hbdf
+  text: |-
+    really-done verification: `swift build --target FoundationModelsRouter` exits 0 fresh. Adversarial double-check (via really-done) returned PASS: diff is exactly 3 files / 7 insertions / 7 deletions matching the two accepted embed-relabeling findings precisely (LiveModelLoader.swift's instance+static embed, doc-link, and dimension-probe call site; ModelLoader.swift's LoadedEmbeddingContainer protocol requirement; RoutedEmbedder.swift's one call site); `grep -rn "\.embed(" Sources/` shows no remaining unlabeled call to the protocol's embed anywhere (the one other unlabeled `model.embed(texts)` in Tools.swift calls the deliberately-unchanged public RoutedEmbedder.embed(_:) API, out of scope); and `LiveModelLoader.handler` is confirmed unchanged (still `static func handler(`, no `private`), consistent with the declined-with-justification item above.
+
+    Task is green and ready for /review; leaving in doing. One item (marking `handler` private) is intentionally left unchecked with its justification recorded above for the reviewer/user to weigh in on if they disagree with the call.
+  timestamp: 2026-07-06T19:24:07.887288+00:00
 position_column: doing
 position_ordinal: '80'
 title: Define LanguageModelSessionBackend protocol and make LoadedLLMContainer a factory
 ---
-## What\n\nReplace the stateless generation methods on `LoadedLLMContainer` with a single factory method. The container no longer invokes generation directly — it manufactures session objects that do.\n\n**New file:** `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`\n\n```swift\n/// A live session object vended by a LoadedLLMContainer factory.\n/// Holds state (conversation transcript) across calls.\npublic protocol LanguageModelSessionBackend: AnyObject, Sendable {\n    func respond(to prompt: String, maxTokens: Int?) async throws -> String\n    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>\n    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String\n    /// Produces a new backend seeded from this session's accumulated transcript.\n    func makeFork() -> any LanguageModelSessionBackend\n}\n```\n\n**Modify** `Sources/FoundationModelsRouter/Resolution/ModelLoader.swift`:\n- Add `func makeSession(instructions: String?) -> any LanguageModelSessionBackend` to `LoadedLLMContainer`\n- Remove the three stateless generation methods: `respond(to:instructions:maxTokens:)`, `streamResponse(to:instructions:maxTokens:)`, `respond(to:instructions:following:maxTokens:)`\n- Remove `makeCache() -> any SessionKVCache`\n\n**Modify** `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift`:\n- Remove the `LoadedLLMContainer` default extension for `respond(to:instructions:following:grammar:maxTokens:)`\n\n**Modify** `Sources/FoundationModelsRouter/Session/SessionKVCache.swift`:\n- Remove the `LoadedLLMContainer.makeCache()` default extension\n\n**Note on compilation:** Removing the stateless protocol methods will cause test targets to fail to compile until task 4 updates the stubs. That is expected and accepted. Only `Sources/` production code must compile after this task.\n\n## Acceptance Criteria\n- [x] `LanguageModelSessionBackend` protocol exists in `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`\n- [x] `LoadedLLMContainer` in `ModelLoader.swift` has only `makeSession(instructions:) -> any LanguageModelSessionBackend`; the three stateless generation methods and `makeCache()` are gone from the protocol\n- [x] `swift build --target FoundationModelsRouter` (production sources only) succeeds\n- [x] Test targets are expected to fail to compile until task 4 — do not attempt to fix stubs here\n\n## Tests\n- [x] `swift build --target FoundationModelsRouter` exits 0\n\n## Workflow\n- Use `/tdd` — define the protocol and strip the container seam, verify production target compiles, leave test failures for task 4.\n\n## Review Findings (2026-07-06 10:36)\n\n- [x] `ModelLoader.swift:66` — The first required parameter `ref` should have a label. Factory methods should label their parameters to form clear phrases at the call site. Omitting the label is only appropriate for value-preserving conversions. Change `_ ref: ModelRef,` to `ref: ModelRef,` to label the first required parameter and form a clearer phrase at the call site.\n- [x] `ModelLoader.swift:84` — The first required parameter `ref` should have a label. Factory methods should label their parameters to form clear phrases at the call site. Change `_ ref: ModelRef,` to `ref: ModelRef,` to label the first required parameter.\n- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:165` — The first required parameter `grammar` should have a label. Factory methods should label their parameters to form clear phrases at the call site. The pattern `makeGuidedSession(_ grammar:)` does not align with the fluent-usage convention, which reserves unlabeled first parameters for value-preserving conversions only. Change `makeGuidedSession(_ grammar: Grammar,` to `makeGuidedSession(grammar: Grammar,` to align with the fluent-usage convention and match the parameter-labeling pattern of `makeSession`.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:119` — The first required parameter `ref` should have a label. This implementation conforms to the protocol but the protocol method signature itself should be corrected to label all parameters per fluent-usage conventions. Change `_ ref: ModelRef,` to `ref: ModelRef,` to align with fluent-usage conventions.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:148` — The first required parameter `ref` should have a label in this factory method. Change `_ ref: ModelRef,` to `ref: ModelRef,`.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:253` — The first required parameter `ref` should have a label in this factory method. Change `_ ref: ModelRef,` to `ref: ModelRef,`.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:270` — The first required parameter `ref` should have a label in this factory method. Change `_ ref: ModelRef,` to `ref: ModelRef,`.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:232` — The first required parameter `prompt` should have a label. Private methods should follow the same fluent-usage conventions as public ones. Change `_ prompt: String,` to `prompt: String,` to follow fluent-usage conventions.\n\n## Review Findings (2026-07-06 11:00)\n\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:98` — Function has 5+ levels of nesting with control flow (AsyncThrowingStream closure → Task closure → do-catch → for loop → if statement), making the logic difficult to follow. Extract the streaming logic into a helper function to reduce nesting depth, or refactor the nested closures into named async functions.\n\n## Review Findings (2026-07-06 11:17)\n\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:61` — The `respond(to:maxTokens:)` method and the code in the `.jsonSchema` case of `respond(to:following:maxTokens:)` contain near-verbatim duplicated logic. Both create a LanguageModelSession with identical parameters, call session.respond with the same prompt and options, and return response.content (or a variant thereof). This duplication can be factored into a shared helper method. Extract a private helper method that accepts an optional GenerationSchema parameter and delegates to the appropriate session.respond overload, returning the appropriate content variant (response.content or response.content.jsonString).\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:231` — The first line of the doc comment for `case notConfigured` does not end in a period. Per the documentation rule, the first line must be a single-sentence summary ending in a period; elaboration follows after a blank /// line. Revise to make the first line a complete sentence ending in a period, then add a blank `///` line before elaboration.\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:237` — The first line of the doc comment for `LiveModelLoader` does not end in a period. Revise to make the first line a complete sentence ending in a period, then add a blank `///` line before elaboration.\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:318` — The first line of the doc comment for `loadEmbedder(ref:slot:reporting:)` on `LiveModelLoader` does not end in a period. Revise to make the first line a complete sentence ending in a period.\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:368` — The first line of the doc comment for `UnconfiguredModelLoader` does not end in a period. Revise to make the first line a complete sentence ending in a period.\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:380` — The first line of the doc comment for `loadLLM(ref:slot:context:reporting:)` on `UnconfiguredModelLoader` does not end in a period. Revise to make the first line a complete sentence ending in a period.\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:391` — The first line of the doc comment for `loadEmbedder(ref:slot:reporting:)` on `UnconfiguredModelLoader` does not end in a period. Revise to make the first line a complete sentence ending in a period.\n- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:405` — The first line of the doc comment for `preload(_:)` on `UnconfiguredModelLoader` does not end in a period. Revise to make the first line a complete sentence ending in a period.\n
+## What
+
+Replace the stateless generation methods on `LoadedLLMContainer` with a single factory method. The container no longer invokes generation directly — it manufactures session objects that do.
+
+**New file:** `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`
+
+```swift
+/// A live session object vended by a LoadedLLMContainer factory.
+/// Holds state (conversation transcript) across calls.
+public protocol LanguageModelSessionBackend: AnyObject, Sendable {
+    func respond(to prompt: String, maxTokens: Int?) async throws -> String
+    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
+    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String
+    /// Produces a new backend seeded from this session's accumulated transcript.
+    func makeFork() -> any LanguageModelSessionBackend
+}
+```
+
+**Modify** `Sources/FoundationModelsRouter/Resolution/ModelLoader.swift`:
+- Add `func makeSession(instructions: String?) -> any LanguageModelSessionBackend` to `LoadedLLMContainer`
+- Remove the three stateless generation methods: `respond(to:instructions:maxTokens:)`, `streamResponse(to:instructions:maxTokens:)`, `respond(to:instructions:following:maxTokens:)`
+- Remove `makeCache() -> any SessionKVCache`
+
+**Modify** `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift`:
+- Remove the `LoadedLLMContainer` default extension for `respond(to:instructions:following:grammar:maxTokens:)`
+
+**Modify** `Sources/FoundationModelsRouter/Session/SessionKVCache.swift`:
+- Remove the `LoadedLLMContainer.makeCache()` default extension
+
+**Note on compilation:** Removing the stateless protocol methods will cause test targets to fail to compile until task 4 updates the stubs. That is expected and accepted. Only `Sources/` production code must compile after this task.
+
+## Acceptance Criteria
+- [x] `LanguageModelSessionBackend` protocol exists in `Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`
+- [x] `LoadedLLMContainer` in `ModelLoader.swift` has only `makeSession(instructions:) -> any LanguageModelSessionBackend`; the three stateless generation methods and `makeCache()` are gone from the protocol
+- [x] `swift build --target FoundationModelsRouter` (production sources only) succeeds
+- [x] Test targets are expected to fail to compile until task 4 — do not attempt to fix stubs here
+
+## Tests
+- [x] `swift build --target FoundationModelsRouter` exits 0
+
+## Workflow
+- Use `/tdd` — define the protocol and strip the container seam, verify production target compiles, leave test failures for task 4.
+
+## Review Findings (2026-07-06 10:36)
+
+- [x] `ModelLoader.swift:66` — The first required parameter `ref` should have a label. Change `_ ref: ModelRef,` to `ref: ModelRef,`.
+- [x] `ModelLoader.swift:84` — The first required parameter `ref` should have a label. Change `_ ref: ModelRef,` to `ref: ModelRef,`.
+- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:165` — Change `makeGuidedSession(_ grammar: Grammar,` to `makeGuidedSession(grammar: Grammar,`.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:119` — Change `_ ref: ModelRef,` to `ref: ModelRef,`.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:148` — Change `_ ref: ModelRef,` to `ref: ModelRef,`.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:253` — Change `_ ref: ModelRef,` to `ref: ModelRef,`.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:270` — Change `_ ref: ModelRef,` to `ref: ModelRef,`.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:232` — Change `_ prompt: String,` to `prompt: String,`.
+
+## Review Findings (2026-07-06 11:00)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:98` — Function has 5+ levels of nesting; extract the streaming logic into a helper function.
+
+## Review Findings (2026-07-06 11:17)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:61` — Duplication between `respond(to:maxTokens:)` and the `.jsonSchema` case of `respond(to:following:maxTokens:)`. Resolved by a private `respond(to:schema:maxTokens:)` helper on `MLXFoundationModelsSessionBackend`; both call sites route through it (confirmed 2026-07-06: `respond(to:maxTokens:)` calls the helper directly, and the `.jsonSchema` case compiles its schema and calls the same helper — no remaining duplicated session-construction logic).
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:231` — doc-comment first line now ends in a period (confirmed 2026-07-06).
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:237` — doc-comment first line now ends in a period (confirmed 2026-07-06).
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:318` — doc-comment first line now ends in a period (confirmed 2026-07-06).
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:368` — doc-comment first line now ends in a period (confirmed 2026-07-06).
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:380` — doc-comment first line now ends in a period (confirmed 2026-07-06).
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:391` — doc-comment first line now ends in a period (confirmed 2026-07-06).
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:405` — doc-comment first line now ends in a period (confirmed 2026-07-06).
+
+## Review Findings (2026-07-06 12:00)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:228` — `LiveEmbeddingContainer.embed(_:)` relabeled to `func embed(texts: [String]) async throws -> [[Float]]`. Updated the `LoadedEmbeddingContainer` protocol requirement in `ModelLoader.swift` (must match for conformance) and the one production call site, `RoutedEmbedder.swift`'s `container.embed(texts: texts)`.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:233` — static `embed(_:in:)` relabeled to `static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]]`. Updated its two call sites (`LiveEmbeddingContainer.embed(texts:)`'s body and `loadEmbedder`'s dimension probe).
+- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:431` — **Declined, with justification.** `handler` is already `internal` (module-only visibility, not part of the package's public API) — marking it `private` only tightens visibility from "whole module" to "single file," a marginal stylistic gain. Applying it breaks `Tests/FoundationModelsRouterTests/LiveModelLoaderTests.swift`, which calls `LiveModelLoader.handler { ... }` directly via `@testable import` to unit-test the Foundation-`Progress`-to-`DownloadProgress` byte-mapping adapter in isolation. `@testable` lifts `internal` access but never lifts `private` (which is strictly file-scoped) — there is no way to keep both the stricter access and that test's direct-call design. Confirmed by making the change: `swift build --build-tests` showed a *new* failure (`'handler' is inaccessible due to 'private' protection level`) not present before, distinct from the already-documented/deferred missing-`makeSession`/label-mismatch gaps. Reverted the `private` marker; `handler` stays `internal`. Asked the user for a decision via the question tool; the prompt was declined (no interactive answer available), so proceeding with the lower-risk choice (keep the test green) rather than force a new regression for a marginal encapsulation gain.

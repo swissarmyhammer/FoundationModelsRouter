@@ -227,7 +227,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
 /// Wraps a loaded `EmbedderModelContainer` and the embedding ``dimension``
 /// probed once at load, so the router's synchronous
 /// ``LoadedEmbeddingContainer/dimension`` accessor reports a real value and
-/// ``embed(_:)`` runs the real `MLXEmbedders` pooling pipeline.
+/// ``embed(texts:)`` runs the real `MLXEmbedders` pooling pipeline.
 ///
 /// The wrapper exists because `EmbedderModelContainer` exposes its model only
 /// through an async `perform` closure, so the dimension is not knowable
@@ -250,8 +250,8 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
     }
 
     /// Embeds each input into a ``dimension``-length, L2-normalized vector through the real `MLXEmbedders` pipeline.
-    func embed(_ texts: [String]) async throws -> [[Float]] {
-        try await Self.embed(texts, in: container)
+    func embed(texts: [String]) async throws -> [[Float]] {
+        try await Self.embed(texts: texts, in: container)
     }
 
     /// The shared embedding computation.
@@ -260,7 +260,7 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
     /// and reads the vectors back to `[[Float]]`. Static so ``LiveModelLoader``
     /// can probe the dimension at load without a wrapper instance. Mirrors the
     /// fork's own `MLXEmbedders` usage example.
-    static func embed(_ texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {
+    static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {
         guard !texts.isEmpty else { return [] }
         return await container.perform { context in
             let tokenizer = context.tokenizer
@@ -437,7 +437,7 @@ public struct LiveModelLoader: ModelLoader {
             configuration: configuration(for: ref),
             progressHandler: Self.handler(reporting)
         )
-        let probe = try await LiveEmbeddingContainer.embed(["dimension probe"], in: container)
+        let probe = try await LiveEmbeddingContainer.embed(texts: ["dimension probe"], in: container)
         return LiveEmbeddingContainer(container: container, dimension: probe.first?.count ?? 0)
     }
 

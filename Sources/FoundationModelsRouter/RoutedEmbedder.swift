@@ -29,7 +29,7 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// - Throws: Any error thrown by the embedder container.
     public func embed(_ texts: [String]) async throws -> [[Float]] {
         let started = Date()
-        let vectors = try await container.embed(texts)
+        let vectors = try await container.embed(texts: texts)
         let ms = Int(Date().timeIntervalSince(started) * 1_000)
 
         await recorder.append(

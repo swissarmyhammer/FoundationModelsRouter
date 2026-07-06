@@ -84,7 +84,7 @@ public protocol LoadedEmbeddingContainer: LoadedModelContainer {
     /// - Parameter texts: The strings to embed.
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: If the embedding computation fails.
-    func embed(_ texts: [String]) async throws -> [[Float]]
+    func embed(texts: [String]) async throws -> [[Float]]
 }
 
 /// The download-and-load step behind ``Router/resolve(_:reporting:)``,
