@@ -25,16 +25,19 @@ import MLXLMCommon
 // invoked by FoundationModels, not called directly here. See plan.md's
 // "Backends" and "Guided generation" sections.
 
-/// The default token budget for the live generation paths when a caller does
-/// not supply its own `maxTokens`, so a routed turn cannot run away. Plain and
-/// guided generation share the same default — there is no principled reason
-/// for guided decode to get a different ceiling.
+/// The default token budget for the live generation paths.
+///
+/// Applies when a caller does not supply its own `maxTokens`, so a routed
+/// turn cannot run away. Plain and guided generation share the same default —
+/// there is no principled reason for guided decode to get a different ceiling.
 private let defaultMaxTokens = 8192
 
-/// The live ``LoadedLLMContainer``: wraps an `MLXLanguageModel` — the
-/// `FoundationModels.LanguageModel` protocol conformance `MLXFoundationModels`
-/// provides over a resident MLX `ModelContainer` — and manufactures the
-/// ``LanguageModelSessionBackend`` every generation call actually runs through.
+/// The live ``LoadedLLMContainer``.
+///
+/// Wraps an `MLXLanguageModel` — the `FoundationModels.LanguageModel` protocol
+/// conformance `MLXFoundationModels` provides over a resident MLX
+/// `ModelContainer` — and manufactures the ``LanguageModelSessionBackend``
+/// every generation call actually runs through.
 ///
 /// This container no longer invokes generation itself (see
 /// ``LoadedLLMContainer/makeSession(instructions:)``); ``makeSession(instructions:)``
@@ -57,8 +60,9 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     }
 }
 
-/// The live ``LanguageModelSessionBackend``: drives a real `LanguageModelSession`
-/// over a resident `MLXLanguageModel`.
+/// The live ``LanguageModelSessionBackend``.
+///
+/// Drives a real `LanguageModelSession` over a resident `MLXLanguageModel`.
 ///
 /// **Not yet conversation-preserving.** A fresh `LanguageModelSession` is
 /// constructed per call, mirroring this seam's prior one-shot contract (no
@@ -68,12 +72,10 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
 /// vends an equivalent fresh backend rather than seeding from an accumulated
 /// transcript — there is none yet to seed from.
 final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Sendable {
-    /// The `LanguageModel` conformance a fresh `LanguageModelSession` is built
-    /// over for each call.
+    /// The `LanguageModel` conformance a fresh `LanguageModelSession` is built over for each call.
     private let model: MLXLanguageModel
 
-    /// The system instructions every `LanguageModelSession` this backend
-    /// constructs is given.
+    /// The system instructions every `LanguageModelSession` this backend constructs is given.
     private let instructions: String?
 
     /// Creates a backend over a resident model and its session instructions.
@@ -84,16 +86,36 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
 
     /// Generates a complete text response through a real `LanguageModelSession`.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        let session = LanguageModelSession(model: model, instructions: instructions)
-        let response = try await session.respond(
-            to: prompt,
-            options: GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
-        )
-        return response.content
+        try await respond(to: prompt, schema: nil, maxTokens: maxTokens)
     }
 
-    /// Streams a text response through a real `LanguageModelSession`, adapting
-    /// its snapshot-based stream into this seam's delta (fragment) contract.
+    /// Runs a real `LanguageModelSession` over ``model``/``instructions`` and
+    /// returns its response content, constrained to `schema` when one is given.
+    ///
+    /// Shared by ``respond(to:maxTokens:)`` and the `.jsonSchema` case of
+    /// ``respond(to:following:maxTokens:)``: both build an identical session,
+    /// call the matching `session.respond` overload with the same prompt and
+    /// options, and differ only in whether a schema is supplied and in how the
+    /// resulting content is stringified.
+    private func respond(
+        to prompt: String,
+        schema: GenerationSchema?,
+        maxTokens: Int?
+    ) async throws -> String {
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+        guard let schema else {
+            let response = try await session.respond(to: prompt, options: options)
+            return response.content
+        }
+        let response = try await session.respond(to: prompt, schema: schema, options: options)
+        return response.content.jsonString
+    }
+
+    /// Streams a text response through a real `LanguageModelSession`.
+    ///
+    /// Adapts its snapshot-based stream into this seam's delta (fragment)
+    /// contract.
     ///
     /// **Verified, not assumed** (per the FoundationModels v2 SDK's
     /// `LanguageModelSession.ResponseStream`): each element the stream yields is
@@ -121,9 +143,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         }
     }
 
-    /// Drives a fresh `LanguageModelSession`'s cumulative-snapshot stream to
-    /// completion, forwarding each snapshot's new suffix into `continuation`
-    /// and finishing (or failing) it when the underlying stream ends.
+    /// Drives a fresh `LanguageModelSession`'s cumulative-snapshot stream to completion.
+    ///
+    /// Forwards each snapshot's new suffix into `continuation` and finishes
+    /// (or fails) it when the underlying stream ends.
     ///
     /// Extracted out of ``streamResponse(to:maxTokens:)`` so that method's
     /// `AsyncThrowingStream` closure only has to spawn a `Task` and await this
@@ -153,8 +176,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         }
     }
 
-    /// The new suffix `current` has beyond `previous`, assuming `current`
-    /// extends `previous` the way a cumulative streaming snapshot does.
+    /// The new suffix `current` has beyond `previous`.
+    ///
+    /// Assumes `current` extends `previous` the way a cumulative streaming
+    /// snapshot does.
     ///
     /// - Returns: The whole of `current` if it does not have `previous` as a
     ///   prefix — a defensive fallback for a non-monotonic snapshot, not
@@ -164,8 +189,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
         return String(current.dropFirst(previous.count))
     }
 
-    /// Generates a grammar-constrained response through a real
-    /// `LanguageModelSession`.
+    /// Generates a grammar-constrained response through a real `LanguageModelSession`.
     ///
     /// ``Grammar/jsonSchema(_:)`` compiles the caller's JSON Schema source into
     /// a `GenerationSchema` via ``RuntimeJSONSchemaConverter`` (see its
@@ -184,13 +208,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
             throw GuidedRequestError.ebnfNotSupportedByLanguageModelSession
         case .jsonSchema(let schemaText):
             let schema = try RuntimeJSONSchemaConverter.compile(schemaText)
-            let session = LanguageModelSession(model: model, instructions: instructions)
-            let response = try await session.respond(
-                to: prompt,
-                schema: schema,
-                options: GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
-            )
-            return response.content.jsonString
+            return try await respond(to: prompt, schema: schema, maxTokens: maxTokens)
         }
     }
 
@@ -204,8 +222,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
     }
 }
 
-/// The live embedding container: wraps a loaded `EmbedderModelContainer` and the
-/// embedding ``dimension`` probed once at load, so the router's synchronous
+/// The live embedding container.
+///
+/// Wraps a loaded `EmbedderModelContainer` and the embedding ``dimension``
+/// probed once at load, so the router's synchronous
 /// ``LoadedEmbeddingContainer/dimension`` accessor reports a real value and
 /// ``embed(_:)`` runs the real `MLXEmbedders` pooling pipeline.
 ///
@@ -223,23 +243,23 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
     /// The length of every embedding vector this model produces, probed at load.
     let dimension: Int
 
-    /// Creates a live embedding container over a loaded MLX container and its
-    /// probed embedding dimension.
+    /// Creates a live embedding container over a loaded MLX container and its probed embedding dimension.
     init(container: EmbedderModelContainer, dimension: Int) {
         self.container = container
         self.dimension = dimension
     }
 
-    /// Embeds each input into a ``dimension``-length, L2-normalized vector through
-    /// the real `MLXEmbedders` pipeline.
+    /// Embeds each input into a ``dimension``-length, L2-normalized vector through the real `MLXEmbedders` pipeline.
     func embed(_ texts: [String]) async throws -> [[Float]] {
         try await Self.embed(texts, in: container)
     }
 
-    /// The shared embedding computation: tokenize, pad to the batch max, run the
-    /// model, pool (normalized), and read the vectors back to `[[Float]]`. Static
-    /// so ``LiveModelLoader`` can probe the dimension at load without a wrapper
-    /// instance. Mirrors the fork's own `MLXEmbedders` usage example.
+    /// The shared embedding computation.
+    ///
+    /// Tokenizes, pads to the batch max, runs the model, pools (normalized),
+    /// and reads the vectors back to `[[Float]]`. Static so ``LiveModelLoader``
+    /// can probe the dimension at load without a wrapper instance. Mirrors the
+    /// fork's own `MLXEmbedders` usage example.
     static func embed(_ texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {
         guard !texts.isEmpty else { return [] }
         return await container.perform { context in
@@ -271,15 +291,19 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
 
 /// A failure constructing or invoking a ``ModelLoader``.
 public enum ModelLoaderError: Error, Equatable {
-    /// No real loader was configured: the ``Router`` was built without a
-    /// ``LiveModelLoader`` (which requires a `Downloader` and `TokenizerLoader`)
-    /// and without an injected stub. See ``UnconfiguredModelLoader``.
+    /// No real loader was configured.
+    ///
+    /// The ``Router`` was built without a ``LiveModelLoader`` (which requires
+    /// a `Downloader` and `TokenizerLoader`) and without an injected stub. See
+    /// ``UnconfiguredModelLoader``.
     case notConfigured
 }
 
-/// The live ``ModelLoader``: downloads weights from a Hugging Face-compatible
-/// source and materializes an ``MLXFoundationModelsContainer`` for generation
-/// (backed by `MLXLanguageModel` + `LanguageModelSession`) and a
+/// The live ``ModelLoader``.
+///
+/// Downloads weights from a Hugging Face-compatible source and materializes
+/// an ``MLXFoundationModelsContainer`` for generation (backed by
+/// `MLXLanguageModel` + `LanguageModelSession`) and a
 /// ``LiveEmbeddingContainer`` for embedding.
 ///
 /// This fork of `mlx-swift-lm` intentionally does **not** bundle a default Hub
@@ -304,8 +328,9 @@ public struct LiveModelLoader: ModelLoader {
     /// The factory that loads a tokenizer from downloaded files.
     private let tokenizerLoader: any TokenizerLoader
 
-    /// Resolves a model identifier to its on-disk weights directory, passed
-    /// through to `MLXLanguageModel` for its availability checks
+    /// Resolves a model identifier to its on-disk weights directory.
+    ///
+    /// Passed through to `MLXLanguageModel` for its availability checks
     /// (`modelExistsOnDisk()`, free-disk-space checks) — **not** consulted by
     /// the load path itself, which always goes through `load`/`downloader`
     /// below. Defaults to a harmless temporary-directory stub for callers that
@@ -386,12 +411,13 @@ public struct LiveModelLoader: ModelLoader {
         return MLXFoundationModelsContainer(model: model)
     }
 
-    /// Downloads and loads an embedding model, wrapping it in a
-    /// ``LiveEmbeddingContainer`` with its embedding dimension probed once now.
+    /// Downloads and loads an embedding model.
     ///
-    /// `EmbedderModelContainer` only exposes its model through an async closure, so
-    /// the dimension is not available synchronously; a single probe embedding
-    /// establishes it (and warms the model) before the container is vended.
+    /// Wraps it in a ``LiveEmbeddingContainer`` with its embedding dimension
+    /// probed once now. `EmbedderModelContainer` only exposes its model
+    /// through an async closure, so the dimension is not available
+    /// synchronously; a single probe embedding establishes it (and warms the
+    /// model) before the container is vended.
     ///
     /// - Parameters:
     ///   - ref: The embedding model reference to download and load.
@@ -415,9 +441,10 @@ public struct LiveModelLoader: ModelLoader {
         return LiveEmbeddingContainer(container: container, dimension: probe.first?.count ?? 0)
     }
 
-    /// Builds the MLX `ModelConfiguration` for a model ref, pinning the ref's
-    /// revision or falling back to ``defaultRevision`` — shared by the
-    /// generation and embedding load paths.
+    /// Builds the MLX `ModelConfiguration` for a model ref.
+    ///
+    /// Pins the ref's revision or falls back to ``defaultRevision`` — shared
+    /// by the generation and embedding load paths.
     private func configuration(for ref: ModelRef) -> ModelConfiguration {
         ModelConfiguration(id: ref.repo, revision: ref.revision ?? Self.defaultRevision)
     }
@@ -447,8 +474,10 @@ public struct LiveModelLoader: ModelLoader {
     /// The revision used when a ``ModelRef`` does not pin one.
     private static let defaultRevision = "main"
 
-    /// Adapts the injected Hub downloader's Foundation `Progress` to the router's
-    /// byte-based ``DownloadProgress`` callback.
+    /// Adapts the injected Hub downloader's progress to the router's callback.
+    ///
+    /// Maps Foundation `Progress` to the router's byte-based
+    /// ``DownloadProgress`` callback.
     ///
     /// The unit contract is **bytes**: `bytesTotal` is the snapshot's total byte
     /// size and `bytesDownloaded` is the bytes streamed so far, so the surfaced
@@ -492,10 +521,10 @@ public struct LiveModelLoader: ModelLoader {
     }
 }
 
-/// The default ``ModelLoader`` when none is supplied: it cannot load anything and
-/// throws ``ModelLoaderError/notConfigured`` on first use.
+/// The default ``ModelLoader`` when none is supplied.
 ///
-/// Because the live download path requires an injected `Downloader` /
+/// It cannot load anything and throws ``ModelLoaderError/notConfigured`` on
+/// first use. Because the live download path requires an injected `Downloader` /
 /// `TokenizerLoader` (see ``LiveModelLoader``), a `Router` built with no loader
 /// can size and joint-fit a profile but cannot download or load models — callers
 /// that want real loading pass a configured ``LiveModelLoader``, and unit tests
@@ -505,9 +534,10 @@ public struct UnconfiguredModelLoader: ModelLoader {
     /// Creates the unconfigured sentinel loader.
     public init() {}
 
-    /// Always throws ``ModelLoaderError/notConfigured``: this sentinel cannot
-    /// load a generation model. Real loading is configured/injected via
-    /// ``LiveModelLoader`` (milestone 7).
+    /// Always throws ``ModelLoaderError/notConfigured``.
+    ///
+    /// This sentinel cannot load a generation model. Real loading is
+    /// configured/injected via ``LiveModelLoader`` (milestone 7).
     ///
     /// - Parameters:
     ///   - ref: The model reference that would be loaded.
@@ -525,9 +555,10 @@ public struct UnconfiguredModelLoader: ModelLoader {
         throw ModelLoaderError.notConfigured
     }
 
-    /// Always throws ``ModelLoaderError/notConfigured``: this sentinel cannot
-    /// load an embedding model. Real loading is configured/injected via
-    /// ``LiveModelLoader`` (milestone 7).
+    /// Always throws ``ModelLoaderError/notConfigured``.
+    ///
+    /// This sentinel cannot load an embedding model. Real loading is
+    /// configured/injected via ``LiveModelLoader`` (milestone 7).
     ///
     /// - Parameters:
     ///   - ref: The embedding model reference that would be loaded.
@@ -543,9 +574,10 @@ public struct UnconfiguredModelLoader: ModelLoader {
         throw ModelLoaderError.notConfigured
     }
 
-    /// Always throws ``ModelLoaderError/notConfigured``: this sentinel has no
-    /// container to warm. Real loading is configured/injected via
-    /// ``LiveModelLoader`` (milestone 7).
+    /// Always throws ``ModelLoaderError/notConfigured``.
+    ///
+    /// This sentinel has no container to warm. Real loading is
+    /// configured/injected via ``LiveModelLoader`` (milestone 7).
     public func preload(_ container: any LoadedModelContainer) async throws {
         throw ModelLoaderError.notConfigured
     }
