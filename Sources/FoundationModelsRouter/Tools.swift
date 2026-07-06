@@ -96,6 +96,6 @@ public struct EmbedTool: Sendable {
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the underlying embedder.
     public func embed(_ texts: [String]) async throws -> [[Float]] {
-        try await model.embed(texts)
+        try await model.embed(texts: texts)
     }
 }

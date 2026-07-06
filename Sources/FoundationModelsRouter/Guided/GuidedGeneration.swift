@@ -84,7 +84,7 @@ extension Grammar {
     func validateForXGrammar() throws {
         switch self {
         case .jsonSchema(let schema):
-            try Grammar.validateJSONSchema(schema)
+            try Grammar.validateJSONSchema(schema: schema)
         case .ebnf(let source):
             guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw GuidedRequestError.emptyGrammar
@@ -100,7 +100,7 @@ extension Grammar {
     ///   is not parseable JSON, or
     ///   ``GuidedRequestError/unsupportedSchemaConstructs(_:)`` when it uses
     ///   keywords outside the supported subset.
-    private static func validateJSONSchema(_ schema: String) throws {
+    private static func validateJSONSchema(schema: String) throws {
         let trimmed = schema.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw GuidedRequestError.emptyGrammar }
         guard let data = schema.data(using: .utf8),

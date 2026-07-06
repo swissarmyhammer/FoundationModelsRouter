@@ -131,7 +131,7 @@ public protocol ModelLoader: Sendable {
     ///
     /// - Parameter container: The container to warm.
     /// - Throws: If warm-up fails.
-    func preload(_ container: any LoadedModelContainer) async throws
+    func preload(container: any LoadedModelContainer) async throws
 
     /// Evicts a resident container, releasing the memory it holds.
     ///
@@ -142,7 +142,7 @@ public protocol ModelLoader: Sendable {
     /// unload required. Best-effort and non-throwing.
     ///
     /// - Parameter container: The container to evict.
-    func evict(_ container: any LoadedModelContainer) async
+    func evict(container: any LoadedModelContainer) async
 }
 
 extension ModelLoader {
@@ -150,5 +150,5 @@ extension ModelLoader {
     /// unload to a later milestone) inherits this default, so only loaders that
     /// truly manage residency — and the test stubs that spy on eviction —
     /// override it.
-    public func evict(_ container: any LoadedModelContainer) async {}
+    public func evict(container: any LoadedModelContainer) async {}
 }

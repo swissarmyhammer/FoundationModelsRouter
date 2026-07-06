@@ -300,7 +300,7 @@ public actor Router {
         guard case .resident(let current) = residencyState, current == token else { return }
         residencyState = .idle
         for container in containers {
-            await loader.evict(container)
+            await loader.evict(container: container)
         }
     }
 
@@ -493,7 +493,7 @@ public actor Router {
         progress: ResolutionProgress
     ) async throws {
         await setSlotState(slot, .loading, progress: progress)
-        try await loader.preload(container)
+        try await loader.preload(container: container)
         await MainActor.run {
             var sp = progress.slots[slot] ?? SlotProgress()
             sp.state = .ready

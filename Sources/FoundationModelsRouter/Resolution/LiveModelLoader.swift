@@ -402,7 +402,7 @@ public struct LiveModelLoader: ModelLoader {
                         // router's own byte-based progress plumbing, which is
                         // what `Router`/`ResolutionProgress` actually consume.
                         mlxProgressHandler(progress)
-                        Self.handler(reporting)(progress)
+                        Self.handler(reporting: reporting)(progress)
                     }
                 )
             }
@@ -435,7 +435,7 @@ public struct LiveModelLoader: ModelLoader {
             from: downloader,
             using: tokenizerLoader,
             configuration: configuration(for: ref),
-            progressHandler: Self.handler(reporting)
+            progressHandler: Self.handler(reporting: reporting)
         )
         let probe = try await LiveEmbeddingContainer.embed(texts: ["dimension probe"], in: container)
         return LiveEmbeddingContainer(container: container, dimension: probe.first?.count ?? 0)
@@ -456,7 +456,7 @@ public struct LiveModelLoader: ModelLoader {
     /// container loads synchronously in `loadEmbedder`), so this hook is a
     /// no-op seam for any future explicit warm-up (e.g. a throwaway forward
     /// pass beyond weight materialization).
-    public func preload(_ container: any LoadedModelContainer) async throws {}
+    public func preload(container: any LoadedModelContainer) async throws {}
 
     /// Evicts a loaded container, freeing the GPU memory its weights hold.
     ///
@@ -466,7 +466,7 @@ public struct LiveModelLoader: ModelLoader {
     /// so a subsequent load reloads from the on-disk snapshot); a no-op for any
     /// other container (e.g. the embedding container, which has no equivalent
     /// eviction hook today).
-    public func evict(_ container: any LoadedModelContainer) async {
+    public func evict(container: any LoadedModelContainer) async {
         guard let generation = container as? MLXFoundationModelsContainer else { return }
         await generation.model.evict()
     }
@@ -509,7 +509,7 @@ public struct LiveModelLoader: ModelLoader {
     /// - Returns: A `@Sendable` `Progress` observer that maps each update into a
     ///   byte-based ``DownloadProgress`` and forwards it to `reporting`.
     static func handler(
-        _ reporting: @escaping @Sendable (DownloadProgress) -> Void
+        reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) -> @Sendable (Progress) -> Void {
         { progress in
             let bytesTotal = progress.totalUnitCount
@@ -578,7 +578,7 @@ public struct UnconfiguredModelLoader: ModelLoader {
     ///
     /// This sentinel has no container to warm. Real loading is
     /// configured/injected via ``LiveModelLoader`` (milestone 7).
-    public func preload(_ container: any LoadedModelContainer) async throws {
+    public func preload(container: any LoadedModelContainer) async throws {
         throw ModelLoaderError.notConfigured
     }
 }

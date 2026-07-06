@@ -391,15 +391,15 @@ actor RoutedSessionActor: RoutedSession {
         defer { serialGate.signal() }
 
         await recordSessionMetaIfNeeded()
-        await append(makePartialEvent(kind: .prompt, grammar: grammar, text: prompt))
+        await append(partial: makePartialEvent(kind: .prompt, grammar: grammar, text: prompt))
         let started = Date()
         do {
             let response = try await body()
-            await append(makePartialEvent(kind: .response, grammar: grammar, text: response, since: started))
+            await append(partial: makePartialEvent(kind: .response, grammar: grammar, text: response, since: started))
             return response
         } catch {
             // The turn produced no response, so the close event carries no body.
-            await append(makePartialEvent(kind: .response, grammar: grammar, since: started))
+            await append(partial: makePartialEvent(kind: .response, grammar: grammar, since: started))
             throw error
         }
     }
@@ -413,7 +413,7 @@ actor RoutedSessionActor: RoutedSession {
     private func recordSessionMetaIfNeeded() async {
         guard !didRecordSessionMeta else { return }
         didRecordSessionMeta = true
-        await append(makePartialEvent(kind: .session, grammar: grammar))
+        await append(partial: makePartialEvent(kind: .session, grammar: grammar))
     }
 
     /// Appends a partial event through the recorder into this session's own
@@ -422,7 +422,7 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// - Parameter partial: The event to record, minus its recorder-owned `seq`
     ///   and `ts`.
-    private func append(_ partial: TranscriptEvent.Partial) async {
+    private func append(partial: TranscriptEvent.Partial) async {
         await recorder.append(partial, to: recordingDirectory)
     }
 

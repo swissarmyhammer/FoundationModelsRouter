@@ -27,7 +27,7 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// - Parameter texts: The strings to embed.
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the embedder container.
-    public func embed(_ texts: [String]) async throws -> [[Float]] {
+    public func embed(texts: [String]) async throws -> [[Float]] {
         let started = Date()
         let vectors = try await container.embed(texts: texts)
         let ms = Int(Date().timeIntervalSince(started) * 1_000)
