@@ -236,7 +236,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, Send
 /// `LanguageModelSession` — `MLXEmbedders` has no `FoundationModels.LanguageModel`
 /// surface, so this stays on the direct `MLXEmbedders` pipeline (see plan.md's
 /// "Backends" section).
-final class LiveEmbeddingContainer: LoadedEmbeddingContainer {
+final class LiveEmbeddingContainer: LoadedEmbeddingContainer, Sendable {
     /// The loaded MLX embedder container the computation runs through.
     private let container: EmbedderModelContainer
 
