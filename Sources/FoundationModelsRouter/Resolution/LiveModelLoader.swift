@@ -57,7 +57,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     ///   ``RoutedSession`` drives for its lifetime.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
         let session = LanguageModelSession(model: model, instructions: instructions)
-        return MLXFoundationModelsSessionBackend(session: session, model: model)
+        return MLXFoundationModelsSessionBackend(session: session, model: model, instructions: instructions)
     }
 }
 
@@ -88,6 +88,18 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// conversation state (the transcript) for this backend's lifetime.
     private let liveSession: LanguageModelSession
 
+    /// The system instructions ``liveSession`` was created with, or `nil`.
+    ///
+    /// `LanguageModelSession` exposes no `instructions` accessor of its own —
+    /// the only trace of them is the `Transcript.Entry.instructions` case
+    /// `liveSession.transcript` carries as its first entry when instructions
+    /// were supplied. Stored here explicitly (rather than re-derived from the
+    /// transcript on demand) so ``makeFork()`` can hand it straight to the
+    /// forked backend, keeping every backend in a fork chain able to report
+    /// the instructions it was seeded with without re-parsing transcript
+    /// entries.
+    private let instructions: String?
+
     /// Test-only accessor onto ``liveSession``, for `@testable import` in the
     /// gated integration suite (e.g. asserting `transcript.count` grows across
     /// turns, or matches a fork's parent at fork time). Deliberately not part
@@ -98,9 +110,17 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// Creates a backend over an already-constructed session and the model it
     /// was built over. `model` is kept alongside so ``makeFork()`` can build a
     /// forked session of the same type, continuing this session's transcript.
-    init(session: LanguageModelSession, model: MLXLanguageModel) {
+    ///
+    /// - Parameters:
+    ///   - session: The live `LanguageModelSession` this backend drives.
+    ///   - model: The `LanguageModel` conformance `session` was built over.
+    ///   - instructions: The system instructions `session` was created with,
+    ///     or `nil`. Stored so ``makeFork()`` can propagate it to the forked
+    ///     backend; see ``instructions``.
+    init(session: LanguageModelSession, model: MLXLanguageModel, instructions: String? = nil) {
         self.liveSession = session
         self.model = model
+        self.instructions = instructions
     }
 
     /// Generates a complete text response through ``liveSession``.
@@ -226,12 +246,20 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// (see plan.md's "Sessions & KV cache" section for why this is a
     /// correctness primitive, not a cheap-prefix-reuse one, against the pinned
     /// `mlx-swift-lm` dependency): the forked session begins holding every
-    /// entry ``liveSession``'s transcript has accumulated so far, then
-    /// diverges independently as each session's own further turns append to
-    /// its own transcript.
+    /// entry ``liveSession``'s transcript has accumulated so far — including
+    /// the `Transcript.Entry.instructions` entry the parent's system
+    /// instructions were recorded as, if any — then diverges independently as
+    /// each session's own further turns append to its own transcript.
+    ///
+    /// ``instructions`` is threaded into the new backend alongside the
+    /// transcript-seeded session, so the fork reports the same instructions
+    /// the parent was created with (there is no `LanguageModelSession`
+    /// initializer that accepts both `transcript:` and `instructions:`
+    /// together — the transcript's own `.instructions` entry is what actually
+    /// carries them forward into generation).
     func makeFork() -> any LanguageModelSessionBackend {
         let forkedSession = LanguageModelSession(model: model, tools: [], transcript: liveSession.transcript)
-        return MLXFoundationModelsSessionBackend(session: forkedSession, model: model)
+        return MLXFoundationModelsSessionBackend(session: forkedSession, model: model, instructions: instructions)
     }
 }
 
@@ -535,7 +563,7 @@ public struct LiveModelLoader: ModelLoader {
     ///
     /// - Parameter progress: The Foundation `Progress` snapshot to map.
     /// - Returns: The equivalent byte-based ``DownloadProgress``.
-    static func mapProgress(_ progress: Progress) -> DownloadProgress {
+    internal static func mapProgress(_ progress: Progress) -> DownloadProgress {
         let bytesTotal = progress.totalUnitCount
         let bytesDownloaded = Int64((progress.fractionCompleted * Double(bytesTotal)).rounded())
         return DownloadProgress(bytesDownloaded: bytesDownloaded, bytesTotal: bytesTotal)

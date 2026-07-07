@@ -110,9 +110,24 @@ struct LanguageModelSessionBackendIntegrationTests {
         // it, not an empty/fresh transcript.
         #expect(child.session.transcript.count == parentEntryCountAtForkTime)
 
+        // The transcript-count check above only proves the entry count matches;
+        // it does not prove the fork can actually *see* the parent's prior-turn
+        // content. Drive the fork with a real turn and assert its answer
+        // reflects the number the parent was told to remember before the fork —
+        // the same content-awareness proof ``secondRespondSeesPriorTurn`` above
+        // uses for same-backend continuity, applied here across the fork
+        // boundary.
+        let childReply = try await child.respond(
+            to: "What number should I remember? Answer with just the number.",
+            maxTokens: 64
+        )
+        #expect(childReply.contains("42"))
+        let childEntryCountAfterOwnTurn = child.session.transcript.count
+
         // The two then diverge independently: a further parent turn does not
-        // retroactively change the child's already-seeded transcript.
+        // retroactively change the child's already-seeded (and now
+        // independently-grown) transcript.
         _ = try await parent.respond(to: "Remember the number 7 too.", maxTokens: 64)
-        #expect(child.session.transcript.count == parentEntryCountAtForkTime)
+        #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
     }
 }
