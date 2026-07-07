@@ -41,6 +41,9 @@ struct SessionChokepointTests {
     /// `maxTokens` into a ``MaxTokensSpy``, so this suite's maxTokens-threading
     /// assertions keep working now that generation runs through a persistent
     /// backend rather than the container directly.
+    ///
+    /// Thread-safe via immutable captured references; both `backend` and `spy`
+    /// are `let` and never mutated after initialization.
     private final class MaxTokensRecordingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let backend: StubSessionBackend
         private let spy: MaxTokensSpy
@@ -65,24 +68,46 @@ struct SessionChokepointTests {
                 // has finished draining the stream is guaranteed to observe it.
                 Task {
                     await spy.record(maxTokens)
-                    do {
-                        for try await chunk in backend.streamResponse(to: prompt, maxTokens: maxTokens) {
-                            continuation.yield(chunk)
-                        }
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
-                    }
+                    await Self.forward(
+                        backend.streamResponse(to: prompt, maxTokens: maxTokens),
+                        to: continuation
+                    )
                 }
             }
         }
 
+        /// Drains `stream` into `continuation`, finishing it (with or without
+        /// an error) once the source stream ends — extracted out of
+        /// ``streamResponse(to:maxTokens:)``'s `Task` closure to keep that
+        /// closure's control flow shallow.
+        private static func forward(
+            _ stream: AsyncThrowingStream<String, Error>,
+            to continuation: AsyncThrowingStream<String, Error>.Continuation
+        ) async {
+            do {
+                for try await chunk in stream {
+                    continuation.yield(chunk)
+                }
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-            try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+            await spy.record(maxTokens)
+            return try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
         }
 
         func makeFork() -> any LanguageModelSessionBackend {
-            backend.makeFork()
+            // `StubSessionBackend.makeFork()` always concretely returns another
+            // `StubSessionBackend` (see its doc comment); preserve that identity
+            // here so the fork keeps recording through `spy`, mirroring how the
+            // live backend's wrapping would apply uniformly across forks.
+            guard let fork = backend.makeFork() as? StubSessionBackend else {
+                preconditionFailure("StubSessionBackend.makeFork() must return a StubSessionBackend")
+            }
+            return MaxTokensRecordingBackend(backend: fork, spy: spy)
         }
     }
 

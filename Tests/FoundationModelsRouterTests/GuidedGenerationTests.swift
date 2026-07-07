@@ -42,6 +42,11 @@ struct GuidedGenerationTests {
     /// `maxTokens` into a ``MaxTokensSpy``, mirroring
     /// ``SessionChokepointTests``'s analogous wrapper for the plain (unguided)
     /// path.
+    ///
+    /// `@unchecked Sendable` is safe here because `RoutedSessionActor` serializes
+    /// all method calls through the model's serial gate, and both wrapped fields
+    /// (`backend`, `spy`) are themselves `Sendable` — `backend` is a `StubSessionBackend`
+    /// and `spy` is an actor.
     private final class MaxTokensRecordingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let backend: StubSessionBackend
         private let spy: MaxTokensSpy
@@ -65,7 +70,14 @@ struct GuidedGenerationTests {
         }
 
         func makeFork() -> any LanguageModelSessionBackend {
-            backend.makeFork()
+            // `StubSessionBackend.makeFork()` always concretely returns another
+            // `StubSessionBackend` (see its doc comment); preserve that identity
+            // here so the fork keeps recording through `spy`, mirroring how the
+            // live backend's wrapping would apply uniformly across forks.
+            guard let fork = backend.makeFork() as? StubSessionBackend else {
+                preconditionFailure("StubSessionBackend.makeFork() must return a StubSessionBackend")
+            }
+            return MaxTokensRecordingBackend(backend: fork, spy: spy)
         }
     }
 

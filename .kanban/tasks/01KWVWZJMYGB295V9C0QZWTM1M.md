@@ -22,55 +22,27 @@ comments:
 
     This is the task the whole stub-migration session was blocked on — `swift build --build-tests` and `swift test` are both fully green now, zero known blockers remaining. Leaving in `doing` for `/review`.
   timestamp: 2026-07-07T17:45:45.017100+00:00
+- actor: claude-code
+  id: 01kwyxe0nmk9715axcb9tdadw8
+  text: |-
+    Fixed all 5 review findings from the 2026-07-07 12:49 review pass:
+
+    1. GuidedGenerationTests.swift `MaxTokensRecordingBackend` — added a doc comment explaining the `@unchecked Sendable` synchronization invariant (RoutedSessionActor serializes calls; wrapped fields are Sendable).
+    2. GuidedGenerationTests.swift `MaxTokensRecordingBackend.makeFork()` — was returning the raw `backend.makeFork()` result, silently dropping spy tracking on forked sessions. Now downcasts the fork to `StubSessionBackend` (guaranteed by `StubSessionBackend.makeFork()`'s concrete implementation — it's `final` and always constructs another `StubSessionBackend`) and re-wraps it in a new `MaxTokensRecordingBackend`, so forked sessions keep recording through the spy.
+    3. SessionChokepointTests.swift `MaxTokensRecordingBackend` — added its own doc comment on the `@unchecked Sendable` invariant (thread-safe via immutable `let` captured references).
+    4. SessionChokepointTests.swift `streamResponse` — extracted the 4-level-deep `Task { do { for ... } catch }` body into a new `private static func forward(_:to:)` helper, flattening the nesting while preserving identical chunk-forwarding/finish/error semantics (verified against the pre-change version).
+    5. SessionChokepointTests.swift `respond(to:following:grammar:maxTokens:)` — added the missing `await spy.record(maxTokens)` call, matching the pattern in the sibling `respond(to:maxTokens:)` and `streamResponse` methods.
+
+    Adversarial double-check (via `/really-done`) caught a 6th, previously-unflagged issue: `SessionChokepointTests.swift`'s own `MaxTokensRecordingBackend.makeFork()` had the identical unwrapped-fork bug as finding #2's twin in `GuidedGenerationTests.swift` (the two classes are explicitly documented as mirroring each other). Fixed it with the same downcast-and-rewrap pattern for consistency, even though it wasn't in the original 5 findings — it's the same class of bug in the sibling file and a five-line, low-risk fix. Left the double-check's second (advisory, non-blocking) suggestion — adding a new test that forks a maxTokensSpy-wrapped session and asserts the spy keeps recording — as a follow-up opportunity rather than in-scope work, since no existing test in either file exercises fork+spy interaction and adding one wasn't part of the reviewed findings.
+
+    Verification: `swift build --build-tests` exit 0, `swift test` exit 0 — 179 tests in 23 suites passed (plus 3 gated/skipped integration tests, as expected). Filtered reruns of `GuidedGenerationTests` and `SessionChokepointTests` both green. Second double-check pass after the 6th fix would be redundant per really-done's "at most once" re-check bound — the fix is a mechanical repeat of an already-verified pattern.
+
+    Leaving in `doing` for review.
+  timestamp: 2026-07-07T18:28:48.948641+00:00
 depends_on:
 - 01KWVWYKPP6RAJTCX9MRQGZWA4
 position_column: doing
 position_ordinal: '80'
 title: Update all test stubs to implement the LanguageModelSessionBackend factory seam
 ---
-## What
-
-Ten test files have inline `LoadedLLMContainer` stubs with stateless `respond`/`streamResponse`/`makeCache` implementations — all broken after task 1. Two of those files require redesign, not just stub replacement.
-
-**New shared test helper** — `Tests/FoundationModelsRouterTests/Helpers/StubSessionBackend.swift`:
-- `final class StubSessionBackend: LanguageModelSessionBackend`
-- Configurable canned response text, optional throw
-- `callCount: Int` and `receivedPrompts: [String]` for assertion
-- `makeFork()` returns a new `StubSessionBackend` pre-seeded with a copy of the parent's `receivedPrompts` (simulates transcript inheritance without a real model)
-
-**Files to update — simple stub replacement** (remove old stateless methods, add `makeSession(instructions:) -> StubSessionBackend`):
-- `SessionChokepointTests.swift` — `CannedLLMContainer`
-- `TranscriptNestingTests.swift` — `CannedLLMContainer`
-- `ToolIntegrationTests.swift` — `CannedLLMContainer`
-- `MergedAndRedactionTests.swift` — `CannedLLMContainer`
-- `GuidedShapesTests.swift` — `GuidedStubContainer`
-- `ResolveTests.swift` — `StubLLMContainer`
-- `ProfileLifecycleTests.swift` — `StubLLMContainer`
-- `ExamplesTests.swift` — `StubLLMContainer`
-
-**Files requiring redesign:**
-
-`GuidedGenerationTests.swift` — `GuidedStubContainer` (line 30), `DefaultGuidedContainer` (line 64):
-- Update both stubs to `makeSession(instructions:) -> StubSessionBackend`
-- **Delete** `defaultContainerValidatesThenDefersLiveDecode` (line 369) — this test exercises the `LoadedLLMContainer` default extension that task 1 removes; the behaviour it tested (grammar validation before `notWiredForLiveInference`) no longer has a hook. Replace its intent with a pure grammar-validation unit test that calls `grammar.validateForXGrammar()` directly.
-
-`ForkConcurrencyTests.swift` — `InstrumentedLLMContainer`, `SpyKVCache`, `CacheCensus`:
-- `SpyKVCache`, `CacheCensus`, and `InstrumentedLLMContainer.makeCache()` (line 144) are entirely removed — no `makeCache()` exists after task 1
-- Replace all `census.copies`/`census.births`/`census.frees` assertions with assertions on `StubSessionBackend.callCount` and `receivedPrompts` to verify fork transcript inheritance
-- `InstrumentedLLMContainer` becomes a simple `makeSession` factory returning a trackable `StubSessionBackend`
-
-## Acceptance Criteria
-- [ ] `StubSessionBackend` helper exists and is shared by all test files
-- [ ] All 10 stubs implement `makeSession(instructions:)` returning `StubSessionBackend`
-- [ ] `defaultContainerValidatesThenDefersLiveDecode` is deleted; a replacement grammar-validation test covers its intent
-- [ ] `SpyKVCache`/`CacheCensus` are removed; `ForkConcurrencyTests` assertions use `StubSessionBackend` call history instead
-- [ ] `swift test` exits 0
-
-## Tests
-- [ ] `swift test --filter SessionChokepointTests` passes
-- [ ] `swift test --filter ForkConcurrencyTests` passes
-- [ ] `swift test --filter GuidedGenerationTests` passes
-- [ ] `swift test` (full suite) exits 0
-
-## Workflow
-- `/tdd` — run `swift test` first to see all failures, create `StubSessionBackend`, fix simple stubs, then tackle the two redesign files.
+## What\n\nTen test files have inline `LoadedLLMContainer` stubs with stateless `respond`/`streamResponse`/`makeCache` implementations — all broken after task 1. Two of those files require redesign, not just stub replacement.\n\n**New shared test helper** — `Tests/FoundationModelsRouterTests/Helpers/StubSessionBackend.swift`:\n- `final class StubSessionBackend: LanguageModelSessionBackend`\n- Configurable canned response text, optional throw\n- `callCount: Int` and `receivedPrompts: [String]` for assertion\n- `makeFork()` returns a new `StubSessionBackend` pre-seeded with a copy of the parent's `receivedPrompts` (simulates transcript inheritance without a real model)\n\n**Files to update — simple stub replacement** (remove old stateless methods, add `makeSession(instructions:) -> StubSessionBackend`):\n- `SessionChokepointTests.swift` — `CannedLLMContainer`\n- `TranscriptNestingTests.swift` — `CannedLLMContainer`\n- `ToolIntegrationTests.swift` — `CannedLLMContainer`\n- `MergedAndRedactionTests.swift` — `CannedLLMContainer`\n- `GuidedShapesTests.swift` — `GuidedStubContainer`\n- `ResolveTests.swift` — `StubLLMContainer`\n- `ProfileLifecycleTests.swift` — `StubLLMContainer`\n- `ExamplesTests.swift` — `StubLLMContainer`\n\n**Files requiring redesign:**\n\n`GuidedGenerationTests.swift` — `GuidedStubContainer` (line 30), `DefaultGuidedContainer` (line 64):\n- Update both stubs to `makeSession(instructions:) -> StubSessionBackend`\n- **Delete** `defaultContainerValidatesThenDefersLiveDecode` (line 369) — this test exercises the `LoadedLLMContainer` default extension that task 1 removes; the behaviour it tested (grammar validation before `notWiredForLiveInference`) no longer has a hook. Replace its intent with a pure grammar-validation unit test that calls `grammar.validateForXGrammar()` directly.\n\n`ForkConcurrencyTests.swift` — `InstrumentedLLMContainer`, `SpyKVCache`, `CacheCensus`:\n- `SpyKVCache`, `CacheCensus`, and `InstrumentedLLMContainer.makeCache()` (line 144) are entirely removed — no `makeCache()` exists after task 1\n- Replace all `census.copies`/`census.births`/`census.frees` assertions with assertions on `StubSessionBackend.callCount` and `receivedPrompts` to verify fork transcript inheritance\n- `InstrumentedLLMContainer` becomes a simple `makeSession` factory returning a trackable `StubSessionBackend`\n\n## Acceptance Criteria\n- [ ] `StubSessionBackend` helper exists and is shared by all test files\n- [ ] All 10 stubs implement `makeSession(instructions:)` returning `StubSessionBackend`\n- [ ] `defaultContainerValidatesThenDefersLiveDecode` is deleted; a replacement grammar-validation test covers its intent\n- [ ] `SpyKVCache`/`CacheCensus` are removed; `ForkConcurrencyTests` assertions use `StubSessionBackend` call history instead\n- [ ] `swift test` exits 0\n\n## Tests\n- [ ] `swift test --filter SessionChokepointTests` passes\n- [ ] `swift test --filter ForkConcurrencyTests` passes\n- [ ] `swift test --filter GuidedGenerationTests` passes\n- [ ] `swift test` (full suite) exits 0\n\n## Workflow\n- `/tdd` — run `swift test` first to see all failures, create `StubSessionBackend`, fix simple stubs, then tackle the two redesign files.\n\n## Review Findings (2026-07-07 12:49)\n\nScope: HEAD~1..HEAD (468a5c8). Engine reported 57 findings; 52 are waived under this project's blanket test-refactor exception — they cite pre-existing duplicated helper structs/fixtures (`StubProbe`, `StubMetadataSource`, `StubEmbeddingContainer`, `profile`/`rawMetadata`/`configJSON`/`treeJSON` fixtures, `makeTempDir`, `stubDimension`, `CannedLLMContainer` shape duplication) or casing renames (`configJson`→`configJSON`) on lines this diff never touched — verified against `git diff HEAD~1..HEAD` hunk ranges per file. Only findings whose subject is code this diff actually introduces are listed below.\n\n- [x] `Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:39` — @unchecked Sendable requires a documented synchronization invariant explaining why the type is safe to send across actor boundaries, but no comment is present. Add a comment explaining the synchronization invariant, e.g.: 'Like the wrapped backend, this is thread-safe because RoutedSessionActor serializes all method calls through the model's serial gate, and all wrapped fields (backend, spy) are either Sendable or actor-isolated.'.\n- [x] `Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:80` — MaxTokensRecordingBackend.makeFork() returns an unwrapped backend, losing spy tracking. The wrapping that observes guided calls is applied when creating a session (line 43) but is not propagated to forks, so the spy actor stops recording observations on forked sessions. This violates the invariant that observation wrapping should apply uniformly to all backend instances within a model slot. Preserve the wrapping on fork: `return MaxTokensRecordingBackend(backend: backend.makeFork(), spy: spy)`. This ensures spy tracking works uniformly across both the original session and any forks of it.\n- [x] `Tests/FoundationModelsRouterTests/SessionChokepointTests.swift:44` — @unchecked Sendable requires a documented synchronization invariant; the class's documentation describes its behavior but not the thread-safety mechanism. Extend the documentation comment to document the synchronization invariant: 'Thread-safe via immutable captured references; both `backend` and `spy` are `let` and never mutated after initialization.'.\n- [x] `Tests/FoundationModelsRouterTests/SessionChokepointTests.swift:58` — Function has 4 levels of syntactic nesting (AsyncThrowingStream closure > Task > do block > for loop), reducing readability and making control flow hard to trace. Extract the Task and do/catch logic into a separate helper function to reduce top-level nesting, or refactor to flatten the control flow.\n- [x] `Tests/FoundationModelsRouterTests/SessionChokepointTests.swift:110` — The `respond(to:following:grammar:maxTokens:)` method in MaxTokensRecordingBackend doesn't record maxTokens through the spy, while the other generation methods do. This breaks the invariant that all generation methods should record maxTokens calls, making tests relying on maxTokens assertion incomplete. Add `await spy.record(maxTokens)` as the first line inside `respond(to:following:grammar:maxTokens:)`, before the backend call, to match the pattern used in the other two generation methods.
