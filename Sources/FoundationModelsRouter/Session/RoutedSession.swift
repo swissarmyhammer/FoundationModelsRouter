@@ -56,6 +56,7 @@ public protocol RoutedSession: Actor {
     /// Set when the session is vended by
     /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)`` and
     /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:)``.
+    ///
     /// It travels with the session so ``fork(workingDirectory:)`` inherits it;
     /// ``streamResponse(to:)`` stays unconstrained regardless.
     nonisolated var grammar: Grammar? { get }
@@ -163,22 +164,29 @@ actor RoutedSessionActor: RoutedSession {
     private nonisolated let instructions: String?
 
     /// The grammar constraining every ``respond(to:)``, or `nil` for an
-    /// unconstrained session. Travels with the session so a fork inherits it.
+    /// unconstrained session.
+    ///
+    /// Travels with the session so a fork inherits it.
     nonisolated let grammar: Grammar?
 
     /// The per-model serial generation gate, shared with the owning model's other
-    /// sessions and forks. Every ``generate(prompt:grammar:_:)`` runs inside it, so
-    /// generations on one model serialize rather than interleave.
+    /// sessions and forks.
+    ///
+    /// Every ``generate(prompt:grammar:_:)`` runs inside it, so generations on one
+    /// model serialize rather than interleave.
     private nonisolated let serialGate: AsyncSemaphore
 
     /// The fork-admission gate, shared with the owning model.
+    ///
     /// ``fork(workingDirectory:)`` acquires a permit to admit the child; a fork
     /// releases it on deinit (see ``holdsAdmissionPermit``).
     private nonisolated let forkAdmissionGate: AsyncSemaphore
 
     /// Whether this session holds a fork-admission permit to release when it is
-    /// deallocated. `true` for a fork admitted through ``fork(workingDirectory:)``,
-    /// `false` for a root session, which consumes no admission permit.
+    /// deallocated.
+    ///
+    /// `true` for a fork admitted through ``fork(workingDirectory:)``, `false`
+    /// for a root session, which consumes no admission permit.
     private nonisolated let holdsAdmissionPermit: Bool
 
     /// Whether the session's first-line `session` meta event has been recorded.
@@ -190,7 +198,9 @@ actor RoutedSessionActor: RoutedSession {
     /// can emit it twice.
     private var didRecordSessionMeta = false
 
-    /// Creates a session. Internal: construction is only via
+    /// Creates a session.
+    ///
+    /// Internal: construction is only via
     /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
     /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)`` or by
     /// ``fork(workingDirectory:)``.
@@ -240,6 +250,19 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// Generates a complete text response to a prompt, recording the call.
+    ///
+    /// Routes through the guided path when ``grammar`` is set, constraining the
+    /// response to it through the backend's whole-chunk xgrammar entry point;
+    /// otherwise runs the plain path. Both funnel through the same
+    /// ``generate(prompt:grammar:_:)`` chokepoint.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
+    /// - Returns: The model's complete text response.
+    /// - Throws: Any error thrown by the model.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         // `backend` is this session's own persistent generation object — never
         // recreated per call — so turns accumulate conversation state. A guided
@@ -257,6 +280,19 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// Streams a text response to a prompt as it is produced, recording the call.
+    ///
+    /// Wraps ``streamGenerating(prompt:maxTokens:into:)`` in an
+    /// `AsyncThrowingStream`, forwarding each produced chunk to the stream's
+    /// continuation and finishing it when generation completes or throws;
+    /// cancelling the stream cancels the underlying `Task`.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
+    /// - Returns: A stream of response fragments, finishing when generation
+    ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {

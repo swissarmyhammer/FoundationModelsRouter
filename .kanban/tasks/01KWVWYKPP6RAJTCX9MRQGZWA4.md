@@ -25,42 +25,23 @@ comments:
 
     Leaving task in `doing` for `/review` per /implement policy — really-done verification (library build green) plus adversarial sign-off both complete.
   timestamp: 2026-07-07T16:52:52.743927+00:00
+- actor: claude-code
+  id: 01kwyrwy3q88rhs5dq9kenvfd4
+  text: |-
+    Fixed all 8 review findings in Sources/FoundationModelsRouter/Session/RoutedSession.swift (task pulled back from review to doing):
+
+    - Inserted a blank `///` separator line between summary and elaboration sentences in 6 doc comments: the protocol's `grammar` property doc, the actor's `grammar` property doc (previously combined on one physical line), the actor's `serialGate` doc, the actor's `forkAdmissionGate` doc, the actor's `holdsAdmissionPermit` doc, and the actor's `init` doc — matching this file's established paragraph convention (blank `///` line between sentences, as already used in the file-level header comment and the `fork(workingDirectory:)` protocol doc).
+    - Added missing doc comments to the two actor methods implementing `RoutedSession` protocol requirements that had none: `respond(to:maxTokens:)` (documents the guided-vs-plain routing based on `grammar`, funneling through the `generate(prompt:grammar:_:)` chokepoint, with Parameters/Returns/Throws matching the protocol's own doc) and `streamResponse(to:maxTokens:)` (documents the `AsyncThrowingStream` wrapping of `streamGenerating`, finish/throw behavior, and Task cancellation on stream termination, with Parameters/Returns matching the protocol's doc).
+    - Checked off all 8 review-finding checklist items in the task description.
+
+    Verification: `swift build --target FoundationModelsRouter` — exit 0, "Build complete!". `git diff` confirms the change is comment-only (every hunk is a `+    ///` line addition) — no production code lines touched. Ran the double-check adversarial agent per really-done workflow: verdict PASS, independently re-ran the build and confirmed all 8 findings resolved correctly with no factual inaccuracies in the new doc text.
+
+    Leaving task in `doing` for `/review` per implement policy.
+  timestamp: 2026-07-07T17:09:34.967605+00:00
 depends_on:
 - 01KWVWY278TRWBE16W000PE5CF
 position_column: doing
 position_ordinal: '80'
 title: Update RoutedSessionActor to own and drive a LanguageModelSessionBackend
 ---
-## What
-
-`RoutedSessionActor` must hold the `LanguageModelSessionBackend` as actor state for its lifetime. All generation and fork creation goes through the backend.
-
-**Modify** `Sources/FoundationModelsRouter/Session/RoutedSession.swift`:
-- Replace `private nonisolated let container: any LoadedLLMContainer` with `private nonisolated let backend: any LanguageModelSessionBackend`
-- Remove `private nonisolated let cache: any SessionKVCache`
-- `respond(to:maxTokens:)` chokepoint: calls `backend.respond(to:maxTokens:)` — `instructions` no longer passed per call (baked into backend at construction)
-- `streamGenerating(_:maxTokens:into:)`: calls `backend.streamResponse(to:maxTokens:)`
-- Guided path: calls `backend.respond(to:following:maxTokens:)`
-- `fork(workingDirectory:)`:
-  - **Must acquire `serialGate` before calling `backend.makeFork()`** to prevent a transcript data race. A concurrent generation suspending inside `backend.respond()` (outside actor isolation) could be modifying the `LanguageModelSession.transcript` while `fork()` reads it. Acquire with `await serialGate.wait()`, capture the forked backend, then `serialGate.signal()` before constructing the child actor. Add a comment explaining the race.
-  - Construct child `RoutedSessionActor` with the forked backend
-
-**Modify** `Sources/FoundationModelsRouter/RoutedLLM.swift` — `makeSession(grammar:instructions:workingDirectory:)`:
-- Call `container.makeSession(instructions: instructions)` to get the backend
-- Pass `backend:` to `RoutedSessionActor` init, drop `cache:` param
-
-**Update** `RoutedSessionActor.init(...)`:
-- Accept `backend: any LanguageModelSessionBackend` in place of `container:` + `cache:`
-
-## Acceptance Criteria
-- [ ] `RoutedSessionActor` holds `backend: any LanguageModelSessionBackend`; `container` and `cache` are gone
-- [ ] `fork()` acquires `serialGate` before calling `backend.makeFork()` with a comment explaining the transcript data race prevention
-- [ ] `instructions` are no longer passed per generation call
-- [ ] `swift build --target FoundationModelsRouter` succeeds
-
-## Tests
-- [ ] All existing chokepoint, fork, and transcript tests pass after stub updates in task 4
-- [ ] `swift test` exits 0 (once task 4 stubs are done)
-
-## Workflow
-- `/tdd` — update the actor and builder, confirm production build passes, then task 4 fixes the test side.
+## What\n\n`RoutedSessionActor` must hold the `LanguageModelSessionBackend` as actor state for its lifetime. All generation and fork creation goes through the backend.\n\n**Modify** `Sources/FoundationModelsRouter/Session/RoutedSession.swift`:\n- Replace `private nonisolated let container: any LoadedLLMContainer` with `private nonisolated let backend: any LanguageModelSessionBackend`\n- Remove `private nonisolated let cache: any SessionKVCache`\n- `respond(to:maxTokens:)` chokepoint: calls `backend.respond(to:maxTokens:)` — `instructions` no longer passed per call (baked into backend at construction)\n- `streamGenerating(_:maxTokens:into:)`: calls `backend.streamResponse(to:maxTokens:)`\n- Guided path: calls `backend.respond(to:following:maxTokens:)`\n- `fork(workingDirectory:)`:\n  - **Must acquire `serialGate` before calling `backend.makeFork()`** to prevent a transcript data race. A concurrent generation suspending inside `backend.respond()` (outside actor isolation) could be modifying the `LanguageModelSession.transcript` while `fork()` reads it. Acquire with `await serialGate.wait()`, capture the forked backend, then `serialGate.signal()` before constructing the child actor. Add a comment explaining the race.\n  - Construct child `RoutedSessionActor` with the forked backend\n\n**Modify** `Sources/FoundationModelsRouter/RoutedLLM.swift` — `makeSession(grammar:instructions:workingDirectory:)`:\n- Call `container.makeSession(instructions: instructions)` to get the backend\n- Pass `backend:` to `RoutedSessionActor` init, drop `cache:` param\n\n**Update** `RoutedSessionActor.init(...)`:\n- Accept `backend: any LanguageModelSessionBackend` in place of `container:` + `cache:`\n\n## Acceptance Criteria\n- [ ] `RoutedSessionActor` holds `backend: any LanguageModelSessionBackend`; `container` and `cache` are gone\n- [ ] `fork()` acquires `serialGate` before calling `backend.makeFork()` with a comment explaining the transcript data race prevention\n- [ ] `instructions` are no longer passed per generation call\n- [ ] `swift build --target FoundationModelsRouter` succeeds\n\n## Tests\n- [ ] All existing chokepoint, fork, and transcript tests pass after stub updates in task 4\n- [ ] `swift test` exits 0 (once task 4 stubs are done)\n\n## Workflow\n- `/tdd` — update the actor and builder, confirm production build passes, then task 4 fixes the test side.\n\n## Review Findings (2026-07-07 11:56)\n\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:61` — The doc comment has two independent sentences without a blank `///` line separating them. Add a blank `///` line after '`nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:)``.' and before 'It travels with the session...'.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:166` — The doc comment has two independent sentences without a blank `///` line separating them; per the rule, 'any elaboration follows after a blank `///` line'. Add a blank `///` line after 'unconstrained session.' and before 'Travels with the session...'.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:171` — The doc comment has two independent sentences without a blank `///` line separating them. Add a blank `///` line after 'sessions and forks.' and before 'Every `generate...'.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:176` — The doc comment has two independent sentences without a blank `///` line separating them. Add a blank `///` line after 'owning the model.' and before '`fork(workingDirectory:)`...'.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:181` — The doc comment has a summary sentence followed by elaboration (case analysis) without a blank `///` line between them. Add a blank `///` line after 'deallocated.' and before '`true` for a fork...'.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:196` — The doc comment has a summary sentence followed by elaboration without a blank `///` line between them. Add a blank `///` line after 'Creates a session.' and before 'Internal: construction...'.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:278` — Public method `respond(to:maxTokens:)` implementing a protocol method lacks a documentation comment (/// doc comment). The protocol declares and documents this method, and default implementations in the protocol extension include doc comments, but this actor implementation does not. Add a documentation comment to this implementation, either by copying the protocol's documentation or by documenting implementation-specific details. Compare to the protocol definition at lines 71-78.\n- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:295` — Public method `streamResponse(to:maxTokens:)` implementing a protocol method lacks any documentation comment. The protocol declares and documents this method, and default implementations in the protocol extension include doc comments, but this actor implementation has none. Add a documentation comment to this implementation. Compare to the protocol definition at lines 81-89 and the default implementation at lines 125-133.\n
