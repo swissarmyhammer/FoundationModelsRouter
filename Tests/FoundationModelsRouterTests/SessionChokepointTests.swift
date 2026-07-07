@@ -42,8 +42,11 @@ struct SessionChokepointTests {
     /// assertions keep working now that generation runs through a persistent
     /// backend rather than the container directly.
     ///
-    /// Thread-safe via immutable captured references; both `backend` and `spy`
-    /// are `let` and never mutated after initialization.
+    /// `@unchecked Sendable` is safe here because `RoutedSessionActor` serializes
+    /// all method calls through the model's serial gate, and both wrapped fields
+    /// (`backend`, `spy`) are themselves `Sendable` — `backend` is a `StubSessionBackend`
+    /// and `spy` is an actor; both are also `let` and never mutated after
+    /// initialization.
     private final class MaxTokensRecordingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let backend: StubSessionBackend
         private let spy: MaxTokensSpy
