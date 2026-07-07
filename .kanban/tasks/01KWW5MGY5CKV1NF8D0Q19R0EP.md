@@ -1,19 +1,29 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8880'
+comments:
+- actor: claude-code
+  id: 01kwygs906v90fepn3a9vke3dt
+  text: |-
+    Investigated before touching code (per task's own caveat that prior task 2bgsqbe already relabeled some call sites) — found ALL six checklist items already resolved in the current working tree, landed by earlier commits before this task was picked up:
+
+    - `LiveEmbeddingContainer.embed(_:)` -> `embed(texts:)`: done in commit ac1e95c (refactor(resolution): label embed() parameter as texts across embedding path).
+    - `LiveEmbeddingContainer.embed(_:in:)` -> `embed(texts:in:)` + full Parameters/Returns/Throws docs: renamed in ac1e95c, docs added in 7566e43 (fix(router): label parameters and complete doc comments per audit).
+    - `LiveModelLoader.preload(_:)` -> `preload(container:)` + `- Parameter container:`/`- Throws:` docs: rename predates ac1e95c (already `container:` at that diff's context lines), docs added in 7566e43.
+    - `LiveModelLoader.evict(_:)` -> `evict(container:)` + `- Parameter container:` doc: same as above, docs added in 7566e43.
+    - `LiveModelLoader.handler(_:)` -> `handler(reporting:)`: relabeled across cfe83df8/6cdf87e (which also made it `private` as part of the separate mapProgress extraction task); current signature is `private static func handler(reporting: @escaping @Sendable (DownloadProgress) -> Void) -> @Sendable (Progress) -> Void` with full doc comment.
+    - `UnconfiguredModelLoader.preload(_:)` -> `- Parameter container:`/`- Throws:` docs: added in 7566e43.
+
+    Also checked the `ModelLoader`/`LoadedModelContainer` protocol declarations in `ModelLoader.swift` (both `preload(container:)` and `evict(container:)` already labeled and documented) and grepped every `.preload(`/`.evict(` call site and conformance across `Sources/` and `Tests/` (Router.swift, IntegrationTests.swift, GuidedGenerationTests.swift, ExamplesTests.swift, ForkConcurrencyTests.swift, ToolIntegrationTests.swift, ResolveTests.swift, TranscriptNestingTests.swift, MergedAndRedactionTests.swift, ProfileLifecycleTests.swift, GuidedShapesTests.swift, SessionChokepointTests.swift) — every one already uses the labeled `container:` argument, consistent with the protocol.
+
+    No source changes were needed. Verified `swift build --target FoundationModelsRouter` — Build complete, no warnings/errors. Checked off all checklist items in the description to reflect verified state. Leaving in `doing` for `/review` per the implement workflow — this task can likely be closed as a duplicate/already-resolved finding from task 01KWVWXHMHR3XM8PM6T5WVXHNK's own remediation, but leaving that call to review.
+  timestamp: 2026-07-07T14:47:46.438054+00:00
+- actor: claude-code
+  id: 01kwygtkaye8gx4sm4eg3fdy1p
+  text: All six acceptance-criteria items were already satisfied by prior commits (ac1e95c, 7566e43, 6cdf87e) before this task was ever picked up — confirmed by grep across Sources/ and Tests/ plus a green `swift build --target FoundationModelsRouter`. No diff was produced this iteration, so per the finish workflow's "nothing to commit" handling, this is not re-reviewed against a stale commit — closing directly as a verified duplicate of already-landed work.
+  timestamp: 2026-07-07T14:48:29.790017+00:00
+position_column: done
+position_ordinal: a880
 title: Label first parameters and complete param/throws docs in LiveModelLoader.swift
 ---
-A review pass on `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` (run after fixing task 01KWVWXHMHR3XM8PM6T5WVXHNK's duplication/doc-period findings) surfaced a new, distinct category of findings — out of scope for that task, which only covered the respond/schema duplication and doc-comment periods:
-
-- [ ] `LiveEmbeddingContainer.embed(_:)` (instance method) — unlabeled first parameter for a non-value-preserving operation. Change to `func embed(texts: [String]) async throws -> [[Float]]`.
-- [ ] `LiveEmbeddingContainer.embed(_:in:)` (static) — unlabeled first parameter. Change to `static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]]`.
-- [ ] `LiveModelLoader.preload(_:)` — unlabeled first parameter. Change to `public func preload(container: any LoadedModelContainer) async throws`. Also missing `- Parameter container:` and `- Throws:` doc lines.
-- [ ] `LiveModelLoader.evict(_:)` — unlabeled first parameter. Change to `public func evict(container: any LoadedModelContainer) async`. Also missing `- Parameter container:` doc line.
-- [ ] `LiveModelLoader.handler(_:)` (static) — unlabeled first parameter. Change to `static func handler(reporting: @escaping @Sendable (DownloadProgress) -> Void) -> @Sendable (Progress) -> Void`.
-- [ ] `UnconfiguredModelLoader.preload(_:)` — missing `- Parameter container:` and `- Throws:` doc lines.
-
-Renaming `preload`/`evict` requires updating the `ModelLoader`/`LoadedModelContainer` protocol declarations (`Sources/FoundationModelsRouter/Resolution/ModelLoader.swift`) plus every conformance and call site (grep for `.preload(` and `.evict(` across `Sources/` and `Tests/`).
-
-Verify `swift build --target FoundationModelsRouter` stays green after the rename. Test-target compilation is separately broken already (task 01KWVWZJMYGB295V9C0QZWTM1M covers that) — do not treat pre-existing test build failures as new regressions, but do relabel any test-double conformances so they don't add a *new* class of failure.
+A review pass on `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` (run after fixing task 01KWVWXHMHR3XM8PM6T5WVXHNK's duplication/doc-period findings) surfaced a new, distinct category of findings — out of scope for that task, which only covered the respond/schema duplication and doc-comment periods:\n\n- [x] `LiveEmbeddingContainer.embed(_:)` (instance method) — unlabeled first parameter for a non-value-preserving operation. Change to `func embed(texts: [String]) async throws -> [[Float]]`.\n- [x] `LiveEmbeddingContainer.embed(_:in:)` (static) — unlabeled first parameter. Change to `static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]]`.\n- [x] `LiveModelLoader.preload(_:)` — unlabeled first parameter. Change to `public func preload(container: any LoadedModelContainer) async throws`. Also missing `- Parameter container:` and `- Throws:` doc lines.\n- [x] `LiveModelLoader.evict(_:)` — unlabeled first parameter. Change to `public func evict(container: any LoadedModelContainer) async`. Also missing `- Parameter container:` doc line.\n- [x] `LiveModelLoader.handler(_:)` (static) — unlabeled first parameter. Change to `static func handler(reporting: @escaping @Sendable (DownloadProgress) -> Void) -> @Sendable (Progress) -> Void`.\n- [x] `UnconfiguredModelLoader.preload(_:)` — missing `- Parameter container:` and `- Throws:` doc lines.\n\nRenaming `preload`/`evict` requires updating the `ModelLoader`/`LoadedModelContainer` protocol declarations (`Sources/FoundationModelsRouter/Resolution/ModelLoader.swift`) plus every conformance and call site (grep for `.preload(` and `.evict(` across `Sources/` and `Tests/`).\n\nVerify `swift build --target FoundationModelsRouter` stays green after the rename. Test-target compilation is separately broken already (task 01KWVWZJMYGB295V9C0QZWTM1M covers that) — do not treat pre-existing test build failures as new regressions, but do relabel any test-double conformances so they don't add a *new* class of failure.\n\n**Resolution note:** all six items were already fixed by prior commits before this task was picked up — see the `doing`-column comment for the commit-by-commit trace. No further code changes were needed; verified against the current working tree.

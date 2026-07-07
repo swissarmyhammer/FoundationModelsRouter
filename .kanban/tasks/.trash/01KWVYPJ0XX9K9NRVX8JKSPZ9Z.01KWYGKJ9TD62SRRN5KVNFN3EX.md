@@ -1,6 +1,11 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kwygkbnh0jv7hkg8q6nn7z01
+  text: This task is entirely implementation work in the mlx-swift-lm fork (a separate repo) — a new ExecutorCacheStore actor, TDD, commit, and push there. Filed directly on that repo's own kanban board as task qeqw5r3 (github.com/swissarmyhammer/mlx-swift-lm, mlx-foundationmodels branch) with full spec. Removing this task from the FoundationModelsRouter board since it isn't actionable here — this repo's board should only pick up a Package.resolved pin bump once qeqw5r3 lands and pushes, tracked separately if/when that happens.
+  timestamp: 2026-07-07T14:44:32.561992+00:00
 position_column: todo
 position_ordinal: '8780'
 title: Wire cross-turn KV cache in MLXLanguageModel.Executor (swissarmyhammer/mlx-swift-lm fork)

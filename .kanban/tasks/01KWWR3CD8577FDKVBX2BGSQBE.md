@@ -36,8 +36,8 @@ comments:
 
     Leaving this in `doing` per the implement workflow — ready for `/review`.
   timestamp: 2026-07-07T13:42:39.803719+00:00
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: a780
 title: Fix ModelLoader protocol stub argument-label mismatches breaking all test targets
 ---
 ## What

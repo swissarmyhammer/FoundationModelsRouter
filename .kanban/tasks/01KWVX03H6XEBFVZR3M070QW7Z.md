@@ -3,7 +3,6 @@ assignees:
 - claude-code
 depends_on:
 - 01KWVWZJMYGB295V9C0QZWTM1M
-- 01KWVYPJ0XX9K9NRVX8JKSPZ9Z
 position_column: todo
 position_ordinal: '8480'
 title: Prove multi-turn conversation state and KV cache usage in router sessions
