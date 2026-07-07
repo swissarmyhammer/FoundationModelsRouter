@@ -28,8 +28,8 @@ comments:
   timestamp: 2026-07-07T19:14:19.294263+00:00
 depends_on:
 - 01KWVWZJMYGB295V9C0QZWTM1M
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ac80
 title: Prove multi-turn conversation state and KV cache usage in router sessions
 ---
 ## What

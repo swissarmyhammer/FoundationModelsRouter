@@ -1,10 +1,42 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kwz218s1k67tjhnm27hhhxr9
+  text: |-
+    Implemented. Read the current source (LiveModelLoader.swift, RoutedSession.swift, LanguageModelSessionBackend.swift) to verify against plan.md before editing.
+
+    Changes to plan.md:
+    - **Backends section**: rewrote the "Implemented" paragraph to remove the implication that a session is built inline per call. Added a new "Session-as-factory, not a stateless invoker" paragraph documenting `MLXFoundationModelsContainer.makeSession(instructions:) -> any LanguageModelSessionBackend` as a factory, and `MLXFoundationModelsSessionBackend.liveSession` as a persistent, never-rebuilt `LanguageModelSession`. Added a "`LanguageModelSessionBackend` — the seam between factory and session" paragraph per the task's requirement. Rewrote "Resolved — `fork()`" to state fork() now uses `LanguageModelSession.init(model:tools:transcript:)` for real conversation-history inheritance (implemented, not blocked), keeping the honest note that `MLXLanguageModel.Executor` still re-derives `LMInput` from the full transcript every turn (cited grep evidence retained), but reframed explicitly as "a performance observation, not a correctness gap."
+    - **Sessions & KV cache section**: rewrote the opening framing from "Resolved as split/blocked" to "Correctness: implemented. Compute-reuse: a performance gap in a dependency we don't control." Replaced the old aspirational `KVCache.copy()`-based numbered list with one describing the actual persistent-backend / `makeFork()`-seeds-from-transcript behavior. Cited the actual test files: `Tests/FoundationModelsRouterTests/MultiTurnSessionTests.swift` (stub-based) and `Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`'s `makeForkSeedsFromParentTranscript` (real-model gated integration test) as evidence this is tested, not aspirational.
+    - **Decisions section**: added a new bullet "Session-as-factory (replaces the stateless invoker)" explaining why the earlier per-call-session design was replaced — it silently discarded all conversation history, making every turn effectively single-turn. Updated the "Session engine" and "Sessions & KV cache" bullets to match the corrected framing (factory + persistent backend; fork's conversation-history inheritance implemented and tested; only compute-reuse is an upstream performance gap).
+    - Also touched a stale comment in the Core Types code sample (`RoutedSession` fork doc comment) that claimed fork does NOT inherit any parent state — updated to say it inherits conversation history but not prefix compute, for consistency with the rest of the document.
+
+    Verified `swift build --target FoundationModelsRouter` succeeds (documentation-only change, as expected).
+
+    Discovered but NOT fixed (out of scope for this task): `Sources/FoundationModelsRouter/Session/SessionKVCache.swift`'s doc comment still literally says "a fresh `LanguageModelSession` is constructed **per call** rather than held across calls on this seam" — this is the exact stale claim this task was about, but it lives in source code doc comments, not plan.md, and the task instructions said not to touch source. Recommend a follow-up task to update that file's docs to match the persistent-session-backend architecture.
+
+    Also noted while reading `Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`: there is already a gated (real-model, opt-in env var) hard-assertion test `secondTurnReusesFirstTurnsKVCache` expecting `usage.input.cachedTokenCount > 0` on turn 2 — written as a not-yet-necessarily-passing acceptance test for the upstream KV-cache-reuse fix. This doesn't change plan.md's caveat (which per the task description is still accurate as of this writing), just worth knowing it exists for whoever tracks the upstream fix landing.
+
+    Leaving task in `doing` for review, per /implement workflow.
+  timestamp: 2026-07-07T19:49:14.145576+00:00
+- actor: claude-code
+  id: 01kwz2fppns1v660pq2c9hngd0
+  text: |-
+    Ran the double-check adversarial verification agent against the plan.md diff, checking every claim against source (LiveModelLoader.swift, RoutedSession.swift, LanguageModelSessionBackend.swift) and the two cited test files. Verdict: PASS on all core claims (factory pattern, persistent liveSession, makeFork()'s exact transcript-seeding code, the retained-but-reframed KV performance caveat, no lingering "fresh session per call" claim, correct test file/name citations) — REVISE on two secondary findings, both fixed:
+
+    1. Added a disclosure in "Sessions & KV cache" that the same gated integration file also contains `secondTurnReusesFirstTurnsKVCache`, a hard `cachedTokenCount > 0` assertion that is currently expected to fail against the pinned mlx-swift-lm revision (confirmed via the double-check agent reading `.build/checkouts/mlx-swift-lm/Libraries/MLXFoundationModels/MLXLanguageModel.swift`: every `usage` construction hardcodes `cachedTokenCount: 0`) — gated behind `FM_ROUTER_INTEGRATION_TESTS` so it never blocks CI, will start passing once the upstream fix lands.
+    2. Updated the Milestones section's "Pivot note (resolved)" paragraph, which still described fork() only as "split/blocked ... kept as a correctness-only primitive" without acknowledging the now-implemented conversation-history inheritance — reworded to say milestone 9's fork() is implemented for conversation-history inheritance and split/blocked only on the compute-reuse half.
+
+    Re-ran `swift build --target FoundationModelsRouter` after these follow-up edits: exit 0, build complete.
+
+    Final state: plan.md's Backends, Sessions & KV cache, LanguageModelSessionBackend (folded into Backends as a new subsection), and Decisions sections all updated per the task description; acceptance criteria met. Task left in `doing` for `/review`.
+  timestamp: 2026-07-07T19:57:07.157520+00:00
 depends_on:
 - 01KWVX03H6XEBFVZR3M070QW7Z
-position_column: todo
-position_ordinal: '8580'
+position_column: doing
+position_ordinal: '80'
 title: Update plan.md to reflect session-as-factory architecture
 ---
 ## What

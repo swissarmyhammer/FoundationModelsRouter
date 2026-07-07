@@ -259,11 +259,13 @@ struct RoutedEmbedder {
 // resident models stay alive for its lifetime), and is **born holding the Router's
 // recorder** — there is no public init, so an unrecorded session can't exist (see
 // Transcripts & recording). `fork` sets `parentID = self.id`, nests its directory
-// under the parent, and diverges into an independent child session — but does NOT
-// inherit the parent's prefilled-prefix compute cheaply: that mechanism is
-// split/blocked, verified against the pinned `mlx-swift-lm` dependency's
-// `MLXLanguageModel.Executor`, which has no persisted-cache state to copy at the
-// pinned revision (see Backends).
+// under the parent, and diverges into an independent child session that correctly
+// **inherits the parent's conversation history** (seeded from the parent's
+// transcript via `LanguageModelSession.init(model:tools:transcript:)`) — but does
+// NOT inherit the parent's prefilled-prefix *compute* cheaply: that reuse is a
+// performance gap in the pinned `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`,
+// which has no persisted-cache state to copy at the pinned revision, not a
+// correctness gap (see Backends).
 protocol RoutedSession: Actor {
     var profile: LanguageModelProfile { get }    // retained: keeps the models resident
     var routerID: ULID { get }                   // the recording group
@@ -389,42 +391,74 @@ This is a **load-bearing** dependency, not an optional interop path: `RoutedSess
 has no `ChatSession`-backed fallback path. **Implemented**: `RoutedSession`'s live
 conformance (`MLXFoundationModelsContainer`, in `LiveModelLoader.swift`) constructs
 an `MLXLanguageModel` (wrapping this package's own `Downloader`/`TokenizerLoader`
-injection) and drives every call through a real `LanguageModelSession(model:)` —
-`respond`, `streamResponse`, and the guided (`schema:`) path. No code in
-`Sources/FoundationModelsRouter` constructs `MLXLMCommon.ChatSession`, and no code
-drives `MLXGuidedGeneration`'s `GuidedGenerationLoop` directly — that engine now
-runs *inside* `MLXLanguageModel`'s own `Executor`, invoked by `LanguageModelSession`
-when a caller passes a `schema:`, not by a loop we wrote.
+injection). No code in `Sources/FoundationModelsRouter` constructs
+`MLXLMCommon.ChatSession`, and no code drives `MLXGuidedGeneration`'s
+`GuidedGenerationLoop` directly — that engine now runs *inside* `MLXLanguageModel`'s
+own `Executor`, invoked by `LanguageModelSession` when a caller passes a `schema:`,
+not by a loop we wrote.
 
-**Resolved — `fork()`.** The `fork()` design below was premised on owning
-`MLXLMCommon`'s KV cache directly (`KVCache.copy()`), which required sitting below
-`ChatSession`. Research against the real FoundationModels v2 SDK
+**Session-as-factory, not a stateless invoker.** `MLXFoundationModelsContainer` is
+not a generation entry point itself — it is a *factory*:
+`makeSession(instructions:) -> any LanguageModelSessionBackend` builds one
+`LanguageModelSession(model:instructions:)` and hands it to a new
+`MLXFoundationModelsSessionBackend`, which **holds that session for its entire
+lifetime** (`liveSession` is a `let`, never rebuilt). Every generation call on that
+backend — `respond`, `streamResponse`, and the guided (`schema:`) path — runs
+against the same `liveSession`, so the session's `Transcript` accumulates across
+calls the way a real multi-turn chat does: a second `respond(to:maxTokens:)` sees
+the first turn's content in context. `RoutedSessionActor` mirrors this at the
+session layer — it is constructed with one `backend` it keeps for its whole
+lifetime (see `LanguageModelSessionBackend` below and `RoutedSession.swift`), not a
+per-call handle. There is no code path anywhere in `Sources/FoundationModelsRouter`
+that constructs a new `LanguageModelSession` per `respond`/`streamResponse` call.
+
+**`LanguageModelSessionBackend` — the seam between factory and session.** The
+`LanguageModelSessionBackend` protocol (`Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift`)
+is what makes the factory/persistent-session split concrete: a `LoadedLLMContainer`
+(the factory) *manufactures* a backend via `makeSession(instructions:)`, and from
+then on the backend — not the container — owns the live `LanguageModelSession` and
+its accumulated transcript for as long as the owning `RoutedSession` lives.
+`makeFork()` is the seam `RoutedSession.fork(workingDirectory:)` calls to produce a
+child backend: it does not start the child from scratch, it seeds it from the
+parent's own accumulated conversation state (see "Resolved — `fork()`" below), then
+the two diverge independently as each records its own further turns.
+
+**Resolved — `fork()`.** The `fork()` design below was originally premised on
+owning `MLXLMCommon`'s KV cache directly (`KVCache.copy()`), which required sitting
+below `ChatSession`. Research against the real FoundationModels v2 SDK
 (`FoundationModels.swiftinterface`, macOS 27 SDK) found a genuine
 transcript-continuation primitive: `LanguageModelSession.init(model:tools:transcript:)`
-constructs a new session that continues a prior session's `Transcript`. This is a
-real, available mechanism for **conversation correctness** — a child that continues
-its parent's conversation — but it does **not** restore the "cheap prefix reuse"
-property `fork()` originally targeted. Verified by reading the pinned
-`swissarmyhammer/mlx-swift-lm` fork's `Libraries/MLXFoundationModels/MLXLanguageModel.swift`
-(branch `mlx-foundationmodels`, revision `e6ccd2721` as of 2026-06-29, tracking
-upstream PR #334): `MLXLanguageModel`'s `Executor.respond(to:model:streamingInto:)`
-re-derives its full `LMInput` from `TranscriptConverter.mlxMessages(for: request.transcript)`
-and runs a fresh `MLXLMCommon.generate(...)` call — there is no `KVCache`, prompt
-cache, or any other persisted-across-turns state anywhere in that module (confirmed
-by grep: zero `KVCache`/`promptCache`/`trim(`/`savePromptCache` references in
-`Libraries/MLXFoundationModels`). So **every turn of every session reprocesses its
-whole transcript from scratch** under this backend — `fork()`'s "inherits the
-parent's prefilled-prefix compute" performance goal is not achievable against this
-dependency today, not because of a gap in this router's own wiring, but because the
-upstream `MLXLanguageModel` executor itself has no persisted-cache mechanism to
-reuse. `RoutedSession.fork(workingDirectory:)` is kept as a correctness primitive
-(an independent child session, nested transcript, ARC-freed on release — see
-`SessionKVCache`'s documentation for why its cache stays inert) rather than wired to
-transcript-continuation, since doing so would add real complexity for zero
-performance benefit under the current dependency. **This is split/blocked
-specifically on the performance property**, with a concrete, cited reason in a
-dependency this router does not control; revisit if a future `mlx-swift-lm` release
-adds a persisted-cache executor.
+constructs a new session that continues a prior session's `Transcript`. **This is
+now implemented**: `MLXFoundationModelsSessionBackend.makeFork()`
+(`LiveModelLoader.swift`) builds the forked session as
+`LanguageModelSession(model: model, tools: [], transcript: liveSession.transcript)`
+— the child begins holding every entry the parent's transcript has accumulated so
+far (including the parent's `Transcript.Entry.instructions` entry, if any), then
+diverges independently as each session's own further turns append to its own
+transcript. So **conversation history is correctly inherited across a fork** — a
+child sees everything its parent said and heard up to the fork point, and forking
+mid-conversation no longer silently drops that context.
+
+What this primitive does **not** give back is cheap prefix reuse at the GPU level.
+Verified by reading the pinned `swissarmyhammer/mlx-swift-lm` fork's
+`Libraries/MLXFoundationModels/MLXLanguageModel.swift` (branch
+`mlx-foundationmodels`, revision `e6ccd2721` as of 2026-06-29, tracking upstream PR
+#334): `MLXLanguageModel`'s `Executor.respond(to:model:streamingInto:)` re-derives
+its full `LMInput` from `TranscriptConverter.mlxMessages(for: request.transcript)`
+and runs a fresh `MLXLMCommon.generate(...)` call on **every** turn — there is no
+`KVCache`, prompt cache, or any other persisted-across-turns state anywhere in that
+module (confirmed by grep: zero `KVCache`/`promptCache`/`trim(`/`savePromptCache`
+references in `Libraries/MLXFoundationModels`). So every turn of every session —
+forked or not — reprocesses its whole transcript from scratch under this backend.
+**This is a performance observation, not a correctness gap**: conversation
+correctness (fork inherits the right history; a session sees its own prior turns)
+is fully implemented and tested today; only the *compute-reuse* optimization
+(skipping re-derivation of the shared prefix's `LMInput`/KV state) is unavailable,
+because the upstream `MLXLanguageModel` executor this router depends on has no
+persisted-cache mechanism to reuse it against. That upstream gap is filed and
+tracked as its own concern against the `mlx-swift-lm` fork, not as an open item of
+this router's design — revisit if a future `mlx-swift-lm` release adds a
+persisted-cache executor.
 
 ## Guided generation
 
@@ -536,45 +570,72 @@ recognize with a typed `ConversionError` (see "The engine").
 
 ## Sessions & KV cache
 
-**Resolved as split/blocked — not achievable against the pinned dependency today,
-verified rather than assumed.** The mechanism below was designed for owning MLX's
-KV cache directly below `ChatSession`, which we no longer construct. Under
-`LanguageModelSession`, a real transcript-continuation primitive exists
-(`LanguageModelSession.init(model:tools:transcript:)`), but reading the pinned
-`swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor` (branch
+**Correctness: implemented. Compute-reuse: a performance gap in a dependency we
+don't control, not a correctness gap.** The mechanism originally sketched here was
+designed for owning MLX's KV cache directly below `ChatSession`, which we no
+longer construct. Under `LanguageModelSession`, the real primitive is
+transcript continuation: `LanguageModelSession.init(model:tools:transcript:)`
+constructs a new session that continues a prior session's `Transcript`, and
+`RoutedSession.fork(workingDirectory:)` is wired to it —
+`MLXFoundationModelsSessionBackend.makeFork()` builds the child session as
+`LanguageModelSession(model: model, tools: [], transcript: liveSession.transcript)`,
+so a fork **correctly inherits its parent's conversation history** up to the fork
+point, then diverges independently. This is tested against stubs
+(`Tests/FoundationModelsRouterTests/MultiTurnSessionTests.swift`) and, in the gated
+integration suite, against a real model
+(`Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`'s
+`makeForkSeedsFromParentTranscript`) — not aspirational. That same gated file also
+carries `secondTurnReusesFirstTurnsKVCache`, a hard, never-weakened assertion that
+`usage.input.cachedTokenCount > 0` on a session's second turn — written as the
+acceptance test for the upstream compute-reuse fix described below. It is
+currently expected to fail against the pinned revision (every `usage` this
+backend's `Executor` constructs hardcodes `cachedTokenCount: 0` — see the
+compute-reuse discussion just below), and is opt-in
+(`FM_ROUTER_INTEGRATION_TESTS`) precisely so that expected failure never blocks
+CI; it will start passing the moment the upstream fix lands.
+
+What is *not* recovered is cheap prefix reuse at the compute layer. Reading the
+pinned `swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor` (branch
 `mlx-foundationmodels`, revision `e6ccd2721`) found it re-derives its full model
 input from the request's `Transcript` and runs a *fresh* `MLXLMCommon.generate(...)`
-on every single turn — there is no `KVCache`, prompt cache, or any persisted-across-turns
-state anywhere in `Libraries/MLXFoundationModels` (confirmed by grep: zero hits for
-`KVCache`/`promptCache`/`trim(`/`savePromptCache`). So the pattern below is
-**target/aspirational**, same as before the pivot — but now for a *different*,
-concretely-verified reason: it's not that we haven't wired it up, it's that the
-upstream executor this router depends on has no persisted-cache mechanism to wire up
-*to*, at the pinned revision. `RoutedSession.fork(workingDirectory:)` exists today
-as a correctness primitive only (independent child session, nested transcript,
-freed on release) — see plan's "Backends" section for the full citation.
+on every single turn — there is no `KVCache`, prompt cache, or any
+persisted-across-turns state anywhere in `Libraries/MLXFoundationModels`
+(confirmed by grep: zero hits for `KVCache`/`promptCache`/`trim(`/`savePromptCache`).
+So every turn, forked or not, reprocesses its whole transcript from scratch under
+this backend today. This is purely a **performance** characteristic of the
+upstream `MLXLanguageModel` executor this router depends on — it has no
+persisted-cache mechanism to reuse a shared prefix's compute against, at the
+pinned revision. That upstream fix is filed and tracked as its own concern against
+the `mlx-swift-lm` fork, not as an open correctness item of this router's design.
 
-1. Build a **template session** with the shared instructions (and grammar/tools);
-   priming it prefills that common prefix once into its cache.
-2. `template.fork()` returns a child whose cache **begins as a copy of the template's**
-   (`KVCache.copy()`), so it inherits the prefix's compute and diverges on its own
-   prompt. Forks are independent and may run concurrently.
-3. **A session's cache dies with the session** (ARC) — releasing a fork frees its KV.
-   A session also **retains its creating profile** (`session.profile`), so resident
-   models can't be freed out from under it; the profile evicts only once its handle
-   and all sessions/forks are released. No keyed pool or LRU: the live template *is*
-   the warm prefix; forks are explicit and short-lived.
+1. A session — root or fork — is driven through its own persistent
+   `LanguageModelSessionBackend`, which owns one `LanguageModelSession` for the
+   session's whole lifetime and accumulates its `Transcript` turn over turn (see
+   Backends).
+2. `fork()` seeds the child's backend from the parent's *current* accumulated
+   transcript (`makeFork()`, under the parent's serial gate so the read can't race
+   an in-flight turn — see `RoutedSessionActor.fork(workingDirectory:)`), so the
+   child sees everything the parent said and heard up to that point, then the two
+   diverge independently and may run concurrently.
+3. **A session's backend (and its `LanguageModelSession`) dies with the session**
+   (ARC) — releasing a fork frees whatever conversation state it holds. A session
+   also **retains its creating profile** (`session.profile`), so resident models
+   can't be freed out from under it; the profile evicts only once its handle and
+   all sessions/forks are released.
 
 Substrate previously verified below `ChatSession` (**confirmed absent from the
 `LanguageModelSession`/`MLXLanguageModel` path at the pinned revision** — see
-above): `KVCache.copy()` (fork), `trim(_:)` (serial reuse — recycle one cache
-instead of copying), `savePromptCache` / `loadPromptCache` (spill a warm prefix to
-disk). None of these are reachable through `MLXLanguageModel.Executor` today.
+above): `KVCache.copy()` (compute-level fork), `trim(_:)` (serial reuse — recycle
+one cache instead of copying), `savePromptCache` / `loadPromptCache` (spill a warm
+prefix to disk). None of these are reachable through `MLXLanguageModel.Executor`
+today; `fork()`'s conversation-history inheritance above does not depend on any of
+them.
 
-**Budget caveat (moot at the pinned revision, kept for when this becomes real):**
-`copy()` is a *deep* copy, so K concurrent forks hold K× the prefix KV. KV is a
-**reclaimable, pooled** resource separate from pinned weights, and the footprint
-math budgets only one cache per model — so a wide fan-out would need a KV budget
+**Budget caveat (moot at the pinned revision, kept for when compute-level reuse
+becomes real):** a hypothetical `copy()`-based cache is a *deep* copy, so K
+concurrent forks would hold K× the prefix KV. KV is a **reclaimable, pooled**
+resource separate from pinned weights, and the footprint math budgets only one
+cache per model — so a wide fan-out would need a KV budget
 carved from headroom and a bound on concurrent forks, or it would OOM a machine
 that held the models comfortably, *if and when* a persisted-cache executor exists
 to make this a real cost.
@@ -708,13 +769,27 @@ since local models still see sensitive prompts.
 - **Session engine:** Apple's `LanguageModelSession` (`FoundationModels`, macOS 27+)
   is the load-bearing session surface, not `MLXLMCommon`'s `ChatSession` — **implemented**:
   `MLXFoundationModelsContainer` (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`)
-  constructs and drives it, backed by `MLXLanguageModel` (`MLXFoundationModels`). No
-  `ChatSession` construction and no hand-rolled generation/tool-dispatch loop anywhere
-  in `Sources/FoundationModelsRouter`. `fork()`'s cheap-prefix-reuse mechanism under
-  this backend is **split/blocked** (see Backends) — verified against the pinned
-  `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`, which has no persisted-cache
-  mechanism at the pinned revision; `KVCache.copy()` does not apply and there is
-  currently nothing to re-derive it against.
+  is a **session factory** (`makeSession(instructions:) -> any LanguageModelSessionBackend`),
+  backed by `MLXLanguageModel` (`MLXFoundationModels`). No `ChatSession` construction
+  and no hand-rolled generation/tool-dispatch loop anywhere in
+  `Sources/FoundationModelsRouter`. `fork()`'s cheap-*compute*-reuse under this backend
+  is a **performance gap in the upstream dependency, not a correctness gap** (see
+  Backends) — verified against the pinned `mlx-swift-lm` dependency's
+  `MLXLanguageModel.Executor`, which has no persisted-cache mechanism at the pinned
+  revision, so `KVCache.copy()` does not apply; fork's *conversation-history*
+  inheritance, by contrast, is implemented and tested (see below).
+- **Session-as-factory (replaces the stateless invoker):** a `LoadedLLMContainer`
+  manufactures a `LanguageModelSessionBackend` once per session
+  (`makeSession(instructions:)`), and that backend holds one `LanguageModelSession`
+  for its whole lifetime (`MLXFoundationModelsSessionBackend.liveSession`), so every
+  call on a session accumulates conversation state instead of starting over. This
+  replaced an earlier stateless-invoker design where each call constructed and
+  discarded a fresh `LanguageModelSession`, which **silently discarded all
+  conversation history** — every turn was effectively single-turn, `respond`
+  ignored everything said before it, and `fork()` had nothing meaningful to seed a
+  child from. `makeFork()` seeds a forked backend from the parent's accumulated
+  `Transcript` via `LanguageModelSession.init(model:tools:transcript:)`, so a fork
+  now correctly continues its parent's conversation instead of starting cold.
 - **Platform:** macOS 27+ / FoundationModels v2 SDK; full `MLXFoundationModels` +
   `MLXGuidedGeneration` stack, no pre-27 fallback (branch dep until PR #334 merges).
 - **Guided generation:** xgrammar via `MLXGuidedGeneration`, invoked *underneath*
@@ -733,12 +808,16 @@ since local models still see sensitive prompts.
   parameter.
 - **Sessions & KV cache:** a session **retains its creating profile**
   (`session.profile`), so resident models stay alive for its lifetime. `fork()`
-  produces an independent, correctness-scoped child session (nested transcript,
-  freed on release) but does **not** reuse the parent's prefilled-prefix compute —
-  verified split/blocked against the pinned `mlx-swift-lm` dependency, which has no
-  persisted-cache executor to wire a reuse mechanism to (see Backends and "Sessions
-  & KV cache" for the citation). `SessionKVCache` stays an inert copy/free lifecycle
-  contract for every current conformer, live included.
+  produces an independent child session (nested transcript, freed on release) whose
+  backend is seeded from the parent's accumulated `Transcript` via
+  `LanguageModelSession.init(model:tools:transcript:)` — **conversation-history
+  inheritance is implemented and tested**, not aspirational. What it does **not** do
+  is reuse the parent's prefilled-prefix *compute* — verified against the pinned
+  `mlx-swift-lm` dependency, whose `MLXLanguageModel.Executor` has no persisted-cache
+  mechanism to reuse it against (see Backends and "Sessions & KV cache" for
+  the citation); this is a performance property of that upstream dependency, not a
+  gap in this router's own correctness. `SessionKVCache` stays an inert copy/free
+  lifecycle contract for every current conformer, live included.
 - **Concurrency:** generation is serialized per resident model (FIFO, one at a time);
   `fork()` fan-out is bounded by `maxConcurrentForks` and queues for admission — both
   on a fair async semaphore. Guided output is whole-chunk; only unconstrained text
@@ -798,9 +877,12 @@ and 9 (session fork) were scoped against `ModelContainer`/`ChatSession` directly
 `RoutedSession` is now built on `LanguageModelSession` (see Backends):
 milestone 8's guided generation is **implemented** against the real backend
 (`MLXFoundationModelsContainer` + `RuntimeJSONSchemaConverter`, `.ebnf` blocked with
-a typed error); milestone 9's `fork()` is **split/blocked** on the cheap-prefix-reuse
-half specifically (kept as a correctness-only primitive) — verified, not assumed,
-against the pinned `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`.
+a typed error); milestone 9's `fork()` is **implemented** for conversation-history inheritance
+(`makeFork()` seeds the child from the parent's `Transcript` via
+`LanguageModelSession.init(model:tools:transcript:)`, tested — see Sessions & KV
+cache) and **split/blocked** only on the cheap-*compute*-reuse half — a
+performance property, not a correctness one — verified, not assumed, against the
+pinned `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`.
 Milestone 6 (tool integration) is unaffected in practice: `RoutedSession`/`RoutedLLM`
 still has no `tools:` parameter, so there is nothing tool-specific to re-scope yet
 beyond the transcript tool-call recording mechanism identified in "Transcripts &
