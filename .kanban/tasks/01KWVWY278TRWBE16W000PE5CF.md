@@ -58,46 +58,8 @@ comments:
   timestamp: 2026-07-07T12:16:25.095764+00:00
 depends_on:
 - 01KWVWXHMHR3XM8PM6T5WVXHNK
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: a980
 title: Implement MLXFoundationModelsSessionBackend wrapping LanguageModelSession
 ---
-## What
-
-Implement the live `LanguageModelSessionBackend` conformance. `MLXFoundationModelsContainer` becomes the factory; a new `MLXFoundationModelsSessionBackend` class wraps the live `LanguageModelSession`.
-
-**New type** `MLXFoundationModelsSessionBackend` (in `LiveModelLoader.swift`):
-- `final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend`
-- Marked `@unchecked Sendable` — `LanguageModelSession` is itself `@unchecked Sendable` (confirmed: `extension FoundationModels::LanguageModelSession : @unchecked Swift::Sendable` in the macOS 27 SDK interface). Concurrent access is safe because `RoutedSessionActor.serialGate` (AsyncSemaphore at value 1) ensures only one generation call runs at a time. Add a comment to that effect.
-- `private let session: LanguageModelSession` — held for this backend's lifetime
-- `private let model: MLXLanguageModel` — needed to seed forks
-- `internal var session: LanguageModelSession { session }` — `internal` accessor for `@testable import` in integration tests (NOT on the protocol — test-only surface)
-- `respond(to:maxTokens:)` → `session.respond(to:options:)`
-- `streamResponse(to:maxTokens:)` → `session.streamResponse(to:options:)` with suffix-diff adapter (same as today)
-- `respond(to:following:maxTokens:)` → `session.respond(to:schema:options:)` via `RuntimeJSONSchemaConverter`
-- `makeFork()` → reads `session.transcript`, constructs `LanguageModelSession(model: model, tools: [], transcript: session.transcript)`, wraps in a fresh `MLXFoundationModelsSessionBackend`
-
-**Update** `MLXFoundationModelsContainer`:
-- Remove `respond`, `streamResponse`, `respond(following:)` methods
-- Add `func makeSession(instructions: String?) -> any LanguageModelSessionBackend` creating `LanguageModelSession(model: model, instructions: instructions)` wrapped in `MLXFoundationModelsSessionBackend`
-
-## Acceptance Criteria
-- [ ] `MLXFoundationModelsSessionBackend` is `@unchecked Sendable` with a comment citing the `serialGate` as the safety mechanism
-- [ ] `MLXFoundationModelsContainer.makeSession(instructions:)` is implemented and returns `MLXFoundationModelsSessionBackend`
-- [ ] `makeFork()` seeds the fork from `session.transcript` via `LanguageModelSession.init(model:tools:transcript:)`
-- [ ] `internal var session: LanguageModelSession` accessor exists on `MLXFoundationModelsSessionBackend` (not on the protocol)
-- [ ] Old stateless `respond`/`streamResponse` removed from `MLXFoundationModelsContainer`
-- [ ] `swift build --target FoundationModelsRouter` succeeds
-
-## Tests
-- [ ] Integration tests in `LanguageModelSessionBackendTests.swift`: second `respond` call sees prior turn's content in context (requires live model, gated)
-- [ ] Integration test: `makeFork()` produces a session whose `session.transcript.entries.count` equals the parent's entry count at fork time
-
-## Workflow
-- `/tdd` — write integration assertions first (they fail with current single-turn implementation), then implement the backend class.
-
-## Review Findings (2026-07-07 06:13)
-
-- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:232` — makeFork() does not preserve the instructions that were passed when creating the parent session. The `instructions` property was deleted from the class, making it impossible to pass instructions to the forked session's `LanguageModelSession` constructor. Store `instructions` as a property in `MLXFoundationModelsSessionBackend`, pass it to `makeSession` in the container (modify the signature to also accept instructions), and pass it to the forked `LanguageModelSession` in `makeFork()`.
-- [ ] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:538` — Member of a public struct should have explicit access modifier rather than relying on implicit `internal`. All other static members in this struct are explicitly marked as `private`, making this one inconsistent. Add explicit `internal` modifier: `internal static func mapProgress(_ progress: Progress) -> DownloadProgress {`.
-- [ ] `Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift:92` — The `makeForkSeedsFromParentTranscript` test creates a parent session with custom instructions and forks it, but only verifies that the transcript count is preserved. It never calls `respond()` on the forked session to verify that the fork actually works correctly or can access the parent's prior conversation content. Add a call to `child.respond()` asking about the content from the parent's prior turn (e.g., 'What number should I remember?' after the parent responded to 'Remember the number 42.'), and verify the child can correctly access that context.
+## What\n\nImplement the live `LanguageModelSessionBackend` conformance. `MLXFoundationModelsContainer` becomes the factory; a new `MLXFoundationModelsSessionBackend` class wraps the live `LanguageModelSession`.\n\n**New type** `MLXFoundationModelsSessionBackend` (in `LiveModelLoader.swift`):\n- `final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend`\n- Marked `@unchecked Sendable` — `LanguageModelSession` is itself `@unchecked Sendable` (confirmed: `extension FoundationModels::LanguageModelSession : @unchecked Swift::Sendable` in the macOS 27 SDK interface). Concurrent access is safe because `RoutedSessionActor.serialGate` (AsyncSemaphore at value 1) ensures only one generation call runs at a time. Add a comment to that effect.\n- `private let session: LanguageModelSession` — held for this backend's lifetime\n- `private let model: MLXLanguageModel` — needed to seed forks\n- `internal var session: LanguageModelSession { session }` — `internal` accessor for `@testable import` in integration tests (NOT on the protocol — test-only surface)\n- `respond(to:maxTokens:)` → `session.respond(to:options:)`\n- `streamResponse(to:maxTokens:)` → `session.streamResponse(to:options:)` with suffix-diff adapter (same as today)\n- `respond(to:following:maxTokens:)` → `session.respond(to:schema:options:)` via `RuntimeJSONSchemaConverter`\n- `makeFork()` → reads `session.transcript`, constructs `LanguageModelSession(model: model, tools: [], transcript: session.transcript)`, wraps in a fresh `MLXFoundationModelsSessionBackend`\n\n**Update** `MLXFoundationModelsContainer`:\n- Remove `respond`, `streamResponse`, `respond(following:)` methods\n- Add `func makeSession(instructions: String?) -> any LanguageModelSessionBackend` creating `LanguageModelSession(model: model, instructions: instructions)` wrapped in `MLXFoundationModelsSessionBackend`\n\n## Acceptance Criteria\n- [x] `MLXFoundationModelsSessionBackend` is `@unchecked Sendable` with a comment citing the `serialGate` as the safety mechanism\n- [x] `MLXFoundationModelsContainer.makeSession(instructions:)` is implemented and returns `MLXFoundationModelsSessionBackend`\n- [x] `makeFork()` seeds the fork from `session.transcript` via `LanguageModelSession.init(model:tools:transcript:)`\n- [x] `internal var session: LanguageModelSession` accessor exists on `MLXFoundationModelsSessionBackend` (not on the protocol)\n- [x] Old stateless `respond`/`streamResponse` removed from `MLXFoundationModelsContainer`\n- [x] `swift build --target FoundationModelsRouter` succeeds\n\n## Tests\n- [x] Integration tests in `LanguageModelSessionBackendTests.swift`: second `respond` call sees prior turn's content in context (requires live model, gated)\n- [x] Integration test: `makeFork()` produces a session whose `session.transcript.entries.count` equals the parent's entry count at fork time\n\n## Workflow\n- `/tdd` — write integration assertions first (they fail with current single-turn implementation), then implement the backend class.\n\n## Review Findings (2026-07-07 06:13)\n\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:232` — makeFork() does not preserve the instructions that were passed when creating the parent session. Fixed in 49e98aa: `instructions` stored as a property on `MLXFoundationModelsSessionBackend`, threaded through `makeSession`/`init`/`makeFork()`. Verified present at lines 101, 117-123, 262.\n- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:538` — `mapProgress` missing explicit access modifier. Fixed in 49e98aa: now `internal static func mapProgress(...)` at line 566. Verified.\n- [x] `Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift:92` — `makeForkSeedsFromParentTranscript` didn't prove the fork could see parent content. Fixed in 49e98aa: test now calls `child.respond(to: \"What number should I remember?...\")` and asserts the reply contains \"42\". Verified at lines 120-124.\n\n## Review Findings (2026-07-07 11:38)\n\nClean re-review of 915f31c..49e98aa (commits 19ed02e, 49e98aa): 0 findings, 15 validators attempted, 0 failed. The three items from the 2026-07-07 06:13 round are confirmed addressed in 49e98aa (fork instructions preservation, explicit `internal` modifier on `mapProgress`, strengthened fork test) — checkboxes above now checked after direct code verification.

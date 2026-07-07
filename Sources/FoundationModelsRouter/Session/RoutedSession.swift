@@ -87,18 +87,9 @@ public protocol RoutedSession: Actor {
     /// on-disk transcript tree mirrors the fork lineage regardless of
     /// `workingDirectory`; a guided session's fork inherits its ``grammar``. The
     /// child retains the ``profile`` so resident models stay alive, and its
-    /// (currently inert) ``SessionKVCache`` dies with it (ARC) — releasing a
-    /// fork frees whatever it holds.
-    ///
-    /// **Not yet a cheap prefix-reuse primitive.** The child's cache begins as a
-    /// ``SessionKVCache/copy()`` of the parent's, but under the real
-    /// `LanguageModelSession`-backed generation path that object carries no
-    /// actual MLX KV state to copy (see ``SessionKVCache``'s documentation) —
-    /// `fork()` gives independent, correctly-scoped child sessions, not the
-    /// "inherits the parent's prefilled-prefix compute" performance property
-    /// this primitive originally targeted. See plan.md's "Sessions & KV cache"
-    /// section for the open question and what was actually verified against the
-    /// pinned `mlx-swift-lm` dependency.
+    /// ``LanguageModelSessionBackend`` is seeded from this session's accumulated
+    /// conversation state via ``LanguageModelSessionBackend/makeFork()``, so the
+    /// child sees the parent's turns so far and then diverges independently.
     ///
     /// At most the router's `maxConcurrentForks` fork sessions over one model may
     /// be in flight at once; a fork past that ceiling awaits a free slot, freed
@@ -132,13 +123,13 @@ extension RoutedSession {
     }
 }
 
-/// The concrete ``RoutedSession``, backed by a loaded ``LoadedLLMContainer``.
+/// The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``.
 ///
 /// It is `internal` with an `internal` initializer so the only way to obtain one
 /// is ``RoutedModel/makeSession(instructions:workingDirectory:)`` — there is no
 /// public initializer. The recorder and `routerId` flow down from the vending
-/// handle; the `container`, `slot`, `model`, and `instructions` are what the
-/// single ``generate(prompt:grammar:_:)`` chokepoint runs the model with.
+/// handle; the `backend`, `slot`, and `model` are what the single
+/// ``generate(prompt:grammar:_:)`` chokepoint runs the model with.
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
     nonisolated let routerId: ULID
@@ -147,9 +138,15 @@ actor RoutedSessionActor: RoutedSession {
     nonisolated let recordingDirectory: URL
     nonisolated let workingDirectory: URL
 
-    /// The resident container that manufactures the ``LanguageModelSessionBackend``
-    /// every call's generation runs through. Never vended.
-    private nonisolated let container: any LoadedLLMContainer
+    /// The persistent backend this session drives every generation and fork
+    /// through, for the session's whole lifetime.
+    ///
+    /// Born already carrying this session's instructions (baked in when it was
+    /// manufactured by ``LoadedLLMContainer/makeSession(instructions:)``), so
+    /// generation calls no longer pass `instructions` per turn, and calls
+    /// accumulate conversation state across turns instead of each starting a
+    /// fresh backend. Never vended to callers.
+    private nonisolated let backend: any LanguageModelSessionBackend
 
     /// The slot this session's model fills, stamped onto recorded events.
     private nonisolated let slot: ModelSlot
@@ -160,19 +157,14 @@ actor RoutedSessionActor: RoutedSession {
     /// The non-optional recorder every generation brackets through.
     private nonisolated let recorder: any TranscriptRecorder
 
-    /// The session's system instructions, passed to the model on each call.
+    /// The session's system instructions, baked into ``backend`` at
+    /// construction; retained here only to carry forward into a forked child's
+    /// actor state.
     private nonisolated let instructions: String?
 
     /// The grammar constraining every ``respond(to:)``, or `nil` for an
     /// unconstrained session. Travels with the session so a fork inherits it.
     nonisolated let grammar: Grammar?
-
-    /// This session's KV cache — the prefilled-prefix compute it accumulates.
-    ///
-    /// Owned for the session's lifetime and freed with the session (ARC); a
-    /// ``fork(workingDirectory:)`` seeds the child from a ``SessionKVCache/copy()``
-    /// of this one, so the child inherits the prefix and then diverges.
-    private nonisolated let cache: any SessionKVCache
 
     /// The per-model serial generation gate, shared with the owning model's other
     /// sessions and forks. Every ``generate(prompt:grammar:_:)`` runs inside it, so
@@ -209,13 +201,12 @@ actor RoutedSessionActor: RoutedSession {
         parentId: ULID?,
         recordingDirectory: URL,
         workingDirectory: URL,
-        container: any LoadedLLMContainer,
+        backend: any LanguageModelSessionBackend,
         slot: ModelSlot,
         model: ModelRef,
         recorder: any TranscriptRecorder,
         instructions: String?,
         grammar: Grammar? = nil,
-        cache: any SessionKVCache,
         serialGate: AsyncSemaphore,
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false
@@ -226,13 +217,12 @@ actor RoutedSessionActor: RoutedSession {
         self.parentId = parentId
         self.recordingDirectory = recordingDirectory
         self.workingDirectory = workingDirectory
-        self.container = container
+        self.backend = backend
         self.slot = slot
         self.model = model
         self.recorder = recorder
         self.instructions = instructions
         self.grammar = grammar
-        self.cache = cache
         self.serialGate = serialGate
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
@@ -242,8 +232,8 @@ actor RoutedSessionActor: RoutedSession {
     /// fork blocked on the ceiling can proceed.
     ///
     /// Only a fork holds a permit; a root session's `deinit` is a no-op here. The
-    /// session's KV cache is freed by ARC as the actor is torn down — releasing a
-    /// fork frees its KV.
+    /// session's backend is freed by ARC as the actor is torn down — releasing a
+    /// fork frees whatever conversation state it holds.
     deinit {
         if holdsAdmissionPermit {
             forkAdmissionGate.signal()
@@ -251,13 +241,12 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        // The container is only a factory now: each call manufactures the backend
-        // that actually runs generation. A guided session constrains every
-        // response to its grammar, through the backend's whole-chunk xgrammar
-        // entry point; an unguided session takes the plain path. Both funnel
-        // through the same chokepoint, which stamps the grammar (or `nil`) onto
-        // each event.
-        let backend = container.makeSession(instructions: instructions)
+        // `backend` is this session's own persistent generation object — never
+        // recreated per call — so turns accumulate conversation state. A guided
+        // session constrains every response to its grammar, through the
+        // backend's whole-chunk xgrammar entry point; an unguided session takes
+        // the plain path. Both funnel through the same chokepoint, which stamps
+        // the grammar (or `nil`) onto each event.
         if let grammar {
             return try await generate(prompt: prompt, grammar: grammar) {
                 try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
@@ -304,7 +293,6 @@ actor RoutedSessionActor: RoutedSession {
         // Accumulate the streamed chunks so the close event can carry the full
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
-        let backend = container.makeSession(instructions: instructions)
         _ = try await generate(prompt: prompt) {
             var response = ""
             for try await chunk in backend.streamResponse(to: prompt, maxTokens: maxTokens) {
@@ -322,6 +310,20 @@ actor RoutedSessionActor: RoutedSession {
         // permit is held for the child's lifetime and released in its `deinit`.
         await forkAdmissionGate.wait()
 
+        // Acquire the serial gate before reading `backend`'s conversation state to
+        // fork it. `generate(prompt:grammar:_:)` releases this same gate only
+        // *after* `body()` returns, but `body()` itself suspends across an await
+        // while the model generates — so a concurrent turn can be mid-flight,
+        // outside the gate's protection window as far as `backend` internals are
+        // concerned, mutating the underlying `LanguageModelSession.transcript` at
+        // the exact moment `makeFork()` would otherwise read it. Taking the gate
+        // here serializes the fork's read against any in-flight generation,
+        // closing that data race; releasing it immediately after capturing the
+        // forked backend keeps the hold no longer than necessary.
+        await serialGate.wait()
+        let forkedBackend = backend.makeFork()
+        serialGate.signal()
+
         let childId = ULID.generate()
         // The child's transcript nests directly *under this session's* directory,
         // so the on-disk tree mirrors the fork lineage: a root session lives at
@@ -338,15 +340,12 @@ actor RoutedSessionActor: RoutedSession {
             parentId: id,
             recordingDirectory: childRecordingDirectory,
             workingDirectory: workingDirectory ?? childRecordingDirectory,
-            container: container,
+            backend: forkedBackend,
             slot: slot,
             model: model,
             recorder: recorder,
             instructions: instructions,
             grammar: grammar,
-            // The child begins with a copy of this session's prefilled prefix,
-            // inheriting its compute and then diverging independently.
-            cache: cache.copy(),
             serialGate: serialGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true

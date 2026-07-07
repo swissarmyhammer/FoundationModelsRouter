@@ -91,6 +91,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             .appendingPathComponent(routerId.description, isDirectory: true)
             .appendingPathComponent(sessionId.description, isDirectory: true)
 
+        // The container is only a factory: it manufactures the backend the
+        // vended session owns and drives for its whole lifetime, born already
+        // carrying `instructions` so generation calls never pass them again.
+        let backend = container.makeSession(instructions: instructions)
+
         return RoutedSessionActor(
             profile: owningProfile,
             routerId: routerId,
@@ -98,17 +103,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             parentId: nil,
             recordingDirectory: recordingDirectory,
             workingDirectory: workingDirectory ?? recordingDirectory,
-            container: container,
+            backend: backend,
             slot: slot,
             model: chosen,
             recorder: recorder,
             instructions: instructions,
             grammar: grammar,
-            // A fresh session owns an empty (inert — see ``InertKVCache``) cache;
-            // the serial and fork-admission gates are the model handle's, shared
+            // The serial and fork-admission gates are the model handle's, shared
             // across all its sessions and forks. A root session holds no
             // fork-admission permit.
-            cache: InertKVCache(),
             serialGate: serialGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: false
