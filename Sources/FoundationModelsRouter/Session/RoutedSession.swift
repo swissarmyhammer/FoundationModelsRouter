@@ -99,6 +99,11 @@ public protocol RoutedSession: Actor {
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
+    /// - Throws: Nothing in the current implementation — the admission and
+    ///   serial gates never throw and ``LanguageModelSessionBackend/makeFork()``
+    ///   is non-throwing; declared `async throws` to match ``RoutedSession``'s
+    ///   other generation entry points and leave room for a future conforming
+    ///   backend whose fork can fail.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 }
 
