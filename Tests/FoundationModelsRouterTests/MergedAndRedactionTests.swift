@@ -215,11 +215,11 @@ struct MergedAndRedactionTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         _ = try await session.respond(to: "a secret prompt")
-        _ = try await profile.embedding.embed(["a secret document"])
+        _ = try await profile.embedding.embed(texts: ["a secret document"])
 
         let events = await recorder.events
         // Both the session turn and the embedding honored the level: bodies gone.
@@ -249,11 +249,11 @@ struct MergedAndRedactionTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         _ = try await session.respond(to: "a secret prompt")
-        _ = try await profile.embedding.embed(["another secret"])
+        _ = try await profile.embedding.embed(texts: ["another secret"])
 
         let events = await recorder.events
         // No recorded body still contains the redacted token.
@@ -291,13 +291,13 @@ struct MergedAndRedactionTests {
             cacheDir: cacheDir,
             recordingsDir: blocker
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         // Both must return normally despite every recorder write failing.
         let response = try await session.respond(to: "hello")
         #expect(response == Self.cannedText)
-        let vectors = try await profile.embedding.embed(["one", "two"])
+        let vectors = try await profile.embedding.embed(texts: ["one", "two"])
         #expect(vectors.count == 2)
 
         // The blocking file is untouched: nothing was written through it.
@@ -326,7 +326,7 @@ struct MergedAndRedactionTests {
 
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0.5, count: dimension) }
         }
     }
@@ -349,7 +349,7 @@ struct MergedAndRedactionTests {
         let text: String
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -359,7 +359,7 @@ struct MergedAndRedactionTests {
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
@@ -367,7 +367,7 @@ struct MergedAndRedactionTests {
             return StubEmbeddingContainer(dimension: dimension)
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {}
+        func preload(container: any LoadedModelContainer) async throws {}
     }
 
     // MARK: - Fixtures

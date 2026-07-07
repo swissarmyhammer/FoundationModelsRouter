@@ -183,7 +183,7 @@ struct ForkConcurrencyTests {
     /// profile resolves. No MLX.
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0.5, count: dimension) }
         }
     }
@@ -212,7 +212,7 @@ struct ForkConcurrencyTests {
         let dimension: Int
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -227,7 +227,7 @@ struct ForkConcurrencyTests {
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
@@ -235,7 +235,7 @@ struct ForkConcurrencyTests {
             return StubEmbeddingContainer(dimension: dimension)
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {}
+        func preload(container: any LoadedModelContainer) async throws {}
     }
 
     // MARK: - Fixtures
@@ -324,7 +324,7 @@ struct ForkConcurrencyTests {
 
         let census = CacheCensus()
         let router = Self.makeRouter(census: census, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parent = profile.standard.makeSession()
         #expect(parent.parentId == nil)
@@ -354,7 +354,7 @@ struct ForkConcurrencyTests {
 
         let census = CacheCensus()
         let router = Self.makeRouter(census: census, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parent = profile.standard.makeSession()
         var child: RoutedSession? = try await parent.fork(workingDirectory: nil)
@@ -388,10 +388,10 @@ struct ForkConcurrencyTests {
         let census = CacheCensus()
         let guidedProbe = GuidedProbe()
         let router = Self.makeRouter(census: census, cacheDir: dir, guidedProbe: guidedProbe)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let grammar = Grammar.jsonSchema(#"{"type":"object"}"#)
-        let parent = profile.standard.makeGuidedSession(grammar)
+        let parent = profile.standard.makeGuidedSession(grammar: grammar)
         let child = try await parent.fork(workingDirectory: nil)
 
         #expect(child.grammar == grammar)
@@ -425,7 +425,7 @@ struct ForkConcurrencyTests {
             observer: observer,
             releaseGate: releaseGate
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Four callers over the SAME model: a root session and three forks. They
         // share the model's serial gate, so their respond calls must serialize.
@@ -480,7 +480,7 @@ struct ForkConcurrencyTests {
 
         let census = CacheCensus()
         let router = Self.makeRouter(census: census, cacheDir: dir, maxConcurrentForks: 2)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let admissionGate = profile.standard.forkAdmissionGate
         let root = profile.standard.makeSession()

@@ -6,7 +6,7 @@ import Testing
 /// Exercises milestone 5a: a resolved profile's residency lifecycle
 /// (``LanguageModelProfile/release()`` + the ``Router``'s one-active-profile
 /// rule) and the recorded embedding access surface
-/// (``RoutedEmbedder/embed(_:)`` + `dimension`).
+/// (``RoutedEmbedder/embed(texts:)`` + `dimension`).
 ///
 /// Everything runs against stubs — a stub ``ModelLoader`` with an eviction spy,
 /// a stub embedding container, and an ``InMemoryRecorder`` — so the suite needs
@@ -37,7 +37,7 @@ struct ProfileLifecycleTests {
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
 
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0.5, count: dimension) }
         }
     }
@@ -72,7 +72,7 @@ struct ProfileLifecycleTests {
         let dimension: Int
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -82,7 +82,7 @@ struct ProfileLifecycleTests {
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
@@ -90,9 +90,9 @@ struct ProfileLifecycleTests {
             return StubEmbeddingContainer(dimension: dimension)
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {}
+        func preload(container: any LoadedModelContainer) async throws {}
 
-        func evict(_ container: any LoadedModelContainer) async {
+        func evict(container: any LoadedModelContainer) async {
             await spy.record()
         }
     }
@@ -162,14 +162,14 @@ struct ProfileLifecycleTests {
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
 
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         #expect(await spy.count == 0)
 
         await profile.release()
         #expect(await spy.count == 3)
 
         // Residency is clear: a fresh resolve succeeds.
-        _ = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
     }
 
     @Test("a second resolve while a profile is resident throws, then succeeds after release")
@@ -181,16 +181,16 @@ struct ProfileLifecycleTests {
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
 
-        let first = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let first = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+            _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         }
 
         await first.release()
 
         // After release the slot is free again.
-        _ = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
     }
 
     @Test("a release carrying a stale token does not clobber a newer resident profile")
@@ -202,7 +202,7 @@ struct ProfileLifecycleTests {
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
 
-        let first = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let first = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let staleToken = first.residencyToken
         let staleContainers: [any LoadedModelContainer] = [
             first.standard.container, first.flash.container, first.embedding.container,
@@ -210,7 +210,7 @@ struct ProfileLifecycleTests {
         await first.release()
 
         // A second profile is now resident under a fresh, never-reused token.
-        let second = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let second = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // A release carrying the first profile's defunct token must be a no-op:
         // it must neither clear `second`'s residency nor evict any container.
@@ -220,12 +220,12 @@ struct ProfileLifecycleTests {
 
         // `second` is still resident, so a fresh resolve is rejected.
         await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+            _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         }
 
         // And `second` still releases cleanly, freeing the slot.
         await second.release()
-        _ = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
     }
 
     // MARK: - Recorded embedding access
@@ -238,11 +238,11 @@ struct ProfileLifecycleTests {
 
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         #expect(profile.embedding.dimension == Self.stubDimension)
 
-        let vectors = try await profile.embedding.embed(["x", "y", "z"])
+        let vectors = try await profile.embedding.embed(texts: ["x", "y", "z"])
         #expect(vectors.count == 3)
         #expect(vectors.allSatisfy { $0.count == Self.stubDimension })
     }
@@ -256,9 +256,9 @@ struct ProfileLifecycleTests {
         let spy = EvictionSpy()
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        _ = try await profile.embedding.embed(["a", "b"])
+        _ = try await profile.embedding.embed(texts: ["a", "b"])
 
         let events = await recorder.events
         #expect(events.count == 1)
@@ -285,9 +285,9 @@ struct ProfileLifecycleTests {
         let spy = EvictionSpy()
         let recorder: JSONLRecorder = .jsonl(directory: blocker)
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let vectors = try await profile.embedding.embed(["a", "b"])
+        let vectors = try await profile.embedding.embed(texts: ["a", "b"])
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == Self.stubDimension })
 

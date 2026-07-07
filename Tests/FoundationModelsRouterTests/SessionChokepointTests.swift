@@ -72,7 +72,7 @@ struct SessionChokepointTests {
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
 
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0.5, count: dimension) }
         }
     }
@@ -110,7 +110,7 @@ struct SessionChokepointTests {
         var maxTokensSpy: MaxTokensSpy?
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -120,7 +120,7 @@ struct SessionChokepointTests {
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
@@ -128,9 +128,9 @@ struct SessionChokepointTests {
             return StubEmbeddingContainer(dimension: dimension)
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {}
+        func preload(container: any LoadedModelContainer) async throws {}
 
-        func evict(_ container: any LoadedModelContainer) async {
+        func evict(container: any LoadedModelContainer) async {
             await spy.record()
         }
     }
@@ -219,7 +219,7 @@ struct SessionChokepointTests {
         let spy = EvictionSpy()
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         let text = try await session.respond(to: "hello")
@@ -244,7 +244,7 @@ struct SessionChokepointTests {
         let spy = EvictionSpy()
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         var collected = ""
@@ -268,7 +268,7 @@ struct SessionChokepointTests {
         let spy = EvictionSpy()
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir, shouldThrow: true)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         await #expect(throws: (any Error).self) {
@@ -293,7 +293,7 @@ struct SessionChokepointTests {
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
 
-        var profile: LanguageModelProfile? = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        var profile: LanguageModelProfile? = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         var session: RoutedSession? = profile!.standard.makeSession()
 
         // Dropping the external profile handle while the session is alive must
@@ -322,7 +322,7 @@ struct SessionChokepointTests {
 
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let defaultSession = profile.standard.makeSession()
         #expect(defaultSession.workingDirectory == defaultSession.recordingDirectory)
@@ -352,7 +352,7 @@ struct SessionChokepointTests {
             cacheDir: dir,
             maxTokensSpy: maxTokensSpy
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         _ = try await session.respond(to: "hello", maxTokens: 4096)
@@ -379,7 +379,7 @@ struct SessionChokepointTests {
             cacheDir: dir,
             maxTokensSpy: maxTokensSpy
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         for try await _ in await session.streamResponse(to: "hello", maxTokens: 8192) {}

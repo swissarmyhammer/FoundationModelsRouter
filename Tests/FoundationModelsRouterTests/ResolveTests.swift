@@ -31,7 +31,7 @@ struct ResolveTests {
     /// A stand-in for a loaded embedder container, with no MLX dependency.
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension = 8
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0, count: dimension) }
         }
     }
@@ -125,23 +125,23 @@ struct ResolveTests {
         }
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
-            await stubLoad(ref, reporting: reporting, record: { loadedLLMRefs.append($0) }) { StubLLMContainer() }
+            await stubLoad(ref: ref, reporting: reporting, record: { loadedLLMRefs.append($0) }) { StubLLMContainer() }
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
-            await stubLoad(ref, reporting: reporting, record: { loadedEmbedderRefs.append($0) }) { StubEmbeddingContainer() }
+            await stubLoad(ref: ref, reporting: reporting, record: { loadedEmbedderRefs.append($0) }) { StubEmbeddingContainer() }
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {
+        func preload(container: any LoadedModelContainer) async throws {
             observedPreloadPhases.append(await MainActor.run { progress.phase })
         }
 
@@ -149,7 +149,7 @@ struct ResolveTests {
         /// ref via `record`, report a single fake byte total, then return the
         /// stub container built by `container`.
         private func stubLoad<C: LoadedModelContainer>(
-            _ ref: ModelRef,
+            ref: ModelRef,
             reporting: @escaping @Sendable (DownloadProgress) -> Void,
             record: (ModelRef) -> Void,
             container: () -> C
@@ -223,7 +223,7 @@ struct ResolveTests {
             loader: loader
         )
 
-        let resolved = try await router.resolve(Self.profile, reporting: progress)
+        let resolved = try await router.resolve(profile: Self.profile, reporting: progress)
 
         // The profile is populated with the highest-preference candidate per slot.
         #expect(resolved.definitionName == "coding")
@@ -271,7 +271,7 @@ struct ResolveTests {
             loader: loader
         )
 
-        let resolved = try await router.resolve(Self.profile, reporting: progress)
+        let resolved = try await router.resolve(profile: Self.profile, reporting: progress)
 
         #expect(resolved.standard.routerId == router.id)
         #expect(resolved.flash.routerId == router.id)
@@ -302,7 +302,7 @@ struct ResolveTests {
         )
 
         await #expect(throws: ResolutionFailure.self) {
-            _ = try await router.resolve(Self.profile, reporting: progress)
+            _ = try await router.resolve(profile: Self.profile, reporting: progress)
         }
 
         guard case .failed = progress.phase else {
@@ -349,7 +349,7 @@ struct ResolveTests {
         )
 
         await #expect(throws: ModelLoaderError.self) {
-            _ = try await router.resolve(Self.profile, reporting: progress)
+            _ = try await router.resolve(profile: Self.profile, reporting: progress)
         }
 
         guard case .failed = progress.phase else {
@@ -419,7 +419,7 @@ struct ResolveTests {
 
         var caught: ResolutionFailure?
         do {
-            _ = try await router.resolve(profile, reporting: progress)
+            _ = try await router.resolve(profile: profile, reporting: progress)
         } catch let failure as ResolutionFailure {
             caught = failure
         }
@@ -476,7 +476,7 @@ struct ResolveTests {
             loader: loader
         )
 
-        let resolved = try await router.resolve(profile, reporting: progress)
+        let resolved = try await router.resolve(profile: profile, reporting: progress)
 
         #expect(resolved.standard.chosen == heals)
         #expect(resolved.flash.chosen == heals)
@@ -527,7 +527,7 @@ struct ResolveTests {
 
         var caught: ResolutionFailure?
         do {
-            _ = try await router.resolve(profile, reporting: progress)
+            _ = try await router.resolve(profile: profile, reporting: progress)
         } catch let failure as ResolutionFailure {
             caught = failure
         }
@@ -583,7 +583,7 @@ struct ResolveTests {
 
         var caught: ResolutionFailure?
         do {
-            _ = try await router.resolve(profile, reporting: progress)
+            _ = try await router.resolve(profile: profile, reporting: progress)
         } catch let failure as ResolutionFailure {
             caught = failure
         }

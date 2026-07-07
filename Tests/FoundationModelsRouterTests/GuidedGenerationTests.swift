@@ -75,7 +75,7 @@ struct GuidedGenerationTests {
 
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0.5, count: dimension) }
         }
     }
@@ -88,7 +88,7 @@ struct GuidedGenerationTests {
         var maxTokensSpy: MaxTokensSpy?
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -98,7 +98,7 @@ struct GuidedGenerationTests {
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
@@ -106,7 +106,7 @@ struct GuidedGenerationTests {
             return StubEmbeddingContainer(dimension: dimension)
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {}
+        func preload(container: any LoadedModelContainer) async throws {}
     }
 
     private struct StubProbe: MachineProbe {
@@ -277,9 +277,9 @@ struct GuidedGenerationTests {
 
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let session = profile.standard.makeGuidedSession(.jsonSchema(Self.smallSchema))
+        let session = profile.standard.makeGuidedSession(grammar: .jsonSchema(Self.smallSchema))
         let text = try await session.respond(to: "hi")
         #expect(text == Self.canned)
 
@@ -296,9 +296,9 @@ struct GuidedGenerationTests {
 
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let session = profile.standard.makeGuidedSession(.ebnf(Self.ebnf))
+        let session = profile.standard.makeGuidedSession(grammar: .ebnf(Self.ebnf))
         let text = try await session.respond(to: "hi")
         #expect(text == Self.canned)
 
@@ -314,7 +314,7 @@ struct GuidedGenerationTests {
 
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let text = try await profile.standard.respond(to: "hi", following: .jsonSchema(Self.smallSchema))
         #expect(text == Self.canned)
@@ -332,9 +332,9 @@ struct GuidedGenerationTests {
 
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let session = profile.standard.makeGuidedSession(.jsonSchema("{\"$ref\":\"#/$defs/Y\"}"))
+        let session = profile.standard.makeGuidedSession(grammar: .jsonSchema("{\"$ref\":\"#/$defs/Y\"}"))
         await #expect(throws: GuidedRequestError.self) {
             _ = try await session.respond(to: "hi")
         }
@@ -352,10 +352,10 @@ struct GuidedGenerationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let router = Self.makeRouter(recorder: InMemoryRecorder(), cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let grammar = Grammar.jsonSchema(Self.smallSchema)
-        let guided = profile.standard.makeGuidedSession(grammar)
+        let guided = profile.standard.makeGuidedSession(grammar: grammar)
         #expect(guided.grammar == grammar)
 
         // A plain session carries no grammar.
@@ -400,7 +400,7 @@ struct GuidedGenerationTests {
 
         let maxTokensSpy = MaxTokensSpy()
         let router = Self.makeRouter(recorder: InMemoryRecorder(), cacheDir: dir, maxTokensSpy: maxTokensSpy)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         _ = try await profile.standard.respond(
             to: "hi",

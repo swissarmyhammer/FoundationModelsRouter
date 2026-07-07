@@ -83,31 +83,31 @@ private actor PhaseRecordingLoader: ModelLoader {
     }
 
     func loadLLM(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
         observedLoadPhases.append(await MainActor.run { progress.phase })
-        return try await wrapped.loadLLM(ref, slot: slot, context: context, reporting: reporting)
+        return try await wrapped.loadLLM(ref: ref, slot: slot, context: context, reporting: reporting)
     }
 
     func loadEmbedder(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
         observedLoadPhases.append(await MainActor.run { progress.phase })
-        return try await wrapped.loadEmbedder(ref, slot: slot, reporting: reporting)
+        return try await wrapped.loadEmbedder(ref: ref, slot: slot, reporting: reporting)
     }
 
-    func preload(_ container: any LoadedModelContainer) async throws {
+    func preload(container: any LoadedModelContainer) async throws {
         observedPreloadPhases.append(await MainActor.run { progress.phase })
-        try await wrapped.preload(container)
+        try await wrapped.preload(container: container)
     }
 
-    func evict(_ container: any LoadedModelContainer) async {
-        await wrapped.evict(container)
+    func evict(container: any LoadedModelContainer) async {
+        await wrapped.evict(container: container)
     }
 }
 
@@ -161,13 +161,13 @@ private struct DownloadObservingLoader: ModelLoader {
     let observer: DownloadByteObserver
 
     func loadLLM(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         context: Int,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedLLMContainer {
         try await wrapped.loadLLM(
-            ref,
+            ref: ref,
             slot: slot,
             context: context,
             reporting: observer.capturing(slot: slot, forwarding: reporting)
@@ -175,23 +175,23 @@ private struct DownloadObservingLoader: ModelLoader {
     }
 
     func loadEmbedder(
-        _ ref: ModelRef,
+        ref: ModelRef,
         slot: ModelSlot,
         reporting: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> any LoadedEmbeddingContainer {
         try await wrapped.loadEmbedder(
-            ref,
+            ref: ref,
             slot: slot,
             reporting: observer.capturing(slot: slot, forwarding: reporting)
         )
     }
 
-    func preload(_ container: any LoadedModelContainer) async throws {
-        try await wrapped.preload(container)
+    func preload(container: any LoadedModelContainer) async throws {
+        try await wrapped.preload(container: container)
     }
 
-    func evict(_ container: any LoadedModelContainer) async {
-        await wrapped.evict(container)
+    func evict(container: any LoadedModelContainer) async {
+        await wrapped.evict(container: container)
     }
 }
 
@@ -264,7 +264,7 @@ struct IntegrationTests {
             loader: loader
         )
 
-        let profile = try await router.resolve(tinyProfile, reporting: progress)
+        let profile = try await router.resolve(profile: tinyProfile, reporting: progress)
 
         // 1. Progress advanced sizing -> downloading -> loading -> ready.
         #expect(progress.phase == .ready)
@@ -305,7 +305,7 @@ struct IntegrationTests {
         //    transcript event.
         let dimension = profile.embedding.dimension
         #expect(dimension > 0)
-        let vectors = try await profile.embedding.embed(["first document", "second document"])
+        let vectors = try await profile.embedding.embed(texts: ["first document", "second document"])
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == dimension })
 

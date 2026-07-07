@@ -68,7 +68,7 @@
 
         private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
             let dimension: Int
-            func embed(_ texts: [String]) async throws -> [[Float]] {
+            func embed(texts: [String]) async throws -> [[Float]] {
                 texts.map { _ in [Float](repeating: 0.5, count: dimension) }
             }
         }
@@ -79,7 +79,7 @@
             let canned: String
 
             func loadLLM(
-                _ ref: ModelRef,
+                ref: ModelRef,
                 slot: ModelSlot,
                 context: Int,
                 reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -89,7 +89,7 @@
             }
 
             func loadEmbedder(
-                _ ref: ModelRef,
+                ref: ModelRef,
                 slot: ModelSlot,
                 reporting: @escaping @Sendable (DownloadProgress) -> Void
             ) async throws -> any LoadedEmbeddingContainer {
@@ -97,7 +97,7 @@
                 return StubEmbeddingContainer(dimension: dimension)
             }
 
-            func preload(_ container: any LoadedModelContainer) async throws {}
+            func preload(container: any LoadedModelContainer) async throws {}
         }
 
         private struct StubProbe: MachineProbe {
@@ -247,7 +247,7 @@
                 cacheDir: dir,
                 canned: Self.cannedPerson
             )
-            let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+            let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
             let person = try await profile.standard.respond(to: "hi", generating: Person.self)
             #expect(person == Person(name: "Ada", age: 36))
@@ -277,7 +277,7 @@
                 cacheDir: dir,
                 canned: "{\"name\":\"ok\"}"
             )
-            let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+            let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
             let value = try await profile.standard.respond(to: "hi", matching: Self.objectSchema)
             #expect(value == .object(["name": .string("ok")]))
@@ -298,7 +298,7 @@
                 cacheDir: dir,
                 canned: "{}"
             )
-            let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+            let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
             await #expect(throws: GuidedRequestError.self) {
                 _ = try await profile.standard.respond(

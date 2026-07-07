@@ -42,7 +42,7 @@ struct TranscriptNestingTests {
     /// A stand-in for a loaded embedder container, no MLX.
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0.5, count: dimension) }
         }
     }
@@ -66,7 +66,7 @@ struct TranscriptNestingTests {
         let text: String
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -76,7 +76,7 @@ struct TranscriptNestingTests {
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
@@ -84,7 +84,7 @@ struct TranscriptNestingTests {
             return StubEmbeddingContainer(dimension: dimension)
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {}
+        func preload(container: any LoadedModelContainer) async throws {}
     }
 
     // MARK: - Fixtures
@@ -171,7 +171,7 @@ struct TranscriptNestingTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
         let fork = try await root.fork(workingDirectory: nil)
@@ -226,7 +226,7 @@ struct TranscriptNestingTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
         let custom = Self.makeTempDir()
@@ -263,7 +263,7 @@ struct TranscriptNestingTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
         _ = try await root.respond(to: "hello")
@@ -316,7 +316,7 @@ struct TranscriptNestingTests {
             metadataSource: StubMetadataSource(raw: Self.rawMetadata),
             loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText)
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()
         _ = try await root.respond(to: "hello")
@@ -354,7 +354,7 @@ struct TranscriptNestingTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // A root and three forks — four sessions sharing one recorder.
         let root = profile.standard.makeSession()
@@ -409,7 +409,7 @@ struct TranscriptNestingTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
         )
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let manifestURL = recordingsDir
             .appendingPathComponent(router.id.description, isDirectory: true)

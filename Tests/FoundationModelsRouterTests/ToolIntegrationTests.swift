@@ -48,7 +48,7 @@ struct ToolIntegrationTests {
     private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
         let dimension: Int
 
-        func embed(_ texts: [String]) async throws -> [[Float]] {
+        func embed(texts: [String]) async throws -> [[Float]] {
             texts.map { _ in [Float](repeating: 0.5, count: dimension) }
         }
     }
@@ -96,7 +96,7 @@ struct ToolIntegrationTests {
         let text: String
 
         func loadLLM(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             context: Int,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -107,7 +107,7 @@ struct ToolIntegrationTests {
         }
 
         func loadEmbedder(
-            _ ref: ModelRef,
+            ref: ModelRef,
             slot: ModelSlot,
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedEmbeddingContainer {
@@ -116,9 +116,9 @@ struct ToolIntegrationTests {
             return StubEmbeddingContainer(dimension: dimension)
         }
 
-        func preload(_ container: any LoadedModelContainer) async throws {}
+        func preload(container: any LoadedModelContainer) async throws {}
 
-        func evict(_ container: any LoadedModelContainer) async {
+        func evict(container: any LoadedModelContainer) async {
             await spy.recordEviction()
         }
     }
@@ -188,7 +188,7 @@ struct ToolIntegrationTests {
 
         let spy = LoaderSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Resolve loaded each slot exactly once.
         #expect(await spy.llmLoads[profile.flash.chosen] == 1)
@@ -219,10 +219,10 @@ struct ToolIntegrationTests {
         let spy = LoaderSpy()
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let tool = SummarizeTool(model: profile.flash)
-        let summary = try await tool.summarize("a long document to condense")
+        let summary = try await tool.summarize(text: "a long document to condense")
         #expect(summary == Self.cannedText)
 
         // The generation ran through the recorder-bracketed chokepoint: a
@@ -244,10 +244,10 @@ struct ToolIntegrationTests {
         let spy = LoaderSpy()
         let recorder = InMemoryRecorder()
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let tool = EmbedTool(model: profile.embedding)
-        let vectors = try await tool.embed(["a", "b"])
+        let vectors = try await tool.embed(texts: ["a", "b"])
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == Self.stubDimension })
 
@@ -272,7 +272,7 @@ struct ToolIntegrationTests {
 
         let spy = LoaderSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
-        let profile = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Construct several tools from the resolved handles.
         _ = SummarizeTool(model: profile.standard)
@@ -282,11 +282,11 @@ struct ToolIntegrationTests {
         // Residency is unchanged: one profile is still resident, so a second
         // resolve is rejected.
         await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+            _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         }
 
         // And after releasing the one resident profile the slot frees again.
         await profile.release()
-        _ = try await router.resolve(Self.profile, reporting: ResolutionProgress())
+        _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
     }
 }

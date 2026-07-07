@@ -91,7 +91,7 @@ struct ExamplesTests {
         /// A loaded embedding container that returns fixed-length vectors.
         private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
             let dimension: Int
-            func embed(_ texts: [String]) async throws -> [[Float]] {
+            func embed(texts: [String]) async throws -> [[Float]] {
                 texts.map { _ in [Float](repeating: 0, count: dimension) }
             }
         }
@@ -104,7 +104,7 @@ struct ExamplesTests {
             let dimension: Int
 
             func loadLLM(
-                _ ref: ModelRef,
+                ref: ModelRef,
                 slot: ModelSlot,
                 context: Int,
                 reporting: @escaping @Sendable (DownloadProgress) -> Void
@@ -114,7 +114,7 @@ struct ExamplesTests {
             }
 
             func loadEmbedder(
-                _ ref: ModelRef,
+                ref: ModelRef,
                 slot: ModelSlot,
                 reporting: @escaping @Sendable (DownloadProgress) -> Void
             ) async throws -> any LoadedEmbeddingContainer {
@@ -122,7 +122,7 @@ struct ExamplesTests {
                 return StubEmbeddingContainer(dimension: dimension)
             }
 
-            func preload(_ container: any LoadedModelContainer) async throws {}
+            func preload(container: any LoadedModelContainer) async throws {}
         }
 
         /// Tiny canned repo metadata: a 2-layer attention shape and a single
@@ -209,7 +209,7 @@ struct ExamplesTests {
         // `ResolutionProgress` is `@Observable`, so a SwiftUI view can bind to it
         // and drive a `ProgressView` as resolution advances.
         let progress = ResolutionProgress()
-        let profile = try await router.resolve(coding, reporting: progress)
+        let profile = try await router.resolve(profile: coding, reporting: progress)
 
         // Resolution succeeded: every slot is resident and the bar is full.
         #expect(progress.phase == .ready)
@@ -234,7 +234,7 @@ struct ExamplesTests {
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         // A session carries system instructions and its own conversation cache.
         let session = profile.standard.makeSession(
@@ -257,7 +257,7 @@ struct ExamplesTests {
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
 
@@ -288,7 +288,7 @@ struct ExamplesTests {
 
         // One resolve makes both generation models resident together — no
         // reload between the two calls below.
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
         #expect(profile.standard.chosen != profile.flash.chosen)
 
         // Cheap triage: route the light classification work to `flash`.
@@ -326,12 +326,12 @@ struct ExamplesTests {
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         let embedder = profile.embedding
         #expect(embedder.dimension == 384)
 
-        let vectors = try await embedder.embed([
+        let vectors = try await embedder.embed(texts: [
             "func add(_ a: Int, _ b: Int) -> Int { a + b }",
             "let total = a + b",
         ])
@@ -352,7 +352,7 @@ struct ExamplesTests {
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         // A grammar guarantees the raw output is syntactically valid.
         let grammar = Grammar.jsonSchema(
@@ -368,7 +368,7 @@ struct ExamplesTests {
 
         // Reusable: `makeGuidedSession` applies the grammar to every turn, and the
         // grammar travels with the session (so a fork inherits it).
-        let session = profile.standard.makeGuidedSession(grammar)
+        let session = profile.standard.makeGuidedSession(grammar: grammar)
         #expect(session.grammar == grammar)
         let next = try await session.respond(to: "Classify: 'add dark mode'.")
         #expect(next == #"{"intent":"bugfix"}"#)
@@ -389,7 +389,7 @@ struct ExamplesTests {
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         // The schema is known only at runtime (no Swift type), so the output comes
         // back as a dynamically-typed `JSONValue`.
@@ -421,7 +421,7 @@ struct ExamplesTests {
             flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         // A planner session establishes shared context once; each subagent is a
         // fork that inherits its cached prefix and then diverges independently.
@@ -459,19 +459,19 @@ struct ExamplesTests {
             embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
         )
 
-        let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+        let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
         // The router holds one active profile at a time so it never over-commits
         // RAM: a second resolve is rejected while the first is resident.
         await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(coding, reporting: ResolutionProgress())
+            _ = try await router.resolve(profile: coding, reporting: ResolutionProgress())
         }
 
         // Releasing evicts the resident models and frees the residency slot.
         await profile.release()
 
         // Now another profile can be resolved on the same router.
-        _ = try await router.resolve(coding, reporting: ResolutionProgress())
+        _ = try await router.resolve(profile: coding, reporting: ResolutionProgress())
     }
 
     // MARK: - Guided generation: typed
@@ -501,7 +501,7 @@ struct ExamplesTests {
                 flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
                 embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
             )
-            let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+            let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
             // The schema is derived from the type, and the constrained output is
             // decoded straight back into it — one source of truth for the shape.
