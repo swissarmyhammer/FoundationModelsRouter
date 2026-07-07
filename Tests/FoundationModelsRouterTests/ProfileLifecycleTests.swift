@@ -17,18 +17,10 @@ struct ProfileLifecycleTests {
     // MARK: - Stub containers
 
     /// A stand-in for a loaded LLM container, with no MLX dependency. These
-    /// lifecycle tests never generate, so the generation entry points throw.
+    /// lifecycle tests never generate, so the vended backend always throws.
     private struct StubLLMContainer: LoadedLLMContainer {
-        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
-            throw GenerationError.notWiredForLiveInference
-        }
-
-        func streamResponse(
-            to prompt: String,
-            instructions: String?,
-            maxTokens: Int?
-        ) -> AsyncThrowingStream<String, Error> {
-            AsyncThrowingStream { $0.finish(throwing: GenerationError.notWiredForLiveInference) }
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            StubSessionBackend(shouldThrow: true)
         }
     }
 

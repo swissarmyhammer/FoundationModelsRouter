@@ -39,30 +39,8 @@
         private struct GuidedStubContainer: LoadedLLMContainer {
             let canned: String
 
-            func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
-                canned
-            }
-
-            func streamResponse(
-                to prompt: String,
-                instructions: String?,
-                maxTokens: Int?
-            ) -> AsyncThrowingStream<String, Error> {
-                let canned = canned
-                return AsyncThrowingStream { continuation in
-                    continuation.yield(canned)
-                    continuation.finish()
-                }
-            }
-
-            func respond(
-                to prompt: String,
-                instructions: String?,
-                following grammar: Grammar,
-                maxTokens: Int?
-            ) async throws -> String {
-                try grammar.validateForXGrammar()
-                return canned
+            func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+                StubSessionBackend(responseText: canned)
             }
         }
 

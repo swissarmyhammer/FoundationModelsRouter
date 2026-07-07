@@ -31,45 +31,41 @@ struct GuidedGenerationTests {
         let canned: String
         var maxTokensSpy: MaxTokensSpy?
 
-        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
-            canned
-        }
-
-        func streamResponse(
-            to prompt: String,
-            instructions: String?,
-            maxTokens: Int?
-        ) -> AsyncThrowingStream<String, Error> {
-            let canned = canned
-            return AsyncThrowingStream { continuation in
-                continuation.yield(canned)
-                continuation.finish()
-            }
-        }
-
-        func respond(
-            to prompt: String,
-            instructions: String?,
-            following grammar: Grammar,
-            maxTokens: Int?
-        ) async throws -> String {
-            try grammar.validateForXGrammar()
-            await maxTokensSpy?.record(maxTokens)
-            return canned
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            let backend = StubSessionBackend(responseText: canned)
+            guard let maxTokensSpy else { return backend }
+            return MaxTokensRecordingBackend(backend: backend, spy: maxTokensSpy)
         }
     }
 
-    /// A container that implements only the unconstrained surface, so its guided
-    /// entry point is the protocol's default — validate, then defer live decode.
-    private struct DefaultGuidedContainer: LoadedLLMContainer {
-        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String { "" }
+    /// Wraps a ``StubSessionBackend`` to additionally record each guided call's
+    /// `maxTokens` into a ``MaxTokensSpy``, mirroring
+    /// ``SessionChokepointTests``'s analogous wrapper for the plain (unguided)
+    /// path.
+    private final class MaxTokensRecordingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        private let backend: StubSessionBackend
+        private let spy: MaxTokensSpy
 
-        func streamResponse(
-            to prompt: String,
-            instructions: String?,
-            maxTokens: Int?
-        ) -> AsyncThrowingStream<String, Error> {
-            AsyncThrowingStream { $0.finish() }
+        init(backend: StubSessionBackend, spy: MaxTokensSpy) {
+            self.backend = backend
+            self.spy = spy
+        }
+
+        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            try await backend.respond(to: prompt, maxTokens: maxTokens)
+        }
+
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            backend.streamResponse(to: prompt, maxTokens: maxTokens)
+        }
+
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+            await spy.record(maxTokens)
+            return try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+        }
+
+        func makeFork() -> any LanguageModelSessionBackend {
+            backend.makeFork()
         }
     }
 
@@ -363,30 +359,27 @@ struct GuidedGenerationTests {
         #expect(plain.grammar == nil)
     }
 
-    // MARK: - Default (live) container seam
+    // MARK: - Grammar validation gates a guided call before any live decode
 
-    @Test("the default container validates the grammar, then defers live decode to milestone 7")
-    func defaultContainerValidatesThenDefersLiveDecode() async throws {
-        let container: any LoadedLLMContainer = DefaultGuidedContainer()
+    /// Replaces the removed `defaultContainerValidatesThenDefersLiveDecode`:
+    /// that test exercised the `LoadedLLMContainer` default guided extension
+    /// (validate, then defer to `GenerationError.notWiredForLiveInference`),
+    /// which no longer exists now that a container only manufactures a
+    /// ``LanguageModelSessionBackend`` via `makeSession(instructions:)` — there
+    /// is no more container-level guided entry point to validate-then-defer
+    /// through. The behavior worth guarding — a supported grammar passes
+    /// ``Grammar/validateForXGrammar()`` while an unsupported one is rejected
+    /// before any decode is attempted — still holds and is real, GPU-free logic
+    /// every guided backend (stub or live) runs first; this asserts it directly.
+    @Test("grammar.validateForXGrammar() accepts a supported schema and rejects an unsupported one")
+    func validateForXGrammarAcceptsSupportedRejectsUnsupported() throws {
+        // A supported schema passes validation with no error.
+        try Grammar.jsonSchema(Self.smallSchema).validateForXGrammar()
 
-        // A valid grammar passes validation, then surfaces the deferred seam.
-        await #expect(throws: GenerationError.notWiredForLiveInference) {
-            _ = try await container.respond(
-                to: "hi",
-                instructions: nil,
-                following: .jsonSchema(Self.smallSchema),
-                maxTokens: nil
-            )
-        }
-
-        // An unsupported construct is rejected before the deferred seam.
-        await #expect(throws: GuidedRequestError.self) {
-            _ = try await container.respond(
-                to: "hi",
-                instructions: nil,
-                following: .jsonSchema("{\"allOf\":[{\"type\":\"string\"}]}"),
-                maxTokens: nil
-            )
+        // An unsupported construct ($ref/allOf/format) is rejected before any
+        // decode would be attempted.
+        #expect(throws: GuidedRequestError.self) {
+            try Grammar.jsonSchema("{\"allOf\":[{\"type\":\"string\"}]}").validateForXGrammar()
         }
     }
 

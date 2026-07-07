@@ -15,11 +15,6 @@ import Testing
 struct SessionChokepointTests {
     // MARK: - Stub containers
 
-    /// A failure a canned container can be configured to raise.
-    private enum StubGenerationError: Error, Equatable {
-        case boom
-    }
-
     /// Records the `maxTokens` value each generation call on a
     /// ``CannedLLMContainer`` observed, so a test can assert it was threaded
     /// through unmodified from the session's `respond(to:maxTokens:)` call.
@@ -35,35 +30,59 @@ struct SessionChokepointTests {
         let shouldThrow: Bool
         var maxTokensSpy: MaxTokensSpy?
 
-        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
-            await maxTokensSpy?.record(maxTokens)
-            if shouldThrow { throw StubGenerationError.boom }
-            return text
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            let backend = StubSessionBackend(responseText: text, shouldThrow: shouldThrow)
+            guard let maxTokensSpy else { return backend }
+            return MaxTokensRecordingBackend(backend: backend, spy: maxTokensSpy)
+        }
+    }
+
+    /// Wraps a ``StubSessionBackend`` to additionally record each call's
+    /// `maxTokens` into a ``MaxTokensSpy``, so this suite's maxTokens-threading
+    /// assertions keep working now that generation runs through a persistent
+    /// backend rather than the container directly.
+    private final class MaxTokensRecordingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        private let backend: StubSessionBackend
+        private let spy: MaxTokensSpy
+
+        init(backend: StubSessionBackend, spy: MaxTokensSpy) {
+            self.backend = backend
+            self.spy = spy
         }
 
-        func streamResponse(
-            to prompt: String,
-            instructions: String?,
-            maxTokens: Int?
-        ) -> AsyncThrowingStream<String, Error> {
-            let text = text
-            let shouldThrow = shouldThrow
-            let maxTokensSpy = maxTokensSpy
+        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            await spy.record(maxTokens)
+            return try await backend.respond(to: prompt, maxTokens: maxTokens)
+        }
+
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            let backend = backend
+            let spy = spy
             return AsyncThrowingStream { continuation in
                 // `streamResponse` is a non-async protocol requirement, so the spy
                 // (an actor) can only be recorded from inside a `Task`. The record
                 // happens before any chunk is yielded/finished, so a consumer that
                 // has finished draining the stream is guaranteed to observe it.
                 Task {
-                    await maxTokensSpy?.record(maxTokens)
-                    if shouldThrow {
-                        continuation.finish(throwing: StubGenerationError.boom)
-                    } else {
-                        continuation.yield(text)
+                    await spy.record(maxTokens)
+                    do {
+                        for try await chunk in backend.streamResponse(to: prompt, maxTokens: maxTokens) {
+                            continuation.yield(chunk)
+                        }
                         continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
                     }
                 }
             }
+        }
+
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+            try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+        }
+
+        func makeFork() -> any LanguageModelSessionBackend {
+            backend.makeFork()
         }
     }
 

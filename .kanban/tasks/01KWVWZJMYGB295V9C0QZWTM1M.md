@@ -1,10 +1,31 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kwytz59syfg13hb38dfre8fx
+  text: |-
+    Implemented. Summary:
+
+    - Added `Tests/FoundationModelsRouterTests/Helpers/StubSessionBackend.swift` — shared `final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable` with `responseText`/`shouldThrow`, `callCount`/`receivedPrompts` tracking, and `makeFork()` seeding a child with a copy of `receivedPrompts`.
+    - Simple stub replacement (all now `makeSession(instructions:) -> StubSessionBackend`): SessionChokepointTests, TranscriptNestingTests, ToolIntegrationTests, MergedAndRedactionTests, GuidedShapesTests, ResolveTests, ProfileLifecycleTests, ExamplesTests.
+      - SessionChokepointTests and GuidedGenerationTests each needed to preserve their existing maxTokens-threading assertions (a `MaxTokensSpy` actor injected into the container); added a small local `MaxTokensRecordingBackend` wrapper in each file (composes a `StubSessionBackend`, since it's `final` and can't be subclassed) rather than baking maxTokens-observation into the shared helper.
+    - GuidedGenerationTests.swift: `GuidedStubContainer` updated to the factory pattern; `DefaultGuidedContainer` (and its sole consumer `defaultContainerValidatesThenDefersLiveDecode`) deleted outright since it becomes dead code once the default `LoadedLLMContainer` guided extension no longer exists. Replaced with `validateForXGrammarAcceptsSupportedRejectsUnsupported`, a pure unit test asserting the same "supported schema passes / unsupported construct rejected" behavior directly against `Grammar.validateForXGrammar()`.
+    - ForkConcurrencyTests.swift (biggest redesign): removed `SpyKVCache`/`CacheCensus`/`InstrumentedLLMContainer.makeCache()` entirely. Introduced a local `TrackingSessionBackend` (this file's flavor of a trackable backend — needs observer/release-gate parking + guided-grammar-probe recording that the shared `StubSessionBackend` intentionally doesn't carry) and made `InstrumentedLLMContainer` a simple `makeSession` factory that tracks the last-created backend. `StubModelLoader` now returns one fixed, test-supplied container instance (was constructing fresh ones per call) so tests can hold a live handle to inspect `callCount`/`receivedPrompts`/`lastFork`.
+      - `forkCopiesCacheAndSetsParentId` → renamed `forkSeedsBackendFromParentAndSetsParentId`, asserts backend call/prompt-history inheritance at fork time instead of KV-cache copy count.
+      - `releasingForkFreesItsCacheOnly` → renamed `forkedBackendDivergesIndependently`, asserts parent/child transcripts diverge independently post-fork instead of KV-cache free lifecycle (no cache abstraction to observe anymore).
+      - `forkAdmissionBoundsConcurrentForks` → dropped the census-based liveForks/maxLiveForks/forkFrees assertions; kept the admission-gate-based assertions (availablePermits/waiterCount), which the pre-existing in-code comment already called "the robust bound evidence."
+      - Removed now-unused `import Synchronization` (only used by the deleted `Mutex`-guarded `CacheCensus`).
+    - `SessionKVCache`/`InertKVCache` (Sources) left untouched — unreferenced by production code, explicitly out of scope for this task per task 00pe5cf's comment (belongs to follow-up task 070qw7z).
+
+    Verification: `swift build --build-tests` exit 0, `swift test` exit 0 — "Test run with 179 tests in 23 suites passed" (plus 3 gated/skipped integration tests). Filtered reruns of SessionChokepointTests, ForkConcurrencyTests, GuidedGenerationTests all green. Adversarial double-check agent returned PASS with no findings (verified protocol conformance, no dead code, no dropped coverage, no stale references to removed symbols).
+
+    This is the task the whole stub-migration session was blocked on — `swift build --build-tests` and `swift test` are both fully green now, zero known blockers remaining. Leaving in `doing` for `/review`.
+  timestamp: 2026-07-07T17:45:45.017100+00:00
 depends_on:
 - 01KWVWYKPP6RAJTCX9MRQGZWA4
-position_column: todo
-position_ordinal: '8380'
+position_column: doing
+position_ordinal: '80'
 title: Update all test stubs to implement the LanguageModelSessionBackend factory seam
 ---
 ## What

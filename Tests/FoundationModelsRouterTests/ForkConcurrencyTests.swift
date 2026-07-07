@@ -1,105 +1,25 @@
 import Foundation
-import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
 
 /// Exercises milestone 9: the ``RoutedSession/fork(workingDirectory:)`` primitive
-/// over the KV cache plus the two ``AsyncSemaphore``-backed concurrency gates.
+/// over the persistent ``LanguageModelSessionBackend`` plus the two
+/// ``AsyncSemaphore``-backed concurrency gates.
 ///
 /// Everything runs against stubs with no network and no GPU:
-/// - a ``CacheCensus`` (a ``Mutex``-guarded, *synchronous* counter) and a
-///   ``SpyKVCache`` that records `copy()` invocations and cache frees on release,
-///   so the copy-on-fork and KV-free-on-release contracts are observed exactly;
-/// - an ``InstrumentedLLMContainer`` whose `respond` can be parked on a
-///   test-controlled release gate, so the per-model serial gate's non-overlap and
-///   FIFO order are made deterministic through the semaphore's `waiterCount`
-///   observability rather than sleeps.
+/// - a ``TrackingSessionBackend`` that records call count and prompt history
+///   like the shared ``StubSessionBackend``, so a fork's ``makeFork()``-seeded
+///   transcript inheritance and independent divergence are observed exactly;
+/// - the same backend, when wired with a test-controlled ``SerialObserver`` +
+///   release gate, can park `respond` on it, so the per-model serial gate's
+///   non-overlap and FIFO order are made deterministic through the semaphore's
+///   `waiterCount` observability rather than sleeps.
 ///
-/// Real prefix reuse (no recompute) and real MLX cache copy are gated to the
-/// milestone 7 integration suite; here the abstraction is asserted through the
-/// spy.
+/// Real prefix reuse (no recompute) is gated to the milestone 7 integration
+/// suite; here the abstraction is asserted through the stub.
 @Suite("Session fork + per-model concurrency gates")
 struct ForkConcurrencyTests {
-    // MARK: - Cache census + spy
-
-    /// A synchronous, thread-safe census of cache births, copies, and frees.
-    ///
-    /// Updated from ``SpyKVCache``'s `init`/`copy()`/`deinit` under a ``Mutex`` so
-    /// counts are exact and race-free without an `await` — deterministic even from
-    /// a `deinit`. `liveForks`/`maxLiveForks` track only *fork* caches (born from
-    /// `copy()`), which is what the fork-admission bound is asserted against.
-    private final class CacheCensus: Sendable {
-        struct Counts {
-            var births = 0
-            var copies = 0
-            var frees = 0
-            var forkFrees = 0
-            var liveForks = 0
-            var maxLiveForks = 0
-        }
-
-        let state = Mutex(Counts())
-
-        /// Records a cache coming into existence; a fork cache also bumps the live
-        /// fork high-water mark.
-        func birth(isFork: Bool) {
-            state.withLock {
-                $0.births += 1
-                if isFork {
-                    $0.liveForks += 1
-                    $0.maxLiveForks = max($0.maxLiveForks, $0.liveForks)
-                }
-            }
-        }
-
-        /// Records a `copy()` call — one fork cache produced.
-        func copyCall() {
-            state.withLock { $0.copies += 1 }
-        }
-
-        /// Records a cache being freed; a fork cache also decrements the live count.
-        func free(isFork: Bool) {
-            state.withLock {
-                $0.frees += 1
-                if isFork {
-                    $0.forkFrees += 1
-                    $0.liveForks -= 1
-                }
-            }
-        }
-
-        var copies: Int { state.withLock { $0.copies } }
-        var frees: Int { state.withLock { $0.frees } }
-        var forkFrees: Int { state.withLock { $0.forkFrees } }
-        var liveForks: Int { state.withLock { $0.liveForks } }
-        var maxLiveForks: Int { state.withLock { $0.maxLiveForks } }
-    }
-
-    /// A stand-in for a session KV cache that records its lifecycle into a
-    /// ``CacheCensus`` — no MLX. `copy()` is the fork seam; a copied cache is a
-    /// fork cache. Its `deinit` records the free synchronously, so dropping a
-    /// session's cache is observed the instant ARC reclaims it.
-    private final class SpyKVCache: SessionKVCache {
-        let census: CacheCensus
-        let isFork: Bool
-
-        init(census: CacheCensus, isFork: Bool) {
-            self.census = census
-            self.isFork = isFork
-            census.birth(isFork: isFork)
-        }
-
-        func copy() -> any SessionKVCache {
-            census.copyCall()
-            return SpyKVCache(census: census, isFork: true)
-        }
-
-        deinit {
-            census.free(isFork: isFork)
-        }
-    }
-
     // MARK: - Serial-gate observability
 
     /// Tracks the order `respond` bodies enter the model and the peak concurrency,
@@ -130,22 +50,43 @@ struct ForkConcurrencyTests {
         }
     }
 
-    // MARK: - Stub container
+    // MARK: - Stub container + backend
 
-    /// A ``LoadedLLMContainer`` that vends ``SpyKVCache`` caches and, when wired
-    /// with a serial observer + release gate, parks each `respond` until the test
-    /// releases it — so concurrency is observed deterministically. No MLX.
-    private struct InstrumentedLLMContainer: LoadedLLMContainer {
-        let census: CacheCensus
-        let observer: SerialObserver?
-        let releaseGate: AsyncSemaphore?
-        let guidedProbe: GuidedProbe?
+    /// A trackable ``LanguageModelSessionBackend`` for this suite: like the
+    /// shared ``StubSessionBackend``, it records ``callCount``/``receivedPrompts``
+    /// and seeds a fork's history from a copy of its own at fork time — but it
+    /// additionally supports parking a call on a test-controlled
+    /// ``SerialObserver`` + release gate, and recording the grammar a guided
+    /// call was constrained with into a ``GuidedProbe``, neither of which the
+    /// other stub-container files in this target need. ``makeFork()``
+    /// propagates the same wiring to the child, so a fork of an
+    /// observer/gate-wired backend still parks the same way and a fork of a
+    /// guided-probe-wired backend still records into the same probe —
+    /// mirroring how a fork shares its parent's underlying model.
+    private final class TrackingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        private(set) var callCount = 0
+        private(set) var receivedPrompts: [String]
+        private(set) var lastFork: TrackingSessionBackend?
 
-        func makeCache() -> any SessionKVCache {
-            SpyKVCache(census: census, isFork: false)
+        private let observer: SerialObserver?
+        private let releaseGate: AsyncSemaphore?
+        private let guidedProbe: GuidedProbe?
+
+        init(
+            observer: SerialObserver? = nil,
+            releaseGate: AsyncSemaphore? = nil,
+            guidedProbe: GuidedProbe? = nil,
+            receivedPrompts: [String] = []
+        ) {
+            self.observer = observer
+            self.releaseGate = releaseGate
+            self.guidedProbe = guidedProbe
+            self.receivedPrompts = receivedPrompts
         }
 
-        func respond(to prompt: String, instructions: String?, maxTokens: Int?) async throws -> String {
+        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            callCount += 1
+            receivedPrompts.append(prompt)
             if let observer, let releaseGate {
                 let id = Int(prompt) ?? -1
                 await observer.enter(id)
@@ -156,26 +97,59 @@ struct ForkConcurrencyTests {
             return "ok"
         }
 
-        func streamResponse(
-            to prompt: String,
-            instructions: String?,
-            maxTokens: Int?
-        ) -> AsyncThrowingStream<String, Error> {
-            AsyncThrowingStream { continuation in
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            callCount += 1
+            receivedPrompts.append(prompt)
+            return AsyncThrowingStream { continuation in
                 continuation.yield("ok")
                 continuation.finish()
             }
         }
 
-        func respond(
-            to prompt: String,
-            instructions: String?,
-            following grammar: Grammar,
-            maxTokens: Int?
-        ) async throws -> String {
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+            callCount += 1
+            receivedPrompts.append(prompt)
             try grammar.validateForXGrammar()
             if let guidedProbe { await guidedProbe.record(grammar) }
             return "guided-ok"
+        }
+
+        /// Returns a new backend sharing this one's observer/gate/probe wiring
+        /// and pre-seeded with a copy of ``receivedPrompts`` as of this call,
+        /// and records the child so a test holding this (parent) backend can
+        /// reach it via ``lastFork``.
+        func makeFork() -> any LanguageModelSessionBackend {
+            let fork = TrackingSessionBackend(
+                observer: observer,
+                releaseGate: releaseGate,
+                guidedProbe: guidedProbe,
+                receivedPrompts: receivedPrompts
+            )
+            lastFork = fork
+            return fork
+        }
+    }
+
+    /// A ``LoadedLLMContainer`` that vends ``TrackingSessionBackend``s wired
+    /// with this suite's optional observer/release-gate/guided-probe, and
+    /// tracks the most recently manufactured one so a test can assert on its
+    /// call history directly. No MLX.
+    private final class InstrumentedLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        private let observer: SerialObserver?
+        private let releaseGate: AsyncSemaphore?
+        private let guidedProbe: GuidedProbe?
+        private(set) var lastBackend: TrackingSessionBackend?
+
+        init(observer: SerialObserver? = nil, releaseGate: AsyncSemaphore? = nil, guidedProbe: GuidedProbe? = nil) {
+            self.observer = observer
+            self.releaseGate = releaseGate
+            self.guidedProbe = guidedProbe
+        }
+
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            let backend = TrackingSessionBackend(observer: observer, releaseGate: releaseGate, guidedProbe: guidedProbe)
+            lastBackend = backend
+            return backend
         }
     }
 
@@ -201,14 +175,13 @@ struct ForkConcurrencyTests {
         func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata { raw }
     }
 
-    /// A ``ModelLoader`` that returns the shared instrumented container for both
-    /// generation slots (so forks of one model share one container) and stub
-    /// embedders. No download, no GPU.
+    /// A ``ModelLoader`` that returns the identical, test-supplied
+    /// ``InstrumentedLLMContainer`` instance for every generation slot (so
+    /// forks of one model share one container, and the test that constructed
+    /// the container keeps a live handle onto ``InstrumentedLLMContainer/lastBackend``)
+    /// and stub embedders. No download, no GPU.
     private struct StubModelLoader: ModelLoader {
-        let census: CacheCensus
-        let observer: SerialObserver?
-        let releaseGate: AsyncSemaphore?
-        let guidedProbe: GuidedProbe?
+        let container: InstrumentedLLMContainer
         let dimension: Int
 
         func loadLLM(
@@ -218,12 +191,7 @@ struct ForkConcurrencyTests {
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return InstrumentedLLMContainer(
-                census: census,
-                observer: observer,
-                releaseGate: releaseGate,
-                guidedProbe: guidedProbe
-            )
+            return container
         }
 
         func loadEmbedder(
@@ -277,14 +245,12 @@ struct ForkConcurrencyTests {
         return dir
     }
 
-    /// Builds a router wired with the stub loader.
+    /// Builds a router wired with the stub loader, vending `container` for
+    /// every generation slot.
     private static func makeRouter(
-        census: CacheCensus,
+        container: InstrumentedLLMContainer,
         cacheDir: URL,
-        maxConcurrentForks: Int = 4,
-        observer: SerialObserver? = nil,
-        releaseGate: AsyncSemaphore? = nil,
-        guidedProbe: GuidedProbe? = nil
+        maxConcurrentForks: Int = 4
     ) -> Router {
         Router(
             maxConcurrentForks: maxConcurrentForks,
@@ -292,13 +258,7 @@ struct ForkConcurrencyTests {
             recorder: InMemoryRecorder(),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(
-                census: census,
-                observer: observer,
-                releaseGate: releaseGate,
-                guidedProbe: guidedProbe,
-                dimension: stubDimension
-            )
+            loader: StubModelLoader(container: container, dimension: stubDimension)
         )
     }
 
@@ -314,25 +274,36 @@ struct ForkConcurrencyTests {
         }
     }
 
-    // MARK: - Copy-on-fork + parentId
+    // MARK: - Fork seeds the child's backend from the parent + parentId
 
-    @Test("fork copies the parent's KV cache and sets parentId to the parent's id")
+    @Test("fork seeds the child's backend from the parent's prompt history and sets parentId to the parent's id")
     @MainActor
-    func forkCopiesCacheAndSetsParentId() async throws {
+    func forkSeedsBackendFromParentAndSetsParentId() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let census = CacheCensus()
-        let router = Self.makeRouter(census: census, cacheDir: dir)
+        let container = InstrumentedLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parent = profile.standard.makeSession()
         #expect(parent.parentId == nil)
+        _ = try await parent.respond(to: "hello")
+
+        let parentBackend = try #require(container.lastBackend)
+        #expect(parentBackend.callCount == 1)
+        #expect(parentBackend.receivedPrompts == ["hello"])
 
         let child = try await parent.fork(workingDirectory: nil)
 
-        // The child's cache began as a copy of the parent's prefix.
-        #expect(census.copies == 1)
+        // The fork's backend is produced via makeFork(), pre-seeded with a copy
+        // of the parent's prompt history as of fork time — the stand-in for
+        // KV-cache copy-on-fork now that generation runs through a persistent
+        // backend rather than a per-call container.
+        let childBackend = try #require(parentBackend.lastFork)
+        #expect(childBackend.receivedPrompts == parentBackend.receivedPrompts)
+        #expect(childBackend.callCount == 0)
+
         // The child nests under the parent.
         #expect(child.parentId == parent.id)
         #expect(child.id != parent.id)
@@ -344,37 +315,35 @@ struct ForkConcurrencyTests {
         _ = child
     }
 
-    // MARK: - KV free on fork release
+    // MARK: - Fork diverges independently after fork time
 
-    @Test("releasing a fork frees its KV cache; the parent's cache is unaffected")
+    @Test("a fork's backend diverges independently from its parent's after fork time")
     @MainActor
-    func releasingForkFreesItsCacheOnly() async throws {
+    func forkedBackendDivergesIndependently() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let census = CacheCensus()
-        let router = Self.makeRouter(census: census, cacheDir: dir)
+        let container = InstrumentedLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parent = profile.standard.makeSession()
-        var child: RoutedSession? = try await parent.fork(workingDirectory: nil)
-        #expect(census.copies == 1)
-        #expect(census.frees == 0)
-        _ = child
+        let child = try await parent.fork(workingDirectory: nil)
+        let parentBackend = try #require(container.lastBackend)
+        let childBackend = try #require(parentBackend.lastFork)
 
-        // Dropping the fork frees exactly its (fork) cache.
-        child = nil
-        await Self.spin(until: { census.forkFrees == 1 })
-        #expect(census.forkFrees == 1)
-        #expect(census.frees == 1)
-        #expect(census.liveForks == 0)
+        // A turn on the child does not retroactively appear in the parent's
+        // history…
+        let childText = try await child.respond(to: "child turn")
+        #expect(childText == "ok")
+        #expect(childBackend.receivedPrompts == ["child turn"])
+        #expect(parentBackend.receivedPrompts.isEmpty)
 
-        // The parent's cache is untouched: still generating and not freed.
-        let text = try await parent.respond(to: "hi")
-        #expect(text == "ok")
-        #expect(census.frees == 1)
-
-        _ = parent
+        // …and a further parent turn is independent of the (now-diverged) child.
+        let parentText = try await parent.respond(to: "parent turn")
+        #expect(parentText == "ok")
+        #expect(parentBackend.receivedPrompts == ["parent turn"])
+        #expect(childBackend.receivedPrompts == ["child turn"])
     }
 
     // MARK: - Grammar inheritance on a guided-session fork
@@ -385,9 +354,9 @@ struct ForkConcurrencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let census = CacheCensus()
         let guidedProbe = GuidedProbe()
-        let router = Self.makeRouter(census: census, cacheDir: dir, guidedProbe: guidedProbe)
+        let container = InstrumentedLLMContainer(guidedProbe: guidedProbe)
+        let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let grammar = Grammar.jsonSchema(#"{"type":"object"}"#)
@@ -413,17 +382,15 @@ struct ForkConcurrencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let census = CacheCensus()
         let observer = SerialObserver()
         // Bodies park here; a permit per call is released once the test has
         // established the FIFO arrival order.
         let releaseGate = AsyncSemaphore(value: 0)
+        let container = InstrumentedLLMContainer(observer: observer, releaseGate: releaseGate)
         let router = Self.makeRouter(
-            census: census,
+            container: container,
             cacheDir: dir,
-            maxConcurrentForks: 16,
-            observer: observer,
-            releaseGate: releaseGate
+            maxConcurrentForks: 16
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
@@ -478,8 +445,8 @@ struct ForkConcurrencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let census = CacheCensus()
-        let router = Self.makeRouter(census: census, cacheDir: dir, maxConcurrentForks: 2)
+        let container = InstrumentedLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir, maxConcurrentForks: 2)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let admissionGate = profile.standard.forkAdmissionGate
@@ -488,8 +455,6 @@ struct ForkConcurrencyTests {
         // Two forks fit the admission ceiling and are admitted immediately.
         var forkA: RoutedSession? = try await root.fork(workingDirectory: nil)
         let forkB: RoutedSession? = try await root.fork(workingDirectory: nil)
-        #expect(census.liveForks == 2)
-        #expect(census.maxLiveForks == 2)
         #expect(admissionGate.availablePermits == 0)
         _ = forkA
         _ = forkB
@@ -497,18 +462,13 @@ struct ForkConcurrencyTests {
         // A third fork must await a free admission slot.
         let thirdTask = Task { try await root.fork(workingDirectory: nil) }
         await Self.spin(until: { admissionGate.waiterCount == 1 })
-        #expect(census.liveForks == 2)
-        #expect(census.maxLiveForks == 2)
 
         // Releasing one fork frees its slot; the waiter is admitted. (The ceiling
         // was never exceeded while all three were requested: the parked-state
         // assertions above — two admitted, the third blocked on the gate — are the
-        // robust bound evidence; a post-release high-water check would race the
-        // freed fork's teardown against the waiter's admission.)
+        // robust bound evidence for the ceiling itself.)
         forkA = nil
         let third = try await thirdTask.value
-        #expect(census.forkFrees == 1)
-        #expect(census.liveForks == 2)
 
         _ = forkB
         _ = third
