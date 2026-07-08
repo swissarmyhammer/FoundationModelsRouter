@@ -763,6 +763,183 @@ returns, through the recorder actor; a sink failure logs but never fails generat
 redaction hook and a level (`off` / `metadata-only` / `full`) gate what's written,
 since local models still see sensitive prompts.
 
+### Transcript fidelity: persist the SDK's own `Transcript`, not a paraphrase (planned)
+
+**The gap.** The package has two unrelated "transcript" concepts. `FoundationModels.Transcript`
+is the SDK's own conversation state — the `RandomAccessCollection` of `Transcript.Entry` a
+`LanguageModelSession` accumulates, the value that actually drives generation, and the only
+thing `LanguageModelSession(model:tools:transcript:)` accepts when seeding a fork. Our on-disk
+`TranscriptEvent` log is a bespoke audit format that *paraphrases* it: the `generate`
+chokepoint hand-builds one `.prompt` and one `.response` event per turn from the
+prompt/response *strings it already had before calling the SDK*, not from what the SDK
+actually appended. The two drift by construction: a single `respond()` adds *multiple*
+entries to the real transcript (at minimum a `.prompt` and a `.response` entry; an
+`.instructions` entry on first contact; `.toolCalls`/`.toolOutput`/`.reasoning` when
+applicable — the SDK's own `Response.transcriptEntries: ArraySlice<Transcript.Entry>` is
+direct evidence a turn's delta is a slice, not a pair of strings). Nothing on disk can
+reconstruct a real `Transcript`, so recorded history cannot re-seed a session in a new
+process, and any GUI over the recordings renders a lossy paraphrase rather than the
+conversation the model saw.
+
+**Verified SDK surface** (macOS 27 beta SDK,
+`MacOSX.sdk/System/Library/Frameworks/FoundationModels.framework/Modules/FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface`;
+every statement below was read from that interface, none assumed):
+
+- `Transcript.Entry` has exactly six cases: `.instructions(Instructions)`,
+  `.prompt(Prompt)`, `.toolCalls(ToolCalls)`, `.toolOutput(ToolOutput)`,
+  `.response(Response)`, and (27+) `.reasoning(Reasoning)`.
+- Payloads: `Instructions{id, segments, toolDefinitions: [ToolDefinition{name, description,
+  parameters: GenerationSchema}]}`; `Prompt{id, segments, options: GenerationOptions,
+  responseFormat?, (27+) contextOptions, metadata}`; `ToolCalls` — a
+  `RandomAccessCollection` of `ToolCall{id, toolName, arguments: GeneratedContent, (27+)
+  metadata}`; `ToolOutput{id, toolName, segments}`; `Response{id, assetIDs, segments, (27+)
+  metadata}`; `Reasoning{id, segments, signature: Data?, metadata}`.
+- `Transcript.Segment` has four cases: `.text(TextSegment{id, content})`,
+  `.structure(StructuredSegment{id, schemaName, content: GeneratedContent})`, and (27+)
+  `.attachment(AttachmentSegment{id, content: Attachment(.image(ImageAttachment)), label})`
+  and `.custom(any CustomSegment)` — an *existential*, but a well-behaved one: the
+  `CustomSegment` protocol requires `var id: String` and `var content: Content` with
+  `associatedtype Content : Codable & Equatable & Sendable`, so any custom segment's content
+  is *guaranteed encodable*. What the protocol does **not** declare is an initializer, so
+  re-instantiating a concrete conforming type from disk needs a router-side registry (see
+  "Honest fidelity scope" below).
+- `Transcript : Codable`. `Transcript.Entry` alone is **not** Codable (only `Sendable,
+  Identifiable, Equatable`). `GenerationSchema : Codable`. `GeneratedContent` is not Codable
+  but round-trips via `jsonString` / `init(json:) throws`. `GenerationOptions` is **not**
+  Codable; its public surface is `temperature`, `maximumResponseTokens`, `toolCallingMode`,
+  and an opaque `sampling: SamplingMode?` with constructors but no public introspection.
+- Every entry/segment type has a **public memberwise initializer**, `Transcript(entries:)`
+  is public, and `LanguageModelSession(model: some LanguageModel, tools:, transcript:)` is
+  public — so disk → `[Transcript.Entry]` → `Transcript` → live session is achievable
+  entirely with public API. **There is no SDK wall.**
+- `LanguageModelSession : Observation.Observable`, `transcript` is an observable stored
+  property, and `Response<Content>` carries `transcriptEntries` (the turn's delta) and (27+)
+  `usage: LanguageModelSession.Usage{input.totalTokenCount, input.cachedTokenCount,
+  output.totalTokenCount, output.reasoningTokenCount}`.
+
+**Chosen architecture: observe the real transcript and persist its deltas.** The
+event-bracket's role as *content source* is superseded. After each turn completes — inside
+the same serial-gate window the bracket already occupies, on the success and throw paths
+alike — the session snapshots the backend's real transcript and diffs by entry count:
+everything past `persistedEntryCount` is what the SDK actually appended this turn, and
+*those real entries* are mapped into events and persisted. Pull-based snapshotting at the
+deterministic point is chosen over push-based `withObservationTracking`: `Observable` fires
+willSet without payloads and out of band with the serial gate, while the post-turn snapshot
+observes exactly the settled state, in order, with no reentrancy hazards. A fork's baseline
+starts at *its parent's entry count at fork time* (the fork copies the parent transcript),
+so inherited history is never re-persisted — and the same number is recorded as the fork's
+cut point in the session index (below), making the diff baseline and the lineage
+reconstruction rule one fact, not two.
+
+`LanguageModelSessionBackend` grows one requirement to make this possible —
+`transcriptEntries() -> [Transcript.Entry]` (today only the concrete
+`MLXFoundationModelsSessionBackend` can see `liveSession.transcript`; `respond` returns a
+bare `String`). Test stubs fabricate entries with the SDK's public initializers.
+
+**Schema: entry-shaped `TranscriptEvent`, one event per `Transcript.Entry`.** Our own schema
+(not Apple's opaque whole-`Transcript` encoding) stays the on-disk format, because it
+composes with the recording level, the redact hook, the JSONL append-only sink, and the
+provenance envelope. It grows to mirror the real entry shape:
+
+- `Kind` gains `instructions`, `toolCalls`, and `reasoning`; `prompt`/`response` now mean
+  "the SDK appended this entry", not "we bracketed a call". `session` and `embedding` remain
+  router-only kinds (embeddings never enter Apple's transcript). The legacy `toolCall` case
+  remains decodable but is no longer written.
+- A new optional `entry: TranscriptEntryPayload` field carries the structural mirror:
+  Apple's entry `id`, segments (`text` content; `structure` as `schemaName` +
+  `GeneratedContent.jsonString`; `attachment` as label + URL when available; `custom` as its
+  `id` + a type-discriminator string + its `content` encoded to JSON, since
+  `CustomSegment.Content` is protocol-guaranteed `Codable`), tool
+  definitions (name, description, `GenerationSchema` via its own Codable), tool calls (id,
+  toolName, arguments JSON), `assetIDs`, reasoning `signature`, and the introspectable slice
+  of `GenerationOptions`. Old lines (no `entry`) still decode; `MergedTranscript`'s flat
+  `(ts, seq)` view is unchanged.
+- The flattened `text` stays as the human/GUI convenience body and remains what the gate
+  trims: `metadataOnly` now also strips payload content (keeping ids, kinds, counts, tool
+  names — shape without content), and the redact hook applies to every textual content site
+  in the payload, not just `text`. Stripping stamps an explicit `contentRemoved` marker on
+  the payload so reconstruction can *refuse* stripped shapes with a typed error instead of
+  silently rebuilding empty entries.
+
+**What stays event-driven, and why.** The envelope
+(`routerId`/`sessionId`/`parentId`/`slot`/`model`/`seq`/`ts`), the `session` meta line,
+`embedding` events, `grammar`, wall-clock `ms`, and `tokensIn`/`tokensOut` (from per-turn
+`usage` deltas where the backend reports them) are router facts Apple's `Transcript` does
+not carry — they remain recorder-stamped. A failed turn still records a bodyless
+`response`-kind close so every turn leaves a trace, *plus* whatever entries the SDK durably
+appended before failing — which is precisely what snapshot-diffing captures that
+string-bracketing never could.
+
+**Retrieval & the fork hierarchy as first-class data.** Today the lineage is only implicit
+in directory nesting, and the only query is "everything under this router, flattened"
+(`MergedTranscript.merged(under:)`). Two additions:
+
+- **A session index.** `recordings/<routerId>/sessions.jsonl` gains one appended record per
+  session at creation — `{sessionId, parentId, path, forkedAtEntryCount, slot, model,
+  createdAt}` — written from the two places that know it: root vending and
+  `fork(workingDirectory:)`. Appends are best-effort JSONL like the transcript itself (no
+  read-modify-write). The index makes lookup by `ULID` O(index) instead of O(walk every
+  file), and `forkedAtEntryCount` records where the child's inherited history ends.
+- **`TranscriptTree`.** Loads the index (falling back to a directory walk plus per-event
+  `parentId` for pre-index recordings) and exposes the hierarchy as data: the tree of
+  sessions under a router, `children(of:)`, `events(forSession:)` (that session's own
+  delta), and `effectiveEntryEvents(forSession:)` — the session's *whole effective
+  conversation*, computed recursively as the parent's effective entries truncated to
+  `forkedAtEntryCount` plus the session's own, exactly mirroring what its live `Transcript`
+  held.
+
+**Reconstruction end-to-end — rooted at the root session.** `effectiveTranscript(forSession:)`
+maps the effective entry payloads back through the public initializers into
+`[Transcript.Entry]` and returns `Transcript(entries:)` — directly usable as the
+`LanguageModelSession(model:tools:transcript:)` seed. Round-tripping is validated in both
+directions (entry → payload → entry equality on every representable field). Restoration is
+a *tree* operation, not per-arbitrary-session: given a **root session's id** (and only the
+root's — forks are never restored individually), a fresh `Router` pointed at the same
+recordings root reconstructs the whole associated fork tree in memory — the root plus every
+descendant, each node re-seeded with its own effective `Transcript` — synced with what is on
+disk. The proof is a gated integration test (`FM_ROUTER_INTEGRATION_TESTS`, matching the
+existing pattern in `Tests/FoundationModelsRouterIntegrationTests/`): drive real turns on a
+root, fork it into a genuine branching multi-level tree, fork a fork, assert the on-disk
+state mid-test (turns sync as they happen, not only at teardown), discard the router and
+every in-memory session, construct a **new** `Router` over the same directory, restore by
+the root id alone, and assert the restored tree matches — structure, per-node turns, and,
+the fidelity payoff, that a *new* live turn on a restored node sees its prior context
+exactly as an never-torn-down session would.
+
+**Honest fidelity scope.** Faithful capture is a property of `full`-level recording *only*:
+`metadataOnly` intentionally discards content (reconstruction yields shape, not a usable
+seed) and `off` discards everything — that is the levels' contract, not a bug. Within
+`full`, the known, deliberate losses — each degraded explicitly rather than silently:
+`GenerationOptions.sampling` (no public introspection; dropped), the
+`Prompt`/`ToolCall`/`Response`/`Reasoning` `metadata` dictionaries (existential-typed;
+dropped), image attachment *bytes* (label/URL persisted; pixels not — and an in-memory
+attachment whose `ImageAttachment.url` is `nil` cannot be rebuilt at all, so it degrades to
+a labeled text segment), and a `Prompt.responseFormat`, which round-trips through its
+persisted `GenerationSchema` (Codable) via `ResponseFormat(schema:)` — there is no
+`init(name:)` — so a format originally built from a `Generable` *type* rebuilds in schema
+form.
+
+`.custom` segments are **not** on that list — they round-trip. The `CustomSegment` protocol
+guarantees `content: Content` with `Content : Codable`, so *persisting* is unconditional
+and registry-free: the mapper opens the existential and stores the segment's `id`, a type
+discriminator string, and the content encoded to JSON. Only *rebuilding* needs outside
+help, because the protocol declares no initializer. The router defines a refinement,
+`PersistableCustomSegment: CustomSegment`, adding `init(id: String, content: Content)
+throws` and a stable `static var typeDiscriminator: String` (defaulting to the type's
+fully-qualified name — which is also what the mapper writes for types that never conform),
+plus a `CustomSegmentRegistry` value the integrator populates with their concrete types
+(`registry.register(MySegment.self)`) and passes to reconstruction/restore. Registering a
+second type under an already-registered discriminator traps (`preconditionFailure`) rather
+than silently overwriting — two conformances aliasing one on-disk representation is a setup
+bug, not a runtime condition to degrade through, and `register` runs at integrator
+setup time, not on the decode path. Rebuild looks the discriminator up in the registry,
+decodes `Content` with `JSONDecoder`, and calls `init(id:content:)`; an unregistered
+discriminator is a typed, descriptive error naming the discriminator — never a silent drop
+or a lossy text stand-in. The persisted content JSON is
+a text body like any other: `metadataOnly` strips it and the redact hook covers it. None of
+these occur on today's MLX text paths — instructions, text prompts/responses, guided structured
+responses, and tool traffic round-trip losslessly.
+
 ## Decisions
 
 - **Runtime:** MLX only (mlx-swift-lm) for weights/inference; no llama backend.
