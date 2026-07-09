@@ -22,7 +22,7 @@ let huggingFacePackage = "swift-huggingface"
 let transformersPackage = "swift-transformers"
 
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
-// The fork is pinned to the `mlx-foundationmodels` branch and locked to a
+// The fork is pinned to the `foundationmodels-fixes` branch and locked to a
 // specific commit via Package.resolved (committed, not ignored).
 let mlxProducts: [Target.Dependency] = [
     .product(name: "MLXLMCommon", package: mlxPackage),
@@ -61,7 +61,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/swissarmyhammer/\(mlxPackage)",
-            branch: "mlx-foundationmodels"
+            branch: "foundationmodels-fixes"
         ),
         .package(
             url: "https://github.com/yaslab/\(ulidPackage).git",
