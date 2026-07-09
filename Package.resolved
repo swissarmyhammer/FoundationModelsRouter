@@ -1,5 +1,5 @@
 {
-  "originHash" : "01fe3b7dacb2b032f93184e97fa7d188b0f6094880d3bedd7442be04e8cac88c",
+  "originHash" : "bb29dd45222956a84f5ddf91bcc87336d5fc81f777e4f7834ae86b397ea64225",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swissarmyhammer/mlx-swift-lm",
       "state" : {
-        "branch" : "mlx-foundationmodels",
-        "revision" : "e6ccd2721ab3b236b92e436bee2130086f48041c"
+        "branch" : "foundationmodels-fixes",
+        "revision" : "81b9a3b344ae8ec8bc9d7082d3192f987f4411c1"
       }
     },
     {
