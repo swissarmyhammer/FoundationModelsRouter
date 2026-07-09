@@ -327,9 +327,9 @@ struct IntegrationTests {
         if case .string = object["country"] {} else { Issue.record("'country' should be a string") }
 
         // 5. A fork continues the parent's conversation as an independent child
-        //    session. Its ``SessionKVCache`` is still just the copy/free object
-        //    contract (asserted with a spy in the unit suite) — under the real
-        //    `LanguageModelSession`-backed live path it is not yet wired to any
+        //    session, seeded from the parent's accumulated transcript via
+        //    `LanguageModelSessionBackend.makeFork()` — under the real
+        //    `LanguageModelSession`-backed live path this is not yet wired to any
         //    real prefix-compute reuse (see plan.md's "Sessions & KV cache" open
         //    question); fork lineage and independent generation are what this
         //    asserts here.
@@ -345,9 +345,9 @@ struct IntegrationTests {
         let childReply = try await #require(child).respond(to: "Say hi in one word.")
         #expect(!childReply.isEmpty)
 
-        // Dropping the only reference releases the fork, freeing its (inert)
-        // cache object. No other binding retains it, so this is a genuine
-        // release; the parent is unaffected and keeps generating.
+        // Dropping the only reference releases the fork. No other binding
+        // retains it, so this is a genuine release; the parent is unaffected
+        // and keeps generating.
         child = nil
         let afterRelease = try await session.respond(to: "Still there?")
         #expect(!afterRelease.isEmpty)

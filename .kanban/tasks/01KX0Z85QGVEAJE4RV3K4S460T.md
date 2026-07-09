@@ -1,7 +1,24 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01kx4h3y80r85393e2qf4xwd4t
+  text: |-
+    Implemented:
+    1. Deleted Sources/FoundationModelsRouter/Session/SessionKVCache.swift entirely (SessionKVCache protocol + InertKVCache conformer).
+    2. Rewrote the stale fork comment in Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift (step 5, near line ~329) to describe the real mechanism (LanguageModelSessionBackend.makeFork() seeding from the parent's accumulated transcript) instead of referencing the deleted SessionKVCache/spy test. Also rewrote an adjacent comment (near line ~348, "freeing its (inert) cache object") since that concept no longer exists.
+    3. Removed the stale "`SessionKVCache` stays an inert copy/free lifecycle contract for every current conformer, live included." sentence from plan.md's "Sessions & KV cache" bullet; paragraph now ends cleanly at "...not a gap in this router's own correctness." Checked it against the newer "Transcript fidelity" section — no contradiction/duplication, they cover different concerns (on-disk transcript fidelity vs in-memory fork seeding/KV compute reuse).
+
+    Verification:
+    - grep across Sources/, Tests/, plan.md confirms zero remaining references to SessionKVCache/InertKVCache.
+    - `swift build --build-tests`: Build complete!, exit 0.
+    - `swift test`: 182/182 tests passed in 24 suites; gated real-model integration suite (7 tests, 2 suites) skipped as expected without FM_ROUTER_INTEGRATION_TESTS env var — matches pre-existing baseline, no regressions.
+    - Adversarial double-check agent (subagent_type: double-check) independently re-verified the diff, re-ran build+test, and returned PASS with no findings.
+
+    Leaving task in `doing` for /review per the implement workflow.
+  timestamp: 2026-07-09T22:49:02.464290+00:00
+position_column: doing
 position_ordinal: '80'
 title: Delete vestigial SessionKVCache.swift and its stale references
 ---

@@ -993,8 +993,7 @@ responses, and tool traffic round-trip losslessly.
   `mlx-swift-lm` dependency, whose `MLXLanguageModel.Executor` has no persisted-cache
   mechanism to reuse it against (see Backends and "Sessions & KV cache" for
   the citation); this is a performance property of that upstream dependency, not a
-  gap in this router's own correctness. `SessionKVCache` stays an inert copy/free
-  lifecycle contract for every current conformer, live included.
+  gap in this router's own correctness.
 - **Concurrency:** generation is serialized per resident model (FIFO, one at a time);
   `fork()` fan-out is bounded by `maxConcurrentForks` and queues for admission — both
   on a fair async semaphore. Guided output is whole-chunk; only unconstrained text
