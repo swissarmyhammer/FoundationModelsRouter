@@ -277,4 +277,54 @@
             #expect(parent.transcriptEntries().count == entriesAtForkTime.count + 2)
         }
     }
+
+    /// Exercises task bkhj6ya's factory seam:
+    /// ``LoadedLLMContainer/makeSession(transcript:)``, the transcript-seeded
+    /// sibling of ``LoadedLLMContainer/makeSession(instructions:)`` restoration
+    /// needs to rebuild a session from a persisted transcript rather than from
+    /// scratch. The live conformer (``MLXFoundationModelsContainer``, gated
+    /// integration suite) seeds a real `LanguageModelSession` from the
+    /// transcript; this GPU-free counterpart proves the stub side of the seam:
+    /// a container's `makeSession(transcript:)` seeds ``StubSessionBackend``'s
+    /// synthetic entries directly from the given transcript's entries, so a
+    /// freshly manufactured backend already reports them before any new turn.
+    @Suite("LoadedLLMContainer.makeSession(transcript:) seeds a stub backend from transcript entries")
+    struct TranscriptSeededSessionTests {
+        /// A minimal container whose `makeSession(transcript:)` seeds a
+        /// ``StubSessionBackend`` straight from the given transcript's entries —
+        /// mirroring how the live container derives a fresh session from a
+        /// persisted transcript instead of from `instructions`.
+        private struct TranscriptSeededStubContainer: LoadedLLMContainer {
+            func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+                StubSessionBackend(instructions: instructions)
+            }
+
+            func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+                StubSessionBackend(entries: Array(transcript))
+            }
+        }
+
+        @Test("a stub backend made from a 4-entry transcript reports those 4 entries via transcriptEntries() before any new turn")
+        func stubBackendReportsSeededTranscriptEntriesBeforeAnyNewTurn() {
+            let entries: [Transcript.Entry] = [
+                .instructions(
+                    Transcript.Instructions(
+                        segments: [.text(Transcript.TextSegment(content: "be terse"))],
+                        toolDefinitions: []
+                    )
+                ),
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "first"))])),
+                .response(
+                    Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))])
+                ),
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "second"))])),
+            ]
+            let transcript = Transcript(entries: entries)
+
+            let container: any LoadedLLMContainer = TranscriptSeededStubContainer()
+            let backend = container.makeSession(transcript: transcript)
+
+            #expect(backend.transcriptEntries() == entries)
+        }
+    }
 #endif  // canImport(FoundationModels)

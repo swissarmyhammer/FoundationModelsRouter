@@ -42,10 +42,13 @@ private let defaultMaxTokens = 8192
 /// This container no longer invokes generation itself (see
 /// ``LoadedLLMContainer/makeSession(instructions:)``); ``makeSession(instructions:)``
 /// below vends a ``MLXFoundationModelsSessionBackend`` that drives a real
-/// `LanguageModelSession` built over ``model``. Constructing a session is
-/// cheap: `MLXLanguageModel` is a small `Sendable` value whose actual weights
-/// are loaded once and cached by its own process-global cache, keyed by model
-/// id — building a session over it does not reload anything.
+/// `LanguageModelSession` built over ``model``, and
+/// ``makeSession(transcript:)`` vends one seeded from an existing transcript
+/// instead — the factory a restored session tree rebuilds from. Constructing
+/// a session is cheap either way: `MLXLanguageModel` is a small `Sendable`
+/// value whose actual weights are loaded once and cached by its own
+/// process-global cache, keyed by model id — building a session over it does
+/// not reload anything.
 struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
@@ -58,6 +61,50 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
         let session = LanguageModelSession(model: model, instructions: instructions)
         return MLXFoundationModelsSessionBackend(session: session, model: model, instructions: instructions)
+    }
+
+    /// Manufactures a live session backend seeded from an existing transcript.
+    ///
+    /// Builds the new `LanguageModelSession` directly over `transcript` via
+    /// `LanguageModelSession(model:tools:transcript:)` — the identical public
+    /// initializer ``MLXFoundationModelsSessionBackend/makeFork()`` calls to
+    /// seed a forked session from a parent's accumulated transcript. Unlike a
+    /// fork, this factory has no live parent backend to copy `instructions`
+    /// from (`transcript` may have come from disk, long after any originating
+    /// session existed), so the new backend's retained ``instructions`` are
+    /// derived from `transcript`'s own `.instructions` entry when present —
+    /// the only place a transcript carries them forward, since there is no
+    /// `LanguageModelSession` initializer that accepts both `transcript:` and
+    /// `instructions:` together.
+    ///
+    /// - Parameter transcript: The transcript to seed the new session from.
+    /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
+    ///   ``RoutedSession`` drives for its lifetime.
+    func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
+        let session = LanguageModelSession(model: model, tools: [], transcript: transcript)
+        return MLXFoundationModelsSessionBackend(
+            session: session,
+            model: model,
+            instructions: Self.leadingInstructionsText(of: transcript)
+        )
+    }
+
+    /// The text of `transcript`'s leading `.instructions` entry, or `nil` when
+    /// `transcript` has none (or does not open with one).
+    ///
+    /// A `LanguageModelSession`'s transcript carries supplied instructions as
+    /// its first entry (mirrored by `StubSessionBackend`'s synthetic entries
+    /// in the test target), so this only ever looks at the transcript's first
+    /// entry, not the whole sequence.
+    private static func leadingInstructionsText(of transcript: FoundationModels.Transcript) -> String? {
+        guard let first = transcript.first, case .instructions(let instructions) = first else {
+            return nil
+        }
+        let textContents = instructions.segments.compactMap { segment -> String? in
+            guard case .text(let text) = segment else { return nil }
+            return text.content
+        }
+        return textContents.isEmpty ? nil : textContents.joined()
     }
 }
 

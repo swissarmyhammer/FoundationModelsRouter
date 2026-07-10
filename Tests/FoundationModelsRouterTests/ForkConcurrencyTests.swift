@@ -159,6 +159,10 @@ struct ForkConcurrencyTests {
             lastBackend = backend
             return backend
         }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
+        }
     }
 
     /// A stub embedder container — never exercised here, present only so the

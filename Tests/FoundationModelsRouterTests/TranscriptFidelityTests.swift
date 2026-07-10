@@ -24,6 +24,10 @@ struct TranscriptFidelityTests {
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: text)
         }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
+        }
     }
 
     /// A stand-in for a loaded embedder container, no MLX.
@@ -110,6 +114,10 @@ struct TranscriptFidelityTests {
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             backend
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
         }
     }
 

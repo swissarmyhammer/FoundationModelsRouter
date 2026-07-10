@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
@@ -663,6 +664,10 @@ struct MergedAndRedactionTests {
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: text)
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
         }
     }
 

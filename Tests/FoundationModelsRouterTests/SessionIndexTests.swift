@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
@@ -32,6 +33,10 @@ struct SessionIndexTests {
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: text, instructions: forwardInstructions ? instructions : nil)
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
         }
     }
 

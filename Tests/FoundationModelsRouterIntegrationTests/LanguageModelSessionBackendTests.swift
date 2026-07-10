@@ -132,6 +132,34 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
     }
 
+    // MARK: - Transcript-seeded factory (task bkhj6ya)
+
+    @Test("makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript")
+    func makeSessionFromTranscriptRecallsPriorContent() async throws {
+        let container = try await makeContainer()
+        let prior = try #require(
+            container.makeSession(instructions: "You are a terse, literal assistant.")
+                as? MLXFoundationModelsSessionBackend
+        )
+
+        _ = try await prior.respond(to: "Remember the number 42.", maxTokens: 64)
+
+        // Unlike `makeFork()`, which is called on an existing *backend* and
+        // copies its live session's transcript, `makeSession(transcript:)` is
+        // called on the *container* — the seam a restored session tree needs
+        // to rebuild a root session from a persisted transcript, with no live
+        // parent backend/session involved at all.
+        let restored = try #require(
+            container.makeSession(transcript: prior.session.transcript) as? MLXFoundationModelsSessionBackend
+        )
+
+        let reply = try await restored.respond(
+            to: "What number should I remember? Answer with just the number.",
+            maxTokens: 64
+        )
+        #expect(reply.contains("42"))
+    }
+
     // MARK: - Transcript growth and fork seeding (exact counts)
 
     @Test("the transcript grows by exactly two entries (prompt + response) per turn across two respond() calls")

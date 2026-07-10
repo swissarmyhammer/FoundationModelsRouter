@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
@@ -17,6 +18,10 @@ struct ResolveTests {
     private struct StubLLMContainer: LoadedLLMContainer {
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(shouldThrow: true)
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
         }
     }
 

@@ -42,6 +42,10 @@
             func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
                 StubSessionBackend(responseText: canned)
             }
+
+            func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+                StubSessionBackend(entries: Array(transcript))
+            }
         }
 
         private struct StubEmbeddingContainer: LoadedEmbeddingContainer {

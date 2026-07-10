@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 
 /// A single download-progress observation for one model: how many bytes have
 /// arrived out of how many total.
@@ -66,6 +67,27 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// - Returns: A new backend a vended ``RoutedSession`` drives for its
     ///   lifetime.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend
+
+    /// Manufactures a new live session backend seeded from an existing
+    /// transcript, instead of from scratch.
+    ///
+    /// This is the factory a restored session tree needs: rebuilding a session
+    /// from a transcript persisted to disk, rather than starting a fresh one
+    /// from `instructions` (``makeSession(instructions:)``). The live
+    /// `ModelContainer` conformance (see ``LiveModelLoader``) seeds a real
+    /// `LanguageModelSession` directly from `transcript` via its
+    /// `LanguageModelSession(model:tools:transcript:)` initializer — the same
+    /// one ``LanguageModelSessionBackend/makeFork()`` uses to seed a forked
+    /// session from a parent's accumulated transcript, except here there is no
+    /// live parent session to fork: `transcript` may have been reconstructed
+    /// from persisted recordings. Unit tests inject a stub container whose
+    /// backend reports `transcript`'s entries directly.
+    ///
+    /// - Parameter transcript: The transcript to seed the new session from.
+    /// - Returns: A new backend whose accumulated history begins with
+    ///   `transcript`'s entries, a vended ``RoutedSession`` drives for its
+    ///   lifetime.
+    func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
 }
 
 /// A loaded embedding model container — the seam the embedding computation runs

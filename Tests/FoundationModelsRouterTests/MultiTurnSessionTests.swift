@@ -100,6 +100,10 @@ struct MultiTurnSessionTests {
             lastBackend = backend
             return backend
         }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
+        }
     }
 
     // MARK: - Parkable stub backend (serial-gate race proof)
@@ -201,6 +205,10 @@ struct MultiTurnSessionTests {
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             ParkableSessionBackend(log: log, releaseGate: releaseGate)
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
         }
     }
 
