@@ -188,6 +188,14 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
         case custom
     }
 
+    /// Decodes a segment from its flattened representation, switching on the
+    /// `type` discriminator key to decode the case-specific fields.
+    ///
+    /// Synthesized `Codable` can't consume this shape: it expects each case's
+    /// payload nested under a single key named after the case (e.g.
+    /// `{"text": {...}}`), but this format is a flat `type` field plus sibling
+    /// keys. This mirrors ``encode(to:)``, which produces that same flat
+    /// shape by switching on `self`.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         switch try container.decode(SegmentType.self, forKey: .type) {
@@ -230,21 +238,21 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .text(id, content):
+        case .text(let id, let content):
             try container.encode(SegmentType.text, forKey: .type)
             try container.encode(id, forKey: .id)
             try container.encode(content, forKey: .content)
-        case let .structure(id, schemaName, contentJSON):
+        case .structure(let id, let schemaName, let contentJSON):
             try container.encode(SegmentType.structure, forKey: .type)
             try container.encode(id, forKey: .id)
             try container.encode(schemaName, forKey: .schemaName)
             try container.encode(contentJSON, forKey: .contentJSON)
-        case let .attachment(id, label, url):
+        case .attachment(let id, let label, let url):
             try container.encode(SegmentType.attachment, forKey: .type)
             try container.encode(id, forKey: .id)
             try container.encodeIfPresent(label, forKey: .label)
             try container.encodeIfPresent(url, forKey: .url)
-        case let .custom(id, typeDiscriminator, contentJSON, description):
+        case .custom(let id, let typeDiscriminator, let contentJSON, let description):
             try container.encode(SegmentType.custom, forKey: .type)
             try container.encode(id, forKey: .id)
             try container.encode(typeDiscriminator, forKey: .typeDiscriminator)
