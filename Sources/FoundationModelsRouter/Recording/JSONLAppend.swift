@@ -8,6 +8,7 @@ public enum JSONLAppendError: Error, Equatable, LocalizedError {
     /// let the append land outside the intended directory.
     case invalidFileName(String)
 
+    /// A localized message describing what error occurred, for `LocalizedError` conformance.
     public var errorDescription: String? {
         switch self {
         case .invalidFileName(let fileName):
