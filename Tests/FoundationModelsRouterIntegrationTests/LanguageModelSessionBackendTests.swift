@@ -300,7 +300,9 @@ struct LanguageModelSessionBackendIntegrationTests {
             serialGate: standard.serialGate,
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
-            persistedEntryCount: 0
+            persistedEntryCount: 0,
+            indexPath: sessionId.description,
+            sessionIndexWriter: nil
         )
 
         return ChokepointHarness(

@@ -71,6 +71,16 @@ public actor Router {
     /// An optional redaction hook applied to recorded text, enforced through ``recorder``.
     let redact: (@Sendable (String) -> String)?
 
+    /// The session index writer every vended generation session's root/fork
+    /// creation record is appended through, or `nil` when the router has no
+    /// durable transcripts root or is recording at ``RecordingLevel/off``.
+    ///
+    /// Unlike ``recorder``, this needs no ``GatingRecorder``-style wrapping:
+    /// the only gate the session index honors is the off/not-off split (see
+    /// plan.md's "Transcript fidelity" section — the index is metadata, not
+    /// turn content, so it is not further trimmed at ``RecordingLevel/metadataOnly``).
+    let sessionIndexWriter: SessionIndexWriter?
+
     /// The machine probe behind the budget.
     private let probe: any MachineProbe
 
@@ -175,6 +185,16 @@ public actor Router {
         }
         self.recordingLevel = recordingLevel
         self.redact = redact
+        // Gated purely on "is there somewhere durable to write" and "is
+        // recording off" — unlike `recorder`, the session index needs no
+        // `.metadataOnly` trimming (it carries no turn content).
+        if let recordingsDir, recordingLevel != .off {
+            self.sessionIndexWriter = SessionIndexWriter(
+                directory: recordingsDir.appendingPathComponent(id.description, isDirectory: true)
+            )
+        } else {
+            self.sessionIndexWriter = nil
+        }
         self.probe = probe
         self.hostProfileCache = HostProfileCache(cacheDir: resolvedCacheDir)
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
@@ -608,7 +628,8 @@ public actor Router {
             routerId: id,
             recorder: recorder,
             recordingsRoot: recordingsDir,
-            maxConcurrentForks: maxConcurrentForks
+            maxConcurrentForks: maxConcurrentForks,
+            sessionIndexWriter: sessionIndexWriter
         )
     }
 

@@ -86,6 +86,16 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// under this root by router id and session id.
     public let recordingsRoot: URL?
 
+    /// The session index writer a vended generation session appends its
+    /// creation/fork record through, or `nil` when the router has no durable
+    /// transcripts root or is recording at ``RecordingLevel/off``.
+    ///
+    /// Only consumed by the generation-session surface (``makeSession(instructions:workingDirectory:)``
+    /// / ``makeGuidedSession(grammar:instructions:workingDirectory:)`` /
+    /// ``RoutedSessionActor/fork(workingDirectory:)``); the embedding handle
+    /// never vends sessions, so it carries this only for storage symmetry.
+    public let sessionIndexWriter: SessionIndexWriter?
+
     /// The weak back-reference to the profile that owns this model, registered by
     /// ``LanguageModelProfile``'s initializer. A session vended from this handle
     /// reads it to retain the profile (see ``makeSession(instructions:workingDirectory:)``).
@@ -126,6 +136,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///     ``forkAdmissionGate`` admits (the router's `maxConcurrentForks`).
     ///     Consumed only by the generation-session fork surface; the embedding
     ///     handle never forks.
+    ///   - sessionIndexWriter: The session index writer a vended generation
+    ///     session appends its creation/fork record through, or `nil`.
     public init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -135,7 +147,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         routerId: ULID,
         recorder: any TranscriptRecorder,
         recordingsRoot: URL? = nil,
-        maxConcurrentForks: Int = 4
+        maxConcurrentForks: Int = 4,
+        sessionIndexWriter: SessionIndexWriter? = nil
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -146,6 +159,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.recorder = recorder
         self.recordingsRoot = recordingsRoot
         self.forkAdmissionGate = AsyncSemaphore(value: maxConcurrentForks)
+        self.sessionIndexWriter = sessionIndexWriter
     }
 }
 

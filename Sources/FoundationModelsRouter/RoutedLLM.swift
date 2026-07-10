@@ -96,6 +96,30 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // carrying `instructions` so generation calls never pass them again.
         let backend = container.makeSession(instructions: instructions)
 
+        // A root's index path is just its own session id — it sits directly
+        // under the router root (`recordings/<routerId>/<sessionId>/`).
+        let indexPath = sessionId.description
+        // This vending site is synchronous, so the record is appended
+        // fire-and-forget on an unstructured `Task`; every actor-isolated
+        // entry point on the constructed session awaits it before doing its
+        // own work (see ``RoutedSessionActor/pendingIndexWrite``), so by the
+        // time any interaction with the session completes, this record is
+        // guaranteed durable.
+        let pendingIndexWrite = sessionIndexWriter.map { writer in
+            let record = SessionIndexRecord(
+                sessionId: sessionId,
+                parentId: nil,
+                path: indexPath,
+                forkedAtEntryCount: 0,
+                slot: slot,
+                model: chosen,
+                instructions: instructions,
+                grammar: grammar?.source,
+                createdAt: Date()
+            )
+            return Task { await writer.append(record) }
+        }
+
         return makeRoutedSessionActor(
             profile: owningProfile,
             routerId: routerId,
@@ -118,7 +142,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // A root session starts with nothing persisted: the first turn's
             // whole transcript diff (including any leading `.instructions`
             // entry) is new.
-            persistedEntryCount: 0
+            persistedEntryCount: 0,
+            indexPath: indexPath,
+            sessionIndexWriter: sessionIndexWriter,
+            pendingIndexWrite: pendingIndexWrite
         )
     }
 }
