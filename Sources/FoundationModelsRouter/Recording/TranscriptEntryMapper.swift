@@ -202,12 +202,7 @@ public enum TranscriptEntryMapper {
         registry: CustomSegmentRegistry
     ) throws -> Transcript.Instructions {
         let segments = try requiredSegments(payload, registry: registry)
-        guard let toolDefPayloads = payload.toolDefinitions else {
-            throw TranscriptEntryReconstructionError.missingRequiredField(
-                entryId: payload.entryId,
-                field: "toolDefinitions"
-            )
-        }
+        let toolDefPayloads = try requireField(payload.toolDefinitions, "toolDefinitions", entryId: payload.entryId)
         let toolDefinitions = try toolDefPayloads.map { try toolDefinition($0, entryId: payload.entryId) }
         return Transcript.Instructions(id: payload.entryId, segments: segments, toolDefinitions: toolDefinitions)
     }
@@ -239,12 +234,7 @@ public enum TranscriptEntryMapper {
     }
 
     private static func rebuildToolCalls(_ payload: TranscriptEntryPayload) throws -> Transcript.ToolCalls {
-        guard let callPayloads = payload.toolCalls else {
-            throw TranscriptEntryReconstructionError.missingRequiredField(
-                entryId: payload.entryId,
-                field: "toolCalls"
-            )
-        }
+        let callPayloads = try requireField(payload.toolCalls, "toolCalls", entryId: payload.entryId)
         let calls = try callPayloads.map { call -> Transcript.ToolCall in
             let arguments = try decodeGeneratedContent(
                 call.argumentsJSON,
@@ -259,28 +249,20 @@ public enum TranscriptEntryMapper {
         _ payload: TranscriptEntryPayload,
         registry: CustomSegmentRegistry
     ) throws -> Transcript.ToolOutput {
-        let segments = try requiredSegments(payload, registry: registry)
-        guard let toolName = payload.toolName else {
-            throw TranscriptEntryReconstructionError.missingRequiredField(
-                entryId: payload.entryId,
-                field: "toolName"
-            )
+        try rebuildSegmentedEntry(payload, registry: registry, field: \.toolName, fieldName: "toolName") {
+            id, segments, toolName in
+            Transcript.ToolOutput(id: id, toolName: toolName, segments: segments)
         }
-        return Transcript.ToolOutput(id: payload.entryId, toolName: toolName, segments: segments)
     }
 
     private static func rebuildResponse(
         _ payload: TranscriptEntryPayload,
         registry: CustomSegmentRegistry
     ) throws -> Transcript.Response {
-        let segments = try requiredSegments(payload, registry: registry)
-        guard let assetIds = payload.assetIds else {
-            throw TranscriptEntryReconstructionError.missingRequiredField(
-                entryId: payload.entryId,
-                field: "assetIds"
-            )
+        try rebuildSegmentedEntry(payload, registry: registry, field: \.assetIds, fieldName: "assetIds") {
+            id, segments, assetIds in
+            Transcript.Response(id: id, assetIDs: assetIds, segments: segments)
         }
-        return Transcript.Response(id: payload.entryId, assetIDs: assetIds, segments: segments)
     }
 
     private static func rebuildReasoning(
@@ -291,6 +273,34 @@ public enum TranscriptEntryMapper {
         return Transcript.Reasoning(id: payload.entryId, segments: segments, signature: payload.signature)
     }
 
+    /// Rebuilds a segments-carrying entry that requires exactly one other
+    /// payload field, sharing the "fetch segments, require the field,
+    /// construct" shape common to ``rebuildToolOutput`` and
+    /// ``rebuildResponse`` — those two rebuilders differ only in which
+    /// payload field they require (`toolName` vs `assetIds`) and how they
+    /// pass it to their entry's initializer.
+    ///
+    /// - Parameters:
+    ///   - payload: The structural payload to rebuild from.
+    ///   - registry: Passed through to segment reconstruction.
+    ///   - field: The single required payload field the entry needs beyond
+    ///     its segments.
+    ///   - fieldName: The field's name, used in the thrown error when it is
+    ///     `nil`.
+    ///   - construct: Builds the entry from its id, rebuilt segments, and the
+    ///     required field's unwrapped value.
+    private static func rebuildSegmentedEntry<Field, Entry>(
+        _ payload: TranscriptEntryPayload,
+        registry: CustomSegmentRegistry,
+        field: KeyPath<TranscriptEntryPayload, Field?>,
+        fieldName: String,
+        construct: (String, [Transcript.Segment], Field) -> Entry
+    ) throws -> Entry {
+        let segments = try requiredSegments(payload, registry: registry)
+        let value = try requireField(payload[keyPath: field], fieldName, entryId: payload.entryId)
+        return construct(payload.entryId, segments, value)
+    }
+
     /// Returns `payload.segments` rebuilt into real `Transcript.Segment`
     /// values, or throws ``TranscriptEntryReconstructionError/missingRequiredField(entryId:field:)``
     /// when `payload.segments` is `nil` — every entry kind that carries
@@ -299,10 +309,19 @@ public enum TranscriptEntryMapper {
         _ payload: TranscriptEntryPayload,
         registry: CustomSegmentRegistry
     ) throws -> [Transcript.Segment] {
-        guard let segmentPayloads = payload.segments else {
-            throw TranscriptEntryReconstructionError.missingRequiredField(entryId: payload.entryId, field: "segments")
-        }
+        let segmentPayloads = try requireField(payload.segments, "segments", entryId: payload.entryId)
         return try segmentPayloads.map { try rebuildSegment($0, registry: registry) }
+    }
+
+    /// Returns `value` unwrapped, or throws
+    /// ``TranscriptEntryReconstructionError/missingRequiredField(entryId:field:)``
+    /// naming `fieldName` when it is `nil` — the shared shape behind every
+    /// "this entry kind requires this payload field to rebuild" check above.
+    private static func requireField<T>(_ value: T?, _ fieldName: String, entryId: String) throws -> T {
+        guard let value else {
+            throw TranscriptEntryReconstructionError.missingRequiredField(entryId: entryId, field: fieldName)
+        }
+        return value
     }
 
     private static func toolDefinition(
