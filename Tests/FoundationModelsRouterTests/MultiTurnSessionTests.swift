@@ -197,7 +197,7 @@ struct MultiTurnSessionTests {
     /// `@unchecked Sendable` is safe because both stored properties are `let`
     /// references to independently `Sendable`/lock-guarded types, set once at
     /// initialization and never mutated afterward.
-    private final class ParkableLLMContainer: PlainTranscriptStubContainer, @unchecked Sendable {
+    private final class ParkableLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         private let log: EventLog
         private let releaseGate: AsyncSemaphore
 
@@ -207,6 +207,10 @@ struct MultiTurnSessionTests {
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            ParkableSessionBackend(log: log, releaseGate: releaseGate)
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
             ParkableSessionBackend(log: log, releaseGate: releaseGate)
         }
     }
