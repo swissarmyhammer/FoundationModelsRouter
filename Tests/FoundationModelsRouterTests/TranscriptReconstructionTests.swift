@@ -23,6 +23,14 @@ struct TranscriptReconstructionTests {
     /// a known number of times can correlate each call's resulting
     /// ``RoutedSession`` to its own backend purely by call order, since
     /// ``RoutedSession`` exposes no backend accessor.
+    /// `@unchecked Sendable` is safe here because every access is sequential:
+    /// `record(_:)` fires only from a `TrackedStubBackend` initializer or
+    /// ``TrackedStubBackend/makeFork()``, and both are driven one call at a
+    /// time by this suite's single awaited `@MainActor` test method — no two
+    /// backends are ever created concurrently within a test — with any read
+    /// from inside `RoutedSessionActor`'s chokepoint further serialized by
+    /// the model's per-model serial gate (``RoutedModel/serialGate``).
+    /// Nothing ever touches this instance concurrently.
     private final class BackendRegistry: @unchecked Sendable {
         private(set) var created: [TrackedStubBackend] = []
         func record(_ backend: TrackedStubBackend) {
@@ -36,6 +44,16 @@ struct TranscriptReconstructionTests {
     /// into a shared ``BackendRegistry`` at creation and at every
     /// ``makeFork()`` — the hook this suite needs to look up a session's own
     /// in-memory transcript by call order.
+    /// `@unchecked Sendable` is safe here for the same reason as
+    /// ``BackendRegistry``: every mutation of `shouldThrow`,
+    /// `throwsBeforeAppendingAnything`, `customSegment`, and `entries` comes
+    /// either from direct test-code assignment between turns or from
+    /// `respond`/`streamResponse`/`recordResponse()` invoked through
+    /// `RoutedSessionActor`'s chokepoint — and both paths are driven one call
+    /// at a time by this suite's single awaited `@MainActor` test method,
+    /// with any actor-internal access further serialized by the model's
+    /// per-model serial gate (``RoutedModel/serialGate``). Nothing ever
+    /// touches an instance concurrently.
     private final class TrackedStubBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum StubError: Error, Equatable { case boom }
 
@@ -164,11 +182,6 @@ struct TranscriptReconstructionTests {
     private struct NoteSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
         let id: String
         let content: Note
-
-        init(id: String, content: Note) {
-            self.id = id
-            self.content = content
-        }
 
         var description: String { "Note: \(content.body)" }
     }
