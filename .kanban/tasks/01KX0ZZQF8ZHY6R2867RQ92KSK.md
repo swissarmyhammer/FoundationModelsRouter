@@ -1,10 +1,39 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kx52jfx73ve0py1the0ddqfh
+  text: |-
+    Picked up. Read task, plan.md's "Transcript fidelity" section, and landed TranscriptEntryPayload.swift/TranscriptEvent.swift. Verified every SDK signature I use against the real macOS 27 beta SDK interface at /Applications/Xcode-beta.app/.../FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface (Transcript.Entry cases, Instructions/Prompt/ToolCalls/ToolCall/ToolOutput/Response/Reasoning inits, Segment cases, CustomSegment protocol + its default promptRepresentation/instructionsRepresentation, ResponseFormat.kind, GenerationOptions.samplingMode, GeneratedContent.init(json:)/.jsonString, GenerationSchema: Codable).
+
+    Wrote Sources/FoundationModelsRouter/Recording/CustomSegmentRegistry.swift (PersistableCustomSegment protocol + CustomSegmentRegistry) and Sources/FoundationModelsRouter/Recording/TranscriptEntryMapper.swift (TranscriptEntryReconstructionError + TranscriptEntryMapper.event(from:)/entry(from:kind:registry:)) based on that verified API surface. Now writing the test suite (TranscriptEntryMapperTests.swift) to exercise it — will report back once build+tests are green.
+  timestamp: 2026-07-10T03:54:05.095402+00:00
+- actor: claude-code
+  id: 01kx55wgga8s1cgdevp4ff186p
+  text: |-
+    Implementation complete and green.
+
+    New files:
+    - Sources/FoundationModelsRouter/Recording/TranscriptEntryMapper.swift — `TranscriptEntryMapper.event(from:)` / `.entry(from:kind:registry:)`, plus `TranscriptEntryReconstructionError`. All six entry kinds map both ways using real SDK public initializers verified against the macOS 27 beta swiftinterface (`/Applications/Xcode-beta.app/.../FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface`).
+    - Sources/FoundationModelsRouter/Recording/CustomSegmentRegistry.swift — `PersistableCustomSegment` protocol (default `typeDiscriminator = String(reflecting: Self.self)`) and `CustomSegmentRegistry` (traps via `preconditionFailure` on duplicate discriminator, documented not unit-tested per the `RoutedLLM.makeSession` precedent — confirmed via grep that no exitTest/assertCrash convention exists in this repo).
+
+    New tests: Tests/FoundationModelsRouterTests/TranscriptEntryMapperTests.swift — 30 tests covering all six per-kind round trips, text flattening, structured-segment `GeneratedContent` semantics (value-decoded comparison, not raw string equality), custom-segment encode-without-registry / registered round-trip / unregistered-throws / default-discriminator, degradations (sampling, Prompt/Response/ToolCall/Reasoning metadata, Prompt.contextOptions, type-built ResponseFormat rebuilding in schema form, URL-less attachment degrading to labeled text), and reconstruction failures (contentRemoved, missing required fields per kind, invalid schema/arguments JSON, unregistered custom segment, unsupported router-only kind).
+
+    Went through two rounds of adversarial double-check (via really-done):
+    - Round 1 found: `Prompt.contextOptions` silently dropped and undocumented/untested; missing `promptMetadataIsDropped`/`reasoningMetadataIsDropped` tests; doc comment wrongly claimed `GenerationOptions.sampling` "has no public introspection" (it does, at macOS 27+ via `SamplingMode.kind` — the real reason it's dropped is that the already-landed `TranscriptEntryPayload`/`GenerationOptionsPayload` schema has no field for it). Fixed all three: added `contextOptionsAreDropped`, `promptMetadataIsDropped`, `reasoningMetadataIsDropped` tests, and corrected the mapper's doc comment.
+    - Round 2 (re-check) found the identical stale "sampling has no public introspection" claim also existed in the already-landed `TranscriptEntryPayload.swift`'s `GenerationOptionsPayload` doc comment (from task w7dc1zw), now contradicting the just-corrected mapper doc comment. Fixed that doc comment too (pure wording correction, no behavior/schema change) since it was directly contradicting the claim I'd just corrected two files away in the same Recording/ subsystem.
+
+    Verification (fresh, this session): `swift build --build-tests` exit 0, zero new warnings. `swift test`: 247/247 unit tests pass across 27 suites (up from 244 baseline — 30 new TranscriptEntryMapperTests plus net +3 vs the first pass after adding the degradation tests); 8 gated real-model integration tests skip as expected (network/GPU gated, unrelated to this change, pre-existing).
+
+    Note on process: implementation and tests were written together rather than strict red-green-refactor per file, given the primary risk here was verifying exact SDK API signatures (six entry types, four segment types, response format, custom segment protocol) against the real macOS 27 beta interface rather than algorithmic complexity — but every test was run and genuinely failed/passed against real logic bugs during development (e.g. two failures surfaced and were fixed: `Transcript.Response`'s assetIDs-based initializer synthesizes non-empty `.metadata` rather than truly empty, and `GenerationSchema`'s JSON encoding is not key-order-stable across separate encode calls, requiring structural JSON comparison instead of string equality in the ResponseFormat degradation test).
+
+    Leaving in `doing` for `/review`.
+  timestamp: 2026-07-10T04:51:59.114900+00:00
 depends_on:
 - 01KX0ZZ77H2DJAQJV4PW7DC1ZW
-position_column: todo
-position_ordinal: '8380'
+position_column: doing
+position_ordinal: '80'
 title: 'TranscriptEntryMapper: round-trip Transcript.Entry to/from TranscriptEntryPayload'
 ---
 ## What

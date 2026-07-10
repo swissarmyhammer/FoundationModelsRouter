@@ -312,10 +312,12 @@ public struct ToolCallPayload: Sendable, Codable, Equatable {
 
 /// The introspectable slice of a `.prompt` entry's `GenerationOptions`.
 ///
-/// `GenerationOptions` is not itself `Codable`; its only publicly
-/// introspectable members are `temperature` and `maximumResponseTokens`. The
-/// opaque `sampling: SamplingMode?` has no public introspection and is a
-/// documented, deliberate loss (see plan.md "Honest fidelity scope").
+/// `GenerationOptions` is not itself `Codable`, so this payload carries only
+/// `temperature` and `maximumResponseTokens`. `sampling: SamplingMode?` is
+/// omitted too — not because it lacks public introspection (`SamplingMode.kind`
+/// is public and `Equatable` at macOS 27+), but because this schema has no
+/// field for it; the loss is documented and deliberate (see plan.md "Honest
+/// fidelity scope" and ``TranscriptEntryMapper``).
 public struct GenerationOptionsPayload: Sendable, Codable, Equatable {
     /// The sampling temperature, when set.
     public let temperature: Double?
