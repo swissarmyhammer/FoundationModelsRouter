@@ -114,6 +114,11 @@ struct SessionChokepointTests {
             backend.transcriptEntries()
         }
 
+        /// Proxies ``StubSessionBackend/usageTokenCounts()``.
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            backend.usageTokenCounts()
+        }
+
         func makeFork() -> any LanguageModelSessionBackend {
             // `StubSessionBackend.makeFork()` always concretely returns another
             // `StubSessionBackend` (see its doc comment); preserve that identity
@@ -307,7 +312,10 @@ struct SessionChokepointTests {
         // `.prompt` entry that preceded it.
         #expect(promptEvent.ms == nil)
         #expect(responseEvent.ms != nil)
-        // Token metering is a separate follow-up task, not in scope here.
+        // This suite's stub backends never configure `usageIncrement` (see
+        // `StubSessionBackend/usageIncrement`), so `usageTokenCounts()` always
+        // reports `nil` here — canned-usage metering is covered separately
+        // in `TokenUsageMeteringTests`.
         #expect(events.allSatisfy { $0.tokensIn == nil && $0.tokensOut == nil })
     }
 
@@ -350,7 +358,9 @@ struct SessionChokepointTests {
         // `.prompt` entry that preceded it — mirrors respondEmitsOpenAndClose.
         #expect(promptEvent.ms == nil)
         #expect(responseEvent.ms != nil)
-        // Token metering is a separate follow-up task, not in scope here.
+        // Mirrors respondEmitsOpenAndClose: this suite's stub backends never
+        // configure `usageIncrement`, so `usageTokenCounts()` always reports
+        // `nil` here.
         #expect(events.allSatisfy { $0.tokensIn == nil && $0.tokensOut == nil })
     }
 

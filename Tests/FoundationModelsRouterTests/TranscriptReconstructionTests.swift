@@ -147,6 +147,10 @@ struct TranscriptReconstructionTests {
 
         func transcriptEntries() -> [Transcript.Entry] { entries }
 
+        /// No usage is tracked here — this suite exercises transcript-tree
+        /// reconstruction, not token metering.
+        func usageTokenCounts() -> (input: Int, output: Int)? { nil }
+
         private func recordResponse() {
             if let customSegment {
                 entries.append(.response(Transcript.Response(assetIDs: [], segments: [.custom(customSegment)])))

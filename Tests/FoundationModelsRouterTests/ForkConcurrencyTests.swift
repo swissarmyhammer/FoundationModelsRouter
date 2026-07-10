@@ -122,6 +122,12 @@ struct ForkConcurrencyTests {
             []
         }
 
+        /// No usage is tracked here — this suite exercises call-count/prompt-
+        /// history/serial-gate/admission-gate behavior, not token metering.
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            nil
+        }
+
         /// Returns a new backend sharing this one's observer/gate/probe wiring
         /// and pre-seeded with a copy of ``receivedPrompts`` as of this call,
         /// and records the child so a test holding this (parent) backend can

@@ -8,7 +8,7 @@ import Testing
 /// persistence — recorded per-turn content events are derived exclusively
 /// from `backend.transcriptEntries()` deltas, not from hand-built
 /// prompt/response strings. See plan.md's "Transcript fidelity" section and
-/// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:)``.
+/// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, canned/variable LLM
 /// containers, and either a ``JSONLRecorder`` writing into a temp directory or
@@ -94,6 +94,13 @@ struct TranscriptFidelityTests {
 
         func transcriptEntries() -> [Transcript.Entry] {
             entries
+        }
+
+        /// No usage is tracked here — this suite exercises snapshot-diff
+        /// transcript persistence, not token metering (covered separately in
+        /// `TokenUsageMeteringTests`).
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            nil
         }
     }
 

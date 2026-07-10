@@ -69,6 +69,11 @@ struct MultiTurnSessionTests {
             backend.transcriptEntries()
         }
 
+        /// Proxies ``StubSessionBackend/usageTokenCounts()``.
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            backend.usageTokenCounts()
+        }
+
         /// Forks the wrapped stub and wraps the result the same way, recording
         /// it into ``lastFork`` so a test holding this (parent) instance can
         /// reach the child.
@@ -180,6 +185,12 @@ struct MultiTurnSessionTests {
         /// behavior via ``log``.
         func transcriptEntries() -> [Transcript.Entry] {
             []
+        }
+
+        /// No usage is tracked here — nothing in this suite exercises token
+        /// metering, only parking/ordering behavior via ``log``.
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            nil
         }
 
         /// Records that a fork was produced, so a test can assert this never

@@ -44,8 +44,8 @@ depends_on:
 - 01KX102FWSNR12B9TK5DW0ZX8K
 - 01KX10HEZ76ZJJHTQTZBKHJ6YA
 - 01KX1004E0SNV1AWY9SAJA228X
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: b880
 title: Restore a session tree from disk by root session id
 ---
 ## What

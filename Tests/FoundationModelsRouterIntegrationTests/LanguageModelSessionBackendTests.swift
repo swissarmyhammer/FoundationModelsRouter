@@ -405,6 +405,57 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(!recordedEntryKinds.isEmpty)
     }
 
+    // MARK: - Token usage metering (task v22nv1g)
+
+    /// Proves the chokepoint's usage delta stays faithful to the live
+    /// backend's own ``LanguageModelSessionBackend/usageTokenCounts()``
+    /// snapshots, whatever those snapshots turn out to be. Written to pass
+    /// either way per this task's instructions: whether `MLXLanguageModel`'s
+    /// `Executor` actually populates real, positive `usage.input`/`usage.output`
+    /// totals, or leaves them at zero, is the open empirical question
+    /// ``MLXFoundationModelsSessionBackend/usageTokenCounts()``'s doc comment
+    /// documents as unverified in this sandbox (no GPU). This test cannot
+    /// resolve that question — it can only prove the router's recorded delta
+    /// exactly matches whatever the backend reports, and prints the observed
+    /// counts for a human to read.
+    @Test("recorded tokensIn/tokensOut on the turn's response event exactly match the live backend's own usageTokenCounts() delta")
+    func recordedTokenUsageMatchesLiveBackendDelta() async throws {
+        let harness = try await makeChokepointHarness()
+        defer {
+            try? FileManager.default.removeItem(at: harness.recordingsDir)
+            try? FileManager.default.removeItem(at: harness.cacheDir)
+        }
+
+        let usageBefore = harness.backend.usageTokenCounts()
+        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        let usageAfter = harness.backend.usageTokenCounts()
+
+        let recorded = try recordedEvents(from: harness)
+        let responseEvent = try #require(recorded.first { $0.kind == .response })
+
+        guard let usageBefore, let usageAfter else {
+            // The backend reported no usage at all — MLXFoundationModelsSessionBackend
+            // never actually takes this branch today (it always returns a real
+            // tuple), but the router's own nil-propagation contract still must
+            // hold if a future backend ever does.
+            #expect(responseEvent.tokensIn == nil)
+            #expect(responseEvent.tokensOut == nil)
+            return
+        }
+
+        let expectedTokensIn = usageAfter.input - usageBefore.input
+        let expectedTokensOut = usageAfter.output - usageBefore.output
+        #expect(responseEvent.tokensIn == expectedTokensIn)
+        #expect(responseEvent.tokensOut == expectedTokensOut)
+
+        // Not asserted either way — this is exactly the populated-vs-zero
+        // question this suite can finally give a real answer to, on real
+        // hardware, without this test needing to hardcode an assumption.
+        print(
+            "[recordedTokenUsageMatchesLiveBackendDelta] tokensIn=\(expectedTokensIn) tokensOut=\(expectedTokensOut)"
+        )
+    }
+
     // MARK: - KV cache reuse across turns (the hard proof)
 
     @Test(

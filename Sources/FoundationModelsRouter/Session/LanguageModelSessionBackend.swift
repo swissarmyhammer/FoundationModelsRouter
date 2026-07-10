@@ -78,4 +78,23 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// - Returns: Every transcript entry this backend has accumulated so far,
     ///   in order.
     func transcriptEntries() -> [FoundationModels.Transcript.Entry]
+
+    /// The backend's cumulative input/output token usage so far, or `nil`
+    /// when the backend cannot report usage.
+    ///
+    /// **Only safe to call while holding the model's serial gate**
+    /// (``RoutedModel/serialGate``) — the same discipline ``transcriptEntries()``
+    /// requires, since a concrete conformer (e.g.
+    /// `MLXFoundationModelsSessionBackend`) reads this straight off a live,
+    /// mutable session that a concurrent generation call could otherwise
+    /// still be updating.
+    ///
+    /// The counts are the backend's running totals since the session began,
+    /// not a per-turn delta — ``RoutedSessionActor``'s `generate(grammar:_:)`
+    /// chokepoint is what turns two of these snapshots, taken immediately
+    /// before and after a turn, into that turn's own `tokensIn`/`tokensOut`.
+    ///
+    /// - Returns: The backend's cumulative `(input, output)` token counts so
+    ///   far, or `nil` when the backend cannot report usage.
+    func usageTokenCounts() -> (input: Int, output: Int)?
 }

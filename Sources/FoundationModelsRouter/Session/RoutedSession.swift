@@ -3,7 +3,7 @@ import FoundationModels
 import os
 
 /// The logger ``RoutedSessionActor`` reports a defensively-clamped transcript
-/// shrink to (see ``RoutedSessionActor/recordTranscriptDelta(grammar:since:)``).
+/// shrink to (see ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``).
 private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 
 /// A generation session over a resident model: the recorded surface an
@@ -575,7 +575,7 @@ actor RoutedSessionActor: RoutedSession {
     /// interleave. Inside the gate it first lazily records the session's
     /// first-line `session` meta event (once per session), then runs `body`, then
     /// snapshot-diffs ``backend``'s real transcript (see
-    /// ``recordTranscriptDelta(grammar:since:)``) so what lands on disk mirrors
+    /// ``recordTranscriptDelta(grammar:since:usage:)``) so what lands on disk mirrors
     /// the SDK's own `Transcript.Entry` values rather than a hand-built
     /// paraphrase of the prompt/response strings — on the success path and the
     /// throwing path alike, so a transcript always gains whatever the SDK
@@ -615,9 +615,11 @@ actor RoutedSessionActor: RoutedSession {
 
         await recordSessionMetaIfNeeded()
         let started = Date()
+        let usageBefore = backend.usageTokenCounts()
         do {
             let response = try await body()
-            _ = await recordTranscriptDelta(grammar: grammar, since: started)
+            let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
+            _ = await recordTranscriptDelta(grammar: grammar, since: started, usage: usage)
             return response
         } catch {
             // Whatever the SDK durably appended before failing is still diffed
@@ -625,7 +627,8 @@ actor RoutedSessionActor: RoutedSession {
             // (on the diff's own last `.response`-kind entry, if any) — a
             // post-generation failure can still leave the SDK having appended a
             // genuine `.response` entry before throwing.
-            let diffIncludedResponse = await recordTranscriptDelta(grammar: grammar, since: started)
+            let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
+            let diffIncludedResponse = await recordTranscriptDelta(grammar: grammar, since: started, usage: usage)
             // Only synthesize the router-only bodyless close when the SDK's own
             // diff did *not* already include a `.response`-kind entry — otherwise
             // this would double up two `.response` events for one turn, breaking
@@ -633,10 +636,38 @@ actor RoutedSessionActor: RoutedSession {
             // every failed turn leaves a trace: either the SDK's own `.response`
             // entry (mapped above) or this synthetic one.
             if !diffIncludedResponse {
-                await append(partial: makePartialEvent(kind: .response, grammar: grammar, since: started))
+                await append(
+                    partial: makePartialEvent(
+                        kind: .response,
+                        grammar: grammar,
+                        since: started,
+                        tokensIn: usage?.input,
+                        tokensOut: usage?.output
+                    )
+                )
             }
             throw error
         }
+    }
+
+    /// The per-turn token usage delta between two ``LanguageModelSessionBackend/usageTokenCounts()``
+    /// snapshots taken immediately before and after a turn's `body()` ran.
+    ///
+    /// `nil` when either snapshot is `nil` — a backend that cannot report
+    /// usage at all, or one that stopped being able to mid-turn — rather than
+    /// synthesizing a delta from a partial reading.
+    ///
+    /// - Parameters:
+    ///   - before: The snapshot taken immediately before `body()` ran.
+    ///   - after: The snapshot taken immediately after `body()` returned or
+    ///     threw.
+    /// - Returns: The turn's own `(input, output)` token counts, or `nil`.
+    private static func usageDelta(
+        before: (input: Int, output: Int)?,
+        after: (input: Int, output: Int)?
+    ) -> (input: Int, output: Int)? {
+        guard let before, let after else { return nil }
+        return (after.input - before.input, after.output - before.output)
     }
 
     /// Snapshot-diffs ``backend``'s real transcript against ``persistedEntryCount``
@@ -657,14 +688,17 @@ actor RoutedSessionActor: RoutedSession {
     /// reality instead of tripping the same guard again.
     ///
     /// Every new entry is mapped through ``TranscriptEntryMapper/event(from:)``
-    /// and appended as its own event (envelope stamped as usual; `entry` payload
-    /// and flattened `text` from the mapper; `tokensIn`/`tokensOut` stay `nil` —
-    /// token metering is a separate follow-up, not in scope here). When `since`
-    /// is non-nil, the turn's measured `ms` is stamped only on the *last*
+    /// and appended as its own event (envelope stamped as usual; `entry`
+    /// payload and flattened `text` from the mapper). When `since` is
+    /// non-nil, the turn's measured `ms` is stamped only on the *last*
     /// `.response`-kind event this diff appends — not on every appended event —
     /// on the success path and the throwing path alike, so an SDK-appended
     /// `.response` entry from a turn that failed *after* generating still gets
-    /// the turn's `ms`.
+    /// the turn's `ms`. `usage` (the turn's own `tokensIn`/`tokensOut` delta,
+    /// or `nil` when the backend cannot report usage) is stamped the same
+    /// way, on that same last `.response`-kind event — mirroring `ms`, since
+    /// both are per-turn totals that only make sense attributed to the turn's
+    /// one closing event, not every entry it appended.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force, stamped onto every
@@ -672,13 +706,20 @@ actor RoutedSessionActor: RoutedSession {
     ///   - since: The turn's start instant to stamp `ms` with on the diff's last
     ///     `.response`-kind event, or `nil` to leave `ms` unset on every
     ///     appended event.
+    ///   - usage: The turn's own `(input, output)` token usage delta to stamp
+    ///     as `tokensIn`/`tokensOut` on the diff's last `.response`-kind
+    ///     event, or `nil` to leave both unset on every appended event.
     /// - Returns: Whether this diff included a `.response`-kind entry — the
     ///   throwing path in ``generate(grammar:_:)`` uses this to decide whether
     ///   a synthetic bodyless close is still needed, so a turn whose SDK
     ///   transcript already gained a real `.response` entry before failing
     ///   never gets two `.response` events.
     @discardableResult
-    private func recordTranscriptDelta(grammar: Grammar?, since: Date?) async -> Bool {
+    private func recordTranscriptDelta(
+        grammar: Grammar?,
+        since: Date?,
+        usage: (input: Int, output: Int)?
+    ) async -> Bool {
         let entries = backend.transcriptEntries()
         guard entries.count >= persistedEntryCount else {
             sessionRecordingLogger.warning(
@@ -700,14 +741,18 @@ actor RoutedSessionActor: RoutedSession {
         let lastResponseIndex = mapped.lastIndex { $0.kind == .response }
 
         for (index, mappedEntry) in mapped.enumerated() {
-            let stampSince = (since != nil && index == lastResponseIndex) ? since : nil
+            let isTurnClose = index == lastResponseIndex
+            let stampSince = (since != nil && isTurnClose) ? since : nil
+            let stampUsage = (usage != nil && isTurnClose) ? usage : nil
             await append(
                 partial: makePartialEvent(
                     kind: mappedEntry.kind,
                     grammar: grammar,
                     text: mappedEntry.text,
                     since: stampSince,
-                    entry: mappedEntry.payload
+                    entry: mappedEntry.payload,
+                    tokensIn: stampUsage?.input,
+                    tokensOut: stampUsage?.output
                 )
             )
         }
@@ -740,7 +785,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Builds an event of the given kind stamped with this session's provenance.
     ///
     /// The `session` meta event, every entry-derived event
-    /// ``recordTranscriptDelta(grammar:since:)`` appends, and the throwing
+    /// ``recordTranscriptDelta(grammar:since:usage:)`` appends, and the throwing
     /// path's bodyless close event all share this one helper; a close-carrying
     /// call passes `since` to record the turn's measured duration.
     ///
@@ -757,13 +802,19 @@ actor RoutedSessionActor: RoutedSession {
     ///   - entry: The structural payload mirroring the SDK's own
     ///     `Transcript.Entry`, or `nil` for the `session` meta event and the
     ///     throwing path's bodyless close.
+    ///   - tokensIn: The turn's input token usage delta to stamp, or `nil` to
+    ///     leave it unset.
+    ///   - tokensOut: The turn's output token usage delta to stamp, or `nil`
+    ///     to leave it unset.
     /// - Returns: The partial event for the recorder to stamp and append.
     private func makePartialEvent(
         kind: TranscriptEvent.Kind,
         grammar: Grammar? = nil,
         text: String? = nil,
         since: Date? = nil,
-        entry: TranscriptEntryPayload? = nil
+        entry: TranscriptEntryPayload? = nil,
+        tokensIn: Int? = nil,
+        tokensOut: Int? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
             routerId: routerId,
@@ -774,6 +825,8 @@ actor RoutedSessionActor: RoutedSession {
             kind: kind,
             grammar: grammar?.source,
             text: text,
+            tokensIn: tokensIn,
+            tokensOut: tokensOut,
             ms: since.map { Int(Date().timeIntervalSince($0) * 1_000) },
             entry: entry
         )

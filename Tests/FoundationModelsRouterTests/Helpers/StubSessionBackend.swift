@@ -93,6 +93,21 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// `.response` entry per successful turn. See ``transcriptEntries()``.
     private(set) var entries: [Transcript.Entry]
 
+    /// The per-turn token counts this backend adds to its simulated
+    /// cumulative usage on every successful call, or `nil` (the default) to
+    /// report no usage at all — ``usageTokenCounts()`` then always returns
+    /// `nil`, mirroring a real backend that cannot meter.
+    ///
+    /// Set this before driving a turn to give a test canned, configurable
+    /// counts; ``recordResponse()`` is what actually folds it into
+    /// ``cumulativeUsage`` on each successful call, the way a real
+    /// `LanguageModelSession.usage` grows across turns.
+    var usageIncrement: (input: Int, output: Int)?
+
+    /// This backend's simulated running total of metered usage, grown by
+    /// ``usageIncrement`` on every successful call. See ``usageTokenCounts()``.
+    private var cumulativeUsage: (input: Int, output: Int) = (0, 0)
+
     /// Creates a stub backend.
     ///
     /// - Parameters:
@@ -109,16 +124,21 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     ///   - entries: The initial transcript — non-nil only for a backend born
     ///     via ``makeFork()``, which snapshots the parent's ``entries`` as of
     ///     fork time. When `nil`, ``entries`` is derived from `instructions`.
+    ///   - usageIncrement: The per-turn token counts to add to
+    ///     ``cumulativeUsage`` on every successful call, or `nil` to report no
+    ///     usage. See ``usageIncrement``.
     init(
         responseText: String = "stub response",
         shouldThrow: Bool = false,
         receivedPrompts: [String] = [],
         instructions: String? = nil,
-        entries: [Transcript.Entry]? = nil
+        entries: [Transcript.Entry]? = nil,
+        usageIncrement: (input: Int, output: Int)? = nil
     ) {
         self.responseText = responseText
         self.shouldThrow = shouldThrow
         self.receivedPrompts = receivedPrompts
+        self.usageIncrement = usageIncrement
         if let entries {
             self.entries = entries
         } else if let instructions {
@@ -172,17 +192,27 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// ``receivedPrompts`` and ``entries`` as of this call, sharing this
     /// backend's ``responseText``/``shouldThrow`` configuration.
     func makeFork() -> any LanguageModelSessionBackend {
-        StubSessionBackend(
+        let fork = StubSessionBackend(
             responseText: responseText,
             shouldThrow: shouldThrow,
             receivedPrompts: receivedPrompts,
-            entries: entries
+            entries: entries,
+            usageIncrement: usageIncrement
         )
+        fork.cumulativeUsage = cumulativeUsage
+        return fork
     }
 
     /// Returns ``entries``, this backend's synthetic transcript so far.
     func transcriptEntries() -> [Transcript.Entry] {
         entries
+    }
+
+    /// Returns ``cumulativeUsage``, or `nil` when ``usageIncrement`` is unset —
+    /// mirroring a backend that cannot report usage at all.
+    func usageTokenCounts() -> (input: Int, output: Int)? {
+        guard usageIncrement != nil else { return nil }
+        return cumulativeUsage
     }
 
     /// Records one call's prompt into ``receivedPrompts``/``entries`` and
@@ -194,11 +224,22 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     }
 
     /// Appends a `.response` entry carrying ``responseText`` into
-    /// ``entries``, called only once a turn is known to have succeeded.
+    /// ``entries``, called only once a turn is known to have succeeded. Also
+    /// folds ``usageIncrement`` (when set) into ``cumulativeUsage``, so the
+    /// two snapshots ``RoutedSessionActor``'s chokepoint takes around a turn
+    /// — before this call runs and after it returns — differ by exactly one
+    /// turn's worth of usage, the same way a real `LanguageModelSession`'s
+    /// cumulative `usage` grows by one turn's tokens per call.
     private func recordResponse() {
         entries.append(
             .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))]))
         )
+        if let usageIncrement {
+            cumulativeUsage = (
+                cumulativeUsage.input + usageIncrement.input,
+                cumulativeUsage.output + usageIncrement.output
+            )
+        }
     }
 
     /// Builds the leading `.instructions` entry a non-nil `instructions`

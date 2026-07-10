@@ -317,6 +317,36 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     func transcriptEntries() -> [FoundationModels.Transcript.Entry] {
         Array(liveSession.transcript)
     }
+
+    /// Returns ``liveSession``'s cumulative token usage.
+    ///
+    /// See the protocol requirement's doc comment
+    /// (``LanguageModelSessionBackend/usageTokenCounts()``) for the
+    /// serial-gate precondition this call must be made under.
+    ///
+    /// **Empirical status: unverified in this environment.** `LanguageModelSession.usage`
+    /// (`Usage{input: Input{totalTokenCount, cachedTokenCount}, output:
+    /// Output{totalTokenCount, reasoningTokenCount}}`) is confirmed present in
+    /// the macOS 27 `FoundationModels` swiftinterface, and the gated
+    /// integration suite (`LanguageModelSessionBackendIntegrationTests.secondTurnReusesFirstTurnsKVCache`,
+    /// task 070qw7z) already asserts `usage.input.totalTokenCount > 0` and
+    /// `usage.output.totalTokenCount > 0` against a real model as a hard,
+    /// unweakened requirement — but that suite needs a GPU and network access
+    /// this sandbox does not have, so it has never actually run here; it only
+    /// ever reports "skipped". Whether `MLXLanguageModel`'s `Executor`
+    /// populates real, non-zero totals for `usage.input`/`usage.output` (as
+    /// opposed to leaving them at zero) has therefore **not been empirically
+    /// confirmed in this environment** — this doc comment states that
+    /// honestly rather than claiming verification that never happened. This
+    /// implementation returns the SDK's real value regardless — never a
+    /// fabricated zero or a preemptive `nil` for lack of proof — so it is
+    /// already correct once the executor does populate real counts, and the
+    /// gated integration suite above is where the populated-vs-zero question
+    /// gets an actual answer, on real hardware.
+    func usageTokenCounts() -> (input: Int, output: Int)? {
+        let usage = liveSession.usage
+        return (usage.input.totalTokenCount, usage.output.totalTokenCount)
+    }
 }
 
 /// The live embedding container.
