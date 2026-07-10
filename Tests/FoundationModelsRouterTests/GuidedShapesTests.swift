@@ -36,15 +36,11 @@
         /// A loaded LLM container that runs the real (GPU-free) grammar validation
         /// behind its guided entry point and returns canned constrained JSON on
         /// success — the stand-in for the xgrammar engine.
-        private struct GuidedStubContainer: LoadedLLMContainer {
+        private struct GuidedStubContainer: PlainTranscriptStubContainer {
             let canned: String
 
             func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
                 StubSessionBackend(responseText: canned)
-            }
-
-            func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-                StubSessionBackend(entries: Array(transcript))
             }
         }
 

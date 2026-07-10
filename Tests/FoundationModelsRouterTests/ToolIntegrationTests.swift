@@ -24,15 +24,11 @@ struct ToolIntegrationTests {
 
     /// A stand-in for a loaded LLM container that returns canned text, with no
     /// MLX dependency.
-    private struct CannedLLMContainer: LoadedLLMContainer {
+    private struct CannedLLMContainer: PlainTranscriptStubContainer {
         let text: String
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: text)
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
         }
     }
 

@@ -38,7 +38,9 @@ struct SessionChokepointTests {
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
+            let backend = StubSessionBackend(entries: Array(transcript))
+            guard let maxTokensSpy else { return backend }
+            return MaxTokensRecordingBackend(backend: backend, spy: maxTokensSpy)
         }
     }
 

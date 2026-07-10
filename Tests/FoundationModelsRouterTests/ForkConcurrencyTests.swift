@@ -160,8 +160,18 @@ struct ForkConcurrencyTests {
             return backend
         }
 
+        /// Mirrors ``makeSession(instructions:)``'s observer/gate/probe wiring
+        /// and ``lastBackend`` tracking invariant instead of the shared plain
+        /// default. `TrackingSessionBackend` never models a synthetic
+        /// transcript (its ``TrackingSessionBackend/transcriptEntries()``
+        /// always reports empty, by design — this suite exercises
+        /// call-count/prompt-history/serial-gate behavior, not transcript
+        /// accumulation), so `transcript`'s entries have nothing to seed; only
+        /// the tracking invariant itself needs to be preserved here.
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
+            let backend = TrackingSessionBackend(observer: observer, releaseGate: releaseGate, guidedProbe: guidedProbe)
+            lastBackend = backend
+            return backend
         }
     }
 

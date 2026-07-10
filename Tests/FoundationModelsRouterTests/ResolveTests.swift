@@ -20,8 +20,13 @@ struct ResolveTests {
             StubSessionBackend(shouldThrow: true)
         }
 
+        /// Mirrors ``makeSession(instructions:)``'s "no generation" invariant
+        /// instead of the shared plain default: a seeded-but-generation-allowing
+        /// backend here would silently let a future transcript-seeded test defeat
+        /// the whole point of this container (see the identical fix in
+        /// ``ProfileLifecycleTests``).
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
+            StubSessionBackend(shouldThrow: true)
         }
     }
 

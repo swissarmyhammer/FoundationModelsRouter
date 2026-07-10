@@ -38,8 +38,14 @@ struct GuidedGenerationTests {
             return MaxTokensRecordingBackend(backend: backend, spy: maxTokensSpy)
         }
 
+        /// Mirrors ``makeSession(instructions:)``'s ``maxTokensSpy`` wrapping
+        /// instead of the shared plain default, so a future transcript-seeded
+        /// test observing `maxTokens` through this container's spy is not
+        /// silently unwrapped.
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
+            let backend = StubSessionBackend(entries: Array(transcript))
+            guard let maxTokensSpy else { return backend }
+            return MaxTokensRecordingBackend(backend: backend, spy: maxTokensSpy)
         }
     }
 

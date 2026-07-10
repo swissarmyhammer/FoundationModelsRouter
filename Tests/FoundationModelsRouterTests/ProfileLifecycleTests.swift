@@ -25,7 +25,7 @@ struct ProfileLifecycleTests {
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
+            StubSessionBackend(shouldThrow: true)
         }
     }
 

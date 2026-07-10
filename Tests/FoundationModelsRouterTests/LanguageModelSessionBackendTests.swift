@@ -294,13 +294,9 @@
         /// ``StubSessionBackend`` straight from the given transcript's entries —
         /// mirroring how the live container derives a fresh session from a
         /// persisted transcript instead of from `instructions`.
-        private struct TranscriptSeededStubContainer: LoadedLLMContainer {
+        private struct TranscriptSeededStubContainer: PlainTranscriptStubContainer {
             func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
                 StubSessionBackend(instructions: instructions)
-            }
-
-            func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-                StubSessionBackend(entries: Array(transcript))
             }
         }
 

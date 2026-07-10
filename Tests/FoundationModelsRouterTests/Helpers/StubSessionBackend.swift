@@ -36,6 +36,30 @@ import FoundationModels
 /// rather than an actor: ``RoutedSessionActor`` only ever drives one backend
 /// method at a time (serialized by the model's own serial gate), so there is
 /// no concurrent access to guard against in practice.
+/// A ``LoadedLLMContainer`` whose `makeSession(transcript:)` has no special
+/// wrapping/invariant/spy requirement beyond seeding a plain
+/// ``StubSessionBackend`` from the given transcript's entries — the common
+/// case shared by most stub containers across this suite. Conforming to this
+/// protocol instead of ``LoadedLLMContainer`` directly gets a container this
+/// implementation for free, so it only has to implement
+/// `makeSession(instructions:)`.
+///
+/// A handful of containers wire special behavior through
+/// `makeSession(instructions:)` — test-observation tracking, a
+/// "no generation allowed" invariant, a maxTokens-recording spy, or a shared
+/// mutable backend a test drives directly — and their `makeSession(transcript:)`
+/// must mirror that same behavior rather than fall back to a bare stub. Those
+/// containers implement `makeSession(transcript:)` themselves and conform to
+/// ``LoadedLLMContainer`` directly instead of to this protocol.
+protocol PlainTranscriptStubContainer: LoadedLLMContainer {}
+
+extension PlainTranscriptStubContainer {
+    /// Seeds a plain ``StubSessionBackend`` from `transcript`'s entries.
+    func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+        StubSessionBackend(entries: Array(transcript))
+    }
+}
+
 final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
     /// A failure ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)``/
     /// the guided `respond` raise when ``shouldThrow`` is `true`.

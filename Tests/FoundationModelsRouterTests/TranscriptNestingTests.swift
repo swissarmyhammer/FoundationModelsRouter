@@ -25,16 +25,12 @@ struct TranscriptNestingTests {
     /// `forwardInstructions` is set, so a test can model a session whose SDK
     /// transcript opens with a leading `.instructions` entry the way a real
     /// `LanguageModelSession` given instructions would.
-    private struct CannedLLMContainer: LoadedLLMContainer {
+    private struct CannedLLMContainer: PlainTranscriptStubContainer {
         let text: String
         var forwardInstructions = false
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: text, instructions: forwardInstructions ? instructions : nil)
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
         }
     }
 

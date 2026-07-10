@@ -59,15 +59,11 @@ struct ExamplesTests {
         /// every entry point — plain, streamed, and grammar-guided (after running
         /// the real, GPU-free grammar validation) — the stand-in for the MLX +
         /// xgrammar engine.
-        private struct StubLLMContainer: LoadedLLMContainer {
+        private struct StubLLMContainer: PlainTranscriptStubContainer {
             let canned: String
 
             func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
                 StubSessionBackend(responseText: canned)
-            }
-
-            func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-                StubSessionBackend(entries: Array(transcript))
             }
         }
 

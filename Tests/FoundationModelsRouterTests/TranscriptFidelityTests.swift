@@ -18,15 +18,11 @@ struct TranscriptFidelityTests {
     // MARK: - Stub containers
 
     /// A stand-in for a loaded LLM container that returns canned text, no MLX.
-    private struct CannedLLMContainer: LoadedLLMContainer {
+    private struct CannedLLMContainer: PlainTranscriptStubContainer {
         let text: String
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             StubSessionBackend(responseText: text)
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
         }
     }
 
@@ -117,7 +113,8 @@ struct TranscriptFidelityTests {
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
+            backend.entries = Array(transcript)
+            return backend
         }
     }
 
