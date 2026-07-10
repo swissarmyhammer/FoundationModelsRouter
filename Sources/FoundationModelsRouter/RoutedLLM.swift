@@ -96,7 +96,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // carrying `instructions` so generation calls never pass them again.
         let backend = container.makeSession(instructions: instructions)
 
-        return RoutedSessionActor(
+        return makeRoutedSessionActor(
             profile: owningProfile,
             routerId: routerId,
             id: sessionId,

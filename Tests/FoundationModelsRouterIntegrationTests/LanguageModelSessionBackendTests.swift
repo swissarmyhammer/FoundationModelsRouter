@@ -201,20 +201,25 @@ struct LanguageModelSessionBackendIntegrationTests {
         func embed(texts: [String]) async throws -> [[Float]] { [] }
     }
 
-    /// Task qb9p7gs's core acceptance criterion, proved against a real model:
-    /// after one live turn, what ``RoutedSessionActor``'s snapshot-diff
-    /// persisted matches — kind for kind, in order — what the live
-    /// `LanguageModelSession`'s own `transcript` actually accumulated.
-    ///
-    /// Bypasses ``Router/resolve(_:reporting:)`` (which would need a real
-    /// `.flash`/`.embedding` download too) and instead builds a
-    /// ``LanguageModelProfile``/``RoutedSessionActor`` directly from the
-    /// already-loaded tiny model's container, via the same `internal`
-    /// initializers production code uses — the same technique this file's
-    /// other tests use to reach ``MLXFoundationModelsSessionBackend`` directly,
-    /// extended one level up to the chokepoint itself.
-    @Test("recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
-    func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
+    /// The pieces ``recordedEntryKindsMatchSessionTranscriptKinds()`` and its
+    /// streaming counterpart both need: a real ``RoutedSessionActor`` wired
+    /// directly to the already-loaded tiny model's backend (bypassing
+    /// ``Router/resolve(_:reporting:)``, which would need a real
+    /// `.flash`/`.embedding` download too), plus the on-disk locations its
+    /// transcript is recorded under, via the same `internal` initializers
+    /// production code uses — the same technique this file's other tests use
+    /// to reach ``MLXFoundationModelsSessionBackend`` directly, extended one
+    /// level up to the chokepoint itself.
+    private struct ChokepointHarness {
+        let session: RoutedSessionActor
+        let backend: MLXFoundationModelsSessionBackend
+        let recordingDirectory: URL
+        let recordingsDir: URL
+        let cacheDir: URL
+    }
+
+    /// Builds a ``ChokepointHarness`` over a freshly loaded tiny model.
+    private func makeChokepointHarness() async throws -> ChokepointHarness {
         let container = try await makeContainer()
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
@@ -224,10 +229,6 @@ struct LanguageModelSessionBackendIntegrationTests {
             .appendingPathComponent("LanguageModelSessionBackendTests-\(UUID().uuidString)", isDirectory: true)
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("LanguageModelSessionBackendTests-cache-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: recordingsDir)
-            try? FileManager.default.removeItem(at: cacheDir)
-        }
 
         // `Router.recorder` is actor-isolated; constructing the recorder
         // directly and handing the same instance to both the router and every
@@ -302,21 +303,74 @@ struct LanguageModelSessionBackendIntegrationTests {
             persistedEntryCount: 0
         )
 
-        _ = try await session.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        return ChokepointHarness(
+            session: session,
+            backend: backend,
+            recordingDirectory: recordingDirectory,
+            recordingsDir: recordingsDir,
+            cacheDir: cacheDir
+        )
+    }
 
-        let fileURL = recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+    /// Decodes every event from `harness`'s session directory's `transcript.jsonl`.
+    private func recordedEvents(from harness: ChokepointHarness) throws -> [TranscriptEvent] {
+        let fileURL = harness.recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
         let text = try String(contentsOf: fileURL, encoding: .utf8)
         let decoder = JSONDecoder()
-        let recorded = try text.split(separator: "\n").map {
+        return try text.split(separator: "\n").map {
             try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
         }
+    }
+
+    /// Task qb9p7gs's core acceptance criterion, proved against a real model:
+    /// after one live turn, what ``RoutedSessionActor``'s snapshot-diff
+    /// persisted matches — kind for kind, in order — what the live
+    /// `LanguageModelSession`'s own `transcript` actually accumulated.
+    @Test("recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
+    func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
+        let harness = try await makeChokepointHarness()
+        defer {
+            try? FileManager.default.removeItem(at: harness.recordingsDir)
+            try? FileManager.default.removeItem(at: harness.cacheDir)
+        }
+
+        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+
+        let recorded = try recordedEvents(from: harness)
 
         // The `.session` meta line is router-only and never enters Apple's own
         // transcript; every other recorded kind must match, in order, the kind
         // of the corresponding real `Transcript.Entry` the live session
         // actually accumulated — the whole point of snapshot-diff persistence.
         let recordedEntryKinds = recorded.filter { $0.kind != .session }.map(\.kind)
-        let liveEntryKinds = backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
+        let liveEntryKinds = harness.backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
+        #expect(recordedEntryKinds == liveEntryKinds)
+        #expect(!recordedEntryKinds.isEmpty)
+    }
+
+    /// Mirrors ``recordedEntryKindsMatchSessionTranscriptKinds()`` but drives
+    /// the live turn through ``RoutedSessionActor/streamResponse(to:maxTokens:)``
+    /// instead of `respond(to:maxTokens:)`: both generation entry points funnel
+    /// through the same snapshot-diff chokepoint, so the fidelity invariant
+    /// must hold identically for the streaming path against a real model too.
+    @Test("recorded entry kinds match the real session.transcript kinds one-for-one after a live streaming turn")
+    func recordedEntryKindsMatchSessionTranscriptKindsStreaming() async throws {
+        let harness = try await makeChokepointHarness()
+        defer {
+            try? FileManager.default.removeItem(at: harness.recordingsDir)
+            try? FileManager.default.removeItem(at: harness.cacheDir)
+        }
+
+        var collected = ""
+        for try await chunk in await harness.session.streamResponse(to: "Say 'hi' briefly.", maxTokens: 64) {
+            collected += chunk
+        }
+        #expect(!collected.isEmpty)
+
+        let recorded = try recordedEvents(from: harness)
+
+        let recordedEntryKinds = recorded.filter { $0.kind != .session }.map(\.kind)
+        let liveEntryKinds = harness.backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
         #expect(recordedEntryKinds == liveEntryKinds)
         #expect(!recordedEntryKinds.isEmpty)
     }

@@ -327,13 +327,25 @@ struct SessionChokepointTests {
         // A first-line `session` meta event precedes the turn's open + close.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.allSatisfy { $0.routerId == router.id })
+        #expect(events.allSatisfy { $0.sessionId == session.id })
+        #expect(events.allSatisfy { $0.slot == .standard })
+        #expect(events.allSatisfy { $0.model == profile.standard.chosen })
 
         // No per-chunk events — the snapshot-diff runs once, after the chunk
         // loop completes, exactly like the non-streaming path.
+        let promptEvent = try #require(events.first { $0.kind == .prompt })
+        #expect(promptEvent.entry != nil)
+        #expect(promptEvent.text == "hello")
         let responseEvent = try #require(events.first { $0.kind == .response })
         #expect(responseEvent.text == Self.cannedText)
         #expect(responseEvent.entry != nil)
+        // `ms` lands on the turn's final `.response`-kind entry event, not the
+        // `.prompt` entry that preceded it — mirrors respondEmitsOpenAndClose.
+        #expect(promptEvent.ms == nil)
         #expect(responseEvent.ms != nil)
+        // Token metering is a separate follow-up task, not in scope here.
+        #expect(events.allSatisfy { $0.tokensIn == nil && $0.tokensOut == nil })
     }
 
     @Test("the chokepoint emits a close event even when the body throws")
@@ -355,6 +367,49 @@ struct SessionChokepointTests {
         let events = await recorder.events
         // A first-line `session` meta event precedes the turn's open + close,
         // which is still recorded on the throwing path.
+        #expect(events.count == 3)
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // The `.prompt` event is a genuine SDK-retained entry: the stub backend
+        // appends its `.prompt` entry before throwing, so the transcript diff
+        // still finds and persists it, carrying its structural payload and text.
+        let promptEvent = try #require(events.first { $0.kind == .prompt })
+        #expect(promptEvent.entry != nil)
+        #expect(promptEvent.text == "hello")
+        #expect(promptEvent.ms == nil)
+
+        // The `.response` close is the router-only synthetic trace every failed
+        // turn leaves — bodyless (no `entry`, no `text`) but carrying `ms`, since
+        // the stub never appended a real `.response` entry when it threw.
+        let responseEvent = try #require(events.first { $0.kind == .response })
+        #expect(responseEvent.entry == nil)
+        #expect(responseEvent.text == nil)
+        #expect(responseEvent.ms != nil)
+    }
+
+    @Test("the chokepoint emits a close event even when the streamed body throws")
+    @MainActor
+    func streamCloseEventEmittedOnThrow() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let spy = EvictionSpy()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir, shouldThrow: true)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // Mirrors closeEventEmittedOnThrow but drives the failure through
+        // streamResponse(to:): both paths share generate(grammar:_:)'s throw
+        // handling, so the same close-on-throw invariant must hold for the
+        // stream error path too.
+        let session = profile.standard.makeSession()
+        await #expect(throws: (any Error).self) {
+            for try await _ in await session.streamResponse(to: "hello") {}
+        }
+
+        let events = await recorder.events
+        // A first-line `session` meta event precedes the turn's open + close,
+        // which is still recorded on the throwing streaming path.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
 

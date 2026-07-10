@@ -143,6 +143,61 @@ extension RoutedSession {
     }
 }
 
+/// Builds a ``RoutedSessionActor``, the shared construction path behind both a
+/// fresh root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:)``)
+/// and a forked child (``RoutedSessionActor/fork(workingDirectory:)``).
+///
+/// The two call sites' constructor invocations used to be near-verbatim
+/// duplicates of each other, differing only in the values they passed —
+/// duplication that meant any change to ``RoutedSessionActor``'s initializer
+/// (a new parameter, a reordering) had to be applied in two places and could
+/// silently drift. Factoring the call out here means it is made in exactly
+/// one place; each call site just forwards the values it already has in
+/// scope (a root session's freshly computed identity/directory/zero baseline,
+/// or a fork's inherited profile/gates plus its own child identity and
+/// fork-time baseline).
+///
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:)``
+///   one-for-one.
+/// - Returns: The constructed session actor.
+func makeRoutedSessionActor(
+    profile: LanguageModelProfile,
+    routerId: ULID,
+    id: ULID,
+    parentId: ULID?,
+    recordingDirectory: URL,
+    workingDirectory: URL,
+    backend: any LanguageModelSessionBackend,
+    slot: ModelSlot,
+    model: ModelRef,
+    recorder: any TranscriptRecorder,
+    instructions: String?,
+    grammar: Grammar?,
+    serialGate: AsyncSemaphore,
+    forkAdmissionGate: AsyncSemaphore,
+    holdsAdmissionPermit: Bool,
+    persistedEntryCount: Int
+) -> RoutedSessionActor {
+    RoutedSessionActor(
+        profile: profile,
+        routerId: routerId,
+        id: id,
+        parentId: parentId,
+        recordingDirectory: recordingDirectory,
+        workingDirectory: workingDirectory,
+        backend: backend,
+        slot: slot,
+        model: model,
+        recorder: recorder,
+        instructions: instructions,
+        grammar: grammar,
+        serialGate: serialGate,
+        forkAdmissionGate: forkAdmissionGate,
+        holdsAdmissionPermit: holdsAdmissionPermit,
+        persistedEntryCount: persistedEntryCount
+    )
+}
+
 /// The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``.
 ///
 /// It is `internal` with an `internal` initializer so the only way to obtain one
@@ -412,7 +467,7 @@ actor RoutedSessionActor: RoutedSession {
         let childRecordingDirectory = recordingDirectory
             .appendingPathComponent(childId.description, isDirectory: true)
 
-        return RoutedSessionActor(
+        return makeRoutedSessionActor(
             profile: profile,
             routerId: routerId,
             id: childId,

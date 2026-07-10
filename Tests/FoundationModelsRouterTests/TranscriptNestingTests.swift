@@ -291,6 +291,40 @@ struct TranscriptNestingTests {
         _ = fork
     }
 
+    @Test("a streaming session's first line is also the session meta event, then prompt and response")
+    @MainActor
+    func streamResponseFirstLineIsSessionMetaThenTurn() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // Mirrors firstLineIsSessionMetaThenTurn's root-session assertions but
+        // drives the turn through streamResponse(to:) instead of respond(to:):
+        // recordSessionMetaIfNeeded() applies to both generation entry points,
+        // so the invariant must hold for streaming too.
+        let root = profile.standard.makeSession()
+        for try await _ in await root.streamResponse(to: "hello") {}
+
+        let recorded = try events(in: root.recordingDirectory)
+        #expect(recorded.map(\.kind) == [.session, .prompt, .response])
+        #expect(recorded.allSatisfy { $0.routerId == router.id })
+        #expect(recorded.allSatisfy { $0.sessionId == root.id })
+        #expect(recorded.allSatisfy { $0.parentId == nil })
+        #expect(recorded.allSatisfy { $0.slot == .standard })
+        #expect(recorded.allSatisfy { $0.model == profile.standard.chosen })
+        #expect(recorded.map(\.seq) == [0, 1, 2])
+    }
+
     @Test("an instructed session's first turn opens with an .instructions entry before .prompt/.response")
     @MainActor
     func instructedSessionRecordsLeadingInstructionsEntry() async throws {
@@ -318,6 +352,37 @@ struct TranscriptNestingTests {
         // the session's instructions) plus this turn's `.prompt`/`.response`,
         // so the entry-derived sequence gains a case the old hand-built bracket
         // never recorded at all.
+        let recorded = try events(in: root.recordingDirectory)
+        #expect(recorded.map(\.kind) == [.session, .instructions, .prompt, .response])
+        #expect(recorded.allSatisfy { $0.entry != nil || $0.kind == .session })
+    }
+
+    @Test("an instructed streaming session's first turn also opens with an .instructions entry before .prompt/.response")
+    @MainActor
+    func streamResponseInstructedSessionRecordsLeadingInstructionsEntry() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            forwardInstructions: true
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // Mirrors instructedSessionRecordsLeadingInstructionsEntry but drives
+        // the turn through streamResponse(to:): the snapshot-diff persistence
+        // and entry mapping in recordTranscriptDelta() apply equally to
+        // streaming, so the SDK-generated leading `.instructions` entry must
+        // be persisted in order there too.
+        let root = profile.standard.makeSession(instructions: "You are terse.")
+        for try await _ in await root.streamResponse(to: "hello") {}
+
         let recorded = try events(in: root.recordingDirectory)
         #expect(recorded.map(\.kind) == [.session, .instructions, .prompt, .response])
         #expect(recorded.allSatisfy { $0.entry != nil || $0.kind == .session })

@@ -40,6 +40,14 @@ struct TranscriptFidelityTests {
     /// turns so it can force the transcript to *shrink*, proving
     /// `recordTranscriptDelta(grammar:since:)`'s defensive clamp
     /// (`entries[min(persistedEntryCount, entries.count)...]`) never traps.
+    ///
+    /// `@unchecked Sendable` is safe here because every access is sequential:
+    /// a test's direct mutations of `entries`/`responseText`/`shouldThrow`
+    /// between turns and this session's `respond`/`streamResponse`/
+    /// `transcriptEntries()` calls during a turn all happen on the awaited
+    /// `@MainActor` test method, one at a time, and any read from inside
+    /// `RoutedSessionActor`'s chokepoint is further serialized by the model's
+    /// serial gate — nothing ever touches this instance concurrently.
     private final class VariableTranscriptBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum StubError: Error { case boom }
 
@@ -92,6 +100,11 @@ struct TranscriptFidelityTests {
     /// A ``LoadedLLMContainer`` that vends one ``VariableTranscriptBackend`` and
     /// tracks it so a test can drive its ``VariableTranscriptBackend/entries``
     /// directly between turns.
+    ///
+    /// `@unchecked Sendable` is safe here because its only stored property,
+    /// `backend`, is itself `@unchecked Sendable` for the same reason (see
+    /// ``VariableTranscriptBackend``): every access is sequential, driven by
+    /// one awaited `@MainActor` test method at a time.
     private final class VariableLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         let backend = VariableTranscriptBackend()
 
@@ -328,6 +341,41 @@ struct TranscriptFidelityTests {
         #expect(streamEvents.map(\.kind) == [.session, .prompt, .response])
     }
 
+    // MARK: - Grammar stamping (guided path)
+
+    @Test("a guided session's recorded entry events carry the session's grammar source")
+    @MainActor
+    func guidedSessionStampsGrammarOnEntryEvents() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(
+            container: CannedLLMContainer(text: Self.cannedText),
+            recorder: recorder,
+            cacheDir: dir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // Every other test in this file exercises the plain path, whose
+        // events carry `grammar == nil`. A guided session runs through the
+        // very same `generate(grammar:_:)` chokepoint with a non-nil
+        // grammar, so this proves the mapped entry events (not just the
+        // `session` meta line) are stamped with it too.
+        let grammar = Grammar.ebnf(#"root ::= "ok""#)
+        let session = profile.standard.makeGuidedSession(grammar: grammar)
+        _ = try await session.respond(to: "hello")
+
+        let events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        #expect(events.allSatisfy { $0.grammar == grammar.source })
+
+        let promptEvent = try #require(events.first { $0.kind == .prompt })
+        #expect(promptEvent.entry != nil)
+        let responseEvent = try #require(events.first { $0.kind == .response })
+        #expect(responseEvent.entry != nil)
+    }
+
     // MARK: - Shrink clamp: never traps, resets baseline, recovers next turn
 
     @Test("a transcript that shrinks below persistedEntryCount does not crash; the next turn diffs from the new baseline")
@@ -391,6 +439,65 @@ struct TranscriptFidelityTests {
         #expect(events.last?.text == "turn3 response")
     }
 
+    @Test("a transcript that shrinks below persistedEntryCount during a streaming turn does not crash; the next turn diffs from the new baseline")
+    @MainActor
+    func streamingShrinkingTranscriptClampsWithoutCrashing() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+
+        // Turn 1 (streaming): the backend "SDK transcript" holds two entries.
+        // The diff persists both and advances `persistedEntryCount` to 2,
+        // mirroring shrinkingTranscriptClampsWithoutCrashing's non-streaming
+        // turn 1 but driven through streamResponse(to:) instead.
+        container.backend.entries = [
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))])),
+            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+        ]
+        for try await _ in await session.streamResponse(to: "turn1") {}
+
+        var events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // Turn 2 (streaming): the backend's transcript *shrinks* to a single
+        // entry — fewer than the 2 already persisted. This must never trap
+        // on the streaming path either: it logs a warning, records nothing
+        // for this turn, and resets the baseline to the smaller count (1).
+        container.backend.entries = [
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))]))
+        ]
+        for try await _ in await session.streamResponse(to: "turn2") {}
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // Turn 3 (streaming): the backend grows again, from the *new*
+        // (post-shrink) baseline of 1. Two more entries are appended past
+        // index 1, proving the streaming path recovers exactly like the
+        // non-streaming path does.
+        let toolCall = Transcript.ToolCall(
+            id: UUID().uuidString,
+            toolName: "lookup",
+            arguments: try GeneratedContent(json: "{}")
+        )
+        container.backend.entries = [
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))])),
+            .toolCalls(Transcript.ToolCalls([toolCall])),
+            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
+        ]
+        for try await _ in await session.streamResponse(to: "turn3") {}
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .toolCalls, .response])
+        #expect(events.last?.text == "turn3 response")
+    }
+
     // MARK: - Throwing turn whose SDK transcript already gained a real .response
 
     @Test("a turn that throws after the SDK durably appended a real .response entry records exactly one .response event")
@@ -430,6 +537,44 @@ struct TranscriptFidelityTests {
         // router-only bodyless synthetic close (which carries neither), and it
         // still carries the turn's `ms` since it is the diff's last
         // `.response`-kind event.
+        #expect(responseEvent.entry != nil)
+        #expect(responseEvent.text == "got this far")
+        #expect(responseEvent.ms != nil)
+    }
+
+    @Test("a streaming turn that throws after the SDK durably appended a real .response entry records exactly one .response event")
+    @MainActor
+    func streamingThrowWithRealResponseEntryRecordsExactlyOneResponseEvent() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+
+        // Mirrors throwingTurnWithRealResponseEntryRecordsExactlyOneResponseEvent
+        // but drives the same scenario through streamResponse(to:): the
+        // streaming path shares generate(grammar:_:)'s throw handling, so
+        // the same double-close regression must not reappear there either.
+        container.backend.entries = [
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "will fail"))])),
+            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "got this far"))])),
+        ]
+        container.backend.shouldThrow = true
+
+        await #expect(throws: (any Error).self) {
+            for try await _ in await session.streamResponse(to: "will fail") {}
+        }
+
+        let events = await recorder.events
+        // Exactly one `.response` event — the SDK's own, not a duplicated
+        // synthetic close — proving the streaming path does not double up
+        // when `recordTranscriptDelta` already persisted a real `.response`.
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+        let responseEvent = try #require(events.first { $0.kind == .response })
         #expect(responseEvent.entry != nil)
         #expect(responseEvent.text == "got this far")
         #expect(responseEvent.ms != nil)
