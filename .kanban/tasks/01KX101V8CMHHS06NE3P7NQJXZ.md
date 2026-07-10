@@ -1,12 +1,37 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kx6jxhj5eh8b7f9x460zayd2
+  text: |-
+    Implemented via TDD.
+
+    New files:
+    - Sources/FoundationModelsRouter/Recording/TranscriptTree.swift — `TranscriptTree` (load(under:), roots, session(_:), children(of:), events(forSession:), effectiveEntryEvents(forSession:)), `SessionNode`, `TranscriptTreeError`.
+    - Tests/FoundationModelsRouterTests/TranscriptTreeTests.swift — 13 tests, including a reusable `buildBranchingTree(profile:...)` fixture (root + two forks + one grandfork, configurable turn counts before/after each fork point) built for reuse by the later restore task's mandated integration test.
+
+    Design notes:
+    - `load(under:)` reads the index via `SessionIndexWriter.read(under:)` when `sessions.jsonl` decodes to at least one record; falls back to enumerating nested `transcript.jsonl` files (deriving id/parentId from each file's first event) whenever the index is missing OR present-but-empty (covers a dropped/partial index write, not just a missing file).
+    - `effectiveEntryEvents(forSession:)` recurses: parent's effective entries (already recursively inherited) truncated to the node's own `forkedAtEntryCount`, then the node's own entries — verified against a grandfork scenario where both ancestors keep generating after their respective fork points.
+    - `buildTree` promotes any node whose declared `parentId` doesn't resolve to another loaded node into `roots` (rather than silently dropping it and its subtree) — needed because a session that forks a child before ever generating writes no `transcript.jsonl` of its own, so the child's parent can be genuinely undiscoverable in fallback mode.
+    - Added `TranscriptTreeError.parentUnresolvable` — a node with a non-nil but unresolvable `parentId` now throws from `effectiveEntryEvents` rather than silently returning just its own entries (this held even when `forkedAtEntryCount` happened to be known, e.g. an index whose parent's own line was dropped by the best-effort writer).
+
+    Two rounds of adversarial double-check were run (per really-done); both surfaced real bugs before landing, all fixed and covered by new regression tests:
+    1. Fallback silently dropped a fork whose own root never generated (fixed: buildTree promotes unresolvable-parent nodes to roots).
+    2. `load(under:)` didn't distinguish a present-but-empty `sessions.jsonl` from a real zero-session index (fixed: fallback triggers on empty decoded records too, not just missing file).
+    3. (surfaced on the second double-check pass) An orphaned node with a *known* `forkedAtEntryCount` silently returned partial data instead of failing loudly (fixed: added `parentUnresolvable` error, thrown before the `forkedAtEntryCount` check).
+
+    Verification: `swift build --build-tests` exit 0, zero warnings/errors via LSP diagnostics. `swift test` — 285 unit tests pass (up from 282 baseline), gated integration suite correctly skipped (no `FM_ROUTER_INTEGRATION_TESTS`). New suite alone: 13/13 pass.
+
+    Leaving in `doing` for `/review`.
+  timestamp: 2026-07-10T17:58:58.885566+00:00
 depends_on:
 - 01KX0ZZ77H2DJAQJV4PW7DC1ZW
 - 01KX100VJZ64Q7M3E5VQB9P7GS
 - 01KX1004E0SNV1AWY9SAJA228X
-position_column: todo
-position_ordinal: '8780'
+position_column: doing
+position_ordinal: '80'
 title: 'TranscriptTree: session-id lookup and hierarchy-aware retrieval'
 ---
 ## What
