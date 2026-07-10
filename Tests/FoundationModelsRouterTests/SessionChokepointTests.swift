@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
@@ -100,6 +101,11 @@ struct SessionChokepointTests {
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
             await spy.record(maxTokens)
             return try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+        }
+
+        /// Proxies ``StubSessionBackend/transcriptEntries()``.
+        func transcriptEntries() -> [Transcript.Entry] {
+            backend.transcriptEntries()
         }
 
         func makeFork() -> any LanguageModelSessionBackend {

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 
 @testable import FoundationModelsRouter
 
@@ -14,9 +15,19 @@ import Foundation
 /// every prompt it is asked to respond to, so a test can assert both the
 /// response a session produced and the call history the backend observed.
 ///
+/// It also maintains a synthetic ``entries`` transcript mirroring the shape a
+/// real `LanguageModelSession`/``MLXFoundationModelsSessionBackend`` would
+/// accumulate: when constructed with non-nil `instructions`, ``entries``
+/// opens with one `.instructions` entry (matching how supplied instructions
+/// become a `LanguageModelSession`'s transcript's first entry); every
+/// successful `respond`/`streamResponse`/guided-`respond` call then appends a
+/// `.prompt` entry followed by a `.response` entry, so ``transcriptEntries()``
+/// reports the same prompt/response-pair-per-turn shape the live backend's
+/// real transcript does.
+///
 /// ``makeFork()`` simulates transcript inheritance without a real model: the
 /// returned backend starts with a *copy* of this backend's
-/// ``receivedPrompts`` as of fork time (mirroring how the live
+/// ``receivedPrompts`` and ``entries`` as of fork time (mirroring how the live
 /// `MLXFoundationModelsSessionBackend.makeFork()` seeds a child session from
 /// the parent's accumulated transcript), then diverges independently as each
 /// backend's own further calls append only to its own history.
@@ -51,6 +62,13 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// parent's prompts and then grows independently with its own.
     private(set) var receivedPrompts: [String]
 
+    /// The synthetic transcript this backend has accumulated, in order.
+    ///
+    /// Seeded from ``instructions`` at construction time (one leading
+    /// `.instructions` entry, or none), then grown by one `.prompt` + one
+    /// `.response` entry per successful turn. See ``transcriptEntries()``.
+    private(set) var entries: [Transcript.Entry]
+
     /// Creates a stub backend.
     ///
     /// - Parameters:
@@ -59,26 +77,51 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     ///     succeeding.
     ///   - receivedPrompts: The initial prompt history — non-empty only for a
     ///     backend born via ``makeFork()``.
-    init(responseText: String = "stub response", shouldThrow: Bool = false, receivedPrompts: [String] = []) {
+    ///   - instructions: The session's system instructions, or `nil`. When
+    ///     non-nil, ``entries`` opens with a single `.instructions` entry
+    ///     carrying this text — mirroring how a real `LanguageModelSession`'s
+    ///     transcript begins. Ignored when `entries` is supplied directly
+    ///     (the fork path).
+    ///   - entries: The initial transcript — non-nil only for a backend born
+    ///     via ``makeFork()``, which snapshots the parent's ``entries`` as of
+    ///     fork time. When `nil`, ``entries`` is derived from `instructions`.
+    init(
+        responseText: String = "stub response",
+        shouldThrow: Bool = false,
+        receivedPrompts: [String] = [],
+        instructions: String? = nil,
+        entries: [Transcript.Entry]? = nil
+    ) {
         self.responseText = responseText
         self.shouldThrow = shouldThrow
         self.receivedPrompts = receivedPrompts
+        if let entries {
+            self.entries = entries
+        } else if let instructions {
+            self.entries = [Self.instructionsEntry(for: instructions)]
+        } else {
+            self.entries = []
+        }
     }
 
     /// Records the call and returns ``responseText``, or throws
     /// ``StubError/boom`` when ``shouldThrow`` is set.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        record(prompt)
+        recordPrompt(prompt)
         if shouldThrow { throw StubError.boom }
+        recordResponse()
         return responseText
     }
 
     /// Records the call and streams ``responseText`` as a single chunk, or
     /// finishes with ``StubError/boom`` when ``shouldThrow`` is set.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-        record(prompt)
+        recordPrompt(prompt)
         let responseText = responseText
         let shouldThrow = shouldThrow
+        if !shouldThrow {
+            recordResponse()
+        }
         return AsyncThrowingStream { continuation in
             if shouldThrow {
                 continuation.finish(throwing: StubError.boom)
@@ -94,23 +137,56 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// ``shouldThrow`` is set — mirroring the live backend's guided entry
     /// point, which validates before decoding.
     func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-        record(prompt)
+        recordPrompt(prompt)
         try grammar.validateForXGrammar()
         if shouldThrow { throw StubError.boom }
+        recordResponse()
         return responseText
     }
 
     /// Returns a new ``StubSessionBackend`` pre-seeded with a copy of
-    /// ``receivedPrompts`` as of this call, sharing this backend's
-    /// ``responseText``/``shouldThrow`` configuration.
+    /// ``receivedPrompts`` and ``entries`` as of this call, sharing this
+    /// backend's ``responseText``/``shouldThrow`` configuration.
     func makeFork() -> any LanguageModelSessionBackend {
-        StubSessionBackend(responseText: responseText, shouldThrow: shouldThrow, receivedPrompts: receivedPrompts)
+        StubSessionBackend(
+            responseText: responseText,
+            shouldThrow: shouldThrow,
+            receivedPrompts: receivedPrompts,
+            entries: entries
+        )
     }
 
-    /// Records one call's prompt into ``receivedPrompts`` and bumps
-    /// ``callCount``, shared by every generation entry point.
-    private func record(_ prompt: String) {
+    /// Returns ``entries``, this backend's synthetic transcript so far.
+    func transcriptEntries() -> [Transcript.Entry] {
+        entries
+    }
+
+    /// Records one call's prompt into ``receivedPrompts``/``entries`` and
+    /// bumps ``callCount``, shared by every generation entry point.
+    private func recordPrompt(_ prompt: String) {
         callCount += 1
         receivedPrompts.append(prompt)
+        entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+    }
+
+    /// Appends a `.response` entry carrying ``responseText`` into
+    /// ``entries``, called only once a turn is known to have succeeded.
+    private func recordResponse() {
+        entries.append(
+            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))]))
+        )
+    }
+
+    /// Builds the leading `.instructions` entry a non-nil `instructions`
+    /// string seeds ``entries`` with, mirroring how a real
+    /// `LanguageModelSession`'s transcript carries supplied instructions as
+    /// its first entry.
+    private static func instructionsEntry(for instructions: String) -> Transcript.Entry {
+        .instructions(
+            Transcript.Instructions(
+                segments: [.text(Transcript.TextSegment(content: instructions))],
+                toolDefinitions: []
+            )
+        )
     }
 }

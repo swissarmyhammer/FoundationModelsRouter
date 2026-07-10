@@ -261,6 +261,15 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         let forkedSession = LanguageModelSession(model: model, tools: [], transcript: liveSession.transcript)
         return MLXFoundationModelsSessionBackend(session: forkedSession, model: model, instructions: instructions)
     }
+
+    /// Returns ``liveSession``'s current transcript, in order.
+    ///
+    /// See the protocol requirement's doc comment
+    /// (``LanguageModelSessionBackend/transcriptEntries()``) for the
+    /// serial-gate precondition this call must be made under.
+    func transcriptEntries() -> [FoundationModels.Transcript.Entry] {
+        Array(liveSession.transcript)
+    }
 }
 
 /// The live embedding container.

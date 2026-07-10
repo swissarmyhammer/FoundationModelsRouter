@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 
 /// A live session object vended by a ``LoadedLLMContainer`` factory.
 ///
@@ -65,4 +66,16 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     ///
     /// - Returns: A new, independent backend seeded from this session's history.
     func makeFork() -> any LanguageModelSessionBackend
+
+    /// The backend's current full transcript, in order.
+    ///
+    /// **Only safe to call while holding the model's serial gate**
+    /// (``RoutedModel/serialGate``) — the same discipline ``makeFork()``
+    /// requires, since a concrete conformer (e.g. `MLXFoundationModelsSessionBackend`)
+    /// reads this straight off a live, mutable session that a concurrent
+    /// generation call could otherwise still be appending to.
+    ///
+    /// - Returns: Every transcript entry this backend has accumulated so far,
+    ///   in order.
+    func transcriptEntries() -> [FoundationModels.Transcript.Entry]
 }

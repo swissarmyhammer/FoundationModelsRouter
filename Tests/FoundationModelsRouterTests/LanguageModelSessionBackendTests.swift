@@ -192,4 +192,89 @@
             }
         }
     }
+
+    /// Exercises ``StubSessionBackend``'s synthetic ``Transcript.Entry``
+    /// accumulation — the GPU-free stand-in for
+    /// ``MLXFoundationModelsSessionBackend/transcriptEntries()`` (see the
+    /// gated integration suite's
+    /// `LanguageModelSessionBackendTests.transcriptEntriesMatchesSessionTranscriptAndGrows`
+    /// for the real-model equivalent). Every unit-suite conformer of
+    /// ``LanguageModelSessionBackend`` outside this file only needs to
+    /// *compile* against the widened protocol; the actual entry-shape
+    /// contract lives here, against the one conformer downstream tasks
+    /// (session index, chokepoint) actually rely on.
+    @Suite("StubSessionBackend synthesizes transcript entries mirroring the live backend")
+    struct StubSessionBackendTranscriptTests {
+        private func isInstructions(_ entry: Transcript.Entry) -> Bool {
+            if case .instructions = entry { return true }
+            return false
+        }
+
+        private func isPrompt(_ entry: Transcript.Entry) -> Bool {
+            if case .prompt = entry { return true }
+            return false
+        }
+
+        private func isResponse(_ entry: Transcript.Entry) -> Bool {
+            if case .response = entry { return true }
+            return false
+        }
+
+        @Test("an uninstructed stub's transcriptEntries() has 4 entries in prompt/response/prompt/response order after two turns")
+        func uninstructedStubAccumulatesPromptResponsePairs() async throws {
+            let backend = StubSessionBackend(responseText: "ok")
+            _ = try await backend.respond(to: "first", maxTokens: nil)
+            _ = try await backend.respond(to: "second", maxTokens: nil)
+
+            let entries = backend.transcriptEntries()
+            #expect(entries.count == 4)
+            #expect(isPrompt(entries[0]))
+            #expect(isResponse(entries[1]))
+            #expect(isPrompt(entries[2]))
+            #expect(isResponse(entries[3]))
+        }
+
+        @Test(
+            "an instructed stub's transcriptEntries() starts with exactly one .instructions entry, followed by prompt/response pairs"
+        )
+        func instructedStubSeedsLeadingInstructionsEntry() async throws {
+            let backend = StubSessionBackend(instructions: "be terse")
+            _ = try await backend.respond(to: "first", maxTokens: nil)
+            _ = try await backend.respond(to: "second", maxTokens: nil)
+
+            let entries = backend.transcriptEntries()
+            #expect(entries.count == 5)
+            #expect(isInstructions(entries[0]))
+            #expect(isPrompt(entries[1]))
+            #expect(isResponse(entries[2]))
+            #expect(isPrompt(entries[3]))
+            #expect(isResponse(entries[4]))
+        }
+
+        @Test("an uninstructed stub seeds no leading .instructions entry")
+        func uninstructedStubHasNoInstructionsEntry() {
+            let backend = StubSessionBackend()
+            #expect(backend.transcriptEntries().isEmpty)
+        }
+
+        @Test(
+            "a fork taken after turn 1 has exactly the parent's entries at fork time; the parent's turn 2 does not appear in the child"
+        )
+        func forkSnapshotsEntriesAtForkTime() async throws {
+            let parent = StubSessionBackend(instructions: "be terse")
+            _ = try await parent.respond(to: "first", maxTokens: nil)
+
+            let entriesAtForkTime = parent.transcriptEntries()
+            let child = try #require(parent.makeFork() as? StubSessionBackend)
+            #expect(child.transcriptEntries() == entriesAtForkTime)
+
+            _ = try await parent.respond(to: "second", maxTokens: nil)
+
+            // The child's snapshot does not retroactively grow with the
+            // parent's further turn…
+            #expect(child.transcriptEntries() == entriesAtForkTime)
+            // …while the parent's own transcript has grown independently.
+            #expect(parent.transcriptEntries().count == entriesAtForkTime.count + 2)
+        }
+    }
 #endif  // canImport(FoundationModels)

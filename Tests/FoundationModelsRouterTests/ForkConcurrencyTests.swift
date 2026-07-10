@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
@@ -112,6 +113,13 @@ struct ForkConcurrencyTests {
             try grammar.validateForXGrammar()
             if let guidedProbe { await guidedProbe.record(grammar) }
             return "guided-ok"
+        }
+
+        /// No synthetic transcript is tracked here — this suite exercises
+        /// call-count/prompt-history/serial-gate/admission-gate behavior, not
+        /// transcript accumulation, so there is nothing meaningful to report.
+        func transcriptEntries() -> [Transcript.Entry] {
+            []
         }
 
         /// Returns a new backend sharing this one's observer/gate/probe wiring

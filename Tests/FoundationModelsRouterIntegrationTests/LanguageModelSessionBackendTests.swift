@@ -167,6 +167,29 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(child.session.transcript.count == 2)
     }
 
+    // MARK: - transcriptEntries() matches the test-only transcript accessor
+
+    @Test("transcriptEntries().count equals session.transcript.count and grows across turns")
+    func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
+        let container = try await makeContainer()
+        let backend = try #require(
+            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+        )
+
+        // Before any turn, the public seam and the test-only accessor agree.
+        #expect(backend.transcriptEntries().count == backend.session.transcript.count)
+
+        _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        let countAfterFirstTurn = backend.transcriptEntries().count
+        #expect(countAfterFirstTurn == backend.session.transcript.count)
+        #expect(countAfterFirstTurn > 0)
+
+        _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: 64)
+        let countAfterSecondTurn = backend.transcriptEntries().count
+        #expect(countAfterSecondTurn == backend.session.transcript.count)
+        #expect(countAfterSecondTurn > countAfterFirstTurn)
+    }
+
     // MARK: - KV cache reuse across turns (the hard proof)
 
     @Test(

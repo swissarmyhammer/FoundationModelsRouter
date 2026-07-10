@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
@@ -61,6 +62,11 @@ struct MultiTurnSessionTests {
 
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
             try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+        }
+
+        /// Proxies ``StubSessionBackend/transcriptEntries()``.
+        func transcriptEntries() -> [Transcript.Entry] {
+            backend.transcriptEntries()
         }
 
         /// Forks the wrapped stub and wraps the result the same way, recording
@@ -160,6 +166,13 @@ struct MultiTurnSessionTests {
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
             try grammar.validateForXGrammar()
             return "guided-ok"
+        }
+
+        /// No synthetic transcript is tracked here — nothing in this suite
+        /// exercises this backend's transcript, only its parking/ordering
+        /// behavior via ``log``.
+        func transcriptEntries() -> [Transcript.Entry] {
+            []
         }
 
         /// Records that a fork was produced, so a test can assert this never

@@ -1,8 +1,35 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01kx4ncd63sethfbacb6t6t6s4
+  text: |-
+    Implementation complete, following /tdd:
+
+    - Added `func transcriptEntries() -> [FoundationModels.Transcript.Entry]` to `LanguageModelSessionBackend` (Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift), with a doc comment naming the `RoutedModel.serialGate` precondition (same discipline as `makeFork()`).
+    - Implemented in `MLXFoundationModelsSessionBackend` (Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift): `Array(liveSession.transcript)`.
+    - Rewrote `StubSessionBackend` (Tests/FoundationModelsRouterTests/Helpers/StubSessionBackend.swift) to maintain a synthetic `entries: [Transcript.Entry]`: seeds one `.instructions` entry (via `Transcript.Instructions(segments:toolDefinitions:)`) when constructed with non-nil `instructions:`; each successful respond/streamResponse/guided-respond call appends a `.prompt` entry (`Transcript.Prompt(segments:)`) then a `.response` entry (`Transcript.Response(assetIDs:segments:)`) — response entry is skipped when the call throws (shouldThrow or grammar validation failure) so a failed turn doesn't fabricate a response. `makeFork()` now also snapshots `entries` into the child alongside `receivedPrompts`.
+    - Updated 4 other inline test conformers of `LanguageModelSessionBackend` that needed a `transcriptEntries()` method to keep compiling: `TrackingBackend`/`ParkableSessionBackend` (MultiTurnSessionTests.swift), `MaxTokensRecordingBackend` (GuidedGenerationTests.swift and SessionChokepointTests.swift, one each), `TrackingSessionBackend` (ForkConcurrencyTests.swift). The ones wrapping a `StubSessionBackend` proxy to it; the two that don't (ParkableSessionBackend, TrackingSessionBackend) return `[]` since neither suite exercises transcript state.
+    - Verified the FoundationModels v2 SDK's real public initializers against the macOS 27 swiftinterface at `/Applications/Xcode-beta.app/.../FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface` before using them (`Transcript.Instructions(id:segments:toolDefinitions:)`, `Transcript.Prompt(id:segments:options:responseFormat:...)`, `Transcript.Response(id:assetIDs:segments:)`, `Transcript.TextSegment(id:content:)`).
+
+    Tests added:
+    - Tests/FoundationModelsRouterTests/LanguageModelSessionBackendTests.swift: new `StubSessionBackendTranscriptTests` suite — uninstructed stub 4 entries (prompt/response/prompt/response) after two turns; instructed stub 5 entries starting with exactly one `.instructions`; uninstructed stub seeds no `.instructions` entry; fork snapshots parent's entries at fork time and the parent's later turn does not retroactively appear in the child.
+    - Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift: gated (`FM_ROUTER_INTEGRATION_TESTS`) `transcriptEntriesMatchesSessionTranscriptAndGrows` — asserts `transcriptEntries().count == session.transcript.count` before any turn, after turn 1, and after turn 2 (with strict growth).
+
+    TDD note: this is a protocol-widening change across ~7 files that must all move together to keep the target compiling, so a literal per-behavior red/green cycle for every file isn't possible (the code won't compile at all until the method exists everywhere). Did a red/green sanity check instead: temporarily reverted the `.instructions`-seeding branch in `StubSessionBackend.init`, reran the new suite, and watched `instructedStubSeedsLeadingInstructionsEntry` fail for the right reason (`entries.count` 4 not 5, wrong case at index 0) before restoring the fix.
+
+    Verification: `swift build --build-tests` clean (rm -rf .build/out first) — exit 0, zero warnings in our code (only pre-existing vendored mlx-swift C++ warnings). `swift test` — 186/186 unit tests pass, 8/8 gated integration tests correctly skipped (no `FM_ROUTER_INTEGRATION_TESTS`/network/GPU here). Adversarial double-check agent dispatched for independent verification before handoff.
+  timestamp: 2026-07-10T00:03:34.211842+00:00
+- actor: claude-code
+  id: 01kx4nh6gamfa5be0cn9fe10gk
+  text: |-
+    Adversarial double-check: PASS. Independently verified the diff, SDK API usage against the real macOS 27 swiftinterface, makeFork() value-semantics copy of `entries`, response-entry-skipped-on-throw logic, doc comment naming the serial-gate precondition, and conformer completeness (grepped all `: LanguageModelSessionBackend` declarations — all 6 non-StubSessionBackend conformers plus StubSessionBackend itself have `transcriptEntries()`). Independently reran `swift build --build-tests` (clean) and `swift test` (186/186 unit pass, 8 gated integration skip) — matches reported numbers exactly. Only note: my own earlier progress comment undercounted the inline conformers as "4" when it's actually 5 distinct classes across 4 files — a wording slip in the comment text only, not in the code. No action needed.
+
+    Leaving task in `doing` per /implement workflow — ready for /review.
+  timestamp: 2026-07-10T00:06:11.210669+00:00
+position_column: doing
+position_ordinal: '80'
 title: Expose real Transcript state through LanguageModelSessionBackend
 ---
 ## What
