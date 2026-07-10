@@ -384,6 +384,169 @@ struct MergedAndRedactionTests {
         #expect(event.entry == nil)
     }
 
+    // MARK: - Structured entry payload gating (real JSONL round-trip)
+
+    /// The in-memory tests above (`metadataOnlyStripsEntryPayloadContent`,
+    /// `redactTransformsEntryPayloadContentSites`) only prove the transform
+    /// GatingRecorder applies before handing the event to its inner sink; they
+    /// never prove the stripped/redacted payload survives being encoded to a
+    /// JSON line, written to disk, and decoded back. These two tests close that
+    /// gap: a real `JSONLRecorder` writes into a temp directory and
+    /// `MergedTranscript.merged(under:)` reads the file back, so every
+    /// assertion here is against a value that actually round-tripped through
+    /// `Codable` and disk I/O, not the in-memory transform result.
+    @Test("metadataOnly-stripped entry payload survives a real JSONL write/read round trip")
+    func metadataOnlyEntryPayloadSurvivesJSONLRoundTrip() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder: any TranscriptRecorder = GatingRecorder(
+            level: .metadataOnly,
+            redact: nil,
+            wrapping: JSONLRecorder(directory: dir)
+        )
+        let payload = richEntryPayload()
+        let partial = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .instructions,
+            text: "sensitive flattened body",
+            entry: payload
+        )
+        await recorder.append(partial)
+
+        let merged = try MergedTranscript.merged(under: dir)
+        let event = try #require(merged.first)
+        #expect(event.text == nil)
+
+        let entry = try #require(event.entry)
+        #expect(entry.contentRemoved == true)
+        #expect(entry.entryId == "entry-1")
+
+        let segments = try #require(entry.segments)
+        #expect(segments.count == 4)
+
+        guard case .text(let id, let content) = segments[0] else {
+            Issue.record("expected a text segment")
+            return
+        }
+        #expect(id == "seg-text")
+        #expect(content.isEmpty)
+
+        guard case .structure(let structureId, let schemaName, let contentJSON) = segments[1] else {
+            Issue.record("expected a structure segment")
+            return
+        }
+        #expect(structureId == "seg-structure")
+        #expect(schemaName == "Weather")
+        #expect(contentJSON.isEmpty)
+
+        guard case .attachment(let attachmentId, let label, let url) = segments[2] else {
+            Issue.record("expected an attachment segment")
+            return
+        }
+        #expect(attachmentId == "seg-attachment")
+        #expect(label == nil)
+        #expect(url == nil)
+
+        guard case .custom(let customId, let typeDiscriminator, let contentJSON, let description) = segments[3] else {
+            Issue.record("expected a custom segment")
+            return
+        }
+        #expect(customId == "seg-custom")
+        #expect(typeDiscriminator == "com.example.MySegment")
+        #expect(contentJSON.isEmpty)
+        #expect(description == nil)
+
+        let toolDefinitions = try #require(entry.toolDefinitions)
+        #expect(toolDefinitions.count == 1)
+        #expect(toolDefinitions[0].name == "search")
+        #expect(toolDefinitions[0].description.isEmpty)
+        #expect(toolDefinitions[0].parametersSchemaJSON.isEmpty)
+
+        let toolCalls = try #require(entry.toolCalls)
+        #expect(toolCalls.count == 1)
+        #expect(toolCalls[0].id == "call-1")
+        #expect(toolCalls[0].toolName == "search")
+        #expect(toolCalls[0].argumentsJSON.isEmpty)
+
+        #expect(entry.toolName == "search")
+        #expect(entry.assetIds?.count == 2)
+        #expect(entry.assetIds == ["", ""])
+        #expect(entry.signature == nil)
+        #expect(entry.options == payload.options)
+        #expect(entry.responseFormatName == "Weather")
+        #expect(entry.responseFormatSchemaJSON?.isEmpty == true)
+    }
+
+    @Test("full + redact hook entry payload survives a real JSONL write/read round trip")
+    func redactEntryPayloadSurvivesJSONLRoundTrip() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let redact: @Sendable (String) -> String = { $0.replacingOccurrences(of: "secret", with: "***") }
+        let recorder: any TranscriptRecorder = GatingRecorder(
+            level: .full,
+            redact: redact,
+            wrapping: JSONLRecorder(directory: dir)
+        )
+        let payload = richEntryPayload()
+        let partial = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .instructions,
+            text: "a secret flattened body",
+            entry: payload
+        )
+        await recorder.append(partial)
+
+        let merged = try MergedTranscript.merged(under: dir)
+        let event = try #require(merged.first)
+        #expect(event.text == "a *** flattened body")
+
+        let entry = try #require(event.entry)
+        // Full payloads are never stripped: contentRemoved stays false, even
+        // after the round trip through disk.
+        #expect(entry.contentRemoved == false)
+
+        let segments = try #require(entry.segments)
+        guard case .text(_, let content) = segments[0] else {
+            Issue.record("expected a text segment")
+            return
+        }
+        #expect(content == "a *** text segment")
+
+        guard case .structure(_, _, let contentJSON) = segments[1] else {
+            Issue.record("expected a structure segment")
+            return
+        }
+        #expect(contentJSON == #"{"***":"value"}"#)
+
+        guard case .attachment(_, let label, let url) = segments[2] else {
+            Issue.record("expected an attachment segment")
+            return
+        }
+        #expect(label == "a *** label")
+        // The attachment URL is not a textual-content site; it is untouched.
+        #expect(url == "file:///secret.png")
+
+        guard case .custom(_, _, let contentJSON, let description) = segments[3] else {
+            Issue.record("expected a custom segment")
+            return
+        }
+        #expect(contentJSON == #"{"***":"payload"}"#)
+        #expect(description == "a *** description")
+
+        let toolCalls = try #require(entry.toolCalls)
+        #expect(toolCalls[0].argumentsJSON == #"{"***":"args"}"#)
+
+        // Tool definitions, the response-format schema, and the reasoning
+        // signature are not textual-content sites the redact hook touches —
+        // still true after the round trip through disk.
+        #expect(entry.toolDefinitions?.first?.description == "a secret tool description")
+        #expect(entry.responseFormatSchemaJSON == #"{"secret":"format"}"#)
+    }
+
     // MARK: - Wiring through the router (session + embed)
 
     @Test("metadataOnly wired through the router drops bodies on both session turns and embeddings")
