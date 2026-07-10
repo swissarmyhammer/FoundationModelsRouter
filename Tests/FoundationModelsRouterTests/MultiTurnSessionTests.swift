@@ -207,10 +207,14 @@ struct MultiTurnSessionTests {
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            ParkableSessionBackend(log: log, releaseGate: releaseGate)
+            makeParkableSessionBackend()
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            makeParkableSessionBackend()
+        }
+
+        private func makeParkableSessionBackend() -> any LanguageModelSessionBackend {
             ParkableSessionBackend(log: log, releaseGate: releaseGate)
         }
     }
