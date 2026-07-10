@@ -234,21 +234,30 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             self.entry = entry
         }
 
-        /// Returns a copy of this partial with its ``text`` replaced by
-        /// `transform(text)`, leaving every other field — including ``entry`` —
+        /// Returns a copy of this partial with its ``text`` and ``entry``
+        /// replaced by `transform(text, entry)`, leaving every other field
         /// untouched.
         ///
         /// The transform seam a ``GatingRecorder`` uses to enforce the recording
         /// level and redaction before the event is stamped and written: mapping
-        /// the body to `nil` trims it (``RecordingLevel/metadataOnly``) and
-        /// mapping it through the ``Router``'s `redact` hook redacts it. Gating
-        /// ``entry``'s own textual content sites is a downstream concern; this
-        /// seam only ever transforms the flattened ``text`` body.
+        /// to `(nil, entry?.strippingContent())` trims both the flattened body
+        /// and every content-bearing field of the structured payload
+        /// (``RecordingLevel/metadataOnly``), and mapping through the
+        /// ``Router``'s `redact` hook — `(text.map(redact), entry?.redacted(with:
+        /// redact))` — redacts every textual content site in both
+        /// (``RecordingLevel/full``). Transforming ``text`` and ``entry``
+        /// together in one seam is what keeps the two from drifting: a gate that
+        /// only ever touched ``text`` would silently leak payload content once
+        /// entries carried any.
         ///
-        /// - Parameter transform: The body-text transform to apply.
-        /// - Returns: A copy carrying the transformed body text.
-        func mapText(_ transform: (String?) -> String?) -> Partial {
-            Partial(
+        /// - Parameter transform: The transform applied to the flattened body
+        ///   text and the structural entry payload together.
+        /// - Returns: A copy carrying the transformed body and payload.
+        func mapBody(
+            _ transform: (String?, TranscriptEntryPayload?) -> (String?, TranscriptEntryPayload?)
+        ) -> Partial {
+            let (mappedText, mappedEntry) = transform(text, entry)
+            return Partial(
                 routerId: routerId,
                 sessionId: sessionId,
                 parentId: parentId,
@@ -256,11 +265,11 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 model: model,
                 kind: kind,
                 grammar: grammar,
-                text: transform(text),
+                text: mappedText,
                 tokensIn: tokensIn,
                 tokensOut: tokensOut,
                 ms: ms,
-                entry: entry
+                entry: mappedEntry
             )
         }
 

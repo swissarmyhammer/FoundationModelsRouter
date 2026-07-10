@@ -60,8 +60,8 @@ struct TranscriptEventSchemaTests {
 
     // MARK: - entry threaded through Partial
 
-    @Test("Partial carries entry through mapText unchanged")
-    func partialCarriesEntryThroughMapText() {
+    @Test("Partial.mapBody leaves fields the transform doesn't touch unchanged")
+    func mapBodyLeavesUntouchedFieldsUnchanged() {
         let payload = TranscriptEntryPayload(entryId: "e1")
         let partial = TranscriptEvent.Partial(
             routerId: .generate(),
@@ -69,8 +69,24 @@ struct TranscriptEventSchemaTests {
             kind: .instructions,
             entry: payload
         )
-        let mapped = partial.mapText { _ in nil }
+        let mapped = partial.mapBody { text, entry in (text, entry) }
         #expect(mapped.entry == payload)
+    }
+
+    @Test("Partial.mapBody transforms text and entry together")
+    func mapBodyTransformsTextAndEntryTogether() {
+        let payload = TranscriptEntryPayload(entryId: "e1")
+        let stripped = TranscriptEntryPayload(entryId: "e1", contentRemoved: true)
+        let partial = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .instructions,
+            text: "body",
+            entry: payload
+        )
+        let mapped = partial.mapBody { _, _ in (nil, stripped) }
+        #expect(mapped.text == nil)
+        #expect(mapped.entry == stripped)
     }
 
     @Test("Partial.stamped carries entry onto the finished event")

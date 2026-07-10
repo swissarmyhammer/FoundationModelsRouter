@@ -14,9 +14,20 @@ import Foundation
 /// - ``RecordingLevel/off`` drops every event, so nothing is written and no
 ///   transcript file is created;
 /// - ``RecordingLevel/metadataOnly`` maps the body ``TranscriptEvent/text`` to
-///   `nil`, keeping counts, kinds, and provenance;
-/// - ``RecordingLevel/full`` keeps the body, passing it through the `redact`
-///   hook first when one is set.
+///   `nil` and strips every content-bearing field of the structured
+///   ``TranscriptEvent/entry`` payload (``TranscriptEntryPayload/strippingContent()``),
+///   keeping counts, kinds, ids, and provenance;
+/// - ``RecordingLevel/full`` keeps the body and the payload, passing every
+///   textual content site in both through the `redact` hook first when one is
+///   set (``TranscriptEntryPayload/redacted(with:)``).
+///
+/// Gating covers the payload as thoroughly as the flattened body: content also
+/// lives in segments, tool-call arguments, and tool definitions, and a gate
+/// that only ever touched ``TranscriptEvent/text`` would let `metadataOnly`
+/// and the redact hook leak that content. JSON-valued sites (structure and
+/// custom segment `contentJSON`, tool-call `argumentsJSON`) are redacted as
+/// opaque whole strings — a hook that must keep JSON valid after redacting it
+/// is the caller's responsibility, exactly like the flattened `text` contract.
 ///
 /// Gating changes only *what* an event carries (or whether it is forwarded at
 /// all); the inner sink still owns `seq`/`ts` stamping and the best-effort
@@ -56,13 +67,19 @@ public struct GatingRecorder: TranscriptRecorder {
         case .off:
             return
         case .metadataOnly:
-            await inner.append(partial.mapText { _ in nil }, to: directory)
+            await inner.append(
+                partial.mapBody { _, entry in (nil, entry?.strippingContent()) },
+                to: directory
+            )
         case .full:
             guard let redact else {
                 await inner.append(partial, to: directory)
                 return
             }
-            await inner.append(partial.mapText { $0.map(redact) }, to: directory)
+            await inner.append(
+                partial.mapBody { text, entry in (text.map(redact), entry?.redacted(with: redact)) },
+                to: directory
+            )
         }
     }
 }

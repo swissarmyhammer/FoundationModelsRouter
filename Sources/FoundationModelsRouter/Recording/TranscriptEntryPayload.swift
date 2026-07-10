@@ -332,3 +332,158 @@ public struct GenerationOptionsPayload: Sendable, Codable, Equatable {
         self.maximumResponseTokens = maximumResponseTokens
     }
 }
+
+// MARK: - Gating: metadataOnly stripping and full-level redaction
+
+/// Both `GatingRecorder` operations below act on the payload's content-bearing
+/// fields only — the recorder-facing seam is ``TranscriptEvent/Partial/mapBody(_:)``,
+/// which calls these methods on ``TranscriptEvent/Partial/entry``.
+extension TranscriptEntryPayload {
+    /// Returns a copy with every content-bearing field emptied, keeping shape:
+    /// ``entryId``, segment ids and case tags, custom-segment
+    /// ``SegmentPayload/custom(id:typeDiscriminator:contentJSON:description:)``'s
+    /// `typeDiscriminator`, ``toolName``, and every array's element count
+    /// (``segments``, ``toolDefinitions``, ``toolCalls``, ``assetIds``) all
+    /// survive; only the content each element carries is removed.
+    ///
+    /// ``assetIds`` keeps its element *count* — asset identifiers are
+    /// themselves considered content, so each id is blanked to an empty
+    /// string rather than dropped, preserving the array's length as the
+    /// "how many assets" shape fact ``RecordingLevel/metadataOnly`` promises
+    /// to keep.
+    ///
+    /// ``options`` and ``responseFormatName`` are not content — generation
+    /// configuration and a format's declared name, not user- or model-authored
+    /// text — so both pass through unchanged.
+    ///
+    /// Marks ``contentRemoved`` `true`, so reconstruction can refuse a
+    /// stripped payload with a typed error instead of silently rebuilding an
+    /// empty entry.
+    ///
+    /// - Returns: A shape-only copy with `contentRemoved == true`.
+    func strippingContent() -> TranscriptEntryPayload {
+        TranscriptEntryPayload(
+            entryId: entryId,
+            contentRemoved: true,
+            segments: segments?.map { $0.strippingContent() },
+            toolDefinitions: toolDefinitions?.map { $0.strippingContent() },
+            toolCalls: toolCalls?.map { $0.strippingContent() },
+            toolName: toolName,
+            assetIds: assetIds.map { ids in Array(repeating: "", count: ids.count) },
+            signature: nil,
+            options: options,
+            responseFormatName: responseFormatName,
+            responseFormatSchemaJSON: responseFormatSchemaJSON.map { _ in "" }
+        )
+    }
+
+    /// Returns a copy with `transform` applied to every textual content site
+    /// at ``RecordingLevel/full``: segment text/structure/custom content and
+    /// custom descriptions (via ``SegmentPayload/redacted(with:)``) and
+    /// tool-call arguments (via ``ToolCallPayload/redacted(with:)``).
+    ///
+    /// JSON-valued sites (``SegmentPayload/structure(id:schemaName:contentJSON:)``'s
+    /// `contentJSON`, a custom segment's `contentJSON`, and a tool call's
+    /// `argumentsJSON`) are redacted as opaque whole strings, exactly like any
+    /// other text body — a hook that must keep JSON valid after redacting it
+    /// is the caller's responsibility, consistent with the flattened `text`
+    /// contract (see the "redact is applied verbatim" tests).
+    ///
+    /// Tool definitions, the response-format schema, the reasoning
+    /// `signature`, and an attachment's `url` are declared/structural or
+    /// opaque-binary data, not user- or model-authored text, so `transform`
+    /// never touches them. ``contentRemoved`` is left as-is (`full` never
+    /// strips).
+    ///
+    /// - Parameter transform: The redaction hook applied to each content site.
+    /// - Returns: A copy with every textual content site redacted.
+    func redacted(with transform: (String) -> String) -> TranscriptEntryPayload {
+        TranscriptEntryPayload(
+            entryId: entryId,
+            contentRemoved: contentRemoved,
+            segments: segments?.map { $0.redacted(with: transform) },
+            toolDefinitions: toolDefinitions,
+            toolCalls: toolCalls?.map { $0.redacted(with: transform) },
+            toolName: toolName,
+            assetIds: assetIds,
+            signature: signature,
+            options: options,
+            responseFormatName: responseFormatName,
+            responseFormatSchemaJSON: responseFormatSchemaJSON
+        )
+    }
+}
+
+extension SegmentPayload {
+    /// Returns a copy with this segment's content emptied, keeping its `id`
+    /// and case — and, for ``custom(id:typeDiscriminator:contentJSON:description:)``,
+    /// its `typeDiscriminator` — intact.
+    ///
+    /// - Returns: A shape-only copy of this segment.
+    func strippingContent() -> SegmentPayload {
+        switch self {
+        case .text(let id, _):
+            return .text(id: id, content: "")
+        case .structure(let id, let schemaName, _):
+            return .structure(id: id, schemaName: schemaName, contentJSON: "")
+        case .attachment(let id, _, _):
+            return .attachment(id: id, label: nil, url: nil)
+        case .custom(let id, let typeDiscriminator, _, _):
+            return .custom(id: id, typeDiscriminator: typeDiscriminator, contentJSON: "", description: nil)
+        }
+    }
+
+    /// Returns a copy with `transform` applied to this segment's textual
+    /// content sites: `.text`'s `content`, `.structure`'s `contentJSON` (as an
+    /// opaque string), `.attachment`'s `label` (its `url` is untouched), and
+    /// `.custom`'s `contentJSON` (as an opaque string) and `description`.
+    ///
+    /// - Parameter transform: The redaction hook applied to each content site.
+    /// - Returns: A copy with this segment's textual content sites redacted.
+    func redacted(with transform: (String) -> String) -> SegmentPayload {
+        switch self {
+        case .text(let id, let content):
+            return .text(id: id, content: transform(content))
+        case .structure(let id, let schemaName, let contentJSON):
+            return .structure(id: id, schemaName: schemaName, contentJSON: transform(contentJSON))
+        case .attachment(let id, let label, let url):
+            return .attachment(id: id, label: label.map(transform), url: url)
+        case .custom(let id, let typeDiscriminator, let contentJSON, let description):
+            return .custom(
+                id: id,
+                typeDiscriminator: typeDiscriminator,
+                contentJSON: transform(contentJSON),
+                description: description.map(transform)
+            )
+        }
+    }
+}
+
+extension ToolDefinitionPayload {
+    /// Returns a copy with `description` and `parametersSchemaJSON` emptied,
+    /// keeping `name` intact.
+    ///
+    /// - Returns: A shape-only copy of this tool definition.
+    func strippingContent() -> ToolDefinitionPayload {
+        ToolDefinitionPayload(name: name, description: "", parametersSchemaJSON: "")
+    }
+}
+
+extension ToolCallPayload {
+    /// Returns a copy with `argumentsJSON` emptied, keeping `id` and
+    /// `toolName` intact.
+    ///
+    /// - Returns: A shape-only copy of this tool call.
+    func strippingContent() -> ToolCallPayload {
+        ToolCallPayload(id: id, toolName: toolName, argumentsJSON: "")
+    }
+
+    /// Returns a copy with `transform` applied to `argumentsJSON` as an
+    /// opaque string, keeping `id` and `toolName` untouched.
+    ///
+    /// - Parameter transform: The redaction hook applied to `argumentsJSON`.
+    /// - Returns: A copy with `argumentsJSON` redacted.
+    func redacted(with transform: (String) -> String) -> ToolCallPayload {
+        ToolCallPayload(id: id, toolName: toolName, argumentsJSON: transform(argumentsJSON))
+    }
+}

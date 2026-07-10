@@ -195,6 +195,195 @@ struct MergedAndRedactionTests {
         #expect(await inner.events.first?.text == "*** and *** and ***")
     }
 
+    // MARK: - Structured entry payload gating (unit)
+
+    /// Builds a payload exercising every segment kind, tool definitions, tool
+    /// calls, and every other field the metadataOnly-stripping and
+    /// full-redaction paths must handle.
+    private func richEntryPayload() -> TranscriptEntryPayload {
+        TranscriptEntryPayload(
+            entryId: "entry-1",
+            contentRemoved: false,
+            segments: [
+                .text(id: "seg-text", content: "a secret text segment"),
+                .structure(id: "seg-structure", schemaName: "Weather", contentJSON: #"{"secret":"value"}"#),
+                .attachment(id: "seg-attachment", label: "a secret label", url: "file:///secret.png"),
+                .custom(
+                    id: "seg-custom",
+                    typeDiscriminator: "com.example.MySegment",
+                    contentJSON: #"{"secret":"payload"}"#,
+                    description: "a secret description"
+                ),
+            ],
+            toolDefinitions: [
+                ToolDefinitionPayload(
+                    name: "search",
+                    description: "a secret tool description",
+                    parametersSchemaJSON: #"{"secret":"schema"}"#
+                )
+            ],
+            toolCalls: [
+                ToolCallPayload(id: "call-1", toolName: "search", argumentsJSON: #"{"secret":"args"}"#)
+            ],
+            toolName: "search",
+            assetIds: ["asset-1", "asset-2"],
+            signature: Data("secret-signature".utf8),
+            options: GenerationOptionsPayload(temperature: 0.5, maximumResponseTokens: 100),
+            responseFormatName: "Weather",
+            responseFormatSchemaJSON: #"{"secret":"format"}"#
+        )
+    }
+
+    @Test("metadataOnly strips entry payload content but keeps shape")
+    func metadataOnlyStripsEntryPayloadContent() async throws {
+        let inner: InMemoryRecorder = .inMemory
+        let recorder: any TranscriptRecorder = GatingRecorder(level: .metadataOnly, redact: nil, wrapping: inner)
+        let payload = richEntryPayload()
+        let partial = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .instructions,
+            text: "sensitive flattened body",
+            entry: payload
+        )
+        await recorder.append(partial)
+
+        let events = await inner.events
+        let event = try #require(events.first)
+        #expect(event.text == nil)
+
+        let entry = try #require(event.entry)
+        #expect(entry.contentRemoved == true)
+        #expect(entry.entryId == "entry-1")
+
+        let segments = try #require(entry.segments)
+        #expect(segments.count == 4)
+
+        guard case .text(let id, let content) = segments[0] else {
+            Issue.record("expected a text segment")
+            return
+        }
+        #expect(id == "seg-text")
+        #expect(content.isEmpty)
+
+        guard case .structure(let structureId, let schemaName, let contentJSON) = segments[1] else {
+            Issue.record("expected a structure segment")
+            return
+        }
+        #expect(structureId == "seg-structure")
+        #expect(schemaName == "Weather")
+        #expect(contentJSON.isEmpty)
+
+        guard case .attachment(let attachmentId, let label, let url) = segments[2] else {
+            Issue.record("expected an attachment segment")
+            return
+        }
+        #expect(attachmentId == "seg-attachment")
+        #expect(label == nil)
+        #expect(url == nil)
+
+        guard case .custom(let customId, let typeDiscriminator, let contentJSON, let description) = segments[3] else {
+            Issue.record("expected a custom segment")
+            return
+        }
+        #expect(customId == "seg-custom")
+        #expect(typeDiscriminator == "com.example.MySegment")
+        #expect(contentJSON.isEmpty)
+        #expect(description == nil)
+
+        let toolDefinitions = try #require(entry.toolDefinitions)
+        #expect(toolDefinitions.count == 1)
+        #expect(toolDefinitions[0].name == "search")
+        #expect(toolDefinitions[0].description.isEmpty)
+        #expect(toolDefinitions[0].parametersSchemaJSON.isEmpty)
+
+        let toolCalls = try #require(entry.toolCalls)
+        #expect(toolCalls.count == 1)
+        #expect(toolCalls[0].id == "call-1")
+        #expect(toolCalls[0].toolName == "search")
+        #expect(toolCalls[0].argumentsJSON.isEmpty)
+
+        #expect(entry.toolName == "search")
+        #expect(entry.assetIds?.count == 2)
+        #expect(entry.assetIds == ["", ""])
+        #expect(entry.signature == nil)
+        #expect(entry.options == payload.options)
+        #expect(entry.responseFormatName == "Weather")
+        #expect(entry.responseFormatSchemaJSON?.isEmpty == true)
+    }
+
+    @Test("full + redact hook transforms every textual content site in the entry payload")
+    func redactTransformsEntryPayloadContentSites() async throws {
+        let inner: InMemoryRecorder = .inMemory
+        let redact: @Sendable (String) -> String = { $0.replacingOccurrences(of: "secret", with: "***") }
+        let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: redact, wrapping: inner)
+        let payload = richEntryPayload()
+        let partial = TranscriptEvent.Partial(
+            routerId: .generate(),
+            sessionId: .generate(),
+            kind: .instructions,
+            text: "a secret flattened body",
+            entry: payload
+        )
+        await recorder.append(partial)
+
+        let events = await inner.events
+        let event = try #require(events.first)
+        #expect(event.text == "a *** flattened body")
+
+        let entry = try #require(event.entry)
+        // Full payloads are never stripped: contentRemoved stays false.
+        #expect(entry.contentRemoved == false)
+
+        let segments = try #require(entry.segments)
+        guard case .text(_, let content) = segments[0] else {
+            Issue.record("expected a text segment")
+            return
+        }
+        #expect(content == "a *** text segment")
+
+        guard case .structure(_, _, let contentJSON) = segments[1] else {
+            Issue.record("expected a structure segment")
+            return
+        }
+        #expect(contentJSON == #"{"***":"value"}"#)
+
+        guard case .attachment(_, let label, let url) = segments[2] else {
+            Issue.record("expected an attachment segment")
+            return
+        }
+        #expect(label == "a *** label")
+        // The attachment URL is not a textual-content site; it is untouched.
+        #expect(url == "file:///secret.png")
+
+        guard case .custom(_, _, let contentJSON, let description) = segments[3] else {
+            Issue.record("expected a custom segment")
+            return
+        }
+        #expect(contentJSON == #"{"***":"payload"}"#)
+        #expect(description == "a *** description")
+
+        let toolCalls = try #require(entry.toolCalls)
+        #expect(toolCalls[0].argumentsJSON == #"{"***":"args"}"#)
+
+        // Tool definitions, the response-format schema, and the reasoning
+        // signature are not textual-content sites the redact hook touches.
+        #expect(entry.toolDefinitions?.first?.description == "a secret tool description")
+        #expect(entry.responseFormatSchemaJSON == #"{"secret":"format"}"#)
+    }
+
+    @Test("metadataOnly with no entry payload still nils text and writes no entry content")
+    func metadataOnlyWithNilEntryPayload() async throws {
+        let inner: InMemoryRecorder = .inMemory
+        let recorder: any TranscriptRecorder = GatingRecorder(level: .metadataOnly, redact: nil, wrapping: inner)
+        await recorder.append(samplePartial(kind: .prompt, text: "sensitive body"))
+
+        let events = await inner.events
+        let event = try #require(events.first)
+        #expect(event.text == nil)
+        #expect(event.entry == nil)
+    }
+
     // MARK: - Wiring through the router (session + embed)
 
     @Test("metadataOnly wired through the router drops bodies on both session turns and embeddings")

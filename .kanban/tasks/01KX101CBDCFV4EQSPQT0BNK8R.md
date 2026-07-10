@@ -1,32 +1,27 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kx506f55kvv38p74cqhw8841
+  text: |-
+    Implemented via TDD.
+
+    - RED: added failing tests to Tests/FoundationModelsRouterTests/MergedAndRedactionTests.swift (`metadataOnlyStripsEntryPayloadContent`, `redactTransformsEntryPayloadContentSites`, `metadataOnlyWithNilEntryPayload`) exercising a rich `TranscriptEntryPayload` fixture (all 4 segment kinds, tool definitions, tool calls, assetIds, signature, options, response format). Confirmed they failed for the right reason (entry payload content untouched by the old `mapText`-only gate), not a compile error.
+    - GREEN:
+      - Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift: replaced `Partial.mapText(_:)` with `Partial.mapBody(_ transform: (String?, TranscriptEntryPayload?) -> (String?, TranscriptEntryPayload?))`, transforming `text` and `entry` together in one seam.
+      - Sources/FoundationModelsRouter/Recording/TranscriptEntryPayload.swift: added `strippingContent()`/`redacted(with:)` extensions on `TranscriptEntryPayload`, `SegmentPayload`, `ToolDefinitionPayload`, `ToolCallPayload`. `strippingContent()` empties every content-bearing field (segment content/contentJSON, custom description, tool-call argumentsJSON, tool-definition description/parametersSchemaJSON, responseFormatSchemaJSON, attachment label/url, reasoning signature) while preserving entryId, segment ids/case tags, custom typeDiscriminator, toolName(s), and array counts (assetIds blanked to same-length array of `""` to keep the count fact without the actual ids); sets `contentRemoved = true`. `redacted(with:)` applies the hook to text-segment content, structure/custom contentJSON (as opaque strings), custom description, and tool-call argumentsJSON, leaving tool definitions, response-format schema, reasoning signature, and attachment url untouched (per plan.md's textual-content-site list); leaves `contentRemoved` as-is.
+      - Sources/FoundationModelsRouter/Recording/GatingRecorder.swift: `metadataOnly` now calls `mapBody { _, entry in (nil, entry?.strippingContent()) }`; `full`+redact calls `mapBody { text, entry in (text.map(redact), entry?.redacted(with: redact)) }`. Updated the doc comment to describe payload gating and the "JSON redacted as opaque string" contract.
+      - Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift: replaced the old `mapText`-based test with two `mapBody` tests (untouched-fields pass-through, and text+entry transformed together).
+    - Verified: `swift build --build-tests` exit 0; `swift test` — 215/215 tests pass (26 suites), gated integration suite (8 tests) correctly skipped, 0 failures.
+    - Adversarial double-check (via really-done workflow): PASS — confirmed field-by-field coverage against the acceptance criteria, assetIds count-preservation, contentRemoved semantics in both directions, no leftover `mapText` references, and a fresh build+test run.
+
+    Leaving task in `doing`, green and ready for `/review`.
+  timestamp: 2026-07-10T03:12:33.957786+00:00
 depends_on:
 - 01KX0ZZ77H2DJAQJV4PW7DC1ZW
-position_column: todo
-position_ordinal: '8680'
+position_column: doing
+position_ordinal: '80'
 title: Gate and redact structured entry payloads in GatingRecorder
 ---
-## What
-
-The recording level and redact hook currently only touch the flat `text: String?` (`TranscriptEvent.Partial.mapText`, applied by `GatingRecorder` in Sources/FoundationModelsRouter/Recording/GatingRecorder.swift). With structured `entry` payloads, content now also lives in segments, tool-call arguments, and tool definitions — gating must cover all of it or `metadataOnly`/redaction silently leak content. **This task deliberately lands before the chokepoint starts emitting payloads** (the chokepoint task depends on this one), so there is never a window on main where structured content bypasses the gate.
-
-- Replace `Partial.mapText` (Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift) with a `mapBody(_:)` seam that transforms both `text` and the `entry` payload.
-- `RecordingLevel.metadataOnly`: nil out `text` AND strip payload content — text segment `content`, structure `contentJSON`, custom-segment `contentJSON` and `description`, tool-call `argumentsJSON`, tool-definition `description`/`parametersSchemaJSON`, response-format schema JSON, attachment `label`/`url`, reasoning `signature` — while keeping shape: `entryId`, segment ids and case tags, custom-segment `typeDiscriminator`, `toolName`s, `assetIDs` count, and per-kind counts. Stripping sets the payload's `contentRemoved = true` marker (schema task defines it) so reconstruction can *refuse* stripped payloads with a typed error instead of silently rebuilding empty entries. This preserves "shape without content" for GUI structure rendering, per plan.md "Honest fidelity scope".
-- `RecordingLevel.full` + redact hook: apply the hook to every textual content site — flattened `text`, text segment `content`, structure `contentJSON` (as an opaque string), custom-segment `contentJSON` (as an opaque string) and `description`, tool-call `argumentsJSON` (as an opaque string), toolOutput segment content, attachment `label`. The custom-segment content JSON gets the same treatment as every other text body — it is user-authored content, not metadata. Document that JSON-valued sites are redacted as whole strings (a hook that must keep JSON valid is the caller's responsibility, consistent with the existing "redact is applied verbatim" tests).
-- `RecordingLevel.off` behavior unchanged (drop everything).
-- Tests here fabricate `TranscriptEvent.Partial` values directly — no chokepoint involvement needed. Update Tests/FoundationModelsRouterTests/MergedAndRedactionTests.swift for the new sites.
-
-## Acceptance Criteria
-- [ ] `metadataOnly` events carry no content in `text` or any payload field (including custom-segment `contentJSON`/`description`), keep kinds/ids/tool names/discriminators/counts, and have `contentRemoved == true`
-- [ ] The redact hook transforms every textual site listed above at `full`, including custom-segment `contentJSON`; `full` payloads keep `contentRemoved == false`
-- [ ] `off` still writes nothing
-- [ ] `swift build` and `swift test` exit 0
-
-## Tests
-- [ ] Unit: `metadataOnly` on a fabricated event with segments + tool calls yields shape-only payload with `contentRemoved == true` (assert each stripped field is nil/empty and each kept field survives — including that a custom segment keeps `typeDiscriminator` but loses `contentJSON`)
-- [ ] Unit: redact hook replaces a secret appearing in a text segment, a structure contentJSON, a custom-segment contentJSON, and a tool-call argumentsJSON
-- [ ] Unit: existing text-only redaction tests still pass unchanged (v1-shape events without payloads)
-
-## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass.
+## What\n\nThe recording level and redact hook currently only touch the flat `text: String?` (`TranscriptEvent.Partial.mapText`, applied by `GatingRecorder` in Sources/FoundationModelsRouter/Recording/GatingRecorder.swift). With structured `entry` payloads, content now also lives in segments, tool-call arguments, and tool definitions — gating must cover all of it or `metadataOnly`/redaction silently leak content. **This task deliberately lands before the chokepoint starts emitting payloads** (the chokepoint task depends on this one), so there is never a window on main where structured content bypasses the gate.\n\n- Replace `Partial.mapText` (Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift) with a `mapBody(_:)` seam that transforms both `text` and the `entry` payload.\n- `RecordingLevel.metadataOnly`: nil out `text` AND strip payload content — text segment `content`, structure `contentJSON`, custom-segment `contentJSON` and `description`, tool-call `argumentsJSON`, tool-definition `description`/`parametersSchemaJSON`, response-format schema JSON, attachment `label`/`url`, reasoning `signature` — while keeping shape: `entryId`, segment ids and case tags, custom-segment `typeDiscriminator`, `toolName`s, `assetIDs` count, and per-kind counts. Stripping sets the payload's `contentRemoved = true` marker (schema task defines it) so reconstruction can *refuse* stripped payloads with a typed error instead of silently rebuilding empty entries. This preserves \"shape without content\" for GUI structure rendering, per plan.md \"Honest fidelity scope\".\n- `RecordingLevel.full` + redact hook: apply the hook to every textual content site — flattened `text`, text segment `content`, structure `contentJSON` (as an opaque string), custom-segment `contentJSON` (as an opaque string) and `description`, tool-call `argumentsJSON` (as an opaque string), toolOutput segment content, attachment `label`. The custom-segment content JSON gets the same treatment as every other text body — it is user-authored content, not metadata. Document that JSON-valued sites are redacted as whole strings (a hook that must keep JSON valid is the caller's responsibility, consistent with the existing \"redact is applied verbatim\" tests).\n- `RecordingLevel.off` behavior unchanged (drop everything).\n- Tests here fabricate `TranscriptEvent.Partial` values directly — no chokepoint involvement needed. Update Tests/FoundationModelsRouterTests/MergedAndRedactionTests.swift for the new sites.\n\n## Acceptance Criteria\n- [x] `metadataOnly` events carry no content in `text` or any payload field (including custom-segment `contentJSON`/`description`), keep kinds/ids/tool names/discriminators/counts, and have `contentRemoved == true`\n- [x] The redact hook transforms every textual site listed above at `full`, including custom-segment `contentJSON`; `full` payloads keep `contentRemoved == false`\n- [x] `off` still writes nothing\n- [x] `swift build` and `swift test` exit 0\n\n## Tests\n- [x] Unit: `metadataOnly` on a fabricated event with segments + tool calls yields shape-only payload with `contentRemoved == true` (assert each stripped field is nil/empty and each kept field survives — including that a custom segment keeps `typeDiscriminator` but loses `contentJSON`)\n- [x] Unit: redact hook replaces a secret appearing in a text segment, a structure contentJSON, a custom-segment contentJSON, and a tool-call argumentsJSON\n- [x] Unit: existing text-only redaction tests still pass unchanged (v1-shape events without payloads)\n\n## Workflow\n- Use `/tdd` — write failing tests first, then implement to make them pass.
