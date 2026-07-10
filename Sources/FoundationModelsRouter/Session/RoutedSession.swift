@@ -618,8 +618,7 @@ actor RoutedSessionActor: RoutedSession {
         let usageBefore = backend.usageTokenCounts()
         do {
             let response = try await body()
-            let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
-            _ = await recordTranscriptDelta(grammar: grammar, since: started, usage: usage)
+            _ = await finishTurn(grammar: grammar, since: started, usageBefore: usageBefore)
             return response
         } catch {
             // Whatever the SDK durably appended before failing is still diffed
@@ -627,8 +626,7 @@ actor RoutedSessionActor: RoutedSession {
             // (on the diff's own last `.response`-kind entry, if any) — a
             // post-generation failure can still leave the SDK having appended a
             // genuine `.response` entry before throwing.
-            let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
-            let diffIncludedResponse = await recordTranscriptDelta(grammar: grammar, since: started, usage: usage)
+            let (diffIncludedResponse, usage) = await finishTurn(grammar: grammar, since: started, usageBefore: usageBefore)
             // Only synthesize the router-only bodyless close when the SDK's own
             // diff did *not* already include a `.response`-kind entry — otherwise
             // this would double up two `.response` events for one turn, breaking
@@ -648,6 +646,34 @@ actor RoutedSessionActor: RoutedSession {
             }
             throw error
         }
+    }
+
+    /// Computes this turn's usage delta and records whatever the SDK's
+    /// transcript diff contains — the one place both of ``generate(grammar:_:)``'s
+    /// success and throwing exits go through, so the usage-delta computation
+    /// and the ``recordTranscriptDelta(grammar:since:usage:)`` call are made in
+    /// exactly one place rather than duplicated per branch.
+    ///
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force, forwarded to
+    ///     ``recordTranscriptDelta(grammar:since:usage:)``.
+    ///   - since: The turn's start instant, forwarded to
+    ///     ``recordTranscriptDelta(grammar:since:usage:)`` to stamp `ms`.
+    ///   - usageBefore: The pre-turn snapshot captured immediately before
+    ///     `body()` ran.
+    /// - Returns: Whether the diff included a `.response`-kind entry — the
+    ///   throwing path uses this to decide whether a synthetic bodyless close
+    ///   is still needed — and the turn's own usage delta (`nil` if the
+    ///   backend cannot report usage), which the throwing path stamps onto
+    ///   that synthetic close.
+    private func finishTurn(
+        grammar: Grammar?,
+        since: Date,
+        usageBefore: (input: Int, output: Int)?
+    ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?) {
+        let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
+        let diffIncludedResponse = await recordTranscriptDelta(grammar: grammar, since: since, usage: usage)
+        return (diffIncludedResponse, usage)
     }
 
     /// The per-turn token usage delta between two ``LanguageModelSessionBackend/usageTokenCounts()``
