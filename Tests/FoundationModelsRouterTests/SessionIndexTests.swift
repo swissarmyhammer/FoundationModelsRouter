@@ -490,6 +490,11 @@ struct SessionIndexTests {
 
         let writer = SessionIndexWriter(directory: dir)
         let sessionId = ULID.generate()
+        // The first and duplicate records carry distinct `model`/`createdAt`
+        // values (not just distinct `path`s) so the assertions below prove
+        // dedup keeps the *first record's* fields intact through the
+        // JSON round-trip, not merely its `path`.
+        let firstCreatedAt = Date(timeIntervalSince1970: 1_700_000_000)
         let first = SessionIndexRecord(
             sessionId: sessionId,
             parentId: nil,
@@ -499,7 +504,7 @@ struct SessionIndexTests {
             model: "org/model-a",
             instructions: nil,
             grammar: nil,
-            createdAt: Date()
+            createdAt: firstCreatedAt
         )
         let duplicate = SessionIndexRecord(
             sessionId: sessionId,
@@ -507,10 +512,10 @@ struct SessionIndexTests {
             path: "second",
             forkedAtEntryCount: 0,
             slot: .standard,
-            model: "org/model-a",
+            model: "org/model-b",
             instructions: nil,
             grammar: nil,
-            createdAt: Date()
+            createdAt: Date(timeIntervalSince1970: 1_700_000_500)
         )
         await writer.append(first)
         await writer.append(duplicate)
@@ -518,5 +523,7 @@ struct SessionIndexTests {
         let decoded = try SessionIndexWriter.read(under: dir)
         #expect(decoded.count == 1)
         #expect(decoded.first?.path == "first")
+        #expect(decoded.first?.model == "org/model-a")
+        #expect(decoded.first?.createdAt == firstCreatedAt)
     }
 }

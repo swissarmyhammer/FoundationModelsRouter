@@ -2,10 +2,7 @@ import Foundation
 import os
 
 /// The logger best-effort sinks report dropped events to.
-private let recordingLogger = Logger(
-    subsystem: moduleName,
-    category: "Recording"
-)
+private let recordingLogger = makeModuleLogger(category: "Recording")
 
 /// A ``TranscriptRecorder`` that appends each event as one JSON object per line
 /// to a `transcript.jsonl`, routing each event to a per-session directory while

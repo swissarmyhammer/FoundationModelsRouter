@@ -397,10 +397,7 @@ public struct RepoMetadataReader: Sendable {
 
 /// The logger the cache reports decode failures to, when a cached entry falls
 /// back to a clean re-fetch instead of throwing.
-private let repoMetadataCacheLogger = Logger(
-    subsystem: moduleName,
-    category: "RepoMetadataCache"
-)
+private let repoMetadataCacheLogger = makeModuleLogger(category: "RepoMetadataCache")
 
 /// A disposable on-disk cache of parsed ``RepoMetadata``, keyed by
 /// `(repo, revision)`.

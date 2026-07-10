@@ -2,10 +2,20 @@ import Foundation
 import os
 
 /// The logger the router reports best-effort manifest write failures to.
-private let manifestLogger = Logger(
-    subsystem: moduleName,
-    category: "Manifest"
-)
+private let manifestLogger = makeModuleLogger(category: "Manifest")
+
+/// The default in-flight fork-session ceiling per resolved profile.
+///
+/// Shared between ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``
+/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:recordingsRoot:maxConcurrentForks:sessionIndexWriter:)``'s
+/// own default, so a ``RoutedModel`` constructed directly (outside a
+/// ``Router``, e.g. in tests) admits the same ceiling a router-vended one
+/// would.
+///
+/// `public` (not `internal`) because both initializers that default to it are
+/// `public`: a default argument expression must be at least as visible as the
+/// declaration it defaults on, since it is evaluated at every call site.
+public let defaultMaxConcurrentForks = 4
 
 /// How much of a session's activity is recorded.
 ///
@@ -137,7 +147,8 @@ public actor Router {
     ///   - id: The recording root id; pass one in to continue a prior recording
     ///     root. Defaults to a fresh ULID.
     ///   - headroomReserve: Bytes held out of the budget. Defaults to 4 GB.
-    ///   - maxConcurrentForks: In-flight fork sessions per profile. Defaults to 4.
+    ///   - maxConcurrentForks: In-flight fork sessions per profile. Defaults to
+    ///     ``defaultMaxConcurrentForks``.
     ///   - cacheDir: The disposable cache directory. Defaults to the user caches
     ///     directory under `FoundationModelsRouter`.
     ///   - recordingsDir: The durable transcripts root, or `nil`.
@@ -156,7 +167,7 @@ public actor Router {
     public init(
         id: ULID = .generate(),
         headroomReserve: Int64 = 4 << 30,
-        maxConcurrentForks: Int = 4,
+        maxConcurrentForks: Int = defaultMaxConcurrentForks,
         cacheDir: URL? = nil,
         recordingsDir: URL? = nil,
         recorder: (any TranscriptRecorder)? = nil,

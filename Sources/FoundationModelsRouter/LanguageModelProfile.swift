@@ -135,7 +135,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - maxConcurrentForks: The in-flight fork ceiling this model's
     ///     ``forkAdmissionGate`` admits (the router's `maxConcurrentForks`).
     ///     Consumed only by the generation-session fork surface; the embedding
-    ///     handle never forks.
+    ///     handle never forks. Defaults to ``defaultMaxConcurrentForks``.
     ///   - sessionIndexWriter: The session index writer a vended generation
     ///     session appends its creation/fork record through, or `nil`.
     public init(
@@ -147,7 +147,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         routerId: ULID,
         recorder: any TranscriptRecorder,
         recordingsRoot: URL? = nil,
-        maxConcurrentForks: Int = 4,
+        maxConcurrentForks: Int = defaultMaxConcurrentForks,
         sessionIndexWriter: SessionIndexWriter? = nil
     ) {
         self.slot = slot

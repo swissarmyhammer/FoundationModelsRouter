@@ -4,10 +4,7 @@ import os
 
 /// The logger ``RoutedSessionActor`` reports a defensively-clamped transcript
 /// shrink to (see ``RoutedSessionActor/recordTranscriptDelta(grammar:since:)``).
-private let sessionRecordingLogger = Logger(
-    subsystem: moduleName,
-    category: "Recording"
-)
+private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.

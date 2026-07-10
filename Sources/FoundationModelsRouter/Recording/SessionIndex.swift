@@ -4,10 +4,12 @@ import os
 /// The logger ``SessionIndexWriter`` reports a dropped record to, mirroring
 /// ``JSONLRecorder``'s log-and-drop failure policy (see
 /// Sources/FoundationModelsRouter/Recording/Sinks.swift).
-private let sessionIndexLogger = Logger(
-    subsystem: moduleName,
-    category: "SessionIndex"
-)
+private let sessionIndexLogger = makeModuleLogger(category: "SessionIndex")
+
+/// The session index's filename under a router root
+/// (`recordings/<routerId>/sessions.jsonl`), shared by the append and read
+/// paths so the name is kept in exactly one place.
+private let sessionIndexFileName = "sessions.jsonl"
 
 /// One appended record in a router's session index — the fork hierarchy made
 /// first-class, queryable data instead of something implicit in directory
@@ -142,7 +144,7 @@ public actor SessionIndexWriter {
     private func handleForAppending() throws -> FileHandle {
         if let handle { return handle }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileURL = directory.appendingPathComponent("sessions.jsonl", isDirectory: false)
+        let fileURL = directory.appendingPathComponent(sessionIndexFileName, isDirectory: false)
         if !FileManager.default.fileExists(atPath: fileURL.path) {
             FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         }
@@ -166,7 +168,7 @@ public actor SessionIndexWriter {
     ///   array when no `sessions.jsonl` exists yet.
     /// - Throws: Any error decoding an existing file's contents.
     public static func read(under directory: URL) throws -> [SessionIndexRecord] {
-        let fileURL = directory.appendingPathComponent("sessions.jsonl", isDirectory: false)
+        let fileURL = directory.appendingPathComponent(sessionIndexFileName, isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         let text = try String(contentsOf: fileURL, encoding: .utf8)
         let decoder = JSONDecoder()
