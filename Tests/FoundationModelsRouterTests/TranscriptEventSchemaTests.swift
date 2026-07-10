@@ -162,7 +162,7 @@ struct TranscriptEventSchemaTests {
         let payload = TranscriptEntryPayload(
             entryId: "response-1",
             segments: [.text(id: "s1", content: "it's sunny and 72F")],
-            assetIDs: ["asset-1", "asset-2"]
+            assetIds: ["asset-1", "asset-2"]
         )
         try assertRoundTrips(payload)
     }
@@ -200,7 +200,7 @@ struct TranscriptEventSchemaTests {
             ],
             toolCalls: [ToolCallPayload(id: "c1", toolName: "t", argumentsJSON: "{}")],
             toolName: "t",
-            assetIDs: ["a1"],
+            assetIds: ["a1"],
             signature: Data([0x01, 0x02, 0x03]),
             options: GenerationOptionsPayload(temperature: 1.0, maximumResponseTokens: 100),
             responseFormatName: "Fmt",

@@ -47,7 +47,7 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     public let toolName: String?
 
     /// The asset ids attached to a `.response` entry.
-    public let assetIDs: [String]?
+    public let assetIds: [String]?
 
     /// The opaque reasoning signature carried by a `.reasoning` entry, when
     /// the model provided one.
@@ -77,7 +77,7 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     ///     or `nil`.
     ///   - toolCalls: The tool calls on a `.toolCalls` entry, or `nil`.
     ///   - toolName: The tool name on a `.toolOutput` entry, or `nil`.
-    ///   - assetIDs: The asset ids on a `.response` entry, or `nil`.
+    ///   - assetIds: The asset ids on a `.response` entry, or `nil`.
     ///   - signature: The reasoning signature on a `.reasoning` entry, or `nil`.
     ///   - options: The introspectable generation options on a `.prompt`
     ///     entry, or `nil`.
@@ -92,7 +92,7 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
         toolDefinitions: [ToolDefinitionPayload]? = nil,
         toolCalls: [ToolCallPayload]? = nil,
         toolName: String? = nil,
-        assetIDs: [String]? = nil,
+        assetIds: [String]? = nil,
         signature: Data? = nil,
         options: GenerationOptionsPayload? = nil,
         responseFormatName: String? = nil,
@@ -104,7 +104,7 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
         self.toolDefinitions = toolDefinitions
         self.toolCalls = toolCalls
         self.toolName = toolName
-        self.assetIDs = assetIDs
+        self.assetIds = assetIds
         self.signature = signature
         self.options = options
         self.responseFormatName = responseFormatName
@@ -118,7 +118,7 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
         case toolDefinitions
         case toolCalls
         case toolName
-        case assetIDs
+        case assetIds
         case signature
         case options
         case responseFormatName
@@ -136,7 +136,7 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
         toolDefinitions = try container.decodeIfPresent([ToolDefinitionPayload].self, forKey: .toolDefinitions)
         toolCalls = try container.decodeIfPresent([ToolCallPayload].self, forKey: .toolCalls)
         toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
-        assetIDs = try container.decodeIfPresent([String].self, forKey: .assetIDs)
+        assetIds = try container.decodeIfPresent([String].self, forKey: .assetIds)
         signature = try container.decodeIfPresent(Data.self, forKey: .signature)
         options = try container.decodeIfPresent(GenerationOptionsPayload.self, forKey: .options)
         responseFormatName = try container.decodeIfPresent(String.self, forKey: .responseFormatName)
