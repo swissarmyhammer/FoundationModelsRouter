@@ -1,12 +1,31 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kx6p27t9prxr0f7gyw4jtcbk
+  text: |-
+    Implemented via TDD.
+
+    **New source file**: `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift`
+    - `TranscriptReconstructionError` (typed, `LocalizedError`): `legacyEventMissingPayload(session:seq:)`, `contentRemoved(session:seq:)`, `unregisteredCustomSegmentType(session:seq:discriminator:)`, plus `entryReconstructionFailed(session:seq:underlying:)` for any other mapper error (missingRequiredField/invalidJSON), so every reconstruction failure carries session+seq context.
+    - `TranscriptTree.effectiveTranscript(forSession:registry:) throws -> Transcript` — maps `effectiveEntryEvents(forSession:)` through `TranscriptEntryMapper.entry(from:kind:registry:)`, wraps mapper errors with session/seq, and returns `Transcript(entries:)`.
+    - Private `isFailedTurnBodylessClose(_:)` recognizes and skips the router-only bodyless `.response` close a failed turn's throw path emits (`entry == nil`, `text == nil`, `ms != nil`), with a long doc comment walking through why the shape is unambiguous vs. a genuine v1 legacy line (v1's bracket wrote `.prompt` unconditionally before ever calling the backend, so a bare orphan `.response` can never be genuine v1 — verified against git history at 06f8d16/889ab6a).
+
+    **New tests**: `Tests/FoundationModelsRouterTests/TranscriptReconstructionTests.swift` (9 unit tests) + `Tests/FoundationModelsRouterIntegrationTests/TranscriptReconstructionIntegrationTests.swift` (1 gated test behind `FM_ROUTER_INTEGRATION_TESTS`, compiles, not run here — no GPU/network in this environment). Covers: root round-trip vs. stub backend entries, 3-level fork tree effective-transcript-per-node, registered vs. unregistered custom segment, metadataOnly `contentRemoved` error, v1-legacy `missingPayload` error, failed-turn bodyless close skip, non-refusal mapper error wrapping, and two regression tests pinning down the v1-vs-synthetic-close disambiguation (a v1 prompt+response pair throws on the prompt; a v2 first-turn-total-failure with zero backend entries reconstructs to an empty Transcript).
+
+    **Process note**: went through two rounds of adversarial double-check via the `really-done` skill. Round 1 found a real ambiguity in the bodyless-close skip heuristic (a genuine v1 `.response` recorded at `metadataOnly` decodes identically to the v2 synthetic close) plus uncontextualized mapper errors — both fixed. Round 2's re-check found my first fix's reasoning had a hole (didn't account for a v2 session whose very first turn fails before the backend appends anything at all) — fixed with a corrected two-part argument, backed by a new regression test and doc comment, and confirmed via git history that v1's bracket always wrote `.prompt` unconditionally (so the ambiguous shape can never arise from genuine v1). Round 3 re-check: PASS, with the reviewer independently re-deriving the argument from source rather than trusting the summary, and also checking a third scenario (a later turn failing after an earlier turn succeeded) that wasn't explicitly walked through in the docs — confirmed also safe.
+
+    Verification (fresh, this session): `swift build --build-tests` exit 0. `swift test`: 294 tests in 33 suites pass, 12 gated integration tests correctly skipped (no `FM_ROUTER_INTEGRATION_TESTS`), 0 failures. `mcp__sah__diagnostics check working`: 0 errors, 0 warnings.
+
+    Leaving in `doing` for `/review` per the implement skill workflow.
+  timestamp: 2026-07-10T18:53:58.473009+00:00
 depends_on:
 - 01KX0ZZQF8ZHY6R2867RQ92KSK
 - 01KX101V8CMHHS06NE3P7NQJXZ
 - 01KX101CBDCFV4EQSPQT0BNK8R
-position_column: todo
-position_ordinal: '8880'
+position_column: doing
+position_ordinal: '80'
 title: Reconstruct FoundationModels.Transcript from recorded events
 ---
 ## What

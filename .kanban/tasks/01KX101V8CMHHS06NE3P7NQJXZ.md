@@ -30,8 +30,8 @@ depends_on:
 - 01KX0ZZ77H2DJAQJV4PW7DC1ZW
 - 01KX100VJZ64Q7M3E5VQB9P7GS
 - 01KX1004E0SNV1AWY9SAJA228X
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: b680
 title: 'TranscriptTree: session-id lookup and hierarchy-aware retrieval'
 ---
 ## What
