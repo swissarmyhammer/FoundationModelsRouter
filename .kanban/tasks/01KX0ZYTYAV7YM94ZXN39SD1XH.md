@@ -28,8 +28,8 @@ comments:
 
     Leaving task in `doing` per /implement workflow — ready for /review.
   timestamp: 2026-07-10T00:06:11.210669+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: af80
 title: Expose real Transcript state through LanguageModelSessionBackend
 ---
 ## What

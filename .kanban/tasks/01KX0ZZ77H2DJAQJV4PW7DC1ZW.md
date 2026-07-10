@@ -1,8 +1,25 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8280'
+comments:
+- actor: claude-code
+  id: 01kx4r2w5brv1e76rqgvxv6rv0
+  text: |-
+    Implemented via TDD.
+
+    **Changes:**
+    - `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift`: added `Kind` cases `instructions`, `toolCalls`, `reasoning`; kept `toolCall` decodable (doc-marked deprecated, no longer written) plus `session`/`prompt`/`response`/`toolOutput`/`embedding`. Added `entry: TranscriptEntryPayload?` (default `nil`) to both `TranscriptEvent` and `TranscriptEvent.Partial`, threaded through `Partial.mapText` (passed through unchanged — gating `entry`'s own content is explicitly a downstream task) and `Partial.stamped(seq:ts:)`.
+    - New `Sources/FoundationModelsRouter/Recording/TranscriptEntryPayload.swift`: `TranscriptEntryPayload` (Codable/Sendable/Equatable) with `entryId`, `contentRemoved` (custom `init(from:)` defaults to `false` when absent, `encode(to:)` left to synthesis), `segments: [SegmentPayload]?`, `toolDefinitions`, `toolCalls`, `toolName`, `assetIDs`, `signature: Data?`, `options: GenerationOptionsPayload?`, `responseFormatName`, `responseFormatSchemaJSON`. `SegmentPayload` enum with hand-written Codable (`type` discriminator) for `.text`, `.structure(schemaName: non-optional)`, `.attachment(label/url optional)`, `.custom(typeDiscriminator/contentJSON/description optional)`. Plus small `ToolDefinitionPayload`, `ToolCallPayload`, `GenerationOptionsPayload` structs.
+    - New `Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift`: 25 tests — new Kind round-trips, legacy `toolCall` decode, v1-no-`entry`-field decode (`entry == nil`), `entry` threading through `mapText`/`stamped`, `contentRemoved` default-false/true round trips, per-entry-kind payload round trips (all six kinds), all four segment shapes incl. nil url/description, a kitchen-sink all-fields round trip, two negative-path decode tests (missing/unknown segment `type` discriminator throws), and `MergedTranscript.merged(under:)` over a directory mixing a hand-written v1 line and a real v2-encoded line.
+
+    **Scope respected:** no mapper (`Transcript.Entry` <-> `TranscriptEntryPayload`), no `CustomSegmentRegistry`, no `RoutedSession` recording changes — confirmed no production `switch` over `TranscriptEvent.Kind` exists anywhere, and `RoutedSession.makePartialEvent`/`RoutedEmbedder` still only stamp the pre-existing kinds with `entry` defaulting to `nil`.
+
+    **Verification:** `swift build` exit 0, `swift build --build-tests` exit 0, `swift test` — 211/211 unit tests pass (209 pre-existing + new schema suite grew from 23 to 25 tests after adding two negative-path decode tests), gated integration suite correctly skipped (no `FM_ROUTER_INTEGRATION_TESTS`). Ran the `double-check` adversarial review (via `really-done`): initial verdict REVISE with one low-severity, non-blocking finding (no negative-path test for malformed `SegmentPayload` JSON) — fixed by adding the two negative-path tests above; re-verified green.
+
+    Leaving in `doing` for `/review`.
+  timestamp: 2026-07-10T00:50:47.595823+00:00
+position_column: doing
+position_ordinal: '80'
 title: Entry-shaped TranscriptEvent schema v2 with structured payloads
 ---
 ## What
