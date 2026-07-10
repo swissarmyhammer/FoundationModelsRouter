@@ -218,6 +218,15 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
         }
     }
 
+    /// Encodes a segment by hand, writing a `type` discriminator alongside
+    /// each case's associated values.
+    ///
+    /// Synthesized `Codable` can't produce this shape: Swift's compiler-
+    /// generated enum encoding nests each case's payload under a single key
+    /// named after the case (e.g. `{"text": {...}}`), but this format needs a
+    /// flat `type` field plus sibling keys so on-disk JSON stays uniform and
+    /// human-inspectable across all four segment kinds. This mirrors
+    /// ``init(from:)``, which decodes by switching on that same `type` key.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
