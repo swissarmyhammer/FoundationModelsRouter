@@ -286,6 +286,23 @@ struct SessionChokepointTests {
         #expect(events.allSatisfy { $0.sessionId == session.id })
         #expect(events.allSatisfy { $0.slot == .standard })
         #expect(events.allSatisfy { $0.model == profile.standard.chosen })
+
+        // The open/close events are no longer hand-built from the prompt/response
+        // strings — they are the real `Transcript.Entry` values the backend
+        // accumulated, mapped through `TranscriptEntryMapper`, each carrying its
+        // structural `entry` payload and matching flattened `text`.
+        let promptEvent = try #require(events.first { $0.kind == .prompt })
+        #expect(promptEvent.entry != nil)
+        #expect(promptEvent.text == "hello")
+        let responseEvent = try #require(events.first { $0.kind == .response })
+        #expect(responseEvent.entry != nil)
+        #expect(responseEvent.text == Self.cannedText)
+        // `ms` lands on the turn's final `.response`-kind entry event, not the
+        // `.prompt` entry that preceded it.
+        #expect(promptEvent.ms == nil)
+        #expect(responseEvent.ms != nil)
+        // Token metering is a separate follow-up task, not in scope here.
+        #expect(events.allSatisfy { $0.tokensIn == nil && $0.tokensOut == nil })
     }
 
     @Test("streamResponse emits exactly one open + one close event around the stream")
@@ -310,6 +327,13 @@ struct SessionChokepointTests {
         // A first-line `session` meta event precedes the turn's open + close.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // No per-chunk events — the snapshot-diff runs once, after the chunk
+        // loop completes, exactly like the non-streaming path.
+        let responseEvent = try #require(events.first { $0.kind == .response })
+        #expect(responseEvent.text == Self.cannedText)
+        #expect(responseEvent.entry != nil)
+        #expect(responseEvent.ms != nil)
     }
 
     @Test("the chokepoint emits a close event even when the body throws")
@@ -333,6 +357,22 @@ struct SessionChokepointTests {
         // which is still recorded on the throwing path.
         #expect(events.count == 3)
         #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // The `.prompt` event is a genuine SDK-retained entry: the stub backend
+        // appends its `.prompt` entry before throwing, so the transcript diff
+        // still finds and persists it, carrying its structural payload and text.
+        let promptEvent = try #require(events.first { $0.kind == .prompt })
+        #expect(promptEvent.entry != nil)
+        #expect(promptEvent.text == "hello")
+        #expect(promptEvent.ms == nil)
+
+        // The `.response` close is the router-only synthetic trace every failed
+        // turn leaves — bodyless (no `entry`, no `text`) but carrying `ms`, since
+        // the stub never appended a real `.response` entry when it threw.
+        let responseEvent = try #require(events.first { $0.kind == .response })
+        #expect(responseEvent.entry == nil)
+        #expect(responseEvent.text == nil)
+        #expect(responseEvent.ms != nil)
     }
 
     // MARK: - Profile retention

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -188,6 +189,136 @@ struct LanguageModelSessionBackendIntegrationTests {
         let countAfterSecondTurn = backend.transcriptEntries().count
         #expect(countAfterSecondTurn == backend.session.transcript.count)
         #expect(countAfterSecondTurn > countAfterFirstTurn)
+    }
+
+    // MARK: - Chokepoint fidelity: recorded entry kinds match the real transcript
+
+    /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
+    /// `.embedding` slot the ``LanguageModelProfile`` this test builds must
+    /// still carry — never exercised here, only present to satisfy the type.
+    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
+        let dimension = 1
+        func embed(texts: [String]) async throws -> [[Float]] { [] }
+    }
+
+    /// Task qb9p7gs's core acceptance criterion, proved against a real model:
+    /// after one live turn, what ``RoutedSessionActor``'s snapshot-diff
+    /// persisted matches — kind for kind, in order — what the live
+    /// `LanguageModelSession`'s own `transcript` actually accumulated.
+    ///
+    /// Bypasses ``Router/resolve(_:reporting:)`` (which would need a real
+    /// `.flash`/`.embedding` download too) and instead builds a
+    /// ``LanguageModelProfile``/``RoutedSessionActor`` directly from the
+    /// already-loaded tiny model's container, via the same `internal`
+    /// initializers production code uses — the same technique this file's
+    /// other tests use to reach ``MLXFoundationModelsSessionBackend`` directly,
+    /// extended one level up to the chokepoint itself.
+    @Test("recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
+    func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
+        let container = try await makeContainer()
+        let backend = try #require(
+            container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
+        )
+
+        let recordingsDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LanguageModelSessionBackendTests-\(UUID().uuidString)", isDirectory: true)
+        let cacheDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LanguageModelSessionBackendTests-cache-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: recordingsDir)
+            try? FileManager.default.removeItem(at: cacheDir)
+        }
+
+        // `Router.recorder` is actor-isolated; constructing the recorder
+        // directly and handing the same instance to both the router and every
+        // `RoutedModel`/`RoutedSessionActor` below avoids hopping the actor
+        // repeatedly and keeps every append going through one sink.
+        let recorder = JSONLRecorder(directory: recordingsDir)
+        let router = Router(cacheDir: cacheDir, recorder: recorder)
+
+        func noopResolution(_ slot: ModelSlot) -> SlotResolution {
+            SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: sessionBackendTinyModel, considered: [])
+        }
+        let standard = RoutedLLM(
+            slot: .standard,
+            chosen: sessionBackendTinyModel,
+            footprintBytes: 0,
+            resolution: noopResolution(.standard),
+            container: container,
+            routerId: router.id,
+            recorder: recorder,
+            recordingsRoot: recordingsDir
+        )
+        let flash = RoutedLLM(
+            slot: .flash,
+            chosen: sessionBackendTinyModel,
+            footprintBytes: 0,
+            resolution: noopResolution(.flash),
+            container: container,
+            routerId: router.id,
+            recorder: recorder,
+            recordingsRoot: recordingsDir
+        )
+        let embedding = RoutedEmbedder(
+            slot: .embedding,
+            chosen: sessionBackendTinyModel,
+            footprintBytes: 0,
+            resolution: noopResolution(.embedding),
+            container: UnusedEmbeddingContainer(),
+            routerId: router.id,
+            recorder: recorder,
+            recordingsRoot: recordingsDir
+        )
+        let profile = LanguageModelProfile(
+            definitionName: "test",
+            standard: standard,
+            flash: flash,
+            embedding: embedding,
+            router: router,
+            residencyToken: .generate()
+        )
+
+        let sessionId = ULID.generate()
+        let recordingDirectory = recordingsDir
+            .appendingPathComponent(router.id.description, isDirectory: true)
+            .appendingPathComponent(sessionId.description, isDirectory: true)
+
+        let session = RoutedSessionActor(
+            profile: profile,
+            routerId: router.id,
+            id: sessionId,
+            parentId: nil,
+            recordingDirectory: recordingDirectory,
+            workingDirectory: recordingDirectory,
+            backend: backend,
+            slot: .standard,
+            model: sessionBackendTinyModel,
+            recorder: recorder,
+            instructions: nil,
+            grammar: nil,
+            serialGate: standard.serialGate,
+            forkAdmissionGate: standard.forkAdmissionGate,
+            holdsAdmissionPermit: false,
+            persistedEntryCount: 0
+        )
+
+        _ = try await session.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+
+        let fileURL = recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+        let text = try String(contentsOf: fileURL, encoding: .utf8)
+        let decoder = JSONDecoder()
+        let recorded = try text.split(separator: "\n").map {
+            try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
+        }
+
+        // The `.session` meta line is router-only and never enters Apple's own
+        // transcript; every other recorded kind must match, in order, the kind
+        // of the corresponding real `Transcript.Entry` the live session
+        // actually accumulated — the whole point of snapshot-diff persistence.
+        let recordedEntryKinds = recorded.filter { $0.kind != .session }.map(\.kind)
+        let liveEntryKinds = backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
+        #expect(recordedEntryKinds == liveEntryKinds)
+        #expect(!recordedEntryKinds.isEmpty)
     }
 
     // MARK: - KV cache reuse across turns (the hard proof)

@@ -1,12 +1,29 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kx5h9dd1d84m9ntk7e5r88ta
+  text: |-
+    Implemented. Production diff is entirely in Sources/FoundationModelsRouter/Session/RoutedSession.swift (plus a one-line persistedEntryCount:0 in RoutedLLM.swift's root-session construction):
+
+    - Added `persistedEntryCount: Int` actor state, threaded through the init (new required param, no default) and set to 0 for root sessions (RoutedLLM.swift) / captured as `backend.transcriptEntries().count` inside the existing serial-gate hold in `fork(workingDirectory:)`, immediately before `makeFork()`, so the read and the fork snapshot can't race.
+    - Replaced the hand-built `.prompt`-open/`.response`-close events in `generate(grammar:_:)` with `recordTranscriptDelta(grammar:since:)`: reads `backend.transcriptEntries()`, clamps defensively via `entries[min(persistedEntryCount, entries.count)...]` (never a bare `entries[persistedEntryCount...]`), detects shrink (`entries.count < persistedEntryCount`) and on shrink logs a warning, records nothing, and resets the baseline. Otherwise maps every new entry through `TranscriptEntryMapper.event(from:)` and appends one event per entry (entry payload + flattened text; tokensIn/tokensOut stay nil), stamping `ms` only on the diff's last `.response`-kind event.
+    - Streaming (`streamGenerating`) reuses the same `generate` chokepoint, so the diff runs once after the chunk loop completes — no per-chunk events.
+    - Throw path: `recordTranscriptDelta` runs with `since: started` on both success and throw; the synthetic bodyless `.response` close is only appended when the diff did *not* already include a `.response`-kind entry, so a turn that fails after the SDK already durably appended a real `.response` (e.g. a post-generation validation/guardrail failure) never gets two `.response` events for one turn.
+
+    Test migration: TranscriptNestingTests.swift gained an instructed-session test proving `.instructions` now appears in the entry-derived sequence (previously silently dropped by the hand-built bracket). SessionChokepointTests.swift's three chokepoint tests gained entry/text/ms assertions. New file TranscriptFidelityTests.swift covers: two-turn entry order+payload, fork-baseline delta (child file has only its own turns, no parent/child leakage either direction), streaming-matches-non-streaming, the shrink-clamp (a `VariableTranscriptBackend` whose `entries` a test drives directly, forcing a mid-session shrink — proven not to crash and to recover cleanly next turn), and the duplicate-`.response` regression the adversarial review caught (see below). Gated integration test added to LanguageModelSessionBackendTests.swift comparing recorded entry kinds to the real `session.transcript` kinds one-for-one against a live tiny model (built by constructing `RoutedSessionActor`/`LanguageModelProfile` directly via their internal/public initializers, bypassing `Router.resolve()`) — could not be executed in this environment (no network/GPU) but builds clean; gated behind `FM_ROUTER_INTEGRATION_TESTS`.
+
+    Adversarial double-check (via really-done) caught one real bug on the first pass: the throwing path unconditionally appended a synthetic bodyless `.response` close even when the SDK's own diff already contained a real `.response` entry, producing two `.response` events for one failed turn. Fixed by having `recordTranscriptDelta` return whether it persisted a `.response`-kind entry this call, and only synthesizing the close when it didn't. Added a regression test (`throwingTurnWithRealResponseEntryRecordsExactlyOneResponseEvent`) that fails against the pre-fix code (would see 4 events instead of 3). Also fixed a stale class-level doc comment describing the old "exactly one open and one close" bracket invariant. Re-verified: build + build-tests + full test suite green (253/253 unit tests, gated suites correctly skipped).
+
+    swift build: exit 0. swift build --build-tests: exit 0. swift test: 253 tests in 28 suites passed + 9 gated tests skipped (0 failures).
+  timestamp: 2026-07-10T08:11:16.257925+00:00
 depends_on:
 - 01KX0ZYTYAV7YM94ZXN39SD1XH
 - 01KX0ZZQF8ZHY6R2867RQ92KSK
 - 01KX101CBDCFV4EQSPQT0BNK8R
-position_column: todo
-position_ordinal: '8580'
+position_column: doing
+position_ordinal: '80'
 title: 'Snapshot-diff persistence: chokepoint records real Transcript entries'
 ---
 ## What

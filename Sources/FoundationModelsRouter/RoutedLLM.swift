@@ -114,7 +114,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // fork-admission permit.
             serialGate: serialGate,
             forkAdmissionGate: forkAdmissionGate,
-            holdsAdmissionPermit: false
+            holdsAdmissionPermit: false,
+            // A root session starts with nothing persisted: the first turn's
+            // whole transcript diff (including any leading `.instructions`
+            // entry) is new.
+            persistedEntryCount: 0
         )
     }
 }

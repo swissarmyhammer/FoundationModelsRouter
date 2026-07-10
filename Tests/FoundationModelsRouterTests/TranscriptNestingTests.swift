@@ -19,11 +19,17 @@ struct TranscriptNestingTests {
     // MARK: - Stub containers
 
     /// A stand-in for a loaded LLM container that returns canned text, no MLX.
+    ///
+    /// Forwards `instructions` into the backend's synthetic transcript when
+    /// `forwardInstructions` is set, so a test can model a session whose SDK
+    /// transcript opens with a leading `.instructions` entry the way a real
+    /// `LanguageModelSession` given instructions would.
     private struct CannedLLMContainer: LoadedLLMContainer {
         let text: String
+        var forwardInstructions = false
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: text)
+            StubSessionBackend(responseText: text, instructions: forwardInstructions ? instructions : nil)
         }
     }
 
@@ -52,6 +58,7 @@ struct TranscriptNestingTests {
     private struct StubModelLoader: ModelLoader {
         let dimension: Int
         let text: String
+        var forwardInstructions = false
 
         func loadLLM(
             ref: ModelRef,
@@ -60,7 +67,7 @@ struct TranscriptNestingTests {
             reporting: @escaping @Sendable (DownloadProgress) -> Void
         ) async throws -> any LoadedLLMContainer {
             reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return CannedLLMContainer(text: text)
+            return CannedLLMContainer(text: text, forwardInstructions: forwardInstructions)
         }
 
         func loadEmbedder(
@@ -117,10 +124,16 @@ struct TranscriptNestingTests {
 
     /// Builds a router wired with the stubs, an explicit recorder, and a durable
     /// recordings root (so vended sessions nest their transcripts under it).
+    ///
+    /// - Parameter forwardInstructions: When `true`, a vended session's
+    ///   instructions flow into its ``StubSessionBackend``'s synthetic
+    ///   transcript as a leading `.instructions` entry, modeling an
+    ///   instructed real `LanguageModelSession`.
     private static func makeRouter(
         recorder: any TranscriptRecorder,
         cacheDir: URL,
-        recordingsDir: URL
+        recordingsDir: URL,
+        forwardInstructions: Bool = false
     ) -> Router {
         Router(
             cacheDir: cacheDir,
@@ -128,7 +141,7 @@ struct TranscriptNestingTests {
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(dimension: stubDimension, text: cannedText)
+            loader: StubModelLoader(dimension: stubDimension, text: cannedText, forwardInstructions: forwardInstructions)
         )
     }
 
@@ -276,6 +289,38 @@ struct TranscriptNestingTests {
         #expect(childRecorded.allSatisfy { $0.parentId == root.id })
 
         _ = fork
+    }
+
+    @Test("an instructed session's first turn opens with an .instructions entry before .prompt/.response")
+    @MainActor
+    func instructedSessionRecordsLeadingInstructionsEntry() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            forwardInstructions: true
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let root = profile.standard.makeSession(instructions: "You are terse.")
+        _ = try await root.respond(to: "hello")
+
+        // The chokepoint no longer hand-builds a `.prompt`/`.response` pair —
+        // it persists whatever the SDK's real transcript actually accumulated.
+        // Here that's the stub's synthesized `.instructions` entry (seeded from
+        // the session's instructions) plus this turn's `.prompt`/`.response`,
+        // so the entry-derived sequence gains a case the old hand-built bracket
+        // never recorded at all.
+        let recorded = try events(in: root.recordingDirectory)
+        #expect(recorded.map(\.kind) == [.session, .instructions, .prompt, .response])
+        #expect(recorded.allSatisfy { $0.entry != nil || $0.kind == .session })
     }
 
     // MARK: - Default recorder wiring

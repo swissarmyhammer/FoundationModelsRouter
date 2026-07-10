@@ -1,4 +1,13 @@
 import Foundation
+import FoundationModels
+import os
+
+/// The logger ``RoutedSessionActor`` reports a defensively-clamped transcript
+/// shrink to (see ``RoutedSessionActor/recordTranscriptDelta(grammar:since:)``).
+private let sessionRecordingLogger = Logger(
+    subsystem: moduleName,
+    category: "Recording"
+)
 
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
@@ -10,10 +19,15 @@ import Foundation
 /// models cannot be evicted out from under an in-flight session.
 ///
 /// Every public generation method (``respond(to:)``, ``streamResponse(to:)``)
-/// funnels through one private recorder-bracketed chokepoint: an open event is
-/// recorded, the model runs, and a close event is recorded whether the model
-/// returns or throws. Each call's bracket is individually balanced — exactly one
-/// open and one close. Concurrent generations on one model do not interleave:
+/// funnels through one private recorder-bracketed chokepoint: the model runs,
+/// then the backend's real transcript is snapshot-diffed against what was
+/// already persisted and the new entries are recorded, whether the model
+/// returns or throws. A turn's recorded event count is however many entries
+/// the SDK's own transcript gained for it — not a fixed one-open/one-close
+/// pair — except on the throwing path, which still guarantees at least one
+/// trace: either a real `.response` entry the SDK appended before failing, or
+/// a synthetic bodyless close when it appended none. Concurrent generations on
+/// one model do not interleave:
 /// the chokepoint runs inside the model's per-model serial gate
 /// (``RoutedModel/serialGate``, a fair FIFO ``AsyncSemaphore`` at value 1) that a
 /// session shares with all its forks, so calls on one model queue rather than
@@ -135,7 +149,7 @@ extension RoutedSession {
 /// is ``RoutedModel/makeSession(instructions:workingDirectory:)`` — there is no
 /// public initializer. The recorder and `routerId` flow down from the vending
 /// handle; the `backend`, `slot`, and `model` are what the single
-/// ``generate(prompt:grammar:_:)`` chokepoint runs the model with.
+/// ``generate(grammar:_:)`` chokepoint runs the model with.
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
     nonisolated let routerId: ULID
@@ -177,7 +191,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The per-model serial generation gate, shared with the owning model's other
     /// sessions and forks.
     ///
-    /// Every ``generate(prompt:grammar:_:)`` runs inside it, so generations on one
+    /// Every ``generate(grammar:_:)`` runs inside it, so generations on one
     /// model serialize rather than interleave.
     private nonisolated let serialGate: AsyncSemaphore
 
@@ -203,12 +217,28 @@ actor RoutedSessionActor: RoutedSession {
     /// can emit it twice.
     private var didRecordSessionMeta = false
 
+    /// How many of ``backend``'s ``LanguageModelSessionBackend/transcriptEntries()``
+    /// have already been persisted, so each turn's post-generation snapshot can
+    /// diff against it to find only what the SDK appended *this* turn.
+    ///
+    /// `0` for a root session — nothing has been persisted yet. For a fork,
+    /// this is the parent's entry count *at fork time*
+    /// (``fork(workingDirectory:)`` captures it inside the serial gate it
+    /// already holds, before ``LanguageModelSessionBackend/makeFork()`` seeds
+    /// the child), so the inherited history the child's backend starts holding
+    /// is never re-persisted into the child's own transcript.
+    private var persistedEntryCount: Int
+
     /// Creates a session.
     ///
     /// Internal: construction is only via
     /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
     /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)`` or by
     /// ``fork(workingDirectory:)``.
+    ///
+    /// - Parameter persistedEntryCount: The baseline ``backend`` entry count
+    ///   already persisted — `0` for a root session, or the parent's entry
+    ///   count at fork time for a fork (see ``persistedEntryCount``).
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -224,7 +254,8 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar? = nil,
         serialGate: AsyncSemaphore,
         forkAdmissionGate: AsyncSemaphore,
-        holdsAdmissionPermit: Bool = false
+        holdsAdmissionPermit: Bool = false,
+        persistedEntryCount: Int
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -241,6 +272,7 @@ actor RoutedSessionActor: RoutedSession {
         self.serialGate = serialGate
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
+        self.persistedEntryCount = persistedEntryCount
     }
 
     /// Releases this session's fork-admission permit when it is deallocated, so a
@@ -260,7 +292,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Routes through the guided path when ``grammar`` is set, constraining the
     /// response to it through the backend's whole-chunk xgrammar entry point;
     /// otherwise runs the plain path. Both funnel through the same
-    /// ``generate(prompt:grammar:_:)`` chokepoint.
+    /// ``generate(grammar:_:)`` chokepoint.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -276,11 +308,11 @@ actor RoutedSessionActor: RoutedSession {
         // the plain path. Both funnel through the same chokepoint, which stamps
         // the grammar (or `nil`) onto each event.
         if let grammar {
-            return try await generate(prompt: prompt, grammar: grammar) {
+            return try await generate(grammar: grammar) {
                 try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
             }
         }
-        return try await generate(prompt: prompt) {
+        return try await generate {
             try await backend.respond(to: prompt, maxTokens: maxTokens)
         }
     }
@@ -334,7 +366,7 @@ actor RoutedSessionActor: RoutedSession {
         // Accumulate the streamed chunks so the close event can carry the full
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
-        _ = try await generate(prompt: prompt) {
+        _ = try await generate {
             var response = ""
             for try await chunk in backend.streamResponse(to: prompt, maxTokens: maxTokens) {
                 continuation.yield(chunk)
@@ -352,7 +384,7 @@ actor RoutedSessionActor: RoutedSession {
         await forkAdmissionGate.wait()
 
         // Acquire the serial gate before reading `backend`'s conversation state to
-        // fork it. `generate(prompt:grammar:_:)` releases this same gate only
+        // fork it. `generate(grammar:_:)` releases this same gate only
         // *after* `body()` returns, but `body()` itself suspends across an await
         // while the model generates — so a concurrent turn can be mid-flight,
         // outside the gate's protection window as far as `backend` internals are
@@ -362,6 +394,12 @@ actor RoutedSessionActor: RoutedSession {
         // closing that data race; releasing it immediately after capturing the
         // forked backend keeps the hold no longer than necessary.
         await serialGate.wait()
+        // Captured in the same gate window as `makeFork()`, so it names exactly
+        // the entry count the child's seeded backend starts holding — the
+        // child's own `persistedEntryCount` baseline, so the parent's history
+        // inherited into the fork is never re-persisted into the child's
+        // transcript (see ``persistedEntryCount``).
+        let entryCountAtFork = backend.transcriptEntries().count
         let forkedBackend = backend.makeFork()
         serialGate.signal()
 
@@ -389,7 +427,8 @@ actor RoutedSessionActor: RoutedSession {
             grammar: grammar,
             serialGate: serialGate,
             forkAdmissionGate: forkAdmissionGate,
-            holdsAdmissionPermit: true
+            holdsAdmissionPermit: true,
+            persistedEntryCount: entryCountAtFork
         )
     }
 
@@ -400,25 +439,29 @@ actor RoutedSessionActor: RoutedSession {
     /// (``RoutedModel/serialGate``), so concurrent generations on one model —
     /// including from forks that share the gate — queue in FIFO order rather than
     /// interleave. Inside the gate it first lazily records the session's
-    /// first-line `session` meta event (once per session), then an open `.prompt`
-    /// event, runs `body`, then a close `.response` event — on the success path and
-    /// the throwing path alike, so a transcript always pairs each open with a
-    /// close. Every event is routed to this session's ``recordingDirectory``, so
-    /// the on-disk transcript tree mirrors the fork lineage, and the close event
-    /// carries the turn's measured wall-clock duration (`ms`). The single recorder
-    /// stamps a globally monotonic `seq` at append.
+    /// first-line `session` meta event (once per session), then runs `body`, then
+    /// snapshot-diffs ``backend``'s real transcript (see
+    /// ``recordTranscriptDelta(grammar:since:)``) so what lands on disk mirrors
+    /// the SDK's own `Transcript.Entry` values rather than a hand-built
+    /// paraphrase of the prompt/response strings — on the success path and the
+    /// throwing path alike, so a transcript always gains whatever the SDK
+    /// durably appended for the turn. A throwing turn additionally gets a
+    /// bodyless `.response`-kind close event carrying the turn's `ms`, so every
+    /// failed turn still leaves a trace even when the SDK appended no `.response`
+    /// entry of its own. Every event is routed to this session's
+    /// ``recordingDirectory``, so the on-disk transcript tree mirrors the fork
+    /// lineage; the single recorder stamps a globally monotonic `seq` at append.
     ///
     /// - Parameters:
-    ///   - prompt: The prompt driving this turn, recorded as the open `.prompt`
-    ///     event's body text.
     ///   - grammar: The guided-generation grammar in force for this turn, stamped
-    ///     onto both bracket events, or `nil` for an unconstrained turn.
+    ///     onto every event this turn appends.
     ///   - body: The model work to run inside the bracket, returning the response
-    ///     text recorded as the close `.response` event's body.
+    ///     text callers receive (still returned directly; no longer the source of
+    ///     any recorded event body).
     /// - Returns: The response text `body` produced.
-    /// - Throws: Whatever `body` throws, after recording the close event.
+    /// - Throws: Whatever `body` throws, after recording whatever the SDK
+    ///   appended plus the bodyless close event.
     private func generate(
-        prompt: String,
         grammar: Grammar? = nil,
         _ body: () async throws -> String
     ) async throws -> String {
@@ -431,17 +474,105 @@ actor RoutedSessionActor: RoutedSession {
         defer { serialGate.signal() }
 
         await recordSessionMetaIfNeeded()
-        await append(partial: makePartialEvent(kind: .prompt, grammar: grammar, text: prompt))
         let started = Date()
         do {
             let response = try await body()
-            await append(partial: makePartialEvent(kind: .response, grammar: grammar, text: response, since: started))
+            _ = await recordTranscriptDelta(grammar: grammar, since: started)
             return response
         } catch {
-            // The turn produced no response, so the close event carries no body.
-            await append(partial: makePartialEvent(kind: .response, grammar: grammar, since: started))
+            // Whatever the SDK durably appended before failing is still diffed
+            // and persisted, with `ms` stamped the same way as the success path
+            // (on the diff's own last `.response`-kind entry, if any) — a
+            // post-generation failure can still leave the SDK having appended a
+            // genuine `.response` entry before throwing.
+            let diffIncludedResponse = await recordTranscriptDelta(grammar: grammar, since: started)
+            // Only synthesize the router-only bodyless close when the SDK's own
+            // diff did *not* already include a `.response`-kind entry — otherwise
+            // this would double up two `.response` events for one turn, breaking
+            // the "exactly one close per turn" invariant. This still guarantees
+            // every failed turn leaves a trace: either the SDK's own `.response`
+            // entry (mapped above) or this synthetic one.
+            if !diffIncludedResponse {
+                await append(partial: makePartialEvent(kind: .response, grammar: grammar, since: started))
+            }
             throw error
         }
+    }
+
+    /// Snapshot-diffs ``backend``'s real transcript against ``persistedEntryCount``
+    /// and persists exactly what the SDK appended since the last diff — the core
+    /// of the "persist the SDK's own `Transcript`, not a paraphrase" design (see
+    /// plan.md's "Transcript fidelity" section).
+    ///
+    /// Reads `backend.transcriptEntries()` once and takes the new suffix
+    /// **defensively** (`entries[min(persistedEntryCount, entries.count)...]`),
+    /// never a bare `entries[persistedEntryCount...]`: nothing guarantees the SDK
+    /// transcript stays strictly append-only forever (a future
+    /// `TranscriptErrorHandlingPolicy` opt-in could condense or rewrite it), and
+    /// an out-of-bounds range here would trap *inside the recording path* —
+    /// crashing generation and violating the recording-is-best-effort/never-fails
+    /// contract. If a shrink is detected (`entries.count < persistedEntryCount`),
+    /// this logs a warning, records nothing for this turn's diff, and resets
+    /// ``persistedEntryCount`` to the smaller count so the next turn diffs from
+    /// reality instead of tripping the same guard again.
+    ///
+    /// Every new entry is mapped through ``TranscriptEntryMapper/event(from:)``
+    /// and appended as its own event (envelope stamped as usual; `entry` payload
+    /// and flattened `text` from the mapper; `tokensIn`/`tokensOut` stay `nil` —
+    /// token metering is a separate follow-up, not in scope here). When `since`
+    /// is non-nil, the turn's measured `ms` is stamped only on the *last*
+    /// `.response`-kind event this diff appends — not on every appended event —
+    /// on the success path and the throwing path alike, so an SDK-appended
+    /// `.response` entry from a turn that failed *after* generating still gets
+    /// the turn's `ms`.
+    ///
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force, stamped onto every
+    ///     appended event.
+    ///   - since: The turn's start instant to stamp `ms` with on the diff's last
+    ///     `.response`-kind event, or `nil` to leave `ms` unset on every
+    ///     appended event.
+    /// - Returns: Whether this diff included a `.response`-kind entry — the
+    ///   throwing path in ``generate(grammar:_:)`` uses this to decide whether
+    ///   a synthetic bodyless close is still needed, so a turn whose SDK
+    ///   transcript already gained a real `.response` entry before failing
+    ///   never gets two `.response` events.
+    @discardableResult
+    private func recordTranscriptDelta(grammar: Grammar?, since: Date?) async -> Bool {
+        let entries = backend.transcriptEntries()
+        guard entries.count >= persistedEntryCount else {
+            sessionRecordingLogger.warning(
+                """
+                transcript shrank from \(self.persistedEntryCount, privacy: .public) to \
+                \(entries.count, privacy: .public) entries for session \
+                \(self.id.description, privacy: .public); recording no entries for this turn and \
+                resetting the baseline
+                """
+            )
+            persistedEntryCount = entries.count
+            return false
+        }
+
+        let newEntries = entries[min(persistedEntryCount, entries.count)...]
+        guard !newEntries.isEmpty else { return false }
+
+        let mapped = newEntries.map { TranscriptEntryMapper.event(from: $0) }
+        let lastResponseIndex = mapped.lastIndex { $0.kind == .response }
+
+        for (index, mappedEntry) in mapped.enumerated() {
+            let stampSince = (since != nil && index == lastResponseIndex) ? since : nil
+            await append(
+                partial: makePartialEvent(
+                    kind: mappedEntry.kind,
+                    grammar: grammar,
+                    text: mappedEntry.text,
+                    since: stampSince,
+                    entry: mappedEntry.payload
+                )
+            )
+        }
+        persistedEntryCount = entries.count
+        return lastResponseIndex != nil
     }
 
     /// Records the session's first-line `session` meta event the first time this
@@ -468,26 +599,31 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Builds an event of the given kind stamped with this session's provenance.
     ///
-    /// The `session` meta, open (`.prompt`), and close (`.response`) events share
-    /// this one helper; a close event passes `since` to record the turn's measured
-    /// duration.
+    /// The `session` meta event, every entry-derived event
+    /// ``recordTranscriptDelta(grammar:since:)`` appends, and the throwing
+    /// path's bodyless close event all share this one helper; a close-carrying
+    /// call passes `since` to record the turn's measured duration.
     ///
     /// - Parameters:
-    ///   - kind: The event kind to stamp — `.session` for meta, `.prompt` to open,
-    ///     `.response` to close.
+    ///   - kind: The event kind to stamp — `.session` for meta, or the mapped
+    ///     ``TranscriptEntryMapper/event(from:)`` kind for an entry-derived event.
     ///   - grammar: The guided-generation grammar in force, recorded as its
     ///     source, or `nil` for an unconstrained turn.
-    ///   - text: The event's body text — the prompt or response — or `nil` for
-    ///     the bodyless `session` meta event. Recording-level and redaction
-    ///     trimming happen later, in the recorder.
-    ///   - since: The turn's start instant for a close event, or `nil` to leave
-    ///     `ms` unset (meta and open events).
+    ///   - text: The event's flattened body text from the mapper, or `nil` for
+    ///     the bodyless `session` meta event or a bodyless close. Recording-level
+    ///     and redaction trimming happen later, in the recorder.
+    ///   - since: The turn's start instant to stamp `ms` with, or `nil` to leave
+    ///     `ms` unset.
+    ///   - entry: The structural payload mirroring the SDK's own
+    ///     `Transcript.Entry`, or `nil` for the `session` meta event and the
+    ///     throwing path's bodyless close.
     /// - Returns: The partial event for the recorder to stamp and append.
     private func makePartialEvent(
         kind: TranscriptEvent.Kind,
         grammar: Grammar? = nil,
         text: String? = nil,
-        since: Date? = nil
+        since: Date? = nil,
+        entry: TranscriptEntryPayload? = nil
     ) -> TranscriptEvent.Partial {
         TranscriptEvent.Partial(
             routerId: routerId,
@@ -498,7 +634,8 @@ actor RoutedSessionActor: RoutedSession {
             kind: kind,
             grammar: grammar?.source,
             text: text,
-            ms: since.map { Int(Date().timeIntervalSince($0) * 1_000) }
+            ms: since.map { Int(Date().timeIntervalSince($0) * 1_000) },
+            entry: entry
         )
     }
 }
