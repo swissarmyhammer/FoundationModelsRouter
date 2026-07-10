@@ -49,16 +49,15 @@ public actor JSONLRecorder: TranscriptRecorder {
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
         let target = directory ?? self.directory
-        do {
-            let handle = try handleForAppending(in: target)
-            var line = try encoder.encode(event)
-            line.append(0x0A)
-            try handle.write(contentsOf: line)
-        } catch {
-            recordingLogger.error(
-                "dropping transcript event seq \(event.seq, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
-        }
+        appendJSONLine(
+            event,
+            encoder: encoder,
+            logger: recordingLogger,
+            handle: { try self.handleForAppending(in: target) },
+            describeFailure: { error in
+                "dropping transcript event seq \(event.seq): \(error.localizedDescription)"
+            }
+        )
     }
 
     /// Returns the reusable append handle for a directory, creating the directory
@@ -70,13 +69,7 @@ public actor JSONLRecorder: TranscriptRecorder {
     private func handleForAppending(in directory: URL) throws -> FileHandle {
         let key = directory.standardizedFileURL.path
         if let handle = handles[key] { return handle }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        if !FileManager.default.fileExists(atPath: fileURL.path) {
-            FileManager.default.createFile(atPath: fileURL.path, contents: nil)
-        }
-        let handle = try FileHandle(forWritingTo: fileURL)
-        try handle.seekToEnd()
+        let handle = try openHandleForAppending(fileName: "transcript.jsonl", in: directory)
         handles[key] = handle
         return handle
     }

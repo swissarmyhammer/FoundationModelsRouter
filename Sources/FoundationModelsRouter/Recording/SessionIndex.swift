@@ -123,33 +123,22 @@ public actor SessionIndexWriter {
     /// Appends `record` as one JSON line to `sessions.jsonl`; logs and drops it
     /// on any I/O failure.
     public func append(_ record: SessionIndexRecord) async {
-        do {
-            let handle = try handleForAppending()
-            var line = try encoder.encode(record)
-            line.append(0x0A)
-            try handle.write(contentsOf: line)
-        } catch {
-            sessionIndexLogger.error(
-                """
-                dropping session index record for session \
-                \(record.sessionId.description, privacy: .public): \
-                \(error.localizedDescription, privacy: .public)
-                """
-            )
-        }
+        appendJSONLine(
+            record,
+            encoder: encoder,
+            logger: sessionIndexLogger,
+            handle: { try self.handleForAppending() },
+            describeFailure: { error in
+                "dropping session index record for session \(record.sessionId.description): \(error.localizedDescription)"
+            }
+        )
     }
 
     /// Returns the reusable append handle, creating the directory and its
     /// `sessions.jsonl` and seeking to the end on first use.
     private func handleForAppending() throws -> FileHandle {
         if let handle { return handle }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileURL = directory.appendingPathComponent(sessionIndexFileName, isDirectory: false)
-        if !FileManager.default.fileExists(atPath: fileURL.path) {
-            FileManager.default.createFile(atPath: fileURL.path, contents: nil)
-        }
-        let opened = try FileHandle(forWritingTo: fileURL)
-        try opened.seekToEnd()
+        let opened = try openHandleForAppending(fileName: sessionIndexFileName, in: directory)
         handle = opened
         return opened
     }
