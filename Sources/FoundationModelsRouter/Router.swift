@@ -259,7 +259,17 @@ public actor Router {
             var generationContainers: [ModelSlot: any LoadedLLMContainer] = [:]
             for (chosen, slot) in [(resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash)] {
                 generationContainers[slot] = try await download(ref: chosen, slot: slot, progress: progress) {
-                    try await loader.loadLLM(ref: $0, slot: $1, context: def.context, reporting: $2)
+                    // TODO(JointFit ladder): `def.context` is nil when the author
+                    // wants the context derived from the resolved candidates'
+                    // native max context. That derivation ladder is a separate,
+                    // dependent task; until it lands, nil falls back to the same
+                    // 8192 default this call site always used.
+                    try await loader.loadLLM(
+                        ref: $0,
+                        slot: $1,
+                        context: def.context ?? ProfileDefinition.defaultContext,
+                        reporting: $2
+                    )
                 }
             }
             // Total by construction: the loop above populates both generation
@@ -409,13 +419,19 @@ public actor Router {
 
     /// Sizes every candidate across all slots into raw footprint bytes at the
     /// profile's context, ready for the joint-fit closure.
+    ///
+    /// `def.context` is `nil` when the author wants the context derived from
+    /// each candidate's native max context instead of caller-supplied; that
+    /// derivation ladder is a separate, dependent task (JointFit), so this
+    /// falls back to ``ProfileDefinition/defaultContext`` for now.
     private func sizeCandidates(
         profile def: ProfileDefinition
     ) async -> [ModelRef: Result<Int64, RepoMetadataError>] {
+        let context = def.context ?? ProfileDefinition.defaultContext
         var out: [ModelRef: Result<Int64, RepoMetadataError>] = [:]
         for (slot, refs) in def.candidatesBySlot {
             for ref in refs {
-                let result = await footprintBytes(for: ref, slot: slot, context: def.context)
+                let result = await footprintBytes(for: ref, slot: slot, context: context)
                 if let existing = out[ref] {
                     out[ref] = Self.preferLarger(left: existing, right: result)
                 } else {

@@ -86,6 +86,192 @@ struct RepoMetadataTests {
         #expect(footprint.footprint(context: 16) == Self.expectedWeightBytes + 262_144)
     }
 
+    @Test("config.json missing every context-length field defaults nativeMaxContext to 8192 with a diagnostic")
+    func nativeMaxContextDefaultsWhenNoFieldPresent() async throws {
+        // fullConfigJSON has none of max_position_embeddings/n_positions/max_seq_len/seq_length.
+        let (reader, dir, _) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let metadata = try await reader.metadata(for: "org/model")
+
+        #expect(metadata.nativeMaxContext == 8192)
+        #expect(metadata.nativeMaxContextDiagnostic != nil)
+    }
+
+    @Test("nativeMaxContext resolves from max_position_embeddings when present")
+    func nativeMaxContextFromMaxPositionEmbeddings() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "max_position_embeddings": 32768
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 32768)
+        #expect(metadata.nativeMaxContextDiagnostic == nil)
+    }
+
+    @Test("nativeMaxContext falls back to n_positions when max_position_embeddings is absent")
+    func nativeMaxContextFromNPositions() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "n_positions": 16384
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 16384)
+        #expect(metadata.nativeMaxContextDiagnostic == nil)
+    }
+
+    @Test("nativeMaxContext falls back to max_seq_len when higher-priority fields are absent")
+    func nativeMaxContextFromMaxSeqLen() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "max_seq_len": 8192
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 8192)
+        #expect(metadata.nativeMaxContextDiagnostic == nil)
+    }
+
+    @Test("nativeMaxContext falls back to seq_length as the last resort")
+    func nativeMaxContextFromSeqLength() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "seq_length": 12000
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 12000)
+        #expect(metadata.nativeMaxContextDiagnostic == nil)
+    }
+
+    @Test("an absurdly large nativeMaxContext value is capped to the sanity ceiling")
+    func nativeMaxContextCappedWhenAbsurd() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "max_position_embeddings": 99999999
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 1_048_576)
+        #expect(metadata.nativeMaxContextDiagnostic != nil)
+    }
+
+    @Test("a tiny nativeMaxContext value is raised to the floor")
+    func nativeMaxContextFlooredWhenTiny() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "max_position_embeddings": 128
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 4096)
+        #expect(metadata.nativeMaxContextDiagnostic != nil)
+    }
+
+    @Test("a value exactly at the sanity cap passes through unchanged, with no diagnostic")
+    func nativeMaxContextAtCapBoundaryPassesThrough() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "max_position_embeddings": 1048576
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 1_048_576)
+        #expect(metadata.nativeMaxContextDiagnostic == nil)
+    }
+
+    @Test("a value exactly at the floor passes through unchanged, with no diagnostic")
+    func nativeMaxContextAtFloorBoundaryPassesThrough() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "max_position_embeddings": 4096
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 4096)
+        #expect(metadata.nativeMaxContextDiagnostic == nil)
+    }
+
+    @Test("a non-positive nativeMaxContext value is raised to the floor, with a diagnostic")
+    func nativeMaxContextFlooredWhenNonPositive() throws {
+        let config = Data("""
+            {
+                "num_hidden_layers": 4,
+                "num_attention_heads": 32,
+                "head_dim": 128,
+                "max_position_embeddings": -1
+            }
+            """.utf8)
+        let raw = RawRepoMetadata(configJSON: config, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 4096)
+        #expect(metadata.nativeMaxContextDiagnostic != nil)
+    }
+
+    @Test("nativeMaxContext resolves from a VLM's text_config, matching the coherent-source rule")
+    func nativeMaxContextFromTextConfig() throws {
+        let raw = RawRepoMetadata(configJSON: Self.qwenVLConfigJSON, treeJSON: Self.weightTreeJSON)
+
+        let metadata = try RepoMetadata(raw: raw)
+
+        #expect(metadata.nativeMaxContext == 262_144)
+        #expect(metadata.nativeMaxContextDiagnostic == nil)
+    }
+
     /// The verbatim `config.json` fetched from
     /// `https://huggingface.co/mlx-community/Qwen3.5-2B-mxfp4/resolve/main/config.json`.
     /// A VLM config: the transformer sizing fields live only under `text_config`

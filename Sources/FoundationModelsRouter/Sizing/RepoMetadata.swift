@@ -96,6 +96,43 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     /// overestimated by counting every layer.
     public let numFullAttentionLayers: Int
 
+    /// The repo's own maximum context length, resolved from `config.json`'s
+    /// `max_position_embeddings`, then `n_positions`, then `max_seq_len` /
+    /// `seq_length` (in that priority order), sanity-capped and floored.
+    ///
+    /// This is the model's *native* ceiling — not the working context a
+    /// profile requests. It exists so a caller-omitted ``ProfileDefinition/context``
+    /// can eventually be derived from what candidates actually support (the
+    /// JointFit ladder task); this task only surfaces the figure.
+    ///
+    /// Defaults to 8192 when `config.json` has none of the four fields (see
+    /// ``nativeMaxContextDiagnostic``), and is clamped to
+    /// `[nativeMaxContextFloor, nativeMaxContextCap]` otherwise.
+    public let nativeMaxContext: Int
+
+    /// A human-readable explanation of why ``nativeMaxContext`` is not the raw
+    /// `config.json` value verbatim — `nil` when it is (a field was present and
+    /// within `[nativeMaxContextFloor, nativeMaxContextCap]`).
+    ///
+    /// Set when `config.json` has none of the four context-length fields (the
+    /// 8192 default was substituted) or when the parsed value was capped or
+    /// floored, so a resolution failure message can explain why the derived
+    /// context landed where it did instead of the raw config figure.
+    public let nativeMaxContextDiagnostic: String?
+
+    /// The hard sanity ceiling ``nativeMaxContext`` is capped to: config values
+    /// beyond this are almost certainly a units/typo error rather than a real
+    /// context length.
+    public static let nativeMaxContextCap = 1_048_576
+
+    /// The floor ``nativeMaxContext`` is raised to: config values below this
+    /// are too small to be a plausible working context.
+    public static let nativeMaxContextFloor = 4096
+
+    /// The native max context substituted when `config.json` has none of the
+    /// four fallback fields.
+    public static let defaultNativeMaxContext = 8192
+
     /// Creates parsed metadata from already-resolved values.
     ///
     /// - Parameters:
@@ -107,6 +144,11 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     ///   - hiddenSize: Hidden size, used only to derive `headDim` when absent.
     ///   - numFullAttentionLayers: Count of layers with a growing KV cache;
     ///     defaults to `numHiddenLayers` for non-hybrid architectures.
+    ///   - nativeMaxContext: The repo's native max context; defaults to
+    ///     ``defaultNativeMaxContext`` (8192) for values constructed directly
+    ///     rather than parsed from `config.json`.
+    ///   - nativeMaxContextDiagnostic: Why ``nativeMaxContext`` isn't the raw
+    ///     config value verbatim, or `nil`.
     public init(
         weightBytes: Int64,
         numHiddenLayers: Int,
@@ -114,7 +156,9 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         numKeyValueHeads: Int?,
         headDim: Int?,
         hiddenSize: Int?,
-        numFullAttentionLayers: Int? = nil
+        numFullAttentionLayers: Int? = nil,
+        nativeMaxContext: Int = RepoMetadata.defaultNativeMaxContext,
+        nativeMaxContextDiagnostic: String? = nil
     ) {
         self.weightBytes = weightBytes
         self.numHiddenLayers = numHiddenLayers
@@ -123,6 +167,8 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         self.headDim = headDim
         self.hiddenSize = hiddenSize
         self.numFullAttentionLayers = numFullAttentionLayers ?? numHiddenLayers
+        self.nativeMaxContext = nativeMaxContext
+        self.nativeMaxContextDiagnostic = nativeMaxContextDiagnostic
     }
 
     /// Parses sizing metadata from raw fetched artifacts.
@@ -160,6 +206,9 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         // falls back to numHiddenLayers, preserving prior behavior.
         let numFullAttentionLayers = sizing.layerTypes?.filter { $0 == Self.fullAttentionLayerType }.count
             ?? sizing.numHiddenLayers
+        let (nativeMaxContext, nativeMaxContextDiagnostic) = Self.resolveNativeMaxContext(
+            raw: sizing.nativeMaxContextRaw
+        )
         self.init(
             weightBytes: weightBytes,
             numHiddenLayers: sizing.numHiddenLayers,
@@ -167,8 +216,43 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
             numKeyValueHeads: sizing.numKeyValueHeads,
             headDim: sizing.headDim,
             hiddenSize: sizing.hiddenSize,
-            numFullAttentionLayers: numFullAttentionLayers
+            numFullAttentionLayers: numFullAttentionLayers,
+            nativeMaxContext: nativeMaxContext,
+            nativeMaxContextDiagnostic: nativeMaxContextDiagnostic
         )
+    }
+
+    /// Resolves the raw context-length figure from `config.json` (already
+    /// picked from the fallback chain by ``ResolvedSizing/nativeMaxContextRaw``)
+    /// into the clamped ``nativeMaxContext`` plus an explanatory diagnostic.
+    ///
+    /// - Parameter raw: The first fallback-chain field present in the config,
+    ///   or `nil` when `config.json` has none of the four fields.
+    /// - Returns: The clamped native max context, and a diagnostic explaining
+    ///   why it differs from `raw` verbatim (`nil` when it doesn't).
+    private static func resolveNativeMaxContext(raw: Int?) -> (Int, String?) {
+        guard let raw else {
+            return (
+                Self.defaultNativeMaxContext,
+                "config.json has none of max_position_embeddings, n_positions, max_seq_len, "
+                    + "or seq_length; defaulting native max context to \(Self.defaultNativeMaxContext)"
+            )
+        }
+        if raw > Self.nativeMaxContextCap {
+            return (
+                Self.nativeMaxContextCap,
+                "config.json's native max context \(raw) exceeds the sanity cap of "
+                    + "\(Self.nativeMaxContextCap); capping to \(Self.nativeMaxContextCap)"
+            )
+        }
+        if raw < Self.nativeMaxContextFloor {
+            return (
+                Self.nativeMaxContextFloor,
+                "config.json's native max context \(raw) is below the floor of "
+                    + "\(Self.nativeMaxContextFloor); raising to \(Self.nativeMaxContextFloor)"
+            )
+        }
+        return (raw, nil)
     }
 
     /// The memory footprint estimate for this repo, applying the GQA and head-dim
@@ -216,8 +300,9 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     /// kind that materializes a KV cache which grows with context.
     private static let fullAttentionLayerType = "full_attention"
 
-    /// The six architecture fields the KV math needs, resolved from one
-    /// coherent source — never mixed across the top level and `text_config`.
+    /// The KV-math architecture fields plus the native-max-context figure,
+    /// resolved from one coherent source — never mixed across the top level
+    /// and `text_config`.
     ///
     /// `numHiddenLayers`/`numAttentionHeads` are non-optional by construction:
     /// the only way to produce a ``ResolvedSizing`` is ``SizingFields/resolved``,
@@ -234,13 +319,17 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         let headDim: Int?
         let hiddenSize: Int?
         let layerTypes: [String]?
+
+        /// The native max context, picked from whichever of the four
+        /// fallback-chain fields is present first, or `nil` when none are.
+        let nativeMaxContextRaw: Int?
     }
 
-    /// The six architecture fields the KV math needs, and their shared
-    /// snake_case `config.json` key mapping. Every field is optional so a
-    /// sparse or unexpected config decodes without throwing; ``resolved``
-    /// enforces which fields must be present to select this as a sizing
-    /// source.
+    /// The architecture fields the KV math needs, plus the four
+    /// native-max-context fallback-chain fields, and their shared snake_case
+    /// `config.json` key mapping. Every field is optional so a sparse or
+    /// unexpected config decodes without throwing; ``resolved`` enforces which
+    /// fields must be present to select this as a sizing source.
     ///
     /// Both `RepoConfig`'s top level and its nested `text_config` (VLM repos
     /// such as the Qwen-VL family nest language-model sizing fields there
@@ -258,6 +347,21 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
         let hiddenSize: Int?
         let layerTypes: [String]?
 
+        /// `max_position_embeddings`: the highest-priority native-max-context
+        /// field.
+        let maxPositionEmbeddings: Int?
+
+        /// `n_positions`: the second-priority native-max-context field, used
+        /// by architectures (e.g. GPT-2-style configs) that don't declare
+        /// `max_position_embeddings`.
+        let nPositions: Int?
+
+        /// `max_seq_len`: a third-priority native-max-context field.
+        let maxSeqLen: Int?
+
+        /// `seq_length`: the last-resort native-max-context field.
+        let seqLength: Int?
+
         enum CodingKeys: String, CodingKey {
             case numHiddenLayers = "num_hidden_layers"
             case numAttentionHeads = "num_attention_heads"
@@ -265,6 +369,10 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
             case headDim = "head_dim"
             case hiddenSize = "hidden_size"
             case layerTypes = "layer_types"
+            case maxPositionEmbeddings = "max_position_embeddings"
+            case nPositions = "n_positions"
+            case maxSeqLen = "max_seq_len"
+            case seqLength = "seq_length"
         }
 
         /// This field set as a ``ResolvedSizing``, or `nil` when the two
@@ -278,7 +386,8 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
                 numKeyValueHeads: numKeyValueHeads,
                 headDim: headDim,
                 hiddenSize: hiddenSize,
-                layerTypes: layerTypes
+                layerTypes: layerTypes,
+                nativeMaxContextRaw: maxPositionEmbeddings ?? nPositions ?? maxSeqLen ?? seqLength
             )
         }
     }
