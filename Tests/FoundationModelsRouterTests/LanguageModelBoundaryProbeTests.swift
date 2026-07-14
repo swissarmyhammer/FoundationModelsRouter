@@ -11,6 +11,7 @@
     /// call, so a test can assert on it once the (Sendable) executor call has
     /// returned.
     actor ProbeTranscriptRecorder {
+        /// The transcripts recorded so far, one per executor call, in call order.
         private(set) var transcripts: [Transcript] = []
         /// Records a transcript observed on a probe model's executor call.
         func record(_ transcript: Transcript) { transcripts.append(transcript) }
@@ -23,6 +24,7 @@
     /// *before* re-emitting it, so this recorder proves the wrapper actually
     /// possessed the text, not merely relayed an opaque token it never saw.
     actor ProbeResponseRecorder {
+        /// The response texts recorded so far, one per executor call, in call order.
         private(set) var responses: [String] = []
         /// Records response text observed after delegation to the wrapped model.
         func record(_ text: String) { responses.append(text) }
@@ -39,10 +41,16 @@
     /// criteria calls for, so ``PassthroughProbeModel`` below has a real
     /// (non-mock) model to wrap.
     struct ProbeStubModel: LanguageModel {
+        /// The fixed text this stub emits as its response, regardless of prompt content.
         let cannedResponseText: String
+        /// The recorder every request transcript this stub's executor observes is appended to.
         let transcripts: ProbeTranscriptRecorder
 
+        /// This stub declares no optional capabilities; it only needs the
+        /// base `respond(to:model:streamingInto:)` boundary the probe exercises.
         var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([]) }
+        /// Builds the `Executor.Configuration` cache key from this stub's own
+        /// `cannedResponseText` and `transcripts` recorder.
         var executorConfiguration: Executor.Configuration {
             Executor.Configuration(cannedResponseText: cannedResponseText, transcripts: transcripts)
         }
@@ -64,23 +72,43 @@
             /// so the SDK's executor cache never conflates one test's
             /// recorder with another's.
             struct Configuration: Sendable, Hashable {
+                /// The canned response text this executor will emit; folded
+                /// into the cache key so executors with different canned
+                /// text are never conflated.
                 let cannedResponseText: String
+                /// The recorder this executor's `respond` calls append
+                /// observed transcripts to; compared/hashed by identity (see
+                /// `==`/`hash(into:)` below), not by content.
                 let transcripts: ProbeTranscriptRecorder
 
+                /// Identity-based comparison: `transcripts` is a reference
+                /// type (`actor`) with no structural equality of its own, so
+                /// it is compared via `===` rather than by content — this
+                /// keeps two configurations that happen to share
+                /// `cannedResponseText` but wrap distinct recorder instances
+                /// as distinct cache keys.
                 static func == (lhs: Self, rhs: Self) -> Bool {
                     lhs.cannedResponseText == rhs.cannedResponseText && lhs.transcripts === rhs.transcripts
                 }
 
+                /// Mirrors `==`: hashes `transcripts` via `ObjectIdentifier`
+                /// (identity) rather than by content, so hashing stays
+                /// consistent with the identity-based equality above and
+                /// the SDK's executor cache stays consistent for this
+                /// configuration.
                 func hash(into hasher: inout Hasher) {
                     hasher.combine(cannedResponseText)
                     hasher.combine(ObjectIdentifier(transcripts))
                 }
             }
 
+            /// The `LanguageModel` this executor conforms for.
             typealias Model = ProbeStubModel
 
             private let configuration: Configuration
 
+            /// Stores the cache-key configuration the SDK constructed this
+            /// executor with.
             init(configuration: Configuration) throws {
                 self.configuration = configuration
             }
@@ -126,11 +154,19 @@
     /// (and the router's real ``MLXFoundationModelsSessionBackend``) actually
     /// uses to observe what a wrapped model produced.
     struct PassthroughProbeModel: LanguageModel {
+        /// The inner model this wrapper delegates every call to.
         let wrapped: ProbeStubModel
+        /// The recorder every request transcript this wrapper's executor
+        /// observes is appended to.
         let transcripts: ProbeTranscriptRecorder
+        /// The recorder every response text this wrapper delegates to and
+        /// re-emits is appended to.
         let responses: ProbeResponseRecorder
 
+        /// Passed through unchanged from the wrapped model.
         var capabilities: LanguageModelCapabilities { wrapped.capabilities }
+        /// Builds the `Executor.Configuration` cache key from `wrapped` and
+        /// this wrapper's own recorders.
         var executorConfiguration: Executor.Configuration {
             Executor.Configuration(wrapped: wrapped, transcripts: transcripts, responses: responses)
         }
@@ -154,16 +190,39 @@
             /// configurations that wrap *different* stub models collide
             /// in that cache and silently reuse the wrong executor.
             struct Configuration: Sendable, Hashable {
+                /// The wrapped model this configuration delegates to; its
+                /// `cannedResponseText` and `transcripts` recorder identity
+                /// are folded into `==`/`hash(into:)` below so two
+                /// configurations wrapping different stub models never
+                /// collide in the SDK's executor cache.
                 let wrapped: ProbeStubModel
+                /// The recorder this executor's `respond` calls append
+                /// observed transcripts to; compared/hashed by identity.
                 let transcripts: ProbeTranscriptRecorder
+                /// The recorder this executor's `respond` calls append
+                /// delegated response text to; compared/hashed by identity.
                 let responses: ProbeResponseRecorder
 
+                /// Identity-based comparison via `===` for the
+                /// reference-type recorder fields (`transcripts`,
+                /// `responses`, and `wrapped.transcripts`): these are
+                /// actors with no structural equality of their own, so
+                /// comparing them by identity — rather than by content —
+                /// keeps distinct cache keys for configurations that wrap
+                /// otherwise-identical models but carry different recorder
+                /// instances.
                 static func == (lhs: Self, rhs: Self) -> Bool {
                     lhs.transcripts === rhs.transcripts && lhs.responses === rhs.responses
                         && lhs.wrapped.cannedResponseText == rhs.wrapped.cannedResponseText
                         && lhs.wrapped.transcripts === rhs.wrapped.transcripts
                 }
 
+                /// Mirrors `==`: hashes the reference-type recorder fields
+                /// (`transcripts`, `responses`, `wrapped.transcripts`) via
+                /// `ObjectIdentifier` (identity) rather than by content, so
+                /// hashing stays consistent with the identity-based
+                /// equality above and the SDK's executor cache remains
+                /// internally consistent for this configuration.
                 func hash(into hasher: inout Hasher) {
                     hasher.combine(ObjectIdentifier(transcripts))
                     hasher.combine(ObjectIdentifier(responses))
@@ -172,10 +231,13 @@
                 }
             }
 
+            /// The `LanguageModel` this executor conforms for.
             typealias Model = PassthroughProbeModel
 
             private let configuration: Configuration
 
+            /// Stores the cache-key configuration the SDK constructed this
+            /// executor with.
             init(configuration: Configuration) throws {
                 self.configuration = configuration
             }
@@ -236,6 +298,10 @@
             return (stubTranscripts, wrapperTranscripts, responses, stub, wrapper)
         }
 
+        /// Fact 1 and Fact 3, single call: asserts the wrapper's executor
+        /// received the full session transcript for the turn, and that it
+        /// actually possessed (not merely relayed) the response text it
+        /// delegated to and re-emitted.
         @Test("a passthrough wrapper observes the transcript passed to a call and the response text it delegates and emits")
         func passthroughWrapperObservesTranscriptAndResponse() async throws {
             let (stubTranscripts, wrapperTranscripts, responses, _, wrapper) =
@@ -268,6 +334,10 @@
             #expect(stubTranscript.count == 1)
         }
 
+        /// Fact 2, across two calls: asserts the second call's transcript is
+        /// the full accumulated history (not just the new turn's delta),
+        /// proving the boundary carries no hidden session identity across
+        /// calls.
         @Test("a second call's transcript is the full accumulated history again, not just the new turn's delta")
         func secondCallReceivesFullAccumulatedTranscriptAgain() async throws {
             let (stubTranscripts, wrapperTranscripts, responses, _, wrapper) =
