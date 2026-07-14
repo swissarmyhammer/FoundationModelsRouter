@@ -149,8 +149,8 @@ comments:
 
     Leaving in `doing` per /implement's contract — review is the next step's job.
   timestamp: 2026-07-14T16:43:51.284553+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ba80
 title: 'Spike: verify LanguageModel generate boundary exposes the transcript (recording-handle prerequisite)'
 ---
 ## What
