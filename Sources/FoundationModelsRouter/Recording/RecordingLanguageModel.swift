@@ -1,0 +1,413 @@
+import Foundation
+import FoundationModels
+import os
+
+/// The logger ``RecordingLanguageModelState`` reports a defensively-clamped
+/// transcript shrink to (see ``RecordingLanguageModelState/diffAndRecord(current:)``)
+/// — mirrors ``RoutedSessionActor``'s own `sessionRecordingLogger` in
+/// Session/RoutedSession.swift, kept as a separate constant since that one is
+/// `private` to its own file.
+private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording")
+
+/// A `FoundationModels.LanguageModel` conformer any caller can build a
+/// `LanguageModelSession(model:tools:instructions:)` over directly and get
+/// recording, serial gating, and tool-calling support with zero session
+/// plumbing.
+///
+/// Vended only by ``RoutedModel/makeLanguageModel()`` — there is no public
+/// initializer — each call mints a fresh handle carrying its own per-handle
+/// state (``RecordingLanguageModelState``): a session ULID, a recording
+/// directory nested the same way ``RoutedModel/makeSession(instructions:workingDirectory:)``'s
+/// is, and a last-seen ``FoundationModels/Transcript`` snapshot. Two live
+/// handles never interleave events or share a directory.
+///
+/// Generation passes straight through to the wrapped model's own executor —
+/// `Wrapped.Executor(configuration: wrapped.executorConfiguration).respond(to:model:streamingInto:)`,
+/// called with the OUTER channel unmodified — so streaming, reasoning, and
+/// tool-calling events flow untouched; this handle never delegates through a
+/// nested `LanguageModelSession` (which would execute tool calls itself and
+/// break tool-using turns) and never reads the channel back (`Event` is
+/// write-only). On every call it diffs the request's transcript against
+/// last-seen (via ``TranscriptDiffer``, the same diff implementation
+/// ``RoutedSessionActor`` uses) and records whatever is new.
+///
+/// The turn-final response is not observable at the executor boundary (only
+/// the request's *input* transcript is visible on any one call), so
+/// ``sync(_:)`` closes that gap: call it with `session.transcript` at turn
+/// end to record the final response. Any later `respond` call on the same
+/// session back-fills automatically via the diff, so mid-turn records are
+/// complete even without `sync`; `sync` matters for the last turn before
+/// idle/exit, and is idempotent — a transcript already fully reflected in the
+/// last diff produces an empty diff and records nothing.
+public struct RecordingLanguageModel: LanguageModel, Sendable {
+    /// This handle's per-call mutable state and identity.
+    let state: RecordingLanguageModelState
+
+    /// Creates a handle over `state`. Internal: the only way to obtain one is
+    /// ``RoutedModel/makeLanguageModel()``.
+    init(state: RecordingLanguageModelState) {
+        self.state = state
+    }
+
+    /// Passed through unchanged from the wrapped model.
+    public var capabilities: LanguageModelCapabilities { state.wrapped.capabilities }
+
+    /// Builds the ``Executor/Configuration`` cache key from this handle's own
+    /// state, identity-compared so the SDK's executor cache treats each
+    /// handle distinctly while reusing one executor across every turn on the
+    /// same handle.
+    public var executorConfiguration: Executor.Configuration {
+        Executor.Configuration(state: state)
+    }
+
+    /// Diffs `transcript` against last-seen and records anything new,
+    /// closing the gap the executor boundary cannot: the turn-final
+    /// response, only ever visible once a turn's driving `LanguageModelSession`
+    /// has returned. Idempotent — a `transcript` already fully reflected in
+    /// the last diff produces an empty diff and records nothing.
+    ///
+    /// - Parameter transcript: The transcript to sync against last-seen —
+    ///   typically `session.transcript` at turn end.
+    public func sync(_ transcript: Transcript) async {
+        await state.sync(transcript)
+    }
+
+    /// The executor conformance every ``FoundationModels/LanguageModelSession``
+    /// built over a ``RecordingLanguageModel`` drives.
+    ///
+    /// Non-generic by design: the wrapped model's concrete type is erased at
+    /// ``RecordingLanguageModelState``'s construction (``RoutedModel/makeLanguageModel()``
+    /// obtains it from `LoadedLLMContainer.languageModel`, an `any LanguageModel`
+    /// existential), and `Wrapped.Executor(configuration:)` is built exactly
+    /// once — inside ``init(configuration:)`` — by opening that existential
+    /// through ``RecordingLanguageModelState/makePassthrough(wrapped:)``. The
+    /// SDK caches executors keyed by ``Configuration`` equality (this
+    /// handle's own identity), so as long as repeated calls on one handle
+    /// keep producing an equal `Configuration`, this `init` runs once per
+    /// handle and the wrapped model's own executor is reused for every turn,
+    /// never rebuilt per call.
+    public struct Executor: LanguageModelExecutor {
+        /// Cache key the SDK uses to create and reuse this handle's executor:
+        /// identity-compared on ``RecordingLanguageModelState``, a reference
+        /// type with no structural equality of its own, so two distinct
+        /// handles — even ones wrapping otherwise-identical models — never
+        /// collide in the SDK's executor cache, while repeated calls on the
+        /// *same* handle keep reusing the same cached executor.
+        public struct Configuration: Sendable, Hashable {
+            let state: RecordingLanguageModelState
+
+            public static func == (lhs: Self, rhs: Self) -> Bool {
+                lhs.state === rhs.state
+            }
+
+            public func hash(into hasher: inout Hasher) {
+                hasher.combine(ObjectIdentifier(state))
+            }
+        }
+
+        public typealias Model = RecordingLanguageModel
+
+        /// This handle's shared per-call state, driving the diff-and-record
+        /// chokepoint every ``respond(to:model:streamingInto:)`` call runs
+        /// through.
+        private let state: RecordingLanguageModelState
+
+        /// The wrapped model's own executor, built exactly once here (see
+        /// the type-level doc comment above) and reused for every turn.
+        private let innerRespond: @Sendable (
+            LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
+        ) async throws -> Void
+
+        /// Stores the cache-key configuration the SDK constructed this
+        /// executor with, and builds the wrapped model's own executor once.
+        public init(configuration: Configuration) throws {
+            self.state = configuration.state
+            self.innerRespond = try RecordingLanguageModelState.makePassthrough(wrapped: configuration.state.wrapped)
+        }
+
+        /// Runs this handle's diff-and-record chokepoint, then passes the
+        /// request straight through to the wrapped model's own (cached)
+        /// executor over the SAME outer `channel` — streaming, reasoning, and
+        /// tool-calling events flow untouched.
+        public func respond(
+            to request: LanguageModelExecutorGenerationRequest,
+            model: RecordingLanguageModel,
+            streamingInto channel: LanguageModelExecutorGenerationChannel
+        ) async throws {
+            try await state.generate(request: request, channel: channel, innerRespond: innerRespond)
+        }
+    }
+}
+
+/// Per-handle mutable recording state backing one ``RecordingLanguageModel``:
+/// its session identity, recording directory, and the last-seen transcript
+/// every ``RecordingLanguageModel/Executor/respond(to:model:streamingInto:)``
+/// call diffs against — plus the wrapped model this handle passes generation
+/// straight through to.
+///
+/// An actor — not a plain lock-guarded class — because
+/// ``RecordingLanguageModel/Executor/respond(to:model:streamingInto:)`` is not
+/// itself isolated (`LanguageModelExecutor`'s protocol requirement is
+/// `nonisolated(nonsending)`) and ``RecordingLanguageModel/sync(_:)`` is called
+/// directly by a turn owner, potentially from any isolation domain. Both entry
+/// points additionally acquire the shared ``RoutedModel/serialGate`` around
+/// their whole diff-and-record (and, for `generate`, the inner passthrough)
+/// work — the same gate ``RoutedSessionActor``'s own chokepoint acquires — so
+/// a `generate` and a `sync` on the same handle can never interleave and
+/// corrupt ``lastSeen``, and generation on this handle serializes with
+/// generation on any ``RoutedSession`` over the same model.
+actor RecordingLanguageModelState {
+    /// The recording root id.
+    nonisolated let routerId: ULID
+    /// This handle's own session span id.
+    nonisolated let sessionId: ULID
+    /// This handle's recording directory.
+    nonisolated let recordingDirectory: URL
+    /// The model slot this handle runs against, stamped onto every event.
+    nonisolated let slot: ModelSlot
+    /// The concrete model reference, stamped onto every event.
+    nonisolated let model: ModelRef
+    /// The non-optional recorder every diffed event is appended through.
+    nonisolated let recorder: any TranscriptRecorder
+    /// The owning model's shared serial generation gate — the same one
+    /// ``RoutedSessionActor`` acquires, so generation on this handle and on
+    /// any ``RoutedSession`` over the same model serialize together.
+    nonisolated let serialGate: AsyncSemaphore
+    /// The session index writer this handle's own creation record is
+    /// appended through, or `nil`.
+    nonisolated let sessionIndexWriter: SessionIndexWriter?
+    /// This handle's recording directory, relative to the router root.
+    nonisolated let indexPath: String
+    /// The raw model this handle passes generation straight through to.
+    nonisolated let wrapped: any LanguageModel
+    /// The owning profile, retained strongly so the resident models this
+    /// handle drives stay alive for its whole lifetime — mirrors
+    /// ``RoutedSessionActor``'s own retention of its owning ``LanguageModelProfile``.
+    nonisolated let profile: LanguageModelProfile
+
+    /// The last-seen transcript snapshot every diff runs against; updated
+    /// after each successful diff (see ``diffAndRecord(current:)``).
+    private var lastSeen = Transcript(entries: [])
+    /// Whether this handle's first-line `session` meta event has been
+    /// recorded yet — mirrors ``RoutedSessionActor``'s own
+    /// `didRecordSessionMeta`.
+    private var didRecordSessionMeta = false
+    /// Whether this handle's own `SessionIndexRecord` has been registered yet
+    /// — lazily, on first use, unlike ``RoutedSession``'s eager
+    /// fire-and-forget registration at creation, since minting a handle via
+    /// ``RoutedModel/makeLanguageModel()`` does no I/O until it is actually
+    /// driven.
+    private var didRegisterSessionIndex = false
+
+    /// Creates a handle's per-call state.
+    ///
+    /// - Parameters:
+    ///   - routerId: The recording root id.
+    ///   - sessionId: This handle's own session span id.
+    ///   - recordingDirectory: This handle's recording directory.
+    ///   - slot: The model slot this handle runs against.
+    ///   - model: The concrete model reference.
+    ///   - recorder: The recorder every diffed event is appended through.
+    ///   - serialGate: The owning model's shared serial generation gate.
+    ///   - sessionIndexWriter: The session index writer this handle's own
+    ///     creation record is appended through, or `nil`.
+    ///   - indexPath: This handle's recording directory, relative to the
+    ///     router root.
+    ///   - wrapped: The raw model this handle passes generation straight
+    ///     through to.
+    ///   - profile: The owning profile, retained strongly for this handle's
+    ///     whole lifetime.
+    init(
+        routerId: ULID,
+        sessionId: ULID,
+        recordingDirectory: URL,
+        slot: ModelSlot,
+        model: ModelRef,
+        recorder: any TranscriptRecorder,
+        serialGate: AsyncSemaphore,
+        sessionIndexWriter: SessionIndexWriter?,
+        indexPath: String,
+        wrapped: any LanguageModel,
+        profile: LanguageModelProfile
+    ) {
+        self.routerId = routerId
+        self.sessionId = sessionId
+        self.recordingDirectory = recordingDirectory
+        self.slot = slot
+        self.model = model
+        self.recorder = recorder
+        self.serialGate = serialGate
+        self.sessionIndexWriter = sessionIndexWriter
+        self.indexPath = indexPath
+        self.wrapped = wrapped
+        self.profile = profile
+    }
+
+    /// The chokepoint every ``RecordingLanguageModel/Executor/respond(to:model:streamingInto:)``
+    /// call runs through: registers this handle's session-index record on
+    /// first use, then — inside the shared serial gate — records the session
+    /// meta event lazily, diffs `request.transcript` against last-seen and
+    /// appends whatever is new, and finally passes the request straight
+    /// through to the wrapped model's own (cached) executor over the SAME
+    /// outer `channel`.
+    ///
+    /// - Parameters:
+    ///   - request: The generation request, carrying the full transcript for
+    ///     this call.
+    ///   - channel: The outer channel to stream the wrapped model's response
+    ///     into, passed straight through unmodified.
+    ///   - innerRespond: The wrapped model's own (cached) executor call.
+    /// - Throws: Whatever `innerRespond` throws.
+    func generate(
+        request: LanguageModelExecutorGenerationRequest,
+        channel: LanguageModelExecutorGenerationChannel,
+        innerRespond: @Sendable (
+            LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
+        ) async throws -> Void
+    ) async throws {
+        await registerSessionIndexRecordIfNeeded(transcript: request.transcript)
+        await serialGate.wait()
+        defer { serialGate.signal() }
+        await recordSessionMetaIfNeeded()
+        await diffAndRecord(current: request.transcript)
+        try await innerRespond(request, channel)
+    }
+
+    /// Diffs `transcript` against last-seen and records anything new,
+    /// closing the gap ``generate(request:channel:innerRespond:)`` cannot:
+    /// the turn-final response, only ever visible once a turn's driving
+    /// `LanguageModelSession` has returned. Idempotent — a `transcript`
+    /// already fully reflected in the last diff produces an empty diff.
+    ///
+    /// - Parameter transcript: The transcript to sync against last-seen.
+    func sync(_ transcript: Transcript) async {
+        await registerSessionIndexRecordIfNeeded(transcript: transcript)
+        await serialGate.wait()
+        defer { serialGate.signal() }
+        await recordSessionMetaIfNeeded()
+        await diffAndRecord(current: transcript)
+    }
+
+    /// Snapshot-diffs `current` against ``lastSeen`` via ``TranscriptDiffer``
+    /// and persists exactly what is new, then updates ``lastSeen``.
+    ///
+    /// Defensively resets the baseline (recording nothing for this call, like
+    /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``'s
+    /// own guard) rather than trapping when `current` is shorter than
+    /// ``lastSeen`` — nothing guarantees the SDK's transcript stays
+    /// strictly append-only forever.
+    ///
+    /// - Parameter current: The transcript's current state.
+    private func diffAndRecord(current: Transcript) async {
+        guard current.count >= lastSeen.count else {
+            recordingLanguageModelLogger.warning(
+                """
+                transcript shrank from \(self.lastSeen.count, privacy: .public) to \
+                \(current.count, privacy: .public) entries for handle \
+                \(self.sessionId.description, privacy: .public); recording no entries for this call and \
+                resetting the baseline
+                """
+            )
+            lastSeen = current
+            return
+        }
+        let diffPartials = TranscriptDiffer.diff(
+            lastSeen: lastSeen,
+            current: current,
+            routerId: routerId,
+            sessionId: sessionId,
+            parentId: nil,
+            slot: slot,
+            model: model
+        )
+        guard !diffPartials.isEmpty else { return }
+        for partial in diffPartials {
+            await recorder.append(partial, to: recordingDirectory)
+        }
+        lastSeen = current
+    }
+
+    /// Records this handle's first-line `session` meta event the first time
+    /// it records anything, so a driven handle's transcript always opens with
+    /// a `session` line while one that is never driven writes no file at all.
+    private func recordSessionMetaIfNeeded() async {
+        guard !didRecordSessionMeta else { return }
+        didRecordSessionMeta = true
+        await recorder.append(
+            TranscriptEvent.Partial(
+                routerId: routerId, sessionId: sessionId, parentId: nil, slot: slot, model: model, kind: .session
+            ),
+            to: recordingDirectory
+        )
+    }
+
+    /// Registers this handle's own ``SessionIndexRecord`` in `sessions.jsonl`
+    /// the first time this handle is used — lazily, unlike ``RoutedSession``'s
+    /// eager fire-and-forget registration at creation (see
+    /// ``didRegisterSessionIndex``).
+    ///
+    /// - Parameter transcript: The transcript observed at first use, mined
+    ///   for a leading `.instructions` entry to populate the record's
+    ///   `instructions` field the same way ``RoutedSession`` populates it.
+    private func registerSessionIndexRecordIfNeeded(transcript: Transcript) async {
+        guard !didRegisterSessionIndex else { return }
+        didRegisterSessionIndex = true
+        guard let sessionIndexWriter else { return }
+        await sessionIndexWriter.append(
+            SessionIndexRecord(
+                sessionId: sessionId,
+                parentId: nil,
+                path: indexPath,
+                forkedAtEntryCount: 0,
+                slot: slot,
+                model: model,
+                instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+                grammar: nil,
+                createdAt: Date()
+            )
+        )
+    }
+
+    /// Builds the wrapped model's own executor exactly once and returns a
+    /// closure that re-invokes it — the confirmed passthrough mechanism:
+    /// `Wrapped.Executor(configuration: wrapped.executorConfiguration)
+    /// .respond(to:model:streamingInto:)`, called through the OUTER channel
+    /// unmodified. Called only from ``RecordingLanguageModel/Executor/init(configuration:)``,
+    /// which the SDK calls once per distinct ``RecordingLanguageModel/Executor/Configuration``
+    /// (this handle's own identity) and caches thereafter, so the wrapped
+    /// model's own executor is built once per handle and reused for every
+    /// turn, never rebuilt per call.
+    ///
+    /// - Parameter wrapped: The raw model to wrap, type-erased.
+    /// - Returns: A closure re-invoking the wrapped model's own (already
+    ///   constructed) executor.
+    /// - Throws: Whatever `Wrapped.Executor.init(configuration:)` throws.
+    static func makePassthrough(
+        wrapped: any LanguageModel
+    ) throws -> @Sendable (
+        LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
+    ) async throws -> Void {
+        try makePassthroughGeneric(wrapped)
+    }
+
+    /// Opens `wrapped`'s existential so `Wrapped.Executor` — an associated
+    /// type unreachable from `any LanguageModel` directly — is nameable here,
+    /// constructs it once, then closes back over that concretely-typed,
+    /// already-built executor and model so the returned closure stays
+    /// non-generic.
+    ///
+    /// - Parameter wrapped: The raw model to wrap.
+    /// - Returns: A closure re-invoking `wrapped`'s own (already constructed)
+    ///   executor.
+    /// - Throws: Whatever `Wrapped.Executor.init(configuration:)` throws.
+    private static func makePassthroughGeneric<Wrapped: LanguageModel>(
+        _ wrapped: Wrapped
+    ) throws -> @Sendable (
+        LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
+    ) async throws -> Void {
+        let executor = try Wrapped.Executor(configuration: wrapped.executorConfiguration)
+        return { request, channel in
+            try await executor.respond(to: request, model: wrapped, streamingInto: channel)
+        }
+    }
+}

@@ -80,16 +80,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         }
 
         let sessionId = ULID.generate()
-        // When the router has no durable transcripts root (recording to
-        // memory/none), nest the session directory under a per-process temporary
-        // location, so the directory is still well-defined.
-        let recordingsBase = recordingsRoot
-            ?? FileManager.default.temporaryDirectory
-                .appendingPathComponent(moduleName, isDirectory: true)
-                .appendingPathComponent("Transcripts", isDirectory: true)
-        let recordingDirectory = recordingsBase
-            .appendingPathComponent(routerId.description, isDirectory: true)
-            .appendingPathComponent(sessionId.description, isDirectory: true)
+        let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
 
         // The container is only a factory: it manufactures the backend the
         // vended session owns and drives for its whole lifetime, born already
@@ -147,5 +138,73 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             sessionIndexWriter: sessionIndexWriter,
             pendingIndexWrite: pendingIndexWrite
         )
+    }
+
+    /// The recording directory a fresh session/handle with `sessionId` nests
+    /// under: the router's durable transcripts root (or a per-process
+    /// temporary fallback when recording to memory/none), by router id and
+    /// session id — shared by ``makeSession(grammar:instructions:workingDirectory:)``
+    /// and ``makeLanguageModel()`` so the two factories nest identically.
+    ///
+    /// - Parameter sessionId: The fresh session/handle's own span id.
+    /// - Returns: The directory its transcript is recorded under.
+    func recordingDirectory(forSessionId sessionId: ULID) -> URL {
+        let recordingsBase = recordingsRoot
+            ?? FileManager.default.temporaryDirectory
+                .appendingPathComponent(moduleName, isDirectory: true)
+                .appendingPathComponent("Transcripts", isDirectory: true)
+        return recordingsBase
+            .appendingPathComponent(routerId.description, isDirectory: true)
+            .appendingPathComponent(sessionId.description, isDirectory: true)
+    }
+
+    /// Vends a fresh ``RecordingLanguageModel`` handle over this resident
+    /// model: a `FoundationModels.LanguageModel` conformer any caller can
+    /// build a `LanguageModelSession(model:tools:instructions:)` over
+    /// directly — recorded, serial-gated, and tool-capable with zero session
+    /// plumbing.
+    ///
+    /// A FACTORY, not a property: each call mints a distinct handle with its
+    /// own session ULID, its own recording directory (nested the same way
+    /// ``makeSession(instructions:workingDirectory:)``'s is), and its own
+    /// last-seen transcript, so two live handles never interleave events or
+    /// share a directory. Generation is recorded by diffing the transcript
+    /// `LanguageModelExecutorGenerationRequest` carries on every call against
+    /// last-seen; the turn-final response additionally needs an explicit
+    /// ``RecordingLanguageModel/sync(_:)`` call at turn end
+    /// (`session.transcript`), since it is not observable at the executor
+    /// boundary. See ``RecordingLanguageModelState`` for the full mechanism.
+    ///
+    /// - Precondition: The owning ``LanguageModelProfile`` must still be
+    ///   alive when this is called — mirrors
+    ///   ``makeSession(instructions:workingDirectory:)``'s own precondition,
+    ///   since this handle's resident model must stay alive for its whole
+    ///   lifetime too.
+    /// - Returns: A fresh ``RecordingLanguageModel`` handle over this model.
+    public func makeLanguageModel() -> RecordingLanguageModel {
+        guard let owningProfile = owningProfileBox.current else {
+            preconditionFailure(
+                "makeLanguageModel requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
+            )
+        }
+
+        let sessionId = ULID.generate()
+        let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
+        let indexPath = sessionId.description
+
+        let state = RecordingLanguageModelState(
+            routerId: routerId,
+            sessionId: sessionId,
+            recordingDirectory: recordingDirectory,
+            slot: slot,
+            model: chosen,
+            recorder: recorder,
+            serialGate: serialGate,
+            sessionIndexWriter: sessionIndexWriter,
+            indexPath: indexPath,
+            wrapped: container.languageModel,
+            profile: owningProfile
+        )
+        return RecordingLanguageModel(state: state)
     }
 }

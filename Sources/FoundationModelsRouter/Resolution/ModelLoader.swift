@@ -88,6 +88,31 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     ///   `transcript`'s entries, a vended ``RoutedSession`` drives for its
     ///   lifetime.
     func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
+
+    /// The raw `FoundationModels.LanguageModel` this container wraps — the
+    /// seam ``RoutedModel/makeLanguageModel()`` wraps in a
+    /// ``RecordingLanguageModel`` passthrough handle so any caller can build
+    /// a `LanguageModelSession(model:tools:instructions:)` directly over a
+    /// recorded, serial-gated, tool-capable handle.
+    ///
+    /// Defaulted (see the extension below) to a precondition failure: only a
+    /// container that actually supports the recording-handle surface — the
+    /// live `MLXFoundationModelsContainer` and a purpose-built stub in
+    /// `RecordingLanguageModelTests` — needs to override it, so the many stub
+    /// containers elsewhere in the unit suite that only ever exercise
+    /// ``RoutedSession`` (never ``RoutedModel/makeLanguageModel()``) need no
+    /// changes and never call this accessor.
+    var languageModel: any FoundationModels.LanguageModel { get }
+}
+
+extension LoadedLLMContainer {
+    /// Traps: see ``LoadedLLMContainer/languageModel``'s doc comment for
+    /// which containers need to override this default.
+    public var languageModel: any FoundationModels.LanguageModel {
+        preconditionFailure(
+            "this LoadedLLMContainer does not expose a languageModel; RoutedModel.makeLanguageModel() is unavailable for it"
+        )
+    }
 }
 
 /// A loaded embedding model container — the seam the embedding computation runs

@@ -62,4 +62,31 @@ enum TranscriptDiffer {
             )
         }
     }
+
+    /// The text of `transcript`'s leading `.instructions` entry, or `nil` when
+    /// `transcript` has none (or does not open with one).
+    ///
+    /// A `LanguageModelSession`'s transcript carries supplied instructions as
+    /// its first entry, so this only ever looks at the transcript's first
+    /// entry, not the whole sequence. Shared by
+    /// ``MLXFoundationModelsContainer/makeSession(transcript:)`` (restoring a
+    /// session's instructions from a persisted transcript) and
+    /// ``RecordingLanguageModelState``'s lazy ``SessionIndexRecord``
+    /// registration (deriving `instructions` from the first transcript this
+    /// handle's diff observes) — one place instead of two independently
+    /// re-deriving the same fact from a transcript's shape.
+    ///
+    /// - Parameter transcript: The transcript to inspect.
+    /// - Returns: The leading instructions' joined text-segment content, or
+    ///   `nil`.
+    static func leadingInstructionsText(of transcript: Transcript) -> String? {
+        guard let first = transcript.first, case .instructions(let instructions) = first else {
+            return nil
+        }
+        let textContents = instructions.segments.compactMap { segment -> String? in
+            guard case .text(let text) = segment else { return nil }
+            return text.content
+        }
+        return textContents.isEmpty ? nil : textContents.joined()
+    }
 }

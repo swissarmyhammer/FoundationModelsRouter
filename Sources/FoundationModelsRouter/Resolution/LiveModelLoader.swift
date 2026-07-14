@@ -53,6 +53,13 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
 
+    /// The raw `FoundationModels.LanguageModel` this container wraps — the
+    /// seam ``RoutedModel/makeLanguageModel()`` wraps in a
+    /// ``RecordingLanguageModel`` passthrough handle. `MLXLanguageModel` is a
+    /// small `Sendable` value (see the type-level doc comment above), so
+    /// exposing it here reloads nothing.
+    var languageModel: any FoundationModels.LanguageModel { model }
+
     /// Manufactures a live session backend over ``model``.
     ///
     /// - Parameter instructions: The session's system instructions, or `nil`.
@@ -85,26 +92,8 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         return MLXFoundationModelsSessionBackend(
             session: session,
             model: model,
-            instructions: Self.leadingInstructionsText(of: transcript)
+            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript)
         )
-    }
-
-    /// The text of `transcript`'s leading `.instructions` entry, or `nil` when
-    /// `transcript` has none (or does not open with one).
-    ///
-    /// A `LanguageModelSession`'s transcript carries supplied instructions as
-    /// its first entry (mirrored by `StubSessionBackend`'s synthetic entries
-    /// in the test target), so this only ever looks at the transcript's first
-    /// entry, not the whole sequence.
-    private static func leadingInstructionsText(of transcript: FoundationModels.Transcript) -> String? {
-        guard let first = transcript.first, case .instructions(let instructions) = first else {
-            return nil
-        }
-        let textContents = instructions.segments.compactMap { segment -> String? in
-            guard case .text(let text) = segment else { return nil }
-            return text.content
-        }
-        return textContents.isEmpty ? nil : textContents.joined()
     }
 }
 
