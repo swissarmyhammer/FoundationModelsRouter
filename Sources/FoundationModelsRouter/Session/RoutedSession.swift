@@ -701,30 +701,31 @@ actor RoutedSessionActor: RoutedSession {
     /// of the "persist the SDK's own `Transcript`, not a paraphrase" design (see
     /// plan.md's "Transcript fidelity" section).
     ///
-    /// Reads `backend.transcriptEntries()` once and takes the new suffix
-    /// **defensively** (`entries[min(persistedEntryCount, entries.count)...]`),
-    /// never a bare `entries[persistedEntryCount...]`: nothing guarantees the SDK
-    /// transcript stays strictly append-only forever (a future
-    /// `TranscriptErrorHandlingPolicy` opt-in could condense or rewrite it), and
-    /// an out-of-bounds range here would trap *inside the recording path* —
-    /// crashing generation and violating the recording-is-best-effort/never-fails
-    /// contract. If a shrink is detected (`entries.count < persistedEntryCount`),
+    /// Reads `backend.transcriptEntries()` once. If a shrink is detected
+    /// (`entries.count < persistedEntryCount` — nothing guarantees the SDK
+    /// transcript stays strictly append-only forever; a future
+    /// `TranscriptErrorHandlingPolicy` opt-in could condense or rewrite it),
     /// this logs a warning, records nothing for this turn's diff, and resets
     /// ``persistedEntryCount`` to the smaller count so the next turn diffs from
-    /// reality instead of tripping the same guard again.
+    /// reality instead of tripping the same guard again. Otherwise the
+    /// last-seen (the first ``persistedEntryCount`` entries) and current (all
+    /// of `entries`) states are diffed via ``TranscriptDiffer/diff(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
+    /// — the one diff implementation this session shares with the upcoming
+    /// recording handle — which maps every new entry through
+    /// ``TranscriptEntryMapper/event(from:)`` and stamps this session's
+    /// identity onto each produced partial.
     ///
-    /// Every new entry is mapped through ``TranscriptEntryMapper/event(from:)``
-    /// and appended as its own event (envelope stamped as usual; `entry`
-    /// payload and flattened `text` from the mapper). When `since` is
-    /// non-nil, the turn's measured `ms` is stamped only on the *last*
-    /// `.response`-kind event this diff appends — not on every appended event —
-    /// on the success path and the throwing path alike, so an SDK-appended
-    /// `.response` entry from a turn that failed *after* generating still gets
-    /// the turn's `ms`. `usage` (the turn's own `tokensIn`/`tokensOut` delta,
-    /// or `nil` when the backend cannot report usage) is stamped the same
-    /// way, on that same last `.response`-kind event — mirroring `ms`, since
-    /// both are per-turn totals that only make sense attributed to the turn's
-    /// one closing event, not every entry it appended.
+    /// Each produced partial is then re-stamped with this turn's `grammar`
+    /// and appended as its own event. When `since` is non-nil, the turn's
+    /// measured `ms` is stamped only on the *last* `.response`-kind event the
+    /// diff produced — not on every appended event — on the success path and
+    /// the throwing path alike, so an SDK-appended `.response` entry from a
+    /// turn that failed *after* generating still gets the turn's `ms`.
+    /// `usage` (the turn's own `tokensIn`/`tokensOut` delta, or `nil` when the
+    /// backend cannot report usage) is stamped the same way, on that same
+    /// last `.response`-kind event — mirroring `ms`, since both are per-turn
+    /// totals that only make sense attributed to the turn's one closing
+    /// event, not every entry it appended.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force, stamped onto every
@@ -760,23 +761,30 @@ actor RoutedSessionActor: RoutedSession {
             return false
         }
 
-        let newEntries = entries[min(persistedEntryCount, entries.count)...]
-        guard !newEntries.isEmpty else { return false }
+        let diffPartials = TranscriptDiffer.diff(
+            lastSeen: Transcript(entries: entries.prefix(persistedEntryCount)),
+            current: Transcript(entries: entries),
+            routerId: routerId,
+            sessionId: id,
+            parentId: parentId,
+            slot: slot,
+            model: model
+        )
+        guard !diffPartials.isEmpty else { return false }
 
-        let mapped = newEntries.map { TranscriptEntryMapper.event(from: $0) }
-        let lastResponseIndex = mapped.lastIndex { $0.kind == .response }
+        let lastResponseIndex = diffPartials.lastIndex { $0.kind == .response }
 
-        for (index, mappedEntry) in mapped.enumerated() {
+        for (index, diffPartial) in diffPartials.enumerated() {
             let isTurnClose = index == lastResponseIndex
             let stampSince = (since != nil && isTurnClose) ? since : nil
             let stampUsage = (usage != nil && isTurnClose) ? usage : nil
             await append(
                 partial: makePartialEvent(
-                    kind: mappedEntry.kind,
+                    kind: diffPartial.kind,
                     grammar: grammar,
-                    text: mappedEntry.text,
+                    text: diffPartial.text,
                     since: stampSince,
-                    entry: mappedEntry.payload,
+                    entry: diffPartial.entry,
                     tokensIn: stampUsage?.input,
                     tokensOut: stampUsage?.output
                 )
