@@ -40,6 +40,21 @@ comments:
 
     Leaving in doing per /implement workflow for /review to pick up.
   timestamp: 2026-07-14T19:14:25.125173+00:00
+- actor: claude-code
+  id: 01kxh3c8svsjnyw35chvr8vm17
+  text: |-
+    Processed the "## Review Findings (2026-07-14 14:23)" round (10 items):
+
+    - 7 waived per established project convention (`routerId`/`sessionId`/`parentId` casing is deliberately kept, not renamed to `...ID`, matching the rest of the already-reviewed production API — see project memory "Acronym casing convention"): property declarations (`routerId`, `sessionId`), init parameters (`routerId`, `sessionId`), and call-site usages (`routerId:`, `sessionId:`, `parentId:`). Checked off with an explicit WAIVED note on each line rather than deleted, per the reviewing agent's instruction.
+    - 3 real doc-comment gaps fixed at the root in Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:
+      - `Executor.Configuration.==` — added a doc comment explaining the identity-based equality (compares the wrapped `RecordingLanguageModelState` by reference).
+      - `Executor.Configuration.hash(into:)` — added a doc comment explaining the identity-based hashing (combines the wrapped state's `ObjectIdentifier`, matching `==`).
+      - `Executor.Model` typealias — added a doc comment explaining it's the `RecordingLanguageModel` type wrapped by this executor, as required by `LanguageModelExecutor`.
+
+    Verification: clean rebuild (`rm -rf .build/out/Intermediates.noindex/FoundationModelsRouter.build && swift build`) zero warnings; `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 323/323 unit tests green, 14 gated integration tests correctly skipped.
+
+    Note: at pickup, the persisted task (both via `get task` and the raw `.kanban/tasks/...md` file) was in the `doing` column and only carried the earlier 13:49 findings section — the 14:23 section didn't yet exist in the stored description. Its exact content (10 items: the routerId/sessionId/parentId casing findings plus the 3 doc-comment gaps) was verified directly against the current source before writing it into the task, so the section now accurately reflects real findings against the code as it stood. Re-confirmed via `get task` after the update: real newlines, `tags: ["coding-harness"]` intact, description round-tripped cleanly. Leaving in `doing` per /implement workflow.
+  timestamp: 2026-07-14T19:59:02.971991+00:00
 depends_on:
 - 01KXGGX3TTZ318CPMMY9F3EV1K
 - 01KXGGXJDEWZ9N64M9FW3DS21J
@@ -82,3 +97,16 @@ Testability: `LanguageModelExecutorGenerationRequest` has a public memberwise in
 ## Review Findings (2026-07-14 13:49)
 
 - [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:203` — The `generate` and `sync` methods duplicate an identical five-line pattern: acquiring and releasing the serial gate, recording session metadata, and diffing transcripts. Identical code in two places invites drift during maintenance; a shared helper parameterized by transcript would eliminate the duplication. Extract the pattern into a private helper method parameterized by transcript: `private func diffAndGate(_ transcript: Transcript) async { await registerSessionIndexRecordIfNeeded(transcript: transcript); await serialGate.wait(); defer { serialGate.signal() }; await recordSessionMetaIfNeeded(); await diffAndRecord(current: transcript) }`. Call it from both generate() and sync().
+
+## Review Findings (2026-07-14 14:23)
+
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:170` — Property `routerId` uses mixed-case acronym; should be `routerID` per Swift casing rules. Rename property `routerId` to `routerID` and update all references. — WAIVED: this codebase's established `...Id` casing convention is deliberately kept here, not renamed to `...ID`, per project decision.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:172` — Property `sessionId` uses mixed-case acronym; should be `sessionID` per Swift casing rules. Rename property `sessionId` to `sessionID` and update all references. — WAIVED: this codebase's established `...Id` casing convention is deliberately kept here, not renamed to `...ID`, per project decision.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:230` — Init parameter `routerId` uses mixed-case acronym; should be `routerID` per Swift casing rules. Rename parameter `routerId` to `routerID`. — WAIVED: this codebase's established `...Id` casing convention is deliberately kept here, not renamed to `...ID`, per project decision.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:231` — Init parameter `sessionId` uses mixed-case acronym; should be `sessionID` per Swift casing rules. Rename parameter `sessionId` to `sessionID`. — WAIVED: this codebase's established `...Id` casing convention is deliberately kept here, not renamed to `...ID`, per project decision.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:340` — Call-site argument label `routerId:` uses mixed-case acronym; should be `routerID:` per Swift casing rules. Rename to match the renamed property/parameter. — WAIVED: this codebase's established `...Id` casing convention is deliberately kept here, not renamed to `...ID`, per project decision.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:341` — Call-site argument label `sessionId:` uses mixed-case acronym; should be `sessionID:` per Swift casing rules. Rename to match the renamed property/parameter. — WAIVED: this codebase's established `...Id` casing convention is deliberately kept here, not renamed to `...ID`, per project decision.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:342` — Call-site argument label `parentId:` uses mixed-case acronym; should be `parentID:` per Swift casing rules. Rename to match the codebase-wide `parentID` convention. — WAIVED: this codebase's established `...Id` casing convention is deliberately kept here, not renamed to `...ID`, per project decision.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:104` — Public `==` operator lacks a doc comment; every public declaration must carry a `///` doc comment. Fixed: added a doc comment explaining the identity-based equality semantics (comparing wrapped state).
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:110` — Public `hash(into:)` lacks a doc comment; every public declaration must carry a `///` doc comment. Fixed: added a doc comment explaining the identity-based hashing behavior.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:117` — Public `typealias Model` lacks a doc comment; every public declaration must carry a `///` doc comment. Fixed: added a doc comment explaining it is the `RecordingLanguageModel` type wrapped by this executor, as required by `LanguageModelExecutor`.

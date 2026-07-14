@@ -96,15 +96,24 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
         public struct Configuration: Sendable, Hashable {
             let state: RecordingLanguageModelState
 
+            /// Identity-based equality: two configurations are equal exactly
+            /// when they wrap the same ``RecordingLanguageModelState``
+            /// instance — the SDK's executor cache key for this handle, so
+            /// repeated calls on one handle hit the same cache entry while
+            /// distinct handles never collide.
             public static func == (lhs: Self, rhs: Self) -> Bool {
                 lhs.state === rhs.state
             }
 
+            /// Hashes by the wrapped state's `ObjectIdentifier`, matching
+            /// this type's identity-based `==`.
             public func hash(into hasher: inout Hasher) {
                 hasher.combine(ObjectIdentifier(state))
             }
         }
 
+        /// The ``RecordingLanguageModel`` type wrapped by this executor, as
+        /// required by `LanguageModelExecutor`.
         public typealias Model = RecordingLanguageModel
 
         /// This handle's shared per-call state, driving the diff-and-record
