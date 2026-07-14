@@ -23,6 +23,23 @@ comments:
 
     Leaving in doing per /implement workflow for /review to pick up.
   timestamp: 2026-07-14T18:44:39.893413+00:00
+- actor: claude-code
+  id: 01kxh0thq5wy6335bv4gmstg75
+  text: |-
+    Fixed the review finding: extracted the duplicated gate/register/record/diff pattern from `generate` and `sync` in RecordingLanguageModel.swift.
+
+    Important deviation from the finding's literal sketch: the suggested `diffAndGate(_:)` helper — which does `register; wait; defer { signal() }; recordMeta; diff` all in one function — would release the serial gate BEFORE `generate()`'s passthrough call to `innerRespond`, since the `defer` fires on that helper's own return. That silently breaks the documented invariant that "generation on this handle serializes with generation on any RoutedSession over the same model" — confirmed by a real (non-flaky, reproduced 5/5 runs) failure in the existing `serialGateSerializesAcrossHandles` test after a first attempt at the literal extraction.
+
+    Final design: `enterGateAndDiff(_:)` acquires the gate and runs register/recordMeta/diff, but does NOT release it — callers own the release. `generate()` does `await enterGateAndDiff(...); defer { serialGate.signal() }; try await innerRespond(...)` so generation itself stays inside the gate; `sync()` does `await enterGateAndDiff(...); serialGate.signal()` (a bare call, not `defer`, since nothing follows it — Swift warns on a `defer` with nothing after it in the same scope).
+
+    Also tried a `rethrows` + defaulted-trailing-closure variant (`diffAndGate(_:then:)`) to let `generate` pass `innerRespond` as the "closing" step — rejected because Swift's rethrows analysis is conservative for a defaulted throwing-closure parameter: it always requires `try` at the call site even when the default value can't throw, which would have forced `sync()` (a non-throwing public API) to either become `throws` or use `try!`. The `enterGateAndDiff` + caller-owns-release design avoids that entirely.
+
+    Verification: `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 323/323 unit tests green, 14 gated integration tests correctly skipped, zero warnings on a clean rebuild (`rm -rf .build/out/Intermediates.noindex/FoundationModelsRouter.build && swift build`). Re-ran the serial-gate test 5x standalone to confirm the fix isn't flaky.
+
+    Note on process: my first kanban `update task` call to flip the checkbox mangled the description (literal backslash-n instead of real newlines, from copy-pasting the JSON-escaped display text) and dropped the `tags` field (tags are apparently derived from the `#coding-harness` hashtag in the body text at read time, and the mangled text broke the word-boundary before `#`). Recovered by editing `.kanban/tasks/01KXGGZ3ETZEH6PMG3VEM16AZ8.md` directly with real newlines, using the jsonl audit log's `01KXH0P4A776QSC6FRJZCBP8TK` reverse_patch as the known-good reference. Re-confirmed via `get task`: real newlines, tags restored, progress 1.0.
+
+    Leaving in doing per /implement workflow for /review to pick up.
+  timestamp: 2026-07-14T19:14:25.125173+00:00
 depends_on:
 - 01KXGGX3TTZ318CPMMY9F3EV1K
 - 01KXGGXJDEWZ9N64M9FW3DS21J
@@ -61,3 +78,7 @@ Testability: `LanguageModelExecutorGenerationRequest` has a public memberwise in
 - Use /tdd.
 
 #coding-harness
+
+## Review Findings (2026-07-14 13:49)
+
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift:203` — The `generate` and `sync` methods duplicate an identical five-line pattern: acquiring and releasing the serial gate, recording session metadata, and diffing transcripts. Identical code in two places invites drift during maintenance; a shared helper parameterized by transcript would eliminate the duplication. Extract the pattern into a private helper method parameterized by transcript: `private func diffAndGate(_ transcript: Transcript) async { await registerSessionIndexRecordIfNeeded(transcript: transcript); await serialGate.wait(); defer { serialGate.signal() }; await recordSessionMetaIfNeeded(); await diffAndRecord(current: transcript) }`. Call it from both generate() and sync().

@@ -244,12 +244,11 @@ actor RecordingLanguageModelState {
     }
 
     /// The chokepoint every ``RecordingLanguageModel/Executor/respond(to:model:streamingInto:)``
-    /// call runs through: registers this handle's session-index record on
-    /// first use, then — inside the shared serial gate — records the session
-    /// meta event lazily, diffs `request.transcript` against last-seen and
-    /// appends whatever is new, and finally passes the request straight
-    /// through to the wrapped model's own (cached) executor over the SAME
-    /// outer `channel`.
+    /// call runs through: diffs and gates on `request.transcript` (see
+    /// ``enterGateAndDiff(_:)``), then passes the request straight through
+    /// to the wrapped model's own (cached) executor over the SAME outer
+    /// `channel` — still inside the gate, so generation itself, not just the
+    /// diff, stays serialized — before releasing it.
     ///
     /// - Parameters:
     ///   - request: The generation request, carrying the full transcript for
@@ -265,25 +264,40 @@ actor RecordingLanguageModelState {
             LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
         ) async throws -> Void
     ) async throws {
-        await registerSessionIndexRecordIfNeeded(transcript: request.transcript)
-        await serialGate.wait()
+        await enterGateAndDiff(request.transcript)
         defer { serialGate.signal() }
-        await recordSessionMetaIfNeeded()
-        await diffAndRecord(current: request.transcript)
         try await innerRespond(request, channel)
     }
 
-    /// Diffs `transcript` against last-seen and records anything new,
-    /// closing the gap ``generate(request:channel:innerRespond:)`` cannot:
-    /// the turn-final response, only ever visible once a turn's driving
+    /// Diffs `transcript` against last-seen and records anything new (see
+    /// ``enterGateAndDiff(_:)``), closing the gap
+    /// ``generate(request:channel:innerRespond:)`` cannot: the turn-final
+    /// response, only ever visible once a turn's driving
     /// `LanguageModelSession` has returned. Idempotent — a `transcript`
     /// already fully reflected in the last diff produces an empty diff.
     ///
     /// - Parameter transcript: The transcript to sync against last-seen.
     func sync(_ transcript: Transcript) async {
+        await enterGateAndDiff(transcript)
+        serialGate.signal()
+    }
+
+    /// Registers this handle's session-index record on first use, then
+    /// acquires the shared serial gate — without releasing it — and records
+    /// the session meta event lazily and diffs `transcript` against
+    /// last-seen, appending whatever is new. The shared chokepoint behind
+    /// both ``generate(request:channel:innerRespond:)`` and ``sync(_:)``,
+    /// which differ only in what (if anything) they run inside the gate
+    /// after this returns; callers MUST release the gate themselves once
+    /// that additional work completes — `generate` defers the signal around
+    /// its passthrough call, while `sync` (nothing left to run) signals
+    /// immediately.
+    ///
+    /// - Parameter transcript: The transcript to register/diff against
+    ///   last-seen.
+    private func enterGateAndDiff(_ transcript: Transcript) async {
         await registerSessionIndexRecordIfNeeded(transcript: transcript)
         await serialGate.wait()
-        defer { serialGate.signal() }
         await recordSessionMetaIfNeeded()
         await diffAndRecord(current: transcript)
     }
