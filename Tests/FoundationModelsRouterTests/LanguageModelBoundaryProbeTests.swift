@@ -52,6 +52,17 @@
         /// ``ProbeTranscriptRecorder``, so tests can assert on the
         /// transcripts this stub's boundary actually received.
         struct Executor: LanguageModelExecutor {
+            /// Cache key the SDK uses to create and reuse this stub's
+            /// executor (see `MLXLanguageModel.executorConfiguration`'s doc
+            /// comment: "Configuration the framework uses to create and
+            /// cache executors"). `ProbeTranscriptRecorder` is a reference
+            /// type (`actor`) with no structural equality of its own, so
+            /// equality and hashing compare it by identity (`===` /
+            /// `ObjectIdentifier`) rather than by its contents — this lets
+            /// each test's own recorder instance produce a distinct cache
+            /// key even when two tests share the same `cannedResponseText`,
+            /// so the SDK's executor cache never conflates one test's
+            /// recorder with another's.
             struct Configuration: Sendable, Hashable {
                 let cannedResponseText: String
                 let transcripts: ProbeTranscriptRecorder

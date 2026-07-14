@@ -109,6 +109,24 @@ comments:
 
     All Review Findings (2026-07-14 10:43) checkboxes now [x]. Final verification: swift test (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 305/305 unit tests green, 0 failures, 0 warnings from our code (only the pre-existing, unrelated mlx-swift-lm Cmlx resource-bundle build note). Task description confirmed to have real newlines and tags: ["coding-harness"] intact via re-fetch. Leaving in `doing` per /implement's contract — ready for /review.
   timestamp: 2026-07-14T15:58:19.878406+00:00
+- actor: claude-code
+  id: 01kxgp2jk4ntn4xjfjx5d1xbqc
+  text: |-
+    Addressed Review Findings (2026-07-14 10:59): added a doc comment above ProbeStubModel.Executor.Configuration explaining it is the cache key the SDK uses to create/reuse this stub's executor (mirroring the sibling PassthroughProbeModel.Executor.Configuration doc's citation of MLXLanguageModel.executorConfiguration's "Configuration the framework uses to create and cache executors" comment), and explaining that ProbeTranscriptRecorder is a reference-type actor with no structural equality of its own, so == and hash(into:) compare/hash it by identity (=== / ObjectIdentifier) rather than by content — so each test's own recorder instance yields a distinct cache key even when cannedResponseText happens to match across tests.
+
+    Flipped the single checkbox in Review Findings (2026-07-14 10:59) to [x]; all prior sections preserved verbatim. Confirmed via re-fetch: description has real newlines (not literal \n) and tags: ["coding-harness"] intact, progress 1.0 (hit the same kanban update-task tooling quirk noted in earlier comments on this task — first update call flattened newlines and zeroed tags; fixed with a second update call using real embedded newlines and re-supplying tags).
+
+    Verification: swift test (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 305/305 unit tests green, 0 failures, 0 warnings (grepped test output for "warning": no matches). Gated integration suites skip as expected (no GPU/network in sandbox). No changes made under .build/checkouts/mlx-swift-lm.
+
+    Adversarial double-check agent dispatched to verify the doc comment's technical accuracy and that no other code changed; awaiting verdict before final hand-off.
+  timestamp: 2026-07-14T16:06:33.828417+00:00
+- actor: claude-code
+  id: 01kxgpcd3s2kfbzbx5114sq5sq
+  text: |-
+    Adversarial double-check returned PASS, no findings: diff scope confirmed to exactly 3 files (test file, 32 insertions/0 deletions, plus this task's two kanban metadata files) — no test logic, assertions, or .build/checkouts/mlx-swift-lm touched, pure doc-comment addition. Technical accuracy confirmed: ProbeTranscriptRecorder is indeed an actor with no synthesized Equatable/Hashable, the doc comment's description of == and hash(into:) behavior matches the code exactly, and the MLXLanguageModel.executorConfiguration doc-comment citation was independently verified against the vendored fork source and matches verbatim. Style check confirmed the new comment mirrors the sibling PassthroughProbeModel.Executor.Configuration doc's structure/citation pattern without being a verbatim copy-paste — it's adapted to this struct's own single-recorder field set. Independent swift test re-run: 305/305 green, 0 warnings from project code (only pre-existing unrelated mlx-swift-lm Cmlx resource-bundle build note).
+
+    All Review Findings (2026-07-14 10:59) checkboxes now [x]. Task description re-confirmed to have real newlines and tags: ["coding-harness"] intact, progress 1.0. Leaving in `doing` per /implement's contract — ready for /review.
+  timestamp: 2026-07-14T16:11:55.897864+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Spike: verify LanguageModel generate boundary exposes the transcript (recording-handle prerequisite)'
@@ -151,3 +169,7 @@ Record the findings as a comment on this task naming exact types, files, and sig
 ## Review Findings (2026-07-14 10:43)
 
 - [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:248` — Test setup code (lines 248–252) duplicates setup from the first test (lines 214–218). Both initialize the same recorders and models with only the cannedResponseText differing. Should extract to a parameterized helper to eliminate the near-duplicate. Extract a helper method `func setupProbes(cannedResponseText: String) -> (ProbeTranscriptRecorder, ProbeTranscriptRecorder, ProbeResponseRecorder, ProbeStubModel, PassthroughProbeModel)` and call it from both tests, passing the differing cannedResponseText value.
+
+## Review Findings (2026-07-14 10:59)
+
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:55` — ProbeStubModel.Executor.Configuration struct lacks documentation. This Configuration type has custom Equatable and Hashable implementations with subtle logic (ObjectIdentifier identity checks vs direct equality) that needs explanation. Add a documentation comment explaining the Configuration struct's purpose and why ObjectIdentifier is used for identity-based equality on the transcripts recorder.
