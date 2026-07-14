@@ -204,20 +204,31 @@
     /// it delegates to and re-emits.
     @Suite("LanguageModel boundary probe: transcript visibility, statelessness, and response observability")
     struct LanguageModelBoundaryProbeTests {
-        @Test("a passthrough wrapper observes the transcript passed to a call and the response text it delegates and emits")
-        func passthroughWrapperObservesTranscriptAndResponse() async throws {
-            // Deliberately separate recorders for the stub's own (inner,
-            // throwaway one-turn session) transcript versus the wrapper's
-            // (outer, real session) transcript — sharing one recorder between
-            // them conflated the two and produced a bogus double-count (an
-            // earlier version of this test caught exactly that bug: sharing
-            // one `ProbeTranscriptRecorder` made every outer turn record two
-            // transcripts instead of one).
+        /// Builds a fresh stub/wrapper pair and their recorders, varying only
+        /// the stub's canned response text — shared setup for both tests
+        /// below.
+        ///
+        /// The stub and wrapper transcripts deliberately use separate
+        /// recorders — sharing one `ProbeTranscriptRecorder` between them
+        /// conflated the two and produced a bogus double-count (an earlier
+        /// version of this test caught exactly that bug: sharing one
+        /// recorder made every outer turn record two transcripts instead of
+        /// one).
+        private func setupProbes(
+            cannedResponseText: String
+        ) -> (ProbeTranscriptRecorder, ProbeTranscriptRecorder, ProbeResponseRecorder, ProbeStubModel, PassthroughProbeModel) {
             let stubTranscripts = ProbeTranscriptRecorder()
             let wrapperTranscripts = ProbeTranscriptRecorder()
             let responses = ProbeResponseRecorder()
-            let stub = ProbeStubModel(cannedResponseText: "stub says hello", transcripts: stubTranscripts)
+            let stub = ProbeStubModel(cannedResponseText: cannedResponseText, transcripts: stubTranscripts)
             let wrapper = PassthroughProbeModel(wrapped: stub, transcripts: wrapperTranscripts, responses: responses)
+            return (stubTranscripts, wrapperTranscripts, responses, stub, wrapper)
+        }
+
+        @Test("a passthrough wrapper observes the transcript passed to a call and the response text it delegates and emits")
+        func passthroughWrapperObservesTranscriptAndResponse() async throws {
+            let (stubTranscripts, wrapperTranscripts, responses, _, wrapper) =
+                setupProbes(cannedResponseText: "stub says hello")
 
             let session = LanguageModelSession(model: wrapper, tools: [], instructions: "be terse")
             let response = try await session.respond(to: "hello there")
@@ -248,11 +259,8 @@
 
         @Test("a second call's transcript is the full accumulated history again, not just the new turn's delta")
         func secondCallReceivesFullAccumulatedTranscriptAgain() async throws {
-            let stubTranscripts = ProbeTranscriptRecorder()
-            let wrapperTranscripts = ProbeTranscriptRecorder()
-            let responses = ProbeResponseRecorder()
-            let stub = ProbeStubModel(cannedResponseText: "ok", transcripts: stubTranscripts)
-            let wrapper = PassthroughProbeModel(wrapped: stub, transcripts: wrapperTranscripts, responses: responses)
+            let (stubTranscripts, wrapperTranscripts, responses, _, wrapper) =
+                setupProbes(cannedResponseText: "ok")
 
             let session = LanguageModelSession(model: wrapper, tools: [])
             _ = try await session.respond(to: "first turn")

@@ -91,6 +91,24 @@ comments:
 
     Leaving in `doing` per /implement's contract — review is the next step's job.
   timestamp: 2026-07-14T15:41:59.012760+00:00
+- actor: claude-code
+  id: 01kxgnh68mcq7gq7pmmcqn4vmf
+  text: |-
+    Addressed Review Findings (2026-07-14 10:43): extracted a private `setupProbes(cannedResponseText:)` helper on `LanguageModelBoundaryProbeTests` returning `(ProbeTranscriptRecorder, ProbeTranscriptRecorder, ProbeResponseRecorder, ProbeStubModel, PassthroughProbeModel)`, called from both `passthroughWrapperObservesTranscriptAndResponse` and `secondCallReceivesFullAccumulatedTranscriptAgain` (each destructuring with `_` for the unused raw stub, since neither test referenced it directly after wrapper construction). Moved the recorder-separation rationale comment into the helper's doc comment since that's now where the design choice lives.
+
+    Verification: `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 305/305 unit tests pass, 0 failures; only warning present is a pre-existing, unrelated SPM resource-bundle build note from the vendored mlx-swift-lm package's Cmlx bundle (not from our code, not new). No changes made under .build/checkouts/mlx-swift-lm.
+
+    Kanban tooling quirk repeat: the first `update task` call to flip the checkbox corrupted the description (literal `\n` text appeared instead of real newlines) and zeroed out `tags`/`progress` again — same issue noted in an earlier comment on this task. Fixed with a follow-up `update task` call using real embedded newlines and re-supplying `tags: ["coding-harness"]`; re-fetched and confirmed real newlines and `tags: ["coding-harness"]` are now correct, progress back to 1.0.
+
+    Adversarial double-check agent dispatched to verify the extraction is behaviorally identical (no accidental recorder sharing across test invocations, no lost assertions, no unused-variable warnings, doc comments accurate) — awaiting verdict before final hand-off.
+  timestamp: 2026-07-14T15:57:04.148743+00:00
+- actor: claude-code
+  id: 01kxgnkg76sgkzwz853h1aw3g5
+  text: |-
+    Adversarial double-check returned PASS, no findings: extraction confirmed behaviorally identical (byte-for-byte matching construction logic, only the cannedResponseText literal parameterized), no shared state introduced (both recorder types are actors, setupProbes allocates fresh instances per call), no unused-variable warnings, doc comment accurately relocated, and diff scope confirmed limited to LanguageModelBoundaryProbeTests.swift plus this task's own kanban metadata files — nothing under .build/checkouts/mlx-swift-lm touched.
+
+    All Review Findings (2026-07-14 10:43) checkboxes now [x]. Final verification: swift test (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 305/305 unit tests green, 0 failures, 0 warnings from our code (only the pre-existing, unrelated mlx-swift-lm Cmlx resource-bundle build note). Task description confirmed to have real newlines and tags: ["coding-harness"] intact via re-fetch. Leaving in `doing` per /implement's contract — ready for /review.
+  timestamp: 2026-07-14T15:58:19.878406+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Spike: verify LanguageModel generate boundary exposes the transcript (recording-handle prerequisite)'
@@ -128,4 +146,8 @@ Record the findings as a comment on this task naming exact types, files, and sig
 ## Review Findings (2026-07-14 10:27)
 
 - [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:17` — Public function `ProbeTranscriptRecorder.record(_:)` lacks a documentation comment explaining its purpose. Add a doc comment explaining that this method records a transcript for assertion in tests, e.g. `/// Records a transcript observed on a probe model's executor call.`.
-- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:25` — Public function `ProbeResponseRecorder.record(_:)` lacks a documentation comment explaining its purpose. Add a doc comment explaining that this method records response text observed after delegation, e.g. `/// Records response text the wrapper observed after delegating to its wrapped model.`.
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:25` — Public function `ProbeResponseRecorder.record(_:)` lacks a documentation comment explaining its purpose. Add a doc comment explaining that this method records response text observed after delegation, e.g. `/// Records response text observed after delegation to the wrapped model.`.
+
+## Review Findings (2026-07-14 10:43)
+
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:248` — Test setup code (lines 248–252) duplicates setup from the first test (lines 214–218). Both initialize the same recorders and models with only the cannedResponseText differing. Should extract to a parameterized helper to eliminate the near-duplicate. Extract a helper method `func setupProbes(cannedResponseText: String) -> (ProbeTranscriptRecorder, ProbeTranscriptRecorder, ProbeResponseRecorder, ProbeStubModel, PassthroughProbeModel)` and call it from both tests, passing the differing cannedResponseText value.
