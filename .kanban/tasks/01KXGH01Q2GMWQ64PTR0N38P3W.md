@@ -23,8 +23,8 @@ comments:
   timestamp: 2026-07-14T22:35:00.966064+00:00
 depends_on:
 - 01KXGGZKB5RH9SZ9JP8QTS4V0A
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: be80
 title: 'Gated integration: tool-using turn over a recording handle round-trips to disk'
 ---
 ## What
