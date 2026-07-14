@@ -193,10 +193,26 @@ actor RecordingLanguageModelState {
     /// handle drives stay alive for its whole lifetime — mirrors
     /// ``RoutedSessionActor``'s own retention of its owning ``LanguageModelProfile``.
     nonisolated let profile: LanguageModelProfile
+    /// The span id of the session this handle resumed from, or `nil` for a
+    /// fresh (non-resuming) handle — stamped onto every event this handle
+    /// records and into its own ``SessionIndexRecord``, mirroring
+    /// ``RoutedSessionActor``'s own `parentId`.
+    nonisolated let parentId: ULID?
+    /// How many of ``parentId``'s effective entry-kind events belong to this
+    /// handle's own effective transcript — `0` for a fresh handle, or the
+    /// resumed session's reconstructed transcript entry count for one born
+    /// via ``RoutedModel/makeLanguageModel(resuming:registry:)``. Recorded
+    /// verbatim into this handle's own ``SessionIndexRecord``, mirroring
+    /// ``SessionIndexRecord/forkedAtEntryCount``.
+    nonisolated let forkedAtEntryCount: Int
 
     /// The last-seen transcript snapshot every diff runs against; updated
-    /// after each successful diff (see ``diffAndRecord(current:)``).
-    private var lastSeen = Transcript(entries: [])
+    /// after each successful diff (see ``diffAndRecord(current:)``). Primed
+    /// to the resumed session's own reconstructed transcript for a handle
+    /// born via ``RoutedModel/makeLanguageModel(resuming:registry:)``, so its
+    /// first diff records only genuinely new entries — never the whole
+    /// restored history into a fresh directory.
+    private var lastSeen: Transcript
     /// Whether this handle's first-line `session` meta event has been
     /// recorded yet — mirrors ``RoutedSessionActor``'s own
     /// `didRecordSessionMeta`.
@@ -226,6 +242,15 @@ actor RecordingLanguageModelState {
     ///     through to.
     ///   - profile: The owning profile, retained strongly for this handle's
     ///     whole lifetime.
+    ///   - parentId: The span id of the session this handle resumed from, or
+    ///     `nil` for a fresh (non-resuming) handle.
+    ///   - forkedAtEntryCount: How many of `parentId`'s effective entry-kind
+    ///     events belong to this handle's own effective transcript — `0` for
+    ///     a fresh handle.
+    ///   - initialTranscript: The transcript to prime ``lastSeen`` with —
+    ///     the resumed session's own reconstructed transcript for a handle
+    ///     born via ``RoutedModel/makeLanguageModel(resuming:registry:)``, or
+    ///     empty for a fresh handle.
     init(
         routerId: ULID,
         sessionId: ULID,
@@ -237,7 +262,10 @@ actor RecordingLanguageModelState {
         sessionIndexWriter: SessionIndexWriter?,
         indexPath: String,
         wrapped: any LanguageModel,
-        profile: LanguageModelProfile
+        profile: LanguageModelProfile,
+        parentId: ULID? = nil,
+        forkedAtEntryCount: Int = 0,
+        initialTranscript: Transcript = Transcript(entries: [])
     ) {
         self.routerId = routerId
         self.sessionId = sessionId
@@ -250,6 +278,9 @@ actor RecordingLanguageModelState {
         self.indexPath = indexPath
         self.wrapped = wrapped
         self.profile = profile
+        self.parentId = parentId
+        self.forkedAtEntryCount = forkedAtEntryCount
+        self.lastSeen = initialTranscript
     }
 
     /// The chokepoint every ``RecordingLanguageModel/Executor/respond(to:model:streamingInto:)``
@@ -339,7 +370,7 @@ actor RecordingLanguageModelState {
             current: current,
             routerId: routerId,
             sessionId: sessionId,
-            parentId: nil,
+            parentId: parentId,
             slot: slot,
             model: model
         )
@@ -358,7 +389,7 @@ actor RecordingLanguageModelState {
         didRecordSessionMeta = true
         await recorder.append(
             TranscriptEvent.Partial(
-                routerId: routerId, sessionId: sessionId, parentId: nil, slot: slot, model: model, kind: .session
+                routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model, kind: .session
             ),
             to: recordingDirectory
         )
@@ -379,9 +410,9 @@ actor RecordingLanguageModelState {
         await sessionIndexWriter.append(
             SessionIndexRecord(
                 sessionId: sessionId,
-                parentId: nil,
+                parentId: parentId,
                 path: indexPath,
-                forkedAtEntryCount: 0,
+                forkedAtEntryCount: forkedAtEntryCount,
                 slot: slot,
                 model: model,
                 instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),

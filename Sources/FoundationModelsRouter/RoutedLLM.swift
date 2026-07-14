@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 
 /// A failure producing text from a resident generation model.
 public enum GenerationError: Error, Equatable {
@@ -206,5 +207,97 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             profile: owningProfile
         )
         return RecordingLanguageModel(state: state)
+    }
+
+    /// Vends a fresh ``RecordingLanguageModel`` handle resuming a previously
+    /// recorded session, plus the reconstructed ``FoundationModels/Transcript``
+    /// to pair it with.
+    ///
+    /// Unlike ``makeLanguageModel()``, whose last-seen transcript starts
+    /// empty, this primes the handle's last-seen transcript with `sessionId`'s
+    /// own reconstructed ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
+    /// so the handle's *first* diff records only genuinely new entries —
+    /// never the whole resumed history re-recorded into a fresh directory.
+    /// The vended handle's own ``SessionIndexRecord`` names `sessionId` as its
+    /// parent and the resumed transcript's entry count as its
+    /// `forkedAtEntryCount`, the same lineage semantics
+    /// ``RoutedSessionActor/fork(workingDirectory:)`` establishes for
+    /// ``RoutedSession`` — so ``TranscriptTree``/``MergedTranscript``
+    /// reconstruction over the resumed session plus this handle's own
+    /// recordings yields the full conversation.
+    ///
+    /// This is also how a resumed session finally gets real tools: pair the
+    /// returned handle and transcript into
+    /// `LanguageModelSession(model: handle, tools: realTools, transcript: restored)`
+    /// — unlike ``restoreSessionTree(root:registry:)``, which is stuck
+    /// reconstructing through `LoadedLLMContainer.makeSession(transcript:)`
+    /// (which hardcodes `tools: []`), this handle wraps
+    /// `container.languageModel` directly, so the *caller* supplies real
+    /// tools straight to `LanguageModelSession`'s own initializer.
+    ///
+    /// - Precondition: The owning ``LanguageModelProfile`` must still be
+    ///   alive when this is called — mirrors ``makeLanguageModel()``'s own
+    ///   precondition.
+    /// - Parameters:
+    ///   - sessionId: The previously recorded session's span id to resume
+    ///     from — any session already present in this router's
+    ///     `sessions.jsonl` (a root, a fork, or another recording-handle
+    ///     session).
+    ///   - registry: The registered ``PersistableCustomSegment`` types a
+    ///     `.custom` segment anywhere in the resumed session's recorded
+    ///     transcript may need to rebuild. Defaults to an empty registry.
+    /// - Returns: A fresh ``RecordingLanguageModel`` handle whose first diff
+    ///   only records genuinely new entries, paired with the reconstructed
+    ///   ``FoundationModels/Transcript`` to hand to
+    ///   `LanguageModelSession(model:tools:transcript:)`.
+    /// - Throws: ``SessionTreeRestorationError/noDurableRecordingsRoot`` if
+    ///   this handle has no durable transcripts root; ``TranscriptTreeError``
+    ///   / ``TranscriptReconstructionError`` for anything
+    ///   ``TranscriptTree/load(under:)`` or
+    ///   ``TranscriptTree/effectiveTranscript(forSession:registry:)`` throws.
+    public func makeLanguageModel(
+        resuming sessionId: ULID,
+        registry: CustomSegmentRegistry = CustomSegmentRegistry()
+    ) throws -> (handle: RecordingLanguageModel, transcript: Transcript) {
+        guard let owningProfile = owningProfileBox.current else {
+            preconditionFailure(
+                "makeLanguageModel requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
+            )
+        }
+        guard let recordingsRoot else {
+            throw SessionTreeRestorationError.noDurableRecordingsRoot
+        }
+
+        let routerDirectory = recordingsRoot.appendingPathComponent(routerId.description, isDirectory: true)
+        let tree = try TranscriptTree.load(under: routerDirectory)
+        let restoredTranscript = try tree.effectiveTranscript(forSession: sessionId, registry: registry)
+
+        // Nested the same flat way a root session/handle is (see
+        // `recordingDirectory(forSessionId:)`) rather than physically nested
+        // under the resumed session's own directory: `SessionIndexRecord.path`
+        // is an independent lookup `TranscriptTree.load(under:)` resolves on
+        // its own, so physical nesting carries no functional meaning — only
+        // `parentId`/`forkedAtEntryCount`, set below, establish the lineage.
+        let childId = ULID.generate()
+        let recordingDirectory = self.recordingDirectory(forSessionId: childId)
+        let indexPath = childId.description
+
+        let state = RecordingLanguageModelState(
+            routerId: routerId,
+            sessionId: childId,
+            recordingDirectory: recordingDirectory,
+            slot: slot,
+            model: chosen,
+            recorder: recorder,
+            serialGate: serialGate,
+            sessionIndexWriter: sessionIndexWriter,
+            indexPath: indexPath,
+            wrapped: container.languageModel,
+            profile: owningProfile,
+            parentId: sessionId,
+            forkedAtEntryCount: restoredTranscript.count,
+            initialTranscript: restoredTranscript
+        )
+        return (RecordingLanguageModel(state: state), restoredTranscript)
     }
 }
