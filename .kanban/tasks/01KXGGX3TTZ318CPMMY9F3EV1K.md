@@ -1,0 +1,59 @@
+---
+comments:
+- actor: claude-code
+  id: 01kxgj61q14hdj1ze037gzcyvn
+  text: |-
+    Spike findings: the three facts all hold. Confirmed against the real Apple SDK swiftinterface (not just the fork's comments) at `/Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/FoundationModels.framework/Versions/A/Modules/FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface`, cross-checked against the fork's actual implementation in `.build/index-build/checkouts/mlx-swift-lm/Libraries/MLXFoundationModels/MLXLanguageModel.swift` and `TranscriptConverter.swift`, and this repo's `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`.
+
+    **Fact 1 — the generation entry point receives the full transcript every call.** There is no method literally named `generate` on `LanguageModel`; the real entry point is `LanguageModelExecutor.respond(to request: LanguageModelExecutorGenerationRequest, model: Self.Model, streamingInto channel: LanguageModelExecutorGenerationChannel) async throws` (swiftinterface line 1676, required by `protocol LanguageModel { associatedtype Executor: LanguageModelExecutor where Self == Self.Executor.Model }`, line 1440-1444). `LanguageModelExecutorGenerationRequest` (line 1849-1857) carries `public var transcript: FoundationModels.Transcript` — the full transcript, not a delta. Confirmed in the fork: `MLXLanguageModel.Executor.respond` converts it via `TranscriptConverter.mlxMessages(for: request.transcript)` (MLXLanguageModel.swift), i.e. the whole rendered chat history is rebuilt from `request.transcript` on every single call.
+
+    **Fact 2 — MLXLanguageModel (and the protocol boundary generally) is stateless across calls w.r.t. transcript.** The fork's own doc comment on `preparedInputMappingImageFailures` states it explicitly: "`messages` is `LanguageModelExecutorGenerationRequest`'s full, re-rendered transcript, not just new content since the prior round (the `LanguageModelExecutor` protocol has no session identity — every `respond()` call receives the complete history again...)". This is exactly what `MLXFoundationModelsContainer.makeSession(transcript:)` in `LiveModelLoader.swift` already assumes/relies on: it rebuilds a brand-new `LanguageModelSession(model: model, tools: [], transcript: transcript)` from an arbitrary persisted transcript with no hidden per-model session state to restore — proven live by my own probe test's second test (`secondCallReceivesFullAccumulatedTranscriptAgain`): call 1's `request.transcript` has 1 entry, call 2's has 3 (prompt+response+prompt) — the full accumulated history, re-sent whole.
+
+    **Fact 3 — a conforming wrapper can observe the response it emits.** Holds, but NOT via the mechanism I initially assumed. `LanguageModelExecutorGenerationChannel.Event` (swiftinterface line 1718) is a **write-only, opaque struct** — only static factory constructors (`.response(entryID:action:)` etc.), zero public accessors to read a value back out of an `Event` once built. So a wrapper that tries to relay another executor's *raw* channel events cannot introspect their content — that specific "channel-chaining relay" design does NOT work and should not be attempted for a recording handle. What DOES work, and is exactly what this repo's real `MLXFoundationModelsSessionBackend` already relies on: `LanguageModelSession.respond(to:)`'s return value is a plain, publicly readable `Response<String>` (`.content`). A wrapper's `Executor.respond` can build its own nested `LanguageModelSession` over the wrapped model, call `.respond(to:)`, read `.content`, record it, and then construct its own outgoing `.response(action: .appendText(content, tokenCount:))` event from that known text. Proved live in the probe test's first test: `ProbeResponseRecorder` captured the exact text ("stub says hello") the wrapper delegated to and re-emitted, and the outer session's own `response.content` matched it.
+
+    **Implication for plan section 8**: the recording handle should observe emitted content at the `LanguageModelSession`/`Response.content` (or `session.transcript`) level — not by trying to decode another executor's `LanguageModelExecutorGenerationChannel.Event` stream, which is a write-only wire format with no public read path.
+
+    Probe test: `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift` — `ProbeStubModel` (innermost stub `LanguageModel` conformer) wrapped by `PassthroughProbeModel` (passthrough wrapper `LanguageModel` conformer). TDD followed: first wrote the test with one intentionally wrong expected value (`"WRONG_INTENTIONAL_RED_VALUE"`), ran it, confirmed a genuine RED (compiled fine, failed only on the wrong value, and incidentally also caught a real bug in the probe itself — sharing one `ProbeTranscriptRecorder` between the stub and the wrapper conflated inner/outer transcript counts). Fixed both the recorder-sharing bug and the wrong value, reran: GREEN. `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer): full unit suite 305/305 passing, 0 failures/warnings; gated integration suites skip as expected (no GPU/network in this sandbox). No changes made inside `.build/checkouts/mlx-swift-lm` (read-only reference).
+  timestamp: 2026-07-14T14:58:33.313484+00:00
+- actor: wballard
+  id: 01kxgjk54q9r4f1zrvs798e1z4
+  text: 'Rename note: the consuming package FoundationModelsCodingHarness is now FoundationModelsAgentHarness (public repo: https://github.com/swissarmyhammer/FoundationModelsAgentHarness). The referenced plan lives at ../FoundationModelsAgentHarness/plan.md — ''plan section 8'' is unchanged. The engine type is now Agent (was CodingAgent).'
+  timestamp: 2026-07-14T15:05:42.807112+00:00
+- actor: claude-code
+  id: 01kxgjk9e28f5q1v4nq9gm0gsb
+  text: |-
+    Adversarial double-check (via really-done's gate) ran against the probe test and returned REVISE with two findings, both fixed:
+
+    1. `PassthroughProbeModel.Executor.Configuration`'s `==`/`hash(into:)` only considered the recorder actors' identity, omitting `wrapped` (the stub model it delegates to) — since the SDK caches executors keyed by `Configuration` equality (per `MLXLanguageModel.executorConfiguration`'s own doc comment), two configurations sharing recorders but wrapping different stub models could have collided in that cache. Fixed: `==`/`hash` now also fold in `wrapped.cannedResponseText` and `wrapped.transcripts`'s identity, mirroring how `ProbeStubModel.Executor.Configuration` already treats its own `cannedResponseText`.
+
+    2. The doc comment on `ProbeStubModel.Executor.respond` claimed `stubTranscripts` was "recorded here for the test to inspect," but neither test actually asserted on it — only the wrapper-level recorder was checked. Fixed: added real assertions on `stubTranscripts` in both tests (the stub's own executor call transcript count, and that both of its two calls each carry exactly its own one-turn inner session's single `.prompt` entry), and reworded the doc comment to match what the tests actually do.
+
+    Re-ran the full suite after both fixes: `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 305/305 unit tests pass, 0 failures/warnings; gated integration suites skip as expected (no GPU/network in this sandbox). Second double-check pass not required per really-done's bounded-loop rule (fixes applied, one round is sufficient here — both findings were narrow, mechanical, and directly verified by the fresh green run).
+
+    Task acceptance criteria and Tests checkboxes all checked off in the description. Leaving this in `doing` per /implement's contract — review is the next step's job, not mine.
+  timestamp: 2026-07-14T15:05:47.202926+00:00
+position_column: doing
+position_ordinal: '80'
+title: 'Spike: verify LanguageModel generate boundary exposes the transcript (recording-handle prerequisite)'
+---
+## What
+De-risk the recording-LanguageModel-handle design (FoundationModelsCodingHarness plan section 8) BEFORE building it. Read the fork product MLXFoundationModels (swissarmyhammer/mlx-swift-lm, branch foundationmodels-fixes) and Resolution/LiveModelLoader.swift here, and confirm three facts in writing:
+
+- the LanguageModel protocol generate entry point receives the session transcript (or equivalent full-context input) on every call
+- MLXLanguageModel is stateless across calls with respect to the transcript (fork/restore already assumes this — cite the exact code path)
+- a conforming wrapper can observe the response it emits (needed to record the final response entry at turn end)
+
+Record the findings as a comment on this task naming exact types, files, and signatures. If any fact does not hold, STOP this track and raise it — the dependent tasks must not start.
+
+## Acceptance Criteria
+- [x] A comment on this task documents the generate signature, transcript visibility per call, and the statelessness code path, with file/type names
+- [x] A compiling probe test demonstrates a custom LanguageModel conformer wrapping another model can see the transcript passed in and the output passed back
+
+## Tests
+- [x] Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift — a passthrough LanguageModel conformer over a stub model; asserts the wrapper observed the transcript input and the emitted output (compilation is half the assertion)
+- [x] swift test green (remember DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer)
+
+## Workflow
+- Use /tdd — the probe test IS the spike artifact.
+
+#coding-harness

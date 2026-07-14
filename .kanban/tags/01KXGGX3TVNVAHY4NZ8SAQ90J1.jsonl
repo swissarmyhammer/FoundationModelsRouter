@@ -1,0 +1,1 @@
+{"id":"01KXGGX3TV84E11KNP13S30Z7Q","timestamp":"2026-07-14T14:36:11.995961Z","op":"create","item_id":"01KXGGX3TVNVAHY4NZ8SAQ90J1","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: '5319e7'\n+tag_name: coding-harness\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: '5319e7'\n-tag_name: coding-harness\n","transaction_id":null}
