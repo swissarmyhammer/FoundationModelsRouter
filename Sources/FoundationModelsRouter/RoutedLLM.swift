@@ -9,6 +9,13 @@ public enum GenerationError: Error, Equatable {
     case notWiredForLiveInference
 }
 
+/// The shared suffix of the precondition-failure message a generation-only
+/// entry point traps with when its owning profile has already been
+/// released, so there is exactly one string to update if the wording ever
+/// changes — see ``RoutedModel/requireOwningProfile(apiName:)``.
+private let missingOwningProfileMessageSuffix =
+    "requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
+
 /// The session-creation surface on the generation handle.
 ///
 /// ``RoutedLLM`` is `RoutedModel<any LoadedLLMContainer>`, so the
@@ -20,6 +27,32 @@ public enum GenerationError: Error, Equatable {
 /// resident models stay alive for its lifetime, and runs generation through the
 /// resident container.
 extension RoutedModel where Container == any LoadedLLMContainer {
+    /// Returns the currently live owning profile, or traps if it has already
+    /// been released.
+    ///
+    /// Shared by every generation-only entry point that requires a live
+    /// owning ``LanguageModelProfile`` —
+    /// ``makeSession(grammar:instructions:workingDirectory:)``,
+    /// ``makeLanguageModel()``, and ``makeLanguageModel(resuming:registry:)``
+    /// — which otherwise differ only in which name the trap message should
+    /// report. A handle holds its profile only *weakly* (no retain cycle
+    /// with the profile's strong hold on its models): whatever the caller
+    /// vends from this handle is what retains the profile, so the profile
+    /// must still be alive at this point. Calling any of these entry points
+    /// after the profile has been released (and its models evicted) is a
+    /// programmer error, so this fails loudly with a clear message naming
+    /// the offending entry point rather than an opaque nil-unwrap trap.
+    ///
+    /// - Parameter apiName: The calling entry point's own name, interpolated
+    ///   into the trap message so it names the actual entry point invoked.
+    /// - Returns: The currently live owning profile.
+    func requireOwningProfile(apiName: String) -> LanguageModelProfile {
+        guard let owningProfile = owningProfileBox.current else {
+            preconditionFailure("\(apiName) \(missingOwningProfileMessageSuffix)")
+        }
+        return owningProfile
+    }
+
     /// Vends a new generation session over this resident model.
     ///
     /// The session is born holding this handle's recorder and router id and a
@@ -69,16 +102,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         instructions: String?,
         workingDirectory: URL?
     ) -> RoutedSession {
-        // The handle references its profile weakly (no retain cycle with the
-        // profile's strong hold on its models). The session is what retains the
-        // profile, so the profile must still be alive at this point; if a caller
-        // cached the handle and released the profile first, that is misuse — fail
-        // loudly with a clear message rather than an opaque nil-unwrap trap.
-        guard let owningProfile = owningProfileBox.current else {
-            preconditionFailure(
-                "makeSession requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
-            )
-        }
+        let owningProfile = requireOwningProfile(apiName: "makeSession")
 
         let sessionId = ULID.generate()
         let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
@@ -159,6 +183,57 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             .appendingPathComponent(sessionId.description, isDirectory: true)
     }
 
+    /// Builds a fresh ``RecordingLanguageModel`` handle over this resident
+    /// model, with `sessionId`'s own recording directory nested the same way
+    /// ``recordingDirectory(forSessionId:)`` nests any fresh session/handle.
+    ///
+    /// Shared by ``makeLanguageModel()`` (a from-scratch handle: `parentId`
+    /// `nil`, `forkedAtEntryCount` `0`, empty initial transcript) and
+    /// ``makeLanguageModel(resuming:registry:)`` (a resuming handle: passes
+    /// its own resumed-session lineage), which otherwise differ only in
+    /// those values.
+    ///
+    /// - Parameters:
+    ///   - sessionId: The handle's own session span id.
+    ///   - owningProfile: The already-confirmed-live owning profile to
+    ///     retain for this handle's whole lifetime.
+    ///   - parentId: The span id of the session this handle resumed from, or
+    ///     `nil` for a from-scratch handle. Defaults to `nil`.
+    ///   - forkedAtEntryCount: How many of `parentId`'s effective entry-kind
+    ///     events belong to this handle's own effective transcript. Defaults
+    ///     to `0`.
+    ///   - initialTranscript: The transcript to prime the handle's last-seen
+    ///     diff baseline with. Defaults to empty.
+    /// - Returns: A fresh ``RecordingLanguageModel`` handle.
+    private func makeRecordingLanguageModelHandle(
+        sessionId: ULID,
+        owningProfile: LanguageModelProfile,
+        parentId: ULID? = nil,
+        forkedAtEntryCount: Int = 0,
+        initialTranscript: Transcript = Transcript(entries: [])
+    ) -> RecordingLanguageModel {
+        let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
+        let indexPath = sessionId.description
+
+        let state = RecordingLanguageModelState(
+            routerId: routerId,
+            sessionId: sessionId,
+            recordingDirectory: recordingDirectory,
+            slot: slot,
+            model: chosen,
+            recorder: recorder,
+            serialGate: serialGate,
+            sessionIndexWriter: sessionIndexWriter,
+            indexPath: indexPath,
+            wrapped: container.languageModel,
+            profile: owningProfile,
+            parentId: parentId,
+            forkedAtEntryCount: forkedAtEntryCount,
+            initialTranscript: initialTranscript
+        )
+        return RecordingLanguageModel(state: state)
+    }
+
     /// Vends a fresh ``RecordingLanguageModel`` handle over this resident
     /// model: a `FoundationModels.LanguageModel` conformer any caller can
     /// build a `LanguageModelSession(model:tools:instructions:)` over
@@ -183,30 +258,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   lifetime too.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle over this model.
     public func makeLanguageModel() -> RecordingLanguageModel {
-        guard let owningProfile = owningProfileBox.current else {
-            preconditionFailure(
-                "makeLanguageModel requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
-            )
-        }
-
+        let owningProfile = requireOwningProfile(apiName: "makeLanguageModel")
         let sessionId = ULID.generate()
-        let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
-        let indexPath = sessionId.description
-
-        let state = RecordingLanguageModelState(
-            routerId: routerId,
-            sessionId: sessionId,
-            recordingDirectory: recordingDirectory,
-            slot: slot,
-            model: chosen,
-            recorder: recorder,
-            serialGate: serialGate,
-            sessionIndexWriter: sessionIndexWriter,
-            indexPath: indexPath,
-            wrapped: container.languageModel,
-            profile: owningProfile
-        )
-        return RecordingLanguageModel(state: state)
+        return makeRecordingLanguageModelHandle(sessionId: sessionId, owningProfile: owningProfile)
     }
 
     /// Vends a fresh ``RecordingLanguageModel`` handle resuming a previously
@@ -259,11 +313,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         resuming sessionId: ULID,
         registry: CustomSegmentRegistry = CustomSegmentRegistry()
     ) throws -> (handle: RecordingLanguageModel, transcript: Transcript) {
-        guard let owningProfile = owningProfileBox.current else {
-            preconditionFailure(
-                "makeLanguageModel requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
-            )
-        }
+        let owningProfile = requireOwningProfile(apiName: "makeLanguageModel")
         guard let recordingsRoot else {
             throw SessionTreeRestorationError.noDurableRecordingsRoot
         }
@@ -279,25 +329,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // its own, so physical nesting carries no functional meaning — only
         // `parentId`/`forkedAtEntryCount`, set below, establish the lineage.
         let childId = ULID.generate()
-        let recordingDirectory = self.recordingDirectory(forSessionId: childId)
-        let indexPath = childId.description
-
-        let state = RecordingLanguageModelState(
-            routerId: routerId,
+        let handle = makeRecordingLanguageModelHandle(
             sessionId: childId,
-            recordingDirectory: recordingDirectory,
-            slot: slot,
-            model: chosen,
-            recorder: recorder,
-            serialGate: serialGate,
-            sessionIndexWriter: sessionIndexWriter,
-            indexPath: indexPath,
-            wrapped: container.languageModel,
-            profile: owningProfile,
+            owningProfile: owningProfile,
             parentId: sessionId,
             forkedAtEntryCount: restoredTranscript.count,
             initialTranscript: restoredTranscript
         )
-        return (RecordingLanguageModel(state: state), restoredTranscript)
+        return (handle, restoredTranscript)
     }
 }

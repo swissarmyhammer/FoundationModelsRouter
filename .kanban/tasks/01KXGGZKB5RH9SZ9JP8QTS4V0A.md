@@ -17,6 +17,21 @@ comments:
 
     Full suite: `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 326 tests / 39 suites green, gated integration suite (14 tests / 4 suites) correctly skipped without FM_ROUTER_INTEGRATION_TESTS=1. Zero warnings, zero failures.
   timestamp: 2026-07-14T21:39:01.470820+00:00
+- actor: claude-code
+  id: 01kxhah3sw2fbq41de0a4y3nr4
+  text: |-
+    Addressed all 7 review findings in Sources/FoundationModelsRouter/RoutedLLM.swift (three precondition-guard duplicates + two RecordingLanguageModelState-init duplicates + two repeated message strings — collapsed to 2 helpers as expected):
+
+    - Added `missingOwningProfileMessageSuffix` (file-scope private constant — static stored properties aren't allowed in extensions of generic types) holding the one copy of the trap message text.
+    - Added `requireOwningProfile(apiName:)` on the `RoutedModel where Container == any LoadedLLMContainer` extension: does the `owningProfileBox.current` guard and traps with `"\(apiName) \(missingOwningProfileMessageSuffix)"`. Called from `makeSession(grammar:instructions:workingDirectory:)` (apiName: "makeSession"), `makeLanguageModel()`, and `makeLanguageModel(resuming:registry:)` (both apiName: "makeLanguageModel", matching the original per-call-site text).
+    - Added `makeRecordingLanguageModelHandle(sessionId:owningProfile:parentId:forkedAtEntryCount:initialTranscript:)` (private) that builds the recording directory, index path, and `RecordingLanguageModelState`, returning the `RecordingLanguageModel`. `makeLanguageModel()` now calls it with just sessionId/owningProfile (defaults cover the fresh-handle case); `makeLanguageModel(resuming:registry:)` calls it with the resumed lineage (parentId, forkedAtEntryCount, initialTranscript).
+
+    Verification: `swift build` clean (zero warnings), `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 326/326 unit tests green across 39 suites, gated integration suite (14 tests / 4 suites) correctly skipped. No behavior change — pure extract-duplication refactor.
+
+    Note: caught and fixed my own mistake mid-task — an initial `update task` call stored the description with literal `\n` escape sequences instead of real newlines and silently cleared the top-level `tags` field. Re-ran the update with real newlines and `tags: ["coding-harness"]` explicit, then re-fetched with `get task` to confirm both are correct.
+
+    Leaving in `doing` per /implement workflow — ready for /review.
+  timestamp: 2026-07-14T22:04:01.724545+00:00
 depends_on:
 - 01KXGGZ3ETZEH6PMG3VEM16AZ8
 position_column: doing
@@ -53,3 +68,13 @@ Add resume support to the recording handle: makeLanguageModel(resuming: sessionI
 Adversarial review (via really-done) found the initial test suite could not detect an overcounted `forkedAtEntryCount` (Array.prefix silently clamps). Strengthened the reconstruction test to drive the parent handle one more turn after resume and assert it does not leak into the child's reconstruction; verified via mutation testing (temporarily inflating the count) that this catches the regression.
 
 Full `swift test` run: 326 tests / 39 suites green, gated integration suite correctly skipped, zero warnings.
+
+## Review Findings (2026-07-14 16:42)
+
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:82` — Near-verbatim precondition guard in makeSession(grammar:instructions:workingDirectory:) differs from makeLanguageModel() and makeLanguageModel(resuming:) counterparts only by the API name substituted into the error message; blocks that differ only by a single literal value should be extracted with that value as a parameter. Extract a shared helper function that accepts an apiName: String parameter and call it from all three methods (makeSession, makeLanguageModel, makeLanguageModel(resuming:)) to customize the error message per API.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:146` — Identical preconditionFailure message appears multiple times in the same file; repeated literals should be extracted to a named constant so changes occur in one place. Extract the error message to a named constant at the module level or as a static property on the extension, then reference it in both guard statements.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:164` — Verbatim precondition guard appears in both makeLanguageModel() and makeLanguageModel(resuming:registry:), creating maintenance burden and risk of drift. Extract the guard and its preconditionFailure message into a shared nonisolated helper function, or at minimum extract the error message string as a constant.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:174` — Near-verbatim RecordingLanguageModelState initialization in both makeLanguageModel() and makeLanguageModel(resuming:registry:); blocks differ only in session ID variable name and optional parameters, making them one function with arguments. Extract a helper function that accepts sessionId, parentId (optional), forkedAtEntryCount (optional, default 0), and initialTranscript (optional, default empty Transcript), then call it from both methods instead of duplicating the full initialization block.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:188` — Identical preconditionFailure message appears multiple times in the same file; repeated literals should be extracted to a named constant so changes occur in one place. Extract the error message to a named constant at the module level or as a static property on the extension, then reference it in both guard statements.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:232` — Verbatim precondition guard duplicated from makeLanguageModel(); see prior finding. See prior finding.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:251` — Near-verbatim RecordingLanguageModelState initialization duplicated from makeLanguageModel(); see prior finding. See prior finding.
