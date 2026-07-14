@@ -34,8 +34,8 @@ comments:
   timestamp: 2026-07-14T22:04:01.724545+00:00
 depends_on:
 - 01KXGGZ3ETZEH6PMG3VEM16AZ8
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: bd80
 title: Resume and fork lineage for recording handles
 ---
 ## What
