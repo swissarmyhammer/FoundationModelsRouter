@@ -45,6 +45,10 @@
             Executor.Configuration(cannedResponseText: cannedResponseText, transcripts: transcripts)
         }
 
+        /// Executor conformance that records every request transcript it
+        /// observes — via `configuration.transcripts` — into
+        /// ``ProbeTranscriptRecorder``, so tests can assert on the
+        /// transcripts this stub's boundary actually received.
         struct Executor: LanguageModelExecutor {
             struct Configuration: Sendable, Hashable {
                 let cannedResponseText: String
@@ -118,21 +122,29 @@
             Executor.Configuration(wrapped: wrapped, transcripts: transcripts, responses: responses)
         }
 
+        /// Executor that wraps ``ProbeStubModel``'s executor: it records the
+        /// transcript this call observed and the response text it delegates
+        /// to and re-emits, driving the wrapped model through a nested
+        /// `LanguageModelSession` (see the type-level doc comment above for
+        /// why a nested session is used instead of relaying the wrapped
+        /// executor's raw channel).
         struct Executor: LanguageModelExecutor {
+            /// Configuration for the passthrough executor.
+            ///
+            /// Includes `wrapped`'s own identifying field
+            /// (`cannedResponseText`) and its recorder's identity, not just
+            /// this wrapper's own recorders — the SDK caches executors
+            /// keyed by `Configuration` equality (see
+            /// `MLXLanguageModel.executorConfiguration`'s doc comment:
+            /// "Configuration the framework uses to create and cache
+            /// executors"), so omitting `wrapped` here would let two
+            /// configurations that wrap *different* stub models collide
+            /// in that cache and silently reuse the wrong executor.
             struct Configuration: Sendable, Hashable {
                 let wrapped: ProbeStubModel
                 let transcripts: ProbeTranscriptRecorder
                 let responses: ProbeResponseRecorder
 
-                // Includes `wrapped`'s own identifying field
-                // (`cannedResponseText`) and its recorder's identity, not just
-                // this wrapper's own recorders — the SDK caches executors
-                // keyed by `Configuration` equality (see
-                // `MLXLanguageModel.executorConfiguration`'s doc comment:
-                // "Configuration the framework uses to create and cache
-                // executors"), so omitting `wrapped` here would let two
-                // configurations that wrap *different* stub models collide
-                // in that cache and silently reuse the wrong executor.
                 static func == (lhs: Self, rhs: Self) -> Bool {
                     lhs.transcripts === rhs.transcripts && lhs.responses === rhs.responses
                         && lhs.wrapped.cannedResponseText == rhs.wrapped.cannedResponseText
@@ -155,6 +167,15 @@
                 self.configuration = configuration
             }
 
+            /// Fact 1 in action: records the full transcript this call
+            /// received via `configuration.transcripts`, mirroring
+            /// ``ProbeStubModel/Executor/respond(to:model:streamingInto:)``.
+            /// Fact 3 in action: drives the wrapped model through a nested
+            /// `LanguageModelSession` to obtain its response text, records
+            /// that text via `configuration.responses` — proving the
+            /// wrapper actually possessed the text before re-emitting it as
+            /// its own `.response` event, rather than merely relaying an
+            /// opaque token from the wrapped executor's raw channel.
             func respond(
                 to request: LanguageModelExecutorGenerationRequest,
                 model: PassthroughProbeModel,
@@ -247,6 +268,13 @@
             // raw `LanguageModel` boundary generally, not just to the MLX
             // adapter.
             #expect(recordedTranscripts[1].count == 3)
+
+            // Fact 3, across both calls: the wrapper recorded the response
+            // text it delegated to and re-emitted on each of the two turns,
+            // not just the first.
+            let recordedResponses = await responses.responses
+            #expect(recordedResponses.count == 2)
+            #expect(recordedResponses == ["ok", "ok"])
 
             // The stub's own executor was likewise called once per outer
             // turn (each via a fresh, independent one-turn inner session),

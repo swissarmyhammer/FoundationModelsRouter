@@ -32,28 +32,51 @@ comments:
 
     Task acceptance criteria and Tests checkboxes all checked off in the description. Leaving this in `doing` per /implement's contract — review is the next step's job, not mine.
   timestamp: 2026-07-14T15:05:47.202926+00:00
+- actor: wballard
+  id: 01kxgkdh9zvgjzw6405czqw07m
+  text: |-
+    Review addendum (swiftinterface re-read while folding findings into the dependent tasks) — four facts beyond the spike comment, all load-bearing for task 3:
+
+    1. `LanguageModelExecutor.init(configuration:) throws` is a public protocol requirement, and `Model.executorConfiguration` is public — so a wrapper's executor can construct the wrapped model's own executor and call `respond(to:model:streamingInto:)` on it DIRECTLY, passing the OUTER channel straight through. That is the correct delegation mechanism for the recording handle: perfect event fidelity (streaming, reasoning, AND toolCalls events flow untouched), no re-encoding, no nested session.
+
+    2. The nested-session delegation the probe test uses (PassthroughProbeModel) is right for the probe but WRONG for the real handle: a nested session would try to execute tool calls itself (it owns no tools) and break tool-using turns. The probe never exercises tools, so it couldn't see this.
+
+    3. `LanguageModelExecutorGenerationChannel` has `public init()` and is itself an AsyncSequence of Event (public makeAsyncIterator/next), and `LanguageModelExecutorGenerationRequest` has a public memberwise init carrying `enabledToolDefinitions`, `generationOptions`, `contextOptions`, `id` — executor-level unit tests need no session at all, and tool definitions are available on the request directly. Event remains write-only (single extension, three static constructors, zero accessors) — the spike's fact-3 conclusion stands: relayed events cannot be inspected.
+
+    4. Net design consequence: the turn-final response is unobservable at the executor boundary, full stop. Everything else (prompts, toolCalls, toolOutput, prior responses) is captured by diffing `request.transcript` per call. The handle therefore needs a small idempotent `sync(_ transcript:)` API called at turn end with `session.transcript` (public getter) by whoever owns the turn — harness Agent and the ACP bridge both already touch the session there. Task 3 and task 5 descriptions updated accordingly.
+  timestamp: 2026-07-14T15:20:07.231378+00:00
+- actor: wballard
+  id: 01kxgkeex4389p5k15f4d32mze
+  text: |-
+    Review addendum (swiftinterface re-read while folding findings into the dependent tasks) — four facts beyond the spike comment, all load-bearing for task 3:
+
+    1. `LanguageModelExecutor.init(configuration:) throws` is a public protocol requirement, and `Model.executorConfiguration` is public — so a wrapper's executor can construct the wrapped model's own executor and call `respond(to:model:streamingInto:)` on it DIRECTLY, passing the OUTER channel straight through. That is the correct delegation mechanism for the recording handle: perfect event fidelity (streaming, reasoning, AND toolCalls events flow untouched), no re-encoding, no nested session.
+
+    2. The nested-session delegation the probe test uses (PassthroughProbeModel) is right for the probe but WRONG for the real handle: a nested session would try to execute tool calls itself (it owns no tools) and break tool-using turns. The probe never exercises tools, so it couldn't see this.
+
+    3. `LanguageModelExecutorGenerationChannel` has `public init()` and is itself an AsyncSequence of Event (public makeAsyncIterator/next), and `LanguageModelExecutorGenerationRequest` has a public memberwise init carrying `enabledToolDefinitions`, `generationOptions`, `contextOptions`, `id` — executor-level unit tests need no session at all, and tool definitions are available on the request directly. Event remains write-only (single extension, three static constructors, zero accessors) — the spike's fact-3 conclusion stands: relayed events cannot be inspected.
+
+    4. Net design consequence: the turn-final response is unobservable at the executor boundary, full stop. Everything else (prompts, toolCalls, toolOutput, prior responses) is captured by diffing `request.transcript` per call. The handle therefore needs a small idempotent `sync(_ transcript:)` API called at turn end with `session.transcript` (public getter) by whoever owns the turn — harness Agent and the ACP bridge both already touch the session there. Task 3 and task 5 descriptions updated accordingly.
+  timestamp: 2026-07-14T15:20:37.540565+00:00
+- actor: claude-code
+  id: 01kxgkpw3kkv7a61hp0439hhp2
+  text: |-
+    Addressed all 5 review findings (2026-07-14 10:10) on LanguageModelBoundaryProbeTests.swift:
+
+    1. Added doc comment on `ProbeStubModel.Executor` explaining it records request transcripts via `configuration.transcripts` for test assertions.
+    2. Added doc comment on `PassthroughProbeModel.Executor` explaining it wraps the stub's executor, records observed transcript and response text, and delegates via a nested `LanguageModelSession`.
+    3. Converted the cache-semantics `//` comment above `PassthroughProbeModel.Executor.Configuration`'s `==` into a proper `///` doc comment on the struct declaration itself (moved, not duplicated).
+    4. Added response verification to `secondCallReceivesFullAccumulatedTranscriptAgain`: reads back `responses.responses` and asserts `count == 2` and `== ["ok", "ok"]` (the actual canned response text used in that test), placed right after the wrapper transcript assertions and before the stub-transcript checks.
+    5. Added a doc comment on `PassthroughProbeModel.Executor.respond(to:model:streamingInto:)` matching the "Fact N in action" style of the sibling doc on `ProbeStubModel.Executor.respond`.
+
+    Flipped all 5 `- [ ]` to `- [x]` in the Review Findings section (all other text preserved verbatim).
+
+    Verification: `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 305/305 unit tests pass, 0 failures/warnings; gated integration suites skip as expected (no GPU/network in sandbox). Adversarial double-check agent returned PASS, independently re-ran the full suite and the filtered probe-test-only run, confirmed each doc comment/assertion is accurate and correctly placed, confirmed "ok" is indeed the canned response text in that test, and confirmed no leftover duplicate comment.
+
+    No changes made under .build/checkouts/mlx-swift-lm (vendored fork). Task left in `doing` per /implement's contract — review is the next step's job.
+  timestamp: 2026-07-14T15:25:13.203336+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Spike: verify LanguageModel generate boundary exposes the transcript (recording-handle prerequisite)'
 ---
-## What
-De-risk the recording-LanguageModel-handle design (FoundationModelsCodingHarness plan section 8) BEFORE building it. Read the fork product MLXFoundationModels (swissarmyhammer/mlx-swift-lm, branch foundationmodels-fixes) and Resolution/LiveModelLoader.swift here, and confirm three facts in writing:
-
-- the LanguageModel protocol generate entry point receives the session transcript (or equivalent full-context input) on every call
-- MLXLanguageModel is stateless across calls with respect to the transcript (fork/restore already assumes this — cite the exact code path)
-- a conforming wrapper can observe the response it emits (needed to record the final response entry at turn end)
-
-Record the findings as a comment on this task naming exact types, files, and signatures. If any fact does not hold, STOP this track and raise it — the dependent tasks must not start.
-
-## Acceptance Criteria
-- [x] A comment on this task documents the generate signature, transcript visibility per call, and the statelessness code path, with file/type names
-- [x] A compiling probe test demonstrates a custom LanguageModel conformer wrapping another model can see the transcript passed in and the output passed back
-
-## Tests
-- [x] Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift — a passthrough LanguageModel conformer over a stub model; asserts the wrapper observed the transcript input and the emitted output (compilation is half the assertion)
-- [x] swift test green (remember DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer)
-
-## Workflow
-- Use /tdd — the probe test IS the spike artifact.
-
-#coding-harness
+## What\nDe-risk the recording-LanguageModel-handle design (FoundationModelsCodingHarness plan section 8) BEFORE building it. Read the fork product MLXFoundationModels (swissarmyhammer/mlx-swift-lm, branch foundationmodels-fixes) and Resolution/LiveModelLoader.swift here, and confirm three facts in writing:\n\n- the LanguageModel protocol generate entry point receives the session transcript (or equivalent full-context input) on every call\n- MLXLanguageModel is stateless across calls with respect to the transcript (fork/restore already assumes this — cite the exact code path)\n- a conforming wrapper can observe the response it emits (needed to record the final response entry at turn end)\n\nRecord the findings as a comment on this task naming exact types, files, and signatures. If any fact does not hold, STOP this track and raise it — the dependent tasks must not start.\n\n## Acceptance Criteria\n- [x] A comment on this task documents the generate signature, transcript visibility per call, and the statelessness code path, with file/type names\n- [x] A compiling probe test demonstrates a custom LanguageModel conformer wrapping another model can see the transcript passed in and the output passed back\n\n## Tests\n- [x] Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift — a passthrough LanguageModel conformer over a stub model; asserts the wrapper observed the transcript input and the emitted output (compilation is half the assertion)\n- [x] swift test green (remember DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer)\n\n## Workflow\n- Use /tdd — the probe test IS the spike artifact.\n\n#coding-harness\n\n## Review Findings (2026-07-14 10:10)\n\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:48` — Public struct `Executor` implementing protocol `LanguageModelExecutor` lacks documentation; developers reading this test need to understand what this nested type does. Add a doc comment above the `struct Executor:` declaration explaining its role in the test (e.g., \"Executor conformance that records request transcripts for assertion by tests.\").\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:116` — Public struct `Executor` implementing protocol `LanguageModelExecutor` lacks documentation; mirrors the missing docs issue at line 48 for the passthrough wrapper's executor. Add a doc comment explaining this executor's role (e.g., \"Executor that wraps another model's executor, records the observed transcript and response text, and delegates to the wrapped model via a nested session.\").\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:117` — Public struct `Configuration` for the passthrough executor lacks a doc comment; the cache-semantics comment (lines 122–130) is a regular comment, not a doc comment, so it is invisible to documentation tools and readers skimming the type. Add a doc comment above the struct declaration; move or duplicate the cache-semantics explanation into the doc comment.\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:143` — The test makes two calls to `session.respond()` and verifies transcript recording for both calls, but does not verify response recording for either call. The ProbeResponseRecorder is created and passed to the wrapper (which records responses in its `respond()` method on each call), but the test never reads back the recorded responses. Add response verification to test 2 after the transcript assertions: `let recordedResponses = await responses.responses`, then `#expect(recordedResponses.count == 2)` and `#expect(recordedResponses == [\"ok\", \"ok\"])` to verify responses are recorded for both calls, matching the pattern used for transcript verification.\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:146` — Public async function `respond(to:model:streamingInto:)` in `PassthroughProbeModel.Executor` lacks documentation, whereas the sibling function in `ProbeStubModel.Executor` (line 78) is fully documented, creating inconsistency. Add a doc comment explaining how this executor's `respond` method wraps the inner model, observes and records the response, and re-emits it.\n
