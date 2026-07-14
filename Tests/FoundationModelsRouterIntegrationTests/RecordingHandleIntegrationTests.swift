@@ -189,26 +189,38 @@ struct RecordingHandleIntegrationTests {
         return Harness(profile: profile, router: router, recordingsDir: recordingsDir, cacheDir: cacheDir)
     }
 
-    /// Decodes every event from a session directory's `transcript.jsonl`, or
-    /// an empty array if the file does not exist yet.
-    private static func recordedEvents(in directory: URL) throws -> [TranscriptEvent] {
-        let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
+    /// Decodes every newline-delimited JSON record of type `T` from
+    /// `fileName` inside `directory`. When `checkExists` is `true`, a missing
+    /// file yields `[]` instead of throwing — used by callers where the file
+    /// not existing yet is itself the thing under test (a meaningful
+    /// assertion failure), not a harness error.
+    private static func readJSONLFile<T: Decodable>(
+        in directory: URL,
+        fileName: String,
+        checkExists: Bool = false
+    ) throws -> [T] {
+        let fileURL = directory.appendingPathComponent(fileName, isDirectory: false)
+        if checkExists, !FileManager.default.fileExists(atPath: fileURL.path) {
+            return []
+        }
         let text = try String(contentsOf: fileURL, encoding: .utf8)
         let decoder = JSONDecoder()
         return try text.split(separator: "\n").filter { !$0.isEmpty }.map {
-            try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
+            try decoder.decode(T.self, from: Data($0.utf8))
         }
     }
 
-    /// Decodes every record from a router directory's `sessions.jsonl`.
+    /// Decodes every event from a session directory's `transcript.jsonl`, or
+    /// an empty array if the file does not exist yet.
+    private static func recordedEvents(in directory: URL) throws -> [TranscriptEvent] {
+        try readJSONLFile(in: directory, fileName: "transcript.jsonl", checkExists: true)
+    }
+
+    /// Decodes every record from a router directory's `sessions.jsonl`, or an
+    /// empty array if the file does not exist yet (so a missing file surfaces
+    /// as a meaningful assertion failure rather than a file-not-found error).
     private static func sessionIndexRecords(underRouterDirectory routerDirectory: URL) throws -> [SessionIndexRecord] {
-        let fileURL = routerDirectory.appendingPathComponent("sessions.jsonl", isDirectory: false)
-        let text = try String(contentsOf: fileURL, encoding: .utf8)
-        let decoder = JSONDecoder()
-        return try text.split(separator: "\n").filter { !$0.isEmpty }.map {
-            try decoder.decode(SessionIndexRecord.self, from: Data($0.utf8))
-        }
+        try readJSONLFile(in: routerDirectory, fileName: "sessions.jsonl", checkExists: true)
     }
 
     /// Whether `expected` appears as an in-order (not necessarily contiguous)
