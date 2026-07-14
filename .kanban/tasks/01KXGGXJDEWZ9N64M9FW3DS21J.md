@@ -42,8 +42,8 @@ comments:
 
     Description checkboxes remain accurate; work is complete and green. Still leaving the task in `doing` for `/review`.
   timestamp: 2026-07-14T17:38:42.408725+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: bb80
 title: Extract transcript-diff engine shared by RoutedSession and the recording handle
 ---
 ## What
