@@ -75,8 +75,57 @@ comments:
 
     No changes made under .build/checkouts/mlx-swift-lm (vendored fork). Task left in `doing` per /implement's contract — review is the next step's job.
   timestamp: 2026-07-14T15:25:13.203336+00:00
+- actor: claude-code
+  id: 01kxgmnjb4gy3515tbc75q3d7q
+  text: |-
+    Addressed both Review Findings (2026-07-14 10:27) items on LanguageModelBoundaryProbeTests.swift:
+
+    1. Added `/// Records a transcript observed on a probe model's executor call.` directly above `ProbeTranscriptRecorder.record(_:)`.
+    2. Added `/// Records response text observed after delegation to the wrapped model.` directly above `ProbeResponseRecorder.record(_:)`.
+
+    Flipped both `- [ ]` to `- [x]` in that section; all other sections (base description, Review Findings 10:10 section) preserved verbatim.
+
+    Note: hit a kanban tooling quirk while updating the description — the `tag task` op appended literal "#coding-harness" text to the end of the description instead of registering the tag, and duplicated it on a second call, while the task's `tags`/`filter_tags`/`progress` fields also transiently zeroed out after a plain `update task` description edit. Cleaned this up by rewriting the description to the exact intended text (no stray trailing hashtags) and re-issuing the update, which caused tags (`coding-harness`) and progress (now 1.0) to recompute correctly. No lasting effect on this task's content; flagging in case the tag-task/update-task interaction is a real bug worth a task of its own.
+
+    Verification: `swift test` (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer) — 305/305 unit tests pass, zero warnings/failures; gated integration suites skip as expected (no GPU/network). Adversarial double-check agent returned PASS: diff scoped to exactly the two one-line doc-comment additions, style matches neighboring doc comments, vendored .build/checkouts/mlx-swift-lm untouched, and independently re-ran swift test with the same 305/305 zero-warning result.
+
+    Leaving in `doing` per /implement's contract — review is the next step's job.
+  timestamp: 2026-07-14T15:41:59.012760+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Spike: verify LanguageModel generate boundary exposes the transcript (recording-handle prerequisite)'
 ---
-## What\nDe-risk the recording-LanguageModel-handle design (FoundationModelsCodingHarness plan section 8) BEFORE building it. Read the fork product MLXFoundationModels (swissarmyhammer/mlx-swift-lm, branch foundationmodels-fixes) and Resolution/LiveModelLoader.swift here, and confirm three facts in writing:\n\n- the LanguageModel protocol generate entry point receives the session transcript (or equivalent full-context input) on every call\n- MLXLanguageModel is stateless across calls with respect to the transcript (fork/restore already assumes this — cite the exact code path)\n- a conforming wrapper can observe the response it emits (needed to record the final response entry at turn end)\n\nRecord the findings as a comment on this task naming exact types, files, and signatures. If any fact does not hold, STOP this track and raise it — the dependent tasks must not start.\n\n## Acceptance Criteria\n- [x] A comment on this task documents the generate signature, transcript visibility per call, and the statelessness code path, with file/type names\n- [x] A compiling probe test demonstrates a custom LanguageModel conformer wrapping another model can see the transcript passed in and the output passed back\n\n## Tests\n- [x] Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift — a passthrough LanguageModel conformer over a stub model; asserts the wrapper observed the transcript input and the emitted output (compilation is half the assertion)\n- [x] swift test green (remember DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer)\n\n## Workflow\n- Use /tdd — the probe test IS the spike artifact.\n\n#coding-harness\n\n## Review Findings (2026-07-14 10:10)\n\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:48` — Public struct `Executor` implementing protocol `LanguageModelExecutor` lacks documentation; developers reading this test need to understand what this nested type does. Add a doc comment above the `struct Executor:` declaration explaining its role in the test (e.g., \"Executor conformance that records request transcripts for assertion by tests.\").\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:116` — Public struct `Executor` implementing protocol `LanguageModelExecutor` lacks documentation; mirrors the missing docs issue at line 48 for the passthrough wrapper's executor. Add a doc comment explaining this executor's role (e.g., \"Executor that wraps another model's executor, records the observed transcript and response text, and delegates to the wrapped model via a nested session.\").\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:117` — Public struct `Configuration` for the passthrough executor lacks a doc comment; the cache-semantics comment (lines 122–130) is a regular comment, not a doc comment, so it is invisible to documentation tools and readers skimming the type. Add a doc comment above the struct declaration; move or duplicate the cache-semantics explanation into the doc comment.\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:143` — The test makes two calls to `session.respond()` and verifies transcript recording for both calls, but does not verify response recording for either call. The ProbeResponseRecorder is created and passed to the wrapper (which records responses in its `respond()` method on each call), but the test never reads back the recorded responses. Add response verification to test 2 after the transcript assertions: `let recordedResponses = await responses.responses`, then `#expect(recordedResponses.count == 2)` and `#expect(recordedResponses == [\"ok\", \"ok\"])` to verify responses are recorded for both calls, matching the pattern used for transcript verification.\n- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:146` — Public async function `respond(to:model:streamingInto:)` in `PassthroughProbeModel.Executor` lacks documentation, whereas the sibling function in `ProbeStubModel.Executor` (line 78) is fully documented, creating inconsistency. Add a doc comment explaining how this executor's `respond` method wraps the inner model, observes and records the response, and re-emits it.\n
+## What
+De-risk the recording-LanguageModel-handle design (FoundationModelsCodingHarness plan section 8) BEFORE building it. Read the fork product MLXFoundationModels (swissarmyhammer/mlx-swift-lm, branch foundationmodels-fixes) and Resolution/LiveModelLoader.swift here, and confirm three facts in writing:
+
+- the LanguageModel protocol generate entry point receives the session transcript (or equivalent full-context input) on every call
+- MLXLanguageModel is stateless across calls with respect to the transcript (fork/restore already assumes this — cite the exact code path)
+- a conforming wrapper can observe the response it emits (needed to record the final response entry at turn end)
+
+Record the findings as a comment on this task naming exact types, files, and signatures. If any fact does not hold, STOP this track and raise it — the dependent tasks must not start.
+
+## Acceptance Criteria
+- [x] A comment on this task documents the generate signature, transcript visibility per call, and the statelessness code path, with file/type names
+- [x] A compiling probe test demonstrates a custom LanguageModel conformer wrapping another model can see the transcript passed in and the output passed back
+
+## Tests
+- [x] Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift — a passthrough LanguageModel conformer over a stub model; asserts the wrapper observed the transcript input and the emitted output (compilation is half the assertion)
+- [x] swift test green (remember DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer)
+
+## Workflow
+- Use /tdd — the probe test IS the spike artifact.
+
+#coding-harness
+
+## Review Findings (2026-07-14 10:10)
+
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:48` — Public struct `Executor` implementing protocol `LanguageModelExecutor` lacks documentation; developers reading this test need to understand what this nested type does. Add a doc comment above the `struct Executor:` declaration explaining its role in the test (e.g., "Executor conformance that records request transcripts for assertion by tests.").
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:116` — Public struct `Executor` implementing protocol `LanguageModelExecutor` lacks documentation; mirrors the missing docs issue at line 48 for the passthrough wrapper's executor. Add a doc comment explaining this executor's role (e.g., "Executor that wraps another model's executor, records the observed transcript and response text, and delegates to the wrapped model via a nested session.").
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:117` — Public struct `Configuration` for the passthrough executor lacks a doc comment; the cache-semantics comment (lines 122–130) is a regular comment, not a doc comment, so it is invisible to documentation tools and readers skimming the type. Add a doc comment above the struct declaration; move or duplicate the cache-semantics explanation into the doc comment.
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:143` — The test makes two calls to `session.respond()` and verifies transcript recording for both calls, but does not verify response recording for either call. The ProbeResponseRecorder is created and passed to the wrapper (which records responses in its `respond()` method on each call), but the test never reads back the recorded responses. Add response verification to test 2 after the transcript assertions: `let recordedResponses = await responses.responses`, then `#expect(recordedResponses.count == 2)` and `#expect(recordedResponses == ["ok", "ok"])` to verify responses are recorded for both calls, matching the pattern used for transcript verification.
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:146` — Public async function `respond(to:model:streamingInto:)` in `PassthroughProbeModel.Executor` lacks documentation, whereas the sibling function in `ProbeStubModel.Executor` (line 78) is fully documented, creating inconsistency. Add a doc comment explaining how this executor's `respond` method wraps the inner model, observes and records the response, and re-emits it.
+
+## Review Findings (2026-07-14 10:27)
+
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:17` — Public function `ProbeTranscriptRecorder.record(_:)` lacks a documentation comment explaining its purpose. Add a doc comment explaining that this method records a transcript for assertion in tests, e.g. `/// Records a transcript observed on a probe model's executor call.`.
+- [x] `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift:25` — Public function `ProbeResponseRecorder.record(_:)` lacks a documentation comment explaining its purpose. Add a doc comment explaining that this method records response text observed after delegation, e.g. `/// Records response text the wrapper observed after delegating to its wrapped model.`.

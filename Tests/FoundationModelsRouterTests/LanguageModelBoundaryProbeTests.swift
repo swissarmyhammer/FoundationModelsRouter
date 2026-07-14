@@ -12,6 +12,7 @@
     /// returned.
     actor ProbeTranscriptRecorder {
         private(set) var transcripts: [Transcript] = []
+        /// Records a transcript observed on a probe model's executor call.
         func record(_ transcript: Transcript) { transcripts.append(transcript) }
     }
 
@@ -23,6 +24,7 @@
     /// possessed the text, not merely relayed an opaque token it never saw.
     actor ProbeResponseRecorder {
         private(set) var responses: [String] = []
+        /// Records response text observed after delegation to the wrapped model.
         func record(_ text: String) { responses.append(text) }
     }
 
