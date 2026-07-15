@@ -105,12 +105,43 @@ struct TranscriptNestingTests {
         RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
     }
 
+    /// `config.json` declaring an explicit `max_position_embeddings` (32768)
+    /// rather than falling back to ``RepoMetadata/defaultNativeMaxContext``
+    /// (8192) — so a `context: nil` profile's ladder derivation settles on a
+    /// figure distinguishable from both the explicit-context default and the
+    /// no-fields-present fallback.
+    private static let configJSONWithNativeMax32768 = Data("""
+        {
+            "num_hidden_layers": 2,
+            "num_attention_heads": 8,
+            "num_key_value_heads": 2,
+            "head_dim": 16,
+            "hidden_size": 128,
+            "max_position_embeddings": 32768
+        }
+        """.utf8)
+
+    private static var rawMetadataWithNativeMax32768: RawRepoMetadata {
+        RawRepoMetadata(configJSON: configJSONWithNativeMax32768, treeJSON: treeJSON)
+    }
+
     private static let profile = ProfileDefinition(
         name: "coding",
         description: "test profile",
         standard: ["org/std-a"],
         flash: ["org/flash-a"],
         embedding: ["org/emb-a"]
+    )
+
+    /// A profile with `context: nil`, so resolution derives the working
+    /// context via ``JointFit``'s ladder instead of using an authored figure.
+    private static let profileWithDerivedContext = ProfileDefinition(
+        name: "coding-derived",
+        description: "test profile with ladder-derived context",
+        standard: ["org/std-a"],
+        flash: ["org/flash-a"],
+        embedding: ["org/emb-a"],
+        context: nil
     )
 
     private static let stubDimension = 8
@@ -530,6 +561,52 @@ struct TranscriptNestingTests {
         // ladder never runs and the manifest records that figure verbatim.
         #expect(manifest.profiles.first?.context == 8192)
         #expect(manifest.start <= manifest.end)
+
+        _ = profile
+    }
+
+    @Test("a manifest recording a ladder-derived context round-trips through disk")
+    @MainActor
+    func manifestRecordsLadderDerivedContext() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        // Built directly (not through makeRouter(recorder:cacheDir:recordingsDir:))
+        // so the metadata source can be swapped for one whose config.json
+        // declares a native max context (32768) instead of the shared
+        // fixture's implicit 8192 default — triggering the ladder to settle
+        // on a figure distinguishable from the explicit-context test above.
+        let router = Router(
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            recorder: JSONLRecorder(directory: recordingsDir),
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: StubMetadataSource(raw: Self.rawMetadataWithNativeMax32768),
+            loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText)
+        )
+        // `profileWithDerivedContext` has `context: nil`, so JointFit derives
+        // the working context via the ladder instead of using an authored figure.
+        let profile = try await router.resolve(profile: Self.profileWithDerivedContext, reporting: ResolutionProgress())
+
+        let manifestURL = recordingsDir
+            .appendingPathComponent(router.id.description, isDirectory: true)
+            .appendingPathComponent("manifest.json", isDirectory: false)
+        #expect(FileManager.default.fileExists(atPath: manifestURL.path))
+
+        let data = try Data(contentsOf: manifestURL)
+        let manifest = try JSONDecoder().decode(RouterManifest.self, from: data)
+
+        // The tiny fixture model's footprint is trivial next to the 48 GB
+        // budget at any rung, so the ladder settles on the candidate's own
+        // native max context (32768) at its first (largest) rung — never
+        // stepping down, and distinguishable from both the 8192
+        // explicit-context figure and the 8192 no-fields-present fallback.
+        #expect(manifest.profiles.first?.context == 32_768)
+        #expect(manifest.profiles.first?.standard == profile.standard.chosen)
 
         _ = profile
     }

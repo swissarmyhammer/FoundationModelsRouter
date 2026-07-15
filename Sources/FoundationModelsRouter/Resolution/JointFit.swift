@@ -211,30 +211,17 @@ public enum JointFit {
         for ref in candidates {
             // Once a higher-preference candidate has won, lower-preference ones
             // are recorded as skipped and never sized.
-            if chosen != nil {
+            guard chosen == nil else {
                 considered.append(
                     CandidateReport(ref: ref, estimatedFootprintBytes: nil, verdict: .skippedHigherPreferenceChosen)
                 )
                 continue
             }
 
-            switch footprint(ref, context) {
-            case .failure(.metadataUnavailable(let reason)):
-                considered.append(
-                    CandidateReport(ref: ref, estimatedFootprintBytes: nil, verdict: .metadataUnavailable(reason))
-                )
-            case .success(let rawBytes):
-                let scaled = withMargin(rawBytes)
-                if scaled <= remaining {
-                    chosen = ref
-                    considered.append(
-                        CandidateReport(ref: ref, estimatedFootprintBytes: scaled, verdict: .chosen)
-                    )
-                } else {
-                    considered.append(
-                        CandidateReport(ref: ref, estimatedFootprintBytes: scaled, verdict: .tooLarge)
-                    )
-                }
+            let report = evaluateCandidate(ref, context: context, remaining: remaining, footprint: footprint)
+            considered.append(report)
+            if report.verdict == .chosen {
+                chosen = ref
             }
         }
 
@@ -245,6 +232,37 @@ public enum JointFit {
             considered: considered,
             contextTokens: context
         )
+    }
+
+    /// Sizes one candidate against the remaining budget at a given context,
+    /// producing its verdict.
+    ///
+    /// This is the success-case logic factored out of ``resolveSlot(_:candidates:remaining:context:footprint:)``:
+    /// a candidate is `.chosen` when its margined footprint fits `remaining`,
+    /// `.tooLarge` when it doesn't, and `.metadataUnavailable` when it could
+    /// not be sized at all.
+    ///
+    /// - Parameters:
+    ///   - ref: The candidate being sized.
+    ///   - context: The working context to size the candidate at.
+    ///   - remaining: The budget available to size against.
+    ///   - footprint: The injected per-candidate raw footprint at `context`.
+    /// - Returns: The candidate's report, with its verdict and (when sized)
+    ///   its `× 1.2` footprint.
+    private static func evaluateCandidate(
+        _ ref: ModelRef,
+        context: Int,
+        remaining: Int64,
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    ) -> CandidateReport {
+        switch footprint(ref, context) {
+        case .failure(.metadataUnavailable(let reason)):
+            return CandidateReport(ref: ref, estimatedFootprintBytes: nil, verdict: .metadataUnavailable(reason))
+        case .success(let rawBytes):
+            let scaled = withMargin(rawBytes)
+            let verdict: Verdict = scaled <= remaining ? .chosen : .tooLarge
+            return CandidateReport(ref: ref, estimatedFootprintBytes: scaled, verdict: verdict)
+        }
     }
 
     /// The chosen candidate's margined footprint reserved from the shared
@@ -327,6 +345,130 @@ public enum JointFit {
         return [topRung] + ladderStepDowns.filter { $0 < topRung }
     }
 
+    /// A standard-slot candidate's winning ``TrioAttempt``, with the
+    /// embedding and flash choices already unwrapped from it.
+    ///
+    /// Only ever constructed once ``TrioAttempt/succeeded`` is known `true`,
+    /// so `embedding`/`flash` are always the trio's chosen references at that
+    /// rung — never re-derived or re-checked by callers.
+    private struct LadderWinner {
+        let attempt: TrioAttempt
+        let embedding: ModelRef
+        let flash: ModelRef
+    }
+
+    /// The outcome of walking one standard-slot candidate's descending
+    /// context ladder: every rung attempted, plus the winning rung (if any).
+    private struct LadderWalkResult {
+        /// Every rung tried, largest first, in the order attempted.
+        let attempts: [LadderAttempt]
+
+        /// The rung the candidate won at, or `nil` when every rung was too
+        /// large.
+        let winner: LadderWinner?
+    }
+
+    /// Walks one standard-slot candidate's descending context ladder (see
+    /// ``contextLadder(nativeMaxContext:)``), trying each rung's full-trio
+    /// attempt largest-first, and stopping at the first rung where the whole
+    /// trio — embedding, this candidate, and flash — co-fits the budget.
+    ///
+    /// - Parameters:
+    ///   - candidate: The standard-slot candidate being tried.
+    ///   - profile: The authored profile supplying embedding/flash candidates.
+    ///   - budgetBytes: The shared memory budget the trio must co-fit.
+    ///   - native: The candidate's own native max context, anchoring the ladder.
+    ///   - footprint: The injected per-candidate raw footprint at a context.
+    /// - Returns: Every rung attempted and the winning rung, if any.
+    private static func walkLadder(
+        candidate: ModelRef,
+        profile: ProfileDefinition,
+        budgetBytes: Int64,
+        native: Int,
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    ) -> LadderWalkResult {
+        var attempts: [LadderAttempt] = []
+
+        for context in contextLadder(nativeMaxContext: native) {
+            let attempt = attemptTrio(
+                profile: profile,
+                standardCandidate: candidate,
+                budgetBytes: budgetBytes,
+                context: context,
+                footprint: footprint
+            )
+            attempts.append(
+                LadderAttempt(
+                    contextTokens: context,
+                    estimatedFootprintBytes: attempt.standard.considered.first?.estimatedFootprintBytes,
+                    fits: attempt.succeeded
+                )
+            )
+
+            if attempt.succeeded, let embeddingChosen = attempt.embedding.chosen, let flashChosen = attempt.flash.chosen {
+                return LadderWalkResult(
+                    attempts: attempts,
+                    winner: LadderWinner(attempt: attempt, embedding: embeddingChosen, flash: flashChosen)
+                )
+            }
+        }
+
+        return LadderWalkResult(attempts: attempts, winner: nil)
+    }
+
+    /// Builds the successful ``JointResolution`` once a standard-slot
+    /// candidate has won at some ladder rung.
+    ///
+    /// This is the success-case logic factored out of ``resolveViaLadder``:
+    /// it assembles the standard slot's ``SlotResolution`` from the
+    /// candidates considered before this one, the winning candidate's own
+    /// report (carrying every rung it tried), and the remaining
+    /// lower-preference candidates — recorded as skipped, since a
+    /// higher-preference candidate already won and they were never sized.
+    ///
+    /// - Parameters:
+    ///   - candidate: The winning standard-slot candidate.
+    ///   - index: The candidate's position in ``ProfileDefinition/standard``,
+    ///     so lower-preference candidates after it can be recorded as skipped.
+    ///   - profile: The authored profile supplying the full standard list.
+    ///   - standardConsidered: The reports for standard candidates tried
+    ///     before this one (all `.metadataUnavailable` or `.tooLarge`).
+    ///   - ladderAttempts: Every rung tried for the winning candidate.
+    ///   - winner: The winning rung's trio attempt.
+    /// - Returns: The resolved trio and per-slot reasoning.
+    private static func makeLadderSuccess(
+        candidate: ModelRef,
+        index: Int,
+        profile: ProfileDefinition,
+        standardConsidered: [CandidateReport],
+        ladderAttempts: [LadderAttempt],
+        winner: LadderWinner
+    ) -> JointResolution {
+        let chosenReport = CandidateReport(
+            ref: candidate,
+            estimatedFootprintBytes: reservedBytes(winner.attempt.standard),
+            verdict: .chosen,
+            ladderAttempts: ladderAttempts
+        )
+        let skipped = profile.standard[(index + 1)...].map {
+            CandidateReport(ref: $0, estimatedFootprintBytes: nil, verdict: .skippedHigherPreferenceChosen)
+        }
+        let standardResolution = SlotResolution(
+            slot: .standard,
+            remainingBudgetBytes: winner.attempt.standard.remainingBudgetBytes,
+            chosen: candidate,
+            considered: standardConsidered + [chosenReport] + skipped,
+            contextTokens: winner.attempt.standard.contextTokens
+        )
+
+        return JointResolution(
+            embedding: winner.embedding,
+            standard: candidate,
+            flash: winner.flash,
+            slots: [winner.attempt.embedding, standardResolution, winner.attempt.flash]
+        )
+    }
+
     /// Resolves a profile whose ``ProfileDefinition/context`` is `nil` by
     /// deriving the working context via the ladder.
     ///
@@ -386,57 +528,31 @@ public enum JointFit {
                     CandidateReport(ref: candidate, estimatedFootprintBytes: nil, verdict: .metadataUnavailable(reason))
                 )
             case .success(let native):
-                var attempts: [LadderAttempt] = []
-                for context in contextLadder(nativeMaxContext: native) {
-                    lastTriedContext = context
-                    let attempt = attemptTrio(
-                        profile: profile,
-                        standardCandidate: candidate,
-                        budgetBytes: budgetBytes,
-                        context: context,
-                        footprint: footprint
-                    )
-                    attempts.append(
-                        LadderAttempt(
-                            contextTokens: context,
-                            estimatedFootprintBytes: attempt.standard.considered.first?.estimatedFootprintBytes,
-                            fits: attempt.succeeded
-                        )
-                    )
-
-                    guard
-                        attempt.succeeded,
-                        let embeddingChosen = attempt.embedding.chosen,
-                        let flashChosen = attempt.flash.chosen
-                    else {
-                        continue
-                    }
-
-                    let chosenReport = CandidateReport(
-                        ref: candidate,
-                        estimatedFootprintBytes: reservedBytes(attempt.standard),
-                        verdict: .chosen,
-                        ladderAttempts: attempts
-                    )
-                    let skipped = profile.standard[(index + 1)...].map {
-                        CandidateReport(ref: $0, estimatedFootprintBytes: nil, verdict: .skippedHigherPreferenceChosen)
-                    }
-                    let standardResolution = SlotResolution(
-                        slot: .standard,
-                        remainingBudgetBytes: attempt.standard.remainingBudgetBytes,
-                        chosen: candidate,
-                        considered: standardConsidered + [chosenReport] + skipped,
-                        contextTokens: context
-                    )
-                    return JointResolution(
-                        embedding: embeddingChosen,
-                        standard: candidate,
-                        flash: flashChosen,
-                        slots: [attempt.embedding, standardResolution, attempt.flash]
-                    )
+                let walk = walkLadder(
+                    candidate: candidate,
+                    profile: profile,
+                    budgetBytes: budgetBytes,
+                    native: native,
+                    footprint: footprint
+                )
+                if let mostRecentRung = walk.attempts.last?.contextTokens {
+                    lastTriedContext = mostRecentRung
                 }
-                standardConsidered.append(
-                    CandidateReport(ref: candidate, estimatedFootprintBytes: nil, verdict: .tooLarge, ladderAttempts: attempts)
+
+                guard let winner = walk.winner else {
+                    standardConsidered.append(
+                        CandidateReport(ref: candidate, estimatedFootprintBytes: nil, verdict: .tooLarge, ladderAttempts: walk.attempts)
+                    )
+                    continue
+                }
+
+                return makeLadderSuccess(
+                    candidate: candidate,
+                    index: index,
+                    profile: profile,
+                    standardConsidered: standardConsidered,
+                    ladderAttempts: walk.attempts,
+                    winner: winner
                 )
             }
         }

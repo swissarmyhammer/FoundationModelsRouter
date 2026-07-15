@@ -27,6 +27,28 @@ comments:
 
     Task is green and left in `doing` per the /implement workflow contract — ready for /review.
   timestamp: 2026-07-15T01:02:55.529259+00:00
+- actor: claude-code
+  id: 01kxhpevpk5by5ce9z6d28rwbw
+  text: |-
+    Addressed all 3 review findings from the 2026-07-14 20:08 review pass:
+
+    1. JointFit.swift resolveSlot (the 4-level-nesting function): extracted the switch's success/failure logic into a new `evaluateCandidate(_:context:remaining:footprint:) -> CandidateReport` helper. resolveSlot's loop is now: guard chosen==nil else {skip; continue} -> call evaluateCandidate -> `if report.verdict == .chosen { chosen = ref }`. Down to 2 levels.
+
+    2. JointFit.swift resolveViaLadder (the 5-level-nesting, 71-line function): extracted two helpers — `walkLadder(candidate:profile:budgetBytes:native:footprint:) -> LadderWalkResult` (walks the descending rungs, returns every LadderAttempt plus an optional `LadderWinner` pairing the winning TrioAttempt with its unwrapped embedding/flash refs) and `makeLadderSuccess(candidate:index:profile:standardConsidered:ladderAttempts:winner:) -> JointResolution` (assembles the final JointResolution from a winner, including the skipped-lower-preference-candidates list). resolveViaLadder's outer loop body is now: switch nativeMaxContext -> case .success calls walkLadder, updates lastTriedContext from the walk's last attempt, `guard let winner = walk.winner else {record .tooLarge; continue}`, `return makeLadderSuccess(...)`. Down to ~3 levels.
+
+    3. Added `manifestRecordsLadderDerivedContext()` to TranscriptNestingTests.swift: a new raw-metadata fixture (`rawMetadataWithNativeMax32768`) whose config.json declares `max_position_embeddings: 32768` (distinct from the shared fixture's implicit 8192 default), and a new `profileWithDerivedContext` (context: nil). Builds a Router directly with that metadata source, resolves the profile (triggering ladder derivation, settling at native max 32768 on the first rung since the tiny fixture model trivially fits the 48GB stub budget), reads manifest.json back off disk, and asserts `manifest.profiles.first?.context == 32_768` — a genuine round-trip through JSONEncoder/JSONDecoder, not just a write-only check.
+
+    swift test: 350 unit / 15 gated, all green (up from 349 — 1 new test), zero warnings (only the pre-existing unrelated mlx-swift_Cmlx build-system cache message). Pure refactor — no JointFit behavior change; verified allocation order, margin math, verdict semantics, and lastTriedContext tracking all preserved.
+
+    Spawned the double-check adversarial agent to independently verify before handoff.
+  timestamp: 2026-07-15T01:32:30.803088+00:00
+- actor: claude-code
+  id: 01kxhpk5r0yrxezc6egyaytkzd
+  text: |-
+    Adversarial double-check agent verdict: PASS, no findings. It independently re-ran `swift test --filter JointFitTests` (13/13) and `swift test --filter TranscriptNestingTests` (10/10, including the new test), traced the evaluateCandidate/walkLadder/makeLadderSuccess extractions line-by-line against the pre-refactor code, confirmed lastTriedContext semantics are preserved (attempts.last?.contextTokens after walkLadder equals what the old per-rung assignment would have left), confirmed nesting dropped to ~2 levels in resolveSlot and ~3 in resolveViaLadder, and confirmed the new manifest test is a genuine write-then-read-then-decode round trip that plausibly forces ladder derivation to settle at context 32768 (not the explicit-context or no-fields-present 8192 paths).
+
+    Task is green and left in `doing` per the /implement workflow contract — ready for /review.
+  timestamp: 2026-07-15T01:34:52.160301+00:00
 depends_on:
 - 01KXGH0HW8S82DM6YEFF6A4HM6
 position_column: doing
@@ -56,3 +78,9 @@ When profile context is nil, Resolution/JointFit.resolve derives it. Policy deci
 - Use /tdd.
 
 #coding-harness
+
+## Review Findings (2026-07-14 20:08)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:122` — Function has 4 levels of nesting (exceeds 3-level threshold), combining a for loop over candidates, a conditional check with early continue, a switch statement, and a nested if within the success case. This makes the control flow difficult to trace and reason about. Extract the switch statement body into a helper function, or refactor to reduce the conditional depth by using guard statements or early returns at the top level.
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:250` — Function has 5 levels of nesting (exceeds 3-level threshold): for loop over candidates → switch statement → case branch → nested for loop over context ladder → guard with multiple conditions. Additionally contains nested loops and complex boolean logic. The 71-line function is difficult to follow with deeply nested branches and multiple loop layers. Extract the inner loop logic into separate helper functions. Consider extracting the ladder-walking logic (the nested for loop and its guard) into its own function, and extract the success case logic into another helper. This would reduce nesting from 5 to 2-3 levels in the main function.
+- [x] `Tests/FoundationModelsRouterTests/TranscriptNestingTests.swift:688` — The manifest recording is tested with explicit context (`context: 8192`), but not with ladder-derived context. The router derives context via ladder and records it in `RouterManifest.ResolvedProfile.context`, but there is no end-to-end test that verifies a ladder-derived context is correctly persisted to manifest.json and round-trips through deserialization. Add a test to TranscriptNestingTests that resolves a profile with `context: nil` (triggering ladder derivation), writes the manifest to disk, reads it back, and asserts that the ladder-derived context value (e.g., 32768) is correctly preserved in the round-trip.
