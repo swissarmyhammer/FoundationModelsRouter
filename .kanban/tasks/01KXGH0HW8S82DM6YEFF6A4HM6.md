@@ -42,8 +42,8 @@ comments:
 
     Checkbox flipped to [x] in the Review Findings section; all other sections preserved verbatim; tags/coding-harness confirmed intact via get task. Leaving task in doing for /review.
   timestamp: 2026-07-14T23:59:09.395715+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: bf80
 title: Optional ProfileDefinition.context; native max context from repo metadata
 ---
 ## What
