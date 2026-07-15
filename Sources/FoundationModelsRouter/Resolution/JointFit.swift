@@ -291,7 +291,7 @@ public enum JointFit {
         let flash: SlotResolution
 
         /// Whether every slot found a viable candidate at this rung.
-        var succeeded: Bool {
+        var isSucceeded: Bool {
             embedding.chosen != nil && standard.chosen != nil && flash.chosen != nil
         }
     }
@@ -348,7 +348,7 @@ public enum JointFit {
     /// A standard-slot candidate's winning ``TrioAttempt``, with the
     /// embedding and flash choices already unwrapped from it.
     ///
-    /// Only ever constructed once ``TrioAttempt/succeeded`` is known `true`,
+    /// Only ever constructed once ``TrioAttempt/isSucceeded`` is known `true`,
     /// so `embedding`/`flash` are always the trio's chosen references at that
     /// rung — never re-derived or re-checked by callers.
     private struct LadderWinner {
@@ -401,11 +401,11 @@ public enum JointFit {
                 LadderAttempt(
                     contextTokens: context,
                     estimatedFootprintBytes: attempt.standard.considered.first?.estimatedFootprintBytes,
-                    fits: attempt.succeeded
+                    fits: attempt.isSucceeded
                 )
             )
 
-            if attempt.succeeded, let embeddingChosen = attempt.embedding.chosen, let flashChosen = attempt.flash.chosen {
+            if attempt.isSucceeded, let embeddingChosen = attempt.embedding.chosen, let flashChosen = attempt.flash.chosen {
                 return LadderWalkResult(
                     attempts: attempts,
                     winner: LadderWinner(attempt: attempt, embedding: embeddingChosen, flash: flashChosen)

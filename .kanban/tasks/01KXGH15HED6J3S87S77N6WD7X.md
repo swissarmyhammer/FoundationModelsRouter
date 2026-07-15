@@ -49,6 +49,22 @@ comments:
 
     Task is green and left in `doing` per the /implement workflow contract — ready for /review.
   timestamp: 2026-07-15T01:34:52.160301+00:00
+- actor: claude-code
+  id: 01kxhrdx5w7y1eredgd2xzj8yd
+  text: |-
+    Addressed the 2026-07-14 20:38 review finding: renamed the private `TrioAttempt.succeeded` computed property to `isSucceeded` per Swift boolean-naming convention, and updated all 3 usages in JointFit.swift (the doc-comment reference at LadderWinner, and the two call sites in walkLadder's LadderAttempt construction and success guard). Grepped the whole repo — no other `.succeeded` references anywhere outside this file (only unrelated prose hits in comments/task files matched "succeeded" as an English word).
+
+    swift test (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer): 350/350 unit tests green, 15 gated tests skip as expected, zero warnings, exit code 0.
+
+    Checkbox flipped to [x], tags preserved as ["coding-harness"], real newlines confirmed via re-fetch. Task left in doing per /implement workflow. Spawned the double-check adversarial agent to independently verify before final handoff.
+  timestamp: 2026-07-15T02:06:56.700200+00:00
+- actor: claude-code
+  id: 01kxhrgwfcj36k0b46y4m9amgp
+  text: |-
+    Adversarial double-check agent verdict: PASS, no findings. It independently confirmed via `git diff` that exactly 3 lines changed (property declaration, doc-comment anchor, 2 call sites), the property body is byte-for-byte unchanged (pure rename), a repo-wide grep found no stray `.succeeded` references to the renamed symbol, and re-ran `swift test` fresh: 350/350 unit tests green, 15 gated tests skip as expected, zero warnings on project source (only the pre-existing unrelated mlx-swift_Cmlx vendored build-system message).
+
+    All review findings across both 2026-07-14 review passes are now [x]. Task is green and left in `doing` per the /implement workflow contract — ready for /review.
+  timestamp: 2026-07-15T02:08:34.284348+00:00
 depends_on:
 - 01KXGH0HW8S82DM6YEFF6A4HM6
 position_column: doing
@@ -84,3 +100,7 @@ When profile context is nil, Resolution/JointFit.resolve derives it. Policy deci
 - [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:122` — Function has 4 levels of nesting (exceeds 3-level threshold), combining a for loop over candidates, a conditional check with early continue, a switch statement, and a nested if within the success case. This makes the control flow difficult to trace and reason about. Extract the switch statement body into a helper function, or refactor to reduce the conditional depth by using guard statements or early returns at the top level.
 - [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:250` — Function has 5 levels of nesting (exceeds 3-level threshold): for loop over candidates → switch statement → case branch → nested for loop over context ladder → guard with multiple conditions. Additionally contains nested loops and complex boolean logic. The 71-line function is difficult to follow with deeply nested branches and multiple loop layers. Extract the inner loop logic into separate helper functions. Consider extracting the ladder-walking logic (the nested for loop and its guard) into its own function, and extract the success case logic into another helper. This would reduce nesting from 5 to 2-3 levels in the main function.
 - [x] `Tests/FoundationModelsRouterTests/TranscriptNestingTests.swift:688` — The manifest recording is tested with explicit context (`context: 8192`), but not with ladder-derived context. The router derives context via ladder and records it in `RouterManifest.ResolvedProfile.context`, but there is no end-to-end test that verifies a ladder-derived context is correctly persisted to manifest.json and round-trips through deserialization. Add a test to TranscriptNestingTests that resolves a profile with `context: nil` (triggering ladder derivation), writes the manifest to disk, reads it back, and asserts that the ladder-derived context value (e.g., 32768) is correctly preserved in the round-trip.
+
+## Review Findings (2026-07-14 20:38)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:192` — Boolean computed property should use the `is-` prefix to match Swift's naming conventions for Boolean predicates about the receiver. Rename `var succeeded: Bool` to `var isSucceeded: Bool` and update the usage at line 256.
