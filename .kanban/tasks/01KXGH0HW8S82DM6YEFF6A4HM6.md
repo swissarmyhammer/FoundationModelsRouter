@@ -33,6 +33,15 @@ comments:
 
     Final state: swift test -> 342 unit tests (326 original + 16 new) in 39 suites passed, 15 gated tests passed (unaffected), zero warnings, zero diagnostics errors. Task left in `doing` for /review per the implement workflow.
   timestamp: 2026-07-14T23:45:39.598620+00:00
+- actor: claude-code
+  id: 01kxhh3xjk0w25t41dfb6c56jx
+  text: |-
+    Addressed review finding: added codableRoundTripPreservesNonDefaultNativeMaxContext() to RepoMetadataTests.swift, constructing a RepoMetadata with nativeMaxContext: 32768 and a non-nil nativeMaxContextDiagnostic, encoding/decoding it, and asserting both fields round-trip correctly. Left the original codableRoundTrip() test (default nativeMaxContext) intact rather than mutating it, so both the default and non-default paths through the synthesized Codable are covered.
+
+    swift test (DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer): 343 unit tests in 39 suites passed (342 prior + 1 new), 15 gated tests passed/skipped as before, zero failures. Only build-system message seen is an unrelated pre-existing "missing creator for mutated node" warning from the vendored mlx-swift-lm bundle artifact, not a Swift compiler warning and not something this task touches.
+
+    Checkbox flipped to [x] in the Review Findings section; all other sections preserved verbatim; tags/coding-harness confirmed intact via get task. Leaving task in doing for /review.
+  timestamp: 2026-07-14T23:59:09.395715+00:00
 position_column: doing
 position_ordinal: '80'
 title: Optional ProfileDefinition.context; native max context from repo metadata
@@ -59,3 +68,7 @@ Footprint continues to take a concrete context value — the derivation itself (
 - Use /tdd.
 
 #coding-harness
+
+## Review Findings (2026-07-14 18:50)
+
+- [x] `Tests/FoundationModelsRouterTests/RepoMetadataTests.swift:478` — The new `nativeMaxContext` field is extensively tested on the parse/decode side (11 tests for various config fields, capping, flooring, text_config fallback), but the round-trip encode/decode path is not tested with non-default `nativeMaxContext` values. The `codableRoundTrip()` test exercises the Codable direction but only with default nativeMaxContext (8192), leaving the newly-added field untested through the encode→decode round-trip that is used when caching metadata to disk. Extend the round-trip test or add a new test that explicitly creates a RepoMetadata with a non-default nativeMaxContext (e.g., from the test helper with nativeMaxContext: 32768), encodes and decodes it, and verifies the value is preserved. This ensures the synthesized Codable handles the new field correctly across cache save/load cycles.

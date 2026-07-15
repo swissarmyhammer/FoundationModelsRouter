@@ -602,6 +602,28 @@ struct RepoMetadataTests {
         #expect(decoded.numFullAttentionLayers == 6)
     }
 
+    @Test("RepoMetadata Codable round-trip preserves a non-default nativeMaxContext")
+    func codableRoundTripPreservesNonDefaultNativeMaxContext() throws {
+        let metadata = RepoMetadata(
+            weightBytes: Self.expectedWeightBytes,
+            numHiddenLayers: 24,
+            numAttentionHeads: 32,
+            numKeyValueHeads: 8,
+            headDim: 128,
+            hiddenSize: 4096,
+            numFullAttentionLayers: 6,
+            nativeMaxContext: 32768,
+            nativeMaxContextDiagnostic: "some diagnostic"
+        )
+
+        let data = try JSONEncoder().encode(metadata)
+        let decoded = try JSONDecoder().decode(RepoMetadata.self, from: data)
+
+        #expect(decoded == metadata)
+        #expect(decoded.nativeMaxContext == 32768)
+        #expect(decoded.nativeMaxContextDiagnostic == "some diagnostic")
+    }
+
     @Test("a second read of the same (repo, revision) hits the cache; fetch runs once")
     func cacheHitFetchesOnce() async throws {
         let (reader, dir, source) = Self.makeReader(
