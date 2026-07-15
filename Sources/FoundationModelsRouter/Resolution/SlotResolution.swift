@@ -13,6 +13,11 @@ public enum Verdict: Sendable, Equatable {
 
     /// This candidate's `× 1.2` footprint exceeded the budget remaining when it
     /// was considered.
+    ///
+    /// For a standard-slot candidate resolved via the context ladder (see
+    /// ``CandidateReport/ladderAttempts``), this means *every* rung the ladder
+    /// tried was too large — the per-rung detail lives in `ladderAttempts`,
+    /// not in a single ``CandidateReport/estimatedFootprintBytes`` figure.
     case tooLarge
 
     /// A higher-preference candidate was already chosen for this slot, so this
@@ -24,14 +29,54 @@ public enum Verdict: Sendable, Equatable {
     case metadataUnavailable(String)
 }
 
+/// One context rung tried while deriving the working context for a
+/// standard-slot candidate via the ladder (see ``JointFit``'s type
+/// documentation for the ladder policy).
+///
+/// Recorded only for a standard-slot candidate considered while
+/// ``ProfileDefinition/context`` was `nil` — an explicit profile context
+/// bypasses the ladder entirely, so no ``LadderAttempt``s exist for that
+/// resolution. `estimatedFootprintBytes` is this *one* candidate's own `× 1.2`
+/// footprint at this rung; `fits` is whether the **whole trio** — embedding,
+/// this standard candidate, and flash — co-fit the budget at this context, not
+/// just this candidate alone, since a rung can fail because a different slot
+/// didn't fit even when this candidate itself did.
+public struct LadderAttempt: Sendable, Equatable {
+    /// The context size in tokens tried at this rung.
+    public let contextTokens: Int
+
+    /// This candidate's own `× 1.2` footprint at this rung, or `nil` when it
+    /// could not be sized.
+    public let estimatedFootprintBytes: Int64?
+
+    /// Whether the full trio (embedding, this candidate, flash) co-fit the
+    /// budget at this rung.
+    public let fits: Bool
+
+    /// Creates a ladder attempt record.
+    ///
+    /// - Parameters:
+    ///   - contextTokens: The context size in tokens tried at this rung.
+    ///   - estimatedFootprintBytes: This candidate's own `× 1.2` footprint at
+    ///     this rung, or `nil` when unsized.
+    ///   - fits: Whether the full trio co-fit the budget at this rung.
+    public init(contextTokens: Int, estimatedFootprintBytes: Int64?, fits: Bool) {
+        self.contextTokens = contextTokens
+        self.estimatedFootprintBytes = estimatedFootprintBytes
+        self.fits = fits
+    }
+}
+
 /// One candidate's contribution to a slot's resolution: the reference, its
 /// `× 1.2` footprint estimate, and the verdict explaining its fate.
 ///
 /// `estimatedFootprintBytes` is the conservative figure used at the fit
 /// comparison — already multiplied by the `1.2` overhead margin — so it can be
 /// rendered against the budget directly. It is `nil` when the candidate was
-/// never sized: either because its metadata was unavailable or because a
-/// higher-preference candidate had already won the slot.
+/// never sized: either because its metadata was unavailable, because a
+/// higher-preference candidate had already won the slot, or because it is a
+/// standard-slot candidate resolved via the context ladder whose every rung
+/// was too large (see ``ladderAttempts`` for the per-rung figures instead).
 public struct CandidateReport: Sendable, Equatable {
     /// The candidate model reference.
     public let ref: ModelRef
@@ -43,22 +88,41 @@ public struct CandidateReport: Sendable, Equatable {
     /// Why this candidate was or was not chosen.
     public let verdict: Verdict
 
+    /// The per-context-rung attempts made while deriving the working context
+    /// for this candidate via the ladder.
+    ///
+    /// Non-empty only for a standard-slot candidate considered while
+    /// ``ProfileDefinition/context`` was `nil` (ladder derivation); empty for
+    /// every other candidate — an explicit context bypasses the ladder
+    /// entirely (a single implicit rung, exactly as before this existed), and
+    /// embedding/flash candidates are always sized at whatever context the
+    /// ladder already settled on for standard, never laddered themselves.
+    public let ladderAttempts: [LadderAttempt]
+
     /// Creates a candidate report.
     ///
     /// - Parameters:
     ///   - ref: The candidate model reference.
     ///   - estimatedFootprintBytes: The `× 1.2` footprint, or `nil` when unsized.
     ///   - verdict: Why the candidate was or was not chosen.
-    public init(ref: ModelRef, estimatedFootprintBytes: Int64?, verdict: Verdict) {
+    ///   - ladderAttempts: The per-rung ladder attempts for this candidate, or
+    ///     `[]` when the ladder was not used (the default).
+    public init(
+        ref: ModelRef,
+        estimatedFootprintBytes: Int64?,
+        verdict: Verdict,
+        ladderAttempts: [LadderAttempt] = []
+    ) {
         self.ref = ref
         self.estimatedFootprintBytes = estimatedFootprintBytes
         self.verdict = verdict
+        self.ladderAttempts = ladderAttempts
     }
 }
 
 /// The resolution of one slot during joint fit: which candidate won (if any),
-/// the budget that was available when the slot was resolved, and the per-
-/// candidate reasoning.
+/// the budget that was available when the slot was resolved, the working
+/// context it was sized at, and the per-candidate reasoning.
 ///
 /// `remainingBudgetBytes` is the budget the slot saw — the shared budget less
 /// whatever earlier slots reserved — so later slots record a smaller figure than
@@ -78,6 +142,17 @@ public struct SlotResolution: Sendable, Equatable {
     /// Every candidate considered, in author preference order, with its verdict.
     public let considered: [CandidateReport]
 
+    /// The working context, in tokens, this slot's candidates were sized at.
+    ///
+    /// Every slot in one ``JointResolution`` shares the same value — context is
+    /// one profile-wide parameter, not a per-slot one — either the profile's
+    /// explicit ``ProfileDefinition/context``, or (when it was `nil`) the rung
+    /// the context ladder settled on. Recorded per slot, alongside
+    /// `remainingBudgetBytes`, so a consumer never has to re-thread a separate
+    /// value to know what context a slot's candidates were actually measured
+    /// against.
+    public let contextTokens: Int
+
     /// Creates a slot resolution.
     ///
     /// - Parameters:
@@ -85,16 +160,21 @@ public struct SlotResolution: Sendable, Equatable {
     ///   - remainingBudgetBytes: The budget available to this slot.
     ///   - chosen: The selected candidate, or `nil` when none fit.
     ///   - considered: Every candidate considered, with its verdict.
+    ///   - contextTokens: The working context, in tokens, this slot was sized
+    ///     at. Defaults to ``ProfileDefinition/defaultContext`` for call sites
+    ///     built before context derivation existed.
     public init(
         slot: ModelSlot,
         remainingBudgetBytes: Int64,
         chosen: ModelRef?,
-        considered: [CandidateReport]
+        considered: [CandidateReport],
+        contextTokens: Int = ProfileDefinition.defaultContext
     ) {
         self.slot = slot
         self.remainingBudgetBytes = remainingBudgetBytes
         self.chosen = chosen
         self.considered = considered
+        self.contextTokens = contextTokens
     }
 }
 
@@ -136,10 +216,14 @@ public struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
         for slot in slots {
             let outcome = slot.chosen.map { "chose \($0.stringValue)" } ?? "no viable candidate"
             lines.append(
-                "  \(slot.slot.rawValue) (remaining \(slot.remainingBudgetBytes) bytes): \(outcome)"
+                "  \(slot.slot.rawValue) (remaining \(slot.remainingBudgetBytes) bytes, "
+                    + "context \(slot.contextTokens) tokens): \(outcome)"
             )
             for candidate in slot.considered {
                 lines.append("    - \(Self.line(for: candidate))")
+                for attempt in candidate.ladderAttempts {
+                    lines.append("        \(Self.line(for: attempt))")
+                }
             }
         }
         return lines.joined(separator: "\n")
@@ -150,6 +234,14 @@ public struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
         let footprint = candidate.estimatedFootprintBytes
             .map { "\($0) bytes" } ?? "unsized"
         return "\(candidate.ref.stringValue) — \(footprint): \(verdictText(candidate.verdict))"
+    }
+
+    /// Renders one ladder rung as `context <n> tokens — <footprint> bytes: <fit|too large>`.
+    private static func line(for attempt: LadderAttempt) -> String {
+        let footprint = attempt.estimatedFootprintBytes
+            .map { "\($0) bytes" } ?? "unsized"
+        let fit = attempt.fits ? "fit" : "too large"
+        return "context \(attempt.contextTokens) tokens — \(footprint): \(fit)"
     }
 
     /// A short human-readable label for a verdict.

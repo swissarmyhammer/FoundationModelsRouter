@@ -245,9 +245,9 @@ public actor Router {
 
         await beginSizing(progress: progress)
         let budget = hostBudget()
-        let footprints = await sizeCandidates(profile: def)
+        let metadataByRef = await sizeCandidates(profile: def)
 
-        let resolution = try await runJointFit(profile: def, budget: budget, footprints: footprints, progress: progress)
+        let resolution = try await runJointFit(profile: def, budget: budget, metadataByRef: metadataByRef, progress: progress)
         await markChosen(resolution: resolution, progress: progress)
 
         do {
@@ -258,18 +258,12 @@ public actor Router {
             // different loader call (no `context`) and stays separate.
             var generationContainers: [ModelSlot: any LoadedLLMContainer] = [:]
             for (chosen, slot) in [(resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash)] {
+                // The context joint fit actually resolved this slot at — the
+                // authored `def.context` verbatim when explicit, or the rung
+                // the ladder settled on when it was `nil` (see `JointFit`).
+                let context = Self.slotResolution(for: resolution, slot: slot).contextTokens
                 generationContainers[slot] = try await download(ref: chosen, slot: slot, progress: progress) {
-                    // TODO(JointFit ladder): `def.context` is nil when the author
-                    // wants the context derived from the resolved candidates'
-                    // native max context. That derivation ladder is a separate,
-                    // dependent task; until it lands, nil falls back to the same
-                    // 8192 default this call site always used.
-                    try await loader.loadLLM(
-                        ref: $0,
-                        slot: $1,
-                        context: def.context ?? ProfileDefinition.defaultContext,
-                        reporting: $2
-                    )
+                    try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2)
                 }
             }
             // Total by construction: the loop above populates both generation
@@ -348,7 +342,8 @@ public actor Router {
     // MARK: - Manifest
 
     /// Appends a resolved profile to the run's manifest record, capturing which
-    /// concrete models won each slot for this machine.
+    /// concrete models won each slot for this machine, and the working context
+    /// they were resolved at.
     ///
     /// - Parameters:
     ///   - def: The authored profile that was resolved, for its name.
@@ -359,7 +354,8 @@ public actor Router {
                 definitionName: def.name,
                 standard: resolution.standard,
                 flash: resolution.flash,
-                embedding: resolution.embedding
+                embedding: resolution.embedding,
+                context: Self.slotResolution(for: resolution, slot: .standard).contextTokens
             )
         )
     }
@@ -417,23 +413,25 @@ public actor Router {
 
     // MARK: - Sizing
 
-    /// Sizes every candidate across all slots into raw footprint bytes at the
-    /// profile's context, ready for the joint-fit closure.
+    /// Fetches every candidate's parsed metadata once per `(slot, ref)`
+    /// occurrence, merging results for a ref shared across slots (see
+    /// ``preferSuccess(left:right:)``).
     ///
-    /// `def.context` is `nil` when the author wants the context derived from
-    /// each candidate's native max context instead of caller-supplied; that
-    /// derivation ladder is a separate, dependent task (JointFit), so this
-    /// falls back to ``ProfileDefinition/defaultContext`` for now.
+    /// Metadata — not a footprint baked in at one fixed context — is what's
+    /// cached here: ``JointFit``'s context ladder queries footprint and
+    /// native-max-context at however many different context rungs it needs
+    /// while deriving the working context, all purely sync from the metadata
+    /// already in hand (see ``footprintBytes(for:context:metadataByRef:membership:)``),
+    /// no further I/O once this returns.
     private func sizeCandidates(
         profile def: ProfileDefinition
-    ) async -> [ModelRef: Result<Int64, RepoMetadataError>] {
-        let context = def.context ?? ProfileDefinition.defaultContext
-        var out: [ModelRef: Result<Int64, RepoMetadataError>] = [:]
-        for (slot, refs) in def.candidatesBySlot {
+    ) async -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
+        var out: [ModelRef: Result<RepoMetadata, RepoMetadataError>] = [:]
+        for (_, refs) in def.candidatesBySlot {
             for ref in refs {
-                let result = await footprintBytes(for: ref, slot: slot, context: context)
+                let result = await metadataResult(for: ref)
                 if let existing = out[ref] {
-                    out[ref] = Self.preferLarger(left: existing, right: result)
+                    out[ref] = Self.preferSuccess(left: existing, right: result)
                 } else {
                     out[ref] = result
                 }
@@ -442,22 +440,12 @@ public actor Router {
         return out
     }
 
-    /// The raw footprint bytes for one candidate at a context, slot-aware: the
-    /// embedding slot has no KV cache, so it is sized by weights alone.
-    private func footprintBytes(
-        for ref: ModelRef,
-        slot: ModelSlot,
-        context: Int
-    ) async -> Result<Int64, RepoMetadataError> {
+    /// Fetches and parses one candidate's metadata, passing a thrown
+    /// ``RepoMetadataError`` through unchanged and wrapping any other thrown
+    /// error into ``RepoMetadataError/metadataUnavailable(_:)``.
+    private func metadataResult(for ref: ModelRef) async -> Result<RepoMetadata, RepoMetadataError> {
         do {
-            let metadata = try await metadataReader.metadata(for: ref)
-            let bytes: Int64
-            if slot == .embedding {
-                bytes = Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context)
-            } else {
-                bytes = metadata.footprint.footprint(context: context)
-            }
-            return .success(bytes)
+            return .success(try await metadataReader.metadata(for: ref))
         } catch let error as RepoMetadataError {
             return .failure(error)
         } catch {
@@ -465,21 +453,74 @@ public actor Router {
         }
     }
 
-    /// Merges two footprint results for the same ref, keeping the larger
-    /// (more conservative) successful figure and preferring success over failure.
-    private static func preferLarger(
-        left lhs: Result<Int64, RepoMetadataError>,
-        right rhs: Result<Int64, RepoMetadataError>
-    ) -> Result<Int64, RepoMetadataError> {
+    /// Merges two metadata results for the same ref fetched via different
+    /// slot memberships, keeping the first successful result — or, when both
+    /// failed, the first (chronologically earliest) failure — so a transient
+    /// failure fetching one slot's occurrence never poisons a later slot's
+    /// successful one.
+    private static func preferSuccess(
+        left lhs: Result<RepoMetadata, RepoMetadataError>,
+        right rhs: Result<RepoMetadata, RepoMetadataError>
+    ) -> Result<RepoMetadata, RepoMetadataError> {
         switch (lhs, rhs) {
-        case let (.success(a), .success(b)):
-            return .success(max(a, b))
-        case (.success, .failure):
+        case (.success, _):
             return lhs
         case (.failure, .success):
             return rhs
         case (.failure, .failure):
             return lhs
+        }
+    }
+
+    /// Every slot a ref is a candidate for, across the whole profile.
+    ///
+    /// A ref shared across slots (e.g. one small model listed as both an
+    /// embedding and a standard candidate) must be sized under *every*
+    /// interpretation it could be used under — see
+    /// ``footprintBytes(for:context:metadataByRef:membership:)``.
+    private static func slotMembership(profile def: ProfileDefinition) -> [ModelRef: Set<ModelSlot>] {
+        var membership: [ModelRef: Set<ModelSlot>] = [:]
+        for (slot, refs) in def.candidatesBySlot {
+            for ref in refs {
+                membership[ref, default: []].insert(slot)
+            }
+        }
+        return membership
+    }
+
+    /// The raw footprint bytes for one candidate at a context, conservatively
+    /// sized across every slot it is a candidate for: the embedding
+    /// interpretation has no KV cache (weights alone), while standard/flash
+    /// do — a ref that is a candidate for both is sized under both and the
+    /// larger figure is kept, so neither slot's fit test under-estimates it.
+    private static func footprintBytes(
+        for ref: ModelRef,
+        context: Int,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        membership: [ModelRef: Set<ModelSlot>]
+    ) -> Result<Int64, RepoMetadataError> {
+        guard let metadataResult = metadataByRef[ref] else {
+            return .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized"))
+        }
+        switch metadataResult {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let metadata):
+            let slots = membership[ref] ?? []
+            var candidates: [Int64] = []
+            if slots.contains(.embedding) {
+                candidates.append(Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context))
+            }
+            if slots.contains(.standard) || slots.contains(.flash) {
+                candidates.append(metadata.footprint.footprint(context: context))
+            }
+            // Total by construction: every ref in `metadataByRef` came from
+            // `def.candidatesBySlot`, so `membership[ref]` always has at
+            // least one slot, and thus at least one interpretation above.
+            guard let largest = candidates.max() else {
+                preconditionFailure("a sized candidate is a member of at least one slot")
+            }
+            return .success(largest)
         }
     }
 
@@ -490,13 +531,22 @@ public actor Router {
     private func runJointFit(
         profile def: ProfileDefinition,
         budget: Int64,
-        footprints: [ModelRef: Result<Int64, RepoMetadataError>],
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
         progress: ResolutionProgress
     ) async throws -> JointResolution {
+        let membership = Self.slotMembership(profile: def)
         do {
-            return try JointFit.resolve(profile: def, budgetBytes: budget) { ref in
-                footprints[ref] ?? .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized"))
-            }
+            return try JointFit.resolve(
+                profile: def,
+                budgetBytes: budget,
+                footprint: { ref, context in
+                    Self.footprintBytes(for: ref, context: context, metadataByRef: metadataByRef, membership: membership)
+                },
+                nativeMaxContext: { ref in
+                    (metadataByRef[ref] ?? .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized")))
+                        .map(\.nativeMaxContext)
+                }
+            )
         } catch let failure as ResolutionFailure {
             await recordFailure(failure: failure, progress: progress)
             throw failure

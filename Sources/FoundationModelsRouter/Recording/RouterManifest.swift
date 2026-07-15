@@ -49,6 +49,15 @@ public struct RouterManifest: Sendable, Codable, Equatable {
         /// The concrete model chosen for the `.embedding` slot.
         public let embedding: ModelRef
 
+        /// The working context, in tokens, this profile's slots were resolved
+        /// at — the authored ``ProfileDefinition/context`` verbatim when
+        /// explicit, or the rung ``JointFit``'s context ladder settled on when
+        /// it was `nil`. Every slot shares this one figure (context is one
+        /// profile-wide parameter), so it is recorded once here rather than
+        /// per slot, letting a coding-harness frontend display what context
+        /// this run actually resolved to.
+        public let context: Int
+
         /// Creates a resolved-profile record.
         ///
         /// - Parameters:
@@ -56,11 +65,19 @@ public struct RouterManifest: Sendable, Codable, Equatable {
         ///   - standard: The chosen `.standard` model.
         ///   - flash: The chosen `.flash` model.
         ///   - embedding: The chosen `.embedding` model.
-        public init(definitionName: String, standard: ModelRef, flash: ModelRef, embedding: ModelRef) {
+        ///   - context: The working context, in tokens, resolved for this run.
+        public init(
+            definitionName: String,
+            standard: ModelRef,
+            flash: ModelRef,
+            embedding: ModelRef,
+            context: Int
+        ) {
             self.definitionName = definitionName
             self.standard = standard
             self.flash = flash
             self.embedding = embedding
+            self.context = context
         }
     }
 

@@ -605,6 +605,118 @@ struct ResolveTests {
         #expect(standardSlot.chosen == nil)
     }
 
+    // MARK: - Context ladder wiring (ProfileDefinition.context == nil)
+
+    /// A `config.json` for a "big" standard candidate: a tiny weight (100
+    /// bytes) but a KV-cache coefficient of 400 bytes/token (`head_dim: 100`
+    /// on a single layer/head), so its footprint is dominated by context and
+    /// blows the budget at its own native max (131_072) but fits at a lower
+    /// rung (32_768).
+    private static let ladderBigConfigJSON = Data("""
+        {
+            "num_hidden_layers": 1,
+            "num_attention_heads": 1,
+            "num_key_value_heads": 1,
+            "head_dim": 100,
+            "hidden_size": 100,
+            "max_position_embeddings": 131072
+        }
+        """.utf8)
+
+    /// A `config.json` for a "small" standard candidate: the same tiny
+    /// weight, but a KV-cache coefficient of only 4 bytes/token, so it fits
+    /// comfortably even at its own native max (131_072) — the model-outer
+    /// preference test proves the bigger, preference-first candidate still
+    /// wins at its own smaller rung rather than this one winning at 131_072.
+    private static let ladderSmallConfigJSON = Data("""
+        {
+            "num_hidden_layers": 1,
+            "num_attention_heads": 1,
+            "num_key_value_heads": 1,
+            "head_dim": 1,
+            "hidden_size": 1,
+            "max_position_embeddings": 131072
+        }
+        """.utf8)
+
+    /// A `config.json` for the ladder-test flash/embedding candidates: zero
+    /// hidden layers, so their footprint is a flat, context-independent 100
+    /// bytes (no KV cache growth at any context).
+    private static let ladderFlatConfigJSON = Data("""
+        {
+            "num_hidden_layers": 0,
+            "num_attention_heads": 1,
+            "num_key_value_heads": 1,
+            "head_dim": 1,
+            "hidden_size": 1
+        }
+        """.utf8)
+
+    /// A tree listing with a single 100-byte weight shard, shared by every
+    /// ladder-wiring fixture above (the weight size is negligible next to the
+    /// KV-cache math the test cares about).
+    private static let ladderTreeJSON = Data("""
+        [
+            {"type": "file", "path": "model.safetensors", "size": 100}
+        ]
+        """.utf8)
+
+    @Test("router wiring: the bigger standard candidate at a smaller derived context beats the smaller one at a bigger context")
+    @MainActor
+    func routerDerivesContextViaLadderAndPrefersModelOuter() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let big: ModelRef = "org/ladder-router-big"
+        let small: ModelRef = "org/ladder-router-small"
+        let flash: ModelRef = "org/ladder-router-flash"
+        let embedding: ModelRef = "org/ladder-router-embedding"
+
+        let bigRaw = RawRepoMetadata(configJSON: Self.ladderBigConfigJSON, treeJSON: Self.ladderTreeJSON)
+        let smallRaw = RawRepoMetadata(configJSON: Self.ladderSmallConfigJSON, treeJSON: Self.ladderTreeJSON)
+        let flatRaw = RawRepoMetadata(configJSON: Self.ladderFlatConfigJSON, treeJSON: Self.ladderTreeJSON)
+
+        let source = ScriptedMetadataSource(
+            scripts: [
+                big.repo: [.success(bigRaw)],
+                small.repo: [.success(smallRaw)],
+                flash.repo: [.success(flatRaw)],
+                embedding.repo: [.success(flatRaw)],
+            ],
+            defaultRaw: bigRaw
+        )
+        let progress = ResolutionProgress()
+        let loader = StubModelLoader(progress: progress)
+
+        // budget = min(recommendedMaxWorkingSetSize, totalRAM - headroomReserve).
+        // Embedding (120) + flash (120) + big@32_768 (15_728_640, ×1.2 margin)
+        // = 15_728_880, comfortably under this budget; big@65_536 would need
+        // 31_457_520 (comfortably over), so 32_768 is the largest fitting rung.
+        let router = Router(
+            headroomReserve: 0,
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 15_729_000, recommendedMaxWorkingSetSize: 15_729_000),
+            metadataSource: source,
+            loader: loader
+        )
+
+        let profile = ProfileDefinition(
+            name: "ladder-router",
+            description: "router-level context ladder wiring",
+            standard: [big, small],
+            flash: [flash],
+            embedding: [embedding],
+            context: nil
+        )
+
+        let resolved = try await router.resolve(profile: profile, reporting: progress)
+
+        #expect(resolved.standard.chosen == big)
+        #expect(resolved.standard.resolution.contextTokens == 32_768)
+        #expect(resolved.flash.resolution.contextTokens == 32_768)
+        #expect(resolved.embedding.resolution.contextTokens == 32_768)
+    }
+
     // MARK: - Progress fraction math
 
     @Test("DownloadProgress.fraction divides downloaded bytes by the known total")

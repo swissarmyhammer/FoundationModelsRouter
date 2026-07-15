@@ -526,6 +526,9 @@ struct TranscriptNestingTests {
         #expect(manifest.profiles.first?.standard == profile.standard.chosen)
         #expect(manifest.profiles.first?.flash == profile.flash.chosen)
         #expect(manifest.profiles.first?.embedding == profile.embedding.chosen)
+        // `Self.profile` uses the default explicit context (8192), so the
+        // ladder never runs and the manifest records that figure verbatim.
+        #expect(manifest.profiles.first?.context == 8192)
         #expect(manifest.start <= manifest.end)
 
         _ = profile
