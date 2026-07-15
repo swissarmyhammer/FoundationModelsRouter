@@ -67,8 +67,8 @@ comments:
   timestamp: 2026-07-15T02:08:34.284348+00:00
 depends_on:
 - 01KXGH0HW8S82DM6YEFF6A4HM6
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c080
 title: 'JointFit: derive context via ladder — model choice outer, context inner'
 ---
 ## What
