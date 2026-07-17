@@ -63,12 +63,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// recording directory and can be overridden without moving it.
     ///
     /// **This does a small, synchronous disk write** when the router records
-    /// durably: it creates the session's directory and writes its write-once
-    /// ``SessionSidecar`` before returning (see ``SessionSidecarWriter``). That
-    /// is deliberate — it is what makes "a session's facts are on disk before
-    /// any of its transcript is" true by construction rather than by an
-    /// awaited handshake, so a reader can never meet a transcript it has no
-    /// facts to interpret. The cost is two syscalls on the calling thread,
+    /// durably: the session creates its own directory and writes its write-once
+    /// ``SessionSidecar`` as it is constructed, before this returns (see
+    /// ``SessionSidecarOrigin``). That is deliberate — it is what makes "a
+    /// session's facts are on disk before any of its transcript is" true by
+    /// construction rather than by an awaited handshake, so a reader can never
+    /// meet a transcript it has no facts to interpret. The cost is two syscalls
+    /// on the calling thread,
     /// which vending a session (unlike a turn) does not do in a loop. Callers
     /// that vend sessions from the main actor in a tight loop should hop off
     /// it first.
@@ -123,18 +124,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // carrying `instructions` so generation calls never pass them again.
         let backend = container.makeSession(instructions: instructions)
 
-        // The session's own directory is brought into existence by its
-        // write-once sidecar, here, before the session exists to record
-        // anything into it — so any transcript a reader finds always has the
-        // facts to interpret it sitting beside it. A root carries no fork cut
-        // point (`forkedAtEntryCount: nil`): it inherits nothing.
-        sessionSidecarWriter?.write(
-            instructions: instructions,
-            grammar: grammar?.source,
-            forkedAtEntryCount: nil,
-            to: recordingDirectory
-        )
-
         return makeRoutedSessionActor(
             profile: owningProfile,
             routerId: routerId,
@@ -158,7 +147,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // whole transcript diff (including any leading `.instructions`
             // entry) is new.
             persistedEntryCount: 0,
-            sessionSidecarWriter: sessionSidecarWriter
+            // The vended root lands its own write-once sidecar as it is
+            // constructed — the vending handle does not write it on the
+            // session's behalf, so a root actor built anywhere cannot come into
+            // existence without one (see ``SessionSidecarOrigin``).
+            sidecarOrigin: .new(under: durableRecording)
         )
     }
 

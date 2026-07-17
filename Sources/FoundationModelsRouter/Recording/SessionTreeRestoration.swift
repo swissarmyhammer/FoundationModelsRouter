@@ -148,9 +148,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// **No sidecar rewrite.** This never writes a ``SessionSidecar`` — every
     /// node's sidecar was written when the tree was originally created (root
     /// vend and each fork), it is write-once, and restoration only *reads* it.
-    /// A restored session's own `sessionSidecarWriter` is still threaded
-    /// through, so a brand-new fork taken from a restored session afterward
-    /// writes its own sidecar normally, exactly like any other fork.
+    /// Each restored node is built with ``SessionSidecarOrigin/restored(_:)``,
+    /// which is what says so: unlike a new session, a restored one lands no
+    /// sidecar of its own at init, and the writer it carries travels only for
+    /// the forks taken from it afterward, which write theirs normally.
     ///
     /// **Fork-admission gates.** Every restored node is constructed with
     /// `holdsAdmissionPermit: false` and shares this profile's normal
@@ -246,7 +247,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,
                 persistedEntryCount: transcript.count,
-                sessionSidecarWriter: routedLLM.sessionSidecarWriter
+                // Restored, not new: this node's sidecar is the write-once one
+                // read from disk just above, never rewritten. The writer travels
+                // only for forks taken from the restored session.
+                sidecarOrigin: routedLLM.durableRecording.map { .restored($0.sidecarWriter) }
+                    ?? .memoryOnly
             )
             sessionsById[node.id] = session
             for child in node.children {

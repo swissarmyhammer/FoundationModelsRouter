@@ -428,6 +428,66 @@ struct SessionSidecarTests {
         }
     }
 
+    // MARK: - Construction: a session lands its own sidecar
+
+    @Test("a root session actor built directly, with no sidecar call by its builder, lands its own")
+    @MainActor
+    func aDirectlyBuiltRootSessionActorWritesItsOwnSidecar() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let standard = profile.standard
+
+        let instructions = "You are a terse assistant."
+        let sessionId = ULID.generate()
+        let recordingDirectory = standard.recordingDirectory(forSessionId: sessionId)
+
+        // Assembled by hand rather than vended from `makeSession()`, the way a
+        // harness that needs the backend object itself must — and nothing here
+        // writes a sidecar. Landing one is the session's own job, so that a
+        // durable session directory holding a transcript and no `session.json`
+        // — the tree ``TranscriptTree/load(under:)`` refuses — cannot be built
+        // by forgetting a call.
+        let session = RoutedSessionActor(
+            profile: profile,
+            routerId: standard.routerId,
+            id: sessionId,
+            parentId: nil,
+            recordingDirectory: recordingDirectory,
+            workingDirectory: recordingDirectory,
+            backend: standard.container.makeSession(instructions: instructions),
+            slot: .standard,
+            model: standard.chosen,
+            recorder: standard.recorder,
+            instructions: instructions,
+            grammar: nil,
+            serialGate: standard.serialGate,
+            forkAdmissionGate: standard.forkAdmissionGate,
+            holdsAdmissionPermit: false,
+            persistedEntryCount: 0,
+            sidecarOrigin: .new(under: standard.durableRecording)
+        )
+        #expect(session.recordingDirectory == recordingDirectory)
+
+        let sidecar = try #require(try SessionSidecar.read(in: recordingDirectory))
+        #expect(sidecar.instructions == instructions)
+        #expect(sidecar.slot == .standard)
+        #expect(sidecar.model == standard.chosen)
+        // A root: no cut point, and it carries the run's resolved-profile facts.
+        #expect(sidecar.forkedAtEntryCount == nil)
+        #expect(sidecar.profile?.definitionName == Self.profile.name)
+    }
+
     // MARK: - Grammar and instructions
 
     @Test(

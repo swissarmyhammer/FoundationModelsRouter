@@ -337,18 +337,9 @@ struct LanguageModelSessionBackendIntegrationTests {
             .appendingPathComponent(sessionId.description, isDirectory: true)
 
         // This root is assembled by hand rather than vended from
-        // `standard.makeSession()` — the tests need the backend itself — so it
-        // writes its own sidecar, as `makeSession` does at vending. Nothing
-        // here reloads the tree, but a transcript recorded with no sidecar
-        // beside it is one `TranscriptTree.load` refuses; the harness should
-        // not leave that shape behind.
-        standard.sessionSidecarWriter?.write(
-            instructions: nil,
-            grammar: nil,
-            forkedAtEntryCount: nil,
-            to: recordingDirectory
-        )
-
+        // `standard.makeSession()` — the tests need the backend itself — and it
+        // still lands its own sidecar, because that is the session's own job
+        // rather than its builder's (see `SessionSidecarOrigin`).
         let session = RoutedSessionActor(
             profile: profile,
             routerId: router.id,
@@ -366,9 +357,10 @@ struct LanguageModelSessionBackendIntegrationTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
-            // The vending handle's own writer, exactly as `makeSession` threads
-            // it, so any fork taken from this session records its sidecar too.
-            sessionSidecarWriter: standard.sessionSidecarWriter
+            // A new root under the vending handle's durable recording, exactly
+            // as `makeSession` names it: this session writes its own sidecar,
+            // and so does any fork taken from it.
+            sidecarOrigin: .new(under: standard.durableRecording)
         )
 
         return ChokepointHarness(

@@ -18,8 +18,8 @@ comments:
   timestamp: 2026-07-17T01:27:11.143307+00:00
 depends_on:
 - 01KXPEQ94N516K0QFB3ZTA2Q14
-position_column: todo
-position_ordinal: '8180'
+position_column: done
+position_ordinal: c280
 title: 'Recording layout v3: TranscriptTree + restoreSessionTree read sidecars (read side)'
 ---
 Switch the read/reconstruction path to the per-session `session.json` sidecars introduced by the write-side task.

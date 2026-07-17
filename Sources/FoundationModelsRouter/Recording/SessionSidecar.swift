@@ -318,3 +318,88 @@ public struct SessionSidecarWriter: Sendable {
         }
     }
 }
+
+/// Where a session's `session.json` comes from — the one thing a
+/// ``RoutedSessionActor`` needs to know to keep its own directory loadable.
+///
+/// A session lands its own sidecar as it comes into existence, so whoever builds
+/// one — ``RoutedModel/makeSession(grammar:instructions:workingDirectory:)``,
+/// ``RoutedSessionActor/fork(workingDirectory:)``, or a harness assembling an
+/// actor by hand because it needs the backend object itself — cannot record a
+/// durable session directory holding a transcript and no sidecar beside it, the
+/// tree ``TranscriptTree/load(under:)`` refuses to read. It was a bare
+/// `SessionSidecarWriter?` and a separate hand-typed `write(...)` call that made
+/// that state reachable by *forgetting*; naming the origin makes each builder
+/// state which of the three cases it is in, and the actor do the rest.
+///
+/// A ``RecordingLevel/off`` run is not a case here: it is `.new` carrying a
+/// writer that writes nothing (see ``SessionSidecarWriter``).
+enum SessionSidecarOrigin: Sendable {
+    /// The session is coming into existence now under a durable transcripts
+    /// root — a vended root or a fork — and writes its own write-once sidecar
+    /// through this writer as it is constructed, before it exists to record any
+    /// transcript into its directory.
+    case new(SessionSidecarWriter)
+
+    /// The session is a reconstruction of one already on disk (see
+    /// ``RoutedModel/restoreSessionTree(root:registry:)``): its sidecar was
+    /// written when the tree was first created and is write-once, so it is read,
+    /// never rewritten. The writer travels only for the restored session's own
+    /// new forks.
+    case restored(SessionSidecarWriter)
+
+    /// Nothing is recorded durably: the router has no transcripts root, so there
+    /// is no sidecar to write and none for a fork of this session to write
+    /// either.
+    case memoryOnly
+
+    /// The origin of a session coming into existence now under
+    /// `durableRecording`, or ``memoryOnly`` when the router records to
+    /// memory/none.
+    ///
+    /// - Parameter durableRecording: The vending handle's durable recording, or
+    ///   `nil` when it has none.
+    /// - Returns: The new session's sidecar origin.
+    static func new(under durableRecording: DurableRecording?) -> SessionSidecarOrigin {
+        durableRecording.map { .new($0.sidecarWriter) } ?? .memoryOnly
+    }
+
+    /// The origin a session created *from* a session with this origin has.
+    ///
+    /// A fork is a brand-new session wherever its parent could record one, so it
+    /// writes its own sidecar through the same writer — including a fork of a
+    /// *restored* session, which is new even though its parent is not.
+    var forFork: SessionSidecarOrigin {
+        switch self {
+        case .new(let writer), .restored(let writer):
+            return .new(writer)
+        case .memoryOnly:
+            return .memoryOnly
+        }
+    }
+
+    /// Writes the session's own sidecar when the session is new; does nothing for
+    /// a restored session (whose write-once sidecar is already on disk) or a
+    /// memory-only one (which records nothing).
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - grammar: The session's guided-generation grammar source, or `nil`.
+    ///   - forkedAtEntryCount: The parent's transcript entry count at fork time,
+    ///     or `nil` for a root session.
+    ///   - directory: The session's own recording directory.
+    func writeSidecarIfNew(
+        instructions: String?,
+        grammar: String?,
+        forkedAtEntryCount: Int?,
+        to directory: URL
+    ) {
+        guard case .new(let writer) = self else { return }
+        writer.write(
+            instructions: instructions,
+            grammar: grammar,
+            forkedAtEntryCount: forkedAtEntryCount,
+            to: directory
+        )
+    }
+}

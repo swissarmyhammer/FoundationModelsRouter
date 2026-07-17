@@ -154,7 +154,7 @@ extension RoutedSession {
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sessionSidecarWriter:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -174,7 +174,7 @@ func makeRoutedSessionActor(
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
     persistedEntryCount: Int,
-    sessionSidecarWriter: SessionSidecarWriter?
+    sidecarOrigin: SessionSidecarOrigin
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -193,7 +193,7 @@ func makeRoutedSessionActor(
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
         persistedEntryCount: persistedEntryCount,
-        sessionSidecarWriter: sessionSidecarWriter
+        sidecarOrigin: sidecarOrigin
     )
 }
 
@@ -283,28 +283,41 @@ actor RoutedSessionActor: RoutedSession {
     /// is never re-persisted into the child's own transcript.
     private var persistedEntryCount: Int
 
-    /// The sidecar writer any fork taken from this session writes its own
-    /// `session.json` through, or `nil` when the router has no durable
-    /// transcripts root. At ``RecordingLevel/off`` the writer is present and
-    /// writes nothing (see ``SessionSidecarWriter``).
+    /// Where this session's `session.json` comes from: its own write at init
+    /// when the session is new, or the tree it was restored from.
     ///
-    /// Inherited from the vending handle, so a fork's sidecar states the same
-    /// slot/model/context this session's does.
-    private nonisolated let sessionSidecarWriter: SessionSidecarWriter?
+    /// Inherited from the vending handle — so a fork's sidecar states the same
+    /// slot/model/context this session's does — and handed on to every fork
+    /// taken from this session (see ``SessionSidecarOrigin/forFork``).
+    private nonisolated let sidecarOrigin: SessionSidecarOrigin
 
-    /// Creates a session.
+    /// Creates a session, landing its own `session.json` when it is a new one.
+    ///
+    /// The sidecar write happens here, synchronously, rather than at each
+    /// creation site: a session records its own facts as it comes into
+    /// existence, so no builder can produce a durable session directory that a
+    /// transcript can land in with no sidecar beside it (see
+    /// ``SessionSidecarOrigin``). It runs before the session exists to record
+    /// anything, which is what makes "a session's facts are on disk before any
+    /// of its transcript is" true by construction rather than by an awaited
+    /// handshake. Failure is logged and dropped, so it can never fail a
+    /// `makeSession` or a `fork`.
     ///
     /// Internal: construction is only via
     /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
-    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)`` or by
-    /// ``fork(workingDirectory:)``.
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)``,
+    /// ``fork(workingDirectory:)``, or
+    /// ``RoutedModel/restoreSessionTree(root:registry:)``.
     ///
     /// - Parameters:
     ///   - persistedEntryCount: The baseline ``backend`` entry count
     ///     already persisted — `0` for a root session, or the parent's entry
-    ///     count at fork time for a fork (see ``persistedEntryCount``).
-    ///   - sessionSidecarWriter: The sidecar writer any fork taken from this
-    ///     session writes its own `session.json` through, or `nil`.
+    ///     count at fork time for a fork (see ``persistedEntryCount``). For a
+    ///     new fork this is also the cut point recorded into its sidecar, so
+    ///     the lineage cut point and the diff baseline are one fact.
+    ///   - sidecarOrigin: Where this session's `session.json` comes from — a
+    ///     write of its own at init, a tree it was restored from, or nothing
+    ///     durable at all.
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -322,7 +335,7 @@ actor RoutedSessionActor: RoutedSession {
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
         persistedEntryCount: Int,
-        sessionSidecarWriter: SessionSidecarWriter?
+        sidecarOrigin: SessionSidecarOrigin
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -340,7 +353,20 @@ actor RoutedSessionActor: RoutedSession {
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
-        self.sessionSidecarWriter = sessionSidecarWriter
+        self.sidecarOrigin = sidecarOrigin
+
+        // The session's own directory is brought into existence here, by its
+        // write-once sidecar, before the session exists to record anything into
+        // it — so any transcript a reader finds always has the facts to
+        // interpret it sitting beside it. A session with no parent is a root and
+        // carries no cut point; a fork's cut point *is* its diff baseline, read
+        // from the one `persistedEntryCount` rather than passed a second time.
+        sidecarOrigin.writeSidecarIfNew(
+            instructions: instructions,
+            grammar: grammar?.source,
+            forkedAtEntryCount: parentId == nil ? nil : persistedEntryCount,
+            to: recordingDirectory
+        )
     }
 
     /// Releases this session's fork-admission permit when it is deallocated, so a
@@ -479,19 +505,11 @@ actor RoutedSessionActor: RoutedSession {
         // parent chain — the child's `workingDirectory` override never moves it.
         let childRecordingDirectory = recordingDirectory
             .appendingPathComponent(childId.description, isDirectory: true)
-        // The child's sidecar is written here, before `fork()` returns and so
-        // before the child can record anything: `entryCountAtFork` and the
-        // inherited `instructions`/`grammar` are all in hand, and best-effort
-        // failure (log-and-drop) never surfaces into this call. The cut point
-        // written here is the very value the child's own diff baseline starts
-        // at, below — one fact, read twice, never two facts that can disagree.
-        sessionSidecarWriter?.write(
-            instructions: instructions,
-            grammar: grammar?.source,
-            forkedAtEntryCount: entryCountAtFork,
-            to: childRecordingDirectory
-        )
-
+        // The child lands its own sidecar as it is constructed, from the
+        // `entryCountAtFork` baseline passed below — so `fork()` never returns a
+        // durable child directory a transcript can land in with no sidecar
+        // beside it, and needs no sidecar call of its own to say so (see
+        // ``SessionSidecarOrigin``).
         return makeRoutedSessionActor(
             profile: profile,
             routerId: routerId,
@@ -509,7 +527,9 @@ actor RoutedSessionActor: RoutedSession {
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true,
             persistedEntryCount: entryCountAtFork,
-            sessionSidecarWriter: sessionSidecarWriter
+            // A fork is a brand-new session wherever its parent could record
+            // one — including a fork of a restored session.
+            sidecarOrigin: sidecarOrigin.forFork
         )
     }
 

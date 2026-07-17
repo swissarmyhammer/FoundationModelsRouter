@@ -1,8 +1,20 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8380'
+comments:
+- actor: claude-code
+  id: 01kxr973a22v7bde8q11bn5zgm
+  text: |-
+    Implemented. Introduced `SessionSidecarOrigin` (enum: `.new(writer)` / `.restored(writer)` / `.memoryOnly`) in SessionSidecar.swift. `RoutedSessionActor.init` now takes `sidecarOrigin` instead of `sessionSidecarWriter: SessionSidecarWriter?` and lands the session's own write-once sidecar at construction via `writeSidecarIfNew` (root: no cut point; fork: cut point == persistedEntryCount, one fact). Removed the separate pre-write calls from `makeSession` and `fork`, from restoration (now `.restored`, read-only), and from both integration harnesses. A root actor built anywhere now cannot come into existence without its `session.json`, so the last nil-writer hole is closed by construction on the actor path.
+
+    TDD: added SessionSidecarTests.aDirectlyBuiltRootSessionActorWritesItsOwnSidecar — a hand-built root actor with NO sidecar call by its builder must land its own. Watched it fail RED (read → nil), then GREEN. Mutation-checked: disabling the init write reddens both the new test AND theSidecarExistsBeforeTheFirstTranscriptEvent, as the card required.
+
+    swift build clean; swift test 361/361 + 15/15 green. Note: the 4 FM_ROUTER_INTEGRATION_TESTS suites SKIP locally, so the two integration-harness edits are verified only by compilation, not execution — reasoned correct below.
+
+    Scope note: RecordingLanguageModel (the resuming *handle*, not the actor) still carries `sessionSidecarWriter: SessionSidecarWriter?` and lazily writes via its own `didWriteSidecar` guard. That is a distinct type outside this card's stated scope (RoutedSessionActor); left untouched.
+  timestamp: 2026-07-17T14:55:45.986864+00:00
+position_column: doing
+position_ordinal: '80'
 title: Make a root session's sidecar the actor's own responsibility, closing the last nil-writer hole
 ---
 Follow-up from ^zta2q14's review, raised by its adversarial double-check. Not urgent: no known live defect, and every in-repo caller is correct today. This closes the last place the sidecar invariant is upheld by convention rather than by the type.

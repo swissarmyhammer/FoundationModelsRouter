@@ -128,8 +128,8 @@ comments:
 
     Also fixed a stale doc the change would have rotted: `RoutedSessionActor.sessionSidecarWriter` still claimed the writer is `nil` at `.off`.
   timestamp: 2026-07-17T12:44:13.906636+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c180
 title: 'Recording layout v3: write-once session.json sidecar per session (write side)'
 ---
 Replace the two central recording files with a per-session sidecar. Requested by FoundationModelsAgentHarness plan.md §8 item 3 (project-local, checked-in transcripts need every file write-once or append-only).

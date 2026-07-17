@@ -106,8 +106,8 @@ struct TranscriptReconstructionIntegrationTests {
         // The session below is assembled by hand rather than vended from
         // `standard.makeSession()` — the test needs the backend itself, to
         // compare the reconstruction against the live `session.transcript` —
-        // so it also writes the root's sidecar by hand, just as `makeSession`
-        // does at vending.
+        // and lands its own sidecar all the same, because a session's sidecar
+        // is its own job rather than its builder's (see `SessionSidecarOrigin`).
         func durableRecording(_ slot: ModelSlot) -> DurableRecording {
             DurableRecording(
                 root: recordingsDir,
@@ -164,17 +164,6 @@ struct TranscriptReconstructionIntegrationTests {
             .appendingPathComponent(router.id.description, isDirectory: true)
             .appendingPathComponent(sessionId.description, isDirectory: true)
 
-        // `makeSession` writes a vended root's sidecar before the session
-        // exists to record anything into it; this hand-built root does the same
-        // by hand, since `TranscriptTree.load` below refuses a transcript with
-        // no sidecar beside it. A root carries no fork cut point.
-        standard.sessionSidecarWriter?.write(
-            instructions: nil,
-            grammar: nil,
-            forkedAtEntryCount: nil,
-            to: recordingDirectory
-        )
-
         let session = RoutedSessionActor(
             profile: profile,
             routerId: router.id,
@@ -192,9 +181,11 @@ struct TranscriptReconstructionIntegrationTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
-            // The vending handle's own writer, exactly as `makeSession` threads
-            // it, so any fork taken from this session records its sidecar too.
-            sessionSidecarWriter: standard.sessionSidecarWriter
+            // A new root under the vending handle's durable recording, exactly
+            // as `makeSession` names it: this session writes its own sidecar
+            // before it can record anything — which `TranscriptTree.load` below
+            // requires — and so does any fork taken from it.
+            sidecarOrigin: .new(under: standard.durableRecording)
         )
 
         return Harness(
