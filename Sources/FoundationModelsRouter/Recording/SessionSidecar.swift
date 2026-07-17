@@ -364,6 +364,19 @@ enum SessionSidecarOrigin: Sendable {
         durableRecording.map { .new($0.sidecarWriter) } ?? .memoryOnly
     }
 
+    /// The origin of a session reconstructed from disk under `durableRecording`,
+    /// or ``memoryOnly`` when the router records to memory/none.
+    ///
+    /// The restored session's write-once sidecar is already on disk, so the
+    /// writer travels only for the forks the restored session takes.
+    ///
+    /// - Parameter durableRecording: The vending handle's durable recording, or
+    ///   `nil` when it has none.
+    /// - Returns: The restored session's sidecar origin.
+    static func restored(under durableRecording: DurableRecording?) -> SessionSidecarOrigin {
+        durableRecording.map { .restored($0.sidecarWriter) } ?? .memoryOnly
+    }
+
     /// The origin a session created *from* a session with this origin has.
     ///
     /// A fork is a brand-new session wherever its parent could record one, so it

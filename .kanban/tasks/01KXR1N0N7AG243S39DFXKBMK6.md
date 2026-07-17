@@ -13,6 +13,10 @@ comments:
 
     Scope note: RecordingLanguageModel (the resuming *handle*, not the actor) still carries `sessionSidecarWriter: SessionSidecarWriter?` and lazily writes via its own `didWriteSidecar` guard. That is a distinct type outside this card's stated scope (RoutedSessionActor); left untouched.
   timestamp: 2026-07-17T14:55:45.986864+00:00
+- actor: claude-code
+  id: 01kxrahr5j5g7t75fach1gsj95
+  text: 'Review finding fixed. Added a symmetric `static func restored(under durableRecording: DurableRecording?) -> SessionSidecarOrigin` factory to SessionSidecarOrigin in Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, mirroring the existing `new(under:)` factory (same signature/body/doc shape). Replaced the inline `.map { .restored($0.sidecarWriter) } ?? .memoryOnly` at the single call site in SessionTreeRestoration.swift with `SessionSidecarOrigin.restored(under: routedLLM.durableRecording)`. Grep confirmed no other inline `.map { .restored/.new(...) } ?? .memoryOnly` shapes remain — the two factory bodies are the only occurrences. swift build green; swift test 361 passed, integration suites skipped (FM_ROUTER_INTEGRATION_TESTS unset). double-check agent returned PASS. Left in doing for review.'
+  timestamp: 2026-07-17T15:19:03.602094+00:00
 position_column: doing
 position_ordinal: '80'
 title: Make a root session's sidecar the actor's own responsibility, closing the last nil-writer hole
@@ -37,3 +41,7 @@ Both hand-build a root actor because they need the `MLXFoundationModelsSessionBa
 - The seam that makes the harnesses hand-build actors at all is the absence of a way to vend a session *and* reach its backend. If that seam is worth adding, the harnesses could use the public surface instead and the whole class of bug goes away — possibly the better fix, and worth weighing first.
 
 **Acceptance**: a root actor constructed directly, with no separate sidecar call by its builder, still lands its `session.json` before any transcript event; the two harnesses drop their hand-typed root-sidecar writes; `theSidecarExistsBeforeTheFirstTranscriptEvent` still passes and still reddens under mutation; full suite green.
+
+## Review Findings (2026-07-17 10:03)
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:166` — The pattern `durableRecording.map { .restored($0.sidecarWriter) } ?? .memoryOnly` reimplements what `SessionSidecarOrigin.new(under:)` already does, just for the `.restored` case instead of `.new`. A factory method should be created and reused instead of manually repeating the pattern. Add a factory method `static func restored(under durableRecording: DurableRecording?) -> SessionSidecarOrigin { durableRecording.map { .restored($0.sidecarWriter) } ?? .memoryOnly }` to `SessionSidecarOrigin`, then replace the inline pattern with `SessionSidecarOrigin.restored(under: routedLLM.durableRecording)`.

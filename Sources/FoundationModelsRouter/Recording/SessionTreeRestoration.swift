@@ -250,8 +250,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // Restored, not new: this node's sidecar is the write-once one
                 // read from disk just above, never rewritten. The writer travels
                 // only for forks taken from the restored session.
-                sidecarOrigin: routedLLM.durableRecording.map { .restored($0.sidecarWriter) }
-                    ?? .memoryOnly
+                sidecarOrigin: SessionSidecarOrigin.restored(under: routedLLM.durableRecording)
             )
             sessionsById[node.id] = session
             for child in node.children {
