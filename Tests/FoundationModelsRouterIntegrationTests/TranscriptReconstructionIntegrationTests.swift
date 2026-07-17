@@ -102,6 +102,24 @@ struct TranscriptReconstructionIntegrationTests {
         func noopResolution(_ slot: ModelSlot) -> SlotResolution {
             SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: transcriptReconstructionTinyModel, considered: [])
         }
+        // The same root-plus-writer pair `Router.makeDurableRecording` builds.
+        // The session below is assembled by hand rather than vended from
+        // `standard.makeSession()` — the test needs the backend itself, to
+        // compare the reconstruction against the live `session.transcript` —
+        // so it also writes the root's sidecar by hand, just as `makeSession`
+        // does at vending.
+        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
+            DurableRecording(
+                root: recordingsDir,
+                sidecarWriter: SessionSidecarWriter(
+                    slot: slot,
+                    model: transcriptReconstructionTinyModel,
+                    context: noopResolution(slot).contextTokens,
+                    recordingLevel: .full,
+                    profile: nil
+                )
+            )
+        }
         let standard = RoutedLLM(
             slot: .standard,
             chosen: transcriptReconstructionTinyModel,
@@ -110,7 +128,7 @@ struct TranscriptReconstructionIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.standard)
         )
         let flash = RoutedLLM(
             slot: .flash,
@@ -120,7 +138,7 @@ struct TranscriptReconstructionIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.flash)
         )
         let embedding = RoutedEmbedder(
             slot: .embedding,
@@ -130,7 +148,7 @@ struct TranscriptReconstructionIntegrationTests {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.embedding)
         )
         let profile = LanguageModelProfile(
             definitionName: "test",
@@ -145,6 +163,17 @@ struct TranscriptReconstructionIntegrationTests {
         let recordingDirectory = recordingsDir
             .appendingPathComponent(router.id.description, isDirectory: true)
             .appendingPathComponent(sessionId.description, isDirectory: true)
+
+        // `makeSession` writes a vended root's sidecar before the session
+        // exists to record anything into it; this hand-built root does the same
+        // by hand, since `TranscriptTree.load` below refuses a transcript with
+        // no sidecar beside it. A root carries no fork cut point.
+        standard.sessionSidecarWriter?.write(
+            instructions: nil,
+            grammar: nil,
+            forkedAtEntryCount: nil,
+            to: recordingDirectory
+        )
 
         let session = RoutedSessionActor(
             profile: profile,
@@ -163,7 +192,9 @@ struct TranscriptReconstructionIntegrationTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
-            sessionSidecarWriter: nil
+            // The vending handle's own writer, exactly as `makeSession` threads
+            // it, so any fork taken from this session records its sidecar too.
+            sessionSidecarWriter: standard.sessionSidecarWriter
         )
 
         return Harness(

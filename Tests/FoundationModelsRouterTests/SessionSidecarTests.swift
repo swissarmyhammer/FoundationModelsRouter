@@ -512,6 +512,33 @@ struct SessionSidecarTests {
 
     // MARK: - Recording levels
 
+    @Test("a writer built at RecordingLevel.off writes nothing, wherever it was built")
+    func writerAtRecordingLevelOffWritesNothing() throws {
+        let parent = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let dir = parent.appendingPathComponent(ULID.generate().description, isDirectory: true)
+
+        let writer = SessionSidecarWriter(
+            slot: .standard,
+            model: "org/std-a",
+            context: 4_096,
+            recordingLevel: .off,
+            profile: nil
+        )
+        writer.write(instructions: nil, grammar: nil, forkedAtEntryCount: nil, to: dir)
+
+        // The gate lives in the writer, not in whoever built it: `.off` means a
+        // writer that writes nothing, so a durable root can always be handed one
+        // (see ``DurableRecording``) instead of being paired with `nil` — the
+        // pairing that records a tree ``TranscriptTree/load(under:)`` refuses.
+        //
+        // Asserting the directory never appears, rather than just that no
+        // `session.json` is in it, is what makes this a real check: `write` is
+        // what brings the session's directory into existence, so a gate that
+        // ran too late would leave the directory behind.
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+    }
+
     @Test("RecordingLevel.off writes no sidecar at all")
     @MainActor
     func recordingLevelOffWritesNoSidecar() async throws {

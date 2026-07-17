@@ -285,7 +285,8 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The sidecar writer any fork taken from this session writes its own
     /// `session.json` through, or `nil` when the router has no durable
-    /// transcripts root or is recording at ``RecordingLevel/off``.
+    /// transcripts root. At ``RecordingLevel/off`` the writer is present and
+    /// writes nothing (see ``SessionSidecarWriter``).
     ///
     /// Inherited from the vending handle, so a fork's sidecar states the same
     /// slot/model/context this session's does.

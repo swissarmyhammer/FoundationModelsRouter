@@ -180,6 +180,42 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     }
 }
 
+/// Where a model handle's sessions record durably, and the writer their
+/// `session.json` sidecars go through — one value, because neither half is
+/// usable without the other.
+///
+/// A durable transcripts root paired with a missing sidecar writer records a
+/// tree ``TranscriptTree/load(under:)`` refuses to read: a transcript with no
+/// sidecar beside it carries no facts to interpret it by. Two independent
+/// optionals on ``RoutedModel`` made that state not just possible but the
+/// default — it was what a caller got by passing a root and mentioning nothing
+/// else. Pairing them makes it unspeakable: hold a root, and you hold the writer
+/// that keeps it loadable.
+///
+/// ``RecordingLevel/off`` is not this type's concern. A run recording nothing
+/// still has a root to nest its sessions' working directories under, and it is
+/// the writer that declines to write at that level (see ``SessionSidecarWriter``).
+public struct DurableRecording: Sendable {
+    /// The router's durable transcripts root. A session's own recording
+    /// directory nests under it by router id and session id.
+    public let root: URL
+
+    /// The writer every session under ``root`` records its `session.json`
+    /// through.
+    public let sidecarWriter: SessionSidecarWriter
+
+    /// Pairs a durable transcripts root with the sidecar writer that keeps what
+    /// lands under it loadable.
+    ///
+    /// - Parameters:
+    ///   - root: The router's durable transcripts root.
+    ///   - sidecarWriter: The writer sessions under `root` record through.
+    public init(root: URL, sidecarWriter: SessionSidecarWriter) {
+        self.root = root
+        self.sidecarWriter = sidecarWriter
+    }
+}
+
 /// Writes each session's ``SessionSidecar`` as that session is created, from a
 /// resolved model handle's own facts.
 ///
@@ -191,11 +227,17 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 /// and its directory. A vended session and every fork taken from it share one
 /// writer, so those handle-level facts cannot drift between them.
 ///
-/// The writer is `nil` when the router has no durable transcripts root or is
-/// recording at ``RecordingLevel/off``; unlike ``TranscriptRecorder``, it needs
-/// no ``GatingRecorder``-style wrapping, since a sidecar carries no turn content
-/// to trim at ``RecordingLevel/metadataOnly`` (see plan.md's "Transcript
-/// fidelity" section).
+/// A writer exists wherever there is a durable transcripts root to write into —
+/// it travels with that root as one ``DurableRecording`` value, so a root can
+/// never be paired with a missing writer. ``RecordingLevel/off`` is the writer's
+/// own business rather than its builder's: an `.off` writer writes nothing, the
+/// same way the router's ``GatingRecorder`` drops every event at that level. The
+/// two must agree — ``TranscriptTree/load(under:)`` refuses a transcript with no
+/// sidecar beside it — and they agree because both read the one level.
+///
+/// Unlike ``TranscriptRecorder``, it needs no ``GatingRecorder``-style wrapping
+/// at ``RecordingLevel/metadataOnly``, since a sidecar carries no turn content to
+/// trim (see plan.md's "Transcript fidelity" section).
 ///
 /// Writing is best-effort, mirroring ``JSONLRecorder``: any failure is logged
 /// and the sidecar dropped, so a full disk can never fail a `makeSession` or a
@@ -240,7 +282,8 @@ public struct SessionSidecarWriter: Sendable {
     ///
     /// The run's ``profile`` facts are attached to root sessions only — a
     /// session with no cut point is a root — so the rule lives here rather than
-    /// at each creation site.
+    /// at each creation site. ``RecordingLevel/off`` is honored here for the
+    /// same reason: one gate, rather than one per creation site or per builder.
     ///
     /// - Parameters:
     ///   - instructions: The session's system instructions, or `nil`.
@@ -249,6 +292,13 @@ public struct SessionSidecarWriter: Sendable {
     ///     time, or `nil` for a root session.
     ///   - directory: The session's own recording directory.
     func write(instructions: String?, grammar: String?, forkedAtEntryCount: Int?, to directory: URL) {
+        // Nothing durable is recorded at `.off` — not a sidecar, and not a
+        // transcript either, since the router's `GatingRecorder` drops every
+        // event at this level. Returning before `SessionSidecar.write` is what
+        // keeps that true: it is the sidecar write that would otherwise bring
+        // the session's directory into existence.
+        guard recordingLevel != .off else { return }
+
         let sidecar = SessionSidecar(
             slot: slot,
             model: model,

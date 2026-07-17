@@ -114,6 +114,22 @@ struct SessionTreeRestorationIntegrationTests {
         func noopResolution(_ slot: ModelSlot) -> SlotResolution {
             SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: sessionTreeRestorationTinyModel, considered: [])
         }
+        // The same root-plus-writer pair `Router.makeDurableRecording` builds:
+        // every session vended below writes its `session.json` through this, so
+        // the tree this suite reloads and restores from carries the facts to
+        // interpret it by.
+        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
+            DurableRecording(
+                root: recordingsDir,
+                sidecarWriter: SessionSidecarWriter(
+                    slot: slot,
+                    model: sessionTreeRestorationTinyModel,
+                    context: noopResolution(slot).contextTokens,
+                    recordingLevel: .full,
+                    profile: nil
+                )
+            )
+        }
         let standard = RoutedLLM(
             slot: .standard,
             chosen: sessionTreeRestorationTinyModel,
@@ -122,7 +138,7 @@ struct SessionTreeRestorationIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.standard)
         )
         let flash = RoutedLLM(
             slot: .flash,
@@ -132,7 +148,7 @@ struct SessionTreeRestorationIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.flash)
         )
         let embedding = RoutedEmbedder(
             slot: .embedding,
@@ -142,7 +158,7 @@ struct SessionTreeRestorationIntegrationTests {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.embedding)
         )
         let profile = LanguageModelProfile(
             definitionName: "test",

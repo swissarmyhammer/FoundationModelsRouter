@@ -3,7 +3,7 @@ import Foundation
 /// The default in-flight fork-session ceiling per resolved profile.
 ///
 /// Shared between ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``
-/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:recordingsRoot:maxConcurrentForks:sessionSidecarWriter:)``'s
+/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:durableRecording:maxConcurrentForks:)``'s
 /// own default, so a ``RoutedModel`` constructed directly (outside a
 /// ``Router``, e.g. in tests) admits the same ceiling a router-vended one
 /// would.
@@ -594,7 +594,16 @@ public actor Router {
                 container: embeddingContainer,
                 routerId: id,
                 recorder: recorder,
-                recordingsRoot: recordingsDir
+                // The embedding handle never vends a session, so its writer is
+                // never reached — it is here because a durable root and its
+                // writer are one value, which is what keeps the two generation
+                // handles above from being handed a root with no writer.
+                durableRecording: makeDurableRecording(
+                    slot: .embedding,
+                    chosen: resolution.embedding,
+                    resolution: embeddingRes,
+                    resolvedProfile: resolvedProfile
+                )
             ),
             router: self,
             residencyToken: residencyToken
@@ -631,24 +640,24 @@ public actor Router {
             container: container,
             routerId: id,
             recorder: recorder,
-            recordingsRoot: recordingsDir,
-            maxConcurrentForks: maxConcurrentForks,
-            sessionSidecarWriter: makeSessionSidecarWriter(
+            durableRecording: makeDurableRecording(
                 slot: slot,
                 chosen: chosen,
                 resolution: resolution,
                 resolvedProfile: resolvedProfile
-            )
+            ),
+            maxConcurrentForks: maxConcurrentForks
         )
     }
 
-    /// Builds the sidecar writer sessions vended from one generation handle
-    /// write their `session.json` through, or `nil` when this run records
-    /// nothing durable.
+    /// Pairs this run's durable transcripts root with the sidecar writer
+    /// sessions vended from one handle record their `session.json` through, or
+    /// `nil` when this run has nowhere durable to record.
     ///
-    /// Gated purely on "is there somewhere durable to write" and "is recording
-    /// off" — unlike `recorder`, a sidecar needs no `.metadataOnly` trimming,
-    /// since it carries no turn content.
+    /// Gated purely on "is there somewhere durable to write". The recording
+    /// level is not a gate here — it is the returned writer's own business, so
+    /// a root is never handed out without the writer that keeps what lands
+    /// under it loadable (see ``DurableRecording``).
     ///
     /// - Parameters:
     ///   - slot: The slot the handle fills.
@@ -657,20 +666,24 @@ public actor Router {
     ///     resolved at.
     ///   - resolvedProfile: The run's resolved-profile facts, recorded onto
     ///     root sessions.
-    /// - Returns: The writer, or `nil` when nothing durable is recorded.
-    private func makeSessionSidecarWriter(
+    /// - Returns: The root and its writer, or `nil` when nothing is recorded
+    ///   durably.
+    private func makeDurableRecording(
         slot: ModelSlot,
         chosen: ModelRef,
         resolution: SlotResolution,
         resolvedProfile: SessionSidecar.ResolvedProfile
-    ) -> SessionSidecarWriter? {
-        guard recordingsDir != nil, recordingLevel != .off else { return nil }
-        return SessionSidecarWriter(
-            slot: slot,
-            model: chosen,
-            context: resolution.contextTokens,
-            recordingLevel: recordingLevel,
-            profile: resolvedProfile
+    ) -> DurableRecording? {
+        guard let recordingsDir else { return nil }
+        return DurableRecording(
+            root: recordingsDir,
+            sidecarWriter: SessionSidecarWriter(
+                slot: slot,
+                model: chosen,
+                context: resolution.contextTokens,
+                recordingLevel: recordingLevel,
+                profile: resolvedProfile
+            )
         )
     }
 

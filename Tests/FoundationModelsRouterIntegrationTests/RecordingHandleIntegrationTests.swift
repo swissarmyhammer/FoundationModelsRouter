@@ -142,16 +142,20 @@ struct RecordingHandleIntegrationTests {
             SlotResolution(
                 slot: slot, remainingBudgetBytes: 0, chosen: recordingHandleTinyModel, considered: [])
         }
-        // Built by hand here (rather than taken from a `Router.resolve`) so the
-        // handle's sidecar actually lands on disk: `RoutedModel`'s own
-        // `sessionSidecarWriter` defaults to nil unless explicitly passed.
-        func sidecarWriter(_ slot: ModelSlot) -> SessionSidecarWriter {
-            SessionSidecarWriter(
-                slot: slot,
-                model: recordingHandleTinyModel,
-                context: noopResolution(slot).contextTokens,
-                recordingLevel: .full,
-                profile: nil
+        // Built by hand here (rather than taken from a `Router.resolve`), so
+        // each handle is handed the same root-plus-writer pair `Router` builds:
+        // a durable root travels with the writer that keeps what lands under it
+        // loadable, which is what `TranscriptTree.load` below reads.
+        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
+            DurableRecording(
+                root: recordingsDir,
+                sidecarWriter: SessionSidecarWriter(
+                    slot: slot,
+                    model: recordingHandleTinyModel,
+                    context: noopResolution(slot).contextTokens,
+                    recordingLevel: .full,
+                    profile: nil
+                )
             )
         }
         let standard = RoutedLLM(
@@ -162,8 +166,7 @@ struct RecordingHandleIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir,
-            sessionSidecarWriter: sidecarWriter(.standard)
+            durableRecording: durableRecording(.standard)
         )
         let flash = RoutedLLM(
             slot: .flash,
@@ -173,8 +176,7 @@ struct RecordingHandleIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir,
-            sessionSidecarWriter: sidecarWriter(.flash)
+            durableRecording: durableRecording(.flash)
         )
         let embedding = RoutedEmbedder(
             slot: .embedding,
@@ -184,8 +186,7 @@ struct RecordingHandleIntegrationTests {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir,
-            sessionSidecarWriter: sidecarWriter(.embedding)
+            durableRecording: durableRecording(.embedding)
         )
         let profile = LanguageModelProfile(
             definitionName: "test",

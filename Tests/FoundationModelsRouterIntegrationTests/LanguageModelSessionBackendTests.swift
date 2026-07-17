@@ -277,6 +277,21 @@ struct LanguageModelSessionBackendIntegrationTests {
             SlotResolution(
                 slot: slot, remainingBudgetBytes: 0, chosen: sessionBackendTinyModel, considered: [])
         }
+        // The same root-plus-writer pair `Router.makeDurableRecording` builds,
+        // so this harness records the tree a reader could load, rather than
+        // transcripts with no sidecars beside them.
+        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
+            DurableRecording(
+                root: recordingsDir,
+                sidecarWriter: SessionSidecarWriter(
+                    slot: slot,
+                    model: sessionBackendTinyModel,
+                    context: noopResolution(slot).contextTokens,
+                    recordingLevel: .full,
+                    profile: nil
+                )
+            )
+        }
         let standard = RoutedLLM(
             slot: .standard,
             chosen: sessionBackendTinyModel,
@@ -285,7 +300,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.standard)
         )
         let flash = RoutedLLM(
             slot: .flash,
@@ -295,7 +310,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.flash)
         )
         let embedding = RoutedEmbedder(
             slot: .embedding,
@@ -305,7 +320,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            recordingsRoot: recordingsDir
+            durableRecording: durableRecording(.embedding)
         )
         let profile = LanguageModelProfile(
             definitionName: "test",
@@ -320,6 +335,19 @@ struct LanguageModelSessionBackendIntegrationTests {
         let recordingDirectory = recordingsDir
             .appendingPathComponent(router.id.description, isDirectory: true)
             .appendingPathComponent(sessionId.description, isDirectory: true)
+
+        // This root is assembled by hand rather than vended from
+        // `standard.makeSession()` — the tests need the backend itself — so it
+        // writes its own sidecar, as `makeSession` does at vending. Nothing
+        // here reloads the tree, but a transcript recorded with no sidecar
+        // beside it is one `TranscriptTree.load` refuses; the harness should
+        // not leave that shape behind.
+        standard.sessionSidecarWriter?.write(
+            instructions: nil,
+            grammar: nil,
+            forkedAtEntryCount: nil,
+            to: recordingDirectory
+        )
 
         let session = RoutedSessionActor(
             profile: profile,
@@ -338,7 +366,9 @@ struct LanguageModelSessionBackendIntegrationTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
-            sessionSidecarWriter: nil
+            // The vending handle's own writer, exactly as `makeSession` threads
+            // it, so any fork taken from this session records its sidecar too.
+            sessionSidecarWriter: standard.sessionSidecarWriter
         )
 
         return ChokepointHarness(
