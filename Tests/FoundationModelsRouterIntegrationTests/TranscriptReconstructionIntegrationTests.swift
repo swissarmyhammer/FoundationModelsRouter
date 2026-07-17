@@ -91,7 +91,8 @@ struct TranscriptReconstructionIntegrationTests {
         )
 
         let recordingsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("TranscriptReconstructionIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "TranscriptReconstructionIntegrationTests-\(UUID().uuidString)", isDirectory: true)
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("TranscriptReconstructionIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
 
@@ -162,8 +163,7 @@ struct TranscriptReconstructionIntegrationTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
-            indexPath: sessionId.description,
-            sessionIndexWriter: nil
+            sessionSidecarWriter: nil
         )
 
         return Harness(
@@ -182,7 +182,9 @@ struct TranscriptReconstructionIntegrationTests {
     /// from disk has the same entry kinds and count — one-for-one, in order —
     /// as the live `LanguageModelSession`'s own `transcript` actually
     /// accumulated.
-    @Test("reconstructed Transcript entry kinds and count match the live session.transcript after one live turn")
+    @Test(
+        "reconstructed Transcript entry kinds and count match the live session.transcript after one live turn"
+    )
     func reconstructedTranscriptMatchesLiveSessionTranscript() async throws {
         let harness = try await makeHarness()
         defer {

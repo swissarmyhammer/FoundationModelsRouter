@@ -25,10 +25,10 @@ private func isPlainFileName(_ fileName: String) -> Bool {
     !fileName.isEmpty && !fileName.contains("/") && fileName != "." && fileName != ".."
 }
 
-/// The on-disk append lifecycle shared by every JSONL sink in this module
-/// (``JSONLRecorder``, ``SessionIndexWriter``): create the directory and file
-/// on first use, open a handle, and seek to its end. Callers own their own
-/// handle-caching strategy — this always creates and opens a fresh handle.
+/// The on-disk append lifecycle every JSONL sink in this module
+/// (``JSONLRecorder``) drives: create the directory and file on first use,
+/// open a handle, and seek to its end. Callers own their own handle-caching
+/// strategy — this always creates and opens a fresh handle.
 ///
 /// - Parameters:
 ///   - fileName: The file's name within `directory` (e.g. `"transcript.jsonl"`).
@@ -56,8 +56,8 @@ func openHandleForAppending(fileName: String, in directory: URL) throws -> FileH
 
 /// Encodes `value` as one compact JSON line and appends it via a handle
 /// obtained from `handle`, logging and dropping it on any failure — the
-/// best-effort append shape shared by every JSONL sink in this module
-/// (``JSONLRecorder``, ``SessionIndexWriter``). Never throws: a failure
+/// best-effort append shape every JSONL sink in this module
+/// (``JSONLRecorder``) uses. Never throws: a failure
 /// obtaining the handle, encoding `value`, or writing the line is reported to
 /// `logger` and the value is dropped rather than surfaced to the caller.
 ///

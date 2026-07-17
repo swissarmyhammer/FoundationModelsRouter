@@ -171,7 +171,8 @@ struct TranscriptNestingTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            probe: StubProbe(
+                chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(dimension: stubDimension, text: cannedText, forwardInstructions: forwardInstructions)
         )
@@ -189,7 +190,8 @@ struct TranscriptNestingTests {
 
     // MARK: - Lineage-nested directories
 
-    @Test("a fork's transcript is physically nested under its parent's; depth mirrors the fork lineage")
+    @Test(
+        "a fork's transcript is physically nested under its parent's; depth mirrors the fork lineage")
     @MainActor
     func forkTranscriptsNestUnderParent() async throws {
         let cacheDir = Self.makeTempDir()
@@ -237,7 +239,8 @@ struct TranscriptNestingTests {
         _ = try await grandfork.respond(to: "grandfork")
 
         for session in [root, fork, grandfork] {
-            let fileURL = session.recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+            let fileURL = session.recordingDirectory.appendingPathComponent(
+                "transcript.jsonl", isDirectory: false)
             #expect(FileManager.default.fileExists(atPath: fileURL.path))
         }
 
@@ -281,7 +284,8 @@ struct TranscriptNestingTests {
 
     // MARK: - Event emission
 
-    @Test("a session's first line is the session meta event, then prompt and response with provenance")
+    @Test(
+        "a session's first line is the session meta event, then prompt and response with provenance")
     @MainActor
     func firstLineIsSessionMetaThenTurn() async throws {
         let cacheDir = Self.makeTempDir()
@@ -357,7 +361,8 @@ struct TranscriptNestingTests {
         #expect(recorded.map(\.seq) == [0, 1, 2])
     }
 
-    @Test("an instructed session's first turn opens with an .instructions entry before .prompt/.response")
+    @Test(
+        "an instructed session's first turn opens with an .instructions entry before .prompt/.response")
     @MainActor
     func instructedSessionRecordsLeadingInstructionsEntry() async throws {
         let cacheDir = Self.makeTempDir()
@@ -442,7 +447,8 @@ struct TranscriptNestingTests {
         let router = Router(
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            probe: StubProbe(
+                chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: Self.rawMetadata),
             loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText)
         )
@@ -454,7 +460,8 @@ struct TranscriptNestingTests {
         // A real JSONLRecorder was wired: the session's transcript.jsonl exists
         // under the router's recordingsDir with real, decodable events — not the
         // no-op wiring that `recordingsDir: nil` would have produced.
-        let fileURL = root.recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+        let fileURL = root.recordingDirectory.appendingPathComponent(
+            "transcript.jsonl", isDirectory: false)
         #expect(FileManager.default.fileExists(atPath: fileURL.path))
         #expect(
             fileURL.standardizedFileURL.path.hasPrefix(recordingsDir.standardizedFileURL.path)
@@ -522,11 +529,11 @@ struct TranscriptNestingTests {
         _ = sessions
     }
 
-    // MARK: - Manifest
+    // MARK: - The run's resolved-profile facts, on each root session's sidecar
 
-    @Test("the router writes a manifest recording config, resolved profiles, and start/end")
+    @Test("a root session's sidecar records the run's recording level and resolved-profile facts")
     @MainActor
-    func manifestRecordsConfigProfilesAndSpan() async throws {
+    func rootSidecarRecordsRecordingLevelAndResolvedProfile() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -541,33 +548,32 @@ struct TranscriptNestingTests {
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let manifestURL = recordingsDir
-            .appendingPathComponent(router.id.description, isDirectory: true)
-            .appendingPathComponent("manifest.json", isDirectory: false)
-        #expect(FileManager.default.fileExists(atPath: manifestURL.path))
+        let root = profile.standard.makeSession()
+        let sidecar = try #require(
+            try SessionSidecar.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
 
-        let data = try Data(contentsOf: manifestURL)
-        let manifest = try JSONDecoder().decode(RouterManifest.self, from: data)
-
-        #expect(manifest.routerId == router.id)
-        #expect(manifest.config.maxConcurrentForks == 4)
-        #expect(manifest.config.recordingLevel == .full)
-        #expect(manifest.profiles.count == 1)
-        #expect(manifest.profiles.first?.definitionName == "coding")
-        #expect(manifest.profiles.first?.standard == profile.standard.chosen)
-        #expect(manifest.profiles.first?.flash == profile.flash.chosen)
-        #expect(manifest.profiles.first?.embedding == profile.embedding.chosen)
+        #expect(sidecar.recordingLevel == .full)
+        let resolved = try #require(sidecar.profile)
+        #expect(resolved.definitionName == "coding")
+        #expect(resolved.standard == profile.standard.chosen)
+        #expect(resolved.flash == profile.flash.chosen)
+        #expect(resolved.embedding == profile.embedding.chosen)
         // `Self.profile` uses the default explicit context (8192), so the
-        // ladder never runs and the manifest records that figure verbatim.
-        #expect(manifest.profiles.first?.context == 8192)
-        #expect(manifest.start <= manifest.end)
-
-        _ = profile
+        // ladder never runs and the sidecar records that figure verbatim.
+        #expect(resolved.context == 8192)
+        #expect(sidecar.context == 8192)
     }
 
-    @Test("a manifest recording a ladder-derived context round-trips through disk")
+    /// The recording directory of a root session vended under `recordingsDir`.
+    private static func sessionDirectory(of session: RoutedSession, under recordingsDir: URL) -> URL {
+        recordingsDir
+            .appendingPathComponent(session.routerId.description, isDirectory: true)
+            .appendingPathComponent(session.id.description, isDirectory: true)
+    }
+
+    @Test("a root sidecar recording a ladder-derived context round-trips through disk")
     @MainActor
-    func manifestRecordsLadderDerivedContext() async throws {
+    func rootSidecarRecordsLadderDerivedContext() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -584,30 +590,27 @@ struct TranscriptNestingTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: JSONLRecorder(directory: recordingsDir),
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            probe: StubProbe(
+                chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: Self.rawMetadataWithNativeMax32768),
             loader: StubModelLoader(dimension: Self.stubDimension, text: Self.cannedText)
         )
         // `profileWithDerivedContext` has `context: nil`, so JointFit derives
         // the working context via the ladder instead of using an authored figure.
-        let profile = try await router.resolve(profile: Self.profileWithDerivedContext, reporting: ResolutionProgress())
+        let profile = try await router.resolve(
+            profile: Self.profileWithDerivedContext, reporting: ResolutionProgress())
 
-        let manifestURL = recordingsDir
-            .appendingPathComponent(router.id.description, isDirectory: true)
-            .appendingPathComponent("manifest.json", isDirectory: false)
-        #expect(FileManager.default.fileExists(atPath: manifestURL.path))
-
-        let data = try Data(contentsOf: manifestURL)
-        let manifest = try JSONDecoder().decode(RouterManifest.self, from: data)
+        let root = profile.standard.makeSession()
+        let sidecar = try #require(
+            try SessionSidecar.read(in: Self.sessionDirectory(of: root, under: recordingsDir)))
 
         // The tiny fixture model's footprint is trivial next to the 48 GB
         // budget at any rung, so the ladder settles on the candidate's own
         // native max context (32768) at its first (largest) rung — never
         // stepping down, and distinguishable from both the 8192
         // explicit-context figure and the 8192 no-fields-present fallback.
-        #expect(manifest.profiles.first?.context == 32_768)
-        #expect(manifest.profiles.first?.standard == profile.standard.chosen)
-
-        _ = profile
+        let resolved = try #require(sidecar.profile)
+        #expect(resolved.context == 32_768)
+        #expect(resolved.standard == profile.standard.chosen)
     }
 }

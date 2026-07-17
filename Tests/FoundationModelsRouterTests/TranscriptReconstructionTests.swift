@@ -105,14 +105,16 @@ struct TranscriptReconstructionTests {
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             if throwsBeforeAppendingAnything { throw StubError.boom }
-            entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+            entries.append(
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
             if shouldThrow { throw StubError.boom }
             recordResponse()
             return responseText
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-            entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+            entries.append(
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
             let responseText = responseText
             let shouldThrow = shouldThrow
             if !shouldThrow { recordResponse() }
@@ -126,8 +128,11 @@ struct TranscriptReconstructionTests {
             }
         }
 
-        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-            entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws
+            -> String
+        {
+            entries.append(
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
             try grammar.validateForXGrammar()
             if shouldThrow { throw StubError.boom }
             recordResponse()
@@ -153,7 +158,8 @@ struct TranscriptReconstructionTests {
 
         private func recordResponse() {
             if let customSegment {
-                entries.append(.response(Transcript.Response(assetIDs: [], segments: [.custom(customSegment)])))
+                entries.append(
+                    .response(Transcript.Response(assetIDs: [], segments: [.custom(customSegment)])))
             } else {
                 entries.append(
                     .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))]))
@@ -273,9 +279,38 @@ struct TranscriptReconstructionTests {
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("TranscriptReconstructionTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "TranscriptReconstructionTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Creates a session's directory the way a real session's creation does —
+    /// by writing its write-once sidecar — so a hand-fabricated
+    /// `transcript.jsonl` written into it afterward sits in a directory
+    /// ``TranscriptTree`` recognizes as a session's.
+    ///
+    /// The facts are placeholders: these tests fabricate *event lines* to
+    /// exercise reconstruction, and never read the sidecar back.
+    ///
+    /// - Parameter sessionDir: The session directory to create.
+    /// - Returns: `sessionDir`, for chaining.
+    @discardableResult
+    private static func makeSessionDir(_ sessionDir: URL) throws -> URL {
+        try SessionSidecar.write(
+            SessionSidecar(
+                slot: .standard,
+                model: "org/model-a",
+                context: 8_192,
+                instructions: nil,
+                grammar: nil,
+                recordingLevel: .full,
+                forkedAtEntryCount: nil,
+                profile: nil
+            ),
+            to: sessionDir
+        )
+        return sessionDir
     }
 
     private static func makeRouter(
@@ -291,7 +326,8 @@ struct TranscriptReconstructionTests {
             recordingsDir: recordingsDir,
             recorder: recorder,
             recordingLevel: recordingLevel,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            probe: StubProbe(
+                chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(container: container, dimension: stubDimension)
         )
@@ -327,7 +363,8 @@ struct TranscriptReconstructionTests {
         _ = try await root.respond(to: "turn 1")
         _ = try await root.respond(to: "turn 2")
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
         let reconstructed = try tree.effectiveTranscript(forSession: root.id)
 
         let backend = try #require(registry.created.first)
@@ -372,10 +409,12 @@ struct TranscriptReconstructionTests {
         _ = try await grandfork.respond(to: "grandfork-turn-1")
         _ = try await forkB.respond(to: "forkB-turn-1")
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
 
         for (session, backend) in [
-            (root, rootBackend), (forkA, forkABackend), (forkB, forkBBackend), (grandfork, grandforkBackend),
+            (root, rootBackend), (forkA, forkABackend), (forkB, forkBBackend),
+            (grandfork, grandforkBackend),
         ] {
             let reconstructed = try tree.effectiveTranscript(forSession: session.id)
             #expect(Array(reconstructed) == backend.transcriptEntries())
@@ -409,7 +448,8 @@ struct TranscriptReconstructionTests {
         backend.customSegment = NoteSegment(id: "n1", content: Note(body: "hello"))
         _ = try await root.respond(to: "turn 1")
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
 
         var segmentRegistry = CustomSegmentRegistry()
         segmentRegistry.register(NoteSegment.self)
@@ -460,12 +500,15 @@ struct TranscriptReconstructionTests {
         let root = profile.standard.makeSession()
         _ = try await root.respond(to: "turn 1")
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
         let events = try tree.events(forSession: root.id)
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         #expect(promptEvent.entry?.contentRemoved == true)
 
-        #expect(throws: TranscriptReconstructionError.contentRemoved(session: root.id, seq: promptEvent.seq)) {
+        #expect(
+            throws: TranscriptReconstructionError.contentRemoved(session: root.id, seq: promptEvent.seq)
+        ) {
             _ = try tree.effectiveTranscript(forSession: root.id)
         }
     }
@@ -476,8 +519,8 @@ struct TranscriptReconstructionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let sessionId = ULID.generate()
-        let sessionDir = dir.appendingPathComponent(sessionId.description, isDirectory: true)
-        try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+        let sessionDir = try Self.makeSessionDir(
+            dir.appendingPathComponent(sessionId.description, isDirectory: true))
         let json = """
             {"routerId":"\(ULID.generate().description)","sessionId":"\(sessionId.description)","seq":0,"ts":0,"kind":"prompt","text":"hello"}
             """
@@ -488,7 +531,9 @@ struct TranscriptReconstructionTests {
         )
 
         let tree = try TranscriptTree.load(under: dir)
-        #expect(throws: TranscriptReconstructionError.legacyEventMissingPayload(session: sessionId, seq: 0)) {
+        #expect(
+            throws: TranscriptReconstructionError.legacyEventMissingPayload(session: sessionId, seq: 0)
+        ) {
             _ = try tree.effectiveTranscript(forSession: sessionId)
         }
     }
@@ -510,8 +555,8 @@ struct TranscriptReconstructionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let sessionId = ULID.generate()
-        let sessionDir = dir.appendingPathComponent(sessionId.description, isDirectory: true)
-        try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+        let sessionDir = try Self.makeSessionDir(
+            dir.appendingPathComponent(sessionId.description, isDirectory: true))
         let routerId = ULID.generate().description
         // Line 1: a v1 `.prompt` (no `entry` key, `text` stripped by
         // metadataOnly, no `ms` — v1's bracket never stamped `ms` on prompt
@@ -532,7 +577,9 @@ struct TranscriptReconstructionTests {
         )
 
         let tree = try TranscriptTree.load(under: dir)
-        #expect(throws: TranscriptReconstructionError.legacyEventMissingPayload(session: sessionId, seq: 0)) {
+        #expect(
+            throws: TranscriptReconstructionError.legacyEventMissingPayload(session: sessionId, seq: 0)
+        ) {
             _ = try tree.effectiveTranscript(forSession: sessionId)
         }
     }
@@ -562,7 +609,8 @@ struct TranscriptReconstructionTests {
         let root = profile.standard.makeSession()
         _ = try await root.respond(to: "turn 1")
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
         let node = try #require(tree.session(root.id))
         let originalEvents = try tree.events(forSession: root.id)
         let promptEvent = try #require(originalEvents.first { $0.kind == .prompt })
@@ -645,7 +693,8 @@ struct TranscriptReconstructionTests {
             _ = try await root.respond(to: "turn 2 (fails)")
         }
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
         let rawEvents = try tree.events(forSession: root.id)
         let closeEvent = try #require(rawEvents.last)
         #expect(closeEvent.kind == .response)
@@ -700,7 +749,8 @@ struct TranscriptReconstructionTests {
         // Sanity: the backend truly appended nothing for this failed call.
         #expect(backend.transcriptEntries().isEmpty)
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
         let rawEvents = try tree.events(forSession: root.id)
         // Only the session meta line and the synthetic bodyless close were
         // ever recorded — no `.prompt`/`.instructions` at all.

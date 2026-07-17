@@ -62,6 +62,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// the new session id; its ``RoutedSession/workingDirectory`` defaults to the
     /// recording directory and can be overridden without moving it.
     ///
+    /// **This does a small, synchronous disk write** when the router records
+    /// durably: it creates the session's directory and writes its write-once
+    /// ``SessionSidecar`` before returning (see ``SessionSidecarWriter``). That
+    /// is deliberate — it is what makes "a session's facts are on disk before
+    /// any of its transcript is" true by construction rather than by an
+    /// awaited handshake, so a reader can never meet a transcript it has no
+    /// facts to interpret. The cost is two syscalls on the calling thread,
+    /// which vending a session (unlike a turn) does not do in a loop. Callers
+    /// that vend sessions from the main actor in a tight loop should hop off
+    /// it first.
+    ///
     /// - Precondition: The owning ``LanguageModelProfile`` must still be alive
     ///   when this is called. A handle holds its profile only *weakly*, so the
     ///   profile is not kept alive by caching `profile.standard` / `profile.flash`
@@ -112,29 +123,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // carrying `instructions` so generation calls never pass them again.
         let backend = container.makeSession(instructions: instructions)
 
-        // A root's index path is just its own session id — it sits directly
-        // under the router root (`recordings/<routerId>/<sessionId>/`).
-        let indexPath = sessionId.description
-        // This vending site is synchronous, so the record is appended
-        // fire-and-forget on an unstructured `Task`; every actor-isolated
-        // entry point on the constructed session awaits it before doing its
-        // own work (see ``RoutedSessionActor/pendingIndexWrite``), so by the
-        // time any interaction with the session completes, this record is
-        // guaranteed durable.
-        let pendingIndexWrite = sessionIndexWriter.map { writer in
-            let record = SessionIndexRecord(
-                sessionId: sessionId,
-                parentId: nil,
-                path: indexPath,
-                forkedAtEntryCount: 0,
-                slot: slot,
-                model: chosen,
-                instructions: instructions,
-                grammar: grammar?.source,
-                createdAt: Date()
-            )
-            return Task { await writer.append(record) }
-        }
+        // The session's own directory is brought into existence by its
+        // write-once sidecar, here, before the session exists to record
+        // anything into it — so any transcript a reader finds always has the
+        // facts to interpret it sitting beside it. A root carries no fork cut
+        // point (`forkedAtEntryCount: nil`): it inherits nothing.
+        sessionSidecarWriter?.write(
+            instructions: instructions,
+            grammar: grammar?.source,
+            forkedAtEntryCount: nil,
+            to: recordingDirectory
+        )
 
         return makeRoutedSessionActor(
             profile: owningProfile,
@@ -159,9 +158,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // whole transcript diff (including any leading `.instructions`
             // entry) is new.
             persistedEntryCount: 0,
-            indexPath: indexPath,
-            sessionIndexWriter: sessionIndexWriter,
-            pendingIndexWrite: pendingIndexWrite
+            sessionSidecarWriter: sessionSidecarWriter
         )
     }
 
@@ -187,34 +184,38 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// model, with `sessionId`'s own recording directory nested the same way
     /// ``recordingDirectory(forSessionId:)`` nests any fresh session/handle.
     ///
-    /// Shared by ``makeLanguageModel()`` (a from-scratch handle: `parentId`
-    /// `nil`, `forkedAtEntryCount` `0`, empty initial transcript) and
-    /// ``makeLanguageModel(resuming:registry:)`` (a resuming handle: passes
-    /// its own resumed-session lineage), which otherwise differ only in
-    /// those values.
+    /// Shared by ``makeLanguageModel()`` (a from-scratch handle: no parent,
+    /// no cut point, empty initial transcript, nested directly under the
+    /// router root) and ``makeLanguageModel(resuming:registry:)`` (a resuming
+    /// handle: nested under the session it resumed, with that session's own
+    /// entry count as its cut point), which otherwise differ only in those
+    /// values.
     ///
     /// - Parameters:
     ///   - sessionId: The handle's own session span id.
     ///   - owningProfile: The already-confirmed-live owning profile to
     ///     retain for this handle's whole lifetime.
+    ///   - recordingDirectory: The handle's own recording directory — nested
+    ///     under the router root for a from-scratch handle, or under the
+    ///     resumed session's own directory for a resuming one, since a
+    ///     session's lineage is stated by that nesting.
     ///   - parentId: The span id of the session this handle resumed from, or
     ///     `nil` for a from-scratch handle. Defaults to `nil`.
     ///   - forkedAtEntryCount: How many of `parentId`'s effective entry-kind
-    ///     events belong to this handle's own effective transcript. Defaults
-    ///     to `0`.
+    ///     events belong to this handle's own effective transcript, or `nil`
+    ///     for a from-scratch handle, which inherits nothing. Defaults to
+    ///     `nil`.
     ///   - initialTranscript: The transcript to prime the handle's last-seen
     ///     diff baseline with. Defaults to empty.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle.
     private func makeRecordingLanguageModelHandle(
         sessionId: ULID,
         owningProfile: LanguageModelProfile,
+        recordingDirectory: URL,
         parentId: ULID? = nil,
-        forkedAtEntryCount: Int = 0,
+        forkedAtEntryCount: Int? = nil,
         initialTranscript: Transcript = Transcript(entries: [])
     ) -> RecordingLanguageModel {
-        let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
-        let indexPath = sessionId.description
-
         let state = RecordingLanguageModelState(
             routerId: routerId,
             sessionId: sessionId,
@@ -223,8 +224,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             model: chosen,
             recorder: recorder,
             serialGate: serialGate,
-            sessionIndexWriter: sessionIndexWriter,
-            indexPath: indexPath,
+            sessionSidecarWriter: sessionSidecarWriter,
             wrapped: container.languageModel,
             profile: owningProfile,
             parentId: parentId,
@@ -260,7 +260,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     public func makeLanguageModel() -> RecordingLanguageModel {
         let owningProfile = requireOwningProfile(apiName: "makeLanguageModel")
         let sessionId = ULID.generate()
-        return makeRecordingLanguageModelHandle(sessionId: sessionId, owningProfile: owningProfile)
+        return makeRecordingLanguageModelHandle(
+            sessionId: sessionId,
+            owningProfile: owningProfile,
+            recordingDirectory: recordingDirectory(forSessionId: sessionId)
+        )
     }
 
     /// Vends a fresh ``RecordingLanguageModel`` handle resuming a previously
@@ -272,9 +276,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// own reconstructed ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
     /// so the handle's *first* diff records only genuinely new entries —
     /// never the whole resumed history re-recorded into a fresh directory.
-    /// The vended handle's own ``SessionIndexRecord`` names `sessionId` as its
-    /// parent and the resumed transcript's entry count as its
-    /// `forkedAtEntryCount`, the same lineage semantics
+    /// The vended handle nests under `sessionId`'s own directory and records
+    /// the resumed transcript's entry count as its
+    /// ``SessionSidecar/forkedAtEntryCount``, the same lineage semantics
     /// ``RoutedSessionActor/fork(workingDirectory:)`` establishes for
     /// ``RoutedSession`` — so ``TranscriptTree``/``MergedTranscript``
     /// reconstruction over the resumed session plus this handle's own
@@ -294,9 +298,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   precondition.
     /// - Parameters:
     ///   - sessionId: The previously recorded session's span id to resume
-    ///     from — any session already present in this router's
-    ///     `sessions.jsonl` (a root, a fork, or another recording-handle
-    ///     session).
+    ///     from — any session already recorded under this router's root (a
+    ///     root, a fork, or another recording-handle session).
     ///   - registry: The registered ``PersistableCustomSegment`` types a
     ///     `.custom` segment anywhere in the resumed session's recorded
     ///     transcript may need to rebuild. Defaults to an empty registry.
@@ -318,20 +321,26 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             throw SessionTreeRestorationError.noDurableRecordingsRoot
         }
 
-        let routerDirectory = recordingsRoot.appendingPathComponent(routerId.description, isDirectory: true)
+        let routerDirectory = recordingsRoot.appendingPathComponent(
+            routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         let restoredTranscript = try tree.effectiveTranscript(forSession: sessionId, registry: registry)
 
-        // Nested the same flat way a root session/handle is (see
-        // `recordingDirectory(forSessionId:)`) rather than physically nested
-        // under the resumed session's own directory: `SessionIndexRecord.path`
-        // is an independent lookup `TranscriptTree.load(under:)` resolves on
-        // its own, so physical nesting carries no functional meaning — only
-        // `parentId`/`forkedAtEntryCount`, set below, establish the lineage.
+        // Nested directly under the resumed session's own directory, exactly
+        // as ``RoutedSessionActor/fork(workingDirectory:)`` nests a fork:
+        // nesting is what states lineage on disk now, so a handle that resumes
+        // a session must physically live under it or `TranscriptTree` could
+        // never rediscover the link. The resumed session's own node names the
+        // directory, so this works for a resumed fork nested at any depth.
+        guard let resumedNode = tree.session(sessionId) else {
+            throw TranscriptTreeError.sessionNotFound(sessionId)
+        }
         let childId = ULID.generate()
         let handle = makeRecordingLanguageModelHandle(
             sessionId: childId,
             owningProfile: owningProfile,
+            recordingDirectory: resumedNode.directory
+                .appendingPathComponent(childId.description, isDirectory: true),
             parentId: sessionId,
             forkedAtEntryCount: restoredTranscript.count,
             initialTranscript: restoredTranscript

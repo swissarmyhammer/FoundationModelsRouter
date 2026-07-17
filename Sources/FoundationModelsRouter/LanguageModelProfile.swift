@@ -86,15 +86,15 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// under this root by router id and session id.
     public let recordingsRoot: URL?
 
-    /// The session index writer a vended generation session appends its
-    /// creation/fork record through, or `nil` when the router has no durable
+    /// The sidecar writer a vended generation session writes its own
+    /// `session.json` through, or `nil` when the router has no durable
     /// transcripts root or is recording at ``RecordingLevel/off``.
     ///
     /// Only consumed by the generation-session surface (``makeSession(instructions:workingDirectory:)``
     /// / ``makeGuidedSession(grammar:instructions:workingDirectory:)`` /
     /// ``RoutedSessionActor/fork(workingDirectory:)``); the embedding handle
     /// never vends sessions, so it carries this only for storage symmetry.
-    public let sessionIndexWriter: SessionIndexWriter?
+    public let sessionSidecarWriter: SessionSidecarWriter?
 
     /// The weak back-reference to the profile that owns this model, registered by
     /// ``LanguageModelProfile``'s initializer. A session vended from this handle
@@ -136,8 +136,14 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///     ``forkAdmissionGate`` admits (the router's `maxConcurrentForks`).
     ///     Consumed only by the generation-session fork surface; the embedding
     ///     handle never forks. Defaults to ``defaultMaxConcurrentForks``.
-    ///   - sessionIndexWriter: The session index writer a vended generation
-    ///     session appends its creation/fork record through, or `nil`.
+    ///   - sessionSidecarWriter: The sidecar writer a vended generation
+    ///     session writes its own `session.json` through, or `nil` to write no
+    ///     sidecars. Pairing a durable `recordingsRoot` with `nil` here records
+    ///     transcripts that ``TranscriptTree/load(under:)`` will refuse to read
+    ///     (a transcript with no sidecar beside it cannot be interpreted), so
+    ///     outside tests the two travel together — ``Router`` builds this
+    ///     whenever it has a durable root and is not recording at
+    ///     ``RecordingLevel/off``.
     public init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -148,7 +154,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         recorder: any TranscriptRecorder,
         recordingsRoot: URL? = nil,
         maxConcurrentForks: Int = defaultMaxConcurrentForks,
-        sessionIndexWriter: SessionIndexWriter? = nil
+        sessionSidecarWriter: SessionSidecarWriter? = nil
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -159,7 +165,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.recorder = recorder
         self.recordingsRoot = recordingsRoot
         self.forkAdmissionGate = AsyncSemaphore(value: maxConcurrentForks)
-        self.sessionIndexWriter = sessionIndexWriter
+        self.sessionSidecarWriter = sessionSidecarWriter
     }
 }
 

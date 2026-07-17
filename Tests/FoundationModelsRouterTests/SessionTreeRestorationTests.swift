@@ -148,22 +148,30 @@ struct SessionTreeRestorationTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: JSONLRecorder(directory: recordingsDir),
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            probe: StubProbe(
+                chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(dimension: stubDimension, text: cannedText)
         )
     }
 
-    /// Reads every session index record under a router id's recording root.
-    private func records(routerId: ULID, recordingsDir: URL) throws -> [SessionIndexRecord] {
-        try SessionIndexWriter.read(
-            under: recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
-        )
+    /// A router id's recording root.
+    private func routerDirectory(routerId: ULID, recordingsDir: URL) -> URL {
+        recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
+    }
+
+    /// The id of every session recorded under a router id's recording root.
+    private func recordedSessionIds(routerId: ULID, recordingsDir: URL) throws -> Set<ULID> {
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(routerId: routerId, recordingsDir: recordingsDir))
+        func ids(_ node: SessionNode) -> [ULID] { [node.id] + node.children.flatMap(ids) }
+        return Set(tree.roots.flatMap(ids))
     }
 
     // MARK: - Tree shape restoration
 
-    @Test("restoring a 4-node tree by root id reproduces its shape and per-node effective entry counts")
+    @Test(
+        "restoring a 4-node tree by root id reproduces its shape and per-node effective entry counts")
     @MainActor
     func restoringReproducesTreeShapeAndEntryCounts() async throws {
         let cacheDir = Self.makeTempDir()
@@ -207,7 +215,8 @@ struct SessionTreeRestorationTests {
         // forkA: root's 2 inherited + its own 1 turn == 4.
         // forkB: root's 2 inherited + no own turn == 2.
         // grandfork: forkA's 4 inherited + its own 1 turn == 6.
-        let routerDirectory = recordingsDir.appendingPathComponent(router1.id.description, isDirectory: true)
+        let routerDirectory = recordingsDir.appendingPathComponent(
+            router1.id.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         #expect(try tree.effectiveEntryEvents(forSession: root.id).count == 2)
         #expect(try tree.effectiveEntryEvents(forSession: forkA.id).count == 4)
@@ -227,11 +236,11 @@ struct SessionTreeRestorationTests {
         #expect(try reloadedTree.effectiveEntryEvents(forSession: forkB.id).count == 4)
     }
 
-    // MARK: - sessions.jsonl untouched by restoration
+    // MARK: - Sidecars untouched by restoration
 
-    @Test("restoreSessionTree writes zero new sessions.jsonl records; a later fork of a restored session appends exactly one")
+    @Test("restoreSessionTree writes no sidecar of its own; a later fork of a restored session writes exactly one")
     @MainActor
-    func restorationAppendsNoIndexRecordsButLaterForkAppendsOne() async throws {
+    func restorationWritesNoSidecarButLaterForkWritesOne() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -247,28 +256,38 @@ struct SessionTreeRestorationTests {
         let fork = try await root.fork(workingDirectory: nil)
         _ = fork
 
-        let indexFileURL = recordingsDir
-            .appendingPathComponent(router1.id.description, isDirectory: true)
-            .appendingPathComponent("sessions.jsonl", isDirectory: false)
-        let bytesBeforeRestore = try Data(contentsOf: indexFileURL)
+        // A sidecar is write-once, so restoring a session must not touch the
+        // one already sitting in its directory — byte-for-byte.
+        let rootSidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+            .appendingPathComponent(root.id.description, isDirectory: true)
+            .appendingPathComponent("session.json", isDirectory: false)
+        let bytesBeforeRestore = try Data(contentsOf: rootSidecarURL)
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
 
-        let bytesAfterRestore = try Data(contentsOf: indexFileURL)
-        #expect(bytesAfterRestore == bytesBeforeRestore)
+        #expect(try Data(contentsOf: rootSidecarURL) == bytesBeforeRestore)
+        #expect(
+            try recordedSessionIds(routerId: router1.id, recordingsDir: recordingsDir) == [
+                root.id, fork.id,
+            ])
 
-        let recordsBeforeNewFork = try records(routerId: router1.id, recordingsDir: recordingsDir)
-        #expect(recordsBeforeNewFork.count == 2)
-
-        // A brand-new fork taken *from a restored session* appends normally,
-        // exactly like any other fork.
+        // A brand-new fork taken *from a restored session* writes its own
+        // sidecar normally, exactly like any other fork.
         let newFork = try await restored.root.fork(workingDirectory: nil)
 
-        let recordsAfterNewFork = try records(routerId: router1.id, recordingsDir: recordingsDir)
-        #expect(recordsAfterNewFork.count == 3)
-        #expect(recordsAfterNewFork.contains { $0.sessionId == newFork.id && $0.parentId == root.id })
+        #expect(
+            try recordedSessionIds(routerId: router1.id, recordingsDir: recordingsDir)
+                == [root.id, fork.id, newFork.id]
+        )
+        let newForkNode = try #require(
+            try TranscriptTree.load(
+                under: routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+            )
+            .session(newFork.id)
+        )
+        #expect(newForkNode.parentId == root.id)
     }
 
     // MARK: - Typed errors
@@ -315,7 +334,8 @@ struct SessionTreeRestorationTests {
         // its `.standard` slot resolves to a different model than the one
         // `root` was recorded against.
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
-        let profile2 = try await router2.resolve(profile: Self.mismatchProfile, reporting: ResolutionProgress())
+        let profile2 = try await router2.resolve(
+            profile: Self.mismatchProfile, reporting: ResolutionProgress())
 
         await #expect(
             throws: SessionTreeRestorationError.modelMismatch(
@@ -329,7 +349,7 @@ struct SessionTreeRestorationTests {
         }
     }
 
-    @Test("a session index record recorded against a non-generation slot throws slotNotInProfile")
+    @Test("a session sidecar recorded against a non-generation slot throws slotNotInProfile")
     @MainActor
     func recordedEmbeddingSlotThrowsSlotNotInProfile() async throws {
         let cacheDir = Self.makeTempDir()
@@ -342,31 +362,31 @@ struct SessionTreeRestorationTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // Fabricate a root session's index record directly, bypassing the
-        // normal makeSession/fork vending paths, with a slot no generation
-        // handle exists for.
+        // Fabricate a root session's directory and sidecar directly,
+        // bypassing the normal makeSession/fork vending paths, with a slot no
+        // generation handle exists for.
         let fabricatedId = ULID.generate()
-        let writer = SessionIndexWriter(
-            directory: recordingsDir.appendingPathComponent(router1.id.description, isDirectory: true)
-        )
-        await writer.append(
-            SessionIndexRecord(
-                sessionId: fabricatedId,
-                parentId: nil,
-                path: fabricatedId.description,
-                forkedAtEntryCount: 0,
+        try SessionSidecar.write(
+            SessionSidecar(
                 slot: .embedding,
                 model: "org/emb-a",
+                context: 4_096,
                 instructions: nil,
                 grammar: nil,
-                createdAt: Date()
-            )
+                recordingLevel: .full,
+                forkedAtEntryCount: nil,
+                profile: nil
+            ),
+            to: routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+                .appendingPathComponent(fabricatedId.description, isDirectory: true)
         )
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        await #expect(throws: SessionTreeRestorationError.slotNotInProfile(session: fabricatedId, slot: .embedding)) {
+        await #expect(
+            throws: SessionTreeRestorationError.slotNotInProfile(session: fabricatedId, slot: .embedding)
+        ) {
             _ = try await profile2.standard.restoreSessionTree(root: fabricatedId)
         }
 
@@ -375,7 +395,8 @@ struct SessionTreeRestorationTests {
 
     // MARK: - Guided session restoration
 
-    @Test("a restored guided session's next turn runs through the guided path with its recorded grammar")
+    @Test(
+        "a restored guided session's next turn runs through the guided path with its recorded grammar")
     @MainActor
     func restoredGuidedSessionUsesRecordedGrammar() async throws {
         let cacheDir = Self.makeTempDir()
@@ -415,7 +436,7 @@ struct SessionTreeRestorationTests {
 
     /// Documents and locks in a known, deliberate restoration limitation (see
     /// ``RoutedModel/restoreSessionTree(root:registry:)``'s doc comment,
-    /// "Known limitation: the `.ebnf` grammar case"): `SessionIndexRecord.grammar`
+    /// "Known limitation: the `.ebnf` grammar case"): `SessionSidecar.grammar`
     /// persists only the grammar's `source` string, not which `Grammar` case
     /// it came from, so a session originally guided by `.ebnf(_:)` restores
     /// under the `.jsonSchema` case instead — its source text is preserved,

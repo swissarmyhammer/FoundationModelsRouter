@@ -11,8 +11,8 @@ import Testing
 /// Unlike a plain ``RoutedModel/makeLanguageModel()`` handle (whose last-seen
 /// transcript starts empty), a resumed handle primes last-seen with the
 /// resumed session's own reconstructed ``FoundationModels/Transcript`` — so its
-/// first diff records only genuinely new entries — and writes a
-/// ``SessionIndexRecord`` naming the resumed session as its parent, the same
+/// first diff records only genuinely new entries — and nests its own
+/// directory under the resumed session's, the same
 /// lineage semantics ``RoutedSessionActor/fork(workingDirectory:)`` already
 /// establishes for ``RoutedSession``. Pairing the returned handle and
 /// transcript into `LanguageModelSession(model:tools:transcript:)` is also how
@@ -47,7 +47,8 @@ struct RecordingHandleResumeTests {
         }
 
         var executorConfiguration: Executor.Configuration {
-            Executor.Configuration(plainResponseText: plainResponseText, toolResponseText: toolResponseText)
+            Executor.Configuration(
+                plainResponseText: plainResponseText, toolResponseText: toolResponseText)
         }
 
         struct Executor: LanguageModelExecutor {
@@ -70,7 +71,8 @@ struct RecordingHandleResumeTests {
                 streamingInto channel: LanguageModelExecutorGenerationChannel
             ) async throws {
                 guard let toolName = request.enabledToolDefinitions.first?.name else {
-                    await channel.send(.response(action: .appendText(configuration.plainResponseText, tokenCount: 1)))
+                    await channel.send(
+                        .response(action: .appendText(configuration.plainResponseText, tokenCount: 1)))
                     return
                 }
 
@@ -90,7 +92,8 @@ struct RecordingHandleResumeTests {
                     )
                     return
                 }
-                await channel.send(.response(action: .appendText(configuration.toolResponseText, tokenCount: 1)))
+                await channel.send(
+                    .response(action: .appendText(configuration.toolResponseText, tokenCount: 1)))
             }
         }
     }
@@ -216,7 +219,7 @@ struct RecordingHandleResumeTests {
 
     /// Builds a router wired with `container` for every generation slot, an
     /// explicit recorder, and a durable recordings root (so a resumed handle
-    /// has an on-disk `sessions.jsonl`/`transcript.jsonl` tree to load).
+    /// has an on-disk `session.json`/`transcript.jsonl` tree to load).
     private static func makeRouter(
         container: any LoadedLLMContainer,
         recorder: any TranscriptRecorder,
@@ -227,7 +230,8 @@ struct RecordingHandleResumeTests {
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            probe: StubProbe(
+                chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(container: container, dimension: stubDimension)
         )
@@ -256,20 +260,23 @@ struct RecordingHandleResumeTests {
 
         // Record N entries via the parent handle.
         let parentHandle = profile.standard.makeLanguageModel()
-        let parentSession = LanguageModelSession(model: parentHandle, tools: [], instructions: "be terse")
+        let parentSession = LanguageModelSession(
+            model: parentHandle, tools: [], instructions: "be terse")
         _ = try await parentSession.respond(to: "hi there")
         await parentHandle.sync(parentSession.transcript)
         let parentEntryCount = parentSession.transcript.count  // instructions, prompt, response == 3
 
         // Resume from the parent's session id and continue one turn.
-        let (childHandle, restored) = try profile.standard.makeLanguageModel(resuming: parentHandle.state.sessionId)
+        let (childHandle, restored) = try profile.standard.makeLanguageModel(
+            resuming: parentHandle.state.sessionId)
         #expect(restored.count == parentEntryCount)
 
         let childSession = LanguageModelSession(model: childHandle, tools: [], transcript: restored)
         _ = try await childSession.respond(to: "continue please")
         await childHandle.sync(childSession.transcript)
 
-        let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
+        let routerDirectory = recordingsDir.appendingPathComponent(
+            router.id.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
 
         // The child's OWN transcript.jsonl contains only post-resume events —
@@ -282,10 +289,11 @@ struct RecordingHandleResumeTests {
         let parentOwnEvents = try tree.events(forSession: parentHandle.state.sessionId)
         #expect(parentOwnEvents.map(\.kind) == [.session, .instructions, .prompt, .response])
 
-        // Lineage: the child's SessionIndexRecord names the parent and the fork point.
+        // Lineage: the child's directory nests under the parent's, and its own
+        // sidecar records the fork point.
         let childNode = try #require(tree.session(childHandle.state.sessionId))
         #expect(childNode.parentId == parentHandle.state.sessionId)
-        #expect(childNode.forkedAtEntryCount == parentEntryCount)
+        #expect(childNode.sidecar.forkedAtEntryCount == parentEntryCount)
     }
 
     // MARK: - Different tool set
@@ -311,18 +319,22 @@ struct RecordingHandleResumeTests {
 
         // The parent handle never sees any tools.
         let parentHandle = profile.standard.makeLanguageModel()
-        let parentSession = LanguageModelSession(model: parentHandle, tools: [], instructions: "be terse")
+        let parentSession = LanguageModelSession(
+            model: parentHandle, tools: [], instructions: "be terse")
         _ = try await parentSession.respond(to: "hi there")
         await parentHandle.sync(parentSession.transcript)
 
         // Resume with a fresh tool the parent never had.
-        let (childHandle, restored) = try profile.standard.makeLanguageModel(resuming: parentHandle.state.sessionId)
-        let childSession = LanguageModelSession(model: childHandle, tools: [UppercaseTool()], transcript: restored)
+        let (childHandle, restored) = try profile.standard.makeLanguageModel(
+            resuming: parentHandle.state.sessionId)
+        let childSession = LanguageModelSession(
+            model: childHandle, tools: [UppercaseTool()], transcript: restored)
         let response = try await childSession.respond(to: "please uppercase hi")
         #expect(response.content == "final answer")
         await childHandle.sync(childSession.transcript)
 
-        let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
+        let routerDirectory = recordingsDir.appendingPathComponent(
+            router.id.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         let childOwnEvents = try tree.events(forSession: childHandle.state.sessionId)
         #expect(childOwnEvents.map(\.kind) == [.session, .prompt, .toolCalls, .toolOutput, .response])
@@ -350,11 +362,13 @@ struct RecordingHandleResumeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let parentHandle = profile.standard.makeLanguageModel()
-        let parentSession = LanguageModelSession(model: parentHandle, tools: [], instructions: "be terse")
+        let parentSession = LanguageModelSession(
+            model: parentHandle, tools: [], instructions: "be terse")
         _ = try await parentSession.respond(to: "first prompt")
         await parentHandle.sync(parentSession.transcript)
 
-        let (childHandle, restored) = try profile.standard.makeLanguageModel(resuming: parentHandle.state.sessionId)
+        let (childHandle, restored) = try profile.standard.makeLanguageModel(
+            resuming: parentHandle.state.sessionId)
         let childSession = LanguageModelSession(model: childHandle, tools: [], transcript: restored)
         _ = try await childSession.respond(to: "second prompt")
         await childHandle.sync(childSession.transcript)
@@ -371,12 +385,17 @@ struct RecordingHandleResumeTests {
         _ = try await parentSession.respond(to: "parent continues after resume")
         await parentHandle.sync(parentSession.transcript)
 
-        let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
+        let routerDirectory = recordingsDir.appendingPathComponent(
+            router.id.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         let fullConversation = try tree.effectiveEntryEvents(forSession: childHandle.state.sessionId)
 
-        #expect(fullConversation.map(\.kind) == [.instructions, .prompt, .response, .prompt, .response])
-        #expect(fullConversation.map(\.text) == ["be terse", "first prompt", "reply", "second prompt", "reply"])
+        #expect(
+            fullConversation.map(\.kind) == [.instructions, .prompt, .response, .prompt, .response])
+        #expect(
+            fullConversation.map(\.text) == [
+                "be terse", "first prompt", "reply", "second prompt", "reply",
+            ])
         #expect(!fullConversation.contains { $0.text == "parent continues after resume" })
 
         // MergedTranscript sees every recorded event across both sessions

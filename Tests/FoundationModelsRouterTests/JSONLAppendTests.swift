@@ -4,10 +4,9 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Tests for ``openHandleForAppending(fileName:in:)``, the on-disk append
-/// lifecycle shared by every JSONL sink in this module (``JSONLRecorder``,
-/// ``SessionIndexWriter``).
+/// lifecycle every JSONL sink in this module (``JSONLRecorder``) drives.
 ///
-/// Both current call sites pass hardcoded literals, so these aren't
+/// Its only call site passes a hardcoded literal, so these aren't
 /// regression tests for an exploited path — they're a hardening guarantee
 /// that the shared helper itself refuses to become a directory-escape
 /// primitive if a future caller ever threads an untrusted `fileName` through.

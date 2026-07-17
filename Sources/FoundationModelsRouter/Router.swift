@@ -1,13 +1,9 @@
 import Foundation
-import os
-
-/// The logger the router reports best-effort manifest write failures to.
-private let manifestLogger = makeModuleLogger(category: "Manifest")
 
 /// The default in-flight fork-session ceiling per resolved profile.
 ///
 /// Shared between ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``
-/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:recordingsRoot:maxConcurrentForks:sessionIndexWriter:)``'s
+/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:recordingsRoot:maxConcurrentForks:sessionSidecarWriter:)``'s
 /// own default, so a ``RoutedModel`` constructed directly (outside a
 /// ``Router``, e.g. in tests) admits the same ceiling a router-vended one
 /// would.
@@ -81,16 +77,6 @@ public actor Router {
     /// An optional redaction hook applied to recorded text, enforced through ``recorder``.
     let redact: (@Sendable (String) -> String)?
 
-    /// The session index writer every vended generation session's root/fork
-    /// creation record is appended through, or `nil` when the router has no
-    /// durable transcripts root or is recording at ``RecordingLevel/off``.
-    ///
-    /// Unlike ``recorder``, this needs no ``GatingRecorder``-style wrapping:
-    /// the only gate the session index honors is the off/not-off split (see
-    /// plan.md's "Transcript fidelity" section — the index is metadata, not
-    /// turn content, so it is not further trimmed at ``RecordingLevel/metadataOnly``).
-    let sessionIndexWriter: SessionIndexWriter?
-
     /// The machine probe behind the budget.
     private let probe: any MachineProbe
 
@@ -133,13 +119,6 @@ public actor Router {
         /// release cannot clobber a newer profile.
         case resident(ULID)
     }
-
-    /// When the router was constructed — the manifest's run-start instant.
-    private let startedAt = Date()
-
-    /// Every profile resolved during this run, in resolution order, recorded into
-    /// the manifest as each resolve completes.
-    private var resolvedProfiles: [RouterManifest.ResolvedProfile] = []
 
     /// Creates a router.
     ///
@@ -196,16 +175,6 @@ public actor Router {
         }
         self.recordingLevel = recordingLevel
         self.redact = redact
-        // Gated purely on "is there somewhere durable to write" and "is
-        // recording off" — unlike `recorder`, the session index needs no
-        // `.metadataOnly` trimming (it carries no turn content).
-        if let recordingsDir, recordingLevel != .off {
-            self.sessionIndexWriter = SessionIndexWriter(
-                directory: recordingsDir.appendingPathComponent(id.description, isDirectory: true)
-            )
-        } else {
-            self.sessionIndexWriter = nil
-        }
         self.probe = probe
         self.hostProfileCache = HostProfileCache(cacheDir: resolvedCacheDir)
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
@@ -257,7 +226,9 @@ public actor Router {
             // pairs in standard-before-flash order. The embedding slot uses a
             // different loader call (no `context`) and stays separate.
             var generationContainers: [ModelSlot: any LoadedLLMContainer] = [:]
-            for (chosen, slot) in [(resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash)] {
+            for (chosen, slot) in [
+                (resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash),
+            ] {
                 // The context joint fit actually resolved this slot at — the
                 // authored `def.context` verbatim when explicit, or the rung
                 // the ladder settled on when it was `nil` (see `JointFit`).
@@ -301,8 +272,6 @@ public actor Router {
                 residencyToken: residencyToken
             )
             residencyState = .resident(residencyToken)
-            recordResolvedProfile(definition: def, resolution: resolution)
-            writeManifest()
             return profile
         } catch {
             // A download/load/preload failure must move the bound progress to
@@ -336,62 +305,6 @@ public actor Router {
         residencyState = .idle
         for container in containers {
             await loader.evict(container: container)
-        }
-    }
-
-    // MARK: - Manifest
-
-    /// Appends a resolved profile to the run's manifest record, capturing which
-    /// concrete models won each slot for this machine, and the working context
-    /// they were resolved at.
-    ///
-    /// - Parameters:
-    ///   - def: The authored profile that was resolved, for its name.
-    ///   - resolution: The joint resolution naming the chosen model per slot.
-    private func recordResolvedProfile(definition def: ProfileDefinition, resolution: JointResolution) {
-        resolvedProfiles.append(
-            RouterManifest.ResolvedProfile(
-                definitionName: def.name,
-                standard: resolution.standard,
-                flash: resolution.flash,
-                embedding: resolution.embedding,
-                context: Self.slotResolution(for: resolution, slot: .standard).contextTokens
-            )
-        )
-    }
-
-    /// Writes the run manifest to `recordings/<routerId>/manifest.json`,
-    /// best-effort.
-    ///
-    /// A no-op when the router has no durable transcripts root (recording to
-    /// memory/none). Like transcript appends, a write failure is swallowed rather
-    /// than surfaced, so a manifest problem never fails a resolve. Each call
-    /// rewrites the whole file with the run's config, every profile resolved so
-    /// far, and the current time as the run's end so far.
-    private func writeManifest() {
-        guard let recordingsDir else { return }
-        let manifest = RouterManifest(
-            routerId: id,
-            config: RouterManifest.Config(
-                headroomReserve: headroomReserve,
-                maxConcurrentForks: maxConcurrentForks,
-                recordingLevel: recordingLevel
-            ),
-            profiles: resolvedProfiles,
-            start: startedAt,
-            end: Date()
-        )
-        let directory = recordingsDir.appendingPathComponent(id.description, isDirectory: true)
-        let fileURL = directory.appendingPathComponent("manifest.json", isDirectory: false)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(manifest).write(to: fileURL, options: .atomic)
-        } catch {
-            manifestLogger.error(
-                "failed to write router manifest: \(error.localizedDescription, privacy: .public)"
-            )
         }
     }
 
@@ -509,7 +422,8 @@ public actor Router {
             let slots = membership[ref] ?? []
             var candidates: [Int64] = []
             if slots.contains(.embedding) {
-                candidates.append(Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context))
+                candidates.append(
+                    Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context))
             }
             if slots.contains(.standard) || slots.contains(.flash) {
                 candidates.append(metadata.footprint.footprint(context: context))
@@ -543,7 +457,8 @@ public actor Router {
                     Self.footprintBytes(for: ref, context: context, metadataByRef: metadataByRef, membership: membership)
                 },
                 nativeMaxContext: { ref in
-                    (metadataByRef[ref] ?? .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized")))
+                    (metadataByRef[ref]
+                        ?? .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized")))
                         .map(\.nativeMaxContext)
                 }
             )
@@ -648,19 +563,28 @@ public actor Router {
         residencyToken: ULID
     ) -> LanguageModelProfile {
         let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
+        let resolvedProfile = SessionSidecar.ResolvedProfile(
+            definitionName: def.name,
+            standard: resolution.standard,
+            flash: resolution.flash,
+            embedding: resolution.embedding,
+            context: Self.slotResolution(for: resolution, slot: .standard).contextTokens
+        )
         return LanguageModelProfile(
             definitionName: def.name,
             standard: makeRoutedLLM(
                 slot: .standard,
                 chosen: resolution.standard,
                 container: standardContainer,
-                resolution: Self.slotResolution(for: resolution, slot: .standard)
+                resolution: Self.slotResolution(for: resolution, slot: .standard),
+                resolvedProfile: resolvedProfile
             ),
             flash: makeRoutedLLM(
                 slot: .flash,
                 chosen: resolution.flash,
                 container: flashContainer,
-                resolution: Self.slotResolution(for: resolution, slot: .flash)
+                resolution: Self.slotResolution(for: resolution, slot: .flash),
+                resolvedProfile: resolvedProfile
             ),
             embedding: RoutedEmbedder(
                 slot: .embedding,
@@ -689,12 +613,15 @@ public actor Router {
     ///   - chosen: The chosen model reference for the slot.
     ///   - container: The loaded, resident generation container.
     ///   - resolution: Why this model won its slot.
+    ///   - resolvedProfile: The run's resolved-profile facts, recorded onto
+    ///     the sidecar of every root session vended from this handle.
     /// - Returns: The routed generation handle.
     private func makeRoutedLLM(
         slot: ModelSlot,
         chosen: ModelRef,
         container: any LoadedLLMContainer,
-        resolution: SlotResolution
+        resolution: SlotResolution,
+        resolvedProfile: SessionSidecar.ResolvedProfile
     ) -> RoutedLLM {
         RoutedLLM(
             slot: slot,
@@ -706,7 +633,44 @@ public actor Router {
             recorder: recorder,
             recordingsRoot: recordingsDir,
             maxConcurrentForks: maxConcurrentForks,
-            sessionIndexWriter: sessionIndexWriter
+            sessionSidecarWriter: makeSessionSidecarWriter(
+                slot: slot,
+                chosen: chosen,
+                resolution: resolution,
+                resolvedProfile: resolvedProfile
+            )
+        )
+    }
+
+    /// Builds the sidecar writer sessions vended from one generation handle
+    /// write their `session.json` through, or `nil` when this run records
+    /// nothing durable.
+    ///
+    /// Gated purely on "is there somewhere durable to write" and "is recording
+    /// off" — unlike `recorder`, a sidecar needs no `.metadataOnly` trimming,
+    /// since it carries no turn content.
+    ///
+    /// - Parameters:
+    ///   - slot: The slot the handle fills.
+    ///   - chosen: The concrete model resident in that slot.
+    ///   - resolution: Why that model won its slot, for the context it was
+    ///     resolved at.
+    ///   - resolvedProfile: The run's resolved-profile facts, recorded onto
+    ///     root sessions.
+    /// - Returns: The writer, or `nil` when nothing durable is recorded.
+    private func makeSessionSidecarWriter(
+        slot: ModelSlot,
+        chosen: ModelRef,
+        resolution: SlotResolution,
+        resolvedProfile: SessionSidecar.ResolvedProfile
+    ) -> SessionSidecarWriter? {
+        guard recordingsDir != nil, recordingLevel != .off else { return nil }
+        return SessionSidecarWriter(
+            slot: slot,
+            model: chosen,
+            context: resolution.contextTokens,
+            recordingLevel: recordingLevel,
+            profile: resolvedProfile
         )
     }
 
@@ -719,7 +683,9 @@ public actor Router {
     /// allocation order — a missing slot is a broken invariant, not a runtime
     /// condition, so it traps rather than returning an optional the callers would
     /// have to unwrap.
-    private static func slotResolution(for resolution: JointResolution, slot: ModelSlot) -> SlotResolution {
+    private static func slotResolution(for resolution: JointResolution, slot: ModelSlot)
+        -> SlotResolution
+    {
         guard let slotRes = resolution.slots.first(where: { $0.slot == slot }) else {
             preconditionFailure("JointResolution records a resolution for every slot; missing \(slot)")
         }

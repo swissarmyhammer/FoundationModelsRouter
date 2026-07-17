@@ -4,6 +4,7 @@
 .shell/
 .code-context/
 .ralph/
+.kanban/mcp.*.log
 
 # macOS
 .DS_Store

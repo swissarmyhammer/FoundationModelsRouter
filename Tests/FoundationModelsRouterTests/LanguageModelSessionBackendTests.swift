@@ -202,7 +202,7 @@
     /// ``LanguageModelSessionBackend`` outside this file only needs to
     /// *compile* against the widened protocol; the actual entry-shape
     /// contract lives here, against the one conformer downstream tasks
-    /// (session index, chokepoint) actually rely on.
+    /// (sidecars, chokepoint) actually rely on.
     @Suite("StubSessionBackend synthesizes transcript entries mirroring the live backend")
     struct StubSessionBackendTranscriptTests {
         private func isInstructions(_ entry: Transcript.Entry) -> Bool {

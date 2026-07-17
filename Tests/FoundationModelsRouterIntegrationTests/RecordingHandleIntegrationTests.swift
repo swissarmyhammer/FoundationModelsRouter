@@ -50,7 +50,7 @@ private let recordingHandleTinyModel: ModelRef = "mlx-community/SmolLM-135M-Inst
 /// and to *skip* (not run) under a normal `swift test` invocation without the
 /// env var. To finish verifying the acceptance criteria that need an actual
 /// live run — the exact on-disk event sequence, the mid-turn back-fill
-/// snapshot before `sync`, the `sessions.jsonl` fields, and the
+/// snapshot before `sync`, the `session.json` sidecar fields, and the
 /// `MergedTranscript`/`TranscriptTree` reconstruction all matching a real
 /// session's live transcript — someone needs to run this suite on a real
 /// Apple Silicon Mac with network access to the Hub (so the tiny model can be
@@ -129,20 +129,30 @@ struct RecordingHandleIntegrationTests {
         let container = try await makeContainer()
 
         let recordingsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RecordingHandleIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "RecordingHandleIntegrationTests-\(UUID().uuidString)", isDirectory: true)
         let cacheDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RecordingHandleIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "RecordingHandleIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
 
         let recorder = JSONLRecorder(directory: recordingsDir)
         let router = Router(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-        // Actor-isolated on Router; awaited once here and threaded into every
-        // RoutedModel below so the handle's SessionIndexRecord actually lands
-        // in sessions.jsonl (RoutedModel's own `sessionIndexWriter` defaults
-        // to nil unless explicitly passed).
-        let sessionIndexWriter = await router.sessionIndexWriter
 
         func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: recordingHandleTinyModel, considered: [])
+            SlotResolution(
+                slot: slot, remainingBudgetBytes: 0, chosen: recordingHandleTinyModel, considered: [])
+        }
+        // Built by hand here (rather than taken from a `Router.resolve`) so the
+        // handle's sidecar actually lands on disk: `RoutedModel`'s own
+        // `sessionSidecarWriter` defaults to nil unless explicitly passed.
+        func sidecarWriter(_ slot: ModelSlot) -> SessionSidecarWriter {
+            SessionSidecarWriter(
+                slot: slot,
+                model: recordingHandleTinyModel,
+                context: noopResolution(slot).contextTokens,
+                recordingLevel: .full,
+                profile: nil
+            )
         }
         let standard = RoutedLLM(
             slot: .standard,
@@ -153,7 +163,7 @@ struct RecordingHandleIntegrationTests {
             routerId: router.id,
             recorder: recorder,
             recordingsRoot: recordingsDir,
-            sessionIndexWriter: sessionIndexWriter
+            sessionSidecarWriter: sidecarWriter(.standard)
         )
         let flash = RoutedLLM(
             slot: .flash,
@@ -164,7 +174,7 @@ struct RecordingHandleIntegrationTests {
             routerId: router.id,
             recorder: recorder,
             recordingsRoot: recordingsDir,
-            sessionIndexWriter: sessionIndexWriter
+            sessionSidecarWriter: sidecarWriter(.flash)
         )
         let embedding = RoutedEmbedder(
             slot: .embedding,
@@ -175,7 +185,7 @@ struct RecordingHandleIntegrationTests {
             routerId: router.id,
             recorder: recorder,
             recordingsRoot: recordingsDir,
-            sessionIndexWriter: sessionIndexWriter
+            sessionSidecarWriter: sidecarWriter(.embedding)
         )
         let profile = LanguageModelProfile(
             definitionName: "test",
@@ -186,7 +196,8 @@ struct RecordingHandleIntegrationTests {
             residencyToken: .generate()
         )
 
-        return Harness(profile: profile, router: router, recordingsDir: recordingsDir, cacheDir: cacheDir)
+        return Harness(
+            profile: profile, router: router, recordingsDir: recordingsDir, cacheDir: cacheDir)
     }
 
     /// Decodes every newline-delimited JSON record of type `T` from
@@ -216,13 +227,6 @@ struct RecordingHandleIntegrationTests {
         try readJSONLFile(in: directory, fileName: "transcript.jsonl", checkExists: true)
     }
 
-    /// Decodes every record from a router directory's `sessions.jsonl`, or an
-    /// empty array if the file does not exist yet (so a missing file surfaces
-    /// as a meaningful assertion failure rather than a file-not-found error).
-    private static func sessionIndexRecords(underRouterDirectory routerDirectory: URL) throws -> [SessionIndexRecord] {
-        try readJSONLFile(in: routerDirectory, fileName: "sessions.jsonl", checkExists: true)
-    }
-
     /// Whether `expected` appears as an in-order (not necessarily contiguous)
     /// subsequence of `actual` — the acceptance criterion's "contains, in
     /// order" phrasing, checked structurally rather than by exact equality so
@@ -244,7 +248,7 @@ struct RecordingHandleIntegrationTests {
     /// `.toolOutput` to disk live (before any `sync`), the turn-final
     /// `.response` only lands once `sync(session.transcript)` closes the
     /// executor-boundary gap at turn end, the handle's own session appears in
-    /// `sessions.jsonl` with the right slot/model, and reconstruction via
+    /// its own `session.json` with the right slot/model, and reconstruction via
     /// ``TranscriptTree``/``MergedTranscript`` over the recorded directory
     /// matches the live session's own transcript kind-for-kind.
     @Test("a tool-using turn over a RecordingLanguageModel handle round-trips to disk: mid-turn back-fill before sync, final response only after sync(session.transcript)")
@@ -295,14 +299,13 @@ struct RecordingHandleIntegrationTests {
         )
         #expect(afterSync.map(\.kind).last == .response)
 
-        // The handle's own session appears in sessions.jsonl with the right
+        // The handle's own directory carries its sidecar, with the right
         // slot/model.
         let routerDirectory = harness.recordingsDir
             .appendingPathComponent(harness.router.id.description, isDirectory: true)
-        let indexRecords = try Self.sessionIndexRecords(underRouterDirectory: routerDirectory)
-        let ownRecord = try #require(indexRecords.first { $0.sessionId == handle.state.sessionId })
-        #expect(ownRecord.slot == .standard)
-        #expect(ownRecord.model == recordingHandleTinyModel)
+        let ownSidecar = try #require(try SessionSidecar.read(in: recordingDirectory))
+        #expect(ownSidecar.slot == .standard)
+        #expect(ownSidecar.model == recordingHandleTinyModel)
 
         // Reconstruction over the recorded directory matches the live
         // session's own transcript, kind-for-kind.

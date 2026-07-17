@@ -12,7 +12,7 @@ import Testing
 /// Everything runs against stubs — a stub `ModelLoader`, a canned LLM
 /// container backed by `StubSessionBackend`, and a `JSONLRecorder` writing
 /// into a temp directory — so the suite needs no network and no GPU, mirroring
-/// ``SessionIndexTests``' scaffolding.
+/// ``SessionSidecarTests``' scaffolding.
 @Suite("TranscriptTree: session-id lookup and hierarchy-aware retrieval")
 struct TranscriptTreeTests {
     // MARK: - Stub containers
@@ -107,16 +107,28 @@ struct TranscriptTreeTests {
     private static let stubDimension = 8
     private static let cannedText = "canned response"
 
+    /// A fresh temp directory, named by its canonical path.
+    ///
+    /// macOS reaches the temporary directory through a symlink (`/var` →
+    /// `/private/var`), and ``TranscriptTree`` reports discovered session
+    /// directories as its `FileManager` enumeration spells them — canonically,
+    /// with that symlink resolved. Canonicalizing here means a directory this
+    /// suite builds and one the tree reports back are the same `URL`, so the
+    /// assertions below compare like with like. (`resolvingSymlinksInPath()`
+    /// is not enough: it leaves `/var` alone.)
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("TranscriptTreeTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        guard let canonical = try? dir.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath else {
+            return dir
+        }
+        return URL(fileURLWithPath: canonical, isDirectory: true)
     }
 
     /// Builds a router wired with the stubs, an explicit recorder, and a
     /// durable recordings root, so vended sessions nest their transcripts —
-    /// and the session index — under it.
+    /// and the sidecars — under it.
     private static func makeRouter(
         recorder: any TranscriptRecorder,
         cacheDir: URL,
@@ -128,7 +140,8 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir,
             recorder: recorder,
             recordingLevel: .full,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            probe: StubProbe(
+                chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(dimension: stubDimension, text: cannedText)
         )
@@ -176,7 +189,9 @@ struct TranscriptTreeTests {
         forkATurnsAfterGrandfork: Int = 0,
         forkBTurns: Int = 1,
         grandforkTurns: Int = 1
-    ) async throws -> (root: RoutedSession, forkA: RoutedSession, forkB: RoutedSession, grandfork: RoutedSession) {
+    ) async throws -> (
+        root: RoutedSession, forkA: RoutedSession, forkB: RoutedSession, grandfork: RoutedSession
+    ) {
         let root = profile.standard.makeSession()
         if rootTurnsBeforeForks > 0 {
             for turn in 1...rootTurnsBeforeForks {
@@ -242,7 +257,8 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
 
         #expect(tree.session(root.id)?.id == root.id)
         #expect(tree.session(forkA.id)?.id == forkA.id)
@@ -271,7 +287,8 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
 
         #expect(tree.roots.map(\.id) == [root.id])
         let rootNode = try #require(tree.roots.first)
@@ -319,7 +336,8 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let (root, forkA, _, grandfork) = try await Self.buildBranchingTree(profile: profile)
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
 
         let forkAEvents = try tree.events(forSession: forkA.id)
         // forkA's own file: one session-meta line, plus one prompt/response
@@ -366,15 +384,16 @@ struct TranscriptTreeTests {
             grandforkTurns: 1
         )
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
 
         // Uninstructed turns: one prompt + one response entry each, so
         // forkA's baseline is 2 (root's one prior turn) and grandfork's
         // baseline is 4 (root's 2 inherited + forkA's own 1 turn == 2 more).
         let forkANode = try #require(tree.session(forkA.id))
-        #expect(forkANode.forkedAtEntryCount == 2)
+        #expect(forkANode.sidecar.forkedAtEntryCount == 2)
         let grandforkNode = try #require(tree.session(grandfork.id))
-        #expect(grandforkNode.forkedAtEntryCount == 4)
+        #expect(grandforkNode.sidecar.forkedAtEntryCount == 4)
 
         let effective = try tree.effectiveEntryEvents(forSession: grandfork.id)
 
@@ -408,116 +427,18 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let (root, _, _, _) = try await Self.buildBranchingTree(profile: profile)
 
-        let tree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
         let effective = try tree.effectiveEntryEvents(forSession: root.id)
         #expect(effective.map(\.kind) == [.prompt, .response])
         #expect(effective.first?.text == "root-turn-1")
     }
 
-    // MARK: - Duplicated sessionId handling
+    // MARK: - A parent that never generated
 
-    @Test("a duplicated sessionId in sessions.jsonl still yields exactly one SessionNode, using the first record's fields")
-    func duplicatedSessionIdYieldsOneNode() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let writer = SessionIndexWriter(directory: dir)
-        let sessionId = ULID.generate()
-        let first = SessionIndexRecord(
-            sessionId: sessionId,
-            parentId: nil,
-            path: "first-path",
-            forkedAtEntryCount: 0,
-            slot: .standard,
-            model: "org/model-a",
-            instructions: nil,
-            grammar: nil,
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-        let duplicate = SessionIndexRecord(
-            sessionId: sessionId,
-            parentId: nil,
-            path: "second-path",
-            forkedAtEntryCount: 5,
-            slot: .standard,
-            model: "org/model-b",
-            instructions: nil,
-            grammar: nil,
-            createdAt: Date(timeIntervalSince1970: 1_700_000_500)
-        )
-        await writer.append(first)
-        await writer.append(duplicate)
-
-        let tree = try TranscriptTree.load(under: dir)
-        #expect(tree.roots.count == 1)
-        let node = try #require(tree.session(sessionId))
-        #expect(node.forkedAtEntryCount == 0)
-        #expect(node.directory == dir.appendingPathComponent("first-path", isDirectory: true))
-        #expect(node.children.isEmpty)
-    }
-
-    // MARK: - Index-less fallback
-
-    @Test("with no sessions.jsonl, the fallback reproduces the tree shape and per-session events; effectiveEntryEvents on a fork throws")
+    @Test("a fork whose root never generated still reconstructs: the root's sidecar identifies it with no transcript.jsonl of its own")
     @MainActor
-    func fallbackReproducesTreeShapeAndThrowsForForks() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
-
-        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
-
-        // Sanity: the index-backed tree has the shape we expect before we
-        // remove the index.
-        let indexedTree = try TranscriptTree.load(under: routerDir)
-        #expect(indexedTree.roots.map(\.id) == [root.id])
-
-        let indexFileURL = routerDir.appendingPathComponent("sessions.jsonl", isDirectory: false)
-        try FileManager.default.removeItem(at: indexFileURL)
-
-        let fallbackTree = try TranscriptTree.load(under: routerDir)
-
-        #expect(fallbackTree.roots.map(\.id) == [root.id])
-        #expect(Set(fallbackTree.children(of: root.id).map(\.id)) == Set([forkA.id, forkB.id]))
-        #expect(fallbackTree.children(of: forkA.id).map(\.id) == [grandfork.id])
-
-        // Per-session events still decode correctly without the index.
-        let forkAEvents = try fallbackTree.events(forSession: forkA.id)
-        #expect(forkAEvents.map(\.kind) == [.session, .prompt, .response])
-        #expect(forkAEvents.first { $0.kind == .prompt }?.text == "forkA-turn-1")
-
-        // forkedAtEntryCount is unknown in fallback mode, so a fork's
-        // effective transcript cannot be reconstructed.
-        #expect(fallbackTree.session(forkA.id)?.forkedAtEntryCount == nil)
-        #expect(throws: TranscriptTreeError.forkedAtEntryCountUnknown(forkA.id)) {
-            _ = try fallbackTree.effectiveEntryEvents(forSession: forkA.id)
-        }
-        #expect(throws: TranscriptTreeError.forkedAtEntryCountUnknown(grandfork.id)) {
-            _ = try fallbackTree.effectiveEntryEvents(forSession: grandfork.id)
-        }
-
-        // A root has no parent to truncate, so it is unaffected by the
-        // missing baseline even in fallback mode.
-        let rootEffective = try fallbackTree.effectiveEntryEvents(forSession: root.id)
-        #expect(rootEffective.map(\.kind) == [.prompt, .response])
-    }
-
-    // MARK: - Fallback surfaces sessions whose own parent never generated
-
-    @Test("the fallback surfaces a fork whose own root never generated (no transcript.jsonl for the root), rather than silently dropping it")
-    @MainActor
-    func fallbackSurfacesForkWhoseRootNeverGenerated() async throws {
+    func forkWhoseRootNeverGeneratedStillReconstructs() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -533,89 +454,37 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // root never calls respond(), so it never writes a session-meta line
-        // and therefore never gets a transcript.jsonl at all — only the fork
-        // (which does generate) leaves any on-disk trace of itself.
+        // and therefore never gets a transcript.jsonl at all. Its sidecar is
+        // still written at vending, so — unlike the transcript-only discovery
+        // this replaced — it is a fully identified node in the loaded tree.
         let root = profile.standard.makeSession()
         let fork = try await root.fork(workingDirectory: nil)
         _ = try await fork.respond(to: "fork-turn-1")
 
-        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
-        let indexFileURL = routerDir.appendingPathComponent("sessions.jsonl", isDirectory: false)
-        try FileManager.default.removeItem(at: indexFileURL)
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
 
-        let fallbackTree = try TranscriptTree.load(under: routerDir)
+        let rootNode = try #require(tree.session(root.id))
+        #expect(rootNode.parentId == nil)
+        #expect(tree.roots.map(\.id) == [root.id])
+        #expect(try tree.events(forSession: root.id).isEmpty)
 
-        // root left no discoverable trace at all — that is an accepted
-        // fallback limitation — but the fork must still surface, promoted to
-        // a root of the loaded (partial) tree, not silently dropped along
-        // with its own subtree.
-        #expect(fallbackTree.session(root.id) == nil)
-        let forkNode = try #require(fallbackTree.session(fork.id))
-        #expect(fallbackTree.roots.map(\.id) == [fork.id])
-        // The node still honestly reports the parent it was forked from, even
-        // though that parent is unresolvable in this loaded tree.
+        let forkNode = try #require(tree.session(fork.id))
         #expect(forkNode.parentId == root.id)
+        #expect(forkNode.sidecar.forkedAtEntryCount == 0)
 
-        let forkEvents = try fallbackTree.events(forSession: fork.id)
-        #expect(forkEvents.first { $0.kind == .prompt }?.text == "fork-turn-1")
-
-        // fork claims a parent (root.id) that cannot be resolved in this
-        // loaded tree, so its effective transcript cannot be honestly
-        // reconstructed — this must fail loudly, never silently return just
-        // fork's own turns as if that were its whole conversation.
-        #expect(throws: TranscriptTreeError.parentUnresolvable(fork.id)) {
-            _ = try fallbackTree.effectiveEntryEvents(forSession: fork.id)
-        }
+        // The fork's whole conversation reconstructs: its root contributed
+        // nothing, which is different from its root being unknown.
+        let effective = try tree.effectiveEntryEvents(forSession: fork.id)
+        #expect(effective.map(\.kind) == [.prompt, .response])
+        #expect(effective.first?.text == "fork-turn-1")
     }
 
-    // MARK: - Orphan with a known forkedAtEntryCount still fails loudly
+    // MARK: - A deleted sidecar fails loudly
 
-    @Test("effectiveEntryEvents throws parentUnresolvable for an index-loaded node whose parent record is missing, even though its own forkedAtEntryCount is known")
-    func effectiveEntryEventsThrowsForOrphanWithKnownForkedAtEntryCount() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let writer = SessionIndexWriter(directory: dir)
-        let missingParentId = ULID.generate()
-        let orphanId = ULID.generate()
-        // Only the child's own record is written — as if the parent's own
-        // index line was dropped by SessionIndexWriter's best-effort
-        // log-and-drop failure policy, while the child's own line wrote
-        // fine. `missingParentId` never appears as a record in this index.
-        let orphanRecord = SessionIndexRecord(
-            sessionId: orphanId,
-            parentId: missingParentId,
-            path: "orphan-path",
-            forkedAtEntryCount: 2,
-            slot: .standard,
-            model: "org/model-a",
-            instructions: nil,
-            grammar: nil,
-            createdAt: Date()
-        )
-        await writer.append(orphanRecord)
-
-        let tree = try TranscriptTree.load(under: dir)
-        let node = try #require(tree.session(orphanId))
-        #expect(node.parentId == missingParentId)
-        #expect(node.forkedAtEntryCount == 2)
-        // Promoted to a root of the loaded (partial) tree since its parent
-        // is unresolvable.
-        #expect(tree.roots.map(\.id) == [orphanId])
-
-        // A real, known cut point exists, but the ancestor data it would
-        // truncate is gone — that is a stronger reason to fail than "unknown
-        // count", not a reason to silently return partial data.
-        #expect(throws: TranscriptTreeError.parentUnresolvable(orphanId)) {
-            _ = try tree.effectiveEntryEvents(forSession: orphanId)
-        }
-    }
-
-    // MARK: - A present-but-empty sessions.jsonl still triggers the fallback
-
-    @Test("a present but empty sessions.jsonl (e.g. a partial write failure) still falls back to enumerating transcript.jsonl")
+    @Test("deleting a parent's session.json throws sidecarMissing naming that directory, rather than silently truncating its fork's conversation")
     @MainActor
-    func emptyIndexFileStillTriggersFallback() async throws {
+    func deletingAParentSidecarThrowsNamingItsDirectory() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -629,24 +498,192 @@ struct TranscriptTreeTests {
             recordingsDir: recordingsDir
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
+        let (root, forkA, _, _) = try await Self.buildBranchingTree(profile: profile)
 
         let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
-        let indexFileURL = routerDir.appendingPathComponent("sessions.jsonl", isDirectory: false)
-        // Simulate a dropped write that still left the file present (created,
-        // but its line never successfully appended) — the file exists but
-        // decodes to zero records, distinct from the file being missing
-        // entirely.
-        try Data().write(to: indexFileURL)
+        // Sanity: the tree loads, with the shape we expect, before the delete.
+        #expect(try TranscriptTree.load(under: routerDir).roots.map(\.id) == [root.id])
 
-        let fallbackTree = try TranscriptTree.load(under: routerDir)
+        let rootDirectory = try #require(TranscriptTree.load(under: routerDir).session(root.id))
+            .directory
+        try FileManager.default.removeItem(
+            at: rootDirectory.appendingPathComponent("session.json", isDirectory: false)
+        )
 
-        #expect(fallbackTree.roots.map(\.id) == [root.id])
-        #expect(Set(fallbackTree.children(of: root.id).map(\.id)) == Set([forkA.id, forkB.id]))
-        #expect(fallbackTree.children(of: forkA.id).map(\.id) == [grandfork.id])
-        // Recovered via the fallback, so the cut point is unknown, just like
-        // the missing-file fallback case.
-        #expect(fallbackTree.session(forkA.id)?.forkedAtEntryCount == nil)
+        // Loud, and specific about which directory is unreadable: silently
+        // promoting forkA to a root would make its truncated conversation read
+        // as its whole one.
+        #expect(throws: TranscriptTreeError.sidecarMissing(directory: rootDirectory)) {
+            _ = try TranscriptTree.load(under: routerDir)
+        }
+        _ = forkA
+    }
+
+    @Test(
+        "a session directory holding an undecodable session.json throws sidecarUnreadable naming it")
+    @MainActor
+    func undecodableSidecarThrowsNamingItsDirectory() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile.standard.makeSession()
+        _ = try await root.respond(to: "root-turn-1")
+
+        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        let rootDirectory = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
+        let sidecarURL = rootDirectory.appendingPathComponent("session.json", isDirectory: false)
+        try FileManager.default.removeItem(at: sidecarURL)
+        try Data("{ truncated".utf8).write(to: sidecarURL)
+
+        #expect(throws: TranscriptTreeError.sidecarUnreadable(directory: rootDirectory)) {
+            _ = try TranscriptTree.load(under: routerDir)
+        }
+    }
+
+    @Test("a transcript.jsonl with no session.json beside it throws sidecarMissing rather than being skipped")
+    func transcriptWithNoSidecarThrows() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sessionDirectory = dir.appendingPathComponent(
+            ULID.generate().description, isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        try Data().write(
+            to: sessionDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false))
+
+        #expect(throws: TranscriptTreeError.sidecarMissing(directory: sessionDirectory)) {
+            _ = try TranscriptTree.load(under: dir)
+        }
+    }
+
+    @Test(
+        "a session.json in a directory not named for a session id throws sessionDirectoryNotIdentified")
+    func sidecarInANonSessionDirectoryThrows() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // A session's id comes from its directory's name, so a sidecar
+        // somewhere else names no session at all.
+        let notASessionDirectory = dir.appendingPathComponent("scratch", isDirectory: true)
+        try SessionSidecar.write(
+            SessionSidecar(
+                slot: .standard,
+                model: "org/model-a",
+                context: 8_192,
+                instructions: nil,
+                grammar: nil,
+                recordingLevel: .full,
+                forkedAtEntryCount: nil,
+                profile: nil
+            ),
+            to: notASessionDirectory
+        )
+
+        #expect(
+            throws: TranscriptTreeError.sessionDirectoryNotIdentified(directory: notASessionDirectory)
+        ) {
+            _ = try TranscriptTree.load(under: dir)
+        }
+    }
+
+    // MARK: - Two directories claiming one session id
+
+    @Test("two session directories sharing one session id throw duplicateSessionId naming both, rather than trapping")
+    func duplicateSessionIdAcrossDirectoriesThrows() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // One session's directory copied under another — the shape an rsync or
+        // a hand-pasted tree produces. The filesystem cannot stop it (the two
+        // live at different depths), and every malformed-tree condition this
+        // loader meets must be a typed error naming the directories, never a
+        // trap.
+        let rootId = ULID.generate()
+        let duplicatedId = ULID.generate()
+        let rootDirectory = dir.appendingPathComponent(rootId.description, isDirectory: true)
+        let first = dir.appendingPathComponent(duplicatedId.description, isDirectory: true)
+        let second = rootDirectory.appendingPathComponent(duplicatedId.description, isDirectory: true)
+        try SessionSidecar.write(Self.sidecarFixture(forkedAtEntryCount: nil), to: rootDirectory)
+        try SessionSidecar.write(Self.sidecarFixture(forkedAtEntryCount: nil), to: first)
+        try SessionSidecar.write(Self.sidecarFixture(forkedAtEntryCount: 0), to: second)
+
+        #expect(
+            throws: TranscriptTreeError.duplicateSessionId(
+                id: duplicatedId,
+                directories: [first, second].sorted { $0.path < $1.path }
+            )
+        ) {
+            _ = try TranscriptTree.load(under: dir)
+        }
+    }
+
+    /// A sidecar with placeholder facts, for hand-built tree fixtures that only
+    /// care about the layout.
+    ///
+    /// - Parameter forkedAtEntryCount: The cut point to record, or `nil` for a
+    ///   root session.
+    /// - Returns: The sidecar to write.
+    private static func sidecarFixture(forkedAtEntryCount: Int?) -> SessionSidecar {
+        SessionSidecar(
+            slot: .standard,
+            model: "org/model-a",
+            context: 8_192,
+            instructions: nil,
+            grammar: nil,
+            recordingLevel: .full,
+            forkedAtEntryCount: forkedAtEntryCount,
+            profile: nil
+        )
+    }
+
+    // MARK: - A fork whose sidecar records no cut point
+
+    @Test("effectiveEntryEvents throws forkCutPointMissing for a nested session whose sidecar has no forkedAtEntryCount")
+    func effectiveEntryEventsThrowsWhenANestedSessionRecordsNoCutPoint() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        func sidecar(forkedAtEntryCount: Int?) -> SessionSidecar {
+            SessionSidecar(
+                slot: .standard,
+                model: "org/model-a",
+                context: 8_192,
+                instructions: nil,
+                grammar: nil,
+                recordingLevel: .full,
+                forkedAtEntryCount: forkedAtEntryCount,
+                profile: nil
+            )
+        }
+
+        let rootId = ULID.generate()
+        let childId = ULID.generate()
+        let rootDirectory = dir.appendingPathComponent(rootId.description, isDirectory: true)
+        let childDirectory = rootDirectory.appendingPathComponent(
+            childId.description, isDirectory: true)
+        try SessionSidecar.write(sidecar(forkedAtEntryCount: nil), to: rootDirectory)
+        // Nested under a parent, so it inherits — yet records no cut point
+        // saying how much. Only a hand-built tree can be in this state; a
+        // vended fork always records one.
+        try SessionSidecar.write(sidecar(forkedAtEntryCount: nil), to: childDirectory)
+
+        let tree = try TranscriptTree.load(under: dir)
+        #expect(try #require(tree.session(childId)).parentId == rootId)
+        #expect(
+            throws: TranscriptTreeError.forkCutPointMissing(session: childId, directory: childDirectory)
+        ) {
+            _ = try tree.effectiveEntryEvents(forSession: childId)
+        }
     }
 
     // MARK: - session/embedding exclusion from effectiveEntryEvents
@@ -662,7 +699,8 @@ struct TranscriptTreeTests {
         }
 
         let recorder = JSONLRecorder(directory: recordingsDir)
-        let router = Self.makeRouter(recorder: recorder, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let router = Self.makeRouter(
+            recorder: recorder, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile.standard.makeSession()

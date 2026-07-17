@@ -71,9 +71,9 @@ enum TranscriptDiffer {
     /// entry, not the whole sequence. Shared by
     /// ``MLXFoundationModelsContainer/makeSession(transcript:)`` (restoring a
     /// session's instructions from a persisted transcript) and
-    /// ``RecordingLanguageModelState``'s lazy ``SessionIndexRecord``
-    /// registration (deriving `instructions` from the first transcript this
-    /// handle's diff observes) — one place instead of two independently
+    /// ``RecordingLanguageModelState``'s lazy ``SessionSidecar`` write
+    /// (deriving `instructions` from the first transcript this handle's diff
+    /// observes) — one place instead of two independently
     /// re-deriving the same fact from a transcript's shape.
     ///
     /// - Parameter transcript: The transcript to inspect.

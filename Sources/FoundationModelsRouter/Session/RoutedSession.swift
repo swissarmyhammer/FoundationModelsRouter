@@ -154,7 +154,7 @@ extension RoutedSession {
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:indexPath:sessionIndexWriter:pendingIndexWrite:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sessionSidecarWriter:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -174,9 +174,7 @@ func makeRoutedSessionActor(
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
     persistedEntryCount: Int,
-    indexPath: String,
-    sessionIndexWriter: SessionIndexWriter?,
-    pendingIndexWrite: Task<Void, Never>? = nil
+    sessionSidecarWriter: SessionSidecarWriter?
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -195,9 +193,7 @@ func makeRoutedSessionActor(
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
         persistedEntryCount: persistedEntryCount,
-        indexPath: indexPath,
-        sessionIndexWriter: sessionIndexWriter,
-        pendingIndexWrite: pendingIndexWrite
+        sessionSidecarWriter: sessionSidecarWriter
     )
 }
 
@@ -287,31 +283,13 @@ actor RoutedSessionActor: RoutedSession {
     /// is never re-persisted into the child's own transcript.
     private var persistedEntryCount: Int
 
-    /// This session's recording directory, relative to the router root — the
-    /// session id alone for a root, or `<parent's indexPath>/<this session's id>`
-    /// for a fork. Mirrors ``recordingDirectory``'s own nesting so a fork can
-    /// build its child's relative path without needing ``recordingsRoot`` on
-    /// hand.
-    private nonisolated let indexPath: String
-
-    /// The session index writer this session's own creation record — and any
-    /// fork's — is appended through, or `nil` when the router has no durable
+    /// The sidecar writer any fork taken from this session writes its own
+    /// `session.json` through, or `nil` when the router has no durable
     /// transcripts root or is recording at ``RecordingLevel/off``.
-    private nonisolated let sessionIndexWriter: SessionIndexWriter?
-
-    /// The in-flight append of this session's own ``SessionIndexRecord``, or
-    /// `nil` once already durably written (every fork's own record is written
-    /// synchronously inside ``fork(workingDirectory:)`` before it returns, so a
-    /// fork never carries one).
     ///
-    /// A root session is born via ``RoutedModel/makeSession(instructions:workingDirectory:)``,
-    /// which is synchronous, so its record is appended fire-and-forget on an
-    /// unstructured `Task` at vending time. Every actor-isolated entry point
-    /// that could be externally observed (``fork(workingDirectory:)``,
-    /// ``generate(grammar:_:)``) awaits it first, so by the time any
-    /// interaction with the session completes, its own index record is
-    /// guaranteed durable — without making session vending itself `async`.
-    private nonisolated let pendingIndexWrite: Task<Void, Never>?
+    /// Inherited from the vending handle, so a fork's sidecar states the same
+    /// slot/model/context this session's does.
+    private nonisolated let sessionSidecarWriter: SessionSidecarWriter?
 
     /// Creates a session.
     ///
@@ -324,13 +302,8 @@ actor RoutedSessionActor: RoutedSession {
     ///   - persistedEntryCount: The baseline ``backend`` entry count
     ///     already persisted — `0` for a root session, or the parent's entry
     ///     count at fork time for a fork (see ``persistedEntryCount``).
-    ///   - indexPath: This session's recording directory, relative to the
-    ///     router root (see ``indexPath``).
-    ///   - sessionIndexWriter: The session index writer this session's record
-    ///     (and any fork's) is appended through, or `nil`.
-    ///   - pendingIndexWrite: The in-flight append of this session's own
-    ///     ``SessionIndexRecord``, or `nil` when already written (see
-    ///     ``pendingIndexWrite``).
+    ///   - sessionSidecarWriter: The sidecar writer any fork taken from this
+    ///     session writes its own `session.json` through, or `nil`.
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -348,9 +321,7 @@ actor RoutedSessionActor: RoutedSession {
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
         persistedEntryCount: Int,
-        indexPath: String,
-        sessionIndexWriter: SessionIndexWriter?,
-        pendingIndexWrite: Task<Void, Never>? = nil
+        sessionSidecarWriter: SessionSidecarWriter?
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -368,9 +339,7 @@ actor RoutedSessionActor: RoutedSession {
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
-        self.indexPath = indexPath
-        self.sessionIndexWriter = sessionIndexWriter
-        self.pendingIndexWrite = pendingIndexWrite
+        self.sessionSidecarWriter = sessionSidecarWriter
     }
 
     /// Releases this session's fork-admission permit when it is deallocated, so a
@@ -475,12 +444,6 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     func fork(workingDirectory: URL?) async throws -> RoutedSession {
-        // If this session is itself a root awaiting its own fire-and-forget
-        // index write (see ``pendingIndexWrite``), wait for it first: by the
-        // time this call returns, both this session's own record and the
-        // child's (written below) are durable.
-        await pendingIndexWrite?.value
-
         // Admission: at most the router's `maxConcurrentForks` fork sessions over
         // this model may be in flight at once. Past the ceiling this suspends
         // (FIFO) until an outstanding fork is released and frees its slot. The
@@ -515,31 +478,18 @@ actor RoutedSessionActor: RoutedSession {
         // parent chain — the child's `workingDirectory` override never moves it.
         let childRecordingDirectory = recordingDirectory
             .appendingPathComponent(childId.description, isDirectory: true)
-        // `indexPath` mirrors the same nesting relative to the router root,
-        // built purely from ids rather than the filesystem path — no need for
-        // `recordingsRoot` on hand.
-        let childIndexPath = "\(indexPath)/\(childId.description)"
-
-        // The child's own record is appended synchronously, before `fork()`
-        // returns — `entryCountAtFork`, `childId`, `id` (as `parentId`),
-        // `childIndexPath`, and the inherited `instructions`/`grammar` are all
-        // in hand here, and best-effort failure (log-and-drop) never surfaces
-        // into this call.
-        if let sessionIndexWriter {
-            await sessionIndexWriter.append(
-                SessionIndexRecord(
-                    sessionId: childId,
-                    parentId: id,
-                    path: childIndexPath,
-                    forkedAtEntryCount: entryCountAtFork,
-                    slot: slot,
-                    model: model,
-                    instructions: instructions,
-                    grammar: grammar?.source,
-                    createdAt: Date()
-                )
-            )
-        }
+        // The child's sidecar is written here, before `fork()` returns and so
+        // before the child can record anything: `entryCountAtFork` and the
+        // inherited `instructions`/`grammar` are all in hand, and best-effort
+        // failure (log-and-drop) never surfaces into this call. The cut point
+        // written here is the very value the child's own diff baseline starts
+        // at, below — one fact, read twice, never two facts that can disagree.
+        sessionSidecarWriter?.write(
+            instructions: instructions,
+            grammar: grammar?.source,
+            forkedAtEntryCount: entryCountAtFork,
+            to: childRecordingDirectory
+        )
 
         return makeRoutedSessionActor(
             profile: profile,
@@ -558,11 +508,7 @@ actor RoutedSessionActor: RoutedSession {
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true,
             persistedEntryCount: entryCountAtFork,
-            indexPath: childIndexPath,
-            sessionIndexWriter: sessionIndexWriter,
-            // Already written above, synchronously — the child carries no
-            // pending write of its own.
-            pendingIndexWrite: nil
+            sessionSidecarWriter: sessionSidecarWriter
         )
     }
 
@@ -599,12 +545,6 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar? = nil,
         _ body: () async throws -> String
     ) async throws -> String {
-        // If this session is itself a root awaiting its own fire-and-forget
-        // index write (see ``pendingIndexWrite``), wait for it first, so any
-        // interaction with the session guarantees its own index record is
-        // durable by the time this call returns.
-        await pendingIndexWrite?.value
-
         // Acquire the serial permit for the whole bracket, releasing it on every
         // path with a `defer` (the recording bracket stays in this actor's
         // isolation region, so the gated work is not sent across an isolation
@@ -672,7 +612,8 @@ actor RoutedSessionActor: RoutedSession {
         usageBefore: (input: Int, output: Int)?
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?) {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
-        let diffIncludedResponse = await recordTranscriptDelta(grammar: grammar, since: since, usage: usage)
+        let diffIncludedResponse = await recordTranscriptDelta(
+            grammar: grammar, since: since, usage: usage)
         return (diffIncludedResponse, usage)
     }
 

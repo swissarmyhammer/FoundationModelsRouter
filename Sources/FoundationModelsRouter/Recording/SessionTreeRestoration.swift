@@ -20,21 +20,13 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// (recording to memory/none), so there is nothing on disk to restore.
     case noDurableRecordingsRoot
 
-    /// `session`'s ``SessionIndexRecord`` has a `nil` ``SessionIndexRecord/slot``
-    /// or ``SessionIndexRecord/model`` — either the record was never
-    /// stamped with one (should not happen for a session vended through the
-    /// normal `makeSession`/`fork` paths), or no `sessions.jsonl` exists at
-    /// all and the tree was loaded through ``TranscriptTree/load(under:)``'s
-    /// index-less fallback, which cannot recover either field.
-    case missingSlotOrModel(session: ULID)
-
-    /// `session`'s recorded ``SessionIndexRecord/slot`` has no corresponding
+    /// `session`'s recorded ``SessionSidecar/slot`` has no corresponding
     /// generation handle on the restoring profile — today, only
     /// ``ModelSlot/embedding``, since a session is only ever vended from a
     /// ``ModelSlot/standard``/``ModelSlot/flash`` generation handle.
     case slotNotInProfile(session: ULID, slot: ModelSlot)
 
-    /// `session`'s recorded ``SessionIndexRecord/model`` does not match the
+    /// `session`'s recorded ``SessionSidecar/model`` does not match the
     /// model resident in `slot` on the restoring profile — the recording was
     /// made against a different model than the one now loaded for that slot.
     case modelMismatch(session: ULID, slot: ModelSlot, recorded: ModelRef, resident: ModelRef)
@@ -49,11 +41,6 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
                 """
         case .noDurableRecordingsRoot:
             return "This model has no durable transcripts root (recording to memory/none); there is nothing on disk to restore."
-        case .missingSlotOrModel(let session):
-            return """
-                Session \(session.description)'s index record has no recorded slot/model, so its \
-                container cannot be selected for restoration.
-                """
         case .slotNotInProfile(let session, let slot):
             return """
                 Session \(session.description) recorded slot \(slot.rawValue), which has no generation \
@@ -125,23 +112,22 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// on a restored node appends to its existing `transcript.jsonl` rather than
     /// starting a new one.
     ///
-    /// Each node's model/slot is resolved from its own ``SessionIndexRecord``
+    /// Each node's model/slot is resolved from its own ``SessionSidecar``
     /// against *this call's* owning profile — not necessarily this handle's own
     /// slot, since a tree's nodes may in principle be recorded against either
     /// generation slot: `.standard` records resolve through the owning
     /// profile's ``LanguageModelProfile/standard``, `.flash` through
-    /// ``LanguageModelProfile/flash``. A `nil` slot/model, a slot with no
-    /// generation handle, or a resident model that does not match the
-    /// recorded one is a typed error naming the offending session — never a
-    /// crash. Each restored session's `persistedEntryCount` starts at its
+    /// ``LanguageModelProfile/flash``. A slot with no generation handle, or a
+    /// resident model that does not match the recorded one, is a typed error
+    /// naming the offending session — never a crash. Each restored session's `persistedEntryCount` starts at its
     /// reconstructed effective-transcript entry count, so its first live turn
     /// persists only what is genuinely new. `instructions`/``Grammar`` are
-    /// rehydrated from the node's own ``SessionIndexRecord``, so a restored
+    /// rehydrated from the node's own ``SessionSidecar``, so a restored
     /// guided session constrains its next turn as the original did — for
     /// ``Grammar/jsonSchema(_:)``.
     ///
     /// **Known limitation: the `.ebnf` grammar case.**
-    /// ``SessionIndexRecord/grammar`` persists only the grammar's `source`
+    /// ``SessionSidecar/grammar`` persists only the grammar's `source`
     /// string, not which ``Grammar`` case it came from (``Grammar/jsonSchema(_:)``
     /// vs ``Grammar/ebnf(_:)`` share the same on-disk representation — see
     /// that type's `source`), so rehydration always reconstructs
@@ -159,13 +145,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// EBNF is the only place this is currently observable (see
     /// `SessionTreeRestorationTests.restoredEbnfGrammarReconstructsAsJSONSchema`).
     ///
-    /// **No session-index re-append.** This never calls
-    /// ``SessionIndexWriter/append(_:)`` — every node's record already exists
-    /// in `sessions.jsonl` from when the tree was originally created (root vend
-    /// and each fork), and restoration only *reads* that index. A restored
-    /// session's own `sessionIndexWriter` is still threaded through, so a
-    /// brand-new fork taken from a restored session afterward appends normally,
-    /// exactly like any other fork.
+    /// **No sidecar rewrite.** This never writes a ``SessionSidecar`` — every
+    /// node's sidecar was written when the tree was originally created (root
+    /// vend and each fork), it is write-once, and restoration only *reads* it.
+    /// A restored session's own `sessionSidecarWriter` is still threaded
+    /// through, so a brand-new fork taken from a restored session afterward
+    /// writes its own sidecar normally, exactly like any other fork.
     ///
     /// **Fork-admission gates.** Every restored node is constructed with
     /// `holdsAdmissionPermit: false` and shares this profile's normal
@@ -202,7 +187,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             throw SessionTreeRestorationError.noDurableRecordingsRoot
         }
 
-        let routerDirectory = recordingsRoot.appendingPathComponent(routerId.description, isDirectory: true)
+        let routerDirectory = recordingsRoot.appendingPathComponent(
+            routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         guard let rootNode = tree.session(rootId) else {
             throw TranscriptTreeError.sessionNotFound(rootId)
@@ -211,15 +197,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             throw SessionTreeRestorationError.notARootSession(rootId)
         }
 
-        let recordsById = Dictionary(
-            uniqueKeysWithValues: try SessionIndexWriter.read(under: routerDirectory).map { ($0.sessionId, $0) }
-        )
-
         var sessionsById: [ULID: RoutedSession] = [:]
         func restore(_ node: SessionNode) throws -> RoutedSession {
-            guard let record = recordsById[node.id], let slot = record.slot, let model = record.model else {
-                throw SessionTreeRestorationError.missingSlotOrModel(session: node.id)
-            }
+            let slot = node.sidecar.slot
+            let model = node.sidecar.model
             let routedLLM: RoutedLLM
             switch slot {
             case .standard:
@@ -240,13 +221,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
             let backend = routedLLM.container.makeSession(transcript: transcript)
-            // `SessionIndexRecord.grammar` is only the grammar's `source`
+            // `SessionSidecar.grammar` is only the grammar's `source`
             // string — it does not distinguish `.jsonSchema(_:)` from
             // `.ebnf(_:)`, which share that representation — so a session
             // originally guided by `.ebnf(_:)` restores under the
             // `.jsonSchema` case instead (see this function's doc comment,
             // "Known limitation: `.ebnf` grammar case").
-            let grammar = record.grammar.map(Grammar.jsonSchema)
+            let grammar = node.sidecar.grammar.map(Grammar.jsonSchema)
 
             let session = makeRoutedSessionActor(
                 profile: owningProfile,
@@ -259,15 +240,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 slot: slot,
                 model: model,
                 recorder: routedLLM.recorder,
-                instructions: record.instructions,
+                instructions: node.sidecar.instructions,
                 grammar: grammar,
                 serialGate: routedLLM.serialGate,
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,
                 persistedEntryCount: transcript.count,
-                indexPath: record.path,
-                sessionIndexWriter: routedLLM.sessionIndexWriter,
-                pendingIndexWrite: nil
+                sessionSidecarWriter: routedLLM.sessionSidecarWriter
             )
             sessionsById[node.id] = session
             for child in node.children {

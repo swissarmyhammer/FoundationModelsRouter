@@ -131,7 +131,8 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
         /// executor with, and builds the wrapped model's own executor once.
         public init(configuration: Configuration) throws {
             self.state = configuration.state
-            self.innerRespond = try RecordingLanguageModelState.makePassthrough(wrapped: configuration.state.wrapped)
+            self.innerRespond = try RecordingLanguageModelState.makePassthrough(
+                wrapped: configuration.state.wrapped)
         }
 
         /// Runs this handle's diff-and-record chokepoint, then passes the
@@ -182,11 +183,9 @@ actor RecordingLanguageModelState {
     /// ``RoutedSessionActor`` acquires, so generation on this handle and on
     /// any ``RoutedSession`` over the same model serialize together.
     nonisolated let serialGate: AsyncSemaphore
-    /// The session index writer this handle's own creation record is
-    /// appended through, or `nil`.
-    nonisolated let sessionIndexWriter: SessionIndexWriter?
-    /// This handle's recording directory, relative to the router root.
-    nonisolated let indexPath: String
+    /// The sidecar writer this handle's own `session.json` is written
+    /// through, or `nil`.
+    nonisolated let sessionSidecarWriter: SessionSidecarWriter?
     /// The raw model this handle passes generation straight through to.
     nonisolated let wrapped: any LanguageModel
     /// The owning profile, retained strongly so the resident models this
@@ -195,16 +194,17 @@ actor RecordingLanguageModelState {
     nonisolated let profile: LanguageModelProfile
     /// The span id of the session this handle resumed from, or `nil` for a
     /// fresh (non-resuming) handle — stamped onto every event this handle
-    /// records and into its own ``SessionIndexRecord``, mirroring
-    /// ``RoutedSessionActor``'s own `parentId`.
+    /// records, mirroring ``RoutedSessionActor``'s own `parentId`. It is not
+    /// written into the sidecar: the handle's directory nests under the
+    /// resumed session's, which is what states the lineage on disk.
     nonisolated let parentId: ULID?
     /// How many of ``parentId``'s effective entry-kind events belong to this
-    /// handle's own effective transcript — `0` for a fresh handle, or the
-    /// resumed session's reconstructed transcript entry count for one born
-    /// via ``RoutedModel/makeLanguageModel(resuming:registry:)``. Recorded
-    /// verbatim into this handle's own ``SessionIndexRecord``, mirroring
-    /// ``SessionIndexRecord/forkedAtEntryCount``.
-    nonisolated let forkedAtEntryCount: Int
+    /// handle's own effective transcript — `nil` for a fresh handle, which
+    /// inherits nothing, or the resumed session's reconstructed transcript
+    /// entry count for one born via
+    /// ``RoutedModel/makeLanguageModel(resuming:registry:)``. Recorded
+    /// verbatim as this handle's ``SessionSidecar/forkedAtEntryCount``.
+    nonisolated let forkedAtEntryCount: Int?
 
     /// The last-seen transcript snapshot every diff runs against; updated
     /// after each successful diff (see ``diffAndRecord(current:)``). Primed
@@ -217,12 +217,11 @@ actor RecordingLanguageModelState {
     /// recorded yet — mirrors ``RoutedSessionActor``'s own
     /// `didRecordSessionMeta`.
     private var didRecordSessionMeta = false
-    /// Whether this handle's own `SessionIndexRecord` has been registered yet
-    /// — lazily, on first use, unlike ``RoutedSession``'s eager
-    /// fire-and-forget registration at creation, since minting a handle via
-    /// ``RoutedModel/makeLanguageModel()`` does no I/O until it is actually
-    /// driven.
-    private var didRegisterSessionIndex = false
+    /// Whether this handle's own sidecar has been written yet — lazily, on
+    /// first use, unlike ``RoutedSession``'s eager write at creation, since
+    /// minting a handle via ``RoutedModel/makeLanguageModel()`` does no I/O
+    /// until it is actually driven.
+    private var didWriteSidecar = false
 
     /// Creates a handle's per-call state.
     ///
@@ -234,10 +233,8 @@ actor RecordingLanguageModelState {
     ///   - model: The concrete model reference.
     ///   - recorder: The recorder every diffed event is appended through.
     ///   - serialGate: The owning model's shared serial generation gate.
-    ///   - sessionIndexWriter: The session index writer this handle's own
-    ///     creation record is appended through, or `nil`.
-    ///   - indexPath: This handle's recording directory, relative to the
-    ///     router root.
+    ///   - sessionSidecarWriter: The sidecar writer this handle's own
+    ///     `session.json` is written through, or `nil`.
     ///   - wrapped: The raw model this handle passes generation straight
     ///     through to.
     ///   - profile: The owning profile, retained strongly for this handle's
@@ -245,8 +242,8 @@ actor RecordingLanguageModelState {
     ///   - parentId: The span id of the session this handle resumed from, or
     ///     `nil` for a fresh (non-resuming) handle.
     ///   - forkedAtEntryCount: How many of `parentId`'s effective entry-kind
-    ///     events belong to this handle's own effective transcript — `0` for
-    ///     a fresh handle.
+    ///     events belong to this handle's own effective transcript — `nil`
+    ///     for a fresh handle.
     ///   - initialTranscript: The transcript to prime ``lastSeen`` with —
     ///     the resumed session's own reconstructed transcript for a handle
     ///     born via ``RoutedModel/makeLanguageModel(resuming:registry:)``, or
@@ -259,12 +256,11 @@ actor RecordingLanguageModelState {
         model: ModelRef,
         recorder: any TranscriptRecorder,
         serialGate: AsyncSemaphore,
-        sessionIndexWriter: SessionIndexWriter?,
-        indexPath: String,
+        sessionSidecarWriter: SessionSidecarWriter?,
         wrapped: any LanguageModel,
         profile: LanguageModelProfile,
         parentId: ULID? = nil,
-        forkedAtEntryCount: Int = 0,
+        forkedAtEntryCount: Int? = nil,
         initialTranscript: Transcript = Transcript(entries: [])
     ) {
         self.routerId = routerId
@@ -274,8 +270,7 @@ actor RecordingLanguageModelState {
         self.model = model
         self.recorder = recorder
         self.serialGate = serialGate
-        self.sessionIndexWriter = sessionIndexWriter
-        self.indexPath = indexPath
+        self.sessionSidecarWriter = sessionSidecarWriter
         self.wrapped = wrapped
         self.profile = profile
         self.parentId = parentId
@@ -322,7 +317,7 @@ actor RecordingLanguageModelState {
         serialGate.signal()
     }
 
-    /// Registers this handle's session-index record on first use, then
+    /// Writes this handle's sidecar on first use, then
     /// acquires the shared serial gate — without releasing it — and records
     /// the session meta event lazily and diffs `transcript` against
     /// last-seen, appending whatever is new. The shared chokepoint behind
@@ -336,7 +331,7 @@ actor RecordingLanguageModelState {
     /// - Parameter transcript: The transcript to register/diff against
     ///   last-seen.
     private func enterGateAndDiff(_ transcript: Transcript) async {
-        await registerSessionIndexRecordIfNeeded(transcript: transcript)
+        writeSidecarIfNeeded(transcript: transcript)
         await serialGate.wait()
         await recordSessionMetaIfNeeded()
         await diffAndRecord(current: transcript)
@@ -389,36 +384,33 @@ actor RecordingLanguageModelState {
         didRecordSessionMeta = true
         await recorder.append(
             TranscriptEvent.Partial(
-                routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model, kind: .session
+                routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model,
+                kind: .session
             ),
             to: recordingDirectory
         )
     }
 
-    /// Registers this handle's own ``SessionIndexRecord`` in `sessions.jsonl`
-    /// the first time this handle is used — lazily, unlike ``RoutedSession``'s
-    /// eager fire-and-forget registration at creation (see
-    /// ``didRegisterSessionIndex``).
+    /// Writes this handle's own ``SessionSidecar`` into its recording
+    /// directory the first time this handle is used — lazily, unlike
+    /// ``RoutedSession``'s eager write at creation (see ``didWriteSidecar``),
+    /// and always before the first event is recorded, so the directory a
+    /// transcript lands in already states what produced it.
     ///
     /// - Parameter transcript: The transcript observed at first use, mined
-    ///   for a leading `.instructions` entry to populate the record's
+    ///   for a leading `.instructions` entry to populate the sidecar's
     ///   `instructions` field the same way ``RoutedSession`` populates it.
-    private func registerSessionIndexRecordIfNeeded(transcript: Transcript) async {
-        guard !didRegisterSessionIndex else { return }
-        didRegisterSessionIndex = true
-        guard let sessionIndexWriter else { return }
-        await sessionIndexWriter.append(
-            SessionIndexRecord(
-                sessionId: sessionId,
-                parentId: parentId,
-                path: indexPath,
-                forkedAtEntryCount: forkedAtEntryCount,
-                slot: slot,
-                model: model,
-                instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
-                grammar: nil,
-                createdAt: Date()
-            )
+    private func writeSidecarIfNeeded(transcript: Transcript) {
+        guard !didWriteSidecar else { return }
+        didWriteSidecar = true
+        sessionSidecarWriter?.write(
+            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+            // A handle built over `container.languageModel` never constrains
+            // generation itself — the caller drives its own
+            // `LanguageModelSession` — so there is no grammar to record.
+            grammar: nil,
+            forkedAtEntryCount: forkedAtEntryCount,
+            to: recordingDirectory
         )
     }
 

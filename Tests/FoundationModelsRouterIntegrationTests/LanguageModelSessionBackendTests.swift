@@ -75,7 +75,8 @@ struct LanguageModelSessionBackendIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        _ = try await backend.respond(to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: 64)
+        _ = try await backend.respond(
+            to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: 64)
         let entriesAfterFirstTurn = backend.session.transcript.count
         #expect(entriesAfterFirstTurn > 0)
 
@@ -134,7 +135,9 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     // MARK: - Transcript-seeded factory (task bkhj6ya)
 
-    @Test("makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript")
+    @Test(
+        "makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript"
+    )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
         let container = try await makeContainer()
         let prior = try #require(
@@ -150,7 +153,8 @@ struct LanguageModelSessionBackendIntegrationTests {
         // to rebuild a root session from a persisted transcript, with no live
         // parent backend/session involved at all.
         let restored = try #require(
-            container.makeSession(transcript: prior.session.transcript) as? MLXFoundationModelsSessionBackend
+            container.makeSession(transcript: prior.session.transcript)
+                as? MLXFoundationModelsSessionBackend
         )
 
         let reply = try await restored.respond(
@@ -162,7 +166,9 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     // MARK: - Transcript growth and fork seeding (exact counts)
 
-    @Test("the transcript grows by exactly two entries (prompt + response) per turn across two respond() calls")
+    @Test(
+        "the transcript grows by exactly two entries (prompt + response) per turn across two respond() calls"
+    )
     func transcriptGrowsByTwoEntriesPerTurn() async throws {
         let container = try await makeContainer()
         // No instructions: an instructions-carrying session's transcript opens
@@ -254,9 +260,11 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
 
         let recordingsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LanguageModelSessionBackendTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "LanguageModelSessionBackendTests-\(UUID().uuidString)", isDirectory: true)
         let cacheDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LanguageModelSessionBackendTests-cache-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "LanguageModelSessionBackendTests-cache-\(UUID().uuidString)", isDirectory: true)
 
         // `Router.recorder` is actor-isolated; constructing the recorder
         // directly and handing the same instance to both the router and every
@@ -266,7 +274,8 @@ struct LanguageModelSessionBackendIntegrationTests {
         let router = Router(cacheDir: cacheDir, recorder: recorder)
 
         func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: sessionBackendTinyModel, considered: [])
+            SlotResolution(
+                slot: slot, remainingBudgetBytes: 0, chosen: sessionBackendTinyModel, considered: [])
         }
         let standard = RoutedLLM(
             slot: .standard,
@@ -329,8 +338,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
-            indexPath: sessionId.description,
-            sessionIndexWriter: nil
+            sessionSidecarWriter: nil
         )
 
         return ChokepointHarness(
@@ -344,7 +352,8 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     /// Decodes every event from `harness`'s session directory's `transcript.jsonl`.
     private func recordedEvents(from harness: ChokepointHarness) throws -> [TranscriptEvent] {
-        let fileURL = harness.recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
+        let fileURL = harness.recordingDirectory.appendingPathComponent(
+            "transcript.jsonl", isDirectory: false)
         let text = try String(contentsOf: fileURL, encoding: .utf8)
         let decoder = JSONDecoder()
         return try text.split(separator: "\n").map {
@@ -356,7 +365,8 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// after one live turn, what ``RoutedSessionActor``'s snapshot-diff
     /// persisted matches — kind for kind, in order — what the live
     /// `LanguageModelSession`'s own `transcript` actually accumulated.
-    @Test("recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
+    @Test(
+        "recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
     func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
         let harness = try await makeChokepointHarness()
         defer {
@@ -373,7 +383,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         // of the corresponding real `Transcript.Entry` the live session
         // actually accumulated — the whole point of snapshot-diff persistence.
         let recordedEntryKinds = recorded.filter { $0.kind != .session }.map(\.kind)
-        let liveEntryKinds = harness.backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
+        let liveEntryKinds = harness.backend.session.transcript.map {
+            TranscriptEntryMapper.event(from: $0).kind
+        }
         #expect(recordedEntryKinds == liveEntryKinds)
         #expect(!recordedEntryKinds.isEmpty)
     }
@@ -383,7 +395,9 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// instead of `respond(to:maxTokens:)`: both generation entry points funnel
     /// through the same snapshot-diff chokepoint, so the fidelity invariant
     /// must hold identically for the streaming path against a real model too.
-    @Test("recorded entry kinds match the real session.transcript kinds one-for-one after a live streaming turn")
+    @Test(
+        "recorded entry kinds match the real session.transcript kinds one-for-one after a live streaming turn"
+    )
     func recordedEntryKindsMatchSessionTranscriptKindsStreaming() async throws {
         let harness = try await makeChokepointHarness()
         defer {
@@ -392,7 +406,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         }
 
         var collected = ""
-        for try await chunk in await harness.session.streamResponse(to: "Say 'hi' briefly.", maxTokens: 64) {
+        for try await chunk in await harness.session.streamResponse(
+            to: "Say 'hi' briefly.", maxTokens: 64)
+        {
             collected += chunk
         }
         #expect(!collected.isEmpty)
@@ -400,7 +416,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         let recorded = try recordedEvents(from: harness)
 
         let recordedEntryKinds = recorded.filter { $0.kind != .session }.map(\.kind)
-        let liveEntryKinds = harness.backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
+        let liveEntryKinds = harness.backend.session.transcript.map {
+            TranscriptEntryMapper.event(from: $0).kind
+        }
         #expect(recordedEntryKinds == liveEntryKinds)
         #expect(!recordedEntryKinds.isEmpty)
     }
@@ -468,7 +486,8 @@ struct LanguageModelSessionBackendIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        _ = try await backend.respond(to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: 64)
+        _ = try await backend.respond(
+            to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: 64)
         let turn1Usage = backend.session.usage
 
         // Nothing could have been cached before the very first turn ever ran.
@@ -480,7 +499,8 @@ struct LanguageModelSessionBackendIntegrationTests {
         // instructions entry) plus its own generated response — becomes part
         // of the growing transcript turn 2 sends as input, and should now be
         // served from cache rather than recomputed.
-        let turn1ProcessedTokenCount = turn1Usage.input.totalTokenCount + turn1Usage.output.totalTokenCount
+        let turn1ProcessedTokenCount =
+            turn1Usage.input.totalTokenCount + turn1Usage.output.totalTokenCount
 
         _ = try await backend.respond(
             to: "What is my favorite color? Answer with just the color, lowercase.",
@@ -526,7 +546,8 @@ struct LanguageModelSessionBackendIntegrationTests {
         // real speed-up (if the cache is working) is more likely to be
         // visible above run-to-run noise on a tiny model.
         let longInstructions = String(
-            repeating: "You are a careful, terse assistant who always answers in as few words as possible. ",
+            repeating:
+                "You are a careful, terse assistant who always answers in as few words as possible. ",
             count: 40
         )
         let backend = try #require(

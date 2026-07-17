@@ -731,12 +731,14 @@ parent's, so the path *is* the fork tree:
 ```
 recordings/
   01J…ROUTER/
-    manifest.json                 # router config, profiles resolved, start/end
     01J…A/                        # root session (parentID = nil)
+      session.json                # A's write-once facts + the run's resolved profile
       transcript.jsonl            # A's turns; first line is a `session` meta event
       01J…B/                      # fork of A
+        session.json              # B's facts, incl. its forkedAtEntryCount cut point
         transcript.jsonl
         01J…C/                    # fork of B
+          session.json
           transcript.jsonl
 ```
 
@@ -828,8 +830,8 @@ willSet without payloads and out of band with the serial gate, while the post-tu
 observes exactly the settled state, in order, with no reentrancy hazards. A fork's baseline
 starts at *its parent's entry count at fork time* (the fork copies the parent transcript),
 so inherited history is never re-persisted — and the same number is recorded as the fork's
-cut point in the session index (below), making the diff baseline and the lineage
-reconstruction rule one fact, not two.
+cut point in its own `session.json` sidecar (below), making the diff baseline and the
+lineage reconstruction rule one fact, not two.
 
 `LanguageModelSessionBackend` grows one requirement to make this possible —
 `transcriptEntries() -> [Transcript.Entry]` (today only the concrete
@@ -870,23 +872,29 @@ not carry — they remain recorder-stamped. A failed turn still records a bodyle
 appended before failing — which is precisely what snapshot-diffing captures that
 string-bracketing never could.
 
-**Retrieval & the fork hierarchy as first-class data.** Today the lineage is only implicit
-in directory nesting, and the only query is "everything under this router, flattened"
-(`MergedTranscript.merged(under:)`). Two additions:
+**Retrieval & the fork hierarchy as first-class data.** The only query used to be
+"everything under this router, flattened" (`MergedTranscript.merged(under:)`). Two
+additions:
 
-- **A session index.** `recordings/<routerId>/sessions.jsonl` gains one appended record per
-  session at creation — `{sessionId, parentId, path, forkedAtEntryCount, slot, model,
-  createdAt}` — written from the two places that know it: root vending and
-  `fork(workingDirectory:)`. Appends are best-effort JSONL like the transcript itself (no
-  read-modify-write). The index makes lookup by `ULID` O(index) instead of O(walk every
-  file), and `forkedAtEntryCount` records where the child's inherited history ends.
-- **`TranscriptTree`.** Loads the index (falling back to a directory walk plus per-event
-  `parentId` for pre-index recordings) and exposes the hierarchy as data: the tree of
-  sessions under a router, `children(of:)`, `events(forSession:)` (that session's own
-  delta), and `effectiveEntryEvents(forSession:)` — the session's *whole effective
-  conversation*, computed recursively as the parent's effective entries truncated to
-  `forkedAtEntryCount` plus the session's own, exactly mirroring what its live `Transcript`
-  held.
+- **A per-session sidecar.** Each session's own directory gains a **write-once**
+  `session.json` at creation — `{slot, model, context, instructions, grammar,
+  recordingLevel, forkedAtEntryCount}`, plus the run's resolved-profile facts on a root —
+  written from the places that know them: root vending and `fork(workingDirectory:)`. It is
+  written *before* any transcript event, so a transcript never exists without the facts to
+  interpret it. Nothing denormalized is recorded: the lineage is the directory nesting and
+  the creation time is the session ULID, so neither is restated. `forkedAtEntryCount` is the
+  fork's own diff baseline — the cut point and the baseline are one fact, not two. Every
+  file on disk is therefore write-once (`session.json`) or append-only
+  (`transcript.jsonl`), which is what lets a recording tree be checked in.
+- **`TranscriptTree`.** Reads the layout itself — every directory holding a `session.json`
+  is a session, its directory name is its id, the session directory it nests under is its
+  parent — and exposes the hierarchy as data: the tree of sessions under a router,
+  `children(of:)`, `events(forSession:)` (that session's own delta), and
+  `effectiveEntryEvents(forSession:)` — the session's *whole effective conversation*,
+  computed recursively as the parent's effective entries truncated to `forkedAtEntryCount`
+  plus the session's own, exactly mirroring what its live `Transcript` held. A session
+  directory with a missing or undecodable sidecar is a loud error naming that directory,
+  never a silently dropped node.
 
 **Reconstruction end-to-end — rooted at the root session.** `effectiveTranscript(forSession:)`
 maps the effective entry payloads back through the public initializers into

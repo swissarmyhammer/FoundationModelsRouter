@@ -47,7 +47,7 @@ private let sessionTreeRestorationTinyModel: ModelRef = "mlx-community/SmolLM-13
 /// 6. Restore the whole tree, passing only the root session's id.
 /// 7. Assert the restored tree matches: structure, each node's own recorded
 ///    turns (via the reconstructed effective entry counts, unchanged from
-///    what step 3 observed), and an unchanged `sessions.jsonl`.
+///    what step 3 observed), and an unchanged root `session.json`.
 /// 8. Drive a **new** live turn on a restored node — the deepest one, the
 ///    grandfork — asking for the earlier fact, asserting the response
 ///    recalls it: the proof that `LanguageModelSession(transcript:)` seeded
@@ -167,6 +167,18 @@ struct SessionTreeRestorationIntegrationTests {
         }
     }
 
+    /// A root session's own sidecar file, under a router's recording root.
+    ///
+    /// - Parameters:
+    ///   - routerDirectory: The router's recording root.
+    ///   - rootId: The root session's span id, which names its directory.
+    /// - Returns: The URL of that session's `session.json`.
+    private static func rootSidecarURL(routerDirectory: URL, rootId: ULID) -> URL {
+        routerDirectory
+            .appendingPathComponent(rootId.description, isDirectory: true)
+            .appendingPathComponent("session.json", isDirectory: false)
+    }
+
     /// The ids and observations ``driveOriginalTree(cacheDir:recordingsDir:)``
     /// hands back once every in-memory session it built has gone out of scope.
     private struct OriginalTree {
@@ -175,8 +187,9 @@ struct SessionTreeRestorationIntegrationTests {
         let forkAId: ULID
         let forkBId: ULID
         let grandforkId: ULID
-        /// `sessions.jsonl`'s raw bytes as of just before restoration.
-        let sessionsIndexBytes: Data
+        /// The root session's write-once `session.json` bytes as of just
+        /// before restoration.
+        let rootSidecarBytes: Data
         /// Each node's effective entry-kind event count as of just before
         /// restoration, via ``TranscriptTree`` — independent of any private
         /// actor state, so the post-restore comparison is a genuine
@@ -223,8 +236,7 @@ struct SessionTreeRestorationIntegrationTests {
             acc[id] = try tree.effectiveEntryEvents(forSession: id).count
         }
 
-        let indexFileURL = routerDirectory.appendingPathComponent("sessions.jsonl", isDirectory: false)
-        let sessionsIndexBytes = try Data(contentsOf: indexFileURL)
+        let rootSidecarBytes = try Data(contentsOf: Self.rootSidecarURL(routerDirectory: routerDirectory, rootId: root.id))
 
         return OriginalTree(
             routerId: router.id,
@@ -232,7 +244,7 @@ struct SessionTreeRestorationIntegrationTests {
             forkAId: forkA.id,
             forkBId: forkB.id,
             grandforkId: grandfork.id,
-            sessionsIndexBytes: sessionsIndexBytes,
+            rootSidecarBytes: rootSidecarBytes,
             effectiveEntryCounts: effectiveEntryCounts
         )
     }
@@ -283,10 +295,12 @@ struct SessionTreeRestorationIntegrationTests {
             #expect(count == original.effectiveEntryCounts[id])
         }
 
-        // sessions.jsonl is byte-identical: restoration wrote nothing to it.
-        let indexFileURL = routerDirectory.appendingPathComponent("sessions.jsonl", isDirectory: false)
-        let sessionsIndexBytesAfterRestore = try Data(contentsOf: indexFileURL)
-        #expect(sessionsIndexBytesAfterRestore == original.sessionsIndexBytes)
+        // The root's sidecar is byte-identical: it is write-once, and
+        // restoration only ever reads it.
+        let rootSidecarBytesAfterRestore = try Data(
+            contentsOf: Self.rootSidecarURL(routerDirectory: routerDirectory, rootId: original.rootId)
+        )
+        #expect(rootSidecarBytesAfterRestore == original.rootSidecarBytes)
 
         // Step 8: the fidelity payoff. A brand-new live turn on the deepest
         // restored node (three levels down from the root that was told the
