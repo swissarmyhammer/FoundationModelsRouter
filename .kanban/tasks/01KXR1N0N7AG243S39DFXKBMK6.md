@@ -21,8 +21,8 @@ comments:
   id: 01kxrbzg824gpaspcyg3cktyqj
   text: 'Worked the one in-delta finding from the 2026-07-17 10:37 review pass (SessionSidecar.swift near-duplicate factories). Synthesis satisfying both passes: kept BOTH named factories `new(under:)` and `restored(under:)` (names, signatures, doc comments intact, preserving the new/restored/forFork symmetry that iteration 1 required) and collapsed their bodies to one-line delegations to a new shared `private static func origin(under:wrappedBy:)` helper. The helper holds the `durableRecording.map { wrap($0.sidecarWriter) } ?? .memoryOnly` shape once — grep confirms that shape now appears in exactly one place. `new(under:)` -> `origin(under: durableRecording) { .new($0) }`; `restored(under:)` -> `origin(under: durableRecording) { .restored($0) }`. Pure behavior-preserving refactor. Did NOT touch the 4 out-of-delta pre-existing findings (write/read URL dup, error Sendable, sessionsById casing). `swift build` green; `swift test` 361/361 unit tests pass (integration suites SKIP without FM_ROUTER_INTEGRATION_TESTS), including the mutation-checked load-bearing test "a session''s sidecar exists before its transcript''s first event is recorded". Left in doing for review.'
   timestamp: 2026-07-17T15:44:02.818224+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c480
 title: Make a root session's sidecar the actor's own responsibility, closing the last nil-writer hole
 ---
 Follow-up from ^zta2q14's review, raised by its adversarial double-check. Not urgent: no known live defect, and every in-repo caller is correct today. This closes the last place the sidecar invariant is upheld by convention rather than by the type.
