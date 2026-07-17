@@ -60,7 +60,7 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/swissarmyhammer/\(mlxPackage)",
+            url: "git@github.com:swissarmyhammer/\(mlxPackage).git",
             branch: "foundationmodels-fixes"
         ),
         .package(
