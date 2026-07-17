@@ -361,7 +361,7 @@ enum SessionSidecarOrigin: Sendable {
     ///   `nil` when it has none.
     /// - Returns: The new session's sidecar origin.
     static func new(under durableRecording: DurableRecording?) -> SessionSidecarOrigin {
-        durableRecording.map { .new($0.sidecarWriter) } ?? .memoryOnly
+        origin(under: durableRecording) { .new($0) }
     }
 
     /// The origin of a session reconstructed from disk under `durableRecording`,
@@ -374,7 +374,29 @@ enum SessionSidecarOrigin: Sendable {
     ///   `nil` when it has none.
     /// - Returns: The restored session's sidecar origin.
     static func restored(under durableRecording: DurableRecording?) -> SessionSidecarOrigin {
-        durableRecording.map { .restored($0.sidecarWriter) } ?? .memoryOnly
+        origin(under: durableRecording) { .restored($0) }
+    }
+
+    /// The shared body behind ``new(under:)`` and ``restored(under:)``: maps a
+    /// durable recording's write-once sidecar writer through `wrap` into the
+    /// matching origin case, or yields ``memoryOnly`` when the router records to
+    /// memory/none.
+    ///
+    /// The two named factories carry distinct semantics in their own doc
+    /// comments but the same shape; this holds that shape in one place.
+    ///
+    /// - Parameters:
+    ///   - durableRecording: The vending handle's durable recording, or `nil`
+    ///     when it has none.
+    ///   - wrap: Wraps the recording's sidecar writer in the origin case that
+    ///     matches how the session came to be (``new(_:)`` vs ``restored(_:)``).
+    /// - Returns: The wrapped origin, or ``memoryOnly`` when there is no
+    ///   durable recording.
+    private static func origin(
+        under durableRecording: DurableRecording?,
+        wrappedBy wrap: (SessionSidecarWriter) -> SessionSidecarOrigin
+    ) -> SessionSidecarOrigin {
+        durableRecording.map { wrap($0.sidecarWriter) } ?? .memoryOnly
     }
 
     /// The origin a session created *from* a session with this origin has.

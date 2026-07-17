@@ -17,6 +17,10 @@ comments:
   id: 01kxrahr5j5g7t75fach1gsj95
   text: 'Review finding fixed. Added a symmetric `static func restored(under durableRecording: DurableRecording?) -> SessionSidecarOrigin` factory to SessionSidecarOrigin in Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, mirroring the existing `new(under:)` factory (same signature/body/doc shape). Replaced the inline `.map { .restored($0.sidecarWriter) } ?? .memoryOnly` at the single call site in SessionTreeRestoration.swift with `SessionSidecarOrigin.restored(under: routedLLM.durableRecording)`. Grep confirmed no other inline `.map { .restored/.new(...) } ?? .memoryOnly` shapes remain — the two factory bodies are the only occurrences. swift build green; swift test 361 passed, integration suites skipped (FM_ROUTER_INTEGRATION_TESTS unset). double-check agent returned PASS. Left in doing for review.'
   timestamp: 2026-07-17T15:19:03.602094+00:00
+- actor: claude-code
+  id: 01kxrbzg824gpaspcyg3cktyqj
+  text: 'Worked the one in-delta finding from the 2026-07-17 10:37 review pass (SessionSidecar.swift near-duplicate factories). Synthesis satisfying both passes: kept BOTH named factories `new(under:)` and `restored(under:)` (names, signatures, doc comments intact, preserving the new/restored/forFork symmetry that iteration 1 required) and collapsed their bodies to one-line delegations to a new shared `private static func origin(under:wrappedBy:)` helper. The helper holds the `durableRecording.map { wrap($0.sidecarWriter) } ?? .memoryOnly` shape once — grep confirms that shape now appears in exactly one place. `new(under:)` -> `origin(under: durableRecording) { .new($0) }`; `restored(under:)` -> `origin(under: durableRecording) { .restored($0) }`. Pure behavior-preserving refactor. Did NOT touch the 4 out-of-delta pre-existing findings (write/read URL dup, error Sendable, sessionsById casing). `swift build` green; `swift test` 361/361 unit tests pass (integration suites SKIP without FM_ROUTER_INTEGRATION_TESTS), including the mutation-checked load-bearing test "a session''s sidecar exists before its transcript''s first event is recorded". Left in doing for review.'
+  timestamp: 2026-07-17T15:44:02.818224+00:00
 position_column: doing
 position_ordinal: '80'
 title: Make a root session's sidecar the actor's own responsibility, closing the last nil-writer hole
@@ -45,3 +49,17 @@ Both hand-build a root actor because they need the `MLXFoundationModelsSessionBa
 ## Review Findings (2026-07-17 10:03)
 
 - [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:166` — The pattern `durableRecording.map { .restored($0.sidecarWriter) } ?? .memoryOnly` reimplements what `SessionSidecarOrigin.new(under:)` already does, just for the `.restored` case instead of `.new`. A factory method should be created and reused instead of manually repeating the pattern. Add a factory method `static func restored(under durableRecording: DurableRecording?) -> SessionSidecarOrigin { durableRecording.map { .restored($0.sidecarWriter) } ?? .memoryOnly }` to `SessionSidecarOrigin`, then replace the inline pattern with `SessionSidecarOrigin.restored(under: routedLLM.durableRecording)`.
+
+## Review Findings (2026-07-17 10:37)
+
+Scope: HEAD~1..HEAD (SHA 84d7471) — iteration 2 delta only. The delta adds `SessionSidecarOrigin.restored(under:)` (SessionSidecar.swift, now line 376) and routes the restoration call site through it (SessionTreeRestoration.swift, line ~253). **Prior finding (2026-07-17 10:03) verified genuinely resolved and checked off**: the inline `.restored(...) ?? .memoryOnly` is gone, replaced by `SessionSidecarOrigin.restored(under: routedLLM.durableRecording)`. Engine line numbers were stale this pass — corrected below via grep cross-check.
+
+In-delta finding (open — CONTRADICTS the prior pass; needs human adjudication, task held in review):
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionSidecar.swift:376` — The newly added `restored(under:)` factory is a near-duplicate of `new(under:)` (line 363), differing only by the enum case (`.restored` vs `.new`); the engine asks to collapse both into a single closure-parameterized factory. NOTE for the human: this is the *exact* method the prior review pass (item above, now [x]) explicitly mandated adding, and it mirrors the deliberate, documented `new`/`restored`/`forFork` symmetry across `SessionSidecarOrigin` — each factory carries distinct semantics in its own doc comment (a brand-new session vs a restored session whose write-once sidecar is already on disk). Obeying this reverses the prior pass's own prescription, so it is not resolved unilaterally. Decide: keep the two symmetric named factories as-is, or have both delegate to a shared private helper (satisfies both passes without losing the named entry points). RESOLVED: both named factories now delegate to a shared private `origin(under:wrappedBy:)` helper that holds the `durableRecording.map { wrap($0.sidecarWriter) } ?? .memoryOnly` shape once; `new(under:)`/`restored(under:)` names, signatures, and doc comments preserved.
+
+Out of iteration-2 delta scope — engine also flagged these, but they are pre-existing code untouched by 84d7471, so they do not block this checkpoint (recorded for visibility, corrected line numbers):
+
+- `SessionSidecar.swift:160` / `:177` — file-URL computation `directory.appendingPathComponent(sessionSidecarFileName, ...)` duplicated between `write()` and `read()`.
+- `SessionTreeRestoration.swift:12` — `SessionTreeRestorationError` could add `Sendable` conformance.
+- `SessionTreeRestoration.swift:70` / `:201` — `sessionsById` → `sessionsByID` (Swift-idiomatic acronym casing; pre-existing, whole-file rename).
