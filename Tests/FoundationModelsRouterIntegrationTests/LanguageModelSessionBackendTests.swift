@@ -21,9 +21,9 @@ private var sessionBackendIntegrationEnabled: Bool {
     ProcessInfo.processInfo.environment[sessionBackendIntegrationEnvVar] != nil
 }
 
-/// The same deliberately tiny `mlx-community` generation model
-/// ``IntegrationTests``' `TinyModels.generation` uses.
-private let sessionBackendTinyModel: ModelRef = "mlx-community/SmolLM-135M-Instruct-4bit"
+/// The same real `mlx-community` generation model the rest of this target's
+/// gated suites use for the `.standard` slot.
+private let sessionBackendTinyModel: ModelRef = RealModels.standard
 
 // MARK: - Suite
 
@@ -61,7 +61,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         let loaded = try await loader.loadLLM(
             ref: sessionBackendTinyModel,
             slot: .standard,
-            context: 512,
+            context: RealModels.context,
             reporting: { _ in }
         )
         return try #require(loaded as? MLXFoundationModelsContainer)
@@ -69,6 +69,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("a second respond() call on the same backend sees the first turn's content in context")
     func secondRespondSeesPriorTurn() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -92,10 +93,14 @@ struct LanguageModelSessionBackendIntegrationTests {
         // And the same session accumulated a second turn on top of the first,
         // rather than starting over.
         #expect(backend.session.transcript.count > entriesAfterFirstTurn)
+
+        await container.model.evict()
+        }
     }
 
     @Test("makeFork() seeds the child's transcript from the parent's at fork time")
     func makeForkSeedsFromParentTranscript() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let parent = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -131,6 +136,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         // independently-grown) transcript.
         _ = try await parent.respond(to: "Remember the number 7 too.", maxTokens: 64)
         #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
+
+        await container.model.evict()
+        }
     }
 
     // MARK: - Transcript-seeded factory (task bkhj6ya)
@@ -139,6 +147,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript"
     )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let prior = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -162,6 +171,9 @@ struct LanguageModelSessionBackendIntegrationTests {
             maxTokens: 64
         )
         #expect(reply.contains("42"))
+
+        await container.model.evict()
+        }
     }
 
     // MARK: - Transcript growth and fork seeding (exact counts)
@@ -170,6 +182,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "the transcript grows by exactly two entries (prompt + response) per turn across two respond() calls"
     )
     func transcriptGrowsByTwoEntriesPerTurn() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         // No instructions: an instructions-carrying session's transcript opens
         // with an extra `.instructions` entry, which would make the exact
@@ -185,10 +198,14 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         // Two turns × (one `.prompt` entry + one `.response` entry) == 4.
         #expect(backend.session.transcript.count == 4)
+
+        await container.model.evict()
+        }
     }
 
     @Test("a fork taken after one turn begins holding exactly that turn's two transcript entries")
     func forkAfterOneTurnHasExactlyTwoEntries() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let parent = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
@@ -200,12 +217,16 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         // One turn × (one `.prompt` entry + one `.response` entry) == 2.
         #expect(child.session.transcript.count == 2)
+
+        await container.model.evict()
+        }
     }
 
     // MARK: - transcriptEntries() matches the test-only transcript accessor
 
     @Test("transcriptEntries().count equals session.transcript.count and grows across turns")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
@@ -223,6 +244,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         let countAfterSecondTurn = backend.transcriptEntries().count
         #expect(countAfterSecondTurn == backend.session.transcript.count)
         #expect(countAfterSecondTurn > countAfterFirstTurn)
+
+        await container.model.evict()
+        }
     }
 
     // MARK: - Chokepoint fidelity: recorded entry kinds match the real transcript
@@ -247,6 +271,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     private struct ChokepointHarness {
         let session: RoutedSessionActor
         let backend: MLXFoundationModelsSessionBackend
+        let container: MLXFoundationModelsContainer
         let recordingDirectory: URL
         let recordingsDir: URL
         let cacheDir: URL
@@ -366,6 +391,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         return ChokepointHarness(
             session: session,
             backend: backend,
+            container: container,
             recordingDirectory: recordingDirectory,
             recordingsDir: recordingsDir,
             cacheDir: cacheDir
@@ -390,6 +416,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     @Test(
         "recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
     func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeChokepointHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -410,6 +437,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         }
         #expect(recordedEntryKinds == liveEntryKinds)
         #expect(!recordedEntryKinds.isEmpty)
+
+        await harness.container.model.evict()
+        }
     }
 
     /// Mirrors ``recordedEntryKindsMatchSessionTranscriptKinds()`` but drives
@@ -421,6 +451,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "recorded entry kinds match the real session.transcript kinds one-for-one after a live streaming turn"
     )
     func recordedEntryKindsMatchSessionTranscriptKindsStreaming() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeChokepointHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -443,6 +474,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         }
         #expect(recordedEntryKinds == liveEntryKinds)
         #expect(!recordedEntryKinds.isEmpty)
+
+        await harness.container.model.evict()
+        }
     }
 
     // MARK: - Token usage metering (task v22nv1g)
@@ -460,6 +494,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// counts for a human to read.
     @Test("recorded tokensIn/tokensOut on the turn's response event exactly match the live backend's own usageTokenCounts() delta")
     func recordedTokenUsageMatchesLiveBackendDelta() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeChokepointHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -494,6 +529,9 @@ struct LanguageModelSessionBackendIntegrationTests {
         print(
             "[recordedTokenUsageMatchesLiveBackendDelta] tokensIn=\(expectedTokensIn) tokensOut=\(expectedTokensOut)"
         )
+
+        await harness.container.model.evict()
+        }
     }
 
     // MARK: - KV cache reuse across turns (the hard proof)
@@ -502,6 +540,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2's usage.input.cachedTokenCount is positive and approximates everything turn 1 processed — the KV cache is reused, not recomputed"
     )
     func secondTurnReusesFirstTurnsKVCache() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -554,6 +593,9 @@ struct LanguageModelSessionBackendIntegrationTests {
             processed tokens (\(turn1ProcessedTokenCount)) within \(tolerance)
             """
         )
+
+        await container.model.evict()
+        }
     }
 
     // MARK: - Timing signal (best-effort, non-fatal)
@@ -562,6 +604,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2 tends to be faster than turn 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
     )
     func secondTurnTendsToBeFasterThanFirst() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         // A long instruction makes the fixed, cacheable prefix turn 2 should
         // reuse a much larger share of the input than a short one would, so a
@@ -593,5 +636,8 @@ struct LanguageModelSessionBackendIntegrationTests {
         print(
             "[secondTurnTendsToBeFasterThanFirst] turn1=\(turn1Duration)s turn2=\(turn2Duration)s ratio=\(ratio)"
         )
+
+        await container.model.evict()
+        }
     }
 }

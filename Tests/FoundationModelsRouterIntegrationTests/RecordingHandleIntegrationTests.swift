@@ -21,9 +21,9 @@ private var recordingHandleIntegrationEnabled: Bool {
     ProcessInfo.processInfo.environment[recordingHandleIntegrationEnvVar] != nil
 }
 
-/// The same deliberately tiny `mlx-community` generation model this target's
-/// other gated suites use.
-private let recordingHandleTinyModel: ModelRef = "mlx-community/SmolLM-135M-Instruct-4bit"
+/// The same real `mlx-community` generation model this target's other gated
+/// suites use for the `.standard` slot.
+private let recordingHandleTinyModel: ModelRef = RealModels.standard
 
 // MARK: - Suite
 
@@ -32,9 +32,12 @@ private let recordingHandleTinyModel: ModelRef = "mlx-community/SmolLM-135M-Inst
 /// `Kind.toolOutput` / `ToolDefinitionPayload`), proving a tool-using turn
 /// driven directly over a ``RecordingLanguageModel`` handle (`RoutedLLM/makeLanguageModel()`)
 /// round-trips to disk: everything up through `.toolOutput` back-fills live,
-/// during the turn, and the turn-final `.response` only lands once the caller
-/// closes the executor-boundary gap with `handle.sync(session.transcript)` at
-/// turn end — exactly as a harness frontend is expected to.
+/// during the turn (alongside an empty, metadata-only `.response` entry the
+/// tool-calling round registers before it ever decides to call a tool — real,
+/// verified executor behavior, not a recording bug), and the turn's real,
+/// populated final answer only lands once the caller closes the
+/// executor-boundary gap with `handle.sync(session.transcript)` at turn end —
+/// exactly as a harness frontend is expected to.
 ///
 /// Builds a real ``LanguageModelProfile`` directly over an already-loaded tiny
 /// model's ``MLXFoundationModelsContainer`` — the same technique
@@ -100,6 +103,7 @@ struct RecordingHandleIntegrationTests {
     private struct Harness {
         let profile: LanguageModelProfile
         let router: Router
+        let container: MLXFoundationModelsContainer
         let recordingsDir: URL
         let cacheDir: URL
     }
@@ -114,7 +118,7 @@ struct RecordingHandleIntegrationTests {
         let loaded = try await loader.loadLLM(
             ref: recordingHandleTinyModel,
             slot: .standard,
-            context: 512,
+            context: RealModels.context,
             reporting: { _ in }
         )
         return try #require(loaded as? MLXFoundationModelsContainer)
@@ -198,7 +202,8 @@ struct RecordingHandleIntegrationTests {
         )
 
         return Harness(
-            profile: profile, router: router, recordingsDir: recordingsDir, cacheDir: cacheDir)
+            profile: profile, router: router, container: container, recordingsDir: recordingsDir,
+            cacheDir: cacheDir)
     }
 
     /// Decodes every newline-delimited JSON record of type `T` from
@@ -254,6 +259,7 @@ struct RecordingHandleIntegrationTests {
     /// matches the live session's own transcript kind-for-kind.
     @Test("a tool-using turn over a RecordingLanguageModel handle round-trips to disk: mid-turn back-fill before sync, final response only after sync(session.transcript)")
     func toolUsingTurnRoundTripsToDisk() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -286,7 +292,14 @@ struct RecordingHandleIntegrationTests {
                 of: beforeSync.map(\.kind)
             )
         )
-        #expect(!beforeSync.map(\.kind).contains(.response))
+        // A tool-calling round's executor invocation unconditionally sends a
+        // metadata-only `.response` channel event (`updateMetadata`, no text)
+        // before it ever decides to call a tool — confirmed empirically
+        // against a real model: every `.response`-kind event recorded before
+        // `sync` has `text == nil`. The turn's real, populated final answer
+        // is still invisible at the executor boundary until `sync` closes
+        // the gap below.
+        #expect(beforeSync.filter { $0.kind == .response }.allSatisfy { $0.text == nil })
 
         // sync(session.transcript) at turn end closes that one gap.
         await handle.sync(session.transcript)
@@ -319,5 +332,8 @@ struct RecordingHandleIntegrationTests {
 
         let merged = try MergedTranscript.merged(under: routerDirectory)
         #expect(merged.map(\.kind) == afterSync.map(\.kind))
+
+        await harness.container.model.evict()
+        }
     }
 }

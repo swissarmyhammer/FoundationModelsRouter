@@ -21,9 +21,9 @@ private var sessionTreeRestorationIntegrationEnabled: Bool {
     ProcessInfo.processInfo.environment[sessionTreeRestorationIntegrationEnvVar] != nil
 }
 
-/// The same deliberately tiny `mlx-community` generation model the rest of
-/// this target's gated suites use.
-private let sessionTreeRestorationTinyModel: ModelRef = "mlx-community/SmolLM-135M-Instruct-4bit"
+/// The same real `mlx-community` generation model the rest of this target's
+/// gated suites use for the `.standard` slot.
+private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
 
 // MARK: - Suite
 
@@ -90,7 +90,7 @@ struct SessionTreeRestorationIntegrationTests {
         let loaded = try await loader.loadLLM(
             ref: sessionTreeRestorationTinyModel,
             slot: .standard,
-            context: 512,
+            context: RealModels.context,
             reporting: { _ in }
         )
         return try #require(loaded as? MLXFoundationModelsContainer)
@@ -254,6 +254,8 @@ struct SessionTreeRestorationIntegrationTests {
 
         let rootSidecarBytes = try Data(contentsOf: Self.rootSidecarURL(routerDirectory: routerDirectory, rootId: root.id))
 
+        await container.model.evict()
+
         return OriginalTree(
             routerId: router.id,
             rootId: root.id,
@@ -267,6 +269,7 @@ struct SessionTreeRestorationIntegrationTests {
 
     @Test("a whole fork tree recorded, torn down, and restored by root id in a fresh Router matches on disk and recalls prior context live")
     func restoresWholeTreeAcrossSimulatedProcessBoundary() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionTreeRestorationIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
         let recordingsDir = FileManager.default.temporaryDirectory
@@ -328,5 +331,8 @@ struct SessionTreeRestorationIntegrationTests {
             maxTokens: 32
         )
         #expect(reply.contains("42"))
+
+        await container2.model.evict()
+        }
     }
 }

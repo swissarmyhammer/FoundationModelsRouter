@@ -510,7 +510,7 @@ public struct LiveModelLoader: ModelLoader {
         let modelConfiguration = configuration(for: ref)
         let model = MLXLanguageModel(
             configuration: modelConfiguration,
-            capabilities: [.guidedGeneration],
+            capabilities: [.guidedGeneration, .toolCalling],
             weightsLocation: weightsLocation,
             load: { configuration, mlxProgressHandler in
                 try await loadModelContainer(

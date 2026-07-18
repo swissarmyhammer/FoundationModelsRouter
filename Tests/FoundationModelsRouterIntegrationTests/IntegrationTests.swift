@@ -19,31 +19,20 @@ private var integrationEnabled: Bool {
     ProcessInfo.processInfo.environment[integrationEnvVar] != nil
 }
 
-// MARK: - Tiny real models
+// MARK: - Real models
 
-/// The deliberately small `mlx-community` models the suite co-fits into one
-/// resolved profile.
-///
-/// - `standard` / `flash`: `SmolLM-135M-Instruct-4bit` — a ~135M-parameter 4-bit
-///   Llama-family instruct model, the smallest widely-available `mlx-community`
-///   causal LM. The same repo fills both generation slots so the run downloads
-///   one set of weights and loads it into two resident containers.
-/// - `embedding`: `Qwen3-Embedding-0.6B-4bit-DWQ` — the smallest `mlx-community`
-///   embedding model wired into the fork's `EmbedderRegistry`.
-private enum TinyModels {
-    static let generation: ModelRef = "mlx-community/SmolLM-135M-Instruct-4bit"
-    static let embedding: ModelRef = "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
-}
-
-/// The tiny co-fitting profile the suite resolves. A small `context` keeps the
-/// per-slot KV footprint modest so all three slots comfortably co-fit.
-private let tinyProfile = ProfileDefinition(
-    name: "integration-tiny",
-    description: "Deliberately tiny real models for the gated integration suite.",
-    standard: [TinyModels.generation],
-    flash: [TinyModels.generation],
-    embedding: [TinyModels.embedding],
-    context: 512
+/// The profile the suite resolves, over ``RealModels``' `standard`/`flash`/
+/// `embedding` repos — two distinct real generation models plus an embedder,
+/// all co-resident, so the resolution/generation/embedding/guided-generation/
+/// fork assertions below exercise genuinely different models per slot rather
+/// than one tiny repo filling both generation slots.
+private let realProfile = ProfileDefinition(
+    name: "integration-real",
+    description: "Real mlx-community models for the gated integration suite.",
+    standard: [RealModels.standard],
+    flash: [RealModels.flash],
+    embedding: [RealModels.embedding],
+    context: RealModels.context
 )
 
 // MARK: - Phase-recording decorators
@@ -199,7 +188,7 @@ private struct DownloadObservingLoader: ModelLoader {
 
 /// The gated end-to-end integration suite (milestone 7).
 ///
-/// It resolves the ``tinyProfile`` once — all three slots co-resident — over a
+/// It resolves the ``realProfile`` once — all three slots co-resident — over a
 /// real ``LiveModelLoader`` (a Hub `#hubDownloader()` + `#huggingFaceTokenizerLoader()`)
 /// and the real ``HuggingFaceMetadataSource``, then asserts every live capability
 /// in that one resolved profile: progress advancement, generation, embedding
@@ -220,10 +209,12 @@ private struct DownloadObservingLoader: ModelLoader {
     .enabled(if: integrationEnabled)
 )
 struct IntegrationTests {
-    /// Resolves the tiny profile and asserts every live capability against it.
-    @Test("resolve tiny profile, then generate, embed, guide, fork, and record")
+    /// Resolves the real profile and asserts every live capability against it.
+    @Test("resolve real profile, then generate, embed, guide, fork, and record")
     @MainActor
     func endToEnd() async throws {
+        await GatedSuiteSerialGate.shared.wait()
+        defer { GatedSuiteSerialGate.shared.signal() }
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -264,7 +255,7 @@ struct IntegrationTests {
             loader: loader
         )
 
-        let profile = try await router.resolve(profile: tinyProfile, reporting: progress)
+        let profile = try await router.resolve(profile: realProfile, reporting: progress)
 
         // 1. Progress advanced sizing -> downloading -> loading -> ready.
         #expect(progress.phase == .ready)

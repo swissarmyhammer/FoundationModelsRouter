@@ -22,9 +22,9 @@ private var transcriptReconstructionIntegrationEnabled: Bool {
     ProcessInfo.processInfo.environment[transcriptReconstructionIntegrationEnvVar] != nil
 }
 
-/// The same deliberately tiny `mlx-community` generation model
-/// ``IntegrationTests``' `TinyModels.generation` uses.
-private let transcriptReconstructionTinyModel: ModelRef = "mlx-community/SmolLM-135M-Instruct-4bit"
+/// The same real `mlx-community` generation model the rest of this target's
+/// gated suites use for the `.standard` slot.
+private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
 
 // MARK: - Suite
 
@@ -57,7 +57,7 @@ struct TranscriptReconstructionIntegrationTests {
         let loaded = try await loader.loadLLM(
             ref: transcriptReconstructionTinyModel,
             slot: .standard,
-            context: 512,
+            context: RealModels.context,
             reporting: { _ in }
         )
         return try #require(loaded as? MLXFoundationModelsContainer)
@@ -74,6 +74,7 @@ struct TranscriptReconstructionIntegrationTests {
     private struct Harness {
         let session: RoutedSessionActor
         let backend: MLXFoundationModelsSessionBackend
+        let container: MLXFoundationModelsContainer
         let routerId: ULID
         let sessionId: ULID
         let recordingsDir: URL
@@ -191,6 +192,7 @@ struct TranscriptReconstructionIntegrationTests {
         return Harness(
             session: session,
             backend: backend,
+            container: container,
             routerId: router.id,
             sessionId: sessionId,
             recordingsDir: recordingsDir,
@@ -208,6 +210,7 @@ struct TranscriptReconstructionIntegrationTests {
         "reconstructed Transcript entry kinds and count match the live session.transcript after one live turn"
     )
     func reconstructedTranscriptMatchesLiveSessionTranscript() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -228,5 +231,8 @@ struct TranscriptReconstructionIntegrationTests {
         #expect(reconstructedKinds == liveKinds)
         #expect(reconstructedEntries.count == liveEntries.count)
         #expect(!reconstructedEntries.isEmpty)
+
+        await harness.container.model.evict()
+        }
     }
 }
