@@ -393,13 +393,13 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer, Sendable {
                     MLXArray(
                         tokens
                             + Array(
-                                repeating: tokenizer.eosTokenID ?? 0,
+                                repeating: tokenizer.eosTokenId ?? 0,
                                 count: maxLength - tokens.count
                             )
                     )
                 }
             )
-            let mask = padded .!= (tokenizer.eosTokenID ?? 0)
+            let mask = padded .!= (tokenizer.eosTokenId ?? 0)
             let tokenTypes = MLXArray.zeros(like: padded)
             let output = context.model(
                 padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask
