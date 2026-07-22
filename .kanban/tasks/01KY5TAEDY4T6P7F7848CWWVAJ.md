@@ -1,6 +1,46 @@
 ---
-position_column: todo
-position_ordinal: 8c80
+comments:
+- actor: claude-code
+  id: 01ky5ywpkf8qqna86cw64183ar
+  text: '/finish #long-running started. Verified cross-repo prerequisite: FoundationModelsOperationTool already has EventEmittingTool.swift, OperationEventSink.swift, OperationEvent.swift landed — no longer a blocker. Pinning this as the single task for iteration 1 (only READY task in scope; the other 2 long-running tasks are blocked on this one).'
+  timestamp: 2026-07-22T22:24:41.583501+00:00
+- actor: claude-code
+  id: 01ky5zp1hqpbnvee1smnacm1q1
+  text: |-
+    Milestone: Package dependency on FoundationModelsOperationTool added (Package.swift, SSH url `git@github.com:swissarmyhammer/FoundationModelsOperationTool.git` branch main, product "Operations" linked into both the library target and FoundationModelsRouterTests). `swift package resolve` confirms it resolves fine.
+
+    Implemented `SessionOutbox` actor at Sources/FoundationModelsRouter/Session/SessionOutbox.swift: conforms to `OperationEventSink`, stores two kinds (PendingEvent/PendingPrompt) each with a stable `ItemID` assigned at enqueue, coalesces `.progress` latest-per-(tool,correlationID) in place (keeping the original id), never coalesces `.completed` or queued prompts, `pending()` snapshot, `drainForDispatch()` atomic commit primitive, `nextEvent()` wakeup surface.
+
+    TDD: wrote Tests/FoundationModelsRouterTests/SessionOutboxTests.swift first (17 tests covering coalescing scoped per tool+correlationID, stable ids, FIFO prompts, drain race-freedom under concurrent post via task group, nextEvent suspend/resume incl. via enqueue). Confirmed RED (cannot find 'SessionOutbox' in scope) before implementing. Now GREEN: all 17 tests pass.
+
+    Dead end / gotcha for next agent: `swift test --build-tests` can fail with "unsealed contents present in the bundle root" / codesign failure on FoundationModelsRouterIntegrationTests.xctest due to a stray default.metallib from the mlx-swift-lm checkout leaking into the built bundle. Fix: `rm -f .build/out/Products/Debug/FoundationModelsRouterIntegrationTests.xctest/default.metallib` then retry. Hit this once already.
+
+    Next: wire `tools: [any Tool]` through `RoutedModel.makeSession` -> `LoadedLLMContainer.makeSession(instructions:tools:)` (new protocol requirement, defaulted to ignore tools for existing stub conformers) -> live `MLXFoundationModelsContainer`/`MLXFoundationModelsSessionBackend` (thread tools into `LanguageModelSession(model:tools:instructions:)` and retain for `makeFork()`), plus `RoutedSessionActor` owning a `SessionOutbox` + retained tools list, auto-connecting `EventEmittingTool` conformers at construction and reconnecting to a fresh outbox on fork.
+  timestamp: 2026-07-22T22:38:31.991527+00:00
+- actor: claude-code
+  id: 01ky60mcwsgbratdkzxng8g30j
+  text: |-
+    Implementation complete and green.
+
+    **makeSession(tools:) wiring:**
+    - `LoadedLLMContainer` (Sources/FoundationModelsRouter/Resolution/ModelLoader.swift) gained `makeSession(instructions:tools:)`, defaulted via extension to ignore tools and forward to the existing `makeSession(instructions:)` — so the ~20 stub containers across the unit suite needed zero changes.
+    - `RoutedModel.makeSession(instructions:workingDirectory:tools:)` (RoutedLLM.swift) threads tools through the internal `makeSession(grammar:instructions:workingDirectory:tools:)` builder into the container factory.
+    - Live `MLXFoundationModelsContainer`/`MLXFoundationModelsSessionBackend` (LiveModelLoader.swift) now build `LanguageModelSession(model:tools:instructions:)` for real, retain `tools`, and thread them into `makeFork()` (previously hardcoded `tools: []`). Needed `FoundationModels.Tool` disambiguation since `MLXLMCommon` also declares a `Tool` type in that file.
+    - `RoutedSessionActor` (RoutedSession.swift) owns `nonisolated let outbox: SessionOutbox` (now part of the public `RoutedSession` protocol) and retains `tools`; auto-connect (`for tool in tools { (tool as? any EventEmittingTool)?.connect(outbox) }`) happens inside `init`, before the session is observable by any caller — no explicit connect call anywhere.
+    - `fork(workingDirectory:)` builds a **fresh** `SessionOutbox` for the child and reconnects the same tool instances to it — documented, tested tradeoff: since `EventEmittingTool.connect` is one-sink-at-a-time, a shared emitting tool's future events flow to the fork after forking, not the parent.
+    - One other `makeRoutedSessionActor` call site (Recording/SessionTreeRestoration.swift, the disk-restore path) updated to pass `tools: []` explicitly — restoration has no live tool list to thread from disk; pre-existing, documented limitation, not new.
+    - Package.swift: added `FoundationModelsOperationTool` dependency (SSH url, branch main, product "Operations") to the library and unit test targets.
+
+    **SessionOutbox actor** (new file, Sources/FoundationModelsRouter/Session/SessionOutbox.swift): conforms to `OperationEventSink`; stores `PendingEvent`/`PendingPrompt`, each with a stable `ItemID` assigned at enqueue; `.progress` coalesces to latest per `(tool, correlationID)` in place (stable id preserved), `.completed` and queued prompts never coalesce; `pending()` snapshot; `drainForDispatch()` atomic commit; `nextEvent()` suspend/resume wakeup surface.
+
+    **Tests (TDD, RED confirmed before each GREEN):** Tests/FoundationModelsRouterTests/SessionOutboxTests.swift (17 tests: coalescing scoped per tool+correlationID, stable ids, FIFO prompts, drain race-freedom under concurrent `post` via `withTaskGroup`, nextEvent suspend/resume via both post and enqueue) + SessionOutboxToolWiringTests.swift (6 tests: tools threaded to container boundary, zero-explicit-connect auto-connect, mixed tool list passthrough, empty-outbox default, fork gets fresh outbox, fork reconnects shared tool so pre-fork events stay with parent and post-fork events go to the child).
+
+    **Verification:** `swift build`, `swift build --build-tests`, and `swift test` all green — 384 unit tests run + 15 gated/skipped, 0 failures, 0 new warnings (only the pre-existing unrelated `mlx-swift_Cmlx.bundle` mutated-node warning). Adversarial double-check agent independently re-ran all these commands, cross-checked `SessionOutbox` against the vendored `Operations` package source, traced the full blast radius of the two `makeRoutedSessionActor`/`LoadedLLMContainer.makeSession` call sites, and verified the fork test is non-vacuous (asserts parent keeps only pre-fork events, child gets only post-fork events). Verdict: **PASS**. One non-blocking observation: `SessionOutbox.nextEvent()`'s `withCheckedContinuation` has no cancellation handling — mirrors the existing `AsyncSemaphore.wait()` pattern already in this codebase, so it's consistent with prevailing convention, not a new defect, and wasn't part of the acceptance criteria; left as-is.
+
+    All acceptance criteria and subtask checkboxes met. Leaving task in `doing` for `/review` per the implement skill's contract — not moving to review/done myself.
+  timestamp: 2026-07-22T22:55:06.649311+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Session outbox: pending prompt material with ids, coalescing, auto-connected EventEmitting tools, driver wakeup'
 ---
 ## What
@@ -23,17 +63,17 @@ Type layering (pinned): tools post `OperationEvent`s — plain host-neutral data
 Non-goal (record it): durable on-disk outbox persistence. Queued prompts are SDK types and events are Codable — both round-trippable via `TranscriptEntryMapper`/`CustomSegmentRegistry` machinery — so durability is a natural later extension; note it, don't build it.
 
 ## Acceptance Criteria
-- [ ] `makeSession(tools:)` threads the tool list into the underlying `LanguageModelSession` (model can call them) AND auto-connects every `EventEmittingTool` to the session's outbox — a fake emitting tool passed in `tools:` delivers events with no explicit connect call anywhere
-- [ ] A tool that does not conform to `EventEmittingTool` passes through untouched (mixed tool lists work)
-- [ ] Coalescing: N `.progress` posts for one correlationID pend as 1 (the latest); interleaved `.completed` events all survive in order; queued prompts never coalesce and preserve enqueue order
-- [ ] `pending()` reports items with stable ids and kinds; `drainForDispatch()` commits and empties exactly what it returns, race-free with concurrent posts
-- [ ] `nextEvent()` suspends while the outbox is empty and resumes on the next post
-- [ ] Fork behavior: a fork's emitting tools feed the fork's own outbox — decided, documented, tested
-- [ ] Public API documented; `swift test` green
+- [x] `makeSession(tools:)` threads the tool list into the underlying `LanguageModelSession` (model can call them) AND auto-connects every `EventEmittingTool` to the session's outbox — a fake emitting tool passed in `tools:` delivers events with no explicit connect call anywhere
+- [x] A tool that does not conform to `EventEmittingTool` passes through untouched (mixed tool lists work)
+- [x] Coalescing: N `.progress` posts for one correlationID pend as 1 (the latest); interleaved `.completed` events all survive in order; queued prompts never coalesce and preserve enqueue order
+- [x] `pending()` reports items with stable ids and kinds; `drainForDispatch()` commits and empties exactly what it returns, race-free with concurrent posts
+- [x] `nextEvent()` suspends while the outbox is empty and resumes on the next post
+- [x] Fork behavior: a fork's emitting tools feed the fork's own outbox — decided, documented, tested
+- [x] Public API documented; `swift test` green
 
 ## Tests
-- [ ] Unit tests in `Tests/FoundationModelsRouterTests/` — auto-connect via `makeSession(tools:)`, mixed tool lists, kind-specific policies, drain/commit semantics under concurrent post, wakeup, fork behavior
-- [ ] `swift test` fully green
+- [x] Unit tests in `Tests/FoundationModelsRouterTests/` — auto-connect via `makeSession(tools:)`, mixed tool lists, kind-specific policies, drain/commit semantics under concurrent post, wakeup, fork behavior
+- [x] `swift test` fully green
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #long-running

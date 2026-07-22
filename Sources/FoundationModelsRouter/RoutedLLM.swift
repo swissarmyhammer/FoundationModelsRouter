@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Operations
 
 /// A failure producing text from a resident generation model.
 public enum GenerationError: Error, Equatable {
@@ -85,22 +86,31 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
+    ///   - tools: The tools the model can call during this session, threaded to
+    ///     the underlying `LanguageModelSession` (mirroring Apple's
+    ///     `LanguageModelSession(tools:)`). During construction, every tool
+    ///     conforming to `EventEmittingTool` is automatically connected to the
+    ///     vended session's own ``RoutedSession/outbox`` — no explicit
+    ///     `connect` call is ever needed: implementing the protocol IS the
+    ///     subscription. A tool that does not conform passes through
+    ///     untouched. Defaults to no tools.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        tools: [any Tool] = []
     ) -> RoutedSession {
-        makeSession(grammar: nil, instructions: instructions, workingDirectory: workingDirectory)
+        makeSession(grammar: nil, instructions: instructions, workingDirectory: workingDirectory, tools: tools)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
     ///
-    /// ``makeSession(instructions:workingDirectory:)`` calls this with `grammar`
-    /// `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:)`` (in
-    /// GuidedGeneration.swift) calls it with a grammar that then constrains every
-    /// `respond` on the vended session and is stamped onto each recorded turn. It
-    /// is `internal` so the guided surface in another file in this module can
-    /// reuse it.
+    /// ``makeSession(instructions:workingDirectory:tools:)`` calls this with
+    /// `grammar` `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:)``
+    /// (in GuidedGeneration.swift) calls it with a grammar that then constrains
+    /// every `respond` on the vended session and is stamped onto each recorded
+    /// turn. It is `internal` so the guided surface in another file in this
+    /// module can reuse it.
     ///
     /// - Parameters:
     ///   - grammar: The grammar constraining the session, or `nil` for an
@@ -108,11 +118,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
+    ///   - tools: The tools the model can call during this session. See
+    ///     ``makeSession(instructions:workingDirectory:tools:)`` for the
+    ///     auto-connect contract. Defaults to no tools.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
         instructions: String?,
-        workingDirectory: URL?
+        workingDirectory: URL?,
+        tools: [any Tool] = []
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -121,8 +135,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
         // The container is only a factory: it manufactures the backend the
         // vended session owns and drives for its whole lifetime, born already
-        // carrying `instructions` so generation calls never pass them again.
-        let backend = container.makeSession(instructions: instructions)
+        // carrying `instructions` and `tools` so generation calls never pass
+        // them again and the model can call whatever `tools` supplies.
+        let backend = container.makeSession(instructions: instructions, tools: tools)
 
         return makeRoutedSessionActor(
             profile: owningProfile,
@@ -137,6 +152,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             recorder: recorder,
             instructions: instructions,
             grammar: grammar,
+            // Auto-connecting every `EventEmittingTool` among `tools` to this
+            // session's own fresh outbox happens inside the actor's
+            // initializer (see ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``) —
+            // nobody has to remember to connect a tool separately.
+            tools: tools,
             // The serial and fork-admission gates are the model handle's, shared
             // across all its sessions and forks. A root session holds no
             // fork-admission permit.

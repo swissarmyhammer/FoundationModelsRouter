@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Operations
 import os
 
 /// The logger ``RoutedSessionActor`` reports a defensively-clamped transcript
@@ -71,6 +72,16 @@ public protocol RoutedSession: Actor {
     /// It travels with the session so ``fork(workingDirectory:)`` inherits it;
     /// ``streamResponse(to:)`` stays unconstrained regardless.
     nonisolated var grammar: Grammar? { get }
+
+    /// This session's outbox: the staging area for tool events posted by
+    /// long-running work and queued user prompts, both destined to enter the
+    /// conversation at a future turn boundary. See ``SessionOutbox``.
+    ///
+    /// Fresh per session — a fork is given its own outbox rather than sharing
+    /// its parent's (see ``fork(workingDirectory:)``'s doc comment for why,
+    /// and how that interacts with a shared ``EventEmittingTool`` instance's
+    /// single-sink-at-a-time connection).
+    nonisolated var outbox: SessionOutbox { get }
 
     /// Generates a complete text response to a prompt, recording the call.
     ///
@@ -154,7 +165,7 @@ extension RoutedSession {
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -170,6 +181,7 @@ func makeRoutedSessionActor(
     recorder: any TranscriptRecorder,
     instructions: String?,
     grammar: Grammar?,
+    tools: [any Tool],
     serialGate: AsyncSemaphore,
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
@@ -189,6 +201,7 @@ func makeRoutedSessionActor(
         recorder: recorder,
         instructions: instructions,
         grammar: grammar,
+        tools: tools,
         serialGate: serialGate,
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
@@ -241,6 +254,28 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// Travels with the session so a fork inherits it.
     nonisolated let grammar: Grammar?
+
+    /// The tools this session's model can call, retained (not just handed to
+    /// ``backend`` at construction) so ``fork(workingDirectory:)`` can
+    /// reconnect any ``EventEmittingTool`` among them to the child's own fresh
+    /// ``SessionOutbox`` — see ``outbox``'s doc comment for why a fork gets a
+    /// fresh outbox rather than sharing this session's.
+    private nonisolated let tools: [any Tool]
+
+    /// This session's own outbox — see ``RoutedSession/outbox``.
+    ///
+    /// Fresh per session: a root session is constructed with a brand-new,
+    /// empty outbox and connects every ``EventEmittingTool`` among ``tools``
+    /// to it; ``fork(workingDirectory:)`` builds another fresh outbox for the
+    /// child and reconnects the *same* ``tools`` instances to it instead —
+    /// deliberately not sharing this session's outbox with the fork. Since an
+    /// ``EventEmittingTool`` connects to only one sink at a time (see its
+    /// "hosts connect, users don't" contract), this means forking a session
+    /// with a shared emitting tool re-homes that tool's future events to the
+    /// fork: the parent stops receiving from it. That is the accepted
+    /// tradeoff of "tool-per-session" wiring plus fresh-per-session outboxes,
+    /// not an oversight.
+    nonisolated let outbox: SessionOutbox
 
     /// The per-model serial generation gate, shared with the owning model's other
     /// sessions and forks.
@@ -331,6 +366,7 @@ actor RoutedSessionActor: RoutedSession {
         recorder: any TranscriptRecorder,
         instructions: String?,
         grammar: Grammar? = nil,
+        tools: [any Tool] = [],
         serialGate: AsyncSemaphore,
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
@@ -349,11 +385,24 @@ actor RoutedSessionActor: RoutedSession {
         self.recorder = recorder
         self.instructions = instructions
         self.grammar = grammar
+        self.tools = tools
         self.serialGate = serialGate
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
         self.sidecarOrigin = sidecarOrigin
+
+        // A brand-new outbox for this session, connected to `tools` right
+        // here at construction — before any caller can observe this session —
+        // so "implementing `EventEmittingTool` IS the subscription" holds with
+        // no explicit connect call anywhere outside this initializer. A tool
+        // that doesn't conform to `EventEmittingTool` simply fails the cast
+        // and passes through untouched.
+        let outbox = SessionOutbox()
+        self.outbox = outbox
+        for tool in tools {
+            (tool as? any EventEmittingTool)?.connect(outbox)
+        }
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into
@@ -523,6 +572,12 @@ actor RoutedSessionActor: RoutedSession {
             recorder: recorder,
             instructions: instructions,
             grammar: grammar,
+            // Fresh-per-session outbox (see ``outbox``'s doc comment):
+            // reconnecting the same `tools` instances here, rather than
+            // sharing this session's own `outbox`, means an emitting tool
+            // shared with this parent now feeds the fork instead — one sink
+            // at a time, per `EventEmittingTool`'s contract.
+            tools: tools,
             serialGate: serialGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true,

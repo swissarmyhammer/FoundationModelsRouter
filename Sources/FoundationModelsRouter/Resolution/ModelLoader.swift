@@ -68,6 +68,25 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     ///   lifetime.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend
 
+    /// Manufactures a new live session backend over this resident model, with
+    /// `tools` threaded to the underlying `LanguageModelSession` so the model
+    /// can call them.
+    ///
+    /// Defaulted (see the extension below) to ignore `tools` and forward to
+    /// ``makeSession(instructions:)`` — so the many stub containers across the
+    /// unit suite that never pass tools need no changes at all. Only a
+    /// container that actually constructs a real `LanguageModelSession` (the
+    /// live `MLXFoundationModelsContainer`, see
+    /// `Resolution/LiveModelLoader.swift`) or a test that specifically
+    /// exercises tool wiring needs to override this.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - tools: The tools the model can call during this session.
+    /// - Returns: A new backend a vended ``RoutedSession`` drives for its
+    ///   lifetime.
+    func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend
+
     /// Manufactures a new live session backend seeded from an existing
     /// transcript, instead of from scratch.
     ///
@@ -112,6 +131,13 @@ extension LoadedLLMContainer {
         preconditionFailure(
             "this LoadedLLMContainer does not expose a languageModel; RoutedModel.makeLanguageModel() is unavailable for it"
         )
+    }
+
+    /// Ignores `tools` and forwards to ``makeSession(instructions:)``: see
+    /// ``makeSession(instructions:tools:)``'s doc comment for which
+    /// containers need to override this default.
+    public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
+        makeSession(instructions: instructions)
     }
 }
 

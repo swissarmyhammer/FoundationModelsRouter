@@ -66,8 +66,22 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
     ///   ``RoutedSession`` drives for its lifetime.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-        let session = LanguageModelSession(model: model, instructions: instructions)
-        return MLXFoundationModelsSessionBackend(session: session, model: model, instructions: instructions)
+        makeSession(instructions: instructions, tools: [])
+    }
+
+    /// Manufactures a live session backend over ``model``, with `tools`
+    /// threaded to the underlying `LanguageModelSession` so the model can call
+    /// them.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - tools: The tools the model can call during this session.
+    /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
+    ///   ``RoutedSession`` drives for its lifetime.
+    func makeSession(instructions: String?, tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
+        let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
+        return MLXFoundationModelsSessionBackend(
+            session: session, model: model, instructions: instructions, tools: tools)
     }
 
     /// Manufactures a live session backend seeded from an existing transcript.
@@ -136,6 +150,14 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// entries.
     private let instructions: String?
 
+    /// The tools ``liveSession`` was created with.
+    ///
+    /// Stored (rather than only baked into `liveSession`) so ``makeFork()``
+    /// can hand the identical tool instances to the forked session, mirroring
+    /// how ``instructions`` is retained here for the same reason — there is
+    /// no way to read a `LanguageModelSession`'s tools back off it.
+    private let tools: [any FoundationModels.Tool]
+
     /// Test-only accessor onto ``liveSession``, for `@testable import` in the
     /// gated integration suite (e.g. asserting `transcript.count` grows across
     /// turns, or matches a fork's parent at fork time). Deliberately not part
@@ -153,10 +175,19 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///   - instructions: The system instructions `session` was created with,
     ///     or `nil`. Stored so ``makeFork()`` can propagate it to the forked
     ///     backend; see ``instructions``.
-    init(session: LanguageModelSession, model: MLXLanguageModel, instructions: String? = nil) {
+    ///   - tools: The tools `session` was created with. Stored so
+    ///     ``makeFork()`` can propagate them to the forked backend; see
+    ///     ``tools``. Defaults to none.
+    init(
+        session: LanguageModelSession,
+        model: MLXLanguageModel,
+        instructions: String? = nil,
+        tools: [any FoundationModels.Tool] = []
+    ) {
         self.liveSession = session
         self.model = model
         self.instructions = instructions
+        self.tools = tools
     }
 
     /// Generates a complete text response through ``liveSession``.
@@ -292,10 +323,14 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// the parent was created with (there is no `LanguageModelSession`
     /// initializer that accepts both `transcript:` and `instructions:`
     /// together — the transcript's own `.instructions` entry is what actually
-    /// carries them forward into generation).
+    /// carries them forward into generation). ``tools`` is threaded the same
+    /// way, so the forked session's model can still call whatever tools the
+    /// parent could — mirroring how ``RoutedSessionActor/fork(workingDirectory:)``
+    /// reconnects the identical tool instances to the fork's own outbox.
     func makeFork() -> any LanguageModelSessionBackend {
-        let forkedSession = LanguageModelSession(model: model, tools: [], transcript: liveSession.transcript)
-        return MLXFoundationModelsSessionBackend(session: forkedSession, model: model, instructions: instructions)
+        let forkedSession = LanguageModelSession(model: model, tools: tools, transcript: liveSession.transcript)
+        return MLXFoundationModelsSessionBackend(
+            session: forkedSession, model: model, instructions: instructions, tools: tools)
     }
 
     /// Returns ``liveSession``'s current transcript, in order.

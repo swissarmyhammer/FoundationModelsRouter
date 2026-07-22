@@ -243,6 +243,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 recorder: routedLLM.recorder,
                 instructions: node.sidecar.instructions,
                 grammar: grammar,
+                // Restoration has no live tool list to thread — mirrors
+                // `LoadedLLMContainer.makeSession(transcript:)`'s own
+                // hardcoded `tools: []` a few lines above; see its doc
+                // comment ("this handle wraps `container.languageModel`
+                // directly, so the *caller* supplies real tools" for the
+                // resuming-handle path that actually can).
+                tools: [],
                 serialGate: routedLLM.serialGate,
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,
