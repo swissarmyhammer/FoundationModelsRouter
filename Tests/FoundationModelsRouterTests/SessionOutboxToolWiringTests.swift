@@ -81,6 +81,15 @@ struct SessionOutboxToolWiringTests {
     /// ``RoutedModel/makeSession(instructions:workingDirectory:tools:)`` passed
     /// through reached the container/backend-construction boundary — the seam
     /// the live container threads into `LanguageModelSession(model:tools:instructions:)`.
+    /// `@unchecked Sendable` invariant: `lastTools` is written once, synchronously,
+    /// inside `makeSession(instructions:tools:)` — itself called synchronously
+    /// (no `await` between call and the write) from `RoutedModel.makeSession`,
+    /// which is not actor-isolated and so never hops off the calling thread. Every
+    /// test that reads `lastTools` does so from the same `@MainActor` test method
+    /// that made the (synchronous) `makeSession(tools:)` call, after it returns —
+    /// so the write and every read happen on the same thread, never concurrently.
+    /// No lock is needed for a field that is never actually accessed from more
+    /// than one thread.
     private final class ToolCapturingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         private(set) var lastTools: [any Tool] = []
 
