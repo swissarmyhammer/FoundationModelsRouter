@@ -1,0 +1,1 @@
+{"id":"01KY5TAESZQVQ2F480CX2QTJN4","timestamp":"2026-07-22T21:04:49.471053Z","op":"create","item_id":"01KY5TAESY7XSB8M0P6S2G2X56","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 0075ca\n+tag_name: long-running\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 0075ca\n-tag_name: long-running\n","transaction_id":null}
