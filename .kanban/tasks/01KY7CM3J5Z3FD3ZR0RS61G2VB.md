@@ -52,8 +52,8 @@ comments:
 
     Leaving task in doing for /review per the /implement process — not moving to review or done myself.
   timestamp: 2026-07-23T13:23:00.246780+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c880
 title: 'Adopt per-session tool capabilities: instanced tool lists, fork-then-connect at fork'
 ---
 ## What
