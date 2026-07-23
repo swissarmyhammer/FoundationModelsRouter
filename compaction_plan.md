@@ -350,6 +350,65 @@ gated (`FM_ROUTER_INTEGRATION_TESTS`).
 1. **Spike**: synthesized `Transcript.Entry` values (summary entry, elision
    placeholders) round-trip through a live session and the recording mirror;
    confirm whether WWDC26 FM ships any native condensing to defer to.
+
+   ### 6.1 Spike findings (task dws80ms)
+
+   **Verdict — native condensing: BUILD, not defer.** Searched the installed
+   macOS 27 SDK's `FoundationModels.framework` public interface
+   (`.../FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface`) for
+   any compaction/condensing primitive:
+   `grep -inE "compact|condens|summar|trim|prune|fold|truncat" "$F"` — zero
+   matches anywhere in the framework. The only context-window-related surface
+   the SDK exposes at all is `LanguageModelSession.contextSize` (a read-only
+   `Int`) and the `LanguageModelError.contextSizeExceeded` / deprecated
+   `GenerationError.exceededContextWindowSize` failure cases — nothing that
+   folds, summarizes, elides, or trims a transcript. There is nothing native
+   to defer to or build on top of: this plan's from-scratch design (§1) is
+   the only option.
+
+   **Verdict — entry ids: fully controllable at synthesis, and preserved
+   through the recording mirror.** The same `.swiftinterface` shows every
+   `Transcript.Entry` case's `id` is a settable `var String` supplied at
+   construction — `init(id: String = UUID().uuidString, ...)` for
+   `.instructions`/`.prompt`/`.response`/`.reasoning`, and a *required*
+   no-default `id:` for `.toolCalls`/`.toolOutput`. A synthesized entry can
+   therefore carry whatever id the compactor wants — a fresh id for a new
+   summary entry, or, deliberately, the *same* id an old `.toolOutput`
+   carried, to mark an elision placeholder as replacing it in place rather
+   than being an unrelated new entry — exactly what `CompactionSegment`
+   (§1.2) depends on, since it references live-window and folded entries *by
+   id*. `Tests/FoundationModelsRouterTests/CompactionSpikeTests.swift` proves
+   the disk half of that dependency: a synthesized summary `.response` entry
+   and a synthesized elision-placeholder `.toolOutput` entry (reusing an old
+   entry's id) both survive `TranscriptEntryMapper` → `TranscriptEntryPayload`
+   → JSONL → `TranscriptTree.effectiveTranscript(forSession:)` with identical
+   structure and ids, using nothing beyond the mapper/reconstruction code
+   already in place — no production changes were needed for this half.
+   `Tests/FoundationModelsRouterIntegrationTests/CompactionSpikeIntegrationTests.swift`
+   (gated, `FM_ROUTER_INTEGRATION_TESTS`) covers the live-session half: it
+   rebuilds a real `LanguageModelSession` via
+   `MLXFoundationModelsContainer.makeSession(transcript:)` — the exact factory
+   `compact()`/restore will rebuild through — over a transcript containing
+   the same synthesized shape, and asserts the turn completes, the model
+   recalls a fact planted only in the synthesized summary entry, and the
+   synthesized ids are unchanged both immediately after ingest and after the
+   turn. (Not executed in the authoring sandbox — a pre-existing MLX
+   `default.metallib` load failure blocks *every* gated integration suite
+   there, reproduced identically against the already-passing
+   `TranscriptReconstructionIntegrationTests`; this is an environment
+   limitation of that sandbox, not something this task introduced. The
+   hermetic suite above fully covers the recording-mirror half without this
+   dependency.)
+
+   **Gotcha for `CompactionSegment` (§1.2) implementers:** none found on the
+   hermetic (disk) half. Both synthesis directions (fresh id, reused id)
+   round-trip cleanly; there is no observed id-reassignment or collision
+   hazard synthesizing entries outside of a real model turn. The live-session
+   half of this verdict (whether `LanguageModelSession(transcript:)` itself
+   preserves ids on ingest) remains to be empirically confirmed by running
+   `CompactionSpikeIntegrationTests` in an environment with working MLX/Metal
+   (e.g. CI, which already runs this target's other gated suites).
+
 2. **`CompactionSegment` + registry default registration**; recording
    round-trip tests.
 3. **Budget + accounting** (§1.5): expose the resolved working context on the
