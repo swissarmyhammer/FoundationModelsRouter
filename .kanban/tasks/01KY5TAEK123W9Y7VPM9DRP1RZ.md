@@ -52,8 +52,8 @@ comments:
   timestamp: 2026-07-23T00:37:32.413792+00:00
 depends_on:
 - 01KY5TAEDY4T6P7F7848CWWVAJ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c680
 title: Inject pending events into the next turn as preamble + persisted custom segment
 ---
 ## What

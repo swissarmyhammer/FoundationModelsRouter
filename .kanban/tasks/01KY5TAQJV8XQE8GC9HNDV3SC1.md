@@ -1,9 +1,34 @@
 ---
+comments:
+- actor: claude-code
+  id: 01ky67rwft5fdy874gsfra0jfm
+  text: |-
+    Milestone: implementation landed, build green.
+
+    - SessionOutbox.swift: added `PromptQueueMutationResult` (`.applied`/`.alreadySent`), `cancel(id:)`, `replace(id:prompt:)` (both racing `drainForDispatch()`'s commit boundary — a drained/committed id returns `.alreadySent`, never mutates an in-flight/recorded turn), and a new `drainPendingEvents() -> [PendingEvent]` that drains only events, leaving the queued-prompt FIFO untouched.
+    - RoutedSession.swift:
+      - Added `dispatchNextPrompt() async throws -> String?` as a protocol requirement, implemented on `RoutedSessionActor`: atomically drains the outbox (`drainForDispatch()`), dispatches the front queued prompt (flattened to text via a new `flattenedPromptText` helper) composed with any pending turn-riding events, as a normal recorded turn honoring the session's `grammar` exactly like `respond(to:)`. Returns `nil` when nothing was queued (re-queuing any events that drain still claimed, so they are never lost).
+      - Added `RoutedSession` extension convenience methods: `enqueue(prompt: Transcript.Prompt)`, `enqueue(prompt: String)`, `pendingPrompts() -> [(id, prompt)]`, `cancel(_:)`, `replace(_:prompt:)` — thin forwards to `outbox`.
+      - Refactored `generate(grammar:prompt:_:)`'s do/catch bracket tail into a shared `runTurn(grammar:pendingEvents:ownPrompt:_:)` helper, reused by both `generate()` and `dispatchNextPrompt()`.
+
+    Important discovery / fix beyond the literal acceptance criteria: `generate()` (used by `respond(to:)`/`streamResponse(to:)`) previously called `outbox.drainForDispatch()` directly, which *always* atomically dequeues the front queued prompt too (not just events) — but `generate()` never used `drained.prompt`, so any prompt sitting in the queue when a direct `respond(to:)` call happened would be silently destroyed. Now that `enqueue()` is actually reachable, this was a live data-loss bug waiting to happen. Fixed by giving `generate()` its own `drainPendingEvents()` (events only, prompt queue untouched) and reserving the prompt-inclusive `drainForDispatch()` exclusively for `dispatchNextPrompt()`. Covered by a new regression test `respondDoesNotConsumeQueuedPrompt`.
+
+    Tests added in Tests/FoundationModelsRouterTests/PromptQueueTests.swift (9 tests): FIFO dispatch order, respond() non-interference, pendingPrompts()/cancel/replace lifecycle, transcript purity for a never-dispatched prompt, event composition into a queued-prompt turn, and three commit-boundary race tests (cancel racing dispatch, replace racing dispatch, enqueue racing dispatch) using a new `GatedStubBackend` fixture gated by `AsyncSemaphore` to land the race deterministically inside the drained-but-not-yet-recorded window.
+
+    `swift build` and `swift build --build-tests` both green, zero warnings beyond the known pre-existing mlx-swift_Cmlx.bundle warning. Running full `swift test` next.
+  timestamp: 2026-07-23T00:59:53.722207+00:00
+- actor: claude-code
+  id: 01ky68br9vs2qp88mctjqs9fpm
+  text: |-
+    Done, left in `doing` for /review.
+
+    Adversarial double-check round 1 found a real bug (dispatchNextPrompt() writing the session meta line even when nothing was queued to dispatch) — fixed and covered by a new regression test. Round 2 double-check passed clean. Final fresh verification in this session: swift build, swift build --build-tests, and swift test all green (401 tests / 43 suites, gated real-model suites correctly skipped, only the known pre-existing mlx-swift_Cmlx.bundle warning). Description's acceptance-criteria/Tests checkboxes checked off; verified via get task that real newlines and the long-running tag survived the update.
+  timestamp: 2026-07-23T01:10:12.027862+00:00
 depends_on:
 - 01KY5TAEDY4T6P7F7848CWWVAJ
 - 01KY5TAEK123W9Y7VPM9DRP1RZ
-position_column: todo
-position_ordinal: '8e80'
+position_column: doing
+position_ordinal: '80'
 title: 'Prompt queue: enqueue, inspect, edit, cancel, and driver dispatch of queued user prompts'
 ---
 ## What
@@ -18,16 +43,26 @@ The user-facing half of the session outbox: queue user prompts while the model i
 - Queued prompts and their edits are app state until dispatch — nothing lands in the recorded transcript until the turn actually runs (the transcript stays the record of committed turns only).
 
 ## Acceptance Criteria
-- [ ] Prompts enqueued while a turn is in flight dispatch afterward in FIFO order, one recorded turn each
-- [ ] `pendingPrompts()` reflects enqueue/edit/cancel; a cancelled prompt never produces a turn; a replaced prompt dispatches its edited content
-- [ ] `cancel`/`replace` racing dispatch: on a committed id returns already-sent; the in-flight turn is unaffected
-- [ ] `dispatchNextPrompt()` composes pending turn-riding events into the queued prompt's turn (integration with the injection work verified by a test)
-- [ ] The recorded transcript contains only dispatched turns — no trace of cancelled or still-pending prompts
-- [ ] Public API documented; `swift test` green
+- [x] Prompts enqueued while a turn is in flight dispatch afterward in FIFO order, one recorded turn each
+- [x] `pendingPrompts()` reflects enqueue/edit/cancel; a cancelled prompt never produces a turn; a replaced prompt dispatches its edited content
+- [x] `cancel`/`replace` racing dispatch: on a committed id returns already-sent; the in-flight turn is unaffected
+- [x] `dispatchNextPrompt()` composes pending turn-riding events into the queued prompt's turn (integration with the injection work verified by a test)
+- [x] The recorded transcript contains only dispatched turns — no trace of cancelled or still-pending prompts
+- [x] Public API documented; `swift test` green
 
 ## Tests
-- [ ] Unit tests in `Tests/FoundationModelsRouterTests/` — FIFO dispatch, edit/cancel lifecycle, commit-boundary race (enqueue/cancel during an in-flight turn via the fake backend), event composition, transcript purity
-- [ ] `swift test` fully green
+- [x] Unit tests in `Tests/FoundationModelsRouterTests/` — FIFO dispatch, edit/cancel lifecycle, commit-boundary race (enqueue/cancel during an in-flight turn via the fake backend), event composition, transcript purity
+- [x] `swift test` fully green
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #long-running
+
+## Implementation notes
+
+Implemented in `Sources/FoundationModelsRouter/Session/SessionOutbox.swift` (added `PromptQueueMutationResult`, `cancel(id:)`, `replace(id:prompt:)`, `drainPendingEvents()`) and `Sources/FoundationModelsRouter/Session/RoutedSession.swift` (added `dispatchNextPrompt()`, `enqueue`/`pendingPrompts`/`cancel`/`replace` convenience methods, a shared `runTurn` helper). Tests in `Tests/FoundationModelsRouterTests/PromptQueueTests.swift` (9 tests).
+
+Also fixed a latent data-loss bug uncovered while wiring this up: `generate()` (used by `respond(to:)`/`streamResponse(to:)`) used to drain the outbox's combined events+queued-prompt commit boundary (`drainForDispatch()`), silently discarding any queued prompt that happened to be waiting. Now it uses a dedicated `drainPendingEvents()` that never touches the queued-prompt FIFO, so a direct `respond`/`streamResponse` call never steals or drops a prompt a driver hasn't dispatched yet. Covered by regression test `respondDoesNotConsumeQueuedPrompt`.
+
+Adversarial double-check (round 1) caught a real bug: `dispatchNextPrompt()` called `recordSessionMetaIfNeeded()` before checking whether a prompt was actually queued, which would write the session's first-line meta event even when nothing dispatched — violating the "a session that never generates writes no file" invariant. Fixed by moving that call after the empty-queue guard; covered by regression test `dispatchNextPromptOnEmptyQueueRecordsNothing`. Round 2 double-check passed clean.
+
+Verification: `swift build`, `swift build --build-tests`, and `swift test` all green — 401 tests in 43 suites passed, gated real-model suites correctly skipped, zero warnings beyond the known pre-existing `mlx-swift_Cmlx.bundle` warning. Left in `doing` for `/review`.

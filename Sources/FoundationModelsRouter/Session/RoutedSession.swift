@@ -127,6 +127,42 @@ public protocol RoutedSession: Actor {
     ///   other generation entry points and leave room for a future conforming
     ///   backend whose fork can fail.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
+
+    /// Runs the earliest still-pending prompt in ``outbox``'s queue as one
+    /// normal recorded turn: dequeues it together with any pending
+    /// turn-riding events (both drained atomically — see
+    /// ``SessionOutbox/drainForDispatch()``), composes them into the turn
+    /// exactly like ``respond(to:maxTokens:)`` does through the shared
+    /// recorder-bracketed chokepoint, and returns the model's response.
+    ///
+    /// This is the driver's pull surface over the queue populated by
+    /// ``RoutedSession/enqueue(prompt:)-(Transcript.Prompt)``/
+    /// ``RoutedSession/enqueue(prompt:)-(String)``: nothing in this package
+    /// auto-drains it — consistent with Router's current character, which has
+    /// no hidden auto-turn loop (see this type's own doc comment). The
+    /// intended driver-loop shape, using ``outbox``'s ``SessionOutbox/nextEvent()``
+    /// as the idle-wakeup signal (it resumes for a queued prompt exactly as
+    /// it does for a pending event):
+    ///
+    /// ```swift
+    /// while !Task.isCancelled {
+    ///     await session.outbox.nextEvent()
+    ///     if let response = try await session.dispatchNextPrompt() {
+    ///         // handle `response`
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// An opt-in mode that runs this loop automatically inside the session is
+    /// a recorded non-goal for now.
+    ///
+    /// - Returns: The model's response text, or `nil` if no prompt was queued
+    ///   at the moment this call drained the outbox (including a prompt
+    ///   ``RoutedSession/cancel(_:)``-ed just before the drain) — any pending
+    ///   events this drain also claimed in that case are re-queued rather
+    ///   than lost.
+    /// - Throws: Any error thrown by the model.
+    func dispatchNextPrompt() async throws -> String?
 }
 
 extension RoutedSession {
@@ -148,6 +184,72 @@ extension RoutedSession {
     ///   completes or throwing if it fails.
     public func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
         streamResponse(to: prompt, maxTokens: nil)
+    }
+
+    /// Stages a queued user prompt for a future turn — the ``RoutedSession``
+    /// convenience over this session's own ``outbox`` (see
+    /// ``SessionOutbox/enqueue(prompt:)``).
+    ///
+    /// Queued prompts are app state until ``dispatchNextPrompt()`` actually
+    /// dispatches one: nothing here touches the recorded transcript, which
+    /// stays the record of committed turns only.
+    ///
+    /// - Parameter prompt: The prompt to stage.
+    /// - Returns: The stable id assigned to this queued prompt, usable with
+    ///   ``pendingPrompts()``, ``cancel(_:)``, and ``replace(_:prompt:)``.
+    @discardableResult
+    public func enqueue(prompt: Transcript.Prompt) async -> SessionOutbox.ItemID {
+        await outbox.enqueue(prompt: prompt)
+    }
+
+    /// Stages a plain-text queued user prompt for a future turn — the
+    /// `String` convenience over ``enqueue(prompt:)-(Transcript.Prompt)``,
+    /// wrapping `prompt` in a single `.text` segment.
+    ///
+    /// - Parameter prompt: The prompt text to stage.
+    /// - Returns: The stable id assigned to this queued prompt.
+    @discardableResult
+    public func enqueue(prompt: String) async -> SessionOutbox.ItemID {
+        await enqueue(prompt: Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
+    }
+
+    /// A snapshot of every prompt currently queued for a future turn, in
+    /// FIFO dispatch order.
+    ///
+    /// - Returns: Each queued prompt's stable id paired with its current
+    ///   content, reflecting any ``replace(_:prompt:)`` applied to it since
+    ///   it was enqueued.
+    public func pendingPrompts() async -> [(id: SessionOutbox.ItemID, prompt: Transcript.Prompt)] {
+        await outbox.pending().prompts.map { (id: $0.id, prompt: $0.prompt) }
+    }
+
+    /// Cancels a still-pending queued prompt.
+    ///
+    /// - Parameter id: The id ``enqueue(prompt:)`` returned for the prompt to
+    ///   cancel.
+    /// - Returns: Whether the prompt was still pending and was removed, or
+    ///   had already been drained for dispatch by
+    ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
+    ///   A cancelled prompt never produces a turn.
+    @discardableResult
+    public func cancel(_ id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult {
+        await outbox.cancel(id: id)
+    }
+
+    /// Replaces a still-pending queued prompt's content, in place —
+    /// preserving its FIFO dispatch position.
+    ///
+    /// - Parameters:
+    ///   - id: The id ``enqueue(prompt:)`` returned for the prompt to
+    ///     replace.
+    ///   - prompt: The prompt's new content.
+    /// - Returns: Whether the prompt was still pending and was updated, or
+    ///   had already been drained for dispatch by
+    ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
+    ///   A replaced prompt dispatches its edited content.
+    @discardableResult
+    public func replace(_ id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult {
+        await outbox.replace(id: id, prompt: prompt)
     }
 }
 
@@ -646,19 +748,48 @@ actor RoutedSessionActor: RoutedSession {
 
         // Drain-on-turn: everything staged in `outbox` since the last turn is
         // folded into *this* turn's prompt, here inside the serial gate so a
-        // drain never interleaves with a concurrent turn (see
-        // ``SessionOutbox/drainForDispatch()``). Only the drained events are
-        // consumed here — a queued prompt this drain also returns
-        // (`drained.prompt`) is left untouched (wiring it into dispatch is a
-        // follow-on task; nothing in this package enqueues one today, so it is
-        // always `nil` in practice). An empty outbox drains to an empty
+        // drain never interleaves with a concurrent turn. This caller supplies
+        // its own prompt directly, so only events are drained — never the
+        // queued-prompt FIFO (see ``SessionOutbox/drainPendingEvents()``, as
+        // opposed to ``SessionOutbox/drainForDispatch()``, which only
+        // ``dispatchNextPrompt()`` uses): a prompt waiting in the queue is left
+        // exactly where it is rather than silently dequeued and discarded by
+        // an unrelated ad hoc turn. An empty outbox drains to an empty
         // `pendingEvents`, so ``composePrompt(pendingEvents:prompt:)`` returns
         // `prompt` unchanged and ``appendingOperationEventSegments(_:to:)`` is
         // never invoked below — byte-identical to a session that never used
         // an outbox.
-        let drained = await outbox.drainForDispatch()
-        let pendingEvents = drained.events.map(\.event)
-        let composedPrompt = Self.composePrompt(pendingEvents: pendingEvents, prompt: prompt)
+        let pendingEvents = await outbox.drainPendingEvents().map(\.event)
+        return try await runTurn(grammar: grammar, pendingEvents: pendingEvents, ownPrompt: prompt, body)
+    }
+
+    /// Runs one turn's model work and recording, given its already-resolved
+    /// prompt text and pending events — the common tail ``generate(grammar:prompt:_:)``
+    /// (a caller-supplied prompt) and ``dispatchNextPrompt()`` (a queue-sourced
+    /// prompt) share once each has resolved its own prompt text and drained
+    /// its own pending events, so composing the preamble, timing the turn,
+    /// and the finish/requeue/synthetic-close handling live in exactly one
+    /// place regardless of where the turn's prompt came from.
+    ///
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force for this turn,
+    ///     stamped onto every event this turn appends.
+    ///   - pendingEvents: The events already drained from the outbox for this
+    ///     turn, in outbox order.
+    ///   - ownPrompt: This turn's own prompt text, before composing in
+    ///     `pendingEvents`.
+    ///   - body: The model work to run inside the bracket, given this turn's
+    ///     composed prompt and returning the response text callers receive.
+    /// - Returns: The response text `body` produced.
+    /// - Throws: Whatever `body` throws, after recording whatever the SDK
+    ///   appended plus the bodyless close event.
+    private func runTurn(
+        grammar: Grammar?,
+        pendingEvents: [OperationEvent],
+        ownPrompt: String,
+        _ body: (String) async throws -> String
+    ) async throws -> String {
+        let composedPrompt = Self.composePrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
 
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
@@ -698,6 +829,71 @@ actor RoutedSessionActor: RoutedSession {
                 )
             }
             throw error
+        }
+    }
+
+    /// Runs the earliest still-pending queued prompt as one normal recorded
+    /// turn — the driver's pull surface over ``outbox``'s prompt queue. See
+    /// ``RoutedSession/dispatchNextPrompt()`` for the full contract and the
+    /// intended driver-loop shape.
+    ///
+    /// Dequeues the front queued prompt together with any pending
+    /// turn-riding events in one atomic ``SessionOutbox/drainForDispatch()``
+    /// call, inside the same serial gate ``generate(grammar:prompt:_:)`` runs
+    /// its own bracket in — so a dispatch never interleaves with a concurrent
+    /// ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)`` turn, and
+    /// races ``cancel(_:)``/``replace(_:prompt:)`` exactly at the drain: once
+    /// this call has drained an id, a `cancel`/`replace` racing it on that id
+    /// finds it already gone from the queue and reports
+    /// ``SessionOutbox/PromptQueueMutationResult/alreadySent``, leaving this
+    /// in-flight turn unaffected.
+    ///
+    /// Honors ``grammar`` exactly like ``respond(to:maxTokens:)``: a guided
+    /// session constrains this turn's response too.
+    func dispatchNextPrompt() async throws -> String? {
+        await serialGate.wait()
+        defer { serialGate.signal() }
+
+        let drained = await outbox.drainForDispatch()
+        let pendingEvents = drained.events.map(\.event)
+        guard let queued = drained.prompt else {
+            // Nothing was queued to dispatch — including the case where a
+            // concurrent `cancel(_:)` won the race for the only queued
+            // prompt just before this drain. Any events this drain still
+            // claimed were never actually delivered on any turn, so
+            // re-queue them rather than let this drain silently destroy
+            // them (the same "claimed but never delivered" situation
+            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:)``
+            // guards against on the ordinary respond/streamResponse path).
+            //
+            // Deliberately does NOT call `recordSessionMetaIfNeeded()` on
+            // this path: a session that never actually runs a turn must
+            // never write its `session` meta line either — the same
+            // "writes no file at all until it generates" invariant
+            // `generate(grammar:prompt:_:)` upholds, load-bearing for
+            // ``TranscriptTree``/``recordSessionMetaIfNeeded()``'s own
+            // contract. A driver following the documented
+            // `outbox.nextEvent()`-then-dispatch loop can reach this guard
+            // on a wakeup caused by a plain posted event with no prompt
+            // queued at all, so this must stay a true no-op.
+            await requeueUnattachedPendingEvents(pendingEvents)
+            return nil
+        }
+
+        // Only now — with a prompt confirmed to actually dispatch as a turn
+        // — is it safe to record the session's first-line meta event.
+        await recordSessionMetaIfNeeded()
+        let ownPrompt = Self.flattenedPromptText(queued.prompt)
+
+        if let grammar {
+            return try await runTurn(grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt) {
+                composedPrompt in
+                try await backend.respond(to: composedPrompt, following: grammar, maxTokens: nil)
+            }
+        }
+        return try await runTurn(grammar: nil, pendingEvents: pendingEvents, ownPrompt: ownPrompt) {
+            composedPrompt in
+            try await backend.respond(to: composedPrompt, maxTokens: nil)
         }
     }
 
@@ -773,6 +969,26 @@ actor RoutedSessionActor: RoutedSession {
         guard !pendingEvents.isEmpty else { return prompt }
         let preamble = pendingEvents.map(OperationEventSegment.renderedLine(for:)).joined(separator: "\n")
         return preamble + "\n\n" + prompt
+    }
+
+    /// The joined content of every `.text` segment in `prompt`, in order —
+    /// the plain-text form ``dispatchNextPrompt()`` hands to
+    /// ``LanguageModelSessionBackend/respond(to:maxTokens:)``/
+    /// ``LanguageModelSessionBackend/respond(to:following:maxTokens:)`` for a
+    /// queued prompt, since the backend's generation surface takes a
+    /// `String`, not a `Transcript.Prompt`. Non-text segments (e.g. a
+    /// `.custom` segment) are silently skipped: queuing anything richer than
+    /// plain text is not supported by this dispatch path.
+    ///
+    /// - Parameter prompt: The queued prompt to flatten.
+    /// - Returns: The joined text, or `""` if `prompt` carries no `.text`
+    ///   segment.
+    private static func flattenedPromptText(_ prompt: Transcript.Prompt) -> String {
+        let textContents = prompt.segments.compactMap { segment -> String? in
+            guard case .text(let text) = segment else { return nil }
+            return text.content
+        }
+        return textContents.joined()
     }
 
     /// Returns a copy of `partial` with one ``OperationEventSegment`` appended
