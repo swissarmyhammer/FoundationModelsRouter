@@ -48,8 +48,8 @@ comments:
   timestamp: 2026-07-23T18:08:37.114123+00:00
 depends_on:
 - 01KXTFR8MQDD7MF8J1NVCHKNHC
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: cd80
 title: 'noteCompaction on RecordingLanguageModel: append-only fold recording'
 ---
 ## What

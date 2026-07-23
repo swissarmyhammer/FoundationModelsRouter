@@ -1,11 +1,44 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01ky85gq4jmc63bvas3cbrsxq9
+  text: |-
+    Implemented via TDD (wrote CompactionStageTests.swift + CompactorPipelineTests.swift first, confirmed RED via `swift build --build-tests` compile failure, then implemented production code, confirmed GREEN).
+
+    Files added under Sources/FoundationModelsRouter/Compaction/:
+    - TranscriptTurns.swift — internal `TranscriptTurn`/`TranscriptTurns.split(_:)`/`.partition(_:keepRecentTurns:)`: shared turn-boundary logic both stages build on. A "turn" = a `.prompt` entry through everything up to (not including) the next `.prompt`; everything before the first `.prompt` (normally just `.instructions`) is the untouchable "header".
+    - CompactionStage.swift — `public protocol CompactionStage: Sendable { static var stageName: String; func apply(_ transcript: Transcript) -> Transcript }`. Only the two deterministic stages conform; the later async/model-assisted Summarization stage wires in differently.
+    - ToolOutputElision.swift / TurnTruncation.swift — both `keepRecentTurns: Int = 4`, pure `apply(_:) -> Transcript`.
+    - Compactor.swift — `CompactionResult` (exactly the 4 fields the task specifies: summary/tokensBefore/tokensAfter/stagesApplied) + `Compactor.compact(_ transcript:budget:)`.
+
+    One deliberate deviation worth flagging: the task text and compaction_plan.md both write the signature as `Compactor.compact(_ transcript: Transcript, budget: TokenBudget) -> CompactionResult`, but CompactionResult (as literally specified, 4 fields) carries no Transcript. Since compaction_plan.md §1.1 defines compaction itself as a pure `Transcript -> Transcript` function, and both downstream consumers (RoutedSessionActor.compact swapping its inner session; the bare-session recipe calling `noteCompaction(_ compacted: Transcript)`) need the folded transcript itself, a `-> CompactionResult`-only return would make the pipeline non-functional for its stated purpose. Implemented as `-> (transcript: Transcript, result: CompactionResult)` instead — CompactionResult's shape is unchanged from spec. Flagging this so the Summarization task (e3b6d6v) and RoutedSession.compact task (ffsjqha) know to expect the tuple return rather than bare CompactionResult.
+
+    Token estimation: no live measurement is available at this pure-Transcript layer, so `Compactor.estimatedTokenCount(of:)` estimates via a character-ratio heuristic (4.0 chars/token, documented) applied to the JSON-encoded byte size of each entry's `TranscriptEntryPayload` mirror (reusing `TranscriptEntryMapper.event(from:)` — covers every entry kind's content, not just `.text` segments). Tests derive expected before/after relationships from this same function rather than hand-computed constants, to stay robust to the payload's exact JSON shape.
+
+    Pipeline semantics: stops as soon as a stage's estimated result is <= target; already-under-target transcripts run zero stages; the oversized-tail case (recency window alone exceeds target) returns the *original* transcript unchanged with `stagesApplied == []`, reporting the shortfall via `tokensAfter` (still > target, visible to the caller who has the budget).
+
+    Verification: `swift test --filter 'CompactionStage|CompactorPipeline'` — 15/15 new tests passed. Full `swift build`, `swift build --build-tests`, `swift test` run next.
+  timestamp: 2026-07-23T18:58:57.810947+00:00
+- actor: claude-code
+  id: 01ky86s512f5c6yd9w8429b12r
+  text: |-
+    Adversarial double-check (via really-done) ran on the initial implementation and returned REVISE with two findings, both fixed:
+
+    1. (High) `Compactor.compact`'s oversized-tail branch reported `tokensAfter` as the size of the discarded, fully-elided-and-truncated `current` transcript rather than the size of what the function actually returns (the unchanged original `transcript`). Contradicted the struct's own doc comment and would mislead a caller (e.g. a future RoutedSessionActor.compact) about how close the returned transcript is to budget. The original test for this path only used 2 turns against keepRecentTurns=4, so `old` was always empty and `current` stayed identical to `transcript` — masking the bug. Fixed: oversized-tail branch now returns `tokensAfter: tokensBefore`. Added a regression test (`oversizedTailWithOldTurnsReportsTokensAfterForTheReturnedTranscript`) with 6 turns (old turns non-empty, so `current` really does shrink inside the pipeline loop) — watched it fail red against the bug, confirmed green after the fix.
+
+    2. (Low) `TranscriptTurns.partition(_:keepRecentTurns:)` treated `keepRecentTurns <= 0` as "protect everything" (old: [], recent: turns) — backwards from "keep the newest zero turns," and undocumented/untested. Fixed: `keepRecentTurns <= 0` now correctly means "protect nothing" (old: turns, recent: []), documented on the function, with a new regression test (`nonPositiveKeepRecentTurnsProtectsNoTurns`) — watched red, confirmed green.
+
+    Both fixes done via TDD (test added, watched fail for the right reason, fixed production code, watched pass). Re-ran the full suite after fixing: `swift build`, `swift build --build-tests`, `swift test` all green — 451 tests in 49 suites passing (baseline 434 + 17 new stage/pipeline tests), 16 gated/skipped in 6 suites unchanged, zero failures, only the known pre-existing mlx-swift_Cmlx.bundle warning.
+
+    Task left in `doing`, green, ready for `/review`. All 4 acceptance-criteria checkboxes and both Tests-section items are satisfied; not checking them off in the description per the kanban-corruption note in memory — verified manually instead.
+  timestamp: 2026-07-23T19:21:02.754088+00:00
 depends_on:
 - 01KXTFQVKKDB1PPCXZQDWS80MS
 - 01KXTFS4FNT1P5F889D1PEQ9N7
-position_column: todo
-position_ordinal: '8480'
+position_column: doing
+position_ordinal: '80'
 title: Deterministic stages + Compactor pipeline (ToolOutputElision, TurnTruncation)
 ---
 ## What
