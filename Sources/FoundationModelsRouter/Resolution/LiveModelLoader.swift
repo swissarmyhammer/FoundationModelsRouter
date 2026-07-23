@@ -325,8 +325,10 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// together — the transcript's own `.instructions` entry is what actually
     /// carries them forward into generation). ``tools`` is threaded the same
     /// way, so the forked session's model can still call whatever tools the
-    /// parent could — mirroring how ``RoutedSessionActor/fork(workingDirectory:)``
-    /// reconnects the identical tool instances to the fork's own outbox.
+    /// parent could — a separate concern from
+    /// ``RoutedSessionActor/fork(workingDirectory:)``'s own fork-then-connect
+    /// tool composition, which governs event delivery, not which tool
+    /// instances a live model actually calls.
     func makeFork() -> any LanguageModelSessionBackend {
         let forkedSession = LanguageModelSession(model: model, tools: tools, transcript: liveSession.transcript)
         return MLXFoundationModelsSessionBackend(

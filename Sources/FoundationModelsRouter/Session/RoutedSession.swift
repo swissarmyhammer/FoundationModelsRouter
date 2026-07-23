@@ -78,9 +78,9 @@ public protocol RoutedSession: Actor {
     /// conversation at a future turn boundary. See ``SessionOutbox``.
     ///
     /// Fresh per session — a fork is given its own outbox rather than sharing
-    /// its parent's (see ``fork(workingDirectory:)``'s doc comment for why,
-    /// and how that interacts with a shared ``EventEmittingTool`` instance's
-    /// single-sink-at-a-time connection).
+    /// its parent's (see ``fork(workingDirectory:)``'s doc comment for the
+    /// fork-then-connect composition that wires each session's own tool
+    /// instances to it, so event delivery never migrates between sessions).
     nonisolated var outbox: SessionOutbox { get }
 
     /// Generates a complete text response to a prompt, recording the call.
@@ -267,7 +267,7 @@ extension RoutedSession {
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -284,6 +284,8 @@ func makeRoutedSessionActor(
     instructions: String?,
     grammar: Grammar?,
     tools: [any Tool],
+    originalTools: [any Tool] = [],
+    outbox: SessionOutbox = SessionOutbox(),
     serialGate: AsyncSemaphore,
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
@@ -304,6 +306,8 @@ func makeRoutedSessionActor(
         instructions: instructions,
         grammar: grammar,
         tools: tools,
+        originalTools: originalTools,
+        outbox: outbox,
         serialGate: serialGate,
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
@@ -357,26 +361,36 @@ actor RoutedSessionActor: RoutedSession {
     /// Travels with the session so a fork inherits it.
     nonisolated let grammar: Grammar?
 
-    /// The tools this session's model can call, retained (not just handed to
-    /// ``backend`` at construction) so ``fork(workingDirectory:)`` can
-    /// reconnect any ``EventEmittingTool`` among them to the child's own fresh
-    /// ``SessionOutbox`` — see ``outbox``'s doc comment for why a fork gets a
-    /// fresh outbox rather than sharing this session's.
-    private nonisolated let tools: [any Tool]
+    /// The tools this session was constructed with, before any per-session
+    /// instancing — retained purely so ``fork(workingDirectory:)`` can build
+    /// the child's own tool list via fork-then-connect composition, sourced
+    /// from these true originals rather than from ``tools``' already-instanced
+    /// copies (see ``fork(workingDirectory:)``'s doc comment).
+    private nonisolated let originalTools: [any Tool]
+
+    /// This session's own per-session tool list: every ``EventEmittingTool``
+    /// among ``originalTools`` bound to ``outbox`` via a pure
+    /// ``EventEmittingTool/connecting(_:)`` copy (a root session), or the
+    /// fork-then-connect composition ``fork(workingDirectory:)`` builds (a
+    /// fork) — a non-conforming tool passes through unchanged. This is the
+    /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
+    /// at construction; retained here too so it stays inspectable without a
+    /// live model.
+    nonisolated let tools: [any Tool]
 
     /// This session's own outbox — see ``RoutedSession/outbox``.
     ///
-    /// Fresh per session: a root session is constructed with a brand-new,
-    /// empty outbox and connects every ``EventEmittingTool`` among ``tools``
-    /// to it; ``fork(workingDirectory:)`` builds another fresh outbox for the
-    /// child and reconnects the *same* ``tools`` instances to it instead —
-    /// deliberately not sharing this session's outbox with the fork. Since an
-    /// ``EventEmittingTool`` connects to only one sink at a time (see its
-    /// "hosts connect, users don't" contract), this means forking a session
-    /// with a shared emitting tool re-homes that tool's future events to the
-    /// fork: the parent stops receiving from it. That is the accepted
-    /// tradeoff of "tool-per-session" wiring plus fresh-per-session outboxes,
-    /// not an oversight.
+    /// Fresh per session: a root session is constructed already holding a
+    /// brand-new, empty outbox and its own ``tools`` instanced to it (a pure
+    /// map, computed by the caller before this session exists — see
+    /// ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``);
+    /// ``fork(workingDirectory:)`` builds another fresh outbox for the child
+    /// and its own fork-then-connect composed tool list instead — deliberately
+    /// not sharing this session's outbox with the fork. Because
+    /// ``EventEmittingTool/connecting(_:)`` is pure rather than mutating, this
+    /// session's own already-instanced ``tools`` keep posting to this outbox
+    /// forever, regardless of how many further forks are taken: event
+    /// delivery never migrates between sessions.
     nonisolated let outbox: SessionOutbox
 
     /// The per-model serial generation gate, shared with the owning model's other
@@ -469,6 +483,8 @@ actor RoutedSessionActor: RoutedSession {
         instructions: String?,
         grammar: Grammar? = nil,
         tools: [any Tool] = [],
+        originalTools: [any Tool] = [],
+        outbox: SessionOutbox = SessionOutbox(),
         serialGate: AsyncSemaphore,
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
@@ -488,23 +504,13 @@ actor RoutedSessionActor: RoutedSession {
         self.instructions = instructions
         self.grammar = grammar
         self.tools = tools
+        self.originalTools = originalTools
+        self.outbox = outbox
         self.serialGate = serialGate
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
         self.sidecarOrigin = sidecarOrigin
-
-        // A brand-new outbox for this session, connected to `tools` right
-        // here at construction — before any caller can observe this session —
-        // so "implementing `EventEmittingTool` IS the subscription" holds with
-        // no explicit connect call anywhere outside this initializer. A tool
-        // that doesn't conform to `EventEmittingTool` simply fails the cast
-        // and passes through untouched.
-        let outbox = SessionOutbox()
-        self.outbox = outbox
-        for tool in tools {
-            (tool as? any EventEmittingTool)?.connect(outbox)
-        }
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into
@@ -656,6 +662,26 @@ actor RoutedSessionActor: RoutedSession {
         // durable child directory a transcript can land in with no sidecar
         // beside it, and needs no sidecar call of its own to say so (see
         // ``SessionSidecarOrigin``).
+        // Fresh-per-session outbox plus fork-then-connect tool composition
+        // (see ``outbox``'s doc comment): built from ``originalTools`` — the
+        // true originals, never this session's own already-instanced
+        // ``tools`` — so a ``ForkableTool`` conformer is forked exactly once,
+        // from its pristine state, rather than from a copy already wired to
+        // this session's outbox. Composition order matters: a tool is forked
+        // first via its own `forked()` (falling back to sharing the original
+        // unchanged when it doesn't conform to `ForkableTool`), *then* the
+        // forked result is wired to `childOutbox` via `connecting(_:)` if it
+        // also emits. Since `connecting(_:)` is pure rather than mutating,
+        // this session's own already-instanced `tools` are entirely
+        // untouched by this and keep posting to this session's own `outbox`
+        // — including any detached work that captured this session's sink
+        // before the fork — so event delivery never migrates to the child.
+        let childOutbox = SessionOutbox()
+        let childTools = originalTools.map { tool in
+            let forked = (tool as? any ForkableTool)?.forked() ?? tool
+            return (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
+        }
+
         return makeRoutedSessionActor(
             profile: profile,
             routerId: routerId,
@@ -669,12 +695,9 @@ actor RoutedSessionActor: RoutedSession {
             recorder: recorder,
             instructions: instructions,
             grammar: grammar,
-            // Fresh-per-session outbox (see ``outbox``'s doc comment):
-            // reconnecting the same `tools` instances here, rather than
-            // sharing this session's own `outbox`, means an emitting tool
-            // shared with this parent now feeds the fork instead — one sink
-            // at a time, per `EventEmittingTool`'s contract.
-            tools: tools,
+            tools: childTools,
+            originalTools: originalTools,
+            outbox: childOutbox,
             serialGate: serialGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true,

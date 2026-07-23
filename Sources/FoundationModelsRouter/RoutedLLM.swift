@@ -86,13 +86,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
-    ///   - tools: The tools the model can call during this session, threaded to
-    ///     the underlying `LanguageModelSession` (mirroring Apple's
-    ///     `LanguageModelSession(tools:)`). During construction, every tool
-    ///     conforming to `EventEmittingTool` is automatically connected to the
-    ///     vended session's own ``RoutedSession/outbox`` — no explicit
-    ///     `connect` call is ever needed: implementing the protocol IS the
-    ///     subscription. A tool that does not conform passes through
+    ///   - tools: The tools the model can call during this session. Before
+    ///     being threaded to the underlying `LanguageModelSession` (mirroring
+    ///     Apple's `LanguageModelSession(tools:)`), every tool conforming to
+    ///     `EventEmittingTool` is replaced by a pure `connecting(_:)` copy
+    ///     wired to the vended session's own fresh ``RoutedSession/outbox`` —
+    ///     no explicit wiring call is ever needed: implementing the protocol
+    ///     IS the subscription. A tool that does not conform passes through
     ///     untouched. Defaults to no tools.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
@@ -133,11 +133,25 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let sessionId = ULID.generate()
         let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
 
+        // Pure per-session instancing, before the backend is ever built:
+        // every `EventEmittingTool` among `tools` is replaced by a
+        // `connecting(_:)` copy wired to a brand-new outbox, never mutating
+        // `tools` itself — a non-conforming tool simply fails the cast and
+        // passes through unchanged. This is what makes "implementing
+        // `EventEmittingTool` IS the subscription" hold with no explicit
+        // wiring call anywhere: nobody has to remember to connect a tool
+        // separately, and — because this runs before `container.makeSession`
+        // below — the model-facing tool list the backend actually receives
+        // is these sink-bound copies, not the originals.
+        let outbox = SessionOutbox()
+        let instancedTools = tools.map { ($0 as? any EventEmittingTool)?.connecting(outbox) ?? $0 }
+
         // The container is only a factory: it manufactures the backend the
         // vended session owns and drives for its whole lifetime, born already
-        // carrying `instructions` and `tools` so generation calls never pass
-        // them again and the model can call whatever `tools` supplies.
-        let backend = container.makeSession(instructions: instructions, tools: tools)
+        // carrying `instructions` and `instancedTools` so generation calls
+        // never pass them again and the model can call whatever `tools`
+        // supplies, with events routed to this session's own `outbox`.
+        let backend = container.makeSession(instructions: instructions, tools: instancedTools)
 
         return makeRoutedSessionActor(
             profile: owningProfile,
@@ -152,11 +166,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             recorder: recorder,
             instructions: instructions,
             grammar: grammar,
-            // Auto-connecting every `EventEmittingTool` among `tools` to this
-            // session's own fresh outbox happens inside the actor's
-            // initializer (see ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``) —
-            // nobody has to remember to connect a tool separately.
-            tools: tools,
+            tools: instancedTools,
+            // The true originals, retained only so a fork can later build its
+            // own tool list via fork-then-connect composition, sourced from
+            // these rather than from `instancedTools` (see
+            // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
+            originalTools: tools,
+            outbox: outbox,
             // The serial and fork-admission gates are the model handle's, shared
             // across all its sessions and forks. A root session holds no
             // fork-admission permit.

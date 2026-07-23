@@ -5,20 +5,20 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 8cwwvaj's other half: ``RoutedModel/makeSession(instructions:workingDirectory:tools:)``
-/// threading a tool list into the underlying session AND auto-connecting every
-/// ``EventEmittingTool`` to the vended ``RoutedSession``'s own ``SessionOutbox`` —
-/// with **no explicit connect call anywhere** in these tests. Also exercises the
-/// fork decision: a fork gets its own fresh outbox, and an emitting tool passed
-/// to the parent re-connects to the *fork's* outbox once forked (one sink at a
-/// time — see ``EventEmittingTool``).
+/// Exercises task s61g2vb's per-session tool capabilities:
+/// ``RoutedModel/makeSession(instructions:workingDirectory:tools:)`` pure
+/// per-session instancing (``EventEmittingTool/connecting(_:)``) with **no
+/// explicit wiring call anywhere** in these tests, and
+/// ``RoutedSessionActor/fork(workingDirectory:)``'s fork-then-connect
+/// composition (``ForkableTool/forked()`` then ``EventEmittingTool/connecting(_:)``)
+/// building the child's tool list from the parent's true originals.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU. Real
 /// `LanguageModelSession(tools:)` wiring lives in the live
 /// ``MLXFoundationModelsContainer``/``MLXFoundationModelsSessionBackend``
 /// (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`),
 /// exercised end to end only by the gated integration suite.
-@Suite("makeSession(tools:): auto-connected EventEmittingTool + fork outbox")
+@Suite("makeSession(tools:): per-session instancing + fork-then-connect")
 struct SessionOutboxToolWiringTests {
     // MARK: - Test tools
 
@@ -27,43 +27,85 @@ struct SessionOutboxToolWiringTests {
         let value: String
     }
 
-    /// A real `FoundationModels.Tool` that also conforms to `EventEmittingTool`,
-    /// so a host discovers it by conformance cast and connects it automatically —
-    /// mirroring how a real fused `OperationTool<Context: EventEmittingContext>`
-    /// gets its conformance. `postEvent(_:)` is the test-only stand-in for what a
-    /// real tool's `execute(in:)` would do: post through whatever sink is
-    /// currently connected (or into the void if none is), through the same
-    /// `OperationEventSinkHolder`-style single-sink-at-a-time discipline.
+    /// A real `FoundationModels.Tool` that also conforms to `EventEmittingTool`
+    /// via a pure `connecting(_:)` — a host discovers it by conformance cast
+    /// and wires it during construction, mirroring how a real fused
+    /// `OperationTool<Context: EventEmittingContext>` gets its conformance.
+    /// `postEvent(_:)` is the test-only stand-in for what a real tool's
+    /// `execute(in:)` would do: post through whichever sink this particular
+    /// instance was instanced with (or into the void if none), never a
+    /// mutable slot that could be reconnected later.
     private final class FakeEmittingTool: Tool, EventEmittingTool, @unchecked Sendable {
         let name = "fake-emitter"
-        let description = "test-only tool that posts events once connected"
+        let description = "test-only tool that posts events through its own sink"
 
-        private let lock = NSLock()
-        private var sink: (any OperationEventSink)?
+        private let sink: (any OperationEventSink)?
 
-        func connect(_ sink: any OperationEventSink) {
-            lock.withLock { self.sink = sink }
+        init(sink: (any OperationEventSink)? = nil) {
+            self.sink = sink
+        }
+
+        /// Pure: returns a new instance wired to `sink`, never mutating
+        /// `self` — the receiver (e.g. the caller's own original) keeps
+        /// posting into the void forever.
+        func connecting(_ sink: any OperationEventSink) -> any Tool {
+            FakeEmittingTool(sink: sink)
         }
 
         func call(arguments: FakeToolArguments) async throws -> String {
             "handled: \(arguments.value)"
         }
 
-        /// Posts `event` through whichever sink is currently connected, or
-        /// silently drops it if none is — never a direct reference to any
-        /// particular `SessionOutbox`, so this can be called both before and
-        /// after a fork reconnects this instance to a different outbox.
+        /// Posts `event` through this instance's own sink, or silently drops
+        /// it if none is connected.
         func postEvent(_ event: OperationEvent) async {
-            let current = lock.withLock { sink }
-            await current?.post(event)
+            await sink?.post(event)
         }
     }
 
-    /// A plain `Tool` with no `EventEmittingTool` conformance at all — proves a
-    /// mixed tool list works: this one just passes through untouched.
+    /// A `Tool` that both emits and forks, so a host applies `forked()` first
+    /// and `connecting(_:)` second — the composition order
+    /// ``ForkableTool``'s doc comment pins. `generation` proves `forked()`
+    /// is actually invoked (incremented on every fork) rather than the
+    /// original being shared unchanged.
+    private final class ForkableEmittingTool: Tool, EventEmittingTool, ForkableTool, @unchecked Sendable {
+        let name = "forkable-emitter"
+        let description = "test-only tool that forks into a new generation and can emit"
+        let generation: Int
+
+        private let sink: (any OperationEventSink)?
+
+        init(generation: Int = 0, sink: (any OperationEventSink)? = nil) {
+            self.generation = generation
+            self.sink = sink
+        }
+
+        func connecting(_ sink: any OperationEventSink) -> any Tool {
+            ForkableEmittingTool(generation: generation, sink: sink)
+        }
+
+        /// Derives a child session's instance, marking it with the next
+        /// generation while sharing whatever sink the receiver had (fork
+        /// runs before connect, per the composition order).
+        func forked() -> any Tool {
+            ForkableEmittingTool(generation: generation + 1, sink: sink)
+        }
+
+        func call(arguments: FakeToolArguments) async throws -> String {
+            "handled: \(arguments.value)"
+        }
+
+        func postEvent(_ event: OperationEvent) async {
+            await sink?.post(event)
+        }
+    }
+
+    /// A plain `Tool` with no `EventEmittingTool`/`ForkableTool` conformance
+    /// at all — proves a mixed tool list works: this one just passes through
+    /// untouched, both at construction and at fork.
     private struct PlainTool: Tool {
         let name = "plain"
-        let description = "a tool with no event-emitting capability"
+        let description = "a tool with no event-emitting or forking capability"
 
         func call(arguments: FakeToolArguments) async throws -> String {
             "plain: \(arguments.value)"
@@ -204,7 +246,7 @@ struct SessionOutboxToolWiringTests {
 
     // MARK: - Tools threaded to the container/backend boundary
 
-    @Test("makeSession(tools:) threads the exact tool list to the container/backend construction boundary")
+    @Test("makeSession(tools:) threads the exact tool list shape to the container/backend construction boundary")
     @MainActor
     func toolsAreThreadedToContainer() async throws {
         let dir = Self.makeTempDir()
@@ -223,9 +265,43 @@ struct SessionOutboxToolWiringTests {
         #expect(container.lastTools.contains { $0 is PlainTool })
     }
 
-    // MARK: - Auto-connect: no explicit connect() call anywhere
+    @Test("the container receives a distinct, sink-bound copy of an emitting tool — not the original instance")
+    @MainActor
+    func toolsThreadedToContainerAreDistinctSinkBoundCopies() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
 
-    @Test("a fake emitting tool passed in tools: delivers events with no explicit connect call anywhere")
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = FakeEmittingTool()
+        let session = profile.standard.makeSession(tools: [emitter])
+
+        guard let instancedEmitter = container.lastTools.first as? FakeEmittingTool else {
+            Issue.record("expected the container to receive a FakeEmittingTool")
+            return
+        }
+        #expect(instancedEmitter !== emitter)
+
+        // Posting through the container-threaded copy — the one the model
+        // would actually call — reaches this session's own outbox, proving
+        // it really is the sink-bound instance, not a disconnected passthrough.
+        await instancedEmitter.postEvent(Self.event(detail: "threaded-to-backend"))
+        let pending = await session.outbox.pending()
+        #expect(pending.events.map(\.event.detail) == ["threaded-to-backend"])
+
+        // The original, never instanced, still posts into the void — the
+        // outbox gains nothing further beyond the one event already posted
+        // through the container-threaded copy above.
+        await emitter.postEvent(Self.event(detail: "never reaches anything"))
+        let pendingAfter = await session.outbox.pending()
+        #expect(pendingAfter.events.map(\.event.detail) == ["threaded-to-backend"])
+    }
+
+    // MARK: - Auto-connect: no explicit wiring call anywhere
+
+    @Test("a fake emitting tool passed in tools: delivers events with no explicit wiring call anywhere")
     @MainActor
     func emittingToolAutoConnectsToSessionOutbox() async throws {
         let dir = Self.makeTempDir()
@@ -238,9 +314,13 @@ struct SessionOutboxToolWiringTests {
         let emitter = FakeEmittingTool()
         let session = profile.standard.makeSession(tools: [emitter])
 
-        // No call to `emitter.connect(...)` appears anywhere in this test —
+        // No call to `connecting(...)` appears anywhere in this test —
         // `makeSession(tools:)` itself must have wired it during construction.
-        await emitter.postEvent(Self.event(detail: "auto-connected"))
+        guard let instancedEmitter = container.lastTools.first as? FakeEmittingTool else {
+            Issue.record("expected the container to receive a FakeEmittingTool")
+            return
+        }
+        await instancedEmitter.postEvent(Self.event(detail: "auto-connected"))
 
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["auto-connected"])
@@ -260,13 +340,20 @@ struct SessionOutboxToolWiringTests {
         let plain = PlainTool()
         let session = profile.standard.makeSession(tools: [plain, emitter])
 
+        guard let instancedEmitter = container.lastTools.first(where: { $0 is FakeEmittingTool }) as? FakeEmittingTool,
+              let instancedPlain = container.lastTools.first(where: { $0 is PlainTool }) as? PlainTool
+        else {
+            Issue.record("expected both a FakeEmittingTool and a PlainTool in the threaded list")
+            return
+        }
+
         // The plain tool has no connect surface at all; the emitter still
         // auto-connects despite sharing the list with a non-emitting tool.
-        await emitter.postEvent(Self.event(detail: "still works"))
+        await instancedEmitter.postEvent(Self.event(detail: "still works"))
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["still works"])
 
-        let output = try await plain.call(arguments: FakeToolArguments(value: "x"))
+        let output = try await instancedPlain.call(arguments: FakeToolArguments(value: "x"))
         #expect(output == "plain: x")
     }
 
@@ -286,7 +373,7 @@ struct SessionOutboxToolWiringTests {
         #expect(pending.prompts.isEmpty)
     }
 
-    // MARK: - Fork behavior: fresh-per-session outbox, tool reconnects to the fork's
+    // MARK: - Fork behavior: fresh-per-session outbox, fork-then-connect tool composition
 
     @Test("a fork gets its own fresh SessionOutbox, distinct from its parent's")
     @MainActor
@@ -304,9 +391,51 @@ struct SessionOutboxToolWiringTests {
         #expect(session.outbox !== child.outbox)
     }
 
-    @Test("forking reconnects a shared emitting tool to the fork's own outbox — events post-fork land in the child, not the parent")
+    @Test(
+        "after fork, the parent's own instance keeps posting to the parent's outbox and the fork's own instance posts to the fork's outbox — concurrently"
+    )
     @MainActor
-    func forkReconnectsEmittingToolToChildOutbox() async throws {
+    func parentAndForkInstancesPostToTheirOwnOutboxesConcurrently() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = FakeEmittingTool()
+        let session = profile.standard.makeSession(tools: [emitter])
+        let child = try await session.fork(workingDirectory: nil)
+
+        guard let parentActor = session as? RoutedSessionActor,
+            let childActor = child as? RoutedSessionActor,
+            let parentInstance = parentActor.tools.first as? FakeEmittingTool,
+            let childInstance = childActor.tools.first as? FakeEmittingTool
+        else {
+            Issue.record("expected both the parent and the fork to expose their own instanced FakeEmittingTool")
+            return
+        }
+        #expect(parentInstance !== childInstance)
+
+        // Concurrently post from each session's own instance — this is
+        // exactly the scenario the old mutation-based design failed: one
+        // shared instance, one sink, so forking silently re-homed the
+        // parent's own future events to the fork.
+        async let parentPost: Void = parentInstance.postEvent(
+            Self.event(correlationID: "parent", detail: "from-parent"))
+        async let childPost: Void = childInstance.postEvent(
+            Self.event(correlationID: "child", detail: "from-child"))
+        _ = await (parentPost, childPost)
+
+        let parentPending = await session.outbox.pending()
+        let childPending = await child.outbox.pending()
+        #expect(parentPending.events.map(\.event.detail) == ["from-parent"])
+        #expect(childPending.events.map(\.event.detail) == ["from-child"])
+    }
+
+    @Test("a sink captured before the fork keeps posting to the parent after forking")
+    @MainActor
+    func sinkCapturedBeforeForkKeepsPostingToParentAfterFork() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -317,23 +446,71 @@ struct SessionOutboxToolWiringTests {
         let emitter = FakeEmittingTool()
         let session = profile.standard.makeSession(tools: [emitter])
 
-        // Before forking, the shared tool feeds the parent's outbox.
-        await emitter.postEvent(Self.event(correlationID: "before", detail: "pre-fork"))
-        let parentPendingBeforeFork = await session.outbox.pending()
-        #expect(parentPendingBeforeFork.events.map(\.event.detail) == ["pre-fork"])
+        guard let parentActor = session as? RoutedSessionActor,
+            let capturedInstance = parentActor.tools.first as? FakeEmittingTool
+        else {
+            Issue.record("expected the parent session to expose its own instanced FakeEmittingTool")
+            return
+        }
 
+        // Stands in for a detached task that captured its sink at operation
+        // start, before any fork happened.
+        _ = try await session.fork(workingDirectory: nil)
+
+        await capturedInstance.postEvent(Self.event(detail: "captured-before-fork"))
+        let parentPending = await session.outbox.pending()
+        #expect(parentPending.events.map(\.event.detail) == ["captured-before-fork"])
+    }
+
+    @Test(
+        "at fork, a ForkableTool fixture's forked() is invoked and its result lands in the child's tool list; a plain tool passes through shared"
+    )
+    @MainActor
+    func forkAppliesForkedThenConnectsAndSharesPlainToolsUnchanged() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let forkable = ForkableEmittingTool()
+        let plain = PlainTool()
+        let session = profile.standard.makeSession(tools: [forkable, plain])
         let child = try await session.fork(workingDirectory: nil)
 
-        // After forking, the (single, shared) tool instance has been
-        // reconnected to the fork's outbox — one sink at a time, per
-        // `EventEmittingTool`'s contract — so further events land in the
-        // child, not the parent.
-        await emitter.postEvent(Self.event(correlationID: "after", detail: "post-fork"))
+        guard let parentActor = session as? RoutedSessionActor,
+            let childActor = child as? RoutedSessionActor
+        else {
+            Issue.record("expected both sessions to be RoutedSessionActor")
+            return
+        }
 
+        guard let parentForkable = parentActor.tools.first(where: { $0 is ForkableEmittingTool }) as? ForkableEmittingTool,
+            let childForkable = childActor.tools.first(where: { $0 is ForkableEmittingTool }) as? ForkableEmittingTool
+        else {
+            Issue.record("expected both sessions to expose a ForkableEmittingTool")
+            return
+        }
+        // The parent's own instance is untouched; the child's is the result
+        // of `forked()` — a distinct, incremented-generation instance, not
+        // the original passed to `makeSession(tools:)`.
+        #expect(parentForkable.generation == 0)
+        #expect(childForkable.generation == 1)
+        #expect(childForkable !== forkable)
+
+        // The forked-then-connected copy posts to the child's own outbox.
+        await childForkable.postEvent(Self.event(detail: "from-forked-tool"))
         let childPending = await child.outbox.pending()
-        #expect(childPending.events.map(\.event.detail) == ["post-fork"])
+        #expect(childPending.events.map(\.event.detail) == ["from-forked-tool"])
 
-        let parentPendingAfterFork = await session.outbox.pending()
-        #expect(parentPendingAfterFork.events.map(\.event.detail) == ["pre-fork"])
+        // The plain tool has no `ForkableTool` conformance at all — it passes
+        // through shared, unchanged, into the child's tool list.
+        guard let childPlain = childActor.tools.first(where: { $0 is PlainTool }) as? PlainTool else {
+            Issue.record("expected the plain tool to pass through into the child's tool list")
+            return
+        }
+        let output = try await childPlain.call(arguments: FakeToolArguments(value: "y"))
+        #expect(output == "plain: y")
     }
 }
