@@ -50,8 +50,8 @@ comments:
 
     Checklist item checked. Leaving task in `doing` per the implement contract — not moving to review myself.
   timestamp: 2026-07-22T23:13:48.347149+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c580
 title: 'Session outbox: pending prompt material with ids, coalescing, auto-connected EventEmitting tools, driver wakeup'
 ---
 ## What

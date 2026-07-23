@@ -449,14 +449,16 @@ actor RoutedSessionActor: RoutedSession {
         // session constrains every response to its grammar, through the
         // backend's whole-chunk xgrammar entry point; an unguided session takes
         // the plain path. Both funnel through the same chokepoint, which stamps
-        // the grammar (or `nil`) onto each event.
+        // the grammar (or `nil`) onto each event and composes `prompt` with
+        // whatever the outbox drains for this turn (see
+        // ``generate(grammar:prompt:_:)``).
         if let grammar {
-            return try await generate(grammar: grammar) {
-                try await backend.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+            return try await generate(grammar: grammar, prompt: prompt) { composedPrompt in
+                try await backend.respond(to: composedPrompt, following: grammar, maxTokens: maxTokens)
             }
         }
-        return try await generate {
-            try await backend.respond(to: prompt, maxTokens: maxTokens)
+        return try await generate(prompt: prompt) { composedPrompt in
+            try await backend.respond(to: composedPrompt, maxTokens: maxTokens)
         }
     }
 
@@ -509,9 +511,9 @@ actor RoutedSessionActor: RoutedSession {
         // Accumulate the streamed chunks so the close event can carry the full
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
-        _ = try await generate {
+        _ = try await generate(prompt: prompt) { composedPrompt in
             var response = ""
-            for try await chunk in backend.streamResponse(to: prompt, maxTokens: maxTokens) {
+            for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
                 continuation.yield(chunk)
                 response += chunk
             }
@@ -595,31 +597,42 @@ actor RoutedSessionActor: RoutedSession {
     /// (``RoutedModel/serialGate``), so concurrent generations on one model —
     /// including from forks that share the gate — queue in FIFO order rather than
     /// interleave. Inside the gate it first lazily records the session's
-    /// first-line `session` meta event (once per session), then runs `body`, then
+    /// first-line `session` meta event (once per session), drains ``outbox``
+    /// and composes this turn's prompt (see below), then runs `body`, then
     /// snapshot-diffs ``backend``'s real transcript (see
-    /// ``recordTranscriptDelta(grammar:since:usage:)``) so what lands on disk mirrors
-    /// the SDK's own `Transcript.Entry` values rather than a hand-built
-    /// paraphrase of the prompt/response strings — on the success path and the
-    /// throwing path alike, so a transcript always gains whatever the SDK
-    /// durably appended for the turn. A throwing turn additionally gets a
-    /// bodyless `.response`-kind close event carrying the turn's `ms`, so every
-    /// failed turn still leaves a trace even when the SDK appended no `.response`
-    /// entry of its own. Every event is routed to this session's
+    /// ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)``) so what
+    /// lands on disk mirrors the SDK's own `Transcript.Entry` values rather
+    /// than a hand-built paraphrase of the prompt/response strings — on the
+    /// success path and the throwing path alike, so a transcript always
+    /// gains whatever the SDK durably appended for the turn. A throwing turn
+    /// additionally gets a bodyless `.response`-kind close event carrying the
+    /// turn's `ms`, so every failed turn still leaves a trace even when the
+    /// SDK appended no `.response` entry of its own. On both exits, if the
+    /// turn's diff produced no `.prompt`-kind partial for the drained events
+    /// to attach to — nothing was durably delivered, so the events never
+    /// actually rode any turn — they are re-queued onto ``outbox`` (see
+    /// ``requeueUnattachedPendingEvents(_:)``) rather than lost, since
+    /// ``SessionOutbox/drainForDispatch()`` already destructively removed
+    /// them up front. Every event is routed to this session's
     /// ``recordingDirectory``, so the on-disk transcript tree mirrors the fork
     /// lineage; the single recorder stamps a globally monotonic `seq` at append.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn, stamped
     ///     onto every event this turn appends.
-    ///   - body: The model work to run inside the bracket, returning the response
-    ///     text callers receive (still returned directly; no longer the source of
-    ///     any recorded event body).
+    ///   - prompt: The caller's own prompt, before this turn's drain-on-turn
+    ///     composition (see below).
+    ///   - body: The model work to run inside the bracket, given this turn's
+    ///     composed prompt and returning the response text callers receive
+    ///     (still returned directly; no longer the source of any recorded
+    ///     event body).
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, after recording whatever the SDK
     ///   appended plus the bodyless close event.
     private func generate(
         grammar: Grammar? = nil,
-        _ body: () async throws -> String
+        prompt: String,
+        _ body: (String) async throws -> String
     ) async throws -> String {
         // Acquire the serial permit for the whole bracket, releasing it on every
         // path with a `defer` (the recording bracket stays in this actor's
@@ -630,11 +643,36 @@ actor RoutedSessionActor: RoutedSession {
         defer { serialGate.signal() }
 
         await recordSessionMetaIfNeeded()
+
+        // Drain-on-turn: everything staged in `outbox` since the last turn is
+        // folded into *this* turn's prompt, here inside the serial gate so a
+        // drain never interleaves with a concurrent turn (see
+        // ``SessionOutbox/drainForDispatch()``). Only the drained events are
+        // consumed here — a queued prompt this drain also returns
+        // (`drained.prompt`) is left untouched (wiring it into dispatch is a
+        // follow-on task; nothing in this package enqueues one today, so it is
+        // always `nil` in practice). An empty outbox drains to an empty
+        // `pendingEvents`, so ``composePrompt(pendingEvents:prompt:)`` returns
+        // `prompt` unchanged and ``appendingOperationEventSegments(_:to:)`` is
+        // never invoked below — byte-identical to a session that never used
+        // an outbox.
+        let drained = await outbox.drainForDispatch()
+        let pendingEvents = drained.events.map(\.event)
+        let composedPrompt = Self.composePrompt(pendingEvents: pendingEvents, prompt: prompt)
+
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
         do {
-            let response = try await body()
-            _ = await finishTurn(grammar: grammar, since: started, usageBefore: usageBefore)
+            let response = try await body(composedPrompt)
+            let (_, _, pendingEventsAttached) = await finishTurn(
+                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
+            // A turn can succeed (return a response) yet still leave the SDK's
+            // transcript unchanged for some future conformer — attach-or-requeue
+            // applies uniformly on both exits (see the catch branch's matching
+            // comment), not just the throwing one.
+            if !pendingEventsAttached {
+                await requeueUnattachedPendingEvents(pendingEvents)
+            }
             return response
         } catch {
             // Whatever the SDK durably appended before failing is still diffed
@@ -642,7 +680,21 @@ actor RoutedSessionActor: RoutedSession {
             // (on the diff's own last `.response`-kind entry, if any) — a
             // post-generation failure can still leave the SDK having appended a
             // genuine `.response` entry before throwing.
-            let (diffIncludedResponse, usage) = await finishTurn(grammar: grammar, since: started, usageBefore: usageBefore)
+            let (diffIncludedResponse, usage, pendingEventsAttached) = await finishTurn(
+                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
+            // `drainForDispatch()` already destructively removed `pendingEvents`
+            // from `outbox` before `body()` ran. When this turn's diff produced
+            // no `.prompt`-kind partial to attach them to — every `.ebnf`-guided
+            // turn, whose backend validates and throws before touching its live
+            // session at all (see `MLXFoundationModelsSessionBackend.respond(to:
+            // following:maxTokens:)`), or a transcript-shrink guard — the
+            // composed preamble was never actually delivered to the model and
+            // the events were never persisted either. Re-queue them so a
+            // future turn gets another chance, instead of the drain silently
+            // destroying state a failed turn never got to deliver.
+            if !pendingEventsAttached {
+                await requeueUnattachedPendingEvents(pendingEvents)
+            }
             // Only synthesize the router-only bodyless close when the SDK's own
             // diff did *not* already include a `.response`-kind entry — otherwise
             // this would double up two `.response` events for one turn, breaking
@@ -664,6 +716,65 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// Re-posts `events` back onto ``outbox`` when a turn's diff produced no
+    /// `.prompt`-kind partial to attach them to.
+    ///
+    /// A no-op when `events` is empty, so an empty outbox never touches
+    /// ``outbox`` here — preserving byte-identical behavior for the common
+    /// case. Re-posted events go back through ``SessionOutbox/post(_:)``'s
+    /// normal coalescing policy and are assigned fresh ``SessionOutbox/ItemID``s
+    /// (the drain that removed them was already the commit point for their
+    /// original ids); what matters is that no event this method is reached
+    /// with is ever silently destroyed.
+    ///
+    /// - Parameter events: The events to re-queue, in outbox order.
+    private func requeueUnattachedPendingEvents(_ events: [OperationEvent]) async {
+        for event in events {
+            await outbox.post(event)
+        }
+    }
+
+    /// Composes this turn's actual model-visible prompt: `pendingEvents`
+    /// rendered as a plain-text preamble (one line per event, in outbox order
+    /// — see ``OperationEventSegment/renderedLine(for:)``), a blank line, then
+    /// the caller's own `prompt` — or `prompt` unchanged when `pendingEvents`
+    /// is empty, so an empty outbox produces byte-identical behavior to a
+    /// session that never used one.
+    ///
+    /// - Parameters:
+    ///   - pendingEvents: The events drained from the outbox for this turn, in
+    ///     outbox order.
+    ///   - prompt: The caller's own prompt.
+    /// - Returns: The composed, model-visible prompt string.
+    private static func composePrompt(pendingEvents: [OperationEvent], prompt: String) -> String {
+        guard !pendingEvents.isEmpty else { return prompt }
+        let preamble = pendingEvents.map(OperationEventSegment.renderedLine(for:)).joined(separator: "\n")
+        return preamble + "\n\n" + prompt
+    }
+
+    /// Returns a copy of `partial` with one ``OperationEventSegment`` appended
+    /// to its recorded entry per event in `events`, in outbox order — the
+    /// durable counterpart to ``composePrompt(pendingEvents:prompt:)``'s text
+    /// preamble, attached only to what gets persisted, never to the SDK's own
+    /// live transcript.
+    ///
+    /// - Parameters:
+    ///   - events: The events to attach, in outbox order.
+    ///   - partial: The turn's `.prompt`-kind partial to augment.
+    /// - Returns: `partial` unchanged if it carries no ``TranscriptEvent/Partial/entry``
+    ///   (nothing to attach a segment to); otherwise a copy with the segments
+    ///   appended.
+    private static func appendingOperationEventSegments(
+        _ events: [OperationEvent],
+        to partial: TranscriptEvent.Partial
+    ) -> TranscriptEvent.Partial {
+        guard let entry = partial.entry else { return partial }
+        let segments = events.map { event in
+            TranscriptEntryMapper.segmentPayload(.custom(OperationEventSegment(content: event)))
+        }
+        return partial.mapBody { text, _ in (text, entry.appendingSegments(segments)) }
+    }
+
     /// Computes this turn's usage delta and records whatever the SDK's
     /// transcript diff contains — the one place both of ``generate(grammar:_:)``'s
     /// success and throwing exits go through, so the usage-delta computation
@@ -672,25 +783,32 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force, forwarded to
-    ///     ``recordTranscriptDelta(grammar:since:usage:)``.
+    ///     ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)``.
     ///   - since: The turn's start instant, forwarded to
-    ///     ``recordTranscriptDelta(grammar:since:usage:)`` to stamp `ms`.
+    ///     ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)`` to
+    ///     stamp `ms`.
     ///   - usageBefore: The pre-turn snapshot captured immediately before
     ///     `body()` ran.
+    ///   - pendingEvents: The events this turn drained from the outbox,
+    ///     forwarded to ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)``
+    ///     to attach as persisted segments on the turn's `.prompt` entry.
     /// - Returns: Whether the diff included a `.response`-kind entry — the
     ///   throwing path uses this to decide whether a synthetic bodyless close
-    ///   is still needed — and the turn's own usage delta (`nil` if the
-    ///   backend cannot report usage), which the throwing path stamps onto
-    ///   that synthetic close.
+    ///   is still needed; the turn's own usage delta (`nil` if the backend
+    ///   cannot report usage), which the throwing path stamps onto that
+    ///   synthetic close; and whether `pendingEvents` were actually attached
+    ///   to a persisted `.prompt` entry — `generate(grammar:prompt:_:)` uses
+    ///   this to decide whether they must be re-queued instead of lost.
     private func finishTurn(
         grammar: Grammar?,
         since: Date,
-        usageBefore: (input: Int, output: Int)?
-    ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?) {
+        usageBefore: (input: Int, output: Int)?,
+        pendingEvents: [OperationEvent]
+    ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool) {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
-        let diffIncludedResponse = await recordTranscriptDelta(
-            grammar: grammar, since: since, usage: usage)
-        return (diffIncludedResponse, usage)
+        let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
+            grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents)
+        return (diffIncludedResponse, usage, pendingEventsAttached)
     }
 
     /// The per-turn token usage delta between two ``LanguageModelSessionBackend/usageTokenCounts()``
@@ -753,17 +871,33 @@ actor RoutedSessionActor: RoutedSession {
     ///   - usage: The turn's own `(input, output)` token usage delta to stamp
     ///     as `tokensIn`/`tokensOut` on the diff's last `.response`-kind
     ///     event, or `nil` to leave both unset on every appended event.
+    ///   - pendingEvents: The events this turn drained from the outbox, in
+    ///     outbox order. When non-empty, one ``OperationEventSegment`` per
+    ///     event is appended (via ``appendingOperationEventSegments(_:to:)``)
+    ///     onto the turn's `.prompt`-kind diff partial — the first one, since
+    ///     a turn submits exactly one prompt — before it is persisted; the
+    ///     SDK's own live transcript is never touched. Empty means no
+    ///     augmentation at all, so this method's output is byte-identical to
+    ///     before this feature existed.
     /// - Returns: Whether this diff included a `.response`-kind entry — the
-    ///   throwing path in ``generate(grammar:_:)`` uses this to decide whether
-    ///   a synthetic bodyless close is still needed, so a turn whose SDK
-    ///   transcript already gained a real `.response` entry before failing
-    ///   never gets two `.response` events.
-    @discardableResult
+    ///   throwing path in ``generate(grammar:prompt:_:)`` uses this to decide
+    ///   whether a synthetic bodyless close is still needed, so a turn whose
+    ///   SDK transcript already gained a real `.response` entry before
+    ///   failing never gets two `.response` events — and whether
+    ///   `pendingEvents` (when non-empty) actually found a `.prompt`-kind
+    ///   partial to attach to. The latter is `true` whenever `pendingEvents`
+    ///   is empty (nothing to attach, so nothing was missed) and `false`
+    ///   whenever it is non-empty but no `.prompt`-kind partial existed —
+    ///   e.g. the shrink guard below, or a backend (like an `.ebnf`-guided
+    ///   one) that throws before appending anything at all — so the caller
+    ///   knows to re-queue them rather than let the drain silently destroy
+    ///   them.
     private func recordTranscriptDelta(
         grammar: Grammar?,
         since: Date?,
-        usage: (input: Int, output: Int)?
-    ) async -> Bool {
+        usage: (input: Int, output: Int)?,
+        pendingEvents: [OperationEvent]
+    ) async -> (diffIncludedResponse: Bool, pendingEventsAttached: Bool) {
         let entries = backend.transcriptEntries()
         guard entries.count >= persistedEntryCount else {
             sessionRecordingLogger.warning(
@@ -775,7 +909,7 @@ actor RoutedSessionActor: RoutedSession {
                 """
             )
             persistedEntryCount = entries.count
-            return false
+            return (false, pendingEvents.isEmpty)
         }
 
         let diffPartials = TranscriptDiffer.diff(
@@ -787,28 +921,33 @@ actor RoutedSessionActor: RoutedSession {
             slot: slot,
             model: model
         )
-        guard !diffPartials.isEmpty else { return false }
+        guard !diffPartials.isEmpty else { return (false, pendingEvents.isEmpty) }
 
         let lastResponseIndex = diffPartials.lastIndex { $0.kind == .response }
+        let promptIndexToAugment = pendingEvents.isEmpty ? nil : diffPartials.firstIndex { $0.kind == .prompt }
 
         for (index, diffPartial) in diffPartials.enumerated() {
             let isTurnClose = index == lastResponseIndex
             let stampSince = (since != nil && isTurnClose) ? since : nil
             let stampUsage = (usage != nil && isTurnClose) ? usage : nil
+            let recordedPartial = (index == promptIndexToAugment)
+                ? Self.appendingOperationEventSegments(pendingEvents, to: diffPartial)
+                : diffPartial
             await append(
                 partial: makePartialEvent(
-                    kind: diffPartial.kind,
+                    kind: recordedPartial.kind,
                     grammar: grammar,
-                    text: diffPartial.text,
+                    text: recordedPartial.text,
                     since: stampSince,
-                    entry: diffPartial.entry,
+                    entry: recordedPartial.entry,
                     tokensIn: stampUsage?.input,
                     tokensOut: stampUsage?.output
                 )
             )
         }
         persistedEntryCount = entries.count
-        return lastResponseIndex != nil
+        let pendingEventsAttached = pendingEvents.isEmpty || promptIndexToAugment != nil
+        return (lastResponseIndex != nil, pendingEventsAttached)
     }
 
     /// Records the session's first-line `session` meta event the first time this

@@ -13,8 +13,10 @@ import Operations
 /// - **Turn-riding events** (``PendingEvent``) — ``OperationEvent``s posted by
 ///   a connected ``EventEmittingTool`` through this actor's
 ///   ``OperationEventSink`` conformance. They fold into whichever prompt
-///   dispatches next; see the plain-text-preamble + persisted-custom-segment
-///   injection this feeds (a follow-on task). Coalescing policy: every
+///   dispatches next: ``RoutedSessionActor``'s turn chokepoint drains them
+///   into a plain-text preamble the model reads and persists each as an
+///   ``OperationEventSegment`` on the turn's recorded `.prompt` entry (see
+///   ``OperationEventSegment/renderedLine(for:)``). Coalescing policy: every
 ///   ``OperationEventKind/completed`` event is kept, in post order;
 ///   ``OperationEventKind/progress`` events coalesce to the single latest
 ///   pending one per `(tool, correlationID)`, replacing in place so the

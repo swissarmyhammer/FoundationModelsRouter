@@ -337,7 +337,18 @@ public enum TranscriptEntryMapper {
 
     // MARK: - Segment mapping
 
-    private static func segmentPayload(_ segment: Transcript.Segment) -> SegmentPayload {
+    /// Maps one real transcript segment to its on-disk payload.
+    ///
+    /// Exposed beyond `event(from:)`'s internal use so a caller building a
+    /// segment that was never part of a live `Transcript.Entry` — e.g.
+    /// ``RoutedSessionActor`` wrapping a drained ``OperationEvent`` in an
+    /// ``OperationEventSegment`` to append onto an already-mapped `.prompt`
+    /// entry's payload — reuses the exact same encoding (discriminator
+    /// resolution, content JSON, description) rather than duplicating it.
+    ///
+    /// - Parameter segment: The segment to map.
+    /// - Returns: The segment's on-disk payload.
+    static func segmentPayload(_ segment: Transcript.Segment) -> SegmentPayload {
         switch segment {
         case .text(let text):
             return .text(id: text.id, content: text.content)

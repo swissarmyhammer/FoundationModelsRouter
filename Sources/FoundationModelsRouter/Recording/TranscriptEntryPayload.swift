@@ -414,6 +414,32 @@ extension TranscriptEntryPayload {
             responseFormatSchemaJSON: responseFormatSchemaJSON
         )
     }
+
+    /// Returns a copy with `additional` appended to ``segments``, in order,
+    /// with every other field untouched.
+    ///
+    /// Used by ``RoutedSessionActor``'s turn chokepoint to attach one
+    /// ``OperationEventSegment`` per drained pending event onto the turn's
+    /// `.prompt` entry — a segment the SDK's own transcript diff never
+    /// produced, appended only to what gets persisted.
+    ///
+    /// - Parameter additional: The segments to append.
+    /// - Returns: A copy with the combined segments.
+    func appendingSegments(_ additional: [SegmentPayload]) -> TranscriptEntryPayload {
+        TranscriptEntryPayload(
+            entryId: entryId,
+            contentRemoved: contentRemoved,
+            segments: (segments ?? []) + additional,
+            toolDefinitions: toolDefinitions,
+            toolCalls: toolCalls,
+            toolName: toolName,
+            assetIds: assetIds,
+            signature: signature,
+            options: options,
+            responseFormatName: responseFormatName,
+            responseFormatSchemaJSON: responseFormatSchemaJSON
+        )
+    }
 }
 
 extension SegmentPayload {
