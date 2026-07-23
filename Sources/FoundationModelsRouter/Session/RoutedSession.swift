@@ -374,8 +374,11 @@ actor RoutedSessionActor: RoutedSession {
     /// fork-then-connect composition ``fork(workingDirectory:)`` builds (a
     /// fork) — a non-conforming tool passes through unchanged. This is the
     /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
-    /// at construction; retained here too so it stays inspectable without a
-    /// live model.
+    /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
+    /// computes it before the backend exists), or via
+    /// ``LanguageModelSessionBackend/makeFork(tools:)`` for a fork (see
+    /// ``fork(workingDirectory:)``) — retained here too so it stays
+    /// inspectable without a live model.
     nonisolated let tools: [any Tool]
 
     /// This session's own outbox — see ``RoutedSession/outbox``.
@@ -460,15 +463,16 @@ actor RoutedSessionActor: RoutedSession {
     /// ``fork(workingDirectory:)``, or
     /// ``RoutedModel/restoreSessionTree(root:registry:)``.
     ///
-    /// - Parameters:
-    ///   - persistedEntryCount: The baseline ``backend`` entry count
-    ///     already persisted — `0` for a root session, or the parent's entry
-    ///     count at fork time for a fork (see ``persistedEntryCount``). For a
-    ///     new fork this is also the cut point recorded into its sidecar, so
-    ///     the lineage cut point and the diff baseline are one fact.
-    ///   - sidecarOrigin: Where this session's `session.json` comes from — a
-    ///     write of its own at init, a tree it was restored from, or nothing
-    ///     durable at all.
+    /// Every parameter here is documented on the stored property it
+    /// initializes, above — no separate `Parameters:` block, so there is
+    /// nowhere for the two to drift apart. The two this initializer's own
+    /// behavior actually turns on are ``persistedEntryCount`` (`0` for a root
+    /// session, or the parent's entry count at fork time for a fork — for a
+    /// new fork this doubles as the cut point recorded into its sidecar, so
+    /// the lineage cut point and the diff baseline are one fact) and
+    /// ``sidecarOrigin`` (where this session's `session.json` comes from — a
+    /// write of its own at init, a tree it was restored from, or nothing
+    /// durable at all), both read directly in the sidecar write below.
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -629,24 +633,50 @@ actor RoutedSessionActor: RoutedSession {
         // permit is held for the child's lifetime and released in its `deinit`.
         await forkAdmissionGate.wait()
 
+        // Fresh-per-session outbox plus fork-then-connect tool composition
+        // (see ``outbox``'s doc comment): built from ``originalTools`` — the
+        // true originals, never this session's own already-instanced
+        // ``tools`` — so a ``ForkableTool`` conformer is forked exactly once,
+        // from its pristine state, rather than from a copy already wired to
+        // this session's outbox. Composition order matters: a tool is forked
+        // first via its own `forked()` (falling back to sharing the original
+        // unchanged when it doesn't conform to `ForkableTool`), *then* the
+        // forked result is wired to `childOutbox` via `connecting(_:)` if it
+        // also emits. Since `connecting(_:)` is pure rather than mutating,
+        // this session's own already-instanced `tools` are entirely
+        // untouched by this and keep posting to this session's own `outbox`
+        // — including any detached work that captured this session's sink
+        // before the fork — so event delivery never migrates to the child.
+        // Computed before the serial-gate window below purely because it has
+        // no dependency on `backend`'s state; `childTools` is then threaded
+        // into `backend.makeFork(tools:)` itself, so the live model backing
+        // the fork actually calls these child-instanced tools rather than
+        // silently carrying forward whatever this session's backend was
+        // built with (see ``LanguageModelSessionBackend/makeFork(tools:)``).
+        let childOutbox = SessionOutbox()
+        let childTools = originalTools.map { tool in
+            let forked = (tool as? any ForkableTool)?.forked() ?? tool
+            return (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
+        }
+
         // Acquire the serial gate before reading `backend`'s conversation state to
         // fork it. `generate(grammar:_:)` releases this same gate only
         // *after* `body()` returns, but `body()` itself suspends across an await
         // while the model generates — so a concurrent turn can be mid-flight,
         // outside the gate's protection window as far as `backend` internals are
         // concerned, mutating the underlying `LanguageModelSession.transcript` at
-        // the exact moment `makeFork()` would otherwise read it. Taking the gate
-        // here serializes the fork's read against any in-flight generation,
+        // the exact moment `makeFork(tools:)` would otherwise read it. Taking the
+        // gate here serializes the fork's read against any in-flight generation,
         // closing that data race; releasing it immediately after capturing the
         // forked backend keeps the hold no longer than necessary.
         await serialGate.wait()
-        // Captured in the same gate window as `makeFork()`, so it names exactly
-        // the entry count the child's seeded backend starts holding — the
-        // child's own `persistedEntryCount` baseline, so the parent's history
+        // Captured in the same gate window as `makeFork(tools:)`, so it names
+        // exactly the entry count the child's seeded backend starts holding —
+        // the child's own `persistedEntryCount` baseline, so the parent's history
         // inherited into the fork is never re-persisted into the child's
         // transcript (see ``persistedEntryCount``).
         let entryCountAtFork = backend.transcriptEntries().count
-        let forkedBackend = backend.makeFork()
+        let forkedBackend = backend.makeFork(tools: childTools)
         serialGate.signal()
 
         let childId = ULID.generate()
@@ -662,25 +692,6 @@ actor RoutedSessionActor: RoutedSession {
         // durable child directory a transcript can land in with no sidecar
         // beside it, and needs no sidecar call of its own to say so (see
         // ``SessionSidecarOrigin``).
-        // Fresh-per-session outbox plus fork-then-connect tool composition
-        // (see ``outbox``'s doc comment): built from ``originalTools`` — the
-        // true originals, never this session's own already-instanced
-        // ``tools`` — so a ``ForkableTool`` conformer is forked exactly once,
-        // from its pristine state, rather than from a copy already wired to
-        // this session's outbox. Composition order matters: a tool is forked
-        // first via its own `forked()` (falling back to sharing the original
-        // unchanged when it doesn't conform to `ForkableTool`), *then* the
-        // forked result is wired to `childOutbox` via `connecting(_:)` if it
-        // also emits. Since `connecting(_:)` is pure rather than mutating,
-        // this session's own already-instanced `tools` are entirely
-        // untouched by this and keep posting to this session's own `outbox`
-        // — including any detached work that captured this session's sink
-        // before the fork — so event delivery never migrates to the child.
-        let childOutbox = SessionOutbox()
-        let childTools = originalTools.map { tool in
-            let forked = (tool as? any ForkableTool)?.forked() ?? tool
-            return (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
-        }
 
         return makeRoutedSessionActor(
             profile: profile,

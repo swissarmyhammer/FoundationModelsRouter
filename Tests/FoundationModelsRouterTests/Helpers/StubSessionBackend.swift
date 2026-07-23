@@ -108,6 +108,16 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// ``usageIncrement`` on every successful call. See ``usageTokenCounts()``.
     private var cumulativeUsage: (input: Int, output: Int) = (0, 0)
 
+    /// The tools most recently passed to ``makeFork(tools:)``, or empty if
+    /// never called with any.
+    ///
+    /// The test-only introspection point proving which tool list
+    /// ``RoutedSessionActor/fork(workingDirectory:)`` actually threads into a
+    /// fork's model-facing backend — mirroring how the live
+    /// `MLXFoundationModelsSessionBackend.makeFork(tools:)` threads its own
+    /// `tools:` argument into a forked `LanguageModelSession`.
+    private(set) var lastForkTools: [any Tool] = []
+
     /// Creates a stub backend.
     ///
     /// - Parameters:
@@ -191,7 +201,20 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// Returns a new ``StubSessionBackend`` pre-seeded with a copy of
     /// ``receivedPrompts`` and ``entries`` as of this call, sharing this
     /// backend's ``responseText``/``shouldThrow`` configuration.
+    ///
+    /// Delegates to ``makeFork(tools:)`` with no tools, mirroring how the
+    /// live `MLXFoundationModelsSessionBackend.makeFork()` delegates to its
+    /// own `tools:` overload with its own stored tools.
     func makeFork() -> any LanguageModelSessionBackend {
+        makeFork(tools: [])
+    }
+
+    /// Returns a new ``StubSessionBackend`` pre-seeded the same way as
+    /// ``makeFork()``, additionally recording `tools` into ``lastForkTools``
+    /// so a test can assert which tool list
+    /// ``RoutedSessionActor/fork(workingDirectory:)`` actually passed.
+    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
+        lastForkTools = tools
         let fork = StubSessionBackend(
             responseText: responseText,
             shouldThrow: shouldThrow,

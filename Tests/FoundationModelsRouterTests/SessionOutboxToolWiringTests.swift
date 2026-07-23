@@ -35,6 +35,8 @@ struct SessionOutboxToolWiringTests {
     /// `execute(in:)` would do: post through whichever sink this particular
     /// instance was instanced with (or into the void if none), never a
     /// mutable slot that could be reconnected later.
+    /// `@unchecked Sendable`: `sink` is immutable (`let`), so concurrent reads
+    /// are safe even if `OperationEventSink` does not conform to `Sendable`.
     private final class FakeEmittingTool: Tool, EventEmittingTool, @unchecked Sendable {
         let name = "fake-emitter"
         let description = "test-only tool that posts events through its own sink"
@@ -68,6 +70,8 @@ struct SessionOutboxToolWiringTests {
     /// ``ForkableTool``'s doc comment pins. `generation` proves `forked()`
     /// is actually invoked (incremented on every fork) rather than the
     /// original being shared unchanged.
+    /// `@unchecked Sendable`: `sink` is immutable (`let`), so concurrent reads
+    /// are safe even if `OperationEventSink` does not conform to `Sendable`.
     private final class ForkableEmittingTool: Tool, EventEmittingTool, ForkableTool, @unchecked Sendable {
         let name = "forkable-emitter"
         let description = "test-only tool that forks into a new generation and can emit"
@@ -135,13 +139,26 @@ struct SessionOutboxToolWiringTests {
     private final class ToolCapturingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         private(set) var lastTools: [any Tool] = []
 
+        /// The ``StubSessionBackend`` most recently vended by
+        /// `makeSession(instructions:tools:)`, so a test can hold a reference
+        /// to the *root* session's own backend and, after forking, inspect
+        /// what ``RoutedSessionActor/fork(workingDirectory:)`` passed to its
+        /// `makeFork(tools:)` (see ``StubSessionBackend/lastForkTools``) —
+        /// without needing any test-only accessor onto the private `backend`
+        /// a `RoutedSession`/`RoutedSessionActor` holds.
+        private(set) var lastBackend: StubSessionBackend?
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend()
+            let backend = StubSessionBackend()
+            lastBackend = backend
+            return backend
         }
 
         func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
             lastTools = tools
-            return StubSessionBackend()
+            let backend = StubSessionBackend()
+            lastBackend = backend
+            return backend
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -512,5 +529,53 @@ struct SessionOutboxToolWiringTests {
         }
         let output = try await childPlain.call(arguments: FakeToolArguments(value: "y"))
         #expect(output == "plain: y")
+    }
+
+    @Test(
+        "fork threads the child's fork-then-connect composed tools into the backend's makeFork(tools:) — the model-facing session, not just the actor's own bookkeeping list"
+    )
+    @MainActor
+    func forkThreadsChildToolsIntoBackendMakeFork() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = FakeEmittingTool()
+        let session = profile.standard.makeSession(tools: [emitter])
+        guard let rootBackend = container.lastBackend else {
+            Issue.record("expected the container to have vended a StubSessionBackend for the root session")
+            return
+        }
+
+        let child = try await session.fork(workingDirectory: nil)
+
+        guard let childActor = child as? RoutedSessionActor,
+            let childInstance = childActor.tools.first as? FakeEmittingTool
+        else {
+            Issue.record("expected the fork to expose its own instanced FakeEmittingTool")
+            return
+        }
+
+        // `rootBackend` is the actual backend `RoutedSessionActor.fork()` calls
+        // `makeFork(tools:)` on — asserting on `lastForkTools` here proves the
+        // child's fork-then-connect composed tool list (`childActor.tools`)
+        // is what actually reached the model-facing backend construction
+        // seam, not just the fork's own actor-level bookkeeping array.
+        #expect(rootBackend.lastForkTools.count == 1)
+        guard let forkedToolAtBackend = rootBackend.lastForkTools.first as? FakeEmittingTool else {
+            Issue.record("expected the backend's makeFork(tools:) to have received a FakeEmittingTool")
+            return
+        }
+        #expect(forkedToolAtBackend === childInstance)
+
+        // Posting through the exact instance the backend received reaches
+        // the child's own outbox — confirming it is genuinely the
+        // child-connected copy, not a disconnected passthrough of the parent's.
+        await forkedToolAtBackend.postEvent(Self.event(detail: "from-backend-threaded-tool"))
+        let childPending = await child.outbox.pending()
+        #expect(childPending.events.map(\.event.detail) == ["from-backend-threaded-tool"])
     }
 }

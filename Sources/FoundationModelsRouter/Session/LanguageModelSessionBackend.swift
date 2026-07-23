@@ -67,6 +67,30 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// - Returns: A new, independent backend seeded from this session's history.
     func makeFork() -> any LanguageModelSessionBackend
 
+    /// Produces a new backend seeded from this session's accumulated transcript,
+    /// with `tools` threaded to whatever model-facing session the fork
+    /// constructs — the overload ``RoutedSession/fork(workingDirectory:)`` calls
+    /// with its own fork-then-connect composed tool list (the child's originals,
+    /// each forked via ``ForkableTool/forked()`` where applicable and reconnected
+    /// to the child's own outbox via ``EventEmittingTool/connecting(_:)``), so a
+    /// conformer whose model can actually call tools (``MLXFoundationModelsSessionBackend``)
+    /// hands the live model the child's own instances rather than silently
+    /// carrying the parent's forward — the same principle that motivates
+    /// ``RoutedSession/fork(workingDirectory:)`` in the first place, applied to
+    /// the model-facing session instead of just the actor's own bookkeeping list.
+    ///
+    /// Defaulted to ignore `tools` and forward to ``makeFork()`` unchanged, so
+    /// every existing conformer that does not model live tool-calling (every
+    /// stub backend in the unit suite) keeps its prior behavior with no changes
+    /// of its own required.
+    ///
+    /// - Parameter tools: The tools to thread into the fork's model-facing
+    ///   session, in place of whatever tools this backend itself was built
+    ///   with.
+    /// - Returns: A new, independent backend seeded from this session's
+    ///   history, with `tools` threaded to its model-facing session.
+    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend
+
     /// The backend's current full transcript, in order.
     ///
     /// **Only safe to call while holding the model's serial gate**
@@ -97,4 +121,21 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// - Returns: The backend's cumulative `(input, output)` token counts so
     ///   far, or `nil` when the backend cannot report usage.
     func usageTokenCounts() -> (input: Int, output: Int)?
+}
+
+extension LanguageModelSessionBackend {
+    /// Default ``makeFork(tools:)``: ignores `tools` and forwards to
+    /// ``makeFork()`` unchanged.
+    ///
+    /// Every conformer across the unit suite stands in for a backend whose
+    /// model cannot actually call tools at all (see each stub's own doc
+    /// comment), so none of them need to know about `tools` threading — they
+    /// pick up this default and keep behaving exactly as ``makeFork()``
+    /// already defined, with no changes of their own required.
+    /// ``MLXFoundationModelsSessionBackend`` is the one conformer whose model
+    /// really can call tools, so it overrides this instead of relying on the
+    /// default.
+    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
+        makeFork()
+    }
 }

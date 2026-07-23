@@ -153,9 +153,12 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// The tools ``liveSession`` was created with.
     ///
     /// Stored (rather than only baked into `liveSession`) so ``makeFork()``
-    /// can hand the identical tool instances to the forked session, mirroring
-    /// how ``instructions`` is retained here for the same reason — there is
-    /// no way to read a `LanguageModelSession`'s tools back off it.
+    /// (called with no fork-then-connect tool list of its own to supply) can
+    /// hand these identical instances to the forked session, mirroring how
+    /// ``instructions`` is retained here for the same reason — there is no
+    /// way to read a `LanguageModelSession`'s tools back off it.
+    /// ``makeFork(tools:)`` threads a caller-supplied list instead, so this
+    /// field only ever matters to the zero-argument overload.
     private let tools: [any FoundationModels.Tool]
 
     /// Test-only accessor onto ``liveSession``, for `@testable import` in the
@@ -323,13 +326,31 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// the parent was created with (there is no `LanguageModelSession`
     /// initializer that accepts both `transcript:` and `instructions:`
     /// together — the transcript's own `.instructions` entry is what actually
-    /// carries them forward into generation). ``tools`` is threaded the same
-    /// way, so the forked session's model can still call whatever tools the
-    /// parent could — a separate concern from
-    /// ``RoutedSessionActor/fork(workingDirectory:)``'s own fork-then-connect
-    /// tool composition, which governs event delivery, not which tool
-    /// instances a live model actually calls.
+    /// carries them forward into generation). Delegates to
+    /// ``makeFork(tools:)`` with ``tools`` (this backend's own, unchanged) so
+    /// the forked session's model can still call whatever tools the parent
+    /// could — the only behavior a direct `makeFork()` call (bypassing
+    /// ``RoutedSessionActor/fork(workingDirectory:)``) can ask for, since it
+    /// has no fork-then-connect tool list of its own to supply.
     func makeFork() -> any LanguageModelSessionBackend {
+        makeFork(tools: tools)
+    }
+
+    /// Produces a new backend seeded from this session's accumulated
+    /// transcript, with `tools` threaded to the forked `LanguageModelSession`
+    /// instead of this backend's own.
+    ///
+    /// This is the overload ``RoutedSessionActor/fork(workingDirectory:)``
+    /// actually calls, with its own fork-then-connect composed child tool
+    /// list (each of the parent's true originals forked via
+    /// ``ForkableTool/forked()`` where applicable, then reconnected to the
+    /// child's own outbox via ``EventEmittingTool/connecting(_:)``) — so the
+    /// live model backing the fork calls the child's own tool instances,
+    /// wired to the child's own outbox, rather than silently carrying
+    /// forward whatever instances this backend was built with (which would
+    /// still be wired to an ancestor's outbox, defeating the fork-then-connect
+    /// composition's whole point for any tool the model actually invokes).
+    func makeFork(tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
         let forkedSession = LanguageModelSession(model: model, tools: tools, transcript: liveSession.transcript)
         return MLXFoundationModelsSessionBackend(
             session: forkedSession, model: model, instructions: instructions, tools: tools)
