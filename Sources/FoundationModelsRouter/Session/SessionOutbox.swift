@@ -213,11 +213,9 @@ public actor SessionOutbox: OperationEventSink {
     ///   otherwise.
     @discardableResult
     public func cancel(id: ItemID) -> PromptQueueMutationResult {
-        guard let index = prompts.firstIndex(where: { $0.id == id }) else {
-            return .alreadySent
+        mutatingPendingPrompt(id: id) { index in
+            prompts.remove(at: index)
         }
-        prompts.remove(at: index)
-        return .applied
     }
 
     /// Replaces a still-pending queued prompt's content by its stable id, in
@@ -236,10 +234,32 @@ public actor SessionOutbox: OperationEventSink {
     ///   otherwise.
     @discardableResult
     public func replace(id: ItemID, prompt: Transcript.Prompt) -> PromptQueueMutationResult {
+        mutatingPendingPrompt(id: id) { index in
+            prompts[index] = PendingPrompt(id: id, prompt: prompt)
+        }
+    }
+
+    /// Finds `id`'s still-pending queued prompt by index and, if found, runs
+    /// `mutate` on it — the find-or-report-already-sent pattern ``cancel(id:)``
+    /// and ``replace(id:prompt:)`` both need, differing only in what they do
+    /// once the index is in hand (remove vs. overwrite). Shared here so that
+    /// lookup — and its ``PromptQueueMutationResult/alreadySent`` commit-boundary
+    /// race handling — lives in exactly one place.
+    ///
+    /// - Parameters:
+    ///   - id: The id ``enqueue(prompt:)`` returned for the prompt to mutate.
+    ///   - mutate: Applied to `prompts` with the found index, once `id` is
+    ///     confirmed still pending.
+    /// - Returns: ``PromptQueueMutationResult/applied`` if `id` was still
+    ///   pending (and `mutate` ran); ``PromptQueueMutationResult/alreadySent``
+    ///   otherwise.
+    private func mutatingPendingPrompt(
+        id: ItemID, _ mutate: (Int) -> Void
+    ) -> PromptQueueMutationResult {
         guard let index = prompts.firstIndex(where: { $0.id == id }) else {
             return .alreadySent
         }
-        prompts[index] = PendingPrompt(id: id, prompt: prompt)
+        mutate(index)
         return .applied
     }
 

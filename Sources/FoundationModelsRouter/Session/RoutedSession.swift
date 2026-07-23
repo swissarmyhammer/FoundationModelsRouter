@@ -554,14 +554,7 @@ actor RoutedSessionActor: RoutedSession {
         // the grammar (or `nil`) onto each event and composes `prompt` with
         // whatever the outbox drains for this turn (see
         // ``generate(grammar:prompt:_:)``).
-        if let grammar {
-            return try await generate(grammar: grammar, prompt: prompt) { composedPrompt in
-                try await backend.respond(to: composedPrompt, following: grammar, maxTokens: maxTokens)
-            }
-        }
-        return try await generate(prompt: prompt) { composedPrompt in
-            try await backend.respond(to: composedPrompt, maxTokens: maxTokens)
-        }
+        try await generate(grammar: grammar, prompt: prompt, respondBody(grammar: grammar, maxTokens: maxTokens))
     }
 
     /// Streams a text response to a prompt as it is produced, recording the call.
@@ -690,6 +683,32 @@ actor RoutedSessionActor: RoutedSession {
             // one — including a fork of a restored session.
             sidecarOrigin: sidecarOrigin.forFork
         )
+    }
+
+    /// Builds the closure that submits a turn's composed prompt to `backend`,
+    /// honoring `grammar` when present — the if-let-grammar branch between
+    /// the plain and grammar-guided `backend.respond(to:maxTokens:)` entry
+    /// points that ``respond(to:maxTokens:)`` (a caller-supplied prompt) and
+    /// ``dispatchNextPrompt()`` (a queue-sourced prompt) both need, so that
+    /// branch lives in exactly one place regardless of where the turn's
+    /// prompt came from.
+    ///
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force for this turn, or
+    ///     `nil` for an unguided turn.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
+    ///     use the underlying model's own default ceiling.
+    /// - Returns: A closure that, given this turn's composed prompt, submits
+    ///   it to `backend.respond` — following `grammar` when present.
+    private func respondBody(grammar: Grammar?, maxTokens: Int?) -> (String) async throws -> String {
+        guard let grammar else {
+            return { composedPrompt in
+                try await self.backend.respond(to: composedPrompt, maxTokens: maxTokens)
+            }
+        }
+        return { composedPrompt in
+            try await self.backend.respond(to: composedPrompt, following: grammar, maxTokens: maxTokens)
+        }
     }
 
     /// The single recorder-bracketed generation chokepoint every public method
@@ -885,16 +904,10 @@ actor RoutedSessionActor: RoutedSession {
         await recordSessionMetaIfNeeded()
         let ownPrompt = Self.flattenedPromptText(queued.prompt)
 
-        if let grammar {
-            return try await runTurn(grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt) {
-                composedPrompt in
-                try await backend.respond(to: composedPrompt, following: grammar, maxTokens: nil)
-            }
-        }
-        return try await runTurn(grammar: nil, pendingEvents: pendingEvents, ownPrompt: ownPrompt) {
-            composedPrompt in
-            try await backend.respond(to: composedPrompt, maxTokens: nil)
-        }
+        return try await runTurn(
+            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
+            respondBody(grammar: grammar, maxTokens: nil)
+        )
     }
 
     /// Runs ``finishTurn(grammar:since:usageBefore:pendingEvents:)`` and, on

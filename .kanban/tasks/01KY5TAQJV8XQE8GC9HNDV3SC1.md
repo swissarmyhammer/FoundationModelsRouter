@@ -24,6 +24,23 @@ comments:
 
     Adversarial double-check round 1 found a real bug (dispatchNextPrompt() writing the session meta line even when nothing was queued to dispatch) — fixed and covered by a new regression test. Round 2 double-check passed clean. Final fresh verification in this session: swift build, swift build --build-tests, and swift test all green (401 tests / 43 suites, gated real-model suites correctly skipped, only the known pre-existing mlx-swift_Cmlx.bundle warning). Description's acceptance-criteria/Tests checkboxes checked off; verified via get task that real newlines and the long-running tag survived the update.
   timestamp: 2026-07-23T01:10:12.027862+00:00
+- actor: claude-code
+  id: 01ky69940md36nqr2yh35gdh7e
+  text: |-
+    Addressed both review findings by extracting shared helpers (root-cause dedup, not line-patching):
+
+    1. RoutedSession.swift: `respond(to:maxTokens:)` and `dispatchNextPrompt()` both had a duplicated `if let grammar { ... } else { ... }` branch choosing between `backend.respond(to:following:maxTokens:)` and `backend.respond(to:maxTokens:)`. Extracted a new private `respondBody(grammar:maxTokens:) -> (String) async throws -> String` that returns the correct closure; both call sites now call `generate`/`runTurn` with `respondBody(grammar: grammar, maxTokens:)` instead of branching inline. Confirmed via grep that no `if let grammar`/`following: grammar` branch remains anywhere else in the file (streamGenerating is a distinct path, never had this duplication).
+
+    2. SessionOutbox.swift: `cancel(id:)` and `replace(id:prompt:)` both had a duplicated `guard let index = prompts.firstIndex(where: { $0.id == id }) else { return .alreadySent }` pattern, differing only in the mutation (remove vs overwrite). Extracted a new private `mutatingPendingPrompt(id:_:) -> PromptQueueMutationResult` taking the mutation as a `(Int) -> Void` closure; `cancel`/`replace` now both call it, preserving `@discardableResult` and identical external behavior/race semantics against `drainForDispatch()`.
+
+    Ran an adversarial double-check (subagent) against the diff: verified both extractions preserve exact prior behavior (correct grammar/maxTokens threading, correct mutation closures), zero remaining duplication of either pattern, no actor-isolation/Sendability issues (backend is `nonisolated let`, closures reference it via explicit `self.backend`), and doc comments accurate. Verdict: PASS, no findings.
+
+    Fresh verification (this session): `swift build` — green, only the known pre-existing `mlx-swift_Cmlx.bundle` warning; `swift build --build-tests` — green (no metallib workaround needed this run); `swift test` — "Test run with 401 tests in 43 suites passed" plus the separate gated real-model suite (15 tests, 5 suites, all correctly skipped) — matches the prior verified baseline exactly.
+
+    Checked both review-finding boxes on the description. Note: the first `update task` call (as this same task's history warns) flattened the description's newlines to literal `\n` and dropped the `long-running` tag — caught immediately via the mandated `get task` re-check, fixed by re-submitting the description with real newlines and re-applying the tag via `tag task`. Verified clean afterward.
+
+    Left in `doing` for `/review`.
+  timestamp: 2026-07-23T01:26:14.292074+00:00
 depends_on:
 - 01KY5TAEDY4T6P7F7848CWWVAJ
 - 01KY5TAEK123W9Y7VPM9DRP1RZ
@@ -66,3 +83,8 @@ Also fixed a latent data-loss bug uncovered while wiring this up: `generate()` (
 Adversarial double-check (round 1) caught a real bug: `dispatchNextPrompt()` called `recordSessionMetaIfNeeded()` before checking whether a prompt was actually queued, which would write the session's first-line meta event even when nothing dispatched — violating the "a session that never generates writes no file" invariant. Fixed by moving that call after the empty-queue guard; covered by regression test `dispatchNextPromptOnEmptyQueueRecordsNothing`. Round 2 double-check passed clean.
 
 Verification: `swift build`, `swift build --build-tests`, and `swift test` all green — 401 tests in 43 suites passed, gated real-model suites correctly skipped, zero warnings beyond the known pre-existing `mlx-swift_Cmlx.bundle` warning. Left in `doing` for `/review`.
+
+## Review Findings (2026-07-22 20:12)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:356` — The if-let-grammar branching pattern repeats in respond(to:maxTokens:) and dispatchNextPrompt() — both check for grammar existence and invoke different functions with or without it. This duplicated pattern should be extracted to prevent drift if grammar-handling logic changes. Extract a helper method that parameterizes the if-let-grammar branching logic via a closure, removing the structural duplication between respond and dispatchNextPrompt.
+- [x] `Sources/FoundationModelsRouter/Session/SessionOutbox.swift:318` — The cancel(id:) and replace(id:prompt:) methods duplicate the find-by-id-or-return pattern — both guard-and-mutate on prompts, differing only in the mutation operation (remove vs replace). Extracting this pattern would eliminate drift risk. Extract a shared helper method that takes the mutation operation as a closure parameter, consolidating the duplicated find-or-return logic.
