@@ -37,6 +37,38 @@ comments:
 
     Task is done and green. Leaving in `doing` per /implement workflow for /review to pick up.
   timestamp: 2026-07-23T14:43:11.355803+00:00
+- actor: claude-code
+  id: 01ky7qqcjswmh8gdv3aw7rvyhv
+  text: |-
+    Addressed all 6 review findings (all documentation-comment style):
+
+    1-2. Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift — added doc comments to public properties `id` and `content` (previously undocumented), using the exact wording suggested in the review findings.
+    3. Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift — inserted a blank `///` line in the `notARootSession` case's doc comment, separating the summary sentence ("...its ``SessionNode/parentId`` is non-nil).") from the elaboration ("Restoration is a whole-tree operation...").
+    4-5. Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift — same fix applied to two separate doc comments: the `legacyEventMissingPayload` case (separating "...``TranscriptEvent/entry`` field existed." from "Reconstruction needs the structural payload...") and the `contentRemoved` case (separating "...``RecordingLevel/metadataOnly``)." from "The shape survives on disk..."). Checked this file (and the other touched files) for any other doc comments with the same missing-separator pattern before stopping — the file's other multi-sentence doc comments (e.g. the type-level doc comment, the `unregisteredCustomSegmentType`/`entryReconstructionFailed` cases, `effectiveTranscript`'s method doc, `isFailedTurnBodylessClose`'s doc) already correctly use the blank-`///`-separator convention, so no further fixes were needed there.
+    6. Sources/FoundationModelsRouter/RoutedLLM.swift — same fix applied to `GenerationError.notWiredForLiveInference`'s doc comment, separating "...gated integration suite (milestone 7)." from "The unit suite exercises...".
+
+    The blank-`///`-separator convention (summary sentence ending in period, blank `///` line, then elaboration) was confirmed against this codebase's own existing usage — e.g. CompactionSegment.swift's own type-level doc comment and SessionTreeRestoration.swift's `restoreSessionTree` method doc comment already follow this pattern, so the fixes match established style exactly rather than inventing a new convention.
+
+    No other changes made — scope held strictly to these 6 findings, no unrelated refactors.
+
+    Verification (really-done, fresh run this session):
+    - `swift build`: green, only the known pre-existing mlx-swift_Cmlx.bundle warning.
+    - `swift build --build-tests`: green (removed stale default.metallib first per the known unsealed-bundle issue).
+    - `swift test`: 416 tests in 45 suites passed, 16 gated/skipped in 6 suites — exactly matches the prior verified baseline, zero regressions.
+
+    Adversarial double-check (via really-done's double-check agent) launched to verify the fixes against the codebase's doc-comment conventions and confirm no scope creep; will follow up with its verdict.
+
+    All 6 review-finding checkboxes marked done; task description/tags verified intact after update. Leaving task in `doing` per /implement workflow — not moving to review myself.
+  timestamp: 2026-07-23T14:57:56.313507+00:00
+- actor: claude-code
+  id: 01ky7qtrb2n9xp2npdzfjgxb2v
+  text: |-
+    Adversarial double-check verdict: PASS.
+
+    Confirmed via independent `git diff` review: the diff scope is exactly the 6 described doc-comment changes across the 4 named files, all comment-only additions (no non-comment code lines touched). Confirmed the blank-`///`-separator convention is genuinely established codebase-wide (445 occurrences of the pattern found via grep), not invented for this fix. Confirmed the new `id`/`content` property docs are additive and don't contradict CompactionSegment's type-level doc comment. Confirmed no scope creep (only the 4 source files + kanban bookkeeping changed; `.reviewignore` is auto-generated tooling output, not an authored change). Independently re-ran `swift build`, `swift build --build-tests`, and `swift test` fresh — reproduced the same 416 tests/45 suites passed, 16/6 gated, zero regressions, only the pre-existing mlx-swift_Cmlx.bundle warning.
+
+    Task is done and green. All 6 review findings fixed and checked off. Leaving in `doing` per /implement workflow for /review to pick up.
+  timestamp: 2026-07-23T14:59:46.658527+00:00
 depends_on:
 - 01KXTFQVKKDB1PPCXZQDWS80MS
 position_column: doing
@@ -65,3 +97,12 @@ Honor the spike task's findings on entry-id stability (dws80ms).
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #compaction
+
+## Review Findings (2026-07-23 09:45)
+
+- [x] `Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift:179` — Public property `id` lacks a documentation comment. Swift requires documentation on all public APIs, and this property is public but undocumented despite other properties in the codebase (including those in the nested Content struct) having individual doc comments. Add a doc comment explaining what `id` represents, e.g.: /// A unique identifier for this segment — a fresh UUID for newly synthesized folds, or the persisted id when rebuilding from disk.
+- [x] `Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift:180` — Public property `content` lacks a documentation comment. Swift requires documentation on all public APIs, and this property is public but undocumented despite the struct-level docs and other properties having individual comments. Add a doc comment explaining what `content` holds, e.g.: /// The fold metadata this segment carries: live-window and folded entry ids, token counts, pipeline stages, and prompt name.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:20` — Doc comment has multiple sentences without a blank `///` line separator. First sentence ends with 'is non-nil).' (line 17) but second sentence 'Restoration is a whole-tree operation...' follows immediately without separation. Add a blank `///` line after '(its ``SessionNode/parentId`` is non-nil).' to separate the first-sentence summary from the elaboration.
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift:20` — Doc comment has multiple sentences without a blank `///` line separator between the first-sentence summary and elaboration. The rule requires: first sentence ending in period, blank `///` line, then elaboration. Add a blank `///` line after the first sentence: separate 'written before the ``TranscriptEvent/entry`` field existed.' from 'Reconstruction needs the structural payload...'.
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift:27` — Doc comment has multiple sentences without a blank `///` line separator between summary and elaboration. First sentence ends with `RecordingLevel/metadataOnly`).' but second sentence 'The shape survives on disk...' follows immediately. Insert blank `///` line after '``RecordingLevel/metadataOnly``).', separating the first summary sentence from the elaboration that follows.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:11` — Doc comment has multiple sentences without a blank `///` line separator. First sentence ends with '(milestone 7).' but second sentence 'The unit suite...' follows immediately. Insert a blank `///` line after 'gated integration suite (milestone 7).' to separate the first-sentence summary from the elaboration about the unit suite.

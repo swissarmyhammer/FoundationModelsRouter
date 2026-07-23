@@ -93,7 +93,12 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
         }
     }
 
+    /// A unique identifier for this segment — a fresh UUID for newly
+    /// synthesized folds, or the persisted id when rebuilding from disk.
     public let id: String
+
+    /// The fold metadata this segment carries: live-window and folded entry
+    /// ids, token counts, pipeline stages, and prompt name.
     public let content: Content
 
     /// Creates a segment wrapping `content`.

@@ -13,6 +13,7 @@ import Foundation
 public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     /// An entry-kind event with `entry == nil` — a v1 recording line,
     /// written before the ``TranscriptEvent/entry`` field existed.
+    ///
     /// Reconstruction needs the structural payload
     /// ``TranscriptEntryMapper/entry(from:kind:registry:)`` reads; a v1 line
     /// has none, so this refuses rather than fabricating an entry from the
@@ -21,9 +22,11 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
 
     /// An event whose payload was stripped by the recording level
     /// (``TranscriptEntryPayload/contentRemoved`` is `true` — recorded at
-    /// ``RecordingLevel/metadataOnly``). The shape survives on disk (kinds,
-    /// ids, counts) for a GUI to render, but reconstruction refuses rather
-    /// than rebuilding an empty or fabricated entry.
+    /// ``RecordingLevel/metadataOnly``).
+    ///
+    /// The shape survives on disk (kinds, ids, counts) for a GUI to render,
+    /// but reconstruction refuses rather than rebuilding an empty or
+    /// fabricated entry.
     case contentRemoved(session: ULID, seq: Int)
 
     /// A `.custom` segment's persisted type-discriminator has no

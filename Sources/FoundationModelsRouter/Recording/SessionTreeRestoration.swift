@@ -11,9 +11,11 @@ import FoundationModels
 /// "Transcript fidelity" section, "Reconstruction end-to-end").
 public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// `id` names a session that exists in the loaded tree but is not a root
-    /// (its ``SessionNode/parentId`` is non-nil). Restoration is a
-    /// whole-tree operation rooted at the root id alone — a fork is restored
-    /// only as part of restoring its root, never individually.
+    /// (its ``SessionNode/parentId`` is non-nil).
+    ///
+    /// Restoration is a whole-tree operation rooted at the root id alone — a
+    /// fork is restored only as part of restoring its root, never
+    /// individually.
     case notARootSession(ULID)
 
     /// The calling handle's router has no durable transcripts root

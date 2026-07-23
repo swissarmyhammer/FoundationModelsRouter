@@ -5,8 +5,10 @@ import Operations
 /// A failure producing text from a resident generation model.
 public enum GenerationError: Error, Equatable {
     /// The live `ModelContainer` generation pipeline is not wired yet — real
-    /// text lands in the gated integration suite (milestone 7). The unit suite
-    /// exercises the surface through a stub container instead.
+    /// text lands in the gated integration suite (milestone 7).
+    ///
+    /// The unit suite exercises the surface through a stub container
+    /// instead.
     case notWiredForLiveInference
 }
 
