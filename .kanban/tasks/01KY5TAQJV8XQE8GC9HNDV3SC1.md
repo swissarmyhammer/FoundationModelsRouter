@@ -44,8 +44,8 @@ comments:
 depends_on:
 - 01KY5TAEDY4T6P7F7848CWWVAJ
 - 01KY5TAEK123W9Y7VPM9DRP1RZ
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c780
 title: 'Prompt queue: enqueue, inspect, edit, cancel, and driver dispatch of queued user prompts'
 ---
 ## What
