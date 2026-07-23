@@ -257,20 +257,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             _ transform: (String?, TranscriptEntryPayload?) -> (String?, TranscriptEntryPayload?)
         ) -> Partial {
             let (mappedText, mappedEntry) = transform(text, entry)
-            return Partial(
-                routerId: routerId,
-                sessionId: sessionId,
-                parentId: parentId,
-                slot: slot,
-                model: model,
-                kind: kind,
-                grammar: grammar,
-                text: mappedText,
-                tokensIn: tokensIn,
-                tokensOut: tokensOut,
-                ms: ms,
-                entry: mappedEntry
-            )
+            return with(text: mappedText, entry: mappedEntry)
         }
 
         /// Returns a copy of this partial with ``tokensIn``/``tokensOut``
@@ -290,6 +277,39 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         ///   - tokensOut: The turn's measured output tokens, or `nil`.
         /// - Returns: A copy carrying the given token counts.
         func stampingUsage(tokensIn: Int?, tokensOut: Int?) -> Partial {
+            with(tokensIn: tokensIn, tokensOut: tokensOut)
+        }
+
+        /// Returns a copy of this partial with the given fields replaced,
+        /// leaving every other field untouched.
+        ///
+        /// The shared copy-with-modification logic ``mapBody(_:)`` and
+        /// ``stampingUsage(tokensIn:tokensOut:)`` both build on, so the full
+        /// field list only has to be repeated once no matter how many such
+        /// seams `Partial` grows.
+        ///
+        /// Each parameter is doubly-optional so a caller can distinguish
+        /// "leave this field as it is" (the default, `nil`) from "replace it
+        /// with `nil`" (pass `.some(nil)`, e.g. via a `String?` value already
+        /// known to be `nil`) — the outer optional selects whether the field
+        /// changes at all, and the inner optional is the field's own value.
+        ///
+        /// - Parameters:
+        ///   - text: The replacement for ``text``, or `nil` to leave it
+        ///     unchanged.
+        ///   - tokensIn: The replacement for ``tokensIn``, or `nil` to leave
+        ///     it unchanged.
+        ///   - tokensOut: The replacement for ``tokensOut``, or `nil` to
+        ///     leave it unchanged.
+        ///   - entry: The replacement for ``entry``, or `nil` to leave it
+        ///     unchanged.
+        /// - Returns: A copy carrying the given replacements.
+        private func with(
+            text: String?? = nil,
+            tokensIn: Int?? = nil,
+            tokensOut: Int?? = nil,
+            entry: TranscriptEntryPayload?? = nil
+        ) -> Partial {
             Partial(
                 routerId: routerId,
                 sessionId: sessionId,
@@ -298,11 +318,11 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
                 model: model,
                 kind: kind,
                 grammar: grammar,
-                text: text,
-                tokensIn: tokensIn,
-                tokensOut: tokensOut,
+                text: text ?? self.text,
+                tokensIn: tokensIn ?? self.tokensIn,
+                tokensOut: tokensOut ?? self.tokensOut,
                 ms: ms,
-                entry: entry
+                entry: entry ?? self.entry
             )
         }
 
