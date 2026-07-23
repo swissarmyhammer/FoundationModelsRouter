@@ -21,6 +21,16 @@ struct TokenBudgetTests {
     /// retaining the most recently vended one so a test can mutate it (e.g.
     /// flip ``StubSessionBackend/shouldThrow``) after the session already
     /// exists.
+    ///
+    /// `@unchecked Sendable` invariant: `lastBackend` is written synchronously
+    /// inside `makeSession(instructions:)` — itself called synchronously (no
+    /// `await` between call and the write) from `RoutedModel.makeSession`,
+    /// which is not actor-isolated and so never hops off the calling thread.
+    /// Every test that reads `lastBackend` does so from the same `@MainActor`
+    /// test method that made the (synchronous) `makeSession` call chain,
+    /// after it returns — so every write and every read happen on the same
+    /// thread, never concurrently. No lock is needed for a field that is
+    /// never actually accessed from more than one thread.
     private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         let text: String
         let usageIncrement: (input: Int, output: Int)?

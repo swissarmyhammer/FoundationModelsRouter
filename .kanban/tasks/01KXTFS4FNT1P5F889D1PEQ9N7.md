@@ -45,6 +45,27 @@ comments:
 
     Leaving this task in `doing`, green, ready for `/review`.
   timestamp: 2026-07-23T16:44:52.384978+00:00
+- actor: claude-code
+  id: 01ky7z14shzx00jwtp4kwadrax
+  text: |-
+    Resolved both review findings (@unchecked Sendable synchronization invariant on ConfiguredLLMContainer.lastBackend) in TokenBudgetTests.swift and TokenUsageMeteringTests.swift.
+
+    Investigation before fixing: confirmed both ConfiguredLLMContainer types are genuinely single-threaded, not just "probably fine":
+    - lastBackend is written synchronously inside makeSession(instructions:), which is called synchronously (no await between call and write) from RoutedModel.makeSession (RoutedLLM.swift) — a plain, non-async, non-actor-isolated function that never hops threads.
+    - Every test in both files reads lastBackend from the same @MainActor test method that made the synchronous makeSession call chain, after it returns — never concurrently.
+    - restoreSessionTree (SessionTreeRestoration.swift) walks the tree with a plain sequential `for child in node.children { _ = try restore(child) }` — no TaskGroup/concurrent Tasks — and its makeSession(transcript:) overload doesn't touch lastBackend anyway.
+    - Grepped both test files for TaskGroup/async let/Task{} — none found.
+
+    Since no concurrent access is possible, added a documented synchronization-invariant comment (no lock needed) above each ConfiguredLLMContainer class declaration, matching the established convention in this repo (ToolCapturingLLMContainer/lastTools in SessionOutboxToolWiringTests.swift) rather than inventing a new comment style.
+
+    Verification (all fresh, this pass):
+    - swift build — clean (only the known pre-existing mlx-swift_Cmlx.bundle warning)
+    - swift build --build-tests — clean
+    - swift test — 429 tests in 46 suites passed, 16 gated/skipped in 6 suites unchanged, zero failures (matches the prior verified baseline exactly)
+    - Spawned double-check (adversarial) per really-done: PASS, no findings — independently re-verified the call-chain synchronicity claim, the absence of concurrent access, the restoration path, convention match, and re-ran build/build-tests/full test suite twice, all green.
+
+    No production code changed — doc comments only, in the two named test files. Leaving task in `doing`, green, ready for /review.
+  timestamp: 2026-07-23T17:05:36.049066+00:00
 depends_on: []
 position_column: doing
 position_ordinal: '80'
@@ -76,3 +97,8 @@ Update any `RoutedSession` conformers/stubs in `Tests/FoundationModelsRouterTest
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #compaction
+
+## Review Findings (2026-07-23 11:47)
+
+- [x] `Tests/FoundationModelsRouterTests/TokenBudgetTests.swift:17` — @unchecked Sendable conformance requires a documented synchronization invariant when there is no lock/isolation mechanism. ConfiguredLLMContainer holds a mutable property `lastBackend` that is accessed and modified without synchronization protection. Add a comment above or inside the class explaining the synchronization invariant (e.g., '// MARK: @unchecked Sendable: This class is used only in single-threaded test contexts and is not shared across concurrent tasks.') or add a lock/actor-based synchronization mechanism.
+- [x] `Tests/FoundationModelsRouterTests/TokenUsageMeteringTests.swift:21` — @unchecked Sendable conformance requires a documented synchronization invariant when there is no lock/isolation mechanism. ConfiguredLLMContainer holds a mutable property `lastBackend` that is accessed and modified without synchronization protection. Add a comment above or inside the class explaining the synchronization invariant (e.g., '// MARK: @unchecked Sendable: This class is used only in single-threaded test contexts and is not shared across concurrent tasks.') or add a lock/actor-based synchronization mechanism.

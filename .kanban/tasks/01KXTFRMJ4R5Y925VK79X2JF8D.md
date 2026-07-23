@@ -48,8 +48,8 @@ comments:
 
     Leaving task in `doing` per /implement workflow — ready for /review.
   timestamp: 2026-07-23T15:52:42.253511+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: cb80
 title: 'Handle usage stamping: sync(_:usage:) on RecordingLanguageModel'
 ---
 ## What
