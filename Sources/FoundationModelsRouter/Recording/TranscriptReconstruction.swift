@@ -95,17 +95,19 @@ extension TranscriptTree {
     ///   - id: The session's span id.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
     ///     `.custom` segment in this session's effective transcript may need
-    ///     to rebuild. Defaults to an empty registry, so any recorded
-    ///     `.custom` segment throws
+    ///     to rebuild. Defaults to ``CustomSegmentRegistry/routerDefault``
+    ///     (pre-seeded with ``CompactionSegment``), so a compacted session
+    ///     restores with no caller setup; any *other* recorded `.custom`
+    ///     segment still throws
     ///     ``TranscriptReconstructionError/unregisteredCustomSegmentType(session:seq:discriminator:)``
-    ///     unless the caller supplies one.
+    ///     unless the caller supplies a registry that also knows about it.
     /// - Returns: The reconstructed transcript.
     /// - Throws: Everything ``effectiveEntryEvents(forSession:)`` throws
     ///   (``TranscriptTreeError``), plus ``TranscriptReconstructionError``
     ///   when an event cannot be honestly rebuilt.
     public func effectiveTranscript(
         forSession id: ULID,
-        registry: CustomSegmentRegistry = CustomSegmentRegistry()
+        registry: CustomSegmentRegistry = .routerDefault
     ) throws -> Transcript {
         let events = try effectiveEntryEvents(forSession: id)
         var entries: [Transcript.Entry] = []

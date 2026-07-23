@@ -331,7 +331,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     root, a fork, or another recording-handle session).
     ///   - registry: The registered ``PersistableCustomSegment`` types a
     ///     `.custom` segment anywhere in the resumed session's recorded
-    ///     transcript may need to rebuild. Defaults to an empty registry.
+    ///     transcript may need to rebuild. Defaults to
+    ///     ``CustomSegmentRegistry/routerDefault`` (pre-seeded with
+    ///     ``CompactionSegment``), so resuming a compacted session needs no
+    ///     caller setup.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle whose first diff
     ///   only records genuinely new entries, paired with the reconstructed
     ///   ``FoundationModels/Transcript`` to hand to
@@ -343,7 +346,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   ``TranscriptTree/effectiveTranscript(forSession:registry:)`` throws.
     public func makeLanguageModel(
         resuming sessionId: ULID,
-        registry: CustomSegmentRegistry = CustomSegmentRegistry()
+        registry: CustomSegmentRegistry = .routerDefault
     ) throws -> (handle: RecordingLanguageModel, transcript: Transcript) {
         let owningProfile = requireOwningProfile(apiName: "makeLanguageModel")
         guard let recordingsRoot else {

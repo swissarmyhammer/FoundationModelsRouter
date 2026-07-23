@@ -164,7 +164,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - rootId: The root session's span id to restore the whole tree from.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
     ///     `.custom` segment anywhere in the tree's recorded transcripts may
-    ///     need to rebuild. Defaults to an empty registry.
+    ///     need to rebuild. Defaults to ``CustomSegmentRegistry/routerDefault``
+    ///     (pre-seeded with ``CompactionSegment``), so a tree containing a
+    ///     compacted session restores with no caller setup.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for every documented
     ///   restoration-specific failure; ``TranscriptTreeError`` /
@@ -173,7 +175,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   ``TranscriptTree/effectiveTranscript(forSession:registry:)`` throws.
     public func restoreSessionTree(
         root rootId: ULID,
-        registry: CustomSegmentRegistry = CustomSegmentRegistry()
+        registry: CustomSegmentRegistry = .routerDefault
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a

@@ -26,8 +26,8 @@ comments:
 
     Leaving in doing for /review. The gated integration test (Tests/FoundationModelsRouterIntegrationTests/CompactionSpikeIntegrationTests.swift) is written and compiles correctly but its "completes one turn without error" acceptance criterion has NOT been empirically verified passing, due to the sandbox limitation above — flagging this explicitly rather than checking that box.
   timestamp: 2026-07-23T14:19:50.422220+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: c980
 title: 'Spike: synthesized Transcript.Entry round-trip + native condensing check'
 ---
 ## What
@@ -49,3 +49,9 @@ Deliverable is a test file `Tests/FoundationModelsRouterTests/CompactionSpikeTes
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #compaction
+
+## Review Findings (2026-07-23 09:24)
+
+Engine review of checkpoint delta `HEAD~1..HEAD` (commit 5858444cf26ccf5bad3ae01cdb5e4a981d1565cb): 0 findings (14 checks attempted, 0 confirmed, 0 refuted, 0 failed). Diff is clean.
+
+Judgment call on the one unchecked acceptance-criteria item (gated integration test not run to green): accepted as-is. This is a spike/investigation task; the gap is a documented, pre-existing sandbox limitation (no GPU + missing CI metallib-copy step) reproduced identically against an unrelated, previously-working gated suite (`TranscriptReconstructionIntegrationTests`) — consistent with every other gated integration suite in this repo, which all skip without `FM_ROUTER_INTEGRATION_TESTS` + a real GPU. Not a new gap introduced by this diff, and not something further work in this sandbox can close. No new work invented beyond what the diff needed.

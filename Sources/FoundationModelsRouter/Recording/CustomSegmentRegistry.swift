@@ -68,38 +68,50 @@ public struct CustomSegmentRegistry: Sendable {
     /// is `type.typeDiscriminator` can be rebuilt by
     /// ``TranscriptEntryMapper/entry(from:kind:registry:)``.
     ///
-    /// **Traps on a duplicate discriminator.** Registering a second type
-    /// under a `typeDiscriminator` that is already registered is a
-    /// programmer error — two distinct ``PersistableCustomSegment``
-    /// conformances silently aliasing the same on-disk representation is
-    /// exactly the kind of ambiguity this design never lets pass silently
-    /// elsewhere (every other rebuild failure in ``TranscriptEntryMapper``
-    /// throws a typed, descriptive error rather than degrading quietly).
-    /// `register` therefore calls `preconditionFailure`, naming both the
-    /// discriminator and the already-registered type, rather than silently
-    /// overwriting (last-wins) or silently keeping the first registration.
-    /// This is a build-time/setup-time registration call, not a per-event
-    /// decode path, so a hard trap — not a `throws` — is the right shape: it
-    /// fails the integrator's registry setup immediately and loudly, before
-    /// any decoding is attempted.
+    /// **Re-registering the same type is a no-op, not a trap.** Calling this
+    /// twice for the identical concrete `S` — e.g. a consumer starting from
+    /// ``routerDefault`` (which already registers ``CompactionSegment``) and
+    /// calling `register(CompactionSegment.self)` again, deliberately or
+    /// because two setup paths both register it — simply re-installs the same
+    /// rebuilder; this is idempotent by construction; every registration
+    /// building the closure fresh means the second call is indistinguishable
+    /// from the first ever having happened.
     ///
-    /// Not unit-tested: there is no exit-test/trap-testing helper anywhere in
-    /// this suite (verified against `Tests/`), and this repo's existing
-    /// `preconditionFailure` sites — e.g. `RoutedLLM.makeSession`'s
-    /// weak-owning-profile trap — are likewise documented in a doc comment
-    /// but not covered by an automated test. This follows that same
-    /// precedent rather than introducing a new trap-testing mechanism.
+    /// **Traps on a genuine duplicate discriminator.** Registering a
+    /// *different* type under a `typeDiscriminator` that is already registered
+    /// by some other type is a programmer error — two distinct
+    /// ``PersistableCustomSegment`` conformances silently aliasing the same
+    /// on-disk representation is exactly the kind of ambiguity this design
+    /// never lets pass silently elsewhere (every other rebuild failure in
+    /// ``TranscriptEntryMapper`` throws a typed, descriptive error rather than
+    /// degrading quietly). `register` therefore calls `preconditionFailure`,
+    /// naming both the discriminator and the already-registered type, rather
+    /// than silently overwriting (last-wins) or silently keeping the first
+    /// registration. This is a build-time/setup-time registration call, not a
+    /// per-event decode path, so a hard trap — not a `throws` — is the right
+    /// shape: it fails the integrator's registry setup immediately and
+    /// loudly, before any decoding is attempted.
+    ///
+    /// Not unit-tested (the trap path): there is no exit-test/trap-testing
+    /// helper anywhere in this suite (verified against `Tests/`), and this
+    /// repo's existing `preconditionFailure` sites — e.g.
+    /// `RoutedLLM.makeSession`'s weak-owning-profile trap — are likewise
+    /// documented in a doc comment but not covered by an automated test. This
+    /// follows that same precedent rather than introducing a new
+    /// trap-testing mechanism. The no-op re-registration path *is*
+    /// unit-tested, since it needs no trap-testing helper to exercise.
     ///
     /// - Parameter type: The ``PersistableCustomSegment`` conformance to register.
     public mutating func register<S: PersistableCustomSegment>(_ type: S.Type) {
         let discriminator = S.typeDiscriminator
-        if let existing = registeredTypeNames[discriminator] {
+        let typeName = String(reflecting: S.self)
+        if let existing = registeredTypeNames[discriminator], existing != typeName {
             preconditionFailure(
                 "CustomSegmentRegistry.register: duplicate discriminator \"\(discriminator)\" — "
-                    + "already registered by \(existing); cannot also register \(String(reflecting: S.self))"
+                    + "already registered by \(existing); cannot also register \(typeName)"
             )
         }
-        registeredTypeNames[discriminator] = String(reflecting: S.self)
+        registeredTypeNames[discriminator] = typeName
         rebuilders[discriminator] = { id, contentJSON in
             let content = try JSONDecoder().decode(S.Content.self, from: Data(contentJSON.utf8))
             return .custom(try S(id: id, content: content))
@@ -133,5 +145,29 @@ public struct CustomSegmentRegistry: Sendable {
                 underlying: String(describing: error)
             )
         }
+    }
+}
+
+extension CustomSegmentRegistry {
+    /// The registry every Router reconstruction entry point defaults its
+    /// `registry:` parameter to — ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
+    /// ``RoutedModel/restoreSessionTree(root:registry:)``, and
+    /// ``RoutedModel/makeLanguageModel(resuming:registry:)`` — pre-seeded with
+    /// ``CompactionSegment``, so a compacted session restores with zero
+    /// consumer configuration: without this, the first compacted session
+    /// would make every default-argument restore throw
+    /// ``TranscriptEntryReconstructionError/unregisteredCustomSegmentType(discriminator:)``.
+    ///
+    /// A fresh, independent registry on every access — `CustomSegmentRegistry`
+    /// is a value type, so a caller building on top of this default (`var
+    /// registry = CustomSegmentRegistry.routerDefault; registry.register(MySegment.self)`)
+    /// never mutates what any other caller sees. Re-registering
+    /// ``CompactionSegment`` itself on top of this default (or on a registry
+    /// already carrying it from elsewhere) is a documented no-op, not a trap
+    /// — see ``register(_:)``.
+    public static var routerDefault: CustomSegmentRegistry {
+        var registry = CustomSegmentRegistry()
+        registry.register(CompactionSegment.self)
+        return registry
     }
 }
