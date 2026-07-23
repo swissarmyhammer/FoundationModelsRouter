@@ -189,7 +189,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // constructed — the vending handle does not write it on the
             // session's behalf, so a root actor built anywhere cannot come into
             // existence without one (see ``SessionSidecarOrigin``).
-            sidecarOrigin: .new(under: durableRecording)
+            sidecarOrigin: .new(under: durableRecording),
+            // This slot's resolved working context — ``contextFill``'s
+            // denominator (compaction_plan.md §1.5). A brand-new root has
+            // sent nothing yet, so its fill state starts at ``.none``.
+            contextTokens: resolution.contextTokens,
+            usageState: .none
         )
     }
 

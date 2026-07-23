@@ -83,6 +83,27 @@ public protocol RoutedSession: Actor {
     /// instances to it, so event delivery never migrates between sessions).
     nonisolated var outbox: SessionOutbox { get }
 
+    /// Context fill, 0...1 — measured token usage against the profile's
+    /// resolved working context (compaction_plan.md §1.5).
+    ///
+    /// The numerator is always a *measured* per-turn delta, never the
+    /// backend's cumulative running total — reading the raw cumulative value
+    /// would overestimate fill monotonically and trip a compaction trigger
+    /// far too early. Concretely:
+    ///
+    /// - Before this session's first turn: `0` — nothing sent yet.
+    /// - After a live turn whose backend metered usage: the newest turn's
+    ///   `(tokensIn + tokensOut) / contextTokens` — the newest turn's own
+    ///   count already *is* the whole transcript, tokenized by the actual
+    ///   model, because generation is stateless over transcripts.
+    /// - Restored from disk (``RoutedModel/restoreSessionTree(root:registry:)``)
+    ///   with a stamped `.response` event recorded before the restore: that
+    ///   stamp's `(tokensIn + tokensOut) / contextTokens`.
+    /// - Restored from disk with no stamp at all (a pre-metering recording,
+    ///   or one with metadata stripped): ``unknownContextFill`` — never a
+    ///   guess — until the first live turn re-measures.
+    var contextFill: Double { get async }
+
     /// Generates a complete text response to a prompt, recording the call.
     ///
     /// - Parameters:
@@ -290,7 +311,9 @@ func makeRoutedSessionActor(
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
     persistedEntryCount: Int,
-    sidecarOrigin: SessionSidecarOrigin
+    sidecarOrigin: SessionSidecarOrigin,
+    contextTokens: Int = ProfileDefinition.defaultContext,
+    usageState: ContextUsageState = .none
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -312,7 +335,9 @@ func makeRoutedSessionActor(
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
         persistedEntryCount: persistedEntryCount,
-        sidecarOrigin: sidecarOrigin
+        sidecarOrigin: sidecarOrigin,
+        contextTokens: contextTokens,
+        usageState: usageState
     )
 }
 
@@ -445,6 +470,23 @@ actor RoutedSessionActor: RoutedSession {
     /// taken from this session (see ``SessionSidecarOrigin/forFork``).
     private nonisolated let sidecarOrigin: SessionSidecarOrigin
 
+    /// The resolved working context, in tokens, ``contextFill`` divides its
+    /// numerator by — the profile's ``SlotResolution/contextTokens`` for this
+    /// session's slot (compaction_plan.md §1.5).
+    nonisolated let contextTokens: Int
+
+    /// The state ``contextFill`` derives its numerator from: nothing yet, a
+    /// measured usage, or (restored, unstamped) unknown. See
+    /// ``ContextUsageState``.
+    ///
+    /// Updated by ``finishTurn(grammar:since:usageBefore:pendingEvents:)``
+    /// only when the SDK's own transcript diff actually included a
+    /// `.response`-kind entry for the turn — a turn rejected before ever
+    /// touching the backend (e.g. a guided turn whose grammar validation
+    /// throws pre-flight) leaves this session's last known fill untouched
+    /// rather than resetting it to a meaningless zero delta.
+    private var usageState: ContextUsageState
+
     /// Creates a session, landing its own `session.json` when it is a new one.
     ///
     /// The sidecar write happens here, synchronously, rather than at each
@@ -493,7 +535,9 @@ actor RoutedSessionActor: RoutedSession {
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
         persistedEntryCount: Int,
-        sidecarOrigin: SessionSidecarOrigin
+        sidecarOrigin: SessionSidecarOrigin,
+        contextTokens: Int = ProfileDefinition.defaultContext,
+        usageState: ContextUsageState = .none
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -515,6 +559,8 @@ actor RoutedSessionActor: RoutedSession {
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
         self.sidecarOrigin = sidecarOrigin
+        self.contextTokens = contextTokens
+        self.usageState = usageState
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into
@@ -540,6 +586,11 @@ actor RoutedSessionActor: RoutedSession {
         if holdsAdmissionPermit {
             forkAdmissionGate.signal()
         }
+    }
+
+    /// See ``RoutedSession/contextFill``.
+    var contextFill: Double {
+        usageState.fill(contextTokens: contextTokens)
     }
 
     /// Generates a complete text response to a prompt, recording the call.
@@ -715,7 +766,14 @@ actor RoutedSessionActor: RoutedSession {
             persistedEntryCount: entryCountAtFork,
             // A fork is a brand-new session wherever its parent could record
             // one — including a fork of a restored session.
-            sidecarOrigin: sidecarOrigin.forFork
+            sidecarOrigin: sidecarOrigin.forFork,
+            // Same profile/slot, so the same resolved context; the child's
+            // backend is seeded from this session's accumulated transcript
+            // (``LanguageModelSessionBackend/makeFork(tools:)``), so it also
+            // inherits this session's own fill state as of fork time rather
+            // than starting from a misleading "nothing sent yet" zero.
+            contextTokens: contextTokens,
+            usageState: usageState
         )
     }
 
@@ -1094,6 +1152,16 @@ actor RoutedSessionActor: RoutedSession {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
             grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents)
+        // Only a turn whose diff actually included a `.response`-kind entry
+        // measured the whole transcript (generation is stateless, so that
+        // turn's own delta *is* the whole transcript's size) — a turn
+        // rejected before ever touching `backend` (e.g. a guided turn whose
+        // grammar validation throws pre-flight) leaves the last known fill
+        // untouched instead of resetting it to a meaningless zero delta. See
+        // ``usageState``.
+        if diffIncludedResponse {
+            usageState = usage.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
+        }
         return (diffIncludedResponse, usage, pendingEventsAttached)
     }
 

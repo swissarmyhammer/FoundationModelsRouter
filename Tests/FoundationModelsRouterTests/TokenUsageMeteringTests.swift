@@ -20,13 +20,23 @@ struct TokenUsageMeteringTests {
     // MARK: - Stub container
 
     /// Vends a single, test-configured ``StubSessionBackend`` per session, so
-    /// a test can control ``StubSessionBackend/usageIncrement`` up front.
-    private struct ConfiguredLLMContainer: LoadedLLMContainer {
+    /// a test can control ``StubSessionBackend/usageIncrement`` up front —
+    /// and, via ``lastBackend``, mutate the already-vended backend afterward
+    /// (e.g. flip ``StubSessionBackend/shouldThrow`` to force a failed turn).
+    private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         let text: String
         let usageIncrement: (input: Int, output: Int)?
+        private(set) var lastBackend: StubSessionBackend?
+
+        init(text: String, usageIncrement: (input: Int, output: Int)?) {
+            self.text = text
+            self.usageIncrement = usageIncrement
+        }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: text, usageIncrement: usageIncrement)
+            let backend = StubSessionBackend(responseText: text, usageIncrement: usageIncrement)
+            lastBackend = backend
+            return backend
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -141,6 +151,58 @@ struct TokenUsageMeteringTests {
         )
     }
 
+    /// A profile with an explicit, small `context`, so restored
+    /// ``RoutedSession/contextFill``'s denominator is a known constant rather
+    /// than whatever the context ladder would have derived.
+    private static func profile(context: Int) -> ProfileDefinition {
+        ProfileDefinition(
+            name: "coding",
+            description: "test profile",
+            standard: ["org/std-a"],
+            flash: ["org/flash-a"],
+            embedding: ["org/emb-a"],
+            context: context
+        )
+    }
+
+    /// Builds a router wired with a durable, on-disk recordings root, so a
+    /// session vended from it can later be restored via
+    /// ``RoutedModel/restoreSessionTree(root:registry:)``.
+    private static func makeDurableRouter(
+        id: ULID = .generate(),
+        usageIncrement: (input: Int, output: Int)?,
+        recordingsDir: URL,
+        cacheDir: URL
+    ) -> Router {
+        makeDurableRouter(
+            id: id,
+            container: ConfiguredLLMContainer(text: cannedText, usageIncrement: usageIncrement),
+            recordingsDir: recordingsDir,
+            cacheDir: cacheDir
+        )
+    }
+
+    /// Builds a router wired with a durable, on-disk recordings root over a
+    /// caller-supplied container, so the caller can retain a reference to it
+    /// and mutate its ``ConfiguredLLMContainer/lastBackend`` after vending a
+    /// session (e.g. to force a later turn to fail).
+    private static func makeDurableRouter(
+        id: ULID = .generate(),
+        container: ConfiguredLLMContainer,
+        recordingsDir: URL,
+        cacheDir: URL
+    ) -> Router {
+        Router(
+            id: id,
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            recorder: JSONLRecorder(directory: recordingsDir),
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: StubMetadataSource(raw: rawMetadata),
+            loader: StubModelLoader(container: container, dimension: stubDimension)
+        )
+    }
+
     // MARK: - Canned counts: per-turn deltas, not cumulative totals
 
     @Test("two turns with canned usage counts record correct per-turn deltas, not cumulative totals")
@@ -190,5 +252,140 @@ struct TokenUsageMeteringTests {
         let events = await recorder.events
         #expect(!events.isEmpty)
         #expect(events.allSatisfy { $0.tokensIn == nil && $0.tokensOut == nil })
+    }
+
+    // MARK: - Restored fill: derived from the newest stamped event, or unknown
+
+    @Test("a restored session's contextFill derives from the newest stamped .response event")
+    @MainActor
+    func restoredSessionFillDerivesFromNewestStamp() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeDurableRouter(
+            usageIncrement: (input: 100, output: 50), recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "first")
+        _ = try await root.respond(to: "second")
+        let rootId = root.id
+
+        // "Fresh process": a second, independently constructed router/profile
+        // resolving against the same id and recordings root, exactly as
+        // SessionTreeRestorationTests simulates a restart.
+        let router2 = Self.makeDurableRouter(
+            id: router1.id, usageIncrement: (input: 100, output: 50), recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        // Each turn's own delta is 150 tokens (100 + 50); the newest stamp is
+        // what a restored session's fill derives from, over the 1000-token
+        // resolved context — never the two turns' 300-token cumulative sum.
+        #expect(await restored.root.contextFill == 0.15)
+    }
+
+    @Test("a restored session with no stamped usage reports contextFill as unknown, never a guess")
+    @MainActor
+    func restoredSessionWithNoStampReportsUnknownFill() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeDurableRouter(
+            usageIncrement: nil, recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "first")
+        let rootId = root.id
+
+        let router2 = Self.makeDurableRouter(
+            id: router1.id, usageIncrement: nil, recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        let fill = await restored.root.contextFill
+        #expect(fill.isNaN)
+    }
+
+    @Test(
+        "a failed turn's synthetic bodyless-close event is never mistaken for a real usage stamp on restore"
+    )
+    @MainActor
+    func restoredFillIgnoresFailedTurnSyntheticCloseStamp() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container = ConfiguredLLMContainer(text: Self.cannedText, usageIncrement: (input: 100, output: 50))
+        let router1 = Self.makeDurableRouter(container: container, recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "first")
+        let rootId = root.id
+
+        // A failed turn after the successful one: `shouldThrow` makes the
+        // backend throw before `recordResponse()` folds `usageIncrement`
+        // into its cumulative total (see `StubSessionBackend.respond(to:
+        // maxTokens:)`), so the delta the router synthesizes for the
+        // resulting bodyless close is a meaningless (0, 0) — restored fill
+        // must still reflect the prior successful turn's 150/1000 = 0.15,
+        // never this failed turn's bogus zero.
+        container.lastBackend?.shouldThrow = true
+        _ = try? await root.respond(to: "second")
+
+        let router2 = Self.makeDurableRouter(
+            id: router1.id, usageIncrement: (input: 100, output: 50), recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        #expect(await restored.root.contextFill == 0.15)
+    }
+
+    // MARK: - Restored fork inherits the parent's stamp
+
+    @Test("a restored fork with no turns of its own inherits the parent's stamped fill up to the fork's cut point")
+    @MainActor
+    func restoredForkInheritsParentStamp() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeDurableRouter(
+            usageIncrement: (input: 100, output: 50), recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile1 = try await router1.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "first")
+        let fork = try await root.fork(workingDirectory: nil)
+        let rootId = root.id
+        let forkId = fork.id
+
+        let router2 = Self.makeDurableRouter(
+            id: router1.id, usageIncrement: (input: 100, output: 50), recordingsDir: recordingsDir, cacheDir: cacheDir)
+        let profile2 = try await router2.resolve(profile: Self.profile(context: 1000), reporting: ResolutionProgress())
+
+        let restored = try await profile2.standard.restoreSessionTree(root: rootId)
+        let restoredFork = try #require(restored.session(forkId))
+        // The fork itself never ran a turn, so it has no stamp of its own;
+        // it inherits the root's 150/1000 = 0.15 up to its fork cut point,
+        // mirroring live `fork()`'s own choice to inherit `usageState`
+        // rather than starting the restored fork at an unknown/zero fill.
+        #expect(await restoredFork.contextFill == 0.15)
     }
 }
