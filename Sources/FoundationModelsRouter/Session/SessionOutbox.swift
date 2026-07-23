@@ -138,7 +138,7 @@ public actor SessionOutbox: OperationEventSink {
     public func post(_ event: OperationEvent) async {
         switch event.kind {
         case .completed:
-            events.append(PendingEvent(id: ItemID(), event: event))
+            appendNewPendingEvent(event)
         case .progress:
             if let index = events.firstIndex(where: {
                 $0.event.kind == .progress && $0.event.tool == event.tool
@@ -146,10 +146,21 @@ public actor SessionOutbox: OperationEventSink {
             }) {
                 events[index] = PendingEvent(id: events[index].id, event: event)
             } else {
-                events.append(PendingEvent(id: ItemID(), event: event))
+                appendNewPendingEvent(event)
             }
         }
         wakeUp()
+    }
+
+    /// Appends `event` onto ``events`` as a brand-new pending item with a
+    /// fresh ``ItemID`` — shared by both ``post(_:)`` branches that add a
+    /// pending event rather than coalescing into an existing one (a
+    /// `.completed` event, always appended; a `.progress` event with no
+    /// still-pending entry for its `(tool, correlationID)` yet).
+    ///
+    /// - Parameter event: The event to append as a new pending item.
+    private func appendNewPendingEvent(_ event: OperationEvent) {
+        events.append(PendingEvent(id: ItemID(), event: event))
     }
 
     /// Stages a queued user prompt for a future turn.

@@ -272,6 +272,11 @@ struct PendingEventInjectionTests {
     /// anything for the turn at all, on every single call. Every generation
     /// entry point on this backend always throws immediately, without
     /// appending anything to ``entries``.
+    ///
+    /// `@unchecked Sendable` is safe here because the type carries no stored
+    /// state at all — every method is a pure function of its arguments
+    /// (throwing `Failure.boom` or returning a fixed empty/`nil` value) with
+    /// nothing to race on across isolation boundaries.
     private final class ThrowsBeforeAppendingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum Failure: Error { case boom }
 

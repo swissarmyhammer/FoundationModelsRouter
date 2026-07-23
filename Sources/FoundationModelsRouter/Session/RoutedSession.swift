@@ -664,15 +664,13 @@ actor RoutedSessionActor: RoutedSession {
         let usageBefore = backend.usageTokenCounts()
         do {
             let response = try await body(composedPrompt)
-            let (_, _, pendingEventsAttached) = await finishTurn(
-                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
             // A turn can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
-            // comment), not just the throwing one.
-            if !pendingEventsAttached {
-                await requeueUnattachedPendingEvents(pendingEvents)
-            }
+            // comment), not just the throwing one; that uniform check lives in
+            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:)``.
+            _ = await finishTurnAndRequeueIfUnattached(
+                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
             return response
         } catch {
             // Whatever the SDK durably appended before failing is still diffed
@@ -680,21 +678,8 @@ actor RoutedSessionActor: RoutedSession {
             // (on the diff's own last `.response`-kind entry, if any) — a
             // post-generation failure can still leave the SDK having appended a
             // genuine `.response` entry before throwing.
-            let (diffIncludedResponse, usage, pendingEventsAttached) = await finishTurn(
+            let (diffIncludedResponse, usage) = await finishTurnAndRequeueIfUnattached(
                 grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
-            // `drainForDispatch()` already destructively removed `pendingEvents`
-            // from `outbox` before `body()` ran. When this turn's diff produced
-            // no `.prompt`-kind partial to attach them to — every `.ebnf`-guided
-            // turn, whose backend validates and throws before touching its live
-            // session at all (see `MLXFoundationModelsSessionBackend.respond(to:
-            // following:maxTokens:)`), or a transcript-shrink guard — the
-            // composed preamble was never actually delivered to the model and
-            // the events were never persisted either. Re-queue them so a
-            // future turn gets another chance, instead of the drain silently
-            // destroying state a failed turn never got to deliver.
-            if !pendingEventsAttached {
-                await requeueUnattachedPendingEvents(pendingEvents)
-            }
             // Only synthesize the router-only bodyless close when the SDK's own
             // diff did *not* already include a `.response`-kind entry — otherwise
             // this would double up two `.response` events for one turn, breaking
@@ -714,6 +699,44 @@ actor RoutedSessionActor: RoutedSession {
             }
             throw error
         }
+    }
+
+    /// Runs ``finishTurn(grammar:since:usageBefore:pendingEvents:)`` and, on
+    /// either of its exits, re-queues `pendingEvents` whenever the turn's diff
+    /// produced no `.prompt`-kind partial to attach them to — the single
+    /// attach-or-requeue check ``generate(grammar:prompt:_:)``'s success and
+    /// throwing paths both need, so the two exits can't drift out of sync.
+    ///
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force for this turn.
+    ///   - since: The turn's start time, forwarded to `finishTurn`.
+    ///   - usageBefore: The token-usage snapshot taken before the turn ran.
+    ///   - pendingEvents: The events drained from ``outbox`` for this turn.
+    /// - Returns: `finishTurn`'s `diffIncludedResponse` and `usage`, for the
+    ///   caller's own post-processing; `pendingEventsAttached` is consumed
+    ///   here and not returned, since both callers handle it identically.
+    private func finishTurnAndRequeueIfUnattached(
+        grammar: Grammar?,
+        since started: Date,
+        usageBefore: (input: Int, output: Int)?,
+        pendingEvents: [OperationEvent]
+    ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?) {
+        let (diffIncludedResponse, usage, pendingEventsAttached) = await finishTurn(
+            grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
+        // `drainForDispatch()` already destructively removed `pendingEvents`
+        // from `outbox` before `body()` ran. When this turn's diff produced no
+        // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
+        // turn, whose backend validates and throws before touching its live
+        // session at all (see `MLXFoundationModelsSessionBackend.respond(to:
+        // following:maxTokens:)`), or a transcript-shrink guard — the
+        // composed preamble was never actually delivered to the model and the
+        // events were never persisted either. Re-queue them so a future turn
+        // gets another chance, instead of the drain silently destroying state
+        // a failed turn never got to deliver.
+        if !pendingEventsAttached {
+            await requeueUnattachedPendingEvents(pendingEvents)
+        }
+        return (diffIncludedResponse, usage)
     }
 
     /// Re-posts `events` back onto ``outbox`` when a turn's diff produced no

@@ -31,6 +31,25 @@ comments:
 
     Re-verified: `swift build`, `swift build --build-tests`, `swift test` all green — 392 unit tests (391 + this new regression test) + 15 gated integration tests correctly skipped, zero failures, only the known pre-existing `mlx-swift_Cmlx.bundle` warning. Local `review working` engine also reports zero findings. Task remains in `doing`, ready for `/review`.
   timestamp: 2026-07-23T00:14:52.600193+00:00
+- actor: claude-code
+  id: 01ky66fykxb1qwmqa2sxk7bkdp
+  text: |-
+    Pulled back from `review` into `doing` to address the 3 open review findings. All fixed by finding the root duplication and deduping properly (not just patching cited lines):
+
+    1. `RoutedSession.swift` requeue-check duplication: extracted a new private helper `finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:)` that calls `finishTurn` and does the `if !pendingEventsAttached { await requeueUnattachedPendingEvents(pendingEvents) }` check exactly once. Both the success and catch branches of `generate(grammar:prompt:_:)` now call this single helper instead of duplicating the check — the success path discards its unused `(diffIncludedResponse, usage)` return, the catch path uses `diffIncludedResponse`/`usage` for the bodyless-close decision as before. Verified via `grep code` there is now exactly one occurrence of the requeue-check pattern in the file.
+
+    2. `SessionOutbox.swift` append duplication: extracted `private func appendNewPendingEvent(_ event: OperationEvent)` wrapping `events.append(PendingEvent(id: ItemID(), event: event))`, called from both the `.completed` case and the `.progress` case's no-match-found branch in `post(_:)`. Exactly one `PendingEvent(id: ItemID(), event:` construction now exists in the file (inside the new helper).
+
+    3. `PendingEventInjectionTests.swift` `@unchecked Sendable`: added a doc comment above `ThrowsBeforeAppendingBackend` explaining the invariant — the type carries no stored state at all, every method is a pure function of its arguments (always throws `Failure.boom` or returns a fixed empty/`nil` value), so there is nothing to race on. Matched the existing convention used elsewhere in the test suite (e.g. `GuidedGenerationTests.swift`'s `MaxTokensRecordingBackend` comment) rather than inventing new phrasing style.
+
+    Verification (really-done): `swift build` — green (only the known pre-existing `mlx-swift_Cmlx.bundle` warning). `swift build --build-tests` — green, no "unsealed contents" issue this run. `swift test` — 392 tests / 42 suites passed, plus 15 gated integration tests correctly skipped (no GPU/network), zero failures — matches the prior verified baseline exactly.
+
+    Note: `diagnostics check working` (SourceKit) reported 3 stale "cannot find OperationEventSegment in scope" errors on `RoutedSession.swift` — a stale sourcekit-lsp index predating these edits (server had been running since before the session started); not real, since `swift build`/`swift test` compiled and ran clean. Treating the build/test commands as authoritative per the task's own instructions.
+
+    Also ran `review working` after the fixes: it reported zero recurrence of any of the 3 original findings, but surfaced one new, unrelated finding — `respond(to:maxTokens:)` has two near-duplicate `generate(...)` call branches differing only in grammar/no-grammar backend dispatch. This is pre-existing code, not introduced by this task, so per "no unrelated refactors" I did not fix it here — logged as new task ^ajkr5dd ("Dedupe generate() calls in RoutedSession.respond(to:maxTokens:)") instead.
+
+    Leaving this task in `doing` for `/review` to pick back up.
+  timestamp: 2026-07-23T00:37:32.413792+00:00
 depends_on:
 - 01KY5TAEDY4T6P7F7848CWWVAJ
 position_column: doing
@@ -63,3 +82,9 @@ Deliver a session's pending turn-riding events to the model at the next turn bou
 ## Implementation notes (see task comments for full detail)
 
 Chose to prepend the rendered preamble to the plain `String` prompt sent to the backend (no `LanguageModelSessionBackend` signature change — there is no public SDK path to submit a `.custom` segment as part of what actually reaches the model), and to attach `OperationEventSegment`s only onto the *persisted* `.prompt` entry payload, never the SDK's own live transcript. New type `Sources/FoundationModelsRouter/Session/OperationEventSegment.swift`; wiring in `Sources/FoundationModelsRouter/Session/RoutedSession.swift`'s `generate(grammar:prompt:_:)` chokepoint; new tests in `Tests/FoundationModelsRouterTests/PendingEventInjectionTests.swift` (8 tests). An adversarial double-check caught and this fixed a real data-loss bug: events drained from the outbox are now re-queued (`requeueUnattachedPendingEvents(_:)`) if a turn's diff produces no `.prompt`-kind partial to attach them to (e.g. any `.ebnf`-guided turn, whose backend throws before touching its live session at all), instead of being silently lost.
+
+## Review Findings (2026-07-22 19:19)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:483` — Verbatim copy of the pending-event requeue check appears in both the success and error paths of `generate()`. Lines 483–485 (success path) and lines 502–504 (error path) are identical: `if !pendingEventsAttached { await requeueUnattachedPendingEvents(pendingEvents) }`. If the requeue logic changes, both copies must be updated or one will silently diverge. Move the requeue check outside the success/error branching or extract a shared helper function to eliminate the duplication. For example, restructure to call `finishTurn()` once and then unconditionally check `pendingEventsAttached` before the success/error fork, or extract the requeue logic into a private method both paths call.
+- [x] `Sources/FoundationModelsRouter/Session/SessionOutbox.swift:110` — Verbatim copy of `events.append(PendingEvent(id: ItemID(), event: event))` appears again at line 119. This pattern is repeated in two branches of the `.progress` case logic — the append when completed and the append when no existing progress entry matches. Copies drift out of sync when one is updated and the other is missed. Extract a helper method `private func appendNewPendingEvent(_ event: OperationEvent)` that wraps the append, then call it from both the `.completed` case (line 110) and the `.progress` case (line 119) to eliminate the duplication.
+- [x] `Tests/FoundationModelsRouterTests/PendingEventInjectionTests.swift:212` — @unchecked Sendable conformance requires a documented synchronization invariant explaining why the type is safe to send across isolation boundaries. Add a comment above or on the same line documenting why this class is safe to send unchecked. For example: `// Stateless stub with no mutable state; safe to send across isolation boundaries` or similar documentation of the invariant.

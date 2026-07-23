@@ -1,0 +1,1 @@
+{"id":"01KY66DET2T7A7SGEEFEEMM149","timestamp":"2026-07-23T00:36:10.690387Z","op":"create","item_id":"01KY66DET12YFCN8604G94RG59","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 1d76db\n+tag_name: bug\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 1d76db\n-tag_name: bug\n","transaction_id":null}
