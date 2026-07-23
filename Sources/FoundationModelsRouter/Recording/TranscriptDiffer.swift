@@ -49,18 +49,78 @@ enum TranscriptDiffer {
     ) -> [TranscriptEvent.Partial] {
         let newEntries = current[min(lastSeen.count, current.count)...]
         return newEntries.map { entry in
-            let mapped = TranscriptEntryMapper.event(from: entry)
-            return TranscriptEvent.Partial(
-                routerId: routerId,
-                sessionId: sessionId,
-                parentId: parentId,
-                slot: slot,
-                model: model,
-                kind: mapped.kind,
-                text: mapped.text,
-                entry: mapped.payload
-            )
+            partial(for: entry, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
         }
+    }
+
+    /// Returns the ordered partial events for every entry in `current` whose
+    /// `Transcript.Entry.id` was never recorded in `lastSeen` — the identity-
+    /// based counterpart to ``diff(lastSeen:current:routerId:sessionId:parentId:slot:model:)``'s
+    /// positional (count-based) diff.
+    ///
+    /// A compaction's fold is not a mere extension of `lastSeen`: the
+    /// synthesized summary entry replaces a folded span and `current` is
+    /// typically *shorter* than `lastSeen`, so a positional diff cannot say
+    /// what is new — only entry identity can (compaction_plan.md §1.5, §3).
+    /// Used by ``RecordingLanguageModelState/noteCompaction(_:)``, the
+    /// bare-session counterpart to `RoutedSessionActor`'s in-place `compact()`
+    /// swap.
+    ///
+    /// - Parameters:
+    ///   - lastSeen: The transcript snapshot already persisted — every entry
+    ///     it carries is treated as already recorded, regardless of position.
+    ///   - current: The transcript's current (post-fold) state.
+    ///   - routerId: The recording root id stamped onto every produced partial.
+    ///   - sessionId: The session span id stamped onto every produced partial.
+    ///   - parentId: The forking session's span id, or `nil` for a root,
+    ///     stamped onto every produced partial.
+    ///   - slot: The routed model slot stamped onto every produced partial.
+    ///   - model: The concrete model reference stamped onto every produced
+    ///     partial.
+    /// - Returns: The ordered partial events for `current`'s never-before-seen
+    ///   entries, in `current`'s own order — empty when every entry in
+    ///   `current` already appears in `lastSeen`.
+    static func diffByEntryId(
+        lastSeen: Transcript,
+        current: Transcript,
+        routerId: ULID,
+        sessionId: ULID,
+        parentId: ULID?,
+        slot: ModelSlot,
+        model: ModelRef
+    ) -> [TranscriptEvent.Partial] {
+        let seenIds = Set(lastSeen.map(\.id))
+        let unseenEntries = current.filter { !seenIds.contains($0.id) }
+        return unseenEntries.map { entry in
+            partial(for: entry, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
+        }
+    }
+
+    /// Maps one real transcript entry to its stamped ``TranscriptEvent/Partial``
+    /// via ``TranscriptEntryMapper``, carrying the given session identity —
+    /// the single per-entry mapping both ``diff(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
+    /// and ``diffByEntryId(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
+    /// share, since they differ only in *which* entries of `current` they
+    /// consider new, not in how a new entry becomes a partial.
+    private static func partial(
+        for entry: Transcript.Entry,
+        routerId: ULID,
+        sessionId: ULID,
+        parentId: ULID?,
+        slot: ModelSlot,
+        model: ModelRef
+    ) -> TranscriptEvent.Partial {
+        let mapped = TranscriptEntryMapper.event(from: entry)
+        return TranscriptEvent.Partial(
+            routerId: routerId,
+            sessionId: sessionId,
+            parentId: parentId,
+            slot: slot,
+            model: model,
+            kind: mapped.kind,
+            text: mapped.text,
+            entry: mapped.payload
+        )
     }
 
     /// The text of `transcript`'s leading `.instructions` entry, or `nil` when

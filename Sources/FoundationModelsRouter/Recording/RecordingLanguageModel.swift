@@ -87,6 +87,38 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
         await state.sync(transcript, usage: usage)
     }
 
+    /// Folds this handle's recording forward across a compaction
+    /// (compaction_plan.md §1.5 "the bare-session path", §3): appends
+    /// `compacted`'s never-before-recorded entries — identified by
+    /// `Transcript.Entry.id`, since compaction's fold is not a mere extension
+    /// of what came before it — and resets the differ baseline to `compacted`,
+    /// so subsequent turns record as ordinary appends again.
+    ///
+    /// Unlike ``sync(_:usage:)``, whose differ is count-based (`current` only
+    /// ever grows), `compacted` is typically *shorter* than the pre-fold
+    /// transcript and reorders entries relative to it: the synthesized
+    /// summary entry (carrying its `CompactionSegment`) replaces a folded
+    /// span, while the recent tail survives verbatim with its original ids.
+    /// This is how the summary entry reaches disk, and how retained tail
+    /// entries avoid being re-recorded — they are recognized as already
+    /// recorded by id, not by position.
+    ///
+    /// **Caller contract**: after calling this, rebuild
+    /// `LanguageModelSession(model: <this same handle>, tools:, transcript:
+    /// compacted)` — driving further turns over the original (stale) session
+    /// would resubmit the pre-fold transcript and defeat the fold.
+    ///
+    /// Idempotent, like ``sync(_:usage:)``: calling this again with a
+    /// `compacted` transcript already fully reflected in the last fold (e.g.
+    /// the same fold noted twice) appends nothing.
+    ///
+    /// - Parameter compacted: The transcript compaction produced —
+    ///   instructions verbatim, the synthesized summary entry, and whatever
+    ///   recent tail survived the fold.
+    public func noteCompaction(_ compacted: Transcript) async {
+        await state.noteCompaction(compacted)
+    }
+
     /// The executor conformance every ``FoundationModels/LanguageModelSession``
     /// built over a ``RecordingLanguageModel`` drives.
     ///
@@ -336,6 +368,23 @@ actor RecordingLanguageModelState {
         serialGate.signal()
     }
 
+    /// Folds this handle's recording forward across a compaction (see
+    /// ``RecordingLanguageModel/noteCompaction(_:)``): writes the sidecar and
+    /// records the session meta event lazily (like ``enterGateAndDiff(_:usage:)``),
+    /// then appends `compacted`'s never-before-recorded entries — by
+    /// `Transcript.Entry.id`, via ``diffAndRecordCompaction(compacted:)`` —
+    /// and resets ``lastSeen`` to `compacted`, so post-fold turns record as
+    /// ordinary (count-based) appends again.
+    ///
+    /// - Parameter compacted: The transcript compaction produced.
+    func noteCompaction(_ compacted: Transcript) async {
+        writeSidecarIfNeeded(transcript: compacted)
+        await serialGate.wait()
+        await recordSessionMetaIfNeeded()
+        await diffAndRecordCompaction(compacted: compacted)
+        serialGate.signal()
+    }
+
     /// Writes this handle's sidecar on first use, then
     /// acquires the shared serial gate — without releasing it — and records
     /// the session meta event lazily and diffs `transcript` against
@@ -411,6 +460,32 @@ actor RecordingLanguageModelState {
             await recorder.append(toRecord, to: recordingDirectory)
         }
         lastSeen = current
+    }
+
+    /// Appends `compacted`'s never-before-recorded entries — identified by
+    /// `Transcript.Entry.id` via ``TranscriptDiffer/diffByEntryId(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
+    /// — and resets ``lastSeen`` to `compacted` unconditionally.
+    ///
+    /// Unlike ``diffAndRecord(current:usage:)``, this never treats a shorter
+    /// `compacted` as a shrink to guard against: a fold is *expected* to be
+    /// shorter than the pre-fold ``lastSeen`` it replaces (the whole point of
+    /// compacting), so there is no anomaly here to warn about or recover from.
+    ///
+    /// - Parameter compacted: The transcript compaction produced.
+    private func diffAndRecordCompaction(compacted: Transcript) async {
+        let diffPartials = TranscriptDiffer.diffByEntryId(
+            lastSeen: lastSeen,
+            current: compacted,
+            routerId: routerId,
+            sessionId: sessionId,
+            parentId: parentId,
+            slot: slot,
+            model: model
+        )
+        for partial in diffPartials {
+            await recorder.append(partial, to: recordingDirectory)
+        }
+        lastSeen = compacted
     }
 
     /// Records this handle's first-line `session` meta event the first time
