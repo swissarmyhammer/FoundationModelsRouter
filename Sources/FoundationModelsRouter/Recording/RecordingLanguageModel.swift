@@ -370,30 +370,45 @@ actor RecordingLanguageModelState {
 
     /// Folds this handle's recording forward across a compaction (see
     /// ``RecordingLanguageModel/noteCompaction(_:)``): writes the sidecar and
-    /// records the session meta event lazily (like ``enterGateAndDiff(_:usage:)``),
-    /// then appends `compacted`'s never-before-recorded entries — by
-    /// `Transcript.Entry.id`, via ``diffAndRecordCompaction(compacted:)`` —
-    /// and resets ``lastSeen`` to `compacted`, so post-fold turns record as
-    /// ordinary (count-based) appends again.
+    /// records the session meta event lazily (via ``enterGateAndRecordMeta(_:)``,
+    /// shared with ``enterGateAndDiff(_:usage:)``), then appends `compacted`'s
+    /// never-before-recorded entries — by `Transcript.Entry.id`, via
+    /// ``diffAndRecordCompaction(compacted:)`` — and resets ``lastSeen`` to
+    /// `compacted`, so post-fold turns record as ordinary (count-based)
+    /// appends again.
     ///
     /// - Parameter compacted: The transcript compaction produced.
     func noteCompaction(_ compacted: Transcript) async {
-        writeSidecarIfNeeded(transcript: compacted)
-        await serialGate.wait()
-        await recordSessionMetaIfNeeded()
+        await enterGateAndRecordMeta(compacted)
         await diffAndRecordCompaction(compacted: compacted)
         serialGate.signal()
     }
 
-    /// Writes this handle's sidecar on first use, then
-    /// acquires the shared serial gate — without releasing it — and records
-    /// the session meta event lazily and diffs `transcript` against
-    /// last-seen, appending whatever is new. The shared chokepoint behind
-    /// both ``generate(request:channel:innerRespond:)`` and ``sync(_:)``,
-    /// which differ only in what (if anything) they run inside the gate
-    /// after this returns; callers MUST release the gate themselves once
-    /// that additional work completes — `generate` defers the signal around
-    /// its passthrough call, while `sync` (nothing left to run) signals
+    /// Writes this handle's sidecar on first use, acquires the shared serial
+    /// gate, and records the session meta event lazily — the prep sequence
+    /// shared by ``enterGateAndDiff(_:usage:)`` and ``noteCompaction(_:)``,
+    /// which differ only in what they do with `transcript` once this
+    /// returns (and how they release the gate afterward).
+    ///
+    /// Does NOT release the gate — callers acquire it here and are
+    /// responsible for signaling once their own follow-on work completes.
+    ///
+    /// - Parameter transcript: The transcript to write the sidecar from
+    ///   (mined for leading instructions) on first use.
+    private func enterGateAndRecordMeta(_ transcript: Transcript) async {
+        writeSidecarIfNeeded(transcript: transcript)
+        await serialGate.wait()
+        await recordSessionMetaIfNeeded()
+    }
+
+    /// Acquires the shared serial gate (via ``enterGateAndRecordMeta(_:)``)
+    /// — without releasing it — and diffs `transcript` against last-seen,
+    /// appending whatever is new. The shared chokepoint behind both
+    /// ``generate(request:channel:innerRespond:)`` and ``sync(_:)``, which
+    /// differ only in what (if anything) they run inside the gate after this
+    /// returns; callers MUST release the gate themselves once that
+    /// additional work completes — `generate` defers the signal around its
+    /// passthrough call, while `sync` (nothing left to run) signals
     /// immediately.
     ///
     /// - Parameters:
@@ -402,9 +417,7 @@ actor RecordingLanguageModelState {
     ///     forwarded to ``diffAndRecord(current:usage:)`` to stamp onto the
     ///     diff's turn-final `.response`-kind event, or `nil`.
     private func enterGateAndDiff(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
-        writeSidecarIfNeeded(transcript: transcript)
-        await serialGate.wait()
-        await recordSessionMetaIfNeeded()
+        await enterGateAndRecordMeta(transcript)
         await diffAndRecord(current: transcript, usage: usage)
     }
 
@@ -545,7 +558,7 @@ actor RecordingLanguageModelState {
     ) throws -> @Sendable (
         LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
     ) async throws -> Void {
-        try makePassthroughGeneric(wrapped)
+        try makePassthroughGeneric(wrapped: wrapped)
     }
 
     /// Opens `wrapped`'s existential so `Wrapped.Executor` — an associated
@@ -554,12 +567,20 @@ actor RecordingLanguageModelState {
     /// already-built executor and model so the returned closure stays
     /// non-generic.
     ///
+    /// Labeled — unlike this file's unlabeled verb+direct-object methods
+    /// (``RecordingLanguageModel/sync(_:usage:)``, ``noteCompaction(_:)``,
+    /// ``enterGateAndDiff(_:usage:)``) — because this is a `make`-prefixed
+    /// factory, not an action performed on `wrapped`: every other `make*`
+    /// factory in this codebase labels its parameters, and the sibling
+    /// ``makePassthrough(wrapped:)`` already labels this exact value
+    /// `wrapped:`.
+    ///
     /// - Parameter wrapped: The raw model to wrap.
     /// - Returns: A closure re-invoking `wrapped`'s own (already constructed)
     ///   executor.
     /// - Throws: Whatever `Wrapped.Executor.init(configuration:)` throws.
     private static func makePassthroughGeneric<Wrapped: LanguageModel>(
-        _ wrapped: Wrapped
+        wrapped: Wrapped
     ) throws -> @Sendable (
         LanguageModelExecutorGenerationRequest, LanguageModelExecutorGenerationChannel
     ) async throws -> Void {

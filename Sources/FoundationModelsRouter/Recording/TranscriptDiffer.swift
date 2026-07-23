@@ -48,9 +48,8 @@ enum TranscriptDiffer {
         model: ModelRef
     ) -> [TranscriptEvent.Partial] {
         let newEntries = current[min(lastSeen.count, current.count)...]
-        return newEntries.map { entry in
-            partial(for: entry, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
-        }
+        return mapPartials(
+            newEntries, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
     }
 
     /// Returns the ordered partial events for every entry in `current` whose
@@ -91,17 +90,45 @@ enum TranscriptDiffer {
     ) -> [TranscriptEvent.Partial] {
         let seenIds = Set(lastSeen.map(\.id))
         let unseenEntries = current.filter { !seenIds.contains($0.id) }
-        return unseenEntries.map { entry in
+        return mapPartials(
+            unseenEntries, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
+    }
+
+    /// Maps a sequence of real transcript entries to their stamped
+    /// ``TranscriptEvent/Partial`` values via ``partial(for:routerId:sessionId:parentId:slot:model:)``,
+    /// carrying the given session identity — the single entries-to-partials
+    /// mapping both ``diff(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
+    /// and ``diffByEntryId(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
+    /// share, since they differ only in *which* entries of `current` they
+    /// consider new, not in how new entries become partials.
+    ///
+    /// - Parameters:
+    ///   - entries: The new entries to map, in order.
+    ///   - routerId: The recording root id stamped onto every produced partial.
+    ///   - sessionId: The session span id stamped onto every produced partial.
+    ///   - parentId: The forking session's span id, or `nil` for a root,
+    ///     stamped onto every produced partial.
+    ///   - slot: The routed model slot stamped onto every produced partial.
+    ///   - model: The concrete model reference stamped onto every produced
+    ///     partial.
+    /// - Returns: The ordered partial events `entries` maps to.
+    private static func mapPartials(
+        _ entries: some Sequence<Transcript.Entry>,
+        routerId: ULID,
+        sessionId: ULID,
+        parentId: ULID?,
+        slot: ModelSlot,
+        model: ModelRef
+    ) -> [TranscriptEvent.Partial] {
+        entries.map { entry in
             partial(for: entry, routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model)
         }
     }
 
     /// Maps one real transcript entry to its stamped ``TranscriptEvent/Partial``
     /// via ``TranscriptEntryMapper``, carrying the given session identity —
-    /// the single per-entry mapping both ``diff(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
-    /// and ``diffByEntryId(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
-    /// share, since they differ only in *which* entries of `current` they
-    /// consider new, not in how a new entry becomes a partial.
+    /// the single per-entry mapping ``mapPartials(_:routerId:sessionId:parentId:slot:model:)``
+    /// shares across both diff variants.
     private static func partial(
         for entry: Transcript.Entry,
         routerId: ULID,

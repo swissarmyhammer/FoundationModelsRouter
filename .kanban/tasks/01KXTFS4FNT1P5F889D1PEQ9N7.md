@@ -67,8 +67,8 @@ comments:
     No production code changed — doc comments only, in the two named test files. Leaving task in `doing`, green, ready for /review.
   timestamp: 2026-07-23T17:05:36.049066+00:00
 depends_on: []
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: cc80
 title: 'TokenBudget + contextFill: measured token accounting'
 ---
 ## What
