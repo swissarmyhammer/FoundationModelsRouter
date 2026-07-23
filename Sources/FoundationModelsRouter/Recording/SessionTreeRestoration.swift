@@ -183,11 +183,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
         // session (restored or not) is what retains the profile, so the
         // profile must still be alive when this is called.
-        guard let owningProfile = owningProfileBox.current else {
-            preconditionFailure(
-                "restoreSessionTree requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
-            )
-        }
+        let owningProfile = requireOwningProfile(apiName: "restoreSessionTree")
         guard let recordingsRoot else {
             throw SessionTreeRestorationError.noDurableRecordingsRoot
         }

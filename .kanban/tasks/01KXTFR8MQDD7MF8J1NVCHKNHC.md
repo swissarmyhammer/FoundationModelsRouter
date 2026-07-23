@@ -69,6 +69,38 @@ comments:
 
     Task is done and green. All 6 review findings fixed and checked off. Leaving in `doing` per /implement workflow for /review to pick up.
   timestamp: 2026-07-23T14:59:46.658527+00:00
+- actor: claude-code
+  id: 01ky7rhx7tsdsp6t9y207fzrhs
+  text: |-
+    Addressed the new review finding (2026-07-23 10:02): duplicated owning-profile precondition in `restoreSessionTree(root:registry:)`.
+
+    Fix: in Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, replaced the inline
+    ```swift
+    guard let owningProfile = owningProfileBox.current else {
+        preconditionFailure(
+            "restoreSessionTree requires a live owning LanguageModelProfile; the handle holds it weakly and the profile was released before this call"
+        )
+    }
+    ```
+    with a call to the shared helper already defined in the same `extension RoutedModel where Container == any LoadedLLMContainer` (in RoutedLLM.swift):
+    ```swift
+    let owningProfile = requireOwningProfile(apiName: "restoreSessionTree")
+    ```
+    `requireOwningProfile(apiName:)` produces the byte-identical trap message (`"\(apiName) \(missingOwningProfileMessageSuffix)"`), so this is a pure duplicate-removal with no behavior change — same precondition, same wording, same laziness (traps only when `owningProfileBox.current` is nil). Confirmed via `git diff -- Sources/` that this is the only change (single 4-removed/1-added hunk, no other files touched).
+
+    Checked the box for this finding; all 7 review-finding checkboxes across both review rounds are now `[x]` (progress 1.0).
+
+    Verification (really-done, fresh this session):
+    - `swift build`: green, only the known pre-existing mlx-swift_Cmlx.bundle warning.
+    - `swift build --build-tests`: green (removed stale default.metallib first per the known unsealed-bundle issue).
+    - `swift test`: 416 tests in 45 suites passed, 16 gated/skipped in 6 suites — exactly matches the prior verified baseline, zero regressions, zero failures/warnings beyond the known pre-existing one.
+
+    Adversarial double-check (via really-done's double-check agent): PASS. Independently confirmed the diff is minimal and scoped, the helper's trap message/semantics are byte-identical to the removed inline code, nothing else references the removed inline structure, and independently re-ran swift build / swift build --build-tests / swift test with the same 416/45 + 16/6 gated result.
+
+    Also caught and immediately fixed a kanban `update task` description-corruption incident while checking this finding's box: the update flattened real newlines to literal `\n` and dropped the `compaction` tag (the known corruption pattern). Re-verified via `get task` and corrected both in a follow-up `update task` call.
+
+    Leaving task in `doing` per /implement workflow — not moving to review myself.
+  timestamp: 2026-07-23T15:12:25.338041+00:00
 depends_on:
 - 01KXTFQVKKDB1PPCXZQDWS80MS
 position_column: doing
@@ -106,3 +138,7 @@ Honor the spike task's findings on entry-id stability (dws80ms).
 - [x] `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift:20` — Doc comment has multiple sentences without a blank `///` line separator between the first-sentence summary and elaboration. The rule requires: first sentence ending in period, blank `///` line, then elaboration. Add a blank `///` line after the first sentence: separate 'written before the ``TranscriptEvent/entry`` field existed.' from 'Reconstruction needs the structural payload...'.
 - [x] `Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift:27` — Doc comment has multiple sentences without a blank `///` line separator between summary and elaboration. First sentence ends with `RecordingLevel/metadataOnly`).' but second sentence 'The shape survives on disk...' follows immediately. Insert blank `///` line after '``RecordingLevel/metadataOnly``).', separating the first summary sentence from the elaboration that follows.
 - [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:11` — Doc comment has multiple sentences without a blank `///` line separator. First sentence ends with '(milestone 7).' but second sentence 'The unit suite...' follows immediately. Insert a blank `///` line after 'gated integration suite (milestone 7).' to separate the first-sentence summary from the elaboration about the unit suite.
+
+## Review Findings (2026-07-23 10:02)
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:178` — The owning profile precondition check is duplicated inline when an identical helper function already exists in the same extension. Replace the inline guard block with `let owningProfile = requireOwningProfile(apiName: "restoreSessionTree")` to reuse the shared helper that already handles this precondition for other functions in the same extension.
