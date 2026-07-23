@@ -31,7 +31,7 @@ struct CompactorPipelineTests {
     // MARK: - Already under target: no stages run
 
     @Test("a transcript already under target needs no stages; it is returned unchanged")
-    func alreadyUnderTargetRunsNoStages() throws {
+    func alreadyUnderTargetRunsNoStages() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "small result") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
@@ -39,7 +39,7 @@ struct CompactorPipelineTests {
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
         let budget = Self.makeBudget(targetTokens: tokensBefore * 2)
 
-        let (resultTranscript, result) = Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
@@ -51,7 +51,7 @@ struct CompactorPipelineTests {
     // MARK: - Early stop: elision alone suffices
 
     @Test("the pipeline stops after ToolOutputElision when eliding old tool output alone lands under target")
-    func earlyStopAfterElisionAlone() throws {
+    func earlyStopAfterElisionAlone() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let bigOutput = String(repeating: "large tool result content ", count: 400)
         let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: bigOutput) }
@@ -63,7 +63,7 @@ struct CompactorPipelineTests {
 
         let budget = Self.makeBudget(targetTokens: (tokensBefore + afterElision) / 2)
 
-        let (resultTranscript, result) = Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
 
         #expect(result.stagesApplied == ["ToolOutputElision"])
         #expect(result.tokensBefore == tokensBefore)
@@ -76,7 +76,7 @@ struct CompactorPipelineTests {
     // MARK: - Stage ordering: both stages needed, in order
 
     @Test("when elision alone is insufficient, TurnTruncation runs next, in order")
-    func bothStagesRunInOrderWhenNeeded() throws {
+    func bothStagesRunInOrderWhenNeeded() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let bigText = String(repeating: "large content ", count: 400)
         // Old turns are large everywhere (prompt, tool output, response), so
@@ -94,7 +94,7 @@ struct CompactorPipelineTests {
 
         let budget = Self.makeBudget(targetTokens: (afterElision + afterBoth) / 2)
 
-        let (resultTranscript, result) = Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
 
         #expect(result.stagesApplied == ["ToolOutputElision", "TurnTruncation"])
         #expect(result.tokensBefore == tokensBefore)
@@ -109,7 +109,7 @@ struct CompactorPipelineTests {
     // MARK: - Oversized tail: shortfall reported, transcript unchanged
 
     @Test("when the recency window alone exceeds target, the pipeline reports the shortfall and returns the transcript unchanged")
-    func oversizedTailReturnsUnchangedWithShortfall() throws {
+    func oversizedTailReturnsUnchangedWithShortfall() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let bigText = String(repeating: "big ", count: 2000)
         // Only 2 turns — fewer than the default keepRecentTurns (4), so every
@@ -123,7 +123,7 @@ struct CompactorPipelineTests {
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
         let budget = Self.makeBudget(targetTokens: tokensBefore / 2)
 
-        let (resultTranscript, result) = Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
@@ -137,7 +137,7 @@ struct CompactorPipelineTests {
     @Test(
         "oversized tail with non-empty old turns: tokensAfter reflects the unchanged returned transcript, not the discarded fully-folded attempt"
     )
-    func oversizedTailWithOldTurnsReportsTokensAfterForTheReturnedTranscript() throws {
+    func oversizedTailWithOldTurnsReportsTokensAfterForTheReturnedTranscript() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
         let bigText = String(repeating: "big content ", count: 400)
         // 6 turns: turns 1-2 are old (foldable away), turns 3-6 are the
@@ -158,7 +158,7 @@ struct CompactorPipelineTests {
         // Target below even the best the deterministic stages can achieve.
         let budget = Self.makeBudget(targetTokens: afterBoth / 2)
 
-        let (resultTranscript, result) = Compactor.compact(transcript, budget: budget)
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget)
 
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)

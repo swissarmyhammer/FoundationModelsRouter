@@ -3,8 +3,8 @@ import FoundationModels
 
 /// What one compaction pipeline run did (compaction_plan.md §1.4): how big
 /// the transcript was before and after, which stages actually ran, and —
-/// once the model-assisted `Summarization` stage (a later build-order step)
-/// is wired in — the synthesized summary text.
+/// once the model-assisted ``Summarization`` stage is wired in — the
+/// synthesized summary text.
 ///
 /// `tokensBefore`/`tokensAfter` are ``Compactor``'s character-ratio estimate
 /// (compaction_plan.md §1.5) when produced by the model-free pipeline alone;
@@ -12,8 +12,12 @@ import FoundationModels
 /// a later build-order step) supplies its own measured counts instead — the
 /// next real turn always re-measures exactly, so an estimate here is safe.
 public struct CompactionResult: Sendable, Equatable {
-    /// The synthesized fold summary, or `nil` for a model-free run (no
-    /// `Summarization` stage applied — this pipeline never adds one).
+    /// The synthesized fold summary, or `nil` when no ``Summarization``
+    /// ran — either no `summarizer` was supplied to
+    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` (the model-free
+    /// fallback), the deterministic stages alone already landed the
+    /// transcript under target, or there was no old span left to summarize
+    /// (the oversized-tail case).
     public let summary: String?
 
     /// The transcript's estimated size, in tokens, before this pipeline ran.
@@ -45,23 +49,26 @@ public struct CompactionResult: Sendable, Equatable {
     }
 }
 
-/// The model-free compaction pipeline (compaction_plan.md §1.3, build-order
-/// step 4): runs deterministic stages, in order, until the transcript lands
-/// under ``TokenBudget/target``, or reports the shortfall when even every
-/// stage together isn't enough.
+/// The compaction pipeline (compaction_plan.md §1.3): runs the deterministic
+/// stages, in order, until the transcript lands under ``TokenBudget/target``,
+/// then — when a `summarizer` is supplied — falls back to the model-assisted
+/// ``Summarization`` stage; reports the shortfall when even that isn't
+/// enough.
 ///
-/// This pipeline takes **no prompt parameter** — it never summarizes.
-/// ``CompactionResult/summary`` is always `nil` here; the model-assisted
-/// `Summarization` stage (a later build-order step) adds a `prompt:
-/// CompactionPrompt` parameter and wires itself in as the pipeline's final
-/// stage.
+/// `summarizer` is `nil` by default: without one, this degrades to the
+/// model-free pipeline exactly as before — ``CompactionResult/summary`` stays
+/// `nil` and only ``ToolOutputElision``/``TurnTruncation`` ever run. `prompt`
+/// is only ever used by ``Summarization``, so it is ignored entirely on that
+/// model-free path.
 ///
-/// `compact(_:budget:)` returns both the folded transcript and the report:
-/// compaction_plan.md §1.1 describes compaction itself as a pure `Transcript
-/// -> Transcript` function, and both entry points that build on this
-/// pipeline need the folded transcript itself — `RoutedSessionActor.compact`
-/// swaps it in as the session's new inner transcript, and the bare-session
-/// recipe hands it to `RecordingLanguageModel.noteCompaction(_:)` and rebuilds
+/// `compact(_:prompt:budget:summarizer:)` returns both the folded transcript
+/// and the report: compaction_plan.md §1.1 describes compaction itself as a
+/// pure `Transcript -> Transcript` function (model-assisted summarization
+/// aside, which needs to call out to `summarizer`), and both entry points
+/// that build on this pipeline need the folded transcript itself —
+/// `RoutedSessionActor.compact` swaps it in as the session's new inner
+/// transcript, and the bare-session recipe hands it to
+/// `RecordingLanguageModel.noteCompaction(_:)` and rebuilds
 /// `LanguageModelSession(model:tools:transcript:)` over it.
 public enum Compactor {
     /// The deterministic stages this pipeline runs, in order, each at its
@@ -81,27 +88,41 @@ public enum Compactor {
     /// live window exactly and replaces it (§1.5).
     static let charsPerTokenEstimate: Double = 4.0
 
-    /// Runs the deterministic pipeline over `transcript`, folding it down to
-    /// at most `budget.target` of `budget.limit`.
+    /// Runs the pipeline over `transcript`, folding it down to at most
+    /// `budget.target` of `budget.limit`.
     ///
     /// Stages run in order (``ToolOutputElision`` first, then
-    /// ``TurnTruncation``) and the pipeline stops as soon as one lands the
+    /// ``TurnTruncation``, then — only when `summarizer` is non-`nil` —
+    /// ``Summarization``) and the pipeline stops as soon as one lands the
     /// transcript under target. When the transcript is already under target,
-    /// no stage runs. When even every stage together leaves the transcript
-    /// over target — the recency window itself is too large, and neither
-    /// stage may touch it — the *original* transcript is returned unchanged
+    /// no stage runs. When every deterministic stage runs without success and
+    /// either no `summarizer` was supplied or ``Summarization`` finds no old
+    /// span left to fold (the recency window itself is too large, and no
+    /// stage may touch it) — the *original* transcript is returned unchanged
     /// (``CompactionResult/stagesApplied`` is empty) with the shortfall
     /// reported via ``CompactionResult/tokensAfter``.
     ///
     /// - Parameters:
     ///   - transcript: The transcript to fold.
+    ///   - prompt: The compaction prompt ``Summarization`` sends to
+    ///     `summarizer`, verbatim, when it runs. Defaults to
+    ///     ``CompactionPrompt/default``. Unused on the model-free path (no
+    ///     `summarizer` supplied, or the deterministic stages alone suffice).
     ///   - budget: The token budget to fold against.
+    ///   - summarizer: The model ``Summarization`` calls to condense the
+    ///     folded span, or `nil` to degrade to the model-free pipeline
+    ///     (``ToolOutputElision``/``TurnTruncation`` only —
+    ///     ``CompactionResult/summary`` stays `nil`). Defaults to `nil`.
     /// - Returns: The folded transcript (unchanged from `transcript` when no
     ///   stage helped enough) and a report of what happened.
+    /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified, when
+    ///   ``Summarization`` runs and the summarizer call fails.
     public static func compact(
         _ transcript: Transcript,
-        budget: TokenBudget
-    ) -> (transcript: Transcript, result: CompactionResult) {
+        prompt: CompactionPrompt = .default,
+        budget: TokenBudget,
+        summarizer: (any CompactionSummarizer)? = nil
+    ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let tokensBefore = estimatedTokenCount(of: transcript)
         let targetTokens = Int((Double(budget.limit) * budget.target).rounded())
 
@@ -129,11 +150,37 @@ public enum Compactor {
             }
         }
 
-        // Oversized tail: every deterministic stage ran and the transcript is
+        // Model-assisted last resort: only attempted when a summarizer is
+        // available, and always over the *original* transcript — see
+        // Summarization's own doc comment for why it cannot operate on
+        // `current` at this point (TurnTruncation already dropped the old
+        // turns' content from it).
+        if let summarizer,
+            let folded = try await Summarization().apply(
+                transcript,
+                prompt: prompt,
+                tokensBefore: tokensBefore,
+                priorStagesApplied: stagesApplied,
+                summarizer: summarizer
+            )
+        {
+            let tokensAfter = estimatedTokenCount(of: folded.transcript)
+            return (
+                folded.transcript,
+                CompactionResult(
+                    summary: folded.summary,
+                    tokensBefore: tokensBefore,
+                    tokensAfter: tokensAfter,
+                    stagesApplied: stagesApplied + [Summarization.stageName]
+                )
+            )
+        }
+
+        // Oversized tail: every available stage ran and the transcript is
         // still over target — the recency window alone is too big, and
-        // neither stage may touch it. `current` at this point may be smaller
-        // than `transcript` (old turns folded away in the discarded attempt),
-        // but the function returns the *original* transcript unchanged, so
+        // nothing may touch it. `current` at this point may be smaller than
+        // `transcript` (old turns folded away in the discarded attempt), but
+        // the function returns the *original* transcript unchanged, so
         // `tokensAfter` must report `tokensBefore` — the size of what is
         // actually being returned — not `current`'s size.
         return (

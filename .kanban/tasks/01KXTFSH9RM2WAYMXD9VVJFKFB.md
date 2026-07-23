@@ -52,8 +52,8 @@ comments:
 depends_on:
 - 01KXTFQVKKDB1PPCXZQDWS80MS
 - 01KXTFS4FNT1P5F889D1PEQ9N7
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ce80
 title: Deterministic stages + Compactor pipeline (ToolOutputElision, TurnTruncation)
 ---
 ## What
