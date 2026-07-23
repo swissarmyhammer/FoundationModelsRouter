@@ -34,6 +34,21 @@ comments:
 
     Task left in `doing`, green, ready for `/review`. All 4 acceptance-criteria checkboxes and both Tests-section items are satisfied; not checking them off in the description per the kanban-corruption note in memory — verified manually instead.
   timestamp: 2026-07-23T19:21:02.754088+00:00
+- actor: claude-code
+  id: 01ky89r3kmdkxb0mfy9vh78xe8
+  text: |-
+    Addressed the 3 review findings (test-file duplication of makeInstructions()/makeTurn()/makeTurns() between CompactionStageTests.swift and CompactorPipelineTests.swift).
+
+    Checked Tests/FoundationModelsRouterTests/Helpers/ first: only StubSessionBackend.swift existed there (a session-backend stub, unrelated to transcript-fixture construction), so no existing helper covered this ground — created a new file rather than extending an unrelated one.
+
+    Fix: created Tests/FoundationModelsRouterTests/Helpers/TranscriptTestHelpers.swift with `enum TranscriptFixtures` holding `makeInstructions()`, `makeTurn(index:promptText:toolOutputText:responseText:)`, and `makeTurns(_:toolOutputText:)` — byte-identical bodies to what both test files had duplicated. Removed the duplicated private static funcs from both CompactionStageTests.swift and CompactorPipelineTests.swift, and rewrote every call site (`Self.makeInstructions()` -> `TranscriptFixtures.makeInstructions()`, etc.) in both files. CompactorPipelineTests.swift's own `makeBudget(targetTokens:)` helper (not part of the duplication — unique to that file) was left untouched.
+
+    Note: found a 4th, pre-existing occurrence of a similar `makeInstructions()` in CompactionSpikeTests.swift — NOT touched, since it wasn't one of the 3 findings and the task said no unrelated refactors. Flagging in case a future cleanup wants to fold it in too.
+
+    Verification: swift build, swift build --build-tests, swift test all green — 451 tests in 49 suites passed, 16 gated/skipped in 6 suites unchanged, zero failures, only the known pre-existing mlx-swift_Cmlx.bundle warning. Matches the prior verified baseline exactly (no test count regression/change, since this was a pure test-code refactor).
+
+    Checked all 3 review-finding checkboxes in the description. Task left in `doing` per /implement process (pulled back from `review`), ready for `/review` to re-verify.
+  timestamp: 2026-07-23T20:12:54.260863+00:00
 depends_on:
 - 01KXTFQVKKDB1PPCXZQDWS80MS
 - 01KXTFS4FNT1P5F889D1PEQ9N7
@@ -51,15 +66,21 @@ Build the model-free half of the compaction pipeline (compaction_plan.md §1.3) 
 Invariants (assert in tests): instructions never modified or dropped; tool pairs kept/elided/dropped together; the recency window survives verbatim; stages are pure (`Transcript → Transcript`, same input → same output); a transcript whose tail alone exceeds target is returned unchanged with the shortfall reported in `CompactionResult`.
 
 ## Acceptance Criteria
-- [ ] Each stage is a pure function over `Transcript`; every §1.3 invariant holds on fixture transcripts
-- [ ] Pipeline stops as soon as a stage lands under target; `stagesApplied` records exactly the stages run
-- [ ] Oversized-tail transcript returned unchanged with shortfall reported
-- [ ] Compiles with only this task's and its dependencies' types — no forward references to `CompactionPrompt`
+- [x] Each stage is a pure function over `Transcript`; every §1.3 invariant holds on fixture transcripts
+- [x] Pipeline stops as soon as a stage lands under target; `stagesApplied` records exactly the stages run
+- [x] Oversized-tail transcript returned unchanged with shortfall reported
+- [x] Compiles with only this task's and its dependencies' types — no forward references to `CompactionPrompt`
 
 ## Tests
-- [ ] `Tests/FoundationModelsRouterTests/CompactionStageTests.swift` — fixture transcripts (mixed prompt/response/tool traffic) covering every invariant, elision placeholder content, turn-boundary edge cases (tool pair at the window edge, transcript with only instructions, fewer turns than keepRecentTurns)
-- [ ] `Tests/FoundationModelsRouterTests/CompactorPipelineTests.swift` — stage ordering, early stop, oversized-tail shortfall
-- [ ] `swift test --filter 'CompactionStage|CompactorPipeline'` passes
+- [x] `Tests/FoundationModelsRouterTests/CompactionStageTests.swift` — fixture transcripts (mixed prompt/response/tool traffic) covering every invariant, elision placeholder content, turn-boundary edge cases (tool pair at the window edge, transcript with only instructions, fewer turns than keepRecentTurns)
+- [x] `Tests/FoundationModelsRouterTests/CompactorPipelineTests.swift` — stage ordering, early stop, oversized-tail shortfall
+- [x] `swift test --filter 'CompactionStage|CompactorPipeline'` passes
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #compaction
+
+## Review Findings (2026-07-23 14:26)
+
+- [x] `Tests/FoundationModelsRouterTests/CompactionStageTests.swift:19` — makeInstructions() is duplicated across test files; both CompactionStageTests and CompactorPipelineTests define identical implementations, requiring maintenance in two places when the fixture structure changes. Extract makeInstructions(), makeTurn(), and makeTurns() to a shared test helper file (e.g., TranscriptTestHelpers.swift in Tests/FoundationModelsRouterTests/Helpers/) and import it in both test suites.
+- [x] `Tests/FoundationModelsRouterTests/CompactionStageTests.swift:32` — makeTurn() is duplicated across test files; both CompactionStageTests and CompactorPipelineTests define identical implementations, requiring maintenance in two places when the fixture structure changes. Extract makeInstructions(), makeTurn(), and makeTurns() to a shared test helper file (e.g., TranscriptTestHelpers.swift in Tests/FoundationModelsRouterTests/Helpers/) and import it in both test suites.
+- [x] `Tests/FoundationModelsRouterTests/CompactorPipelineTests.swift:30` — makeTurn() duplicates the implementation in CompactionStageTests.swift; maintaining identical fixture code in two test files creates unnecessary coupling and divergence risk. Extract makeInstructions(), makeTurn(), and makeTurns() to a shared test helper file (e.g., TranscriptTestHelpers.swift in Tests/FoundationModelsRouterTests/Helpers/) and import it in both test suites.

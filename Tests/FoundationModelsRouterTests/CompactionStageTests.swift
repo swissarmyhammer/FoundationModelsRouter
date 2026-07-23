@@ -16,83 +16,17 @@ import Testing
 @Suite("Compaction stages: ToolOutputElision and TurnTruncation")
 struct CompactionStageTests {
     // MARK: - Fixtures
-
-    private static func makeInstructions() -> Transcript.Entry {
-        .instructions(
-            Transcript.Instructions(
-                id: "instr-1",
-                segments: [.text(Transcript.TextSegment(id: "instr-text-1", content: "you are a helpful assistant"))],
-                toolDefinitions: []
-            )
-        )
-    }
-
-    /// Builds one turn: a `.prompt`, optionally a `.toolCalls`/`.toolOutput`
-    /// pair (when `toolOutputText` is non-nil), and a `.response` — the shape
-    /// ``TranscriptTurns/split(_:)`` partitions a transcript into.
-    private static func makeTurn(
-        index: Int,
-        promptText: String = "question",
-        toolOutputText: String? = nil,
-        responseText: String = "answer"
-    ) throws -> [Transcript.Entry] {
-        var entries: [Transcript.Entry] = [
-            .prompt(
-                Transcript.Prompt(
-                    id: "prompt-\(index)",
-                    segments: [.text(Transcript.TextSegment(id: "prompt-\(index)-text", content: promptText))]
-                )
-            )
-        ]
-        if let toolOutputText {
-            entries.append(
-                .toolCalls(
-                    Transcript.ToolCalls(
-                        id: "calls-\(index)",
-                        [
-                            Transcript.ToolCall(
-                                id: "call-\(index)",
-                                toolName: "search",
-                                arguments: try GeneratedContent(json: #"{"query":"q"}"#)
-                            )
-                        ]
-                    )
-                )
-            )
-            entries.append(
-                .toolOutput(
-                    Transcript.ToolOutput(
-                        id: "toolOutput-\(index)",
-                        toolName: "search",
-                        segments: [.text(Transcript.TextSegment(id: "toolOutput-\(index)-text", content: toolOutputText))]
-                    )
-                )
-            )
-        }
-        entries.append(
-            .response(
-                Transcript.Response(
-                    id: "response-\(index)",
-                    assetIDs: [],
-                    segments: [.text(Transcript.TextSegment(id: "response-\(index)-text", content: responseText))]
-                )
-            )
-        )
-        return entries
-    }
-
-    /// `turnCount` turns, each with a tool-call/tool-output pair, indices
-    /// `1...turnCount`.
-    private static func makeTurns(_ turnCount: Int, toolOutputText: String = "tool result") throws -> [[Transcript.Entry]] {
-        try (1...turnCount).map { try Self.makeTurn(index: $0, toolOutputText: toolOutputText) }
-    }
+    //
+    // makeInstructions()/makeTurn()/makeTurns() live in
+    // TranscriptFixtures (Helpers/TranscriptTestHelpers.swift), shared with
+    // CompactorPipelineTests.
 
     // MARK: - Instructions invariant
 
     @Test("ToolOutputElision never modifies or drops the instructions entry")
     func toolOutputElisionPreservesInstructions() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try Self.makeTurns(6)
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let result = ToolOutputElision(keepRecentTurns: 4).apply(transcript)
@@ -102,8 +36,8 @@ struct CompactionStageTests {
 
     @Test("TurnTruncation never modifies or drops the instructions entry")
     func turnTruncationPreservesInstructions() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try Self.makeTurns(6)
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let result = TurnTruncation(keepRecentTurns: 4).apply(transcript)
@@ -115,9 +49,9 @@ struct CompactionStageTests {
 
     @Test("ToolOutputElision keeps an old turn's toolCalls entry unchanged while shrinking its toolOutput payload")
     func toolOutputElisionPreservesToolCallsAndShrinksToolOutput() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let bigOutput = String(repeating: "large tool result content ", count: 200)
-        let turns = try Self.makeTurns(6, toolOutputText: bigOutput)
+        let turns = try TranscriptFixtures.makeTurns(6, toolOutputText: bigOutput)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let result = Array(ToolOutputElision(keepRecentTurns: 4).apply(transcript))
@@ -141,9 +75,9 @@ struct CompactionStageTests {
 
     @Test("elision placeholder names the tool and is a short one-line message")
     func elisionPlaceholderContent() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let bigOutput = String(repeating: "x", count: 5000)
-        let turns = try Self.makeTurns(6, toolOutputText: bigOutput)
+        let turns = try TranscriptFixtures.makeTurns(6, toolOutputText: bigOutput)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let result = Array(ToolOutputElision(keepRecentTurns: 4).apply(transcript))
@@ -161,8 +95,8 @@ struct CompactionStageTests {
 
     @Test("TurnTruncation drops an old turn's toolCalls/toolOutput pair together, orphaning neither")
     func turnTruncationDropsToolPairTogether() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try Self.makeTurns(6)
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let result = Array(TurnTruncation(keepRecentTurns: 4).apply(transcript))
@@ -183,8 +117,8 @@ struct CompactionStageTests {
 
     @Test("ToolOutputElision leaves the recency window byte-identical")
     func toolOutputElisionRecencyWindowVerbatim() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try Self.makeTurns(6, toolOutputText: String(repeating: "y", count: 500))
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6, toolOutputText: String(repeating: "y", count: 500))
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let result = Array(ToolOutputElision(keepRecentTurns: 4).apply(transcript))
@@ -195,8 +129,8 @@ struct CompactionStageTests {
 
     @Test("TurnTruncation leaves the recency window byte-identical")
     func turnTruncationRecencyWindowVerbatim() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try Self.makeTurns(6)
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let result = Array(TurnTruncation(keepRecentTurns: 4).apply(transcript))
@@ -210,10 +144,10 @@ struct CompactionStageTests {
 
     @Test("a tool pair exactly at the recency window edge stays fully on its own side, never split")
     func toolPairAtWindowEdgeNeverSplit() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         // Exactly keepRecentTurns + 1 turns: turn 1 is the single old turn,
         // turns 2-5 are the recency window.
-        let turns = try Self.makeTurns(5)
+        let turns = try TranscriptFixtures.makeTurns(5)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let elided = Array(ToolOutputElision(keepRecentTurns: 4).apply(transcript))
@@ -235,7 +169,7 @@ struct CompactionStageTests {
 
     @Test("a transcript with only instructions has no turns to fold; both stages no-op")
     func onlyInstructionsIsNoOp() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let transcript = Transcript(entries: [instructions])
 
         #expect(ToolOutputElision().apply(transcript) == transcript)
@@ -244,8 +178,8 @@ struct CompactionStageTests {
 
     @Test("fewer turns than keepRecentTurns means every turn is in the recency window; both stages no-op")
     func fewerTurnsThanWindowIsNoOp() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try Self.makeTurns(2, toolOutputText: String(repeating: "z", count: 500))
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(2, toolOutputText: String(repeating: "z", count: 500))
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         #expect(ToolOutputElision(keepRecentTurns: 4).apply(transcript) == transcript)
@@ -254,9 +188,9 @@ struct CompactionStageTests {
 
     @Test("keepRecentTurns of 0 or fewer protects nothing: every turn is eligible for folding")
     func nonPositiveKeepRecentTurnsProtectsNoTurns() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let bigOutput = String(repeating: "v", count: 500)
-        let turns = try Self.makeTurns(3, toolOutputText: bigOutput)
+        let turns = try TranscriptFixtures.makeTurns(3, toolOutputText: bigOutput)
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let elided = Array(ToolOutputElision(keepRecentTurns: 0).apply(transcript))
@@ -274,8 +208,8 @@ struct CompactionStageTests {
 
     @Test("both stages are pure: the same input always yields the same output")
     func stagesArePure() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try Self.makeTurns(6, toolOutputText: String(repeating: "w", count: 500))
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6, toolOutputText: String(repeating: "w", count: 500))
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let elision = ToolOutputElision(keepRecentTurns: 4)

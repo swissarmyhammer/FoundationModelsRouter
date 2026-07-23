@@ -15,68 +15,10 @@ import Testing
 /// exact JSON-encoding overhead.
 @Suite("Compactor pipeline: stage ordering, early stop, oversized-tail shortfall")
 struct CompactorPipelineTests {
-    // MARK: - Fixtures (mirrors CompactionStageTests' turn builder)
-
-    private static func makeInstructions() -> Transcript.Entry {
-        .instructions(
-            Transcript.Instructions(
-                id: "instr-1",
-                segments: [.text(Transcript.TextSegment(id: "instr-text-1", content: "you are a helpful assistant"))],
-                toolDefinitions: []
-            )
-        )
-    }
-
-    private static func makeTurn(
-        index: Int,
-        promptText: String = "question",
-        toolOutputText: String? = nil,
-        responseText: String = "answer"
-    ) throws -> [Transcript.Entry] {
-        var entries: [Transcript.Entry] = [
-            .prompt(
-                Transcript.Prompt(
-                    id: "prompt-\(index)",
-                    segments: [.text(Transcript.TextSegment(id: "prompt-\(index)-text", content: promptText))]
-                )
-            )
-        ]
-        if let toolOutputText {
-            entries.append(
-                .toolCalls(
-                    Transcript.ToolCalls(
-                        id: "calls-\(index)",
-                        [
-                            Transcript.ToolCall(
-                                id: "call-\(index)",
-                                toolName: "search",
-                                arguments: try GeneratedContent(json: #"{"query":"q"}"#)
-                            )
-                        ]
-                    )
-                )
-            )
-            entries.append(
-                .toolOutput(
-                    Transcript.ToolOutput(
-                        id: "toolOutput-\(index)",
-                        toolName: "search",
-                        segments: [.text(Transcript.TextSegment(id: "toolOutput-\(index)-text", content: toolOutputText))]
-                    )
-                )
-            )
-        }
-        entries.append(
-            .response(
-                Transcript.Response(
-                    id: "response-\(index)",
-                    assetIDs: [],
-                    segments: [.text(Transcript.TextSegment(id: "response-\(index)-text", content: responseText))]
-                )
-            )
-        )
-        return entries
-    }
+    // MARK: - Fixtures
+    //
+    // makeInstructions()/makeTurn() live in TranscriptFixtures
+    // (Helpers/TranscriptTestHelpers.swift), shared with CompactionStageTests.
 
     /// A budget whose `target` fraction of `limit` reconstructs `targetTokens`
     /// (a huge, fixed `limit` keeps the fraction well clear of rounding
@@ -90,8 +32,8 @@ struct CompactorPipelineTests {
 
     @Test("a transcript already under target needs no stages; it is returned unchanged")
     func alreadyUnderTargetRunsNoStages() throws {
-        let instructions = Self.makeInstructions()
-        let turns = try (1...6).map { try Self.makeTurn(index: $0, toolOutputText: "small result") }
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "small result") }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
@@ -110,9 +52,9 @@ struct CompactorPipelineTests {
 
     @Test("the pipeline stops after ToolOutputElision when eliding old tool output alone lands under target")
     func earlyStopAfterElisionAlone() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let bigOutput = String(repeating: "large tool result content ", count: 400)
-        let turns = try (1...6).map { try Self.makeTurn(index: $0, toolOutputText: bigOutput) }
+        let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: bigOutput) }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
@@ -135,13 +77,13 @@ struct CompactorPipelineTests {
 
     @Test("when elision alone is insufficient, TurnTruncation runs next, in order")
     func bothStagesRunInOrderWhenNeeded() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let bigText = String(repeating: "large content ", count: 400)
         // Old turns are large everywhere (prompt, tool output, response), so
         // eliding tool output alone can't be enough — only dropping the
         // whole turn (TurnTruncation) gets under target.
         let turns = try (1...6).map {
-            try Self.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
@@ -168,13 +110,13 @@ struct CompactorPipelineTests {
 
     @Test("when the recency window alone exceeds target, the pipeline reports the shortfall and returns the transcript unchanged")
     func oversizedTailReturnsUnchangedWithShortfall() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let bigText = String(repeating: "big ", count: 2000)
         // Only 2 turns — fewer than the default keepRecentTurns (4), so every
         // turn is inside the untouchable recency window: neither stage can
         // fold anything away, however oversized the transcript is.
         let turns = try (1...2).map {
-            try Self.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
@@ -196,7 +138,7 @@ struct CompactorPipelineTests {
         "oversized tail with non-empty old turns: tokensAfter reflects the unchanged returned transcript, not the discarded fully-folded attempt"
     )
     func oversizedTailWithOldTurnsReportsTokensAfterForTheReturnedTranscript() throws {
-        let instructions = Self.makeInstructions()
+        let instructions = TranscriptFixtures.makeInstructions()
         let bigText = String(repeating: "big content ", count: 400)
         // 6 turns: turns 1-2 are old (foldable away), turns 3-6 are the
         // recency window — but even that reduced recency window alone is
@@ -205,7 +147,7 @@ struct CompactorPipelineTests {
         // attempt inside the pipeline loop) is smaller than `transcript` yet
         // the function must still return `transcript` unchanged.
         let turns = try (1...6).map {
-            try Self.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
