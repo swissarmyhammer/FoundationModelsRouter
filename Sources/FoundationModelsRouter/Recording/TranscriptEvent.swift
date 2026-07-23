@@ -273,6 +273,39 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             )
         }
 
+        /// Returns a copy of this partial with ``tokensIn``/``tokensOut``
+        /// replaced by `tokensIn`/`tokensOut`, leaving every other field
+        /// untouched.
+        ///
+        /// The stamping seam a turn owner uses to attach a turn's measured
+        /// usage delta onto the turn-final `.response`-kind partial a diff
+        /// produced — mirrors ``RoutedSessionActor``'s own per-turn
+        /// `tokensIn`/`tokensOut` stamping in
+        /// `recordTranscriptDelta(grammar:since:usage:)`, but for the
+        /// ``RecordingLanguageModel`` handle path (see
+        /// ``RecordingLanguageModelState/diffAndRecord(current:usage:)``).
+        ///
+        /// - Parameters:
+        ///   - tokensIn: The turn's measured input tokens, or `nil`.
+        ///   - tokensOut: The turn's measured output tokens, or `nil`.
+        /// - Returns: A copy carrying the given token counts.
+        func stampingUsage(tokensIn: Int?, tokensOut: Int?) -> Partial {
+            Partial(
+                routerId: routerId,
+                sessionId: sessionId,
+                parentId: parentId,
+                slot: slot,
+                model: model,
+                kind: kind,
+                grammar: grammar,
+                text: text,
+                tokensIn: tokensIn,
+                tokensOut: tokensOut,
+                ms: ms,
+                entry: entry
+            )
+        }
+
         /// Stamps this partial with a recorder-assigned `seq` and `ts`, yielding
         /// a finished ``TranscriptEvent``.
         ///

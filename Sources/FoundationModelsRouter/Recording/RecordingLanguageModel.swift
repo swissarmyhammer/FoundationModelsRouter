@@ -66,10 +66,25 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
     /// has returned. Idempotent — a `transcript` already fully reflected in
     /// the last diff produces an empty diff and records nothing.
     ///
-    /// - Parameter transcript: The transcript to sync against last-seen —
-    ///   typically `session.transcript` at turn end.
-    public func sync(_ transcript: Transcript) async {
-        await state.sync(transcript)
+    /// When `usage` is supplied, it is stamped as `tokensIn`/`tokensOut` onto
+    /// this call's diff's turn-final `.response`-kind event — the handle-path
+    /// mirror of `RoutedSessionActor.recordTranscriptDelta(grammar:since:usage:)`,
+    /// which already stamps usage the same way on the routed path. The turn
+    /// owner holds the session and reads its own per-turn usage delta (e.g.
+    /// via ``LanguageModelSessionBackend/usageTokenCounts()``'s convention,
+    /// snapshotting `session.usage` before and after the turn); this handle
+    /// sits below the session and cannot read it directly, so it is the
+    /// caller's to supply. `nil` (the default) leaves `tokensIn`/`tokensOut`
+    /// unset, exactly as before this parameter existed.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to sync against last-seen —
+    ///     typically `session.transcript` at turn end.
+    ///   - usage: This turn's own `(input, output)` token usage delta to
+    ///     stamp onto the diff's turn-final `.response`-kind event, or `nil`
+    ///     to leave both unset.
+    public func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
+        await state.sync(transcript, usage: usage)
     }
 
     /// The executor conformance every ``FoundationModels/LanguageModelSession``
@@ -311,9 +326,13 @@ actor RecordingLanguageModelState {
     /// `LanguageModelSession` has returned. Idempotent — a `transcript`
     /// already fully reflected in the last diff produces an empty diff.
     ///
-    /// - Parameter transcript: The transcript to sync against last-seen.
-    func sync(_ transcript: Transcript) async {
-        await enterGateAndDiff(transcript)
+    /// - Parameters:
+    ///   - transcript: The transcript to sync against last-seen.
+    ///   - usage: This turn's own `(input, output)` token usage delta to
+    ///     stamp onto the diff's turn-final `.response`-kind event, or `nil`
+    ///     to leave both unset (see ``RecordingLanguageModel/sync(_:usage:)``).
+    func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
+        await enterGateAndDiff(transcript, usage: usage)
         serialGate.signal()
     }
 
@@ -328,13 +347,16 @@ actor RecordingLanguageModelState {
     /// its passthrough call, while `sync` (nothing left to run) signals
     /// immediately.
     ///
-    /// - Parameter transcript: The transcript to register/diff against
-    ///   last-seen.
-    private func enterGateAndDiff(_ transcript: Transcript) async {
+    /// - Parameters:
+    ///   - transcript: The transcript to register/diff against last-seen.
+    ///   - usage: This turn's own `(input, output)` token usage delta,
+    ///     forwarded to ``diffAndRecord(current:usage:)`` to stamp onto the
+    ///     diff's turn-final `.response`-kind event, or `nil`.
+    private func enterGateAndDiff(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
         writeSidecarIfNeeded(transcript: transcript)
         await serialGate.wait()
         await recordSessionMetaIfNeeded()
-        await diffAndRecord(current: transcript)
+        await diffAndRecord(current: transcript, usage: usage)
     }
 
     /// Snapshot-diffs `current` against ``lastSeen`` via ``TranscriptDiffer``
@@ -346,8 +368,19 @@ actor RecordingLanguageModelState {
     /// ``lastSeen`` — nothing guarantees the SDK's transcript stays
     /// strictly append-only forever.
     ///
-    /// - Parameter current: The transcript's current state.
-    private func diffAndRecord(current: Transcript) async {
+    /// When `usage` is non-nil, it is stamped as `tokensIn`/`tokensOut` (via
+    /// ``TranscriptEvent/Partial/stampingUsage(tokensIn:tokensOut:)``) onto
+    /// the *last* `.response`-kind partial this diff produced — mirroring
+    /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``'s
+    /// own placement of the turn's usage delta on its diff's closing
+    /// `.response` event, not every appended event.
+    ///
+    /// - Parameters:
+    ///   - current: The transcript's current state.
+    ///   - usage: This turn's own `(input, output)` token usage delta to
+    ///     stamp onto the diff's turn-final `.response`-kind event, or `nil`
+    ///     to leave both unset on every appended event.
+    private func diffAndRecord(current: Transcript, usage: (input: Int, output: Int)? = nil) async {
         guard current.count >= lastSeen.count else {
             recordingLanguageModelLogger.warning(
                 """
@@ -370,8 +403,12 @@ actor RecordingLanguageModelState {
             model: model
         )
         guard !diffPartials.isEmpty else { return }
-        for partial in diffPartials {
-            await recorder.append(partial, to: recordingDirectory)
+        let lastResponseIndex = usage != nil ? diffPartials.lastIndex { $0.kind == .response } : nil
+        for (index, partial) in diffPartials.enumerated() {
+            let toRecord = (usage != nil && index == lastResponseIndex)
+                ? partial.stampingUsage(tokensIn: usage?.input, tokensOut: usage?.output)
+                : partial
+            await recorder.append(toRecord, to: recordingDirectory)
         }
         lastSeen = current
     }

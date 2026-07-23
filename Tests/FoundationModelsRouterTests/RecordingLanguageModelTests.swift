@@ -619,4 +619,96 @@ struct RecordingLanguageModelTests {
         let response = try #require(events.first { $0.kind == .response })
         #expect(response.text == "a *** reply")
     }
+
+    // MARK: - Usage stamping
+
+    @Test("sync(_:usage:) stamps tokensIn/tokensOut on the synced turn-final response event")
+    @MainActor
+    func syncWithUsageStampsTokens() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let transcripts = RecordedTranscripts()
+        let model = StubUnderlyingModel(cannedResponseText: "hello back", transcripts: transcripts)
+        let router = Self.makeRouter(
+            container: StubLanguageModelContainer(model: model),
+            recorder: recorder,
+            cacheDir: dir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let handle = profile.standard.makeLanguageModel()
+        let session = LanguageModelSession(model: handle, tools: [], instructions: "be terse")
+        _ = try await session.respond(to: "hi there")
+
+        await handle.sync(session.transcript, usage: (input: 42, output: 7))
+
+        let events = await recorder.events
+        let response = try #require(events.first { $0.kind == .response })
+        #expect(response.tokensIn == 42)
+        #expect(response.tokensOut == 7)
+    }
+
+    @Test("sync(_:) without usage leaves tokensIn/tokensOut nil — unchanged from before usage stamping")
+    @MainActor
+    func syncWithoutUsageLeavesTokensNil() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let transcripts = RecordedTranscripts()
+        let model = StubUnderlyingModel(cannedResponseText: "hello back", transcripts: transcripts)
+        let router = Self.makeRouter(
+            container: StubLanguageModelContainer(model: model),
+            recorder: recorder,
+            cacheDir: dir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let handle = profile.standard.makeLanguageModel()
+        let session = LanguageModelSession(model: handle, tools: [], instructions: "be terse")
+        _ = try await session.respond(to: "hi there")
+
+        await handle.sync(session.transcript)
+
+        let events = await recorder.events
+        let response = try #require(events.first { $0.kind == .response })
+        #expect(response.tokensIn == nil)
+        #expect(response.tokensOut == nil)
+    }
+
+    @Test("multi-turn sync stamps usage per-turn, not cumulatively")
+    @MainActor
+    func multiTurnSyncStampsPerTurnUsage() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let transcripts = RecordedTranscripts()
+        let model = StubUnderlyingModel(cannedResponseText: "hello back", transcripts: transcripts)
+        let router = Self.makeRouter(
+            container: StubLanguageModelContainer(model: model),
+            recorder: recorder,
+            cacheDir: dir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let handle = profile.standard.makeLanguageModel()
+        let session = LanguageModelSession(model: handle, tools: [], instructions: "be terse")
+
+        _ = try await session.respond(to: "first")
+        await handle.sync(session.transcript, usage: (input: 10, output: 5))
+
+        _ = try await session.respond(to: "second")
+        await handle.sync(session.transcript, usage: (input: 7, output: 3))
+
+        let events = await recorder.events
+        let responses = events.filter { $0.kind == .response }
+        #expect(responses.count == 2)
+        #expect(responses[0].tokensIn == 10)
+        #expect(responses[0].tokensOut == 5)
+        #expect(responses[1].tokensIn == 7)
+        #expect(responses[1].tokensOut == 3)
+    }
 }

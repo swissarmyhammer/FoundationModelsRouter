@@ -103,8 +103,8 @@ comments:
   timestamp: 2026-07-23T15:12:25.338041+00:00
 depends_on:
 - 01KXTFQVKKDB1PPCXZQDWS80MS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ca80
 title: CompactionSegment + default registry registration
 ---
 ## What
