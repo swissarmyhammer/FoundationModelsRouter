@@ -186,24 +186,46 @@ public final class SessionProjection {
         }
     }
 
+    /// Appends `fragment` to the last entry if it is already a growing entry
+    /// of the same kind, or starts a new one — the shared coalescing logic
+    /// behind ``appendTextFragment(_:)`` and ``appendReasoningFragment(_:)``,
+    /// which differ only in which ``TranscriptEntry/Kind`` case they read and
+    /// construct.
+    ///
+    /// - Parameters:
+    ///   - fragment: The new text to append.
+    ///   - matching: Extracts the last entry's accumulated text if it is
+    ///     already the coalescing case, or `nil` otherwise.
+    ///   - makeKind: Constructs the case to store, given the (possibly
+    ///     freshly-coalesced) accumulated text.
+    private func appendFragment(
+        _ fragment: String,
+        matching: (TranscriptEntry.Kind) -> String?,
+        makeKind: (String) -> TranscriptEntry.Kind
+    ) {
+        if let last = transcript.last, let existing = matching(last.kind) {
+            transcript[transcript.count - 1].kind = makeKind(existing + fragment)
+        } else {
+            transcript.append(TranscriptEntry(kind: makeKind(fragment)))
+        }
+    }
+
     /// Appends `fragment` to the last entry if it is already a growing
     /// ``TranscriptEntry/Kind/text(_:)`` entry, or starts a new one.
     private func appendTextFragment(_ fragment: String) {
-        if let last = transcript.last, case .text(let existing) = last.kind {
-            transcript[transcript.count - 1].kind = .text(existing + fragment)
-        } else {
-            transcript.append(TranscriptEntry(kind: .text(fragment)))
-        }
+        appendFragment(
+            fragment,
+            matching: { if case .text(let existing) = $0 { return existing } else { return nil } },
+            makeKind: TranscriptEntry.Kind.text)
     }
 
     /// Appends `fragment` to the last entry if it is already a growing
     /// ``TranscriptEntry/Kind/reasoning(_:)`` entry, or starts a new one.
     private func appendReasoningFragment(_ fragment: String) {
-        if let last = transcript.last, case .reasoning(let existing) = last.kind {
-            transcript[transcript.count - 1].kind = .reasoning(existing + fragment)
-        } else {
-            transcript.append(TranscriptEntry(kind: .reasoning(fragment)))
-        }
+        appendFragment(
+            fragment,
+            matching: { if case .reasoning(let existing) = $0 { return existing } else { return nil } },
+            makeKind: TranscriptEntry.Kind.reasoning)
     }
 
     /// Finds the ``TranscriptEntry/Kind/toolCall(_:)`` entry whose
