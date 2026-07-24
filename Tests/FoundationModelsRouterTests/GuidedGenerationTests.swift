@@ -374,6 +374,30 @@ struct GuidedGenerationTests {
         #expect(events.map(\.kind) == [.session, .prompt, .response])
     }
 
+    @Test("makeGuidedSession forwards budget/compactionPrompt to the vended session (task 8213x39)")
+    @MainActor
+    func guidedSessionForwardsAutoCompactionBudget() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let budget = TokenBudget(limit: 4096, trigger: 0.5, target: 0.2)
+        let customPrompt = CompactionPrompt(name: "guided-test-prompt", text: "Summarize tersely.")
+        let session = profile.standard.makeGuidedSession(
+            grammar: .jsonSchema(Self.smallSchema), budget: budget, compactionPrompt: customPrompt)
+
+        // `makeGuidedSession` shares the same internal builder as
+        // `makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)`
+        // — this asserts a guided session actually receives the opt-in rather
+        // than silently dropping it, closing the gap a prior review found.
+        let actor = try #require(session as? RoutedSessionActor)
+        #expect(actor.autoCompactionBudget == budget)
+        #expect(actor.autoCompactionPrompt == customPrompt)
+    }
+
     @Test("the grammar travels with the session so a milestone-9 fork inherits it")
     @MainActor
     func grammarTravelsWithSession() async throws {

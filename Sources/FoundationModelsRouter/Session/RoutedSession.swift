@@ -212,8 +212,10 @@ public protocol RoutedSession: Actor {
     /// never arrived within this turn's diff), and any
     /// ``SessionEvent/reasoningDelta(_:)`` the backend recorded; finally
     /// ``SessionEvent/turnEnded(_:)`` once the turn's own usage delta is
-    /// known. ``SessionEvent/compaction(_:)`` is never emitted here — see
-    /// that case's own documentation.
+    /// known. ``SessionEvent/compaction(_:)`` is emitted before those,
+    /// whenever this session auto-compacts itself mid-turn (only possible
+    /// when it was vended with a `budget` — see that case's own
+    /// documentation); a session with no `budget` set never emits it here.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -461,7 +463,9 @@ func makeRoutedSessionActor(
     persistedEntryCount: Int,
     sidecarOrigin: SessionSidecarOrigin,
     contextTokens: Int = ProfileDefinition.defaultContext,
-    usageState: ContextUsageState = .none
+    usageState: ContextUsageState = .none,
+    autoCompactionBudget: TokenBudget? = nil,
+    autoCompactionPrompt: CompactionPrompt = .default
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -485,7 +489,9 @@ func makeRoutedSessionActor(
         persistedEntryCount: persistedEntryCount,
         sidecarOrigin: sidecarOrigin,
         contextTokens: contextTokens,
-        usageState: usageState
+        usageState: usageState,
+        autoCompactionBudget: autoCompactionBudget,
+        autoCompactionPrompt: autoCompactionPrompt
     )
 }
 
@@ -683,6 +689,23 @@ actor RoutedSessionActor: RoutedSession {
     /// rather than resetting it to a meaningless zero delta.
     private var usageState: ContextUsageState
 
+    /// The auto-compaction opt-in (harness-collapse "session manages its own
+    /// window", task 8213x39), or `nil` for the default manual-only
+    /// behavior. When set, ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
+    /// checks measured ``contextFill`` against ``TokenBudget/trigger`` before
+    /// every turn and folds automatically once it has been reached, and a
+    /// turn that still overflows mid-generation
+    /// (`LanguageModelError.contextSizeExceeded`) is compacted harder and
+    /// retried exactly once before the error surfaces. Set at construction
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``)
+    /// and carried forward by ``fork(workingDirectory:)`` — a fork manages
+    /// its own window exactly like its parent.
+    nonisolated let autoCompactionBudget: TokenBudget?
+
+    /// The compaction prompt auto-compaction's own folds send to the
+    /// summarizer, when ``autoCompactionBudget`` is set. Ignored otherwise.
+    nonisolated let autoCompactionPrompt: CompactionPrompt
+
     /// Creates a session, landing its own `session.json` when it is a new one.
     ///
     /// The sidecar write happens here, synchronously, rather than at each
@@ -733,7 +756,9 @@ actor RoutedSessionActor: RoutedSession {
         persistedEntryCount: Int,
         sidecarOrigin: SessionSidecarOrigin,
         contextTokens: Int = ProfileDefinition.defaultContext,
-        usageState: ContextUsageState = .none
+        usageState: ContextUsageState = .none,
+        autoCompactionBudget: TokenBudget? = nil,
+        autoCompactionPrompt: CompactionPrompt = .default
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -757,6 +782,8 @@ actor RoutedSessionActor: RoutedSession {
         self.sidecarOrigin = sidecarOrigin
         self.contextTokens = contextTokens
         self.usageState = usageState
+        self.autoCompactionBudget = autoCompactionBudget
+        self.autoCompactionPrompt = autoCompactionPrompt
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into
@@ -804,22 +831,14 @@ actor RoutedSessionActor: RoutedSession {
 
     /// See ``RoutedSession/compact(prompt:budget:)``.
     ///
-    /// Runs ``Compactor/compact(_:prompt:budget:summarizer:)`` over
-    /// ``backend``'s current transcript, summarizing (when the deterministic
-    /// stages alone don't land it under target) with a fresh, disposable
-    /// backend over this session's own model (``BackendCompactionSummarizer``).
-    /// When folding actually changed anything
-    /// (`result.stagesApplied` non-empty), the fold's never-before-recorded
-    /// entries are persisted — identified by id, mirroring
-    /// ``RecordingLanguageModel/noteCompaction(_:)``'s own id-based diff,
-    /// since a fold's live window is typically *shorter* than what came
-    /// before it and a positional diff cannot say what is new — and
-    /// ``backend`` is swapped for a fresh one seeded from the folded
-    /// transcript (``LanguageModelSessionBackend/replacingTranscript(_:)``).
-    /// When the transcript was already under target, or every stage ran and
-    /// still couldn't land it (the oversized-tail case), the pipeline
-    /// returns the original transcript unchanged and this method leaves
-    /// ``backend`` exactly as it was.
+    /// The manual, caller-driven entry point — "explicit `compact()` remains
+    /// for manual `/compact` binding upstairs" (task 8213x39): always
+    /// summarizes with a fresh, disposable backend over this session's own
+    /// model (``BackendCompactionSummarizer``), unchanged from before
+    /// auto-compaction existed. Acquires ``serialGate`` for the duration,
+    /// since a caller can invoke this at any time, then runs the shared fold
+    /// mechanics in ``fold(prompt:budget:summarizer:)``. See that method's
+    /// doc comment for what folding does.
     @discardableResult
     func compact(
         prompt: CompactionPrompt = .default,
@@ -827,7 +846,98 @@ actor RoutedSessionActor: RoutedSession {
     ) async throws -> CompactionResult {
         await serialGate.wait()
         defer { serialGate.signal() }
+        return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
+    }
 
+    /// Auto-compaction's own fold entry point (task 8213x39,
+    /// ``autoCompactionBudget``): called from inside
+    /// ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``, which already
+    /// holds ``serialGate`` for the whole turn, so this deliberately never
+    /// acquires it itself — unlike ``compact(prompt:budget:)``, doing so here
+    /// would deadlock against the very turn driving it.
+    ///
+    /// Chooses its summarizer by preference rather than always this
+    /// session's own model: the profile's ``LanguageModelProfile/flash`` slot
+    /// first (compaction_plan.md §1.4's documented override — a
+    /// smaller/cheaper model dedicated to work like this, so the session's
+    /// own model — possibly already near capacity, which is why auto-fold is
+    /// running at all — isn't also asked to produce the summary), skipping
+    /// straight to this session's own model when this session already *is*
+    /// the flash slot (asking flash to summarize itself would be pointless
+    /// indirection through another handle over the identical resident
+    /// model) or when the flash attempt's summarizer call fails, and finally
+    /// falling back to the deterministic-only pipeline (no summarizer —
+    /// ``ToolOutputElision``/``TurnTruncation`` alone, which never throws)
+    /// if the own-model attempt fails too — so a broken summarizer model can
+    /// never block an automatic mid-turn fold outright.
+    ///
+    /// - Parameters:
+    ///   - prompt: The compaction prompt sent to whichever summarizer tier
+    ///     actually runs.
+    ///   - budget: The token budget to fold against.
+    /// - Returns: What the fold did.
+    /// - Throws: Nothing from summarization — every tier that can throw is
+    ///   caught and the next tier tried; only ``Compactor/compact(_:prompt:budget:summarizer:)``'s
+    ///   own non-summarizer failure modes (none today) would propagate.
+    private func performAutoCompaction(
+        prompt: CompactionPrompt,
+        budget: TokenBudget
+    ) async throws -> CompactionResult {
+        if slot != .flash {
+            do {
+                return try await fold(
+                    prompt: prompt, budget: budget,
+                    summarizer: BackendCompactionSummarizer(backend: profile.flash.container.makeSession(instructions: nil))
+                )
+            } catch {
+                // Fall through to the own-model tier below.
+            }
+        }
+        do {
+            return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
+        } catch {
+            return try await fold(prompt: prompt, budget: budget, summarizer: nil)
+        }
+    }
+
+    /// The fold mechanics ``compact(prompt:budget:)`` and
+    /// ``performAutoCompaction(prompt:budget:)`` share: runs
+    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` over ``backend``'s
+    /// current transcript with `summarizer`. When folding actually changed
+    /// anything (`result.stagesApplied` non-empty), the fold's
+    /// never-before-recorded entries are persisted — identified by id,
+    /// mirroring ``RecordingLanguageModel/noteCompaction(_:)``'s own
+    /// id-based diff, since a fold's live window is typically *shorter* than
+    /// what came before it and a positional diff cannot say what is new —
+    /// and ``backend`` is swapped for a fresh one seeded from the folded
+    /// transcript (``LanguageModelSessionBackend/replacingTranscript(_:)``).
+    /// When the transcript was already under target, or every stage ran and
+    /// still couldn't land it (the oversized-tail case), the pipeline
+    /// returns the original transcript unchanged and this method leaves
+    /// ``backend`` exactly as it was.
+    ///
+    /// Assumes ``serialGate`` is already held by the caller — this method
+    /// never acquires or releases it, so it is safe to call from inside the
+    /// turn chokepoint (``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``),
+    /// which holds the gate for the whole turn, as well as from
+    /// ``compact(prompt:budget:)``, which acquires it itself first.
+    ///
+    /// - Parameters:
+    ///   - prompt: The compaction prompt sent to `summarizer` when the
+    ///     model-assisted stage runs.
+    ///   - budget: The token budget to fold against, or `nil` to use this
+    ///     session's own resolved working context at the default
+    ///     trigger/target.
+    ///   - summarizer: The model to summarize with, or `nil` to degrade to
+    ///     the deterministic-only pipeline.
+    /// - Returns: What the fold did.
+    /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified, when
+    ///   the model-assisted stage runs and fails.
+    private func fold(
+        prompt: CompactionPrompt,
+        budget: TokenBudget?,
+        summarizer: (any CompactionSummarizer)?
+    ) async throws -> CompactionResult {
         let entries = backend.transcriptEntries()
         let resolvedBudget = budget ?? TokenBudget(limit: contextTokens)
 
@@ -835,7 +945,7 @@ actor RoutedSessionActor: RoutedSession {
             Transcript(entries: entries),
             prompt: prompt,
             budget: resolvedBudget,
-            summarizer: BackendCompactionSummarizer(backend: backend)
+            summarizer: summarizer
         )
 
         // Nothing to fold (already under target) or every stage ran and
@@ -1172,7 +1282,13 @@ actor RoutedSessionActor: RoutedSession {
             // inherits this session's own fill state as of fork time rather
             // than starting from a misleading "nothing sent yet" zero.
             contextTokens: contextTokens,
-            usageState: usageState
+            usageState: usageState,
+            // A fork manages its own window exactly like its parent: same
+            // opt-in budget and compaction prompt, so a long-running forked
+            // task auto-compacts too rather than silently losing the
+            // opt-in at fork time.
+            autoCompactionBudget: autoCompactionBudget,
+            autoCompactionPrompt: autoCompactionPrompt
         )
     }
 
@@ -1283,6 +1399,15 @@ actor RoutedSessionActor: RoutedSession {
     /// and the finish/requeue/synthetic-close handling live in exactly one
     /// place regardless of where the turn's prompt came from.
     ///
+    /// Auto-compaction's proactive half lives here too (task 8213x39): when
+    /// ``autoCompactionBudget`` is set, this checks measured ``contextFill``
+    /// against its trigger *before* this turn's own physical attempt runs —
+    /// "turns never die" the same way the proactive pattern documented on
+    /// ``compact(prompt:budget:)`` does, just driven by the session itself
+    /// instead of by the caller — and folds automatically if it has already
+    /// been reached. The reactive half (retry once on context overflow) is
+    /// in ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``.
+    ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn,
     ///     stamped onto every event this turn appends.
@@ -1290,6 +1415,9 @@ actor RoutedSessionActor: RoutedSession {
     ///     turn, in outbox order.
     ///   - ownPrompt: This turn's own prompt text, before composing in
     ///     `pendingEvents`.
+    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s,
+    ///     including ``SessionEvent/compaction(_:)`` for any auto-compaction
+    ///     fold this turn triggers, or `nil` to skip event derivation.
     ///   - body: The model work to run inside the bracket, given this turn's
     ///     composed prompt and returning the response text callers receive.
     /// - Returns: The response text `body` produced.
@@ -1300,6 +1428,65 @@ actor RoutedSessionActor: RoutedSession {
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
+        _ body: (String) async throws -> String
+    ) async throws -> String {
+        if let budget = autoCompactionBudget, contextFill >= budget.trigger {
+            let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
+            onEvent?(.compaction(result))
+        }
+
+        return try await runTurnAttempt(
+            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt, onEvent: onEvent,
+            allowOverflowRetry: autoCompactionBudget != nil, body)
+    }
+
+    /// One physical attempt at a turn's model work and recording — the whole
+    /// original body of ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
+    /// before auto-compaction's reactive retry was added, now callable
+    /// recursively for that retry (task 8213x39).
+    ///
+    /// When `allowOverflowRetry` and this attempt throws
+    /// `LanguageModelError.contextSizeExceeded` — the SDK's own
+    /// context-overflow failure a caller is documented to recover from
+    /// reactively on ``compact(prompt:budget:)`` — this attempt is still
+    /// recorded exactly like any other failed turn (the synthetic bodyless
+    /// close below), so both attempts leave a trace ("recording keeps both
+    /// attempts"); this session then folds harder than its own configured
+    /// target and retries **once** with a brand-new physical attempt, this
+    /// time with `allowOverflowRetry: false` so a second overflow surfaces
+    /// rather than looping, and with no `pendingEvents` of its own — the
+    /// failed attempt's own finish already re-queued them onto ``outbox``
+    /// (see ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:onEvent:)``)
+    /// for a future turn to pick up, rather than risking attaching the same
+    /// events to two persisted turns. The retry re-runs the model's own work
+    /// from scratch — including any tool calls the first attempt made
+    /// before overflowing.
+    ///
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force for this turn,
+    ///     stamped onto every event this turn appends.
+    ///   - pendingEvents: The events already drained from the outbox for this
+    ///     attempt, in outbox order.
+    ///   - ownPrompt: This turn's own prompt text, before composing in
+    ///     `pendingEvents`.
+    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, or
+    ///     `nil` to skip event derivation entirely.
+    ///   - allowOverflowRetry: Whether a context-overflow failure here should
+    ///     trigger the one-time compact-and-retry recovery. `false` on the
+    ///     retry's own recursive call, so at most one retry ever happens.
+    ///   - body: The model work to run inside the bracket, given this turn's
+    ///     composed prompt and returning the response text callers receive.
+    /// - Returns: The response text `body` produced.
+    /// - Throws: Whatever `body` throws, after recording whatever the SDK
+    ///   appended plus the bodyless close event — unless the failure was a
+    ///   recoverable context overflow and a retry was still available, in
+    ///   which case the retry's own outcome is returned/thrown instead.
+    private func runTurnAttempt(
+        grammar: Grammar?,
+        pendingEvents: [OperationEvent],
+        ownPrompt: String,
+        onEvent: ((SessionEvent) -> Void)? = nil,
+        allowOverflowRetry: Bool,
         _ body: (String) async throws -> String
     ) async throws -> String {
         let composedPrompt = Self.composePrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
@@ -1343,8 +1530,52 @@ actor RoutedSessionActor: RoutedSession {
                     )
                 )
             }
-            throw error
+
+            guard allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error) else {
+                throw error
+            }
+
+            let loweredBudget = TokenBudget(
+                limit: budget.limit, trigger: budget.trigger, target: Self.loweredRetryTarget(from: budget.target))
+            let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: loweredBudget)
+            onEvent?(.compaction(result))
+
+            return try await runTurnAttempt(
+                grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt, onEvent: onEvent,
+                allowOverflowRetry: false, body)
         }
+    }
+
+    /// Whether `error` is the SDK's own context-overflow failure
+    /// (`LanguageModelError.contextSizeExceeded`, macOS 27) — the one
+    /// ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
+    /// recovers from reactively when auto-compaction is opted in, mirroring
+    /// the documented reactive recovery pattern on
+    /// ``compact(prompt:budget:)``.
+    ///
+    /// - Parameter error: The error a turn attempt threw.
+    /// - Returns: `true` for a context-overflow failure, `false` for any
+    ///   other error.
+    private static func isRecoverableContextOverflow(_ error: Error) -> Bool {
+        if case LanguageModelError.contextSizeExceeded = error {
+            return true
+        }
+        return false
+    }
+
+    /// The fold target the reactive overflow-recovery retry compacts to:
+    /// strictly lower than the budget's own configured target, mirroring the
+    /// documented reactive pattern's own hardcoded "fold harder" example
+    /// (``compact(prompt:budget:)``'s own doc comment folds to `0.35`
+    /// against a default `0.50` target) — computed relative to whatever
+    /// `target` the caller actually configured, halved and floored so a very
+    /// low configured target still folds meaningfully harder rather than
+    /// going to (or past) zero.
+    ///
+    /// - Parameter target: The budget's own configured target.
+    /// - Returns: The lowered target the retry's fold uses.
+    private static func loweredRetryTarget(from target: Double) -> Double {
+        max(target / 2, 0.1)
     }
 
     /// Runs the earliest still-pending queued prompt as one normal recorded

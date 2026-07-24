@@ -8,11 +8,16 @@ import Foundation
 /// the general session-event vocabulary a driver — or a future `@Observable`
 /// per-session projection (task ekd82f4) — consumes instead of a
 /// harness-specific type of its own. ``RoutedSession/streamEvents(to:maxTokens:)``
-/// emits every case but ``compaction(_:)``: that case is reserved for the
-/// auto-compaction opt-in threaded through the same chokepoint (task
-/// 8213x39, not yet built), which will fold mid-turn and needs a way to
-/// report it through this same stream; ``RoutedSession/compact(prompt:budget:)``
-/// still returns its ``CompactionResult`` directly to its own caller today.
+/// emits every case, including ``compaction(_:)`` — the auto-compaction
+/// opt-in threaded through the same chokepoint (task 8213x39,
+/// ``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``'s
+/// `budget:` parameter): a session with a budget set emits this whenever it
+/// folds mid-turn on its own, proactively before a turn whose measured fill
+/// has already reached the budget's trigger, or reactively after a turn
+/// overflows and before the one retry. A session with no budget set never
+/// emits it; ``RoutedSession/compact(prompt:budget:)`` — the explicit,
+/// caller-driven fold — still returns its ``CompactionResult`` directly to
+/// its own caller instead, exactly as before.
 public enum SessionEvent: Sendable, Equatable {
     /// A fragment of the model's response text, in production order — the
     /// same fragments ``RoutedSession/streamResponse(to:maxTokens:)`` yields.
@@ -44,8 +49,8 @@ public enum SessionEvent: Sendable, Equatable {
     ///     or `nil` for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
     case toolStatus(id: String, status: ToolCallStatus, summary: String?)
 
-    /// A compaction fold completed against this session. See this type's own
-    /// documentation for why nothing currently emits this case.
+    /// An auto-compaction fold completed against this session, mid-turn. See
+    /// this type's own documentation for when this is emitted.
     case compaction(CompactionResult)
 
     /// The turn closed, carrying its own measured token usage.

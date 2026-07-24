@@ -220,13 +220,23 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
+    ///   - budget: The auto-compaction opt-in (task 8213x39) — see
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``.
+    ///     Defaults to `nil`.
+    ///   - compactionPrompt: The compaction prompt auto-compaction's own
+    ///     folds send to the summarizer, when `budget` is set. Defaults to
+    ///     ``CompactionPrompt/default``.
     /// - Returns: A new guided ``RoutedSession``.
     public func makeGuidedSession(
         grammar: Grammar,
         instructions: String? = nil,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        budget: TokenBudget? = nil,
+        compactionPrompt: CompactionPrompt = .default
     ) -> RoutedSession {
-        makeSession(grammar: grammar, instructions: instructions, workingDirectory: workingDirectory)
+        makeSession(
+            grammar: grammar, instructions: instructions, workingDirectory: workingDirectory,
+            budget: budget, compactionPrompt: compactionPrompt)
     }
 }
 

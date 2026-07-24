@@ -96,13 +96,30 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     no explicit wiring call is ever needed: implementing the protocol
     ///     IS the subscription. A tool that does not conform passes through
     ///     untouched. Defaults to no tools.
+    ///   - budget: The auto-compaction opt-in (harness-collapse "the session
+    ///     that manages its own window", task 8213x39), or `nil` (the
+    ///     default) for manual-only compaction via
+    ///     ``RoutedSession/compact(prompt:budget:)``. When set, the vended
+    ///     session checks measured ``RoutedSession/contextFill`` against
+    ///     `budget`'s trigger before every turn and folds automatically once
+    ///     it is reached, and a turn that still overflows mid-generation
+    ///     (`LanguageModelError.contextSizeExceeded`) is compacted harder and
+    ///     retried exactly once before the error surfaces. A fork inherits
+    ///     its parent's opt-in.
+    ///   - compactionPrompt: The compaction prompt auto-compaction's own
+    ///     folds send to the summarizer, when `budget` is set. Ignored
+    ///     otherwise. Defaults to ``CompactionPrompt/default``.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
-        tools: [any Tool] = []
+        tools: [any Tool] = [],
+        budget: TokenBudget? = nil,
+        compactionPrompt: CompactionPrompt = .default
     ) -> RoutedSession {
-        makeSession(grammar: nil, instructions: instructions, workingDirectory: workingDirectory, tools: tools)
+        makeSession(
+            grammar: nil, instructions: instructions, workingDirectory: workingDirectory, tools: tools,
+            budget: budget, compactionPrompt: compactionPrompt)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -123,12 +140,20 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The tools the model can call during this session. See
     ///     ``makeSession(instructions:workingDirectory:tools:)`` for the
     ///     auto-connect contract. Defaults to no tools.
+    ///   - budget: The auto-compaction opt-in — see
+    ///     ``makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``.
+    ///     Defaults to `nil`.
+    ///   - compactionPrompt: The compaction prompt auto-compaction's own
+    ///     folds send to the summarizer, when `budget` is set. Defaults to
+    ///     ``CompactionPrompt/default``.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
         instructions: String?,
         workingDirectory: URL?,
-        tools: [any Tool] = []
+        tools: [any Tool] = [],
+        budget: TokenBudget? = nil,
+        compactionPrompt: CompactionPrompt = .default
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -194,7 +219,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // denominator (compaction_plan.md §1.5). A brand-new root has
             // sent nothing yet, so its fill state starts at ``.none``.
             contextTokens: resolution.contextTokens,
-            usageState: .none
+            usageState: .none,
+            autoCompactionBudget: budget,
+            autoCompactionPrompt: compactionPrompt
         )
     }
 

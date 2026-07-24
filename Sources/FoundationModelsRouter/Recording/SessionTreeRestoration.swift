@@ -182,6 +182,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
     ///     performs for a fresh session — so a node's tool never posts to a
     ///     sibling or ancestor's outbox. Defaults to no tools.
+    ///
+    /// Every restored node's ``RoutedSessionActor/autoCompactionBudget``/
+    /// ``RoutedSessionActor/autoCompactionPrompt`` (task 8213x39) come back
+    /// `nil`/``CompactionPrompt/default`` regardless of what the original
+    /// session was vended with: `SessionSidecar` records slot/model/
+    /// instructions/grammar, never a budget, so there is nothing to
+    /// rehydrate it from. A caller that wants the restored tree to keep
+    /// managing its own window calls ``RoutedSession/compact(prompt:budget:)``
+    /// manually, or re-opts-in on a fresh fork from the restored root.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for every documented
     ///   restoration-specific failure; ``TranscriptTreeError`` /
