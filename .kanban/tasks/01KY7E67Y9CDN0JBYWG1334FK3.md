@@ -53,6 +53,18 @@ comments:
 
     All 4 checklist items now checked off. Task remains in `doing`, green, ready for `/review`.
   timestamp: 2026-07-24T15:12:03.398778+00:00
+- actor: claude-code
+  id: 01kyabgzb5ag1r430jdn2py5rz
+  text: |-
+    Addressed the 2026-07-24 10:14 review finding: added an `@unchecked Sendable` invariant doc comment above `EmittingStringTool` in ToolOutputCappingTests.swift, mirroring the style of the existing `ToolCapturingLLMContainer` comment in the same file. Verified all four stored properties (name, description, output, sink) are `let`, assigned once in init, never mutated in connecting(_:)/call(arguments:)/postEvent(_:) — the invariant claim is accurate.
+
+    Build: clean, zero warnings in the touched file (only pre-existing unrelated mlx-swift_Cmlx bundle build-system warning).
+    Tests: 551 total (528 + 18 + 5 across bundles), 0 failures — matches stated baseline, no test count change (pure doc comment).
+
+    Adversarial double-check spawned to confirm the comment's accuracy and style match before final handoff.
+
+    Leaving task in `doing`, ready for next /review pass.
+  timestamp: 2026-07-24T15:22:26.533439+00:00
 depends_on:
 - 01KY7E2TP9DBGFV8RJJJKDAE4B
 position_column: doing
@@ -67,3 +79,7 @@ Harness plan §5.1 seam 2 absorbed — better here than any wrapper: tool OUTPUT
 - [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:245` — Tool output capping logic is duplicated in RoutedSession.fork(). Both locations contain identical guard-and-wrap pattern: checking toolOutputLimit and wrapping with ToolOutputCapping.wrapping(). This could be extracted into a shared static helper method that both call, rather than maintaining parallel copies. Extract the capping logic into a static helper like `static func optionallyCap(_ tool: any Tool, with limit: Int?) -> any Tool` and call it from both makeSession and fork locations.
 - [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:998` — Tool output capping logic is duplicated from RoutedLLM.makeSession(). Both locations contain identical guard-and-wrap pattern. This should be extracted into a shared helper rather than maintaining this parallel copy. Extract the capping logic into a shared static helper and call it from both makeSession and fork locations.
 - [x] `Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:282` — @unchecked Sendable requires a documented synchronization invariant. ToolCapturingLLMContainer uses @unchecked Sendable but provides no comment explaining how its mutable fields (lastTools, lastBackend) avoid data races. Add a doc comment above ToolCapturingLLMContainer explaining the synchronization invariant, similar to ConfiguredLLMContainer: explain that writes happen synchronously during test setup from @MainActor test methods, and reads happen from the same thread, so no lock is needed.
+
+## Review Findings (2026-07-24 10:14)
+
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:38` — `EmittingStringTool` is marked `@unchecked Sendable` without a documented synchronization invariant. The concurrency rule requires documentation of the invariant when using `@unchecked Sendable` without an explicit lock or actor. Add a comment documenting the Sendable synchronization invariant above the class definition. Since all fields (`name`, `description`, `output`, `sink`) are immutable `let` declarations, document: `/// @unchecked Sendable invariant: all fields are immutable `let` declarations, so concurrent access is safe.`.

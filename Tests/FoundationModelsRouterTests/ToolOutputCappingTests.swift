@@ -57,6 +57,11 @@ struct ToolOutputCappingTests {
     /// A `String`-output `Tool` that also conforms to `EventEmittingTool`,
     /// mirroring `SessionOutboxToolWiringTests.FakeEmittingTool` — proves
     /// capping composes with the connect step rather than replacing it.
+    ///
+    /// `@unchecked Sendable` invariant: `name`, `description`, `output`, and
+    /// `sink` are all immutable `let` properties assigned once at `init` and
+    /// never mutated afterward, so concurrent access is safe without further
+    /// synchronization.
     private final class EmittingStringTool: Tool, EventEmittingTool, @unchecked Sendable {
         let name = "emitting-string-tool"
         let description = "emits and returns a fixed string"
