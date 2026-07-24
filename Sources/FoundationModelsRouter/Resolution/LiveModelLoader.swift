@@ -356,6 +356,43 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
             session: forkedSession, model: model, instructions: instructions, tools: tools)
     }
 
+    /// Vends a fresh backend over ``model``, seeded from `transcript` instead
+    /// of ``liveSession``'s own accumulated history.
+    ///
+    /// The mechanism ``RoutedSessionActor/compact(prompt:budget:)`` swaps its
+    /// inner session through in place once folding actually changes
+    /// something: `transcript` there is `Compactor`'s folded output, built
+    /// via the identical `LanguageModelSession(model:tools:transcript:)`
+    /// initializer ``makeFork(tools:)`` uses, so the new backend picks up
+    /// generation exactly where the fold left off. This session's own
+    /// ``tools`` carry forward unchanged (compaction never affects
+    /// tool-calling capability); ``instructions`` are re-derived from
+    /// `transcript`'s own leading `.instructions` entry — mirroring
+    /// ``MLXFoundationModelsContainer/makeSession(transcript:)`` — since a
+    /// fold's header is never touched (compaction_plan.md §1.3's
+    /// "instructions never modified or dropped" invariant) and so always
+    /// still carries them when this session had any.
+    ///
+    /// Also how ``compact(prompt:budget:)``'s model-assisted summarization
+    /// stage gets a disposable, blank-slate one-shot backend to call:
+    /// `transcript` there is empty, so the resulting session carries no
+    /// accumulated history to either leak between independent map-reduce
+    /// calls or double up against the very content being summarized.
+    ///
+    /// - Parameter transcript: The transcript to seed the new backend from.
+    /// - Returns: A new ``MLXFoundationModelsSessionBackend`` over the same
+    ///   ``model``, whose accumulated history begins with `transcript`'s
+    ///   entries.
+    func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
+        let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
+        return MLXFoundationModelsSessionBackend(
+            session: session,
+            model: model,
+            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+            tools: tools
+        )
+    }
+
     /// Returns ``liveSession``'s current transcript, in order.
     ///
     /// See the protocol requirement's doc comment

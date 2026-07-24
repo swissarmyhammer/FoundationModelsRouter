@@ -48,8 +48,8 @@ comments:
 depends_on:
 - 01KXTFR8MQDD7MF8J1NVCHKNHC
 - 01KXTFSH9RM2WAYMXD9VVJFKFB
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: cf80
 title: Summarization stage + CompactionPrompt.default
 ---
 ## What

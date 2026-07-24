@@ -104,6 +104,65 @@ public protocol RoutedSession: Actor {
     ///   guess — until the first live turn re-measures.
     var contextFill: Double { get async }
 
+    /// Folds this session's transcript in place: same ``id``, same
+    /// ``recordingDirectory``/``recorder`` identity, shorter live window
+    /// (compaction_plan.md §1.4).
+    ///
+    /// Runs the ``Compactor/compact(_:prompt:budget:summarizer:)`` pipeline
+    /// over this session's current transcript — the deterministic stages
+    /// first, then, only if they alone don't land it under `budget`'s
+    /// target, the model-assisted ``Summarization`` stage, summarizing with
+    /// this session's own resident model by default (a consumer wanting a
+    /// different summarizer — e.g. the profile's `flash` slot — drives the
+    /// lower-level bare-session recipe directly:
+    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` +
+    /// ``RecordingLanguageModel/noteCompaction(_:)``). When folding changes
+    /// anything, the synthesized summary entry (with its
+    /// ``CompactionSegment``) is appended to the same `transcript.jsonl` this
+    /// session has recorded to all along — append-only, nothing before it
+    /// touched (requirement 2) — and this session's inner generation backend
+    /// is swapped for a fresh one seeded from the folded transcript, in
+    /// place: same actor, same nonisolated ``id``, same ``recorder``, same
+    /// ``recordingDirectory`` (requirement 4). When the transcript is
+    /// already under target — or every stage ran and still couldn't land it,
+    /// the oversized-tail case — nothing changes.
+    ///
+    /// **Proactive use** (preferred): check ``contextFill`` between turns and
+    /// compact before it gets too high — turns never die:
+    ///
+    /// ```swift
+    /// if await session.contextFill >= 0.80 {
+    ///     try await session.compact()
+    /// }
+    /// ```
+    ///
+    /// **Reactive use** (the documented recovery path, compaction_plan.md
+    /// §1.5): catch the backend's context-overflow failure, compact with a
+    /// lowered target, and retry once:
+    ///
+    /// ```swift
+    /// do {
+    ///     return try await session.respond(to: prompt)
+    /// } catch {
+    ///     // The backend ran out of context; fold harder than the default
+    ///     // 50% target and retry exactly once.
+    ///     try await session.compact(budget: TokenBudget(limit: contextTokens, target: 0.35))
+    ///     return try await session.respond(to: prompt)
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - prompt: The compaction prompt sent to the summarizer when the
+    ///     model-assisted stage runs. Defaults to ``CompactionPrompt/default``.
+    ///   - budget: The token budget to fold against, or `nil` to use this
+    ///     session's own resolved working context at the default
+    ///     trigger/target (compaction_plan.md §1.4).
+    /// - Returns: What the fold did.
+    /// - Throws: Whatever the summarizer throws, when the model-assisted
+    ///   stage runs and fails.
+    @discardableResult
+    func compact(prompt: CompactionPrompt, budget: TokenBudget?) async throws -> CompactionResult
+
     /// Generates a complete text response to a prompt, recording the call.
     ///
     /// - Parameters:
@@ -187,6 +246,45 @@ public protocol RoutedSession: Actor {
 }
 
 extension RoutedSession {
+    /// See ``compact(prompt:budget:)``, defaulting both parameters —
+    /// ``CompactionPrompt/default`` and `nil` (this session's own resolved
+    /// working context at the default trigger/target).
+    ///
+    /// - Returns: What the fold did.
+    /// - Throws: Whatever the summarizer throws, when the model-assisted
+    ///   stage runs and fails.
+    @discardableResult
+    public func compact() async throws -> CompactionResult {
+        try await compact(prompt: .default, budget: nil)
+    }
+
+    /// See ``compact(prompt:budget:)``, defaulting `budget` to `nil` (this
+    /// session's own resolved working context at the default trigger/target).
+    ///
+    /// - Parameter prompt: The compaction prompt sent to the summarizer when
+    ///   the model-assisted stage runs.
+    /// - Returns: What the fold did.
+    /// - Throws: Whatever the summarizer throws, when the model-assisted
+    ///   stage runs and fails.
+    @discardableResult
+    public func compact(prompt: CompactionPrompt) async throws -> CompactionResult {
+        try await compact(prompt: prompt, budget: nil)
+    }
+
+    /// See ``compact(prompt:budget:)``, defaulting `prompt` to
+    /// ``CompactionPrompt/default``.
+    ///
+    /// - Parameter budget: The token budget to fold against, or `nil` to use
+    ///   this session's own resolved working context at the default
+    ///   trigger/target.
+    /// - Returns: What the fold did.
+    /// - Throws: Whatever the summarizer throws, when the model-assisted
+    ///   stage runs and fails.
+    @discardableResult
+    public func compact(budget: TokenBudget?) async throws -> CompactionResult {
+        try await compact(prompt: .default, budget: budget)
+    }
+
     /// Generates a complete text response to a prompt using the underlying
     /// model's own default token ceiling, recording the call.
     ///
@@ -348,6 +446,45 @@ func makeRoutedSessionActor(
 /// public initializer. The recorder and `routerId` flow down from the vending
 /// handle; the `backend`, `slot`, and `model` are what the single
 /// ``generate(grammar:_:)`` chokepoint runs the model with.
+///
+/// Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``, so
+/// ``RoutedSessionActor/compact(prompt:budget:)`` can hand
+/// ``Compactor/compact(_:prompt:budget:summarizer:)`` a summarizer without
+/// spinning up a separate model handle — "summarizer defaults to the
+/// session's own model" (compaction_plan.md §1.4).
+///
+/// Deliberately wraps a **fresh, blank-slate** backend
+/// (``LanguageModelSessionBackend/replacingTranscript(_:)`` seeded with an
+/// empty transcript) built fresh for every ``summarize(_:)`` call, rather
+/// than the session's own live, accumulating backend:
+///
+/// - The live backend may already be at or near the context limit — that is
+///   *why* compaction is running — so asking it to also answer the
+///   summarization prompt (which embeds the rendered old span's own text)
+///   would pile more content on top of an already-oversized context, and
+///   could itself throw a context-overflow failure.
+/// - Reusing the *same* live backend would additionally append the
+///   summarization call's own prompt/response pair into the real
+///   conversation history being folded away — corrupting it with a turn the
+///   user never had.
+/// - A single shared blank backend reused across ``Summarization``'s
+///   map-reduce calls would leak one chunk's summarization prompt/response
+///   into the next chunk's context, when each chunk must be summarized
+///   independently.
+///
+/// A fresh blank-slate backend per call avoids all three: it is a genuine
+/// one-shot text-in/text-out call over the same resident model, with no
+/// accumulated history of its own.
+private struct BackendCompactionSummarizer: CompactionSummarizer {
+    /// The session's own backend, over the same resident model every
+    /// blank-slate summarizer call is built from.
+    let backend: any LanguageModelSessionBackend
+
+    func summarize(_ prompt: String) async throws -> String {
+        try await backend.replacingTranscript(Transcript(entries: [])).respond(to: prompt, maxTokens: nil)
+    }
+}
+
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
     nonisolated let routerId: ULID
@@ -364,7 +501,16 @@ actor RoutedSessionActor: RoutedSession {
     /// generation calls no longer pass `instructions` per turn, and calls
     /// accumulate conversation state across turns instead of each starting a
     /// fresh backend. Never vended to callers.
-    private nonisolated let backend: any LanguageModelSessionBackend
+    ///
+    /// Actor-isolated (not `nonisolated`) rather than a `let`: unlike every
+    /// other identity/configuration field here, this one *does* change after
+    /// construction — ``compact(prompt:budget:)`` swaps it for a fresh
+    /// backend seeded from the folded transcript once folding actually
+    /// changes something (compaction_plan.md §1.4, "swap the inner Apple
+    /// session"), while every other stored property on this actor keeps this
+    /// session's identity (``id``, ``recordingDirectory``, ``recorder``)
+    /// fixed for its whole lifetime.
+    private var backend: any LanguageModelSessionBackend
 
     /// The slot this session's model fills, stamped onto recorded events.
     private nonisolated let slot: ModelSlot
@@ -591,6 +737,95 @@ actor RoutedSessionActor: RoutedSession {
     /// See ``RoutedSession/contextFill``.
     var contextFill: Double {
         usageState.fill(contextTokens: contextTokens)
+    }
+
+    /// See ``RoutedSession/compact(prompt:budget:)``.
+    ///
+    /// Runs ``Compactor/compact(_:prompt:budget:summarizer:)`` over
+    /// ``backend``'s current transcript, summarizing (when the deterministic
+    /// stages alone don't land it under target) with a fresh, disposable
+    /// backend over this session's own model (``BackendCompactionSummarizer``).
+    /// When folding actually changed anything
+    /// (`result.stagesApplied` non-empty), the fold's never-before-recorded
+    /// entries are persisted — identified by id, mirroring
+    /// ``RecordingLanguageModel/noteCompaction(_:)``'s own id-based diff,
+    /// since a fold's live window is typically *shorter* than what came
+    /// before it and a positional diff cannot say what is new — and
+    /// ``backend`` is swapped for a fresh one seeded from the folded
+    /// transcript (``LanguageModelSessionBackend/replacingTranscript(_:)``).
+    /// When the transcript was already under target, or every stage ran and
+    /// still couldn't land it (the oversized-tail case), the pipeline
+    /// returns the original transcript unchanged and this method leaves
+    /// ``backend`` exactly as it was.
+    @discardableResult
+    func compact(
+        prompt: CompactionPrompt = .default,
+        budget: TokenBudget? = nil
+    ) async throws -> CompactionResult {
+        await serialGate.wait()
+        defer { serialGate.signal() }
+
+        let entries = backend.transcriptEntries()
+        let resolvedBudget = budget ?? TokenBudget(limit: contextTokens)
+
+        let (folded, result) = try await Compactor.compact(
+            Transcript(entries: entries),
+            prompt: prompt,
+            budget: resolvedBudget,
+            summarizer: BackendCompactionSummarizer(backend: backend)
+        )
+
+        // Nothing to fold (already under target) or every stage ran and
+        // still couldn't land it (the oversized-tail case): `folded` is
+        // `currentTranscript` verbatim, so there is nothing new to record and
+        // no reason to swap `backend`.
+        guard !result.stagesApplied.isEmpty else { return result }
+
+        await recordSessionMetaIfNeeded()
+
+        // `entries.prefix(persistedEntryCount)` is exactly what this
+        // session has already recorded to `transcript.jsonl` — the same
+        // baseline `recordTranscriptDelta(grammar:since:usage:pendingEvents:)`
+        // diffs an ordinary turn's positional growth against. A fold is not
+        // a mere extension of it (`folded` is typically shorter and
+        // reorders entries relative to it), so the diff here is by entry id
+        // rather than position — see ``TranscriptDiffer/diffByEntryId(lastSeen:current:routerId:sessionId:parentId:slot:model:)``.
+        let alreadyRecorded = Transcript(entries: entries.prefix(persistedEntryCount))
+        let diffPartials = TranscriptDiffer.diffByEntryId(
+            lastSeen: alreadyRecorded,
+            current: folded,
+            routerId: routerId,
+            sessionId: id,
+            parentId: parentId,
+            slot: slot,
+            model: model
+        )
+        for diffPartial in diffPartials {
+            await append(
+                partial: makePartialEvent(
+                    kind: diffPartial.kind,
+                    grammar: grammar,
+                    text: diffPartial.text,
+                    entry: diffPartial.entry
+                )
+            )
+        }
+
+        // Swap the inner session in place: same actor, same nonisolated
+        // `id`, same `recorder`, same `recordingDirectory` — only the
+        // backend driving generation changes (compaction_plan.md
+        // requirement 4).
+        backend = backend.replacingTranscript(folded)
+        persistedEntryCount = folded.count
+        // `result.tokensAfter` is this fold's own measured/estimated size of
+        // what `backend` now holds — reported as `contextFill`'s numerator
+        // immediately, the same way a restored session whose newest event is
+        // a compaction checkpoint reports its segment's own `tokensAfter`
+        // (compaction_plan.md §1.5); the next live turn re-measures exactly
+        // and replaces it, same as any other measured state.
+        usageState = .measured(input: result.tokensAfter, output: 0)
+
+        return result
     }
 
     /// Generates a complete text response to a prompt, recording the call.

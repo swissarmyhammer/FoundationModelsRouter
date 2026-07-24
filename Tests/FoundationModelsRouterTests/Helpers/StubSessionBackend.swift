@@ -226,6 +226,22 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
         return fork
     }
 
+    /// Returns a new ``StubSessionBackend`` seeded from `transcript`'s
+    /// entries instead of this backend's own accumulated ``entries`` —
+    /// fresh ``callCount``/``receivedPrompts``/``cumulativeUsage``, mirroring
+    /// how a freshly-constructed real `LanguageModelSession` reports zero
+    /// usage regardless of the transcript it was seeded with (usage tracks
+    /// calls made on *this* session object, not the seeded transcript's own
+    /// history). See ``LanguageModelSessionBackend/replacingTranscript(_:)``.
+    func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
+        StubSessionBackend(
+            responseText: responseText,
+            shouldThrow: shouldThrow,
+            entries: Array(transcript),
+            usageIncrement: usageIncrement
+        )
+    }
+
     /// Returns ``entries``, this backend's synthetic transcript so far.
     func transcriptEntries() -> [Transcript.Entry] {
         entries

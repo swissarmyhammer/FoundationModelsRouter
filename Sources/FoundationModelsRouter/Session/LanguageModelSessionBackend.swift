@@ -121,6 +121,30 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// - Returns: The backend's cumulative `(input, output)` token counts so
     ///   far, or `nil` when the backend cannot report usage.
     func usageTokenCounts() -> (input: Int, output: Int)?
+
+    /// Produces a new backend over the same underlying model, seeded from
+    /// `transcript` instead of this backend's own accumulated history.
+    ///
+    /// Unlike ``makeFork()``/``makeFork(tools:)``, which continue an existing
+    /// conversation by seeding a new backend from *this* backend's own
+    /// accumulated transcript, this reseeds from an arbitrary transcript —
+    /// the mechanism ``RoutedSessionActor/compact(prompt:budget:)`` swaps its
+    /// inner session through in place once folding actually changes
+    /// something (compaction_plan.md §1.4, "swap the inner Apple session"):
+    /// `transcript` there is `Compactor`'s folded output, and the swap keeps
+    /// this session's identity (same actor, same nonisolated `id`, same
+    /// recorder) untouched — only the backend driving generation changes.
+    ///
+    /// Also the mechanism a fresh, disposable one-shot summarizer call is
+    /// built over: seeding from an *empty* transcript yields a blank-slate
+    /// backend for the same resident model, with no accumulated history to
+    /// either leak between independent calls or double up against the very
+    /// content being summarized.
+    ///
+    /// - Parameter transcript: The transcript to seed the new backend from.
+    /// - Returns: A new, independent backend over the same underlying model,
+    ///   whose accumulated history begins with `transcript`'s entries.
+    func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
 }
 
 extension LanguageModelSessionBackend {
@@ -136,6 +160,21 @@ extension LanguageModelSessionBackend {
     /// really can call tools, so it overrides this instead of relying on the
     /// default.
     func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
+        makeFork()
+    }
+
+    /// Default ``replacingTranscript(_:)``: ignores `transcript` and forwards
+    /// to ``makeFork()`` unchanged.
+    ///
+    /// Every stub conformer across the unit suite stands in for a backend
+    /// whose owning session never exercises ``RoutedSessionActor/compact(prompt:budget:)``
+    /// (that surface's own suite drives ``StubSessionBackend`` directly), so
+    /// none of them need real transcript-reseeding behavior — they pick up
+    /// this default and keep behaving exactly as ``makeFork()`` already
+    /// defined, with no changes of their own required.
+    /// ``StubSessionBackend``/``MLXFoundationModelsSessionBackend`` are the
+    /// conformers that override this with a real implementation.
+    func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
         makeFork()
     }
 }
