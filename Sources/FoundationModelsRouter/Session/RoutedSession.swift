@@ -1222,10 +1222,18 @@ actor RoutedSessionActor: RoutedSession {
         // the fork actually calls these child-instanced tools rather than
         // silently carrying forward whatever this session's backend was
         // built with (see ``LanguageModelSessionBackend/makeFork(tools:)``).
+        // Capping (task 1334fk3) is applied outermost here too, exactly as
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:)``
+        // applies it to a root session's tools — see
+        // ``ToolOutputCapping/wrapping(_:toTokenLimit:)`` — so a fork that
+        // inherits ``autoCompactionBudget`` also inherits its
+        // ``TokenBudget/toolOutputLimit``, if any.
         let childOutbox = SessionOutbox()
-        let childTools = originalTools.map { tool in
+        let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
-            return (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
+            let connected = (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
+            guard let toolOutputLimit = autoCompactionBudget?.toolOutputLimit else { return connected }
+            return ToolOutputCapping.wrapping(connected, toTokenLimit: toolOutputLimit)
         }
 
         // Acquire the serial gate before reading `backend`'s conversation state to

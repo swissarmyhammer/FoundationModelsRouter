@@ -170,8 +170,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // separately, and — because this runs before `container.makeSession`
         // below — the model-facing tool list the backend actually receives
         // is these sink-bound copies, not the originals.
+        //
+        // When `budget.toolOutputLimit` is set, ``ToolOutputCapping/wrapping(_:toTokenLimit:)``
+        // wraps the connected tool outermost (task 1334fk3): the SDK's own
+        // call reaches the capped decorator last, so both continued
+        // generation and the recorded `.toolOutput` entry see the capped
+        // text, never the oversized original.
         let outbox = SessionOutbox()
-        let instancedTools = tools.map { ($0 as? any EventEmittingTool)?.connecting(outbox) ?? $0 }
+        let instancedTools = tools.map { tool -> any Tool in
+            let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
+            guard let toolOutputLimit = budget?.toolOutputLimit else { return connected }
+            return ToolOutputCapping.wrapping(connected, toTokenLimit: toolOutputLimit)
+        }
 
         // The container is only a factory: it manufactures the backend the
         // vended session owns and drives for its whole lifetime, born already

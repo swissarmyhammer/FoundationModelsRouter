@@ -1,8 +1,38 @@
 ---
+comments:
+- actor: claude-code
+  id: 01kya90r9bcp2pnx36dhs8ayhg
+  text: |-
+    Implemented. Research: confirmed Apple's `LanguageModelSession` calls each `Tool.call(arguments:)` directly and Router's own transcript-diff pipeline only observes the result afterward (`RoutedSessionActor.emitSessionEvents`, `SessionEvent.toolStatus`) — so the only seam that truly sees a tool's result "before the model does" is the tool-instancing pipeline itself (`RoutedModel.makeSession` / `RoutedSessionActor.fork`), the same seam `EventEmittingTool`/`ForkableTool` already hook into.
+
+    Changes:
+    - `TokenBudget.toolOutputLimit: Int?` added (Sources/FoundationModelsRouter/Compaction/TokenBudget.swift), nil by default, mirroring `hardCeiling`'s style.
+    - New Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift: `ToolOutputCapping.capped(_:toTokenLimit:)` (truncation + "… [truncated: N of M tokens]" marker, N=limit, M=original estimated tokens) and `ToolOutputCapping.wrapping(_:toTokenLimit:)` (dynamic wrap discovered via existential cast `tool as? any Tool<T.Arguments, String>` inside a generic `open<T: Tool>` helper — no per-tool opt-in needed, mirrors how `EventEmittingTool`/`ForkableTool` declare no associated types so they cast against `any Tool`). `TokenCappingTool<Arguments>: Tool` wraps `any Tool<Arguments, String>`, forwards all other Tool requirements, caps only `call(arguments:)`'s return.
+    - Wired into `RoutedModel.makeSession` (RoutedLLM.swift) and `RoutedSessionActor.fork` (RoutedSession.swift), applied outermost — after `EventEmittingTool.connecting`/`ForkableTool.forked` — so the SDK's own call and the recorded `.toolOutput` transcript entry (hence `SessionEvent.toolStatus`'s `summary`) both see the capped text automatically, with zero changes needed to SessionEvent.swift/emitSessionEvents.
+    - Added `Compactor.estimatedTokenCount(of: String)` overload reusing `charsPerTokenEstimate`, consistent with the existing transcript-level estimate.
+    - `SessionTreeRestoration.swift` intentionally untouched: restored sessions always vend `autoCompactionBudget: nil` per existing doc comments, so there is no `toolOutputLimit` to apply there.
+
+    Tests: 2 new TokenBudgetTests cases (default nil, override), 14 new ToolOutputCappingTests cases (truncation boundaries incl. exactly-at-limit, wrapping String vs non-String Output tools, makeSession wiring with/without toolOutputLimit, composition with EventEmittingTool, fork() inheritance with/without toolOutputLimit).
+
+    Verification: `swift build` clean, `swift test` full suite green — 526+18+5 = 549 tests passing, 0 failures, 0 new warnings (one pre-existing unrelated mlx-swift bundle warning only). Adversarial double-check launched.
+
+    Note: the local `diagnostics`/sourcekit-lsp MCP tool returned stale phantom errors (flagging even pre-existing `hardCeiling`/`SessionEvent` symbols as missing) — disregarded in favor of the real `swift build`/`swift test` compiler runs, which are authoritative and clean.
+  timestamp: 2026-07-24T14:38:37.867934+00:00
+- actor: claude-code
+  id: 01kya9jka3ghf4rf2j9q5cywty
+  text: |-
+    Adversarial double-check (via the double-check agent) found a real bug: `ToolOutputCapping.capped(_:toTokenLimit:)` computed the total-size estimate in UTF-8 bytes (`Compactor.estimatedTokenCount(of:)`) but truncated the kept prefix by `Character` count (`text.prefix(keepCharacters)`). For any non-ASCII tool output (emoji, CJK, accented text, smart quotes, etc. — more bytes per character than ASCII) this mismatch meant `text.prefix(keepCharacters)` could return the ENTIRE original text while the code still appended "… [truncated: N of M tokens]" on top — producing a result both larger than the original and falsely claiming truncation. All 14 original tests used only ASCII fixtures (`String(repeating: "<letter>", count: N)`) so this was untested and undetected by the green `swift test` run.
+
+    Fix: added a TDD regression test first (`cappedTruncatesMultiByteTextConsistentlyWithItsByteEstimate`, 10 emoji, confirmed RED against the buggy code — result was the full original + marker, byte count 71 > 40), then fixed `ToolOutputCapping.capped` to truncate on UTF-8 byte count via a new private `prefix(of:keepingAtMostUTF8Bytes:)` helper that walks whole `Character`s (never splitting mid-scalar/mid-emoji) up to the same byte budget the total estimate uses. Also added a non-positive-limit test (`toolOutputLimit: 0` -> empty kept prefix, marker still emitted) per the double-check's minor/non-blocking suggestion.
+
+    Re-verified GREEN after the fix: `swift test --filter ToolOutputCappingTests` — 16/16 pass (was 14, now 16 with the two new regression tests). Full suite: `swift build` clean, `swift test` — 528+18+5 = 551 tests passing, 0 failures, 0 new warnings.
+
+    Double-check otherwise confirmed: the `tool as? any Tool<T.Arguments, String>` existential-cast discrimination is correct against the real `FoundationModels.swiftinterface` protocol declaration (`public protocol Tool<Arguments, Output>`); both wiring sites (RoutedLLM.swift makeSession, RoutedSession.swift fork) apply capping outermost after connect/fork, correctly; SessionTreeRestoration.swift's "always budget: nil for restored sessions" claim is confirmed correct in the actual code; the marker text matches the task's literal spec; and the file's placement under Session/ (vs Compaction/) is right given it hooks the live Tool-calling seam rather than post-hoc transcript compaction.
+  timestamp: 2026-07-24T14:48:22.595678+00:00
 depends_on:
 - 01KY7E2TP9DBGFV8RJJJKDAE4B
-position_column: todo
-position_ordinal: '9480'
+position_column: doing
+position_ordinal: '80'
 title: Tool-output capping in the interop tool loop (TokenBudget.toolOutputLimit)
 ---
 Harness plan §5.1 seam 2 absorbed — better here than any wrapper: tool OUTPUTS are what blow windows mid-turn, and Router's interop tool loop sees each result before the model does. Add toolOutputLimit to TokenBudget; oversized results truncate with an explicit marker ('… [truncated: N of M tokens]') and the truncation reflects in the toolStatus stream event — never silent. Replaces the harness's ObservedTool capping job (the event-emission job is the rich-stream task).

@@ -192,6 +192,18 @@ struct TokenBudgetTests {
         #expect(budget.hardCeiling == 0.95)
     }
 
+    @Test("TokenBudget defaults toolOutputLimit to nil (opted out)")
+    func budgetDefaultsToolOutputLimitToNil() {
+        let budget = TokenBudget(limit: 4096)
+        #expect(budget.toolOutputLimit == nil)
+    }
+
+    @Test("TokenBudget accepts an overridden toolOutputLimit")
+    func budgetOverridesToolOutputLimit() {
+        let budget = TokenBudget(limit: 4096, toolOutputLimit: 200)
+        #expect(budget.toolOutputLimit == 200)
+    }
+
     // MARK: - Brand-new session
 
     @Test("a brand-new session reports contextFill ≈ 0 before its first turn")

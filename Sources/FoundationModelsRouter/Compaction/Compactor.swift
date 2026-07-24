@@ -207,6 +207,18 @@ public enum Compactor {
         return Int((Double(totalBytes) / charsPerTokenEstimate).rounded(.up))
     }
 
+    /// Estimates `text`'s size in tokens using the same
+    /// ``charsPerTokenEstimate`` character-ratio ``estimatedTokenCount(of:)``
+    /// applies to a whole transcript — shared so a single-string estimate
+    /// (e.g. ``ToolOutputCapping``'s tool-output cap, task 1334fk3) is
+    /// measured consistently with the transcript-level one.
+    ///
+    /// - Parameter text: The text to estimate.
+    /// - Returns: The estimated token count.
+    static func estimatedTokenCount(of text: String) -> Int {
+        Int((Double(text.utf8.count) / charsPerTokenEstimate).rounded(.up))
+    }
+
     /// The JSON-encoded byte size of `entry`'s ``TranscriptEntryPayload``
     /// mirror — a proxy for its textual content size across every entry kind.
     ///

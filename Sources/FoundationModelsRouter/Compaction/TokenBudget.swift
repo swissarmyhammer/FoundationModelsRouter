@@ -43,6 +43,26 @@ public struct TokenBudget: Sendable, Equatable {
     /// surfacing to the caller if the retry hits it again.
     public var hardCeiling: Double?
 
+    /// The optional cap, in tokens, on any single tool call's own result —
+    /// `nil` (the default) opts out entirely (harness plan §5.1 seam 2, task
+    /// 1334fk3).
+    ///
+    /// Unlike ``limit``/``trigger``/``target`` (measured against the whole
+    /// transcript, after the fact) this bounds one tool invocation's output
+    /// *before* it ever reaches the model or gets recorded: tool outputs, not
+    /// prompts, are what blow a turn's context window mid-turn, and this is
+    /// the one seam Router's own tool-instancing pipeline
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``/
+    /// ``RoutedSessionActor/fork(workingDirectory:)``) can intercept every
+    /// result at. When set, a tool whose own output is `String` and whose
+    /// estimated size exceeds this limit is truncated to it, with an
+    /// explicit `"… [truncated: N of M tokens]"` marker appended — never
+    /// silently dropped — so both the model and a driver watching
+    /// ``SessionEvent/toolStatus(id:status:summary:)`` see that a result was
+    /// capped. Replaces the harness's own external `ObservedTool` capping
+    /// job.
+    public var toolOutputLimit: Int?
+
     /// Creates a token budget.
     ///
     /// - Parameters:
@@ -54,11 +74,21 @@ public struct TokenBudget: Sendable, Equatable {
     ///     Defaults to `0.50`.
     ///   - hardCeiling: The optional hard ceiling on fill, as a fraction of
     ///     `limit` — see ``hardCeiling``. Defaults to `nil` (opted out).
-    public init(limit: Int, trigger: Double = 0.80, target: Double = 0.50, hardCeiling: Double? = nil) {
+    ///   - toolOutputLimit: The optional cap, in tokens, on any single tool
+    ///     call's own result — see ``toolOutputLimit``. Defaults to `nil`
+    ///     (opted out).
+    public init(
+        limit: Int,
+        trigger: Double = 0.80,
+        target: Double = 0.50,
+        hardCeiling: Double? = nil,
+        toolOutputLimit: Int? = nil
+    ) {
         self.limit = limit
         self.trigger = trigger
         self.target = target
         self.hardCeiling = hardCeiling
+        self.toolOutputLimit = toolOutputLimit
     }
 }
 
