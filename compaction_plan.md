@@ -183,8 +183,11 @@ fold will land under target, where the pipeline uses a character-ratio
 estimate calibrated by the measured pre-fold count — safe because the next
 real turn re-measures exactly.
 
-**The bare-session path** (the agent harness and the ACP bridge drive bare
-`LanguageModelSession`s over the recording handle, not `RoutedSession`): the
+**The bare-session path** (a caller not using `RoutedSession` — e.g. the ACP
+bridge — drives bare `LanguageModelSession`s over the recording handle
+instead; the collapsed `FoundationModelsAgentHarness` loop itself now runs
+directly over `RoutedSession`, per §1.6/§1.7 and plan.md's collapse
+decision): the
 pipeline is exposed as `Compactor.compact(_ transcript:prompt:budget:) ->
 CompactionResult` plus **`RecordingLanguageModel.noteCompaction(_ compacted:
 Transcript)`** — the handle's differ is count-based append-only, so
@@ -199,6 +202,69 @@ primitives — one mechanism, two entry points.
 Proactive use (check `contextFill` ≥ `trigger` between turns — turns never
 die) is preferred; reactive use (catch `exceededContextWindowSize`, compact
 with a lowered target, retry once) is the documented recovery path.
+
+### 1.6 Loop policy: the auto-compaction opt-in (harness plan §5 absorbed)
+
+§1.4/§1.5 above document the proactive/reactive *pattern* as something a
+caller drives by hand. `FoundationModelsAgentHarness`'s plan §5 asked for a
+loop that owns that policy itself — check fill at each turn, fold
+automatically, retry once on overflow — so an agent loop never has to
+remember to call `compact()`. At the 2026-07-23 collapse (plan.md's
+"Guiding principle: constructor-fed, zero configuration"), that policy
+landed directly on `RoutedSession` instead of in a peer package, as an
+opt-in per session:
+
+```swift
+let session = profile.standard.makeSession(
+    tools: myTools,
+    budget: TokenBudget(limit: profile.standard.resolution.contextTokens),
+    compactionPrompt: .default   // or a domain-specific prompt
+)
+```
+
+When `budget` is set, every turn (`respond`/`streamResponse`/
+`streamEvents`) checks measured `contextFill` against `budget.trigger`
+**before** submitting its generate call and folds proactively if it is
+already over; if the call still fails with
+`LanguageModelError.contextSizeExceeded` (or the mid-turn
+`ContextBudgetError.hardCeilingExceeded` from §1.7 below), the session
+folds with a lowered target and **retries exactly once** before surfacing
+the error — never looping. The retry re-runs the turn's own tool calls, so
+non-idempotent side effects can happen twice; the recorded transcript
+keeps both attempts, exactly as harness plan §5.1 called out. A session
+with no `budget` set never auto-compacts; `compact()` remains the manual,
+always-available entry point (e.g. for a `/compact` command upstairs).
+
+### 1.7 Mid-turn strategy: the two in-loop seams (harness plan §5.1 absorbed)
+
+The hard case harness plan §5.1 identified stands regardless of who owns
+the loop: Apple's `LanguageModelSession` runs the whole model → tool →
+model cycle inside one `respond`/`streamResponse` call, and nothing outside
+it regains control until the turn ends — a tool-heavy turn can blow the
+window in the middle, where a between-turns check can't reach. Router
+guards at the same two seams the harness plan identified, both directly in
+`RoutedSessionActor` rather than in an external wrapper a caller would
+otherwise have to maintain:
+
+1. **The generate boundary.** Every inner generate call this package
+   submits measures fill first; the mid-turn events on `streamEvents`
+   report it live, and `TokenBudget.hardCeiling`, when set, fails the call
+   fast with `ContextBudgetError.hardCeilingExceeded` instead of submitting
+   a doomed generate — deterministic, and folded into the same
+   retry-once recovery as a real `contextSizeExceeded`.
+2. **Tool outputs**, not prompts, are what blow a turn's window mid-turn.
+   `TokenBudget.toolOutputLimit`, when set, caps any single tool's own
+   result before it ever reaches the model or gets recorded
+   (`ToolOutputCapping`), truncating with an explicit
+   `"… [truncated: N of M tokens]"` marker — never silent — and reflecting
+   the truncation on `SessionEvent/toolStatus(id:status:summary:)`. This
+   replaces the harness's own external `ObservedTool` capping job with a
+   seam Router's own tool-instancing pipeline already owns.
+
+Fold-below-the-session — rewriting the transcript forwarded to the model so
+it sees a folded window while the session keeps its full one — remains the
+parked research question harness plan §5.1 recorded: still not attempted,
+because the session's and model's views of history would diverge.
 
 ## 2. The default compaction prompt
 
@@ -425,6 +491,15 @@ gated (`FM_ROUTER_INTEGRATION_TESTS`).
 
 ## 7. Decisions
 
+- **Harness plan §5/§5.1 loop policy absorbed (2026-07-23 collapse)** — the
+  proactive-check/reactive-retry-once policy and the two mid-turn guard
+  seams (generate-boundary hard ceiling, tool-output capping) that
+  `FoundationModelsAgentHarness` would have implemented over `RoutedSession`
+  are implemented directly on it instead (§1.6, §1.7):
+  `makeSession(budget:compactionPrompt:)`'s auto-compaction opt-in,
+  `TokenBudget.hardCeiling`, and `TokenBudget.toolOutputLimit`. See plan.md's
+  "Guiding principle: constructor-fed, zero configuration" for the collapse
+  decision itself.
 - **In Router, not a peer package** — the budget (resolved working context),
   the fill (measured usage: live backend counts and recorded stamps), the
   persistence (recording mirror), and the restore path (reconstruction) all
@@ -435,11 +510,11 @@ gated (`FM_ROUTER_INTEGRATION_TESTS`).
   transcript, chat template included); recorded `tokensIn`/`tokensOut` stamps
   and the segment's `tokensAfter` carry that truth across restore. External
   tokenizer passes are never load-bearing.
-- **One mechanism, two entry points** — `RoutedSession.compact()` for routed
-  sessions (in-place swap inside the actor; id unchanged by construction) and
-  `Compactor` + `noteCompaction` for bare sessions over the handle (the agent
-  harness, the ACP bridge). The routed path is implemented on the bare
-  primitives.
+- **One mechanism, two entry points** — `RoutedSession.compact()` (and its
+  auto-compaction opt-in, §1.6) for routed sessions (in-place swap inside the
+  actor; id unchanged by construction) and `Compactor` + `noteCompaction` for
+  bare sessions over the handle (a caller not using `RoutedSession`, e.g. the
+  ACP bridge). The routed path is implemented on the bare primitives.
 - **The fold lives in the transcript** — `CompactionSegment` makes compaction
   self-describing; the recording mirror persists it with zero schema work,
   and restore reads the checkpoint from data the transcript itself carries.

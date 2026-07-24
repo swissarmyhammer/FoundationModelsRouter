@@ -13,6 +13,66 @@ footprint fits the machine's budget.
 The router is constructed **early** and shared. Tools take it (or a model it
 vends) in their constructors so many tools reuse a small set of resident models.
 
+## Guiding principle: constructor-fed, zero configuration (the guardrail)
+
+**Router's session surface is constructor-fed — full stop.** Every value a
+session runs with — the tools it calls (`RoutedModel.makeSession(tools:)`),
+the instructions it follows, the auto-compaction budget and prompt that
+govern its window (`budget:`/`compactionPrompt:` — see compaction_plan.md
+§1.6) — arrives as a plain Swift value the caller already built. Router
+never names a tool *catalog* (no concrete tool implementation — files,
+shell, MCP — is imported anywhere in this package, including its own
+tests — see Testing), never reads a config file or dotfolder, and never
+speaks a wire protocol. Whoever constructs a session decided
+tools/instructions/budget already; Router's own job stops at running
+turns, measuring tokens, and folding the window over whatever it was
+handed.
+
+This is checkable, not aspirational: `Package.swift`'s only dependencies
+are MLX/HuggingFace plumbing (weights, tokenizers, via the pinned
+`mlx-swift-lm` fork plus `swift-huggingface`/`swift-transformers` for the
+gated integration suite), `ULID.swift` (session/router identifiers), and
+`FoundationModelsOperationTool`'s lightweight `Operations` product — a
+host-neutral tool-*events* vocabulary (`OperationEvent`/
+`OperationEventSink`/`EventEmittingTool`) with no dependency back on this
+package, not a tool catalog. No YAML/dotfolder reader and no wire-protocol
+type appears anywhere in `Sources/FoundationModelsRouter`. The guardrail is
+what lets one package sit underneath radically different callers — a CLI,
+a Mac app, an ACP bridge, a sub-agent spawner — with zero coupling between
+them, and it is what made the collapse below possible without Router
+having to learn what a tool catalog or a config format looks like.
+
+### The collapse (2026-07-23): FoundationModelsAgentHarness folds in
+
+`FoundationModelsAgentHarness` was planned as a peer package layering a
+turn loop, token accounting, and compaction policy over a bare
+`RoutedSession`. Reviewing it found that everything the loop needed was
+already a resolved fact one layer down in Router — the working context
+(sized at resolve time), measured usage (read off the live backend), the
+recording mirror, and reconstruction/restore — so a separate loop-policy
+package would have injected all of that back in through seams to end up
+with worse defaults, the same argument that already kept compaction itself
+out of a peer package (compaction_plan.md, intro). **The decision: fold the
+harness's residue directly into Router, which becomes the family's
+runtime**, rather than build a second package over it. By harness-plan
+section:
+
+- **§4 (turn serialization, queueing, cancellation)** — absorbed as
+  Router's own turn discipline (see "Turn loop" below).
+- **§5 / §5.1 (auto-fold policy, mid-turn strategy)** — absorbed as the
+  auto-compaction opt-in on `makeSession(budget:compactionPrompt:)`
+  (compaction_plan.md §1.6, §1.7).
+- **§5.2 (root vs. sub-agent)** — absorbed as "one session surface,
+  constructor values are the role" (see "Root and sub-agent" below).
+- **§9 (sample-tool testing fixtures)** — absorbed as Router's own testing
+  convention (see Testing).
+
+`FoundationModelsAgentHarness` is **not retired by this decision** — it
+still has an active session rooted in that repo, so its own plan document
+gets a "collapsed into Router" banner in a later pass, not a deletion now.
+This document, and compaction_plan.md, are where the surviving design lives
+going forward.
+
 ## Foundation: mlx-swift-lm
 
 Rides on [`ml-explore/mlx-swift-lm`](https://github.com/ml-explore/mlx-swift-lm) —
@@ -661,6 +721,62 @@ a thread-blocking `DispatchSemaphore`) — value 1 for the per-model serial gate
 / `following:` return the complete, schema-valid result. Token streaming
 (`streamResponse`) stays for *unconstrained* text only.
 
+## Turn loop: serialization, queueing, and cancellation (harness plan §4 absorbed)
+
+A session runs **one turn at a time and holds no hidden queue** — the
+harness plan's own turn-loop requirement, absorbed here rather than built a
+layer up:
+
+- **Serialization is structural, not policy.** Concurrent `respond()` /
+  `streamResponse()` / `streamEvents()` calls on one session (or its forks,
+  which share the same model) never interleave — they queue on the
+  per-model serial gate (see Concurrency above) and run strictly in
+  submission order. A caller never observes a half-produced turn
+  interleaved with another's.
+- **No automatic turn loop.** Nothing in this package auto-drains queued
+  work; a session only ever runs a turn because a caller called
+  `respond`/`streamResponse`/`streamEvents`, or a driver explicitly pulled
+  `dispatchNextPrompt()`. This is the harness plan's "queueing is a
+  composer affordance, not an engine one" stance, landed inside Router
+  itself rather than left for every caller to reinvent: `SessionOutbox`
+  gives every session a staging area for queued user prompts and
+  tool-posted events, and its `nextEvent()` is the idle-wakeup a driver
+  loop awaits instead of polling — but the loop that calls it is always
+  the caller's own `Task`, never something Router starts on its own.
+- **Cancellation is queue-side.** `cancel(_:)` withdraws a still-pending
+  queued prompt before it is ever dispatched — a cancelled prompt never
+  produces a turn. There is no separate "abort an in-flight turn"
+  primitive: a turn already handed to the model runs to completion inside
+  the actor's isolated call, exactly like any other `async` work a caller
+  can cancel by cancelling its own enclosing `Task`. Router adds no
+  parallel cancellation mechanism on top of that.
+
+## Root and sub-agent: one session surface (harness plan §5.2 absorbed)
+
+The harness plan drew a line between a **root** session (a user-facing
+conversation living for hours) and a **sub-agent** session (spawned
+mid-task, often one giant turn, ephemeral). Router does not model that as
+two types — there is exactly one `RoutedSession`/`RoutedSessionActor`, and
+the difference between "root" and "sub-agent" is entirely a function of the
+values a caller passes at construction:
+
+- **Tools and instructions** — a sub-agent gets its own subset and
+  persona; a root gets the full roster. Both are just the `tools:`/
+  `instructions:` arguments to `makeSession`.
+- **Budget shape** — a sub-agent often runs a smaller `TokenBudget.limit`
+  so many concurrent agents stay predictable, or a tighter `hardCeiling`;
+  a root usually runs the profile's full resolved context. Both are just a
+  `TokenBudget` value passed to `budget:`.
+- **Lineage** — `agentSpawn` records the parent session id and the parent
+  tool-call id a session was minted from (e.g. an "agents" tool spawning a
+  child mid-turn), so a transcript browser can reconstruct the parent→child
+  tree from recordings alone, the same way `fork()`'s `parentId` already
+  records conversation lineage. A root session simply has no `agentSpawn`.
+
+Nothing in `RoutedSessionActor` branches on which role it is playing —
+there is no `isSubAgent` flag anywhere in this package. The constructor
+values are the role.
+
 ## Sessions: working directory & isolation
 
 Every session has a **`workingDirectory`** (host filesystem) — where its tools,
@@ -950,6 +1066,17 @@ responses, and tool traffic round-trip losslessly.
 
 ## Decisions
 
+- **Collapse: `FoundationModelsAgentHarness` folds into Router (2026-07-23)**
+  — the harness's turn loop, token accounting, and compaction policy had
+  nothing of their own once separated from Router's already-resolved
+  context/usage/recording/restore, so the harness's residue is absorbed
+  directly into this package (Router becomes the family's runtime) rather
+  than built as a peer package over it. See "Guiding principle:
+  constructor-fed, zero configuration," "Turn loop," and "Root and
+  sub-agent" above, and compaction_plan.md §1.6/§1.7 for the folded loop
+  policy. `FoundationModelsAgentHarness` is **not retired** by this
+  decision — an active session is still rooted in that repo — so its own
+  plan document gets a collapsed-into-Router banner in a later pass.
 - **Runtime:** MLX only (mlx-swift-lm) for weights/inference; no llama backend.
 - **Session engine:** Apple's `LanguageModelSession` (`FoundationModels`, macOS 27+)
   is the load-bearing session surface, not `MLXLMCommon`'s `ChatSession` — **implemented**:
@@ -1106,3 +1233,13 @@ array, string/number/integer/boolean, closed enum, plus the schema derived from 
 real `@Generable` type) and throws a typed error for what it doesn't (`oneOf`, a
 malformed array). None of this needs network or GPU: constructing a schema value
 never touches a model.
+
+**Sample tools only (harness plan §9 absorbed).** Any test or example that
+needs a `Tool` to exercise the tool-carrying session surface
+(`makeSession(tools:)`, `restoreSessionTree(tools:)`, `fork()`) uses a small
+in-package sample implementation — an echo-style tool, a deliberately
+failing tool, tool stubs that emit configurable or oversized output for the
+compaction/tool-output-capping suites — never a real tool catalog. This
+matches the guardrail above: no concrete tool implementation (files, shell,
+MCP) appears in `Package.swift`, in a test target, or in an example target
+— tools are always values a caller (here, a test) injects.
