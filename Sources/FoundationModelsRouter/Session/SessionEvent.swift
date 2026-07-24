@@ -5,9 +5,9 @@ import Foundation
 /// own closing usage, all correlated by id where applicable.
 ///
 /// Harness-collapse item (harness plan §4, `HarnessEvent` absorbed): this is
-/// the general session-event vocabulary a driver — or a future `@Observable`
-/// per-session projection (task ekd82f4) — consumes instead of a
-/// harness-specific type of its own. ``RoutedSession/streamEvents(to:maxTokens:)``
+/// the general session-event vocabulary a driver — or ``SessionProjection``,
+/// the `@Observable` per-session projection (task ekd82f4) — consumes
+/// instead of a harness-specific type of its own. ``RoutedSession/streamEvents(to:maxTokens:)``
 /// emits every case, including ``compaction(_:)`` — the auto-compaction
 /// opt-in threaded through the same chokepoint (task 8213x39,
 /// ``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``'s
