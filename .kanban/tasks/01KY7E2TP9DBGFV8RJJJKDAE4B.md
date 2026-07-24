@@ -22,8 +22,25 @@ comments:
 
     Final state: swift build clean, 0 warnings/errors via diagnostics, full suite green — 489 unit + 18 integration (all gated/skipped in this sandbox, including the 1 new one) + 5 evals = 512 total (up from 506 baseline: +5 unit, +1 gated integration). Leaving task in doing per implement skill — ready for /review.
   timestamp: 2026-07-24T07:28:03.457806+00:00
+- actor: claude-code
+  id: 01ky9hvssjwfhnpegfzv5m95n3
+  text: |-
+    Addressed the single review finding: extracted a private file-scope free function `makeSessionBackend(model:transcript:tools:)` in LiveModelLoader.swift (placed right after the `defaultMaxTokens` constant), containing the shared logic both MLXFoundationModelsContainer.makeSession(transcript:tools:) and MLXFoundationModelsSessionBackend.replacingTranscript(_:) previously duplicated (LanguageModelSession construction + MLXFoundationModelsSessionBackend construction, instructions derived via TranscriptDiffer.leadingInstructionsText(of:)). A free function was needed (not a method on either type) since the two call sites live on two unrelated types — a struct and a class. Both call sites now delegate to it, passing their own model/tools, with identical external signatures/behavior preserved.
+
+    Verification: swift build clean (0 errors), diagnostics 0 errors/0 warnings, full suite green — 489 unit + 18 gated integration + 5 eval = 512 total, unchanged from baseline (pure refactor, no test count change). Adversarial double-check spawned; awaiting verdict.
+  timestamp: 2026-07-24T07:53:58.322667+00:00
+- actor: claude-code
+  id: 01ky9j1e2a3eyrz1v9asf7az9q
+  text: 'Finding checked off; task left in doing, ready for /review. Adversarial double-check PASS confirmed independently (own build/test run: 489+18+5=512 all green, byte-for-byte body match on the extracted helper, correct call-site wiring, and confirmed makeFork(tools:) was correctly left alone as genuinely different logic, not a missed third duplicate).'
+  timestamp: 2026-07-24T07:57:02.922395+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Tools through the session surface: makeSession(tools:), restore, fork'
 ---
 Harness-collapse item (harness plan §7 item 1). Thread [any FoundationModels.Tool] through RoutedLLM.makeSession to the wrapped bare LanguageModelSession (both LiveModelLoader call sites hardwire tools: [] today), through restoreSessionTree (hardcodes tools: []), and through fork(workingDirectory:). Recording schema is already tool-aware (Kind.toolCalls/toolOutput, ToolDefinitionPayload) — this gives it first real traffic. Callers pass pre-built, pre-confined tools; Router never names a tool package (constructor-fed guardrail).
+
+## Review Findings (2026-07-24 02:30)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:122` — MLXFoundationModelsContainer.makeSession(transcript:tools:) and MLXFoundationModelsSessionBackend.replacingTranscript(_:) have nearly identical implementations that differ only in the source of the `tools` argument — one takes it as a parameter, the other uses the instance variable self.tools. Both follow the same pattern: create LanguageModelSession from a transcript, derive instructions the same way, and return MLXFoundationModelsSessionBackend wrapping it. Extract a shared private helper method that accepts transcript, instructions, and tools, and use it in both makeSession(transcript:tools:) and replacingTranscript(_:). For example, a helper like `private func makeSessionBackend(transcript:, instructions:, tools:)` would eliminate the duplication while preserving the different public signatures. This reduces maintenance burden and ensures both code paths stay in sync.
+
+Fixed 2026-07-24: extracted a private file-scope free function `makeSessionBackend(model:transcript:tools:)` in LiveModelLoader.swift (right after the `defaultMaxTokens` constant). A free function was used rather than a shared method because the two call sites live on two unrelated types (a struct and a class). Both `MLXFoundationModelsContainer.makeSession(transcript:tools:)` and `MLXFoundationModelsSessionBackend.replacingTranscript(_:)` now delegate to it with their own `model`/`tools`, preserving each method's exact external signature and behavior. Verified: swift build clean, 0 warnings/errors, full suite green — 489 unit + 18 gated integration + 5 eval = 512 total (unchanged from baseline). Adversarial double-check: PASS.

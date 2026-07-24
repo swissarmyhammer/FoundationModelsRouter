@@ -32,6 +32,40 @@ import MLXLMCommon
 /// there is no principled reason for guided decode to get a different ceiling.
 private let defaultMaxTokens = 8192
 
+/// Builds a session backend directly from a transcript, deriving instructions
+/// from the transcript's own leading `.instructions` entry.
+///
+/// Shared by ``MLXFoundationModelsContainer/makeSession(transcript:tools:)`` and
+/// ``MLXFoundationModelsSessionBackend/replacingTranscript(_:)`` — both build a
+/// fresh `LanguageModelSession` directly over an existing transcript and wrap it
+/// in a new ``MLXFoundationModelsSessionBackend``, deriving that backend's
+/// ``MLXFoundationModelsSessionBackend/instructions`` the same way (there is no
+/// live parent backend to copy them from in either case). The two call sites
+/// differ only in where `tools` comes from — a caller-supplied parameter for the
+/// container's factory, this backend's own retained tools for
+/// ``replacingTranscript(_:)`` — so that stays a parameter here instead of being
+/// baked into this helper.
+///
+/// - Parameters:
+///   - model: The `LanguageModel` conformance to build the new session over.
+///   - transcript: The transcript to seed the new session from.
+///   - tools: The tools the model can call during this session.
+/// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
+///   ``RoutedSession`` drives for its lifetime.
+private func makeSessionBackend(
+    model: MLXLanguageModel,
+    transcript: FoundationModels.Transcript,
+    tools: [any FoundationModels.Tool]
+) -> MLXFoundationModelsSessionBackend {
+    let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
+    return MLXFoundationModelsSessionBackend(
+        session: session,
+        model: model,
+        instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+        tools: tools
+    )
+}
+
 /// The live ``LoadedLLMContainer``.
 ///
 /// Wraps an `MLXLanguageModel` — the `FoundationModels.LanguageModel` protocol
@@ -124,13 +158,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool]
     ) -> any LanguageModelSessionBackend {
-        let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
-        return MLXFoundationModelsSessionBackend(
-            session: session,
-            model: model,
-            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
-            tools: tools
-        )
+        makeSessionBackend(model: model, transcript: transcript, tools: tools)
     }
 }
 
@@ -407,13 +435,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///   ``model``, whose accumulated history begins with `transcript`'s
     ///   entries.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
-        let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
-        return MLXFoundationModelsSessionBackend(
-            session: session,
-            model: model,
-            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
-            tools: tools
-        )
+        makeSessionBackend(model: model, transcript: transcript, tools: tools)
     }
 
     /// Returns ``liveSession``'s current transcript, in order.
