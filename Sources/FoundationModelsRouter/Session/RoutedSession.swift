@@ -740,6 +740,19 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     /// See ``RoutedSession/contextFill``.
+    ///
+    /// Synchronous here even though the protocol declares `{ get async }`:
+    /// this getter runs on the actor's own executor and reads only
+    /// actor-isolated state (``usageState``, ``contextTokens``), so it needs
+    /// no `await` from inside the actor. A synchronous actor-isolated getter
+    /// satisfies an `async` protocol requirement — every access from outside
+    /// this actor still goes through an implicit `await` at the call site
+    /// (see the `await session.contextFill` example on
+    /// ``RoutedSession/contextFill``), so isolation is never bypassed. There
+    /// is no data race: every read or write of ``usageState`` in this file
+    /// (init, here, ``compact(prompt:budget:)``, ``fork(workingDirectory:)``,
+    /// ``finishTurn(grammar:since:usageBefore:pendingEvents:)``) executes
+    /// inside this actor's isolation domain.
     var contextFill: Double {
         usageState.fill(contextTokens: contextTokens)
     }
@@ -917,6 +930,25 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// Forks a child session over the same resident model. See
+    /// ``RoutedSession/fork(workingDirectory:)`` for the full contract.
+    ///
+    /// Waits on ``forkAdmissionGate`` for a free slot, then builds the child's
+    /// tools from ``originalTools`` (never this session's own already-instanced
+    /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
+    /// pristine state before being wired to the child's fresh outbox. Acquires
+    /// ``serialGate`` just long enough to read `backend`'s conversation state
+    /// and entry count together, closing the race against a concurrent
+    /// in-flight turn mutating that same state. The child's
+    /// ``recordingDirectory`` nests directly under this session's, and it
+    /// inherits this session's ``contextTokens``/``usageState`` so its fill
+    /// reporting starts from the parent's fill at fork time rather than zero.
+    ///
+    /// - Parameter workingDirectory: The child's working directory, or `nil` to
+    ///   default to its recording directory.
+    /// - Returns: The forked child session.
+    /// - Throws: Nothing in the current implementation — see the protocol
+    ///   doc's ``RoutedSession/fork(workingDirectory:)`` `Throws:` note.
     func fork(workingDirectory: URL?) async throws -> RoutedSession {
         // Admission: at most the router's `maxConcurrentForks` fork sessions over
         // this model may be in flight at once. Past the ceiling this suspends
