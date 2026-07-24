@@ -123,15 +123,17 @@ let package = Package(
             exclude: ["README.md"]
         ),
         // Runnable demo of the compaction loop end to end (compaction_plan.md
-        // §4): open a `RoutedSession`, drive scripted turns that read fixture
-        // documents into the conversation while `contextFill` climbs, fold
-        // with `session.compact()` at the 0.80 trigger, keep talking to the
-        // same session, then restore it from disk. `Fixtures` is excluded
-        // alongside `README.md` — the demo reads those files from disk at
-        // run time (relative to its own source file) rather than bundling
-        // them as SwiftPM resources. Links the same Hub client + tokenizer
-        // products as `MultiModelGeneration`, since it also resolves a real
-        // profile through `LiveModelLoader`.
+        // §4), with real tool traffic (task 4ce0a1k): open a `RoutedSession`
+        // vended with sample tools (`SampleTools.swift`) and a tiny
+        // auto-compaction `TokenBudget` (task 8213x39), drive scripted turns
+        // — fixture reads and explicit tool calls — while `contextFill`
+        // climbs, let the budget fold automatically at the 0.80 trigger, keep
+        // talking to the same session, then restore it from disk. `Fixtures`
+        // is excluded alongside `README.md` — the demo reads those files from
+        // disk at run time (relative to its own source file) rather than
+        // bundling them as SwiftPM resources. Links the same Hub client +
+        // tokenizer products as `MultiModelGeneration`, since it also
+        // resolves a real profile through `LiveModelLoader`.
         .executableTarget(
             name: "CompactionDemo",
             dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,

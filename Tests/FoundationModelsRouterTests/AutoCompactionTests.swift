@@ -17,6 +17,37 @@ import Testing
 /// so the suite needs no network and no GPU.
 @Suite("Auto-compaction opt-in: makeSession(budget:compactionPrompt:) and retry-once")
 struct AutoCompactionTests {
+    // MARK: - Sample tools (task 4ce0a1k): tools + budget composition
+
+    /// Shared arguments for both sample tools below — a single field is
+    /// enough to prove wiring; the mechanics under test here are
+    /// tools-plus-budget composition, not argument schemas.
+    @Generable
+    struct SampleToolArguments {
+        let text: String
+    }
+
+    /// A trivial, always-succeeding `Tool` — returns its input verbatim.
+    /// Real tool-calling only happens inside a live `LanguageModelSession`
+    /// (this suite's stub backends never invoke it), so this exists purely
+    /// to prove `makeSession(tools:budget:)` accepts a real
+    /// `FoundationModels.Tool` conformance alongside a budget.
+    private struct EchoTool: Tool {
+        let name = "echo"
+        let description = "returns its input text unchanged"
+        func call(arguments: SampleToolArguments) async throws -> String { arguments.text }
+    }
+
+    /// A trivial, always-failing `Tool` — proves a tool that could fail is
+    /// just as safely threaded alongside a budget as one that always
+    /// succeeds; construction/wiring never inspects a tool's own behavior.
+    private struct FailingTool: Tool {
+        enum Failure: Error, Equatable { case boom }
+        let name = "always-fails"
+        let description = "a tool that always throws"
+        func call(arguments: SampleToolArguments) async throws -> String { throw Failure.boom }
+    }
+
     // MARK: - Stub containers
 
     /// Vends a single, test-retained ``StubSessionBackend`` per session, with
@@ -202,13 +233,18 @@ struct AutoCompactionTests {
     /// drives one more turn (typically via `streamEvents`) to observe the
     /// proactive auto-fold this triggers.
     ///
-    /// - Parameter budget: The auto-compaction opt-in to vend the session
-    ///   with, or `nil` to opt out (the regression case).
+    /// - Parameters:
+    ///   - budget: The auto-compaction opt-in to vend the session with, or
+    ///     `nil` to opt out (the regression case).
+    ///   - tools: The tools to vend the session with — see task 4ce0a1k's own
+    ///     tools-plus-budget composition tests below. Defaults to none,
+    ///     unchanged from every pre-existing test in this suite.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
     ///   test can configure `shouldThrow` on either before driving the
     ///   triggering turn.
     private static func makeTriggeredSession(
-        budget: TokenBudget?
+        budget: TokenBudget?,
+        tools: [any Tool] = []
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
         let dir = Self.makeTempDir()
         let recorder = InMemoryRecorder()
@@ -218,7 +254,7 @@ struct AutoCompactionTests {
         let router = Self.makeRouter(loader: loader, recorder: recorder, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
-        let session = profile.standard.makeSession(budget: budget)
+        let session = profile.standard.makeSession(tools: tools, budget: budget)
         let backend = try #require(standardContainer.lastBackend)
 
         for turn in 0..<Self.turnCount {
@@ -681,5 +717,50 @@ struct AutoCompactionTests {
         // Both attempts were blocked pre-flight; the original backend was
         // never asked to generate again after the warm-up turns.
         #expect(standard.lastBackend?.callCount == callsBeforeTriggeringTurn)
+    }
+
+    // MARK: - Tools + budget composition (task 4ce0a1k)
+
+    @Test("EchoTool returns its input verbatim; FailingTool always throws")
+    func sampleToolsBehaveAsDocumented() async throws {
+        let echo = EchoTool()
+        let echoed = try await echo.call(arguments: SampleToolArguments(text: "hello"))
+        #expect(echoed == "hello")
+
+        let failing = FailingTool()
+        await #expect(throws: FailingTool.Failure.boom) {
+            try await failing.call(arguments: SampleToolArguments(text: "x"))
+        }
+    }
+
+    @Test(
+        "a session vended with both tools and a budget threads the tools to the session's own tool list and still proactively folds exactly like one with no tools"
+    )
+    @MainActor
+    func toolsAndBudgetComposeWithoutInterference() async throws {
+        let echo = EchoTool()
+        let failing = FailingTool()
+        let (session, _, _) = try await Self.makeTriggeredSession(budget: Self.fixedBudget, tools: [echo, failing])
+
+        guard let actor = session as? RoutedSessionActor else {
+            Issue.record("expected a RoutedSessionActor")
+            return
+        }
+        #expect(actor.tools.contains { $0 is EchoTool })
+        #expect(actor.tools.contains { $0 is FailingTool })
+
+        // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up turns —
+        // identical to the no-tools case above; the presence of tools must
+        // not change fold-triggering behavior at all.
+        #expect(await session.contextFill == 0.9)
+
+        let events = try await Self.collectEvents(session, prompt: "turn 6")
+
+        guard case .compaction(let result) = events.first else {
+            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+            return
+        }
+        #expect(result.stagesApplied.contains("Summarization"))
+        #expect(events.contains(.textDelta(Self.cannedText)))
     }
 }
