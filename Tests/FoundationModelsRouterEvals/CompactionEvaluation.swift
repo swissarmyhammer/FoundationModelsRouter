@@ -263,6 +263,9 @@ struct CompactionEvaluation: Evaluation {
     /// Registers all four metrics — `FactRetention`, `UnderTarget`,
     /// `Faithfulness`, and `Continuability` — for mean aggregation, as the
     /// `Evaluation` protocol requires.
+    ///
+    /// - Parameter aggregator: The aggregator to register the four metrics
+    ///   with.
     func aggregateMetrics(using aggregator: inout MetricsAggregator) {
         aggregator.computeMean(of: CompactionEvalMetric.factRetention)
         aggregator.computeMean(of: CompactionEvalMetric.underTarget)

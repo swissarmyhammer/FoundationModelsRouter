@@ -51,6 +51,13 @@ actor CompactionEvalRealSubjectRunner {
 
     /// The resident container, loading it on first access and caching it for
     /// every later call.
+    ///
+    /// - Returns: The cached container, if one was already loaded, or the
+    ///   newly-loaded and now-cached container otherwise.
+    /// - Throws: ``CompactionEvaluationError/unexpectedContainerType`` if the
+    ///   loaded container is not an `MLXFoundationModelsContainer`, or
+    ///   whatever error ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
+    ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
     private func container() async throws -> MLXFoundationModelsContainer {
         if let loaded { return loaded }
         let loader = LiveModelLoader(
@@ -81,6 +88,10 @@ actor CompactionEvalRealSubjectRunner {
     ///   - budget: The token budget to fold against.
     ///   - question: The question to ask the resumed session.
     /// - Returns: The resumed session's answer plus the fold's report.
+    /// - Throws: Whatever ``container()`` throws while loading the resident
+    ///   model, or whatever ``Compactor/compact(_:prompt:budget:summarizer:)``
+    ///   or the resumed session's `respond(to:maxTokens:)` throws while
+    ///   folding `entries` or answering `question`.
     func run(
         entries: [Transcript.Entry],
         prompt: CompactionPrompt,
