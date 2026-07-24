@@ -170,41 +170,6 @@ struct SessionTreeRestorationTests {
 
     // MARK: - Checkpoint-aware restore fixtures
 
-    /// Builds a `.response`-kind event carrying a text summary segment plus a
-    /// ``CompactionSegment`` — the exact shape a real compaction's
-    /// synthesized entry takes.
-    private static func compactionCheckpointEvent(
-        seq: Int,
-        sessionId: ULID,
-        routerId: ULID,
-        entryId: String,
-        summaryText: String = "summary",
-        content: CompactionSegment.Content
-    ) throws -> TranscriptEvent {
-        let contentJSON = String(data: try JSONEncoder().encode(content), encoding: .utf8)!
-        return TranscriptEvent(
-            routerId: routerId,
-            sessionId: sessionId,
-            seq: seq,
-            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
-            kind: .response,
-            text: summaryText,
-            entry: TranscriptEntryPayload(
-                entryId: entryId,
-                segments: [
-                    .text(id: "\(entryId)-text", content: summaryText),
-                    .custom(
-                        id: "\(entryId)-segment",
-                        typeDiscriminator: CompactionSegment.typeDiscriminator,
-                        contentJSON: contentJSON,
-                        description: nil
-                    ),
-                ],
-                assetIds: []
-            )
-        )
-    }
-
     /// Builds a stamped `.response`-kind event carrying real `tokensIn`/
     /// `tokensOut` — the shape a genuine turn's diffed close takes, needed to
     /// exercise ``TranscriptTree/restoredUsageState(in:)``'s "newest stamp
@@ -570,7 +535,7 @@ struct SessionTreeRestorationTests {
         let turn2ResponseId = try #require(responses.last?.entry?.entryId)
         let sessionContext = try #require(treeBeforeCheckpoint.session(root.id)?.sidecar.context)
 
-        let checkpointEvent = try Self.compactionCheckpointEvent(
+        let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: rawEvents.count,
             sessionId: root.id,
             routerId: router1.id,
@@ -616,7 +581,7 @@ struct SessionTreeRestorationTests {
     func restoredUsageStatePrefersStampAfterCheckpoint() throws {
         let sessionId = ULID.generate()
         let routerId = ULID.generate()
-        let checkpointEvent = try Self.compactionCheckpointEvent(
+        let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: 0,
             sessionId: sessionId,
             routerId: routerId,
@@ -643,7 +608,7 @@ struct SessionTreeRestorationTests {
     func restoredUsageStateFallsBackToCheckpointTokensAfter() throws {
         let sessionId = ULID.generate()
         let routerId = ULID.generate()
-        let checkpointEvent = try Self.compactionCheckpointEvent(
+        let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: 0,
             sessionId: sessionId,
             routerId: routerId,
@@ -688,7 +653,7 @@ struct SessionTreeRestorationTests {
             seq: 0, sessionId: sessionId, routerId: routerId, entryId: "pre-response-1",
             tokensIn: 999, tokensOut: 999
         )
-        let checkpointEvent = try Self.compactionCheckpointEvent(
+        let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: 1,
             sessionId: sessionId,
             routerId: routerId,

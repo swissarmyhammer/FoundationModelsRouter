@@ -84,4 +84,46 @@ enum TranscriptFixtures {
     static func makeTurns(_ turnCount: Int, toolOutputText: String = "tool result") throws -> [[Transcript.Entry]] {
         try (1...turnCount).map { try Self.makeTurn(index: $0, toolOutputText: toolOutputText) }
     }
+
+    /// Builds a `.response`-kind event carrying a text summary segment plus a
+    /// ``CompactionSegment`` — the exact shape a real compaction's
+    /// synthesized entry takes (see ``CompactionSegment``'s own doc comment
+    /// and ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:)``'s
+    /// `makeSummaryEntry`).
+    ///
+    /// Shared by `TranscriptReconstructionTests` and
+    /// `SessionTreeRestorationTests` — both exercise task x3nggmx's
+    /// checkpoint-aware reconstruction/restoration and need this exact
+    /// fixture shape.
+    static func compactionCheckpointEvent(
+        seq: Int,
+        sessionId: ULID,
+        routerId: ULID,
+        entryId: String,
+        summaryText: String = "summary",
+        content: CompactionSegment.Content
+    ) throws -> TranscriptEvent {
+        let contentJSON = String(data: try JSONEncoder().encode(content), encoding: .utf8)!
+        return TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: seq,
+            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+            kind: .response,
+            text: summaryText,
+            entry: TranscriptEntryPayload(
+                entryId: entryId,
+                segments: [
+                    .text(id: "\(entryId)-text", content: summaryText),
+                    .custom(
+                        id: "\(entryId)-segment",
+                        typeDiscriminator: CompactionSegment.typeDiscriminator,
+                        contentJSON: contentJSON,
+                        description: nil
+                    ),
+                ],
+                assetIds: []
+            )
+        )
+    }
 }

@@ -341,43 +341,6 @@ struct TranscriptReconstructionTests {
         )
     }
 
-    /// Builds a `.response`-kind event carrying a text summary segment plus a
-    /// ``CompactionSegment`` — the exact shape a real compaction's
-    /// synthesized entry takes (see ``CompactionSegment``'s own doc comment
-    /// and ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:)``'s
-    /// `makeSummaryEntry`).
-    private static func compactionCheckpointEvent(
-        seq: Int,
-        sessionId: ULID,
-        routerId: ULID,
-        entryId: String,
-        summaryText: String,
-        content: CompactionSegment.Content
-    ) throws -> TranscriptEvent {
-        let contentJSON = String(data: try JSONEncoder().encode(content), encoding: .utf8)!
-        return TranscriptEvent(
-            routerId: routerId,
-            sessionId: sessionId,
-            seq: seq,
-            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
-            kind: .response,
-            text: summaryText,
-            entry: TranscriptEntryPayload(
-                entryId: entryId,
-                segments: [
-                    .text(id: "\(entryId)-text", content: summaryText),
-                    .custom(
-                        id: "\(entryId)-segment",
-                        typeDiscriminator: CompactionSegment.typeDiscriminator,
-                        contentJSON: contentJSON,
-                        description: nil
-                    ),
-                ],
-                assetIds: []
-            )
-        )
-    }
-
     /// Writes `events` as a session's `transcript.jsonl`, one JSON object per
     /// line — the on-disk shape ``TranscriptTree`` reads.
     private static func writeTranscript(_ events: [TranscriptEvent], to sessionDir: URL) throws {
@@ -876,7 +839,7 @@ struct TranscriptReconstructionTests {
             Self.textEntryEvent(
                 seq: 4, sessionId: sessionId, routerId: routerId, kind: .response,
                 entryId: "recent-response-1", text: "recent response"),
-            Self.compactionCheckpointEvent(
+            TranscriptFixtures.compactionCheckpointEvent(
                 seq: 5, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
                 summaryText: "summary of old turns",
                 content: CompactionSegment.Content(
@@ -966,7 +929,7 @@ struct TranscriptReconstructionTests {
             Self.textEntryEvent(
                 seq: 2, sessionId: sessionId, routerId: routerId, kind: .response,
                 entryId: "old-response-1", text: "old response"),
-            Self.compactionCheckpointEvent(
+            TranscriptFixtures.compactionCheckpointEvent(
                 seq: 3, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
                 summaryText: "first fold",
                 content: CompactionSegment.Content(
@@ -984,7 +947,7 @@ struct TranscriptReconstructionTests {
             Self.textEntryEvent(
                 seq: 5, sessionId: sessionId, routerId: routerId, kind: .response,
                 entryId: "mid-response-1", text: "mid response"),
-            Self.compactionCheckpointEvent(
+            TranscriptFixtures.compactionCheckpointEvent(
                 seq: 6, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-2",
                 summaryText: "second fold",
                 content: CompactionSegment.Content(
@@ -1053,7 +1016,7 @@ struct TranscriptReconstructionTests {
         let sessionDir = try Self.makeSessionDir(
             dir.appendingPathComponent(sessionId.description, isDirectory: true))
 
-        let checkpointEvent = try Self.compactionCheckpointEvent(
+        let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: 0, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
             summaryText: "fold",
             content: CompactionSegment.Content(
