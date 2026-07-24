@@ -188,6 +188,42 @@ public protocol RoutedSession: Actor {
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
+    /// Streams a rich event sequence for a prompt as it is produced,
+    /// recording the call exactly like ``streamResponse(to:maxTokens:)``.
+    ///
+    /// The harness-collapse item absorbing `HarnessEvent` (harness plan §4):
+    /// where ``streamResponse(to:maxTokens:)`` only ever yields the model's
+    /// text fragments, this surfaces the same turn's tool calls, tool
+    /// lifecycle, reasoning, and closing usage too — everything the
+    /// chokepoint already observes as transcript entries once the turn's
+    /// snapshot diff runs (see
+    /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``),
+    /// interleaved with the same live text fragments as
+    /// ``streamResponse(to:maxTokens:)``.
+    ///
+    /// Emission order within one turn: ``SessionEvent/textDelta(_:)``
+    /// fragments as the model produces them; then, once generation finishes
+    /// and the turn's diff runs, ``SessionEvent/toolCall(id:name:argumentsJSON:)``
+    /// paired with a ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// ``ToolCallStatus/running`` for each call the model requested (in diff
+    /// order), a ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// ``ToolCallStatus/completed`` as each call's output lands (or
+    /// ``ToolCallStatus/failed`` for a call whose matching `.toolOutput`
+    /// never arrived within this turn's diff), and any
+    /// ``SessionEvent/reasoningDelta(_:)`` the backend recorded; finally
+    /// ``SessionEvent/turnEnded(_:)`` once the turn's own usage delta is
+    /// known. ``SessionEvent/compaction(_:)`` is never emitted here — see
+    /// that case's own documentation.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
+    ///     use the underlying model's own default ceiling.
+    /// - Returns: A stream of session events, finishing when the turn
+    ///   completes or throwing if it fails (after yielding whatever the turn
+    ///   produced first).
+    func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
+
     /// Forks a child session over the same resident model.
     ///
     /// The child takes a fresh id with ``parentId`` set to this session's id and
@@ -308,6 +344,15 @@ extension RoutedSession {
     ///   completes or throwing if it fails.
     public func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
         streamResponse(to: prompt, maxTokens: nil)
+    }
+
+    /// Streams a rich event sequence for a prompt as it is produced, using
+    /// the underlying model's own default token ceiling, recording the call.
+    ///
+    /// - Parameter prompt: The prompt to respond to.
+    /// - Returns: A stream of session events; see ``streamEvents(to:maxTokens:)``.
+    public func streamEvents(to prompt: String) -> AsyncThrowingStream<SessionEvent, Error> {
+        streamEvents(to: prompt, maxTokens: nil)
     }
 
     /// Stages a queued user prompt for a future turn — the ``RoutedSession``
@@ -873,10 +918,10 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Streams a text response to a prompt as it is produced, recording the call.
     ///
-    /// Wraps ``streamGenerating(prompt:maxTokens:into:)`` in an
-    /// `AsyncThrowingStream`, forwarding each produced chunk to the stream's
-    /// continuation and finishing it when generation completes or throws;
-    /// cancelling the stream cancels the underlying `Task`.
+    /// Wraps ``streamGenerating(prompt:maxTokens:into:)`` via ``wrapAsyncStream(_:)``,
+    /// forwarding each produced chunk to the stream's continuation and
+    /// finishing it when generation completes or throws; cancelling the
+    /// stream cancels the underlying `Task`.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -885,10 +930,33 @@ actor RoutedSessionActor: RoutedSession {
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+        Self.wrapAsyncStream { continuation in
+            try await self.streamGenerating(prompt: prompt, maxTokens: maxTokens, into: continuation)
+        }
+    }
+
+    /// Wraps `body` in an `AsyncThrowingStream`, running it inside a
+    /// cancellable `Task` that finishes the stream — with or without an
+    /// error — when `body` returns or throws.
+    ///
+    /// The `AsyncThrowingStream`/`Task`/`onTermination` scaffolding
+    /// ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
+    /// both need, differing only in the element type and the streaming work
+    /// itself — factored out once here rather than duplicated per method.
+    /// `static` (not an instance method) because it touches no actor state of
+    /// its own; `body` captures whatever isolated state it needs (typically
+    /// `self`) instead.
+    ///
+    /// - Parameter body: The streaming work, given the stream's own
+    ///   continuation to yield elements to.
+    /// - Returns: The wrapped stream.
+    private static func wrapAsyncStream<Element>(
+        _ body: @escaping @Sendable (AsyncThrowingStream<Element, Error>.Continuation) async throws -> Void
+    ) -> AsyncThrowingStream<Element, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.streamGenerating(prompt: prompt, maxTokens: maxTokens, into: continuation)
+                    try await body(continuation)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -924,6 +992,65 @@ actor RoutedSessionActor: RoutedSession {
             var response = ""
             for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
                 continuation.yield(chunk)
+                response += chunk
+            }
+            return response
+        }
+    }
+
+    /// Streams a rich event sequence for a prompt as it is produced,
+    /// recording the call. See ``RoutedSession/streamEvents(to:maxTokens:)``
+    /// for the full contract.
+    ///
+    /// Wraps ``streamEventsGenerating(prompt:maxTokens:into:)`` via
+    /// ``wrapAsyncStream(_:)``, mirroring ``streamResponse(to:maxTokens:)``'s
+    /// own scaffolding exactly — cancelling the stream cancels the underlying
+    /// `Task`.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
+    /// - Returns: A stream of session events, finishing when generation
+    ///   completes or throwing if it fails.
+    func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error> {
+        Self.wrapAsyncStream { continuation in
+            try await self.streamEventsGenerating(prompt: prompt, maxTokens: maxTokens, into: continuation)
+        }
+    }
+
+    /// Runs the recorder-bracketed streaming generation, forwarding each
+    /// text chunk the model produces as a ``SessionEvent/textDelta(_:)`` and,
+    /// once the turn's diff runs, every other ``SessionEvent`` it implies —
+    /// to `continuation`.
+    ///
+    /// Extracted from ``streamEvents(to:maxTokens:)`` so that method's
+    /// stream/`Task` scaffolding stays shallow, mirroring
+    /// ``streamGenerating(prompt:maxTokens:into:)``'s own split for the
+    /// plain-text stream.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
+    ///   - continuation: The stream continuation each produced event is
+    ///     yielded to.
+    /// - Throws: Any error thrown by the model, after the chokepoint records the
+    ///   close event and yields whatever ``SessionEvent``s that close implied.
+    private func streamEventsGenerating(
+        prompt: String,
+        maxTokens: Int?,
+        into continuation: AsyncThrowingStream<SessionEvent, Error>.Continuation
+    ) async throws {
+        // Mirrors `streamGenerating(prompt:maxTokens:into:)`'s own
+        // accumulate-and-forward shape for the live text, plus `onEvent` so
+        // the chokepoint's own diff-derived events (tool calls/status,
+        // reasoning, the closing usage) reach this same continuation once
+        // the turn's diff runs — see `generate(grammar:prompt:onEvent:_:)`.
+        _ = try await generate(prompt: prompt, onEvent: { continuation.yield($0) }) { composedPrompt in
+            var response = ""
+            for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
+                continuation.yield(.textDelta(chunk))
                 response += chunk
             }
             return response
@@ -1117,6 +1244,7 @@ actor RoutedSessionActor: RoutedSession {
     private func generate(
         grammar: Grammar? = nil,
         prompt: String,
+        onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: (String) async throws -> String
     ) async throws -> String {
         // Acquire the serial permit for the whole bracket, releasing it on every
@@ -1143,7 +1271,8 @@ actor RoutedSessionActor: RoutedSession {
         // never invoked below — byte-identical to a session that never used
         // an outbox.
         let pendingEvents = await outbox.drainPendingEvents().map(\.event)
-        return try await runTurn(grammar: grammar, pendingEvents: pendingEvents, ownPrompt: prompt, body)
+        return try await runTurn(
+            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: prompt, onEvent: onEvent, body)
     }
 
     /// Runs one turn's model work and recording, given its already-resolved
@@ -1170,6 +1299,7 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
+        onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: (String) async throws -> String
     ) async throws -> String {
         let composedPrompt = Self.composePrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
@@ -1182,9 +1312,10 @@ actor RoutedSessionActor: RoutedSession {
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
             // comment), not just the throwing one; that uniform check lives in
-            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:)``.
+            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:onEvent:)``.
             _ = await finishTurnAndRequeueIfUnattached(
-                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
+                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
+                onEvent: onEvent)
             return response
         } catch {
             // Whatever the SDK durably appended before failing is still diffed
@@ -1193,7 +1324,8 @@ actor RoutedSessionActor: RoutedSession {
             // post-generation failure can still leave the SDK having appended a
             // genuine `.response` entry before throwing.
             let (diffIncludedResponse, usage) = await finishTurnAndRequeueIfUnattached(
-                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
+                grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
+                onEvent: onEvent)
             // Only synthesize the router-only bodyless close when the SDK's own
             // diff did *not* already include a `.response`-kind entry — otherwise
             // this would double up two `.response` events for one turn, breaking
@@ -1274,17 +1406,20 @@ actor RoutedSessionActor: RoutedSession {
         )
     }
 
-    /// Runs ``finishTurn(grammar:since:usageBefore:pendingEvents:)`` and, on
-    /// either of its exits, re-queues `pendingEvents` whenever the turn's diff
-    /// produced no `.prompt`-kind partial to attach them to — the single
-    /// attach-or-requeue check ``generate(grammar:prompt:_:)``'s success and
-    /// throwing paths both need, so the two exits can't drift out of sync.
+    /// Runs ``finishTurn(grammar:since:usageBefore:pendingEvents:onEvent:)``
+    /// and, on either of its exits, re-queues `pendingEvents` whenever the
+    /// turn's diff produced no `.prompt`-kind partial to attach them to — the
+    /// single attach-or-requeue check ``generate(grammar:prompt:onEvent:_:)``'s
+    /// success and throwing paths both need, so the two exits can't drift out
+    /// of sync.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn.
     ///   - since: The turn's start time, forwarded to `finishTurn`.
     ///   - usageBefore: The token-usage snapshot taken before the turn ran.
     ///   - pendingEvents: The events drained from ``outbox`` for this turn.
+    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, forwarded
+    ///     to `finishTurn`, or `nil` to skip event derivation entirely.
     /// - Returns: `finishTurn`'s `diffIncludedResponse` and `usage`, for the
     ///   caller's own post-processing; `pendingEventsAttached` is consumed
     ///   here and not returned, since both callers handle it identically.
@@ -1292,10 +1427,12 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar?,
         since started: Date,
         usageBefore: (input: Int, output: Int)?,
-        pendingEvents: [OperationEvent]
+        pendingEvents: [OperationEvent],
+        onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?) {
         let (diffIncludedResponse, usage, pendingEventsAttached) = await finishTurn(
-            grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents)
+            grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
+            onEvent: onEvent)
         // `drainForDispatch()` already destructively removed `pendingEvents`
         // from `outbox` before `body()` ran. When this turn's diff produced no
         // `.prompt`-kind partial to attach them to — every `.ebnf`-guided
@@ -1392,38 +1529,47 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     /// Computes this turn's usage delta and records whatever the SDK's
-    /// transcript diff contains — the one place both of ``generate(grammar:_:)``'s
-    /// success and throwing exits go through, so the usage-delta computation
-    /// and the ``recordTranscriptDelta(grammar:since:usage:)`` call are made in
-    /// exactly one place rather than duplicated per branch.
+    /// transcript diff contains — the one place both of
+    /// ``generate(grammar:prompt:onEvent:_:)``'s success and throwing exits go
+    /// through, so the usage-delta computation and the
+    /// ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``
+    /// call are made in exactly one place rather than duplicated per branch.
+    /// Also where ``SessionEvent/turnEnded(_:)`` is emitted — once per turn,
+    /// on both exits, right after the diff (and everything it implies) has
+    /// already been recorded and reported.
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force, forwarded to
-    ///     ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)``.
+    ///     ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``.
     ///   - since: The turn's start instant, forwarded to
-    ///     ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)`` to
-    ///     stamp `ms`.
+    ///     ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``
+    ///     to stamp `ms`.
     ///   - usageBefore: The pre-turn snapshot captured immediately before
     ///     `body()` ran.
     ///   - pendingEvents: The events this turn drained from the outbox,
-    ///     forwarded to ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)``
+    ///     forwarded to ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``
     ///     to attach as persisted segments on the turn's `.prompt` entry.
+    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, forwarded
+    ///     to ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``
+    ///     and also given this turn's own ``SessionEvent/turnEnded(_:)`` once
+    ///     usage is known, or `nil` to skip event derivation entirely.
     /// - Returns: Whether the diff included a `.response`-kind entry — the
     ///   throwing path uses this to decide whether a synthetic bodyless close
     ///   is still needed; the turn's own usage delta (`nil` if the backend
     ///   cannot report usage), which the throwing path stamps onto that
     ///   synthetic close; and whether `pendingEvents` were actually attached
-    ///   to a persisted `.prompt` entry — `generate(grammar:prompt:_:)` uses
-    ///   this to decide whether they must be re-queued instead of lost.
+    ///   to a persisted `.prompt` entry — ``generate(grammar:prompt:onEvent:_:)``
+    ///   uses this to decide whether they must be re-queued instead of lost.
     private func finishTurn(
         grammar: Grammar?,
         since: Date,
         usageBefore: (input: Int, output: Int)?,
-        pendingEvents: [OperationEvent]
+        pendingEvents: [OperationEvent],
+        onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, usage: (input: Int, output: Int)?, pendingEventsAttached: Bool) {
         let usage = Self.usageDelta(before: usageBefore, after: backend.usageTokenCounts())
         let (diffIncludedResponse, pendingEventsAttached) = await recordTranscriptDelta(
-            grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents)
+            grammar: grammar, since: since, usage: usage, pendingEvents: pendingEvents, onEvent: onEvent)
         // Only a turn whose diff actually included a `.response`-kind entry
         // measured the whole transcript (generation is stateless, so that
         // turn's own delta *is* the whole transcript's size) — a turn
@@ -1433,6 +1579,14 @@ actor RoutedSessionActor: RoutedSession {
         // ``usageState``.
         if diffIncludedResponse {
             usageState = usage.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
+        }
+        // Mirrors the `tokensIn`/`tokensOut` stamping gate everywhere else in
+        // this chokepoint: emitted whenever the backend could report usage at
+        // all, regardless of `diffIncludedResponse` — a turn rejected before
+        // touching `backend` still measures a genuine (zero) delta between
+        // two real snapshots, so it still closes with a `turnEnded`.
+        if let usage {
+            onEvent?(.turnEnded(TokenUsage(tokensIn: usage.input, tokensOut: usage.output)))
         }
         return (diffIncludedResponse, usage, pendingEventsAttached)
     }
@@ -1505,10 +1659,16 @@ actor RoutedSessionActor: RoutedSession {
     ///     SDK's own live transcript is never touched. Empty means no
     ///     augmentation at all, so this method's output is byte-identical to
     ///     before this feature existed.
+    ///   - onEvent: A sink this diff's derived ``SessionEvent``s (tool
+    ///     calls/status, reasoning) are emitted to as each diff partial is
+    ///     recorded, or `nil` to skip derivation entirely — the cost of a
+    ///     `nil` sink is exactly the branch in
+    ///     ``emitSessionEvents(for:dispatchedToolCallIds:completedToolCallIds:onEvent:)``
+    ///     that returns immediately.
     /// - Returns: Whether this diff included a `.response`-kind entry — the
-    ///   throwing path in ``generate(grammar:prompt:_:)`` uses this to decide
-    ///   whether a synthetic bodyless close is still needed, so a turn whose
-    ///   SDK transcript already gained a real `.response` entry before
+    ///   throwing path in ``generate(grammar:prompt:onEvent:_:)`` uses this to
+    ///   decide whether a synthetic bodyless close is still needed, so a turn
+    ///   whose SDK transcript already gained a real `.response` entry before
     ///   failing never gets two `.response` events — and whether
     ///   `pendingEvents` (when non-empty) actually found a `.prompt`-kind
     ///   partial to attach to. The latter is `true` whenever `pendingEvents`
@@ -1522,7 +1682,8 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar?,
         since: Date?,
         usage: (input: Int, output: Int)?,
-        pendingEvents: [OperationEvent]
+        pendingEvents: [OperationEvent],
+        onEvent: ((SessionEvent) -> Void)? = nil
     ) async -> (diffIncludedResponse: Bool, pendingEventsAttached: Bool) {
         let entries = backend.transcriptEntries()
         guard entries.count >= persistedEntryCount else {
@@ -1552,6 +1713,14 @@ actor RoutedSessionActor: RoutedSession {
         let lastResponseIndex = diffPartials.lastIndex { $0.kind == .response }
         let promptIndexToAugment = pendingEvents.isEmpty ? nil : diffPartials.firstIndex { $0.kind == .prompt }
 
+        // Tool-call ids this diff has announced (`.toolCalls`) versus resolved
+        // (`.toolOutput`), in request order — consulted once the loop finishes
+        // to report any call whose output never arrived within this same
+        // diff as ``SessionEvent/toolStatus(id:status:summary:)`` `.failed`.
+        // Stay empty (and cost nothing further) when `onEvent` is `nil`.
+        var dispatchedToolCallIds: [String] = []
+        var completedToolCallIds: Set<String> = []
+
         for (index, diffPartial) in diffPartials.enumerated() {
             let isTurnClose = index == lastResponseIndex
             let stampSince = (since != nil && isTurnClose) ? since : nil
@@ -1570,10 +1739,82 @@ actor RoutedSessionActor: RoutedSession {
                     tokensOut: stampUsage?.output
                 )
             )
+            Self.emitSessionEvents(
+                for: recordedPartial,
+                dispatchedToolCallIds: &dispatchedToolCallIds,
+                completedToolCallIds: &completedToolCallIds,
+                onEvent: onEvent
+            )
+        }
+        for id in dispatchedToolCallIds where !completedToolCallIds.contains(id) {
+            onEvent?(.toolStatus(id: id, status: .failed, summary: nil))
         }
         persistedEntryCount = entries.count
         let pendingEventsAttached = pendingEvents.isEmpty || promptIndexToAugment != nil
         return (lastResponseIndex != nil, pendingEventsAttached)
+    }
+
+    /// Derives and emits the ``SessionEvent``s one recorded diff partial
+    /// implies — the translation ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``'s
+    /// diff loop applies once per partial, given the full (ungated) content
+    /// that partial carries: recording-level gating/redaction only ever
+    /// applies to what a ``TranscriptRecorder`` persists to disk, never to
+    /// what a live caller of ``RoutedSession/streamEvents(to:maxTokens:)``
+    /// observes — the same principle by which ``RoutedSession/respond(to:maxTokens:)``
+    /// already returns its full response text regardless of recording level.
+    ///
+    /// A `.toolCalls` partial yields one ``SessionEvent/toolCall(id:name:argumentsJSON:)``
+    /// plus a paired ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// ``ToolCallStatus/running`` per requested call, recording each id into
+    /// `dispatchedToolCallIds`. A `.toolOutput` partial yields one
+    /// ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// ``ToolCallStatus/completed``, carrying the tool's flattened output as
+    /// `summary`, and records its id into `completedToolCallIds` — relying on
+    /// the SDK's own invariant that a `.toolOutput` entry's id matches the
+    /// `.toolCalls` entry's call it answers. A `.reasoning` partial yields one
+    /// ``SessionEvent/reasoningDelta(_:)``. Every other kind (`.instructions`,
+    /// `.prompt`, `.response`, `.session`, `.embedding`, the legacy
+    /// `.toolCall`) yields nothing here — a `.response` partial's text is
+    /// already covered by the live ``SessionEvent/textDelta(_:)`` fragments
+    /// ``streamEventsGenerating(prompt:maxTokens:into:)`` yields during
+    /// generation, so re-emitting it here would duplicate it.
+    ///
+    /// A no-op — including no mutation of either tracking array — whenever
+    /// `onEvent` is `nil`, so this costs nothing on the ``respond(to:maxTokens:)``/
+    /// ``dispatchNextPrompt()`` paths, which never supply one.
+    ///
+    /// - Parameters:
+    ///   - partial: The diff partial just recorded.
+    ///   - dispatchedToolCallIds: Every tool-call id seen from a `.toolCalls`
+    ///     partial earlier in this same diff, in request order — appended to
+    ///     here.
+    ///   - completedToolCallIds: Every tool-call id a `.toolOutput` partial
+    ///     has already resolved earlier in this same diff — inserted into
+    ///     here.
+    ///   - onEvent: The sink to emit derived events to, or `nil` to skip
+    ///     entirely.
+    private static func emitSessionEvents(
+        for partial: TranscriptEvent.Partial,
+        dispatchedToolCallIds: inout [String],
+        completedToolCallIds: inout Set<String>,
+        onEvent: ((SessionEvent) -> Void)?
+    ) {
+        guard let onEvent, let entry = partial.entry else { return }
+        switch partial.kind {
+        case .toolCalls:
+            for call in entry.toolCalls ?? [] {
+                onEvent(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON))
+                onEvent(.toolStatus(id: call.id, status: .running, summary: nil))
+                dispatchedToolCallIds.append(call.id)
+            }
+        case .toolOutput:
+            completedToolCallIds.insert(entry.entryId)
+            onEvent(.toolStatus(id: entry.entryId, status: .completed, summary: partial.text))
+        case .reasoning:
+            onEvent(.reasoningDelta(partial.text ?? ""))
+        case .session, .instructions, .prompt, .response, .embedding, .toolCall:
+            break
+        }
     }
 
     /// Records the session's first-line `session` meta event the first time this
