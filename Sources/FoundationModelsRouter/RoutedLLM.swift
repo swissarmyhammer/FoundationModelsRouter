@@ -320,14 +320,17 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// reconstruction over the resumed session plus this handle's own
     /// recordings yields the full conversation.
     ///
-    /// This is also how a resumed session finally gets real tools: pair the
-    /// returned handle and transcript into
-    /// `LanguageModelSession(model: handle, tools: realTools, transcript: restored)`
-    /// — unlike ``restoreSessionTree(root:registry:)``, which is stuck
-    /// reconstructing through `LoadedLLMContainer.makeSession(transcript:)`
-    /// (which hardcodes `tools: []`), this handle wraps
-    /// `container.languageModel` directly, so the *caller* supplies real
-    /// tools straight to `LanguageModelSession`'s own initializer.
+    /// This is also a way for a single resumed session to get real tools by
+    /// pairing the returned handle and transcript directly into
+    /// `LanguageModelSession(model: handle, tools: realTools, transcript: restored)`:
+    /// this handle wraps `container.languageModel` directly, so the *caller*
+    /// supplies real tools straight to `LanguageModelSession`'s own
+    /// initializer, with no per-session instancing of its own. For restoring
+    /// a whole fork tree at once, prefer
+    /// ``restoreSessionTree(root:registry:tools:)`` instead, which threads
+    /// its own `tools:` parameter to every restored node — each with its own
+    /// fresh outbox and instanced tool copies — via
+    /// ``LoadedLLMContainer/makeSession(transcript:tools:)``.
     ///
     /// - Precondition: The owning ``LanguageModelProfile`` must still be
     ///   alive when this is called — mirrors ``makeLanguageModel()``'s own

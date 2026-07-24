@@ -78,6 +78,27 @@ struct SessionTreeRestorationIntegrationTests {
         func embed(texts: [String]) async throws -> [[Float]] { [] }
     }
 
+    // MARK: - Test tool (task jkdae4b: tools threaded through restoreSessionTree)
+
+    /// The scripted tool argument schema the turn's prompt reliably drives —
+    /// mirrors ``RecordingHandleIntegrationTests/EchoArguments``.
+    @Generable
+    struct EchoArguments {
+        let text: String
+    }
+
+    /// A real `FoundationModels.Tool` conformer, so the SDK's own machinery
+    /// invokes it once it observes a `.toolCalls` entry naming it — mirrors
+    /// ``RecordingHandleIntegrationTests/EchoTool``.
+    private struct EchoTool: FoundationModels.Tool {
+        let name = "echo"
+        let description = "Echoes the given text back verbatim."
+
+        func call(arguments: EchoArguments) async throws -> String {
+            "echoed: \(arguments.text)"
+        }
+    }
+
     /// Loads the tiny model directly through a real ``LiveModelLoader`` and
     /// returns its concrete ``MLXFoundationModelsContainer``. Called once per
     /// simulated "process" — the second call models a fresh process reloading
@@ -331,6 +352,63 @@ struct SessionTreeRestorationIntegrationTests {
             maxTokens: 32
         )
         #expect(reply.contains("42"))
+
+        await container2.model.evict()
+        }
+    }
+
+    // MARK: - Tools threaded through restoration (task jkdae4b)
+
+    /// Task jkdae4b: proves ``RoutedModel/restoreSessionTree(root:registry:tools:)``
+    /// gives a restored session real, live tool-calling — not the fixed
+    /// `tools: []` a restore used to hardcode all the way down through
+    /// ``LoadedLLMContainer/makeSession(transcript:)``. A root session is
+    /// recorded with no tools, torn down, then restored in a fresh `Router`
+    /// with a real ``EchoTool`` passed via `tools:`; a new turn instructing
+    /// the model to call it is recorded with `.toolCalls`/`.toolOutput`
+    /// entries and a response reflecting the tool's own output — proof the
+    /// restored `LanguageModelSession` was actually built with the tool
+    /// threaded to it, not silently ignoring it.
+    @Test("restoreSessionTree(tools:) gives a restored session real tool-calling: a new turn on the restored root calls the echo tool")
+    func restoredSessionCallsThreadedTool() async throws {
+        try await GatedSuiteSerialGate.shared.withPermit {
+        let cacheDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionTreeRestorationIntegrationTests-tools-cache-\(UUID().uuidString)", isDirectory: true)
+        let recordingsDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionTreeRestorationIntegrationTests-tools-recordings-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        // Record a root session with no tools at all, then discard everything
+        // that built it, mirroring `driveOriginalTree`'s teardown discipline.
+        let (routerId, rootId): (ULID, ULID) = try await {
+            let container = try await makeContainer()
+            let (router, profile) = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+            let root = profile.standard.makeSession()
+            _ = try await root.respond(to: "Say hi in one word.", maxTokens: 32)
+            await container.model.evict()
+            return (router.id, root.id)
+        }()
+
+        // A fresh process continuing the same recording root, restoring with
+        // a real tool this time — the seam that used to hardcode `tools: []`.
+        let container2 = try await makeContainer()
+        let (_, profile2) = buildProfile(
+            id: routerId, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let restored = try await profile2.standard.restoreSessionTree(root: rootId, tools: [EchoTool()])
+
+        let reply = try await restored.root.respond(
+            to: "Call the echo tool with the text 'ping', then report its result.",
+            maxTokens: 64
+        )
+        #expect(!reply.isEmpty)
+
+        let routerDirectory = recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
+        let events = try Self.recordedEvents(in: routerDirectory.appendingPathComponent(rootId.description, isDirectory: true))
+        #expect(events.contains { $0.kind == .toolCalls })
+        #expect(events.contains { $0.kind == .toolOutput })
 
         await container2.model.evict()
         }

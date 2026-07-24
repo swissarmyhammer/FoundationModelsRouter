@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Operations
 
 /// A failure restoring a session tree from disk via
 /// ``RoutedModel/restoreSessionTree(root:registry:)``.
@@ -169,6 +170,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     need to rebuild. Defaults to ``CustomSegmentRegistry/routerDefault``
     ///     (pre-seeded with ``CompactionSegment``), so a tree containing a
     ///     compacted session restores with no caller setup.
+    ///   - tools: The tools every restored node's model can call, applied
+    ///     uniformly across the whole tree — there is no per-node recorded
+    ///     tool list to rehydrate (a sidecar records slot/model/instructions/
+    ///     grammar, never tool definitions), so this is the caller's chance to
+    ///     hand the restored tree the same live tool package the original
+    ///     conversation ran with. Each restored node gets its own fresh
+    ///     ``RoutedSession/outbox``, with every ``EventEmittingTool`` among
+    ///     `tools` replaced by its own per-node ``EventEmittingTool/connecting(_:)``
+    ///     copy — exactly the per-session instancing
+    ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
+    ///     performs for a fresh session — so a node's tool never posts to a
+    ///     sibling or ancestor's outbox. Defaults to no tools.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for every documented
     ///   restoration-specific failure; ``TranscriptTreeError`` /
@@ -177,7 +190,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   ``TranscriptTree/effectiveTranscript(forSession:registry:)`` throws.
     public func restoreSessionTree(
         root rootId: ULID,
-        registry: CustomSegmentRegistry = .routerDefault
+        registry: CustomSegmentRegistry = .routerDefault,
+        tools: [any Tool] = []
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
         // `makeSession(instructions:workingDirectory:)`'s own invariant: a
@@ -221,7 +235,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             }
 
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
-            let backend = routedLLM.container.makeSession(transcript: transcript)
+
+            // Fresh per-node outbox plus per-session tool instancing — the
+            // identical pure map ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
+            // performs for a from-scratch session, applied here to every
+            // restored node so an `EventEmittingTool` posts to *this* node's
+            // own outbox rather than a sibling or ancestor's; a non-conforming
+            // tool passes through unchanged.
+            let outbox = SessionOutbox()
+            let instancedTools = tools.map { ($0 as? any EventEmittingTool)?.connecting(outbox) ?? $0 }
+            let backend = routedLLM.container.makeSession(transcript: transcript, tools: instancedTools)
             // ``RoutedSession/contextFill``'s restored numerator
             // (compaction_plan.md §1.5, checkpoint-aware restore
             // precedence): the newest stamped `.response` event's usage
@@ -265,13 +288,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 recorder: routedLLM.recorder,
                 instructions: node.sidecar.instructions,
                 grammar: grammar,
-                // Restoration has no live tool list to thread — mirrors
-                // `LoadedLLMContainer.makeSession(transcript:)`'s own
-                // hardcoded `tools: []` a few lines above; see its doc
-                // comment ("this handle wraps `container.languageModel`
-                // directly, so the *caller* supplies real tools" for the
-                // resuming-handle path that actually can).
-                tools: [],
+                // The per-node instanced tool list threaded to `backend`
+                // above; `originalTools` retains the true, un-instanced
+                // originals (this call's own `tools` parameter) so a later
+                // `fork(workingDirectory:)` off this restored node can still
+                // build its own fork-then-connect composed tool list, exactly
+                // as it would from a freshly vended root session.
+                tools: instancedTools,
+                originalTools: tools,
+                outbox: outbox,
                 serialGate: routedLLM.serialGate,
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,

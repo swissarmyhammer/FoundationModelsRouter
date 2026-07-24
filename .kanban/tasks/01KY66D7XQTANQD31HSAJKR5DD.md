@@ -20,8 +20,8 @@ comments:
   id: 01ky9e1c2vs9bq2fc7rymx4p79
   text: 'Addressed the 2026-07-24 01:35 review finding on replace(_:prompt:)''s unlabeled first arg. Investigated per instructions rather than blindly applying the suggested fix: confirmed RoutedSession.enqueue(prompt:)/cancel(_:)/replace(_:prompt:) are siblings designed together in task ndv3sc1 (explicitly documented there as "cancel(id) / replace(id, prompt)" pair), and a codebase-wide grep for `public func \w+\(_ \w+:` confirms an unlabeled-first-arg verb+direct-object convention is widespread (append(_:to:), sync(_:usage:), post(_:), save(_:), apply(_:), session(_:), noteCompaction(_:), cancel(_:)). replace(_:prompt:) matches this convention exactly (same shape as append(_:to:)/sync(_:usage:)) and is not a make*-factory case, so it does not match the one finding from the earlier k36zy10 batch that was genuinely fixed. Verdict: no code change, finding checked off with reasoning recorded in the task description. Re-verified swift build / swift build --build-tests / swift test all green (506 tests, 0 failures, no new warnings) — pure no-op as expected. Left in doing for /review.'
   timestamp: 2026-07-24T06:47:06.587165+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: d580
 title: Dedupe generate() calls in RoutedSession.respond(to:maxTokens:)
 ---
 ## What

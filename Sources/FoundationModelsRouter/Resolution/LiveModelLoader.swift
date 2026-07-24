@@ -86,10 +86,27 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
 
     /// Manufactures a live session backend seeded from an existing transcript.
     ///
+    /// Delegates to ``makeSession(transcript:tools:)`` with no tools — mirrors
+    /// how ``makeSession(instructions:)`` delegates to
+    /// ``makeSession(instructions:tools:)``.
+    ///
+    /// - Parameter transcript: The transcript to seed the new session from.
+    /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
+    ///   ``RoutedSession`` drives for its lifetime.
+    func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
+        makeSession(transcript: transcript, tools: [])
+    }
+
+    /// Manufactures a live session backend seeded from an existing transcript,
+    /// with `tools` threaded to the underlying `LanguageModelSession` so the
+    /// model can call them — the seam a restored session tree
+    /// (``RoutedModel/restoreSessionTree(root:registry:tools:)``) needs to
+    /// give a restored node real, live tool-calling instead of `tools: []`.
+    ///
     /// Builds the new `LanguageModelSession` directly over `transcript` via
     /// `LanguageModelSession(model:tools:transcript:)` — the identical public
-    /// initializer ``MLXFoundationModelsSessionBackend/makeFork()`` calls to
-    /// seed a forked session from a parent's accumulated transcript. Unlike a
+    /// initializer ``MLXFoundationModelsSessionBackend/makeFork(tools:)`` calls
+    /// to seed a forked session from a parent's accumulated transcript. Unlike a
     /// fork, this factory has no live parent backend to copy `instructions`
     /// from (`transcript` may have come from disk, long after any originating
     /// session existed), so the new backend's retained ``instructions`` are
@@ -98,15 +115,21 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// `LanguageModelSession` initializer that accepts both `transcript:` and
     /// `instructions:` together.
     ///
-    /// - Parameter transcript: The transcript to seed the new session from.
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the new session from.
+    ///   - tools: The tools the model can call during this session.
     /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
     ///   ``RoutedSession`` drives for its lifetime.
-    func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
-        let session = LanguageModelSession(model: model, tools: [], transcript: transcript)
+    func makeSession(
+        transcript: FoundationModels.Transcript,
+        tools: [any FoundationModels.Tool]
+    ) -> any LanguageModelSessionBackend {
+        let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
         return MLXFoundationModelsSessionBackend(
             session: session,
             model: model,
-            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript)
+            instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+            tools: tools
         )
     }
 }

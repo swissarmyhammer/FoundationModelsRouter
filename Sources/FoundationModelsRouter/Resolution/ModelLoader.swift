@@ -108,6 +108,32 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     ///   lifetime.
     func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
 
+    /// Manufactures a new live session backend seeded from an existing
+    /// transcript, with `tools` threaded to the underlying `LanguageModelSession`
+    /// so the model can call them.
+    ///
+    /// This is the seam ``RoutedModel/restoreSessionTree(root:registry:tools:)``
+    /// threads its own per-restored-node instanced tool list through, mirroring
+    /// how ``makeSession(instructions:tools:)`` threads tools to a from-scratch
+    /// session — a restored session tree gets real, live tool-calling instead
+    /// of the fixed `tools: []` a restore used to hardcode.
+    ///
+    /// Defaulted (see the extension below) to ignore `tools` and forward to
+    /// ``makeSession(transcript:)`` — so the many stub containers across the
+    /// unit suite that never pass tools need no changes at all. Only a
+    /// container that actually constructs a real `LanguageModelSession` (the
+    /// live `MLXFoundationModelsContainer`, see
+    /// `Resolution/LiveModelLoader.swift`) or a test that specifically
+    /// exercises restored-tree tool wiring needs to override this.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the new session from.
+    ///   - tools: The tools the model can call during this session.
+    /// - Returns: A new backend whose accumulated history begins with
+    ///   `transcript`'s entries, with `tools` threaded to the underlying
+    ///   session.
+    func makeSession(transcript: FoundationModels.Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend
+
     /// The raw `FoundationModels.LanguageModel` this container wraps — the
     /// seam ``RoutedModel/makeLanguageModel()`` wraps in a
     /// ``RecordingLanguageModel`` passthrough handle so any caller can build
@@ -138,6 +164,13 @@ extension LoadedLLMContainer {
     /// containers need to override this default.
     public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions)
+    }
+
+    /// Ignores `tools` and forwards to ``makeSession(transcript:)``: see
+    /// ``makeSession(transcript:tools:)``'s doc comment for which containers
+    /// need to override this default.
+    public func makeSession(transcript: FoundationModels.Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
+        makeSession(transcript: transcript)
     }
 }
 
