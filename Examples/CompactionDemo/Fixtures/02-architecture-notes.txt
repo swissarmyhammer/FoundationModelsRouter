@@ -1,0 +1,13 @@
+Architecture notes for Nightjar: the archive is split into per-outpost
+shards, each stored as a delimited text file with a fixed-width header
+naming the outpost, its coordinates, and the observer's name for that
+decade. Shards are concatenated chronologically before indexing, so the
+ingestion step must sort by the header's decade field before it does
+anything else — a shard arriving out of order silently produces a
+misordered index with no error raised.
+
+The index itself is a single append-only file per outpost, rebuilt from
+scratch on every ingestion run rather than updated incrementally, since
+the archive's static nature (see the project overview) means incremental
+updates would add complexity for no real benefit. Reply with one short
+sentence acknowledging you have read this.

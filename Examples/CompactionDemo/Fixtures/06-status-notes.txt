@@ -1,0 +1,11 @@
+Status notes for Nightjar: three of the six outposts have been fully
+indexed and validated against their source shards. The remaining three
+await a second ingestion pass to resolve the missing wind-direction dashes
+described in the data-quality notes, since the first pass's parser
+predates that fix and was run before the dash convention was understood.
+
+No archive-wide statistics should be treated as final until all six
+outposts have passed the second ingestion pass — the three already-indexed
+outposts are believed correct on their own, but any statistic that mixes
+outposts across the two ingestion passes is provisional. Reply with one
+short sentence acknowledging you have read this.

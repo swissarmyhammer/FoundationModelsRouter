@@ -1,0 +1,12 @@
+Open questions for Nightjar: whether to normalize pre-1875 pressure
+readings, which used a different reference unit than every later entry,
+before computing archive-wide statistics — normalizing changes historical
+values that some downstream consumers may expect to see verbatim, so this
+is still undecided rather than defaulted either way.
+
+A second open question: whether the six outposts should be weighted
+equally or weighted by their number of surviving entries when computing
+archive-wide averages, since two outposts lost several years of records to
+a fire and would otherwise pull the equally-weighted average toward the
+better-documented four. Reply with one short sentence acknowledging you
+have read this.

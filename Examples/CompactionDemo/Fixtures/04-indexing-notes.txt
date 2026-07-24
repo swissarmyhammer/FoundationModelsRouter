@@ -1,0 +1,12 @@
+Indexing notes for Nightjar: the search index keys on outpost name and
+decade, with a secondary index on temperature range so a query like "cold
+readings at any outpost in the 1880s" resolves without a full scan of the
+archive. The secondary index is rebuilt lazily, the first time a
+range-style query touches a decade that has not been range-indexed yet,
+rather than eagerly at ingestion time — eager rebuilding was tried first
+and dropped because most decades are never queried by range at all.
+
+Point queries (a single outpost, a single decade) never touch the
+secondary index and are always served directly from the primary
+outpost/decade key, so the lazy-rebuild trade-off only affects range
+queries. Reply with one short sentence acknowledging you have read this.

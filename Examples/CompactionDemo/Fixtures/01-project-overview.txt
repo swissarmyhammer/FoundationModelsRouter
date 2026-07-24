@@ -1,0 +1,15 @@
+Project overview: this project's internal code name is Nightjar. Remember
+that exact name; you will be asked to recall it later without re-reading
+anything.
+
+Nightjar catalogs a fictional archive of nineteenth-century weather station
+logs from six remote outposts, each reporting barometric pressure, wind
+direction, and temperature three times daily across eleven consecutive
+years. The goal is a searchable index over the whole archive, plus a small
+set of derived statistics (monthly averages, extreme-value flags, and
+missing-data reports) per outpost.
+
+The archive itself is static and never updated once ingested — Nightjar
+only ever reads it, never appends to it — so the indexing pipeline can
+assume a fixed input size once ingestion completes. Reply with one short
+sentence acknowledging you have read this.

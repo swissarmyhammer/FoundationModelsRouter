@@ -1,0 +1,14 @@
+Data-quality notes for Nightjar: roughly four percent of entries are
+missing a wind-direction reading. A missing reading is always recorded as
+a bare dash rather than an omitted field, so parsers must treat a lone
+dash as an explicit missing value rather than a parse failure — treating
+it as a failure would reject otherwise-valid rows and silently shrink the
+archive.
+
+A smaller number of entries (well under one percent) carry a temperature
+reading with an obviously transposed decimal point, identified by being
+more than five standard deviations from that outpost's seasonal mean;
+these are flagged for manual review rather than auto-corrected, since
+auto-correcting a transposed decimal can silently produce a wrong value
+that looks plausible. Reply with one short sentence acknowledging you have
+read this.

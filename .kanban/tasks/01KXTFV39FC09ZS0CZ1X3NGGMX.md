@@ -65,8 +65,8 @@ comments:
 depends_on:
 - 01KXTFR8MQDD7MF8J1NVCHKNHC
 - 01KXTFS4FNT1P5F889D1PEQ9N7
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: d180
 title: 'Checkpoint-aware reconstruction: restore view, fullHistory view, sidecar count'
 ---
 ## What
