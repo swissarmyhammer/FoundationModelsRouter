@@ -32,36 +32,53 @@ import MLXLMCommon
 /// there is no principled reason for guided decode to get a different ceiling.
 private let defaultMaxTokens = 8192
 
-/// Builds a session backend directly from a transcript, deriving instructions
-/// from the transcript's own leading `.instructions` entry.
+/// Builds a session backend directly from a transcript.
 ///
-/// Shared by ``MLXFoundationModelsContainer/makeSession(transcript:tools:)`` and
-/// ``MLXFoundationModelsSessionBackend/replacingTranscript(_:)`` — both build a
-/// fresh `LanguageModelSession` directly over an existing transcript and wrap it
-/// in a new ``MLXFoundationModelsSessionBackend``, deriving that backend's
-/// ``MLXFoundationModelsSessionBackend/instructions`` the same way (there is no
-/// live parent backend to copy them from in either case). The two call sites
-/// differ only in where `tools` comes from — a caller-supplied parameter for the
-/// container's factory, this backend's own retained tools for
-/// ``replacingTranscript(_:)`` — so that stays a parameter here instead of being
-/// baked into this helper.
+/// Shared by ``MLXFoundationModelsContainer/makeSession(transcript:tools:)``,
+/// ``MLXFoundationModelsSessionBackend/replacingTranscript(_:)``, and
+/// ``MLXFoundationModelsSessionBackend/makeFork(tools:)`` — all three build a
+/// fresh `LanguageModelSession` directly over an existing transcript and wrap
+/// it in a new ``MLXFoundationModelsSessionBackend``.
+///
+/// The three differ only in where the new backend's
+/// ``MLXFoundationModelsSessionBackend/instructions`` comes from: the first
+/// two have no live parent backend to copy them from (`transcript` may have
+/// come from disk, long after any originating session existed), so they
+/// derive instructions from `transcript`'s own leading `.instructions` entry
+/// — the only place a transcript carries them forward, since there is no
+/// `LanguageModelSession` initializer that accepts both `transcript:` and
+/// `instructions:` together. `makeFork(tools:)` *does* have a live parent
+/// backend, so it threads that backend's own retained instructions through
+/// verbatim instead of re-deriving them.
+///
+/// `instructions` captures that choice as a doubly-optional parameter: the
+/// outer optional selects the source (`nil`, the default, means "derive from
+/// `transcript`"; any non-`nil` value — including `.some(nil)` — means "use
+/// this verbatim, don't re-derive"), and the inner optional is the
+/// instructions text itself, which is legitimately `nil` when a session
+/// (forked or otherwise) carries none. This is the same "leave unchanged
+/// vs. replace with `nil`" idiom ``TranscriptEvent/Partial/with(text:tokensIn:tokensOut:entry:)``
+/// already uses for the same reason.
 ///
 /// - Parameters:
 ///   - model: The `LanguageModel` conformance to build the new session over.
 ///   - transcript: The transcript to seed the new session from.
 ///   - tools: The tools the model can call during this session.
+///   - instructions: The new backend's instructions, or `nil` (the default)
+///     to derive them from `transcript`'s own leading `.instructions` entry.
 /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
 ///   ``RoutedSession`` drives for its lifetime.
 private func makeSessionBackend(
     model: MLXLanguageModel,
     transcript: FoundationModels.Transcript,
-    tools: [any FoundationModels.Tool]
+    tools: [any FoundationModels.Tool],
+    instructions: String?? = nil
 ) -> MLXFoundationModelsSessionBackend {
     let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
     return MLXFoundationModelsSessionBackend(
         session: session,
         model: model,
-        instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+        instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
         tools: tools
     )
 }
@@ -401,10 +418,14 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// forward whatever instances this backend was built with (which would
     /// still be wired to an ancestor's outbox, defeating the fork-then-connect
     /// composition's whole point for any tool the model actually invokes).
+    ///
+    /// Delegates to ``makeSessionBackend(model:transcript:tools:instructions:)``,
+    /// passing ``instructions`` explicitly so the forked backend reports this
+    /// backend's own instructions verbatim rather than re-deriving them from
+    /// the (identical, at fork time) transcript.
     func makeFork(tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
-        let forkedSession = LanguageModelSession(model: model, tools: tools, transcript: liveSession.transcript)
-        return MLXFoundationModelsSessionBackend(
-            session: forkedSession, model: model, instructions: instructions, tools: tools)
+        makeSessionBackend(
+            model: model, transcript: liveSession.transcript, tools: tools, instructions: instructions)
     }
 
     /// Vends a fresh backend over ``model``, seeded from `transcript` instead
