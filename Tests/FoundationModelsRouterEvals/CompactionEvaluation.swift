@@ -219,6 +219,11 @@ struct CompactionEvaluation: Evaluation {
         )
     }
 
+    /// Rationale used by both mechanical evaluators below when a sample
+    /// unexpectedly carries no `expected` value — extracted so the two
+    /// copies can't drift out of sync.
+    private static let sampleCarriedNoExpectedValueMessage = "sample carried no expected value"
+
     /// The evaluators this evaluation registers: mechanical `FactRetention`
     /// and `UnderTarget` metrics computed directly from each sample/subject
     /// pair, plus a `ModelJudgeEvaluator` scoring the
@@ -227,7 +232,7 @@ struct CompactionEvaluation: Evaluation {
     var evaluators: Evaluators {
         Evaluator<Sample> { sample, subject in
             guard let expected = sample.expected else {
-                return CompactionEvalMetric.factRetention.failing(rationale: "sample carried no expected value")
+                return CompactionEvalMetric.factRetention.failing(rationale: Self.sampleCarriedNoExpectedValueMessage)
             }
             // Checks the answer for the short key phrase, never the whole
             // `plantedFact` sentence: a short, targeted answer can never
@@ -241,7 +246,7 @@ struct CompactionEvaluation: Evaluation {
         }
         Evaluator<Sample> { sample, subject in
             guard let expected = sample.expected else {
-                return CompactionEvalMetric.underTarget.failing(rationale: "sample carried no expected value")
+                return CompactionEvalMetric.underTarget.failing(rationale: Self.sampleCarriedNoExpectedValueMessage)
             }
             return subject.value.tokensAfter <= expected.targetTokens
                 ? CompactionEvalMetric.underTarget.passing()
