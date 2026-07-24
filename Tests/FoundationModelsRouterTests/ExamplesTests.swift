@@ -40,7 +40,10 @@ struct ExamplesTests {
     private enum ExampleHarness {
         /// A machine probe reporting a fixed, generous budget so every authored
         /// candidate fits and the biggest-preference model wins each slot.
-        private struct StubProbe: MachineProbe {
+        ///
+        /// `fileprivate` (not `private`) so ``CompactionExampleHarness`` can
+        /// reuse it directly rather than redefining an identical stub.
+        fileprivate struct StubProbe: MachineProbe {
             let chip: String
             let totalRAM: Int64
             let recommendedMaxWorkingSetSize: Int64
@@ -48,7 +51,10 @@ struct ExamplesTests {
 
         /// A metadata source returning the same tiny canned repo metadata for
         /// every candidate, so sizing is deterministic and offline.
-        private struct StubMetadataSource: MetadataSource {
+        ///
+        /// `fileprivate` so ``CompactionExampleHarness`` can reuse it
+        /// directly rather than redefining an identical stub.
+        fileprivate struct StubMetadataSource: MetadataSource {
             let raw: RawRepoMetadata
             func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
                 raw
@@ -68,7 +74,11 @@ struct ExamplesTests {
         }
 
         /// A loaded embedding container that returns fixed-length vectors.
-        private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
+        ///
+        /// `fileprivate` so ``CompactionExampleHarness`` can reuse it
+        /// directly (passing its own `dimension`) rather than redefining a
+        /// near-duplicate with a hardcoded dimension.
+        fileprivate struct StubEmbeddingContainer: LoadedEmbeddingContainer {
             let dimension: Int
             func embed(texts: [String]) async throws -> [[Float]] {
                 texts.map { _ in [Float](repeating: 0, count: dimension) }
@@ -106,7 +116,10 @@ struct ExamplesTests {
 
         /// Tiny canned repo metadata: a 2-layer attention shape and a single
         /// 10 MB weight shard, so every candidate's footprint is negligible.
-        private static var rawMetadata: RawRepoMetadata {
+        ///
+        /// `fileprivate` so ``CompactionExampleHarness`` can reuse it
+        /// directly rather than redefining an identical copy.
+        fileprivate static var rawMetadata: RawRepoMetadata {
             let configJSON = Data(
                 """
                 {
@@ -501,43 +514,11 @@ struct ExamplesTests {
     /// ``ExampleHarness``'s fixed-budget resolution machinery, which builds a
     /// fresh canned backend per slot with no seam for a test to hold onto.
     private enum CompactionExampleHarness {
-        private struct StubProbe: MachineProbe {
-            let chip: String
-            let totalRAM: Int64
-            let recommendedMaxWorkingSetSize: Int64
-        }
-
-        private struct StubMetadataSource: MetadataSource {
-            let raw: RawRepoMetadata
-            func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata { raw }
-        }
-
-        private static var rawMetadata: RawRepoMetadata {
-            let configJSON = Data(
-                """
-                {
-                    "num_hidden_layers": 2,
-                    "num_attention_heads": 8,
-                    "num_key_value_heads": 2,
-                    "head_dim": 16,
-                    "hidden_size": 128
-                }
-                """.utf8)
-            let treeJSON = Data(
-                """
-                [
-                    {"type": "file", "path": "model.safetensors", "size": 10000000}
-                ]
-                """.utf8)
-            return RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
-        }
-
-        private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
-            let dimension: Int = 8
-            func embed(texts: [String]) async throws -> [[Float]] {
-                texts.map { _ in [Float](repeating: 0, count: dimension) }
-            }
-        }
+        /// The embedding dimension vended to `StubModelLoader.loadEmbedder`
+        /// below — neither example touches embeddings, so any fixed value
+        /// works; reused via ``ExampleHarness/StubEmbeddingContainer``
+        /// instead of a hardcoded near-duplicate.
+        private static let embeddingDimension = 8
 
         /// Vends the same `backend` instance for every slot — both examples
         /// below only ever open one session over `profile.standard`, and
@@ -568,7 +549,7 @@ struct ExamplesTests {
                 reporting: @escaping @Sendable (DownloadProgress) -> Void
             ) async throws -> any LoadedEmbeddingContainer {
                 reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-                return StubEmbeddingContainer()
+                return ExampleHarness.StubEmbeddingContainer(dimension: embeddingDimension)
             }
 
             func preload(container: any LoadedModelContainer) async throws {}
@@ -585,8 +566,9 @@ struct ExamplesTests {
             let router = Router(
                 cacheDir: cacheDir,
                 recorder: InMemoryRecorder(),
-                probe: StubProbe(chip: "Apple Example", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
-                metadataSource: StubMetadataSource(raw: rawMetadata),
+                probe: ExampleHarness.StubProbe(
+                    chip: "Apple Example", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+                metadataSource: ExampleHarness.StubMetadataSource(raw: ExampleHarness.rawMetadata),
                 loader: StubModelLoader(backend: backend)
             )
             let profile = try await router.resolve(
@@ -657,6 +639,15 @@ struct ExamplesTests {
     /// folding changed something; a no-op fold (already under target) never
     /// does. Shared across every backend a fold produces, since
     /// `replacingTranscript(_:)` returns a fresh instance each time.
+    ///
+    /// `@unchecked Sendable` invariant: `recordReplace()` is only ever called
+    /// from inside `RoutedSessionActor`'s isolated methods (`respond`,
+    /// `compact`, …), which serialize every call onto the actor's own
+    /// executor — so mutations of `replaceCount` never race with each other.
+    /// The test's own read of `replaceCount` happens only after `await`ing
+    /// the actor call that could have mutated it, and Swift's async/await
+    /// suspension establishes the happens-before edge that makes that final
+    /// read safe without a lock.
     private final class ReplaceSpy: @unchecked Sendable {
         private(set) var replaceCount = 0
         func recordReplace() { replaceCount += 1 }
@@ -672,6 +663,15 @@ struct ExamplesTests {
     /// `compact()` call the reactive pattern drives has real content to fold
     /// (rather than a no-op on an empty transcript) — see
     /// ``seedEntries(turnCount:responseText:)``.
+    ///
+    /// `@unchecked Sendable` invariant: `entries` and `hasOverflowed` are
+    /// mutated only inside `respond(to:maxTokens:)`, which — like every
+    /// other protocol method here — is only ever invoked from within
+    /// `RoutedSessionActor`'s isolated methods, so calls are serialized onto
+    /// the actor's own executor and never race. Each fork/replace (`makeFork`,
+    /// `replacingTranscript(_:)`) hands off to a *new* instance rather than
+    /// sharing mutable state across concurrent owners, so there is never more
+    /// than one execution context mutating a given instance at a time.
     private final class OverflowOnceBackend: LanguageModelSessionBackend, @unchecked Sendable {
         let responseText: String
         let replaceSpy: ReplaceSpy
