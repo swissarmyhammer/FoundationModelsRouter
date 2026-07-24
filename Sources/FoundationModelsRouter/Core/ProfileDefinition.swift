@@ -38,10 +38,12 @@ public struct ProfileDefinition: Sendable, Codable {
 
     /// The working context size in tokens, or `nil` to derive it at resolve
     /// time from each candidate's native max context (``RepoMetadata/nativeMaxContext``)
-    /// instead of a caller-supplied figure. Scales the KV-cache footprint and
-    /// determines candidate fit once resolved to a concrete value. Defaults to
-    /// ``defaultContext`` (8192) when the initializer's `context` parameter is
-    /// omitted; pass `nil` explicitly to opt into derivation.
+    /// instead of a caller-supplied figure.
+    ///
+    /// Scales the KV-cache footprint and determines candidate fit once
+    /// resolved to a concrete value. Defaults to ``defaultContext`` (8192)
+    /// when the initializer's `context` parameter is omitted; pass `nil`
+    /// explicitly to opt into derivation.
     public var context: Int?
 
     /// Creates a profile definition.
@@ -73,9 +75,10 @@ public struct ProfileDefinition: Sendable, Codable {
 
     /// The per-slot candidate lists keyed by ``ModelSlot``, exposing the slot
     /// candidates as data so callers resolve a slot's candidates by lookup
-    /// rather than by branching over the slot. The mapping is total — it
-    /// contains an entry for every ``ModelSlot`` case — and each list preserves
-    /// the author's preference order.
+    /// rather than by branching over the slot.
+    ///
+    /// The mapping is total — it contains an entry for every ``ModelSlot``
+    /// case — and each list preserves the author's preference order.
     public var candidatesBySlot: [ModelSlot: [ModelRef]] {
         [.standard: standard, .flash: flash, .embedding: embedding]
     }
