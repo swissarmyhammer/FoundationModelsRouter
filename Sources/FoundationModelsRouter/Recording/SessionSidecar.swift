@@ -166,6 +166,21 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// otherwise reassemble its own composition-layer state (config,
     /// AGENTS.md instructions, confinement) against the directory the live
     /// session actually ran with.
+    ///
+    /// **Backward compatibility.** This field postdates every other one on
+    /// this type, so a recording made before it existed has no
+    /// `workingDirectory` key in its on-disk `session.json` at all. Rather
+    /// than make this `Optional` — which would push a `nil` case onto every
+    /// reader (``RoutedModel/restoreSessionTree(root:registry:)`` assigns it
+    /// straight into ``RoutedSessionActor``'s own non-optional
+    /// `workingDirectory`, with no sensible way to run a session with no
+    /// working directory at all) — this type's custom `init(from:)`
+    /// defaults an absent key to the session's own recording directory (see
+    /// ``sidecarDirectoryUserInfoKey``): the exact default a live session
+    /// used for `workingDirectory` before this field existed to override it
+    /// (see ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``),
+    /// so an old recording restores with the same working directory its live
+    /// session actually ran with.
     public let workingDirectory: URL
 
     /// The parent session and tool-call correlation this session was spawned
@@ -230,6 +245,60 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.compactionCount = compactionCount
     }
 
+    /// The key ``read(in:)`` sets on its `JSONDecoder.userInfo` to the
+    /// session's own recording directory before decoding, so this type's
+    /// custom `init(from:)` has a fallback ready when the decoded bytes
+    /// predate ``workingDirectory`` and carry no such key at all (see that
+    /// field's "Backward compatibility" doc comment).
+    static let sidecarDirectoryUserInfoKey = CodingUserInfoKey(
+        rawValue: "SessionSidecar.sidecarDirectory")!
+
+    private enum CodingKeys: String, CodingKey {
+        case slot, model, context, instructions, grammar, recordingLevel, forkedAtEntryCount,
+            profile, compactionCount, workingDirectory, agentSpawn
+    }
+
+    /// Decodes a sidecar, defaulting an absent ``workingDirectory`` key to
+    /// the directory named by ``sidecarDirectoryUserInfoKey`` in the
+    /// decoder's `userInfo` — the fallback a pre-task-6j4bven recording (one
+    /// written before this field existed) needs, since its `session.json`
+    /// carries no such key at all. Every other field decodes exactly as
+    /// synthesis would; only ``workingDirectory`` needs this custom handling.
+    ///
+    /// - Parameter decoder: The decoder, whose `userInfo` supplies the
+    ///   fallback directory when ``read(in:)`` set one.
+    /// - Throws: Whatever decoding any other field throws, or
+    ///   `DecodingError.keyNotFound` when `workingDirectory` is absent and no
+    ///   fallback directory was supplied — a sidecar decoded directly, rather
+    ///   than through ``read(in:)``, has no directory to fall back to.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        slot = try container.decode(ModelSlot.self, forKey: .slot)
+        model = try container.decode(ModelRef.self, forKey: .model)
+        context = try container.decode(Int.self, forKey: .context)
+        instructions = try container.decodeIfPresent(String.self, forKey: .instructions)
+        grammar = try container.decodeIfPresent(String.self, forKey: .grammar)
+        recordingLevel = try container.decode(RecordingLevel.self, forKey: .recordingLevel)
+        forkedAtEntryCount = try container.decodeIfPresent(Int.self, forKey: .forkedAtEntryCount)
+        profile = try container.decodeIfPresent(ResolvedProfile.self, forKey: .profile)
+        compactionCount = try container.decodeIfPresent(Int.self, forKey: .compactionCount)
+        agentSpawn = try container.decodeIfPresent(AgentSpawn.self, forKey: .agentSpawn)
+        if let recorded = try container.decodeIfPresent(URL.self, forKey: .workingDirectory) {
+            workingDirectory = recorded
+        } else if let fallback = decoder.userInfo[Self.sidecarDirectoryUserInfoKey] as? URL {
+            workingDirectory = fallback
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.workingDirectory,
+                DecodingError.Context(
+                    codingPath: container.codingPath,
+                    debugDescription:
+                        "workingDirectory is missing and no fallback directory was supplied via decoder.userInfo[SessionSidecar.sidecarDirectoryUserInfoKey]"
+                )
+            )
+        }
+    }
+
     /// Returns a copy with ``compactionCount`` replaced by `count`, every
     /// other field unchanged.
     ///
@@ -286,6 +355,12 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     /// Decodes the sidecar in a session's own recording directory.
     ///
+    /// Sets ``sidecarDirectoryUserInfoKey`` to `directory` on the decoder
+    /// before decoding, so a pre-task-6j4bven recording with no
+    /// `workingDirectory` key at all still decodes — falling back to this
+    /// same `directory`, the default a live session used for its working
+    /// directory before that field existed to override it.
+    ///
     /// - Parameter directory: The session's recording directory.
     /// - Returns: The decoded sidecar, or `nil` when `directory` holds no
     ///   `session.json` at all — the caller decides whether an absent sidecar is
@@ -295,7 +370,9 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     public static func read(in directory: URL) throws -> SessionSidecar? {
         let fileURL = directory.appendingPathComponent(sessionSidecarFileName, isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        return try JSONDecoder().decode(SessionSidecar.self, from: try Data(contentsOf: fileURL))
+        let decoder = JSONDecoder()
+        decoder.userInfo[sidecarDirectoryUserInfoKey] = directory
+        return try decoder.decode(SessionSidecar.self, from: try Data(contentsOf: fileURL))
     }
 }
 

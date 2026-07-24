@@ -225,6 +225,39 @@ struct SessionSidecarTests {
         #expect(decoded.agentSpawn == nil)
     }
 
+    @Test(
+        "a pre-task-6j4bven recording with no workingDirectory key at all still decodes, defaulting to its own directory"
+    )
+    func oldRecordingWithNoWorkingDirectoryKeyDecodesWithDirectoryFallback() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sessionDir = dir.appendingPathComponent(ULID.generate().description, isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+
+        // Hand-authored bytes mirroring exactly what `SessionSidecarWriter`
+        // produced *before* this task added `workingDirectory` to the type —
+        // every other field present, `workingDirectory` absent entirely (not
+        // `null`: the key itself never existed).
+        let oldFormatJSON = Data(
+            """
+            {
+                "slot": "standard",
+                "model": "org/model-a",
+                "context": 8192,
+                "recordingLevel": "full"
+            }
+            """.utf8)
+        try oldFormatJSON.write(
+            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+
+        let decoded = try #require(try SessionSidecar.read(in: sessionDir))
+        #expect(decoded.workingDirectory == sessionDir)
+        #expect(decoded.slot == .standard)
+        #expect(decoded.model == "org/model-a")
+        #expect(decoded.agentSpawn == nil)
+    }
+
     @Test("reading a directory with no session.json returns nil rather than throwing")
     func readingADirectoryWithNoSidecarReturnsNil() throws {
         let dir = Self.makeTempDir()

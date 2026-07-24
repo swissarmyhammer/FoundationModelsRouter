@@ -1094,6 +1094,39 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// Runs `backend.streamResponse(to:maxTokens:)`, forwarding each produced
+    /// chunk through `wrapChunk` to `continuation` and accumulating the raw
+    /// text for the chokepoint's close event.
+    ///
+    /// Shared by ``streamGenerating(prompt:maxTokens:into:)`` and
+    /// ``streamEventsGenerating(prompt:maxTokens:into:)``, which differ only in
+    /// their continuation's element type and how a chunk is wrapped for it
+    /// (verbatim vs ``SessionEvent/textDelta(_:)``) — extracted so that
+    /// difference cannot drift between the two call sites.
+    ///
+    /// - Parameters:
+    ///   - composedPrompt: The prompt, already composed with whatever the
+    ///     outbox drained for this turn, to stream a response to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the underlying model's own default ceiling.
+    ///   - continuation: The stream continuation each wrapped chunk is yielded to.
+    ///   - wrapChunk: Wraps a raw text chunk into `continuation`'s element type.
+    /// - Returns: The accumulated, unwrapped response text.
+    /// - Throws: Any error thrown by the model.
+    private func streamGeneratingBody<Element>(
+        composedPrompt: String,
+        maxTokens: Int?,
+        into continuation: AsyncThrowingStream<Element, Error>.Continuation,
+        wrapChunk: (String) -> Element
+    ) async throws -> String {
+        var response = ""
+        for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
+            continuation.yield(wrapChunk(chunk))
+            response += chunk
+        }
+        return response
+    }
+
     /// Runs the recorder-bracketed streaming generation, forwarding each chunk
     /// the model produces to `continuation`.
     ///
@@ -1117,12 +1150,12 @@ actor RoutedSessionActor: RoutedSession {
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
         _ = try await generate(prompt: prompt) { composedPrompt in
-            var response = ""
-            for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
-                continuation.yield(chunk)
-                response += chunk
-            }
-            return response
+            try await streamGeneratingBody(
+                composedPrompt: composedPrompt,
+                maxTokens: maxTokens,
+                into: continuation,
+                wrapChunk: { $0 }
+            )
         }
     }
 
@@ -1170,18 +1203,22 @@ actor RoutedSessionActor: RoutedSession {
         maxTokens: Int?,
         into continuation: AsyncThrowingStream<SessionEvent, Error>.Continuation
     ) async throws {
-        // Mirrors `streamGenerating(prompt:maxTokens:into:)`'s own
-        // accumulate-and-forward shape for the live text, plus `onEvent` so
-        // the chokepoint's own diff-derived events (tool calls/status,
-        // reasoning, the closing usage) reach this same continuation once
-        // the turn's diff runs — see `generate(grammar:prompt:onEvent:_:)`.
+        // `onEvent` forwards the chokepoint's own diff-derived events (tool
+        // calls/status, reasoning, the closing usage) to this same
+        // continuation once the turn's diff runs — see
+        // `generate(grammar:prompt:onEvent:_:)`. The live text itself goes
+        // through the same accumulate-and-forward loop
+        // `streamGenerating(prompt:maxTokens:into:)` uses, via
+        // ``streamGeneratingBody(composedPrompt:maxTokens:into:wrapChunk:)``,
+        // wrapping each chunk as a ``SessionEvent/textDelta(_:)`` instead of
+        // yielding it verbatim.
         _ = try await generate(prompt: prompt, onEvent: { continuation.yield($0) }) { composedPrompt in
-            var response = ""
-            for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
-                continuation.yield(.textDelta(chunk))
-                response += chunk
-            }
-            return response
+            try await streamGeneratingBody(
+                composedPrompt: composedPrompt,
+                maxTokens: maxTokens,
+                into: continuation,
+                wrapChunk: SessionEvent.textDelta
+            )
         }
     }
 
