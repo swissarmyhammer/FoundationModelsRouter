@@ -43,6 +43,12 @@ struct CompactionEvaluationHermeticTests {
 
     @Test("subject(from:) wires up against a fake model with no real inference")
     func subjectWiresUpAgainstFakeModel() async throws {
+        // Safe: this closure runs exactly once, synchronously within the
+        // single `await evaluation.subject(from: sample)` call below, on
+        // this test's own task — never from a spawned/concurrent task —
+        // and both vars are read only after that await returns, so there
+        // is never a concurrent access despite crossing the `@Sendable`
+        // closure boundary.
         nonisolated(unsafe) var capturedEntries: [Transcript.Entry] = []
         nonisolated(unsafe) var capturedQuestion = ""
 

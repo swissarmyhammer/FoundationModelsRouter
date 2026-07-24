@@ -23,12 +23,20 @@ enum CompactionEvalMetric {
         4.0: "Excellent — precise and complete",
     ]
 
+    /// The judged dimension scoring whether the fold's summary states only
+    /// facts present in the original conversation — one of the two
+    /// `ModelJudgeEvaluator` dimensions ``CompactionEvaluation/evaluators``
+    /// registers.
     static let faithfulness = ScoreDimension(
         "Faithfulness",
         description: "The summary states only facts present in the original conversation.",
         scale: .numeric(fourPointScale)
     )
 
+    /// The judged dimension scoring whether next steps and constraints
+    /// survive the fold well enough to resume work — the other
+    /// `ModelJudgeEvaluator` dimension ``CompactionEvaluation/evaluators``
+    /// registers.
     static let continuability = ScoreDimension(
         "Continuability",
         description: "Next steps and constraints survive well enough to resume work.",
@@ -75,7 +83,14 @@ enum CompactionEvaluationError: Error {
 ///   describes: ``Compactor/compact(_:prompt:budget:summarizer:)`` over the
 ///   seed's entries, then a live session resumed over the folded transcript.
 struct CompactionEvaluation: Evaluation {
+    /// The expected/ground-truth sample type the `Evaluation` protocol
+    /// requires — Apple's own `ModelSample` wrapping
+    /// ``CompactionEvaluationOutcome``, so `Sample.ExpectedValue ==
+    /// Subject.Value` as `Evaluation` demands.
     typealias Sample = ModelSample<CompactionEvaluationOutcome>
+    /// The produced/actual result type the `Evaluation` protocol requires —
+    /// Apple's own `ModelSubject` wrapping the same
+    /// ``CompactionEvaluationOutcome`` a sample's `expected` value uses.
     typealias Subject = ModelSubject<CompactionEvaluationOutcome>
 
     /// The compaction prompt under test — recorded into every sample's
@@ -176,6 +191,11 @@ struct CompactionEvaluation: Evaluation {
         )
     }
 
+    /// The evaluators this evaluation registers: mechanical `FactRetention`
+    /// and `UnderTarget` metrics computed directly from each sample/subject
+    /// pair, plus a `ModelJudgeEvaluator` scoring the
+    /// ``CompactionEvalMetric/faithfulness`` and
+    /// ``CompactionEvalMetric/continuability`` quality dimensions.
     var evaluators: Evaluators {
         Evaluator<Sample> { sample, subject in
             guard let expected = sample.expected else {
@@ -212,6 +232,9 @@ struct CompactionEvaluation: Evaluation {
         )
     }
 
+    /// Registers all four metrics — `FactRetention`, `UnderTarget`,
+    /// `Faithfulness`, and `Continuability` — for mean aggregation, as the
+    /// `Evaluation` protocol requires.
     func aggregateMetrics(using aggregator: inout MetricsAggregator) {
         aggregator.computeMean(of: CompactionEvalMetric.factRetention)
         aggregator.computeMean(of: CompactionEvalMetric.underTarget)

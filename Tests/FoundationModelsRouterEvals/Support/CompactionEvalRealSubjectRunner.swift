@@ -13,6 +13,9 @@ import Tokenizers
 /// this target exercises genuinely capable multi-turn recall rather than a
 /// toy model.
 enum CompactionEvalRealModel {
+    /// The `mlx-community/Qwen3.6-27B-mxfp4` HuggingFace model reference this
+    /// runner resolves — see this enum's own doc comment for why that
+    /// specific dense causal LM was chosen over a toy model.
     static let ref: ModelRef = "mlx-community/Qwen3.6-27B-mxfp4"
     static let context = 8192
 }
