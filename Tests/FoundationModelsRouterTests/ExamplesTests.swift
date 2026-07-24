@@ -491,4 +491,322 @@ struct ExamplesTests {
             #expect(review == CodeReview(summary: "Looks good.", lineCount: 42))
         }
     #endif  // canImport(FoundationModels)
+
+    // MARK: - Compaction
+
+    /// Minimal router-building support for the two compaction examples below,
+    /// kept separate from ``ExampleHarness``: both examples need a single,
+    /// test-retained backend a test can drive/mutate directly (climbing
+    /// simulated usage, or a one-time context-overflow failure) rather than
+    /// ``ExampleHarness``'s fixed-budget resolution machinery, which builds a
+    /// fresh canned backend per slot with no seam for a test to hold onto.
+    private enum CompactionExampleHarness {
+        private struct StubProbe: MachineProbe {
+            let chip: String
+            let totalRAM: Int64
+            let recommendedMaxWorkingSetSize: Int64
+        }
+
+        private struct StubMetadataSource: MetadataSource {
+            let raw: RawRepoMetadata
+            func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata { raw }
+        }
+
+        private static var rawMetadata: RawRepoMetadata {
+            let configJSON = Data(
+                """
+                {
+                    "num_hidden_layers": 2,
+                    "num_attention_heads": 8,
+                    "num_key_value_heads": 2,
+                    "head_dim": 16,
+                    "hidden_size": 128
+                }
+                """.utf8)
+            let treeJSON = Data(
+                """
+                [
+                    {"type": "file", "path": "model.safetensors", "size": 10000000}
+                ]
+                """.utf8)
+            return RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
+        }
+
+        private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
+            let dimension: Int = 8
+            func embed(texts: [String]) async throws -> [[Float]] {
+                texts.map { _ in [Float](repeating: 0, count: dimension) }
+            }
+        }
+
+        /// Vends the same `backend` instance for every slot — both examples
+        /// below only ever open one session over `profile.standard`, and
+        /// mutate `backend` directly between turns rather than
+        /// reconfiguring the container.
+        private struct FixedBackendContainer: LoadedLLMContainer {
+            let backend: any LanguageModelSessionBackend
+            func makeSession(instructions: String?) -> any LanguageModelSessionBackend { backend }
+            func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend { backend }
+        }
+
+        private struct StubModelLoader: ModelLoader {
+            let backend: any LanguageModelSessionBackend
+
+            func loadLLM(
+                ref: ModelRef,
+                slot: ModelSlot,
+                context: Int,
+                reporting: @escaping @Sendable (DownloadProgress) -> Void
+            ) async throws -> any LoadedLLMContainer {
+                reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
+                return FixedBackendContainer(backend: backend)
+            }
+
+            func loadEmbedder(
+                ref: ModelRef,
+                slot: ModelSlot,
+                reporting: @escaping @Sendable (DownloadProgress) -> Void
+            ) async throws -> any LoadedEmbeddingContainer {
+                reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
+                return StubEmbeddingContainer()
+            }
+
+            func preload(container: any LoadedModelContainer) async throws {}
+        }
+
+        /// Resolves a one-model profile whose working context is `context`
+        /// and opens a `standard`-slot session driven entirely by `backend`.
+        static func makeSession(
+            over backend: any LanguageModelSessionBackend, context: Int
+        ) async throws -> RoutedSession {
+            let cacheDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("CompactionExample-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            let router = Router(
+                cacheDir: cacheDir,
+                recorder: InMemoryRecorder(),
+                probe: StubProbe(chip: "Apple Example", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+                metadataSource: StubMetadataSource(raw: rawMetadata),
+                loader: StubModelLoader(backend: backend)
+            )
+            let profile = try await router.resolve(
+                profile: ProfileDefinition(
+                    name: "compaction-example",
+                    description: "Compaction example profile.",
+                    standard: ["mlx-community/Qwen2.5-14B-Instruct-4bit"],
+                    flash: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
+                    embedding: ["mlx-community/bge-small-en-v1.5-4bit"],
+                    context: context
+                ),
+                reporting: ResolutionProgress()
+            )
+            return profile.standard.makeSession()
+        }
+    }
+
+    @Test(
+        "Proactive: check contextFill against a TokenBudget's trigger between turns and fold before it gets too high — exercises the shape of RoutedSession.compact(prompt:budget:)'s own doc example"
+    )
+    @MainActor
+    func proactiveCompactionBetweenTurns() async throws {
+        let backend = StubSessionBackend(responseText: "ok")
+        let session = try await CompactionExampleHarness.makeSession(over: backend, context: 100_000)
+
+        let budget = TokenBudget(limit: 100_000)
+        var compactedAtTurn: Int?
+
+        for turn in 0..<3 {
+            // Simulated usage climbing turn over turn — 0.3, 0.6, 0.9 of the
+            // 100,000-token context, folded into a genuine measured
+            // before/after contextFill delta by the actor's own chokepoint
+            // (StubSessionBackend.usageIncrement), the way a real model's
+            // own usage grows as a conversation lengthens.
+            backend.usageIncrement = (input: (turn + 1) * 30_000, output: 0)
+            _ = try await session.respond(to: "turn \(turn)")
+
+            // The proactive pattern (RoutedSession.compact(prompt:budget:)'s
+            // own doc comment): check fill between turns, fold before it
+            // gets too high — turns never die.
+            if await session.contextFill >= budget.trigger {
+                try await session.compact(budget: budget)
+                compactedAtTurn = turn
+            }
+        }
+
+        // The trigger fired exactly when the simulated usage crossed it —
+        // this assertion is real evidence the pattern's fill-vs-trigger
+        // comparison works against genuine measured contextFill, not a
+        // tautology: a bug that stopped contextFill from climbing (or that
+        // broke the `>=` comparison) would shift or drop this turn index.
+        #expect(compactedAtTurn == 2)
+
+        // Whether or not this toy transcript had anything left to actually
+        // fold (that mechanics, and a real non-empty-stagesApplied fold, is
+        // exhaustively covered by RoutedSessionCompactTests), compact()
+        // never breaks the session: it keeps responding normally right
+        // afterward.
+        let response = try await session.respond(to: "still working")
+        #expect(response == "ok")
+    }
+
+    /// Counts how many times an ``OverflowOnceBackend``'s
+    /// ``OverflowOnceBackend/replacingTranscript(_:)`` was called — the only
+    /// way to observe, from outside the session, that a `compact()` call
+    /// actually performed a genuine fold. `RoutedSessionActor.compact(prompt:budget:)`
+    /// only swaps its backend (calling `replacingTranscript(_:)`) when
+    /// folding changed something; a no-op fold (already under target) never
+    /// does. Shared across every backend a fold produces, since
+    /// `replacingTranscript(_:)` returns a fresh instance each time.
+    private final class ReplaceSpy: @unchecked Sendable {
+        private(set) var replaceCount = 0
+        func recordReplace() { replaceCount += 1 }
+    }
+
+    /// A backend that throws `LanguageModelError.contextSizeExceeded` on its
+    /// very first call — simulating a turn that overflows the context — and
+    /// responds normally on every call after, so a test can drive the
+    /// reactive recovery pattern documented on
+    /// ``RoutedSession/compact(prompt:budget:)``.
+    ///
+    /// Can be seeded with prior transcript content at construction, so the
+    /// `compact()` call the reactive pattern drives has real content to fold
+    /// (rather than a no-op on an empty transcript) — see
+    /// ``seedEntries(turnCount:responseText:)``.
+    private final class OverflowOnceBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        let responseText: String
+        let replaceSpy: ReplaceSpy
+        private(set) var entries: [Transcript.Entry]
+        private var hasOverflowed: Bool
+
+        init(
+            responseText: String,
+            entries: [Transcript.Entry] = [],
+            hasOverflowed: Bool = false,
+            replaceSpy: ReplaceSpy = ReplaceSpy()
+        ) {
+            self.responseText = responseText
+            self.entries = entries
+            self.hasOverflowed = hasOverflowed
+            self.replaceSpy = replaceSpy
+        }
+
+        /// Synthetic prompt/response turns — long enough in aggregate,
+        /// `turnCount` past `TurnTruncation`'s default 4-turn recency
+        /// window, that a tight-enough `TokenBudget` forces a real fold
+        /// (`TurnTruncation` actually dropping the oldest turns) rather than
+        /// a no-op.
+        static func seedEntries(turnCount: Int, responseText: String) -> [Transcript.Entry] {
+            (0..<turnCount).flatMap { index -> [Transcript.Entry] in
+                [
+                    .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "seed turn \(index)"))])),
+                    .response(
+                        Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))])
+                    ),
+                ]
+            }
+        }
+
+        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            guard hasOverflowed else {
+                hasOverflowed = true
+                throw LanguageModelError.contextSizeExceeded(
+                    .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow")
+                )
+            }
+            entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+            entries.append(
+                .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))])))
+            return responseText
+        }
+
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { continuation in
+                continuation.yield(responseText)
+                continuation.finish()
+            }
+        }
+
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+            responseText
+        }
+
+        func makeFork() -> any LanguageModelSessionBackend {
+            OverflowOnceBackend(
+                responseText: responseText, entries: entries, hasOverflowed: hasOverflowed, replaceSpy: replaceSpy)
+        }
+
+        func transcriptEntries() -> [Transcript.Entry] { entries }
+
+        func usageTokenCounts() -> (input: Int, output: Int)? { nil }
+
+        func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
+            // Only reached when compact() actually folded something — a
+            // no-op fold (already under target) never swaps the backend
+            // (see RoutedSessionActor.compact(prompt:budget:)'s own doc
+            // comment). The fresh backend is already past its one-time
+            // overflow, seeded from the folded transcript.
+            replaceSpy.recordReplace()
+            return OverflowOnceBackend(
+                responseText: responseText, entries: Array(transcript), hasOverflowed: true, replaceSpy: replaceSpy)
+        }
+    }
+
+    /// The reactive recovery pattern documented on
+    /// ``RoutedSession/compact(prompt:budget:)``: try the turn; if the
+    /// backend's context overflowed, fold harder than the default 50% target
+    /// and retry exactly once. Copied verbatim from that doc comment's own
+    /// code sample so the two cannot silently drift apart.
+    private func respondWithReactiveCompaction(
+        session: RoutedSession, prompt: String, contextTokens: Int
+    ) async throws -> String {
+        do {
+            return try await session.respond(to: prompt)
+        } catch LanguageModelError.contextSizeExceeded {
+            try await session.compact(budget: TokenBudget(limit: contextTokens, target: 0.35))
+            return try await session.respond(to: prompt)
+        }
+    }
+
+    @Test(
+        "Reactive: catch LanguageModelError.contextSizeExceeded, compact with a lowered target, and retry once — exercises the shape of RoutedSession.compact(prompt:budget:)'s own doc example"
+    )
+    @MainActor
+    func reactiveCompactionRecoversFromContextOverflow() async throws {
+        // Seed enough real transcript content (more than TurnTruncation's
+        // 4-turn recency window) that the lowered-target compact() this
+        // test drives actually folds something real, not a no-op — so this
+        // test would fail if a future change dropped the compact() call
+        // from the reactive pattern, or broke it, rather than passing
+        // vacuously on the retry alone (which only depends on the stub's
+        // one-time-overflow behavior).
+        let seedText = String(repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
+        let seedEntries = OverflowOnceBackend.seedEntries(turnCount: 6, responseText: seedText)
+        let replaceSpy = ReplaceSpy()
+        let backend = OverflowOnceBackend(responseText: "recovered", entries: seedEntries, replaceSpy: replaceSpy)
+
+        // Derive a context tight enough that the reactive pattern's own
+        // hardcoded 0.35 target sits strictly between the seeded
+        // transcript's real recency-window-only estimate and its full
+        // pre-fold estimate — guaranteeing TurnTruncation alone lands under
+        // target (no need for the model-assisted Summarization stage, which
+        // this stub cannot service).
+        let (header, turns) = TranscriptTurns.split(seedEntries)
+        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
+        let recencyOnlyEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
+        let preFoldEstimate = Compactor.estimatedTokenCount(of: Transcript(entries: seedEntries))
+        let midTarget = (recencyOnlyEstimate + preFoldEstimate) / 2
+        let contextTokens = Int(Double(midTarget) / 0.35)
+
+        let session = try await CompactionExampleHarness.makeSession(over: backend, context: contextTokens)
+
+        let reply = try await respondWithReactiveCompaction(
+            session: session, prompt: "keep going", contextTokens: contextTokens)
+
+        #expect(reply == "recovered")
+        // The compact() call inside the reactive helper genuinely folded
+        // the seeded transcript (swapped the backend) rather than no-op'ing
+        // — real evidence the reactive pattern recovers by shrinking the
+        // transcript, not just by luck of a one-time stub failure.
+        #expect(replaceSpy.replaceCount == 1)
+    }
 }

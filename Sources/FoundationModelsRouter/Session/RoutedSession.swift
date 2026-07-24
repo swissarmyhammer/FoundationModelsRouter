@@ -137,13 +137,18 @@ public protocol RoutedSession: Actor {
     /// ```
     ///
     /// **Reactive use** (the documented recovery path, compaction_plan.md
-    /// §1.5): catch the backend's context-overflow failure, compact with a
-    /// lowered target, and retry once:
+    /// §1.5): catch `LanguageModelError.contextSizeExceeded` — the SDK's own
+    /// context-overflow failure (macOS 27; the deprecated
+    /// `LanguageModelSession.GenerationError.exceededContextWindowSize`
+    /// predates it) — compact with a lowered target, and retry once.
+    /// `contextTokens` below is this session's own resolved working context —
+    /// for a session vended from a resolved profile, its slot's
+    /// `SlotResolution/contextTokens` (e.g. `profile.standard.resolution.contextTokens`):
     ///
     /// ```swift
     /// do {
     ///     return try await session.respond(to: prompt)
-    /// } catch {
+    /// } catch LanguageModelError.contextSizeExceeded {
     ///     // The backend ran out of context; fold harder than the default
     ///     // 50% target and retry exactly once.
     ///     try await session.compact(budget: TokenBudget(limit: contextTokens, target: 0.35))
