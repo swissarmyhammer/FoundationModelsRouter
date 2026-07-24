@@ -474,7 +474,8 @@ func makeRoutedSessionActor(
     contextTokens: Int = ProfileDefinition.defaultContext,
     usageState: ContextUsageState = .none,
     autoCompactionBudget: TokenBudget? = nil,
-    autoCompactionPrompt: CompactionPrompt = .default
+    autoCompactionPrompt: CompactionPrompt = .default,
+    agentSpawn: SessionSidecar.AgentSpawn? = nil
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -500,7 +501,8 @@ func makeRoutedSessionActor(
         contextTokens: contextTokens,
         usageState: usageState,
         autoCompactionBudget: autoCompactionBudget,
-        autoCompactionPrompt: autoCompactionPrompt
+        autoCompactionPrompt: autoCompactionPrompt,
+        agentSpawn: agentSpawn
     )
 }
 
@@ -735,14 +737,18 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// Every parameter here is documented on the stored property it
     /// initializes, above — no separate `Parameters:` block, so there is
-    /// nowhere for the two to drift apart. The two this initializer's own
+    /// nowhere for the two to drift apart. The three this initializer's own
     /// behavior actually turns on are ``persistedEntryCount`` (`0` for a root
     /// session, or the parent's entry count at fork time for a fork — for a
     /// new fork this doubles as the cut point recorded into its sidecar, so
-    /// the lineage cut point and the diff baseline are one fact) and
+    /// the lineage cut point and the diff baseline are one fact),
     /// ``sidecarOrigin`` (where this session's `session.json` comes from — a
     /// write of its own at init, a tree it was restored from, or nothing
-    /// durable at all), both read directly in the sidecar write below.
+    /// durable at all), and `agentSpawn` (the parent session/tool-call this
+    /// session was spawned from — see ``SessionSidecar/agentSpawn``), all
+    /// three read directly in the sidecar write below rather than stored:
+    /// nothing after construction needs any of them again, unlike
+    /// ``instructions``/``grammar``, which a fork also carries forward.
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -767,7 +773,8 @@ actor RoutedSessionActor: RoutedSession {
         contextTokens: Int = ProfileDefinition.defaultContext,
         usageState: ContextUsageState = .none,
         autoCompactionBudget: TokenBudget? = nil,
-        autoCompactionPrompt: CompactionPrompt = .default
+        autoCompactionPrompt: CompactionPrompt = .default,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -804,6 +811,8 @@ actor RoutedSessionActor: RoutedSession {
             instructions: instructions,
             grammar: grammar?.source,
             forkedAtEntryCount: parentId == nil ? nil : persistedEntryCount,
+            workingDirectory: workingDirectory,
+            agentSpawn: agentSpawn,
             to: recordingDirectory
         )
     }

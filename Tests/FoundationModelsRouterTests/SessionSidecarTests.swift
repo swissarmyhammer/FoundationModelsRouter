@@ -141,6 +141,13 @@ struct SessionSidecarTests {
         )
     }
 
+    /// A fixed id for ``sampleSidecar(forkedAtEntryCount:)``'s ``SessionSidecar/agentSpawn``,
+    /// so two separately-built sample sidecars compare equal — `ULID.generate()`
+    /// called afresh in each call would make every sample distinct and break
+    /// any test that builds one to compare against another (e.g. a racing-write
+    /// survivor against a freshly-built expectation).
+    private static let sampleAgentSpawnParentId = ULID.generate()
+
     /// A sample sidecar with every field populated, for round-trip coverage.
     private static func sampleSidecar(forkedAtEntryCount: Int?) -> SessionSidecar {
         SessionSidecar(
@@ -157,6 +164,11 @@ struct SessionSidecarTests {
                 flash: "org/flash-a",
                 embedding: "org/emb-a",
                 context: 8_192
+            ),
+            workingDirectory: URL(fileURLWithPath: "/tmp/sample-working-directory"),
+            agentSpawn: SessionSidecar.AgentSpawn(
+                parentSessionId: sampleAgentSpawnParentId,
+                parentToolCallId: "tool-call-42"
             )
         )
     }
@@ -186,6 +198,31 @@ struct SessionSidecarTests {
 
         let decoded = try #require(try SessionSidecar.read(in: sessionDir))
         #expect(decoded.forkedAtEntryCount == nil)
+    }
+
+    @Test("a sidecar written with no agentSpawn round-trips as nil, not as some default value")
+    func absentAgentSpawnRoundTripsAsNil() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sessionDir = dir.appendingPathComponent(ULID.generate().description, isDirectory: true)
+        try SessionSidecar.write(
+            SessionSidecar(
+                slot: .standard,
+                model: "org/model-a",
+                context: 8_192,
+                instructions: nil,
+                grammar: nil,
+                recordingLevel: .full,
+                forkedAtEntryCount: nil,
+                profile: nil,
+                workingDirectory: sessionDir
+            ),
+            to: sessionDir
+        )
+
+        let decoded = try #require(try SessionSidecar.read(in: sessionDir))
+        #expect(decoded.agentSpawn == nil)
     }
 
     @Test("reading a directory with no session.json returns nil rather than throwing")
@@ -570,6 +607,84 @@ struct SessionSidecarTests {
         #expect(try SessionSidecar.read(in: forkDir)?.profile == nil)
     }
 
+    // MARK: - Durable working directory (harness plan §7, task 6j4bven)
+
+    @Test(
+        "a root's sidecar records its default working directory (the recording directory); an override records verbatim, and a fork's own override records independently of its root's"
+    )
+    @MainActor
+    func sidecarRecordsEachSessionsOwnWorkingDirectory() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        let overrideDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+            try? FileManager.default.removeItem(at: overrideDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // No override: the sidecar's workingDirectory defaults to the
+        // recording directory, just as the live session's own does.
+        let root = profile.standard.makeSession()
+        let rootDir = recordingsDir
+            .appendingPathComponent(router.id.description, isDirectory: true)
+            .appendingPathComponent(root.id.description, isDirectory: true)
+        #expect(root.workingDirectory == rootDir)
+        #expect(try SessionSidecar.read(in: rootDir)?.workingDirectory == rootDir)
+
+        // An explicit override on a fork records verbatim — never silently
+        // reset to the fork's own recording directory.
+        let fork = try await root.fork(workingDirectory: overrideDir)
+        let forkDir = rootDir.appendingPathComponent(fork.id.description, isDirectory: true)
+        #expect(fork.workingDirectory == overrideDir)
+        #expect(try SessionSidecar.read(in: forkDir)?.workingDirectory == overrideDir)
+    }
+
+    // MARK: - Agent-spawn context (harness plan §7, task 6j4bven)
+
+    @Test(
+        "a session vended with an agentSpawn records it on its own root sidecar; a fork taken from it records none, since its lineage is already stated by nesting"
+    )
+    @MainActor
+    func sessionVendedWithAgentSpawnRecordsItOnRootOnlyNotOnAFork() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let spawningSessionId = ULID.generate()
+        let spawn = SessionSidecar.AgentSpawn(
+            parentSessionId: spawningSessionId, parentToolCallId: "agents-tool-call-1")
+        let root = profile.standard.makeSession(agentSpawn: spawn)
+        let fork = try await root.fork(workingDirectory: nil)
+
+        let rootDir = recordingsDir
+            .appendingPathComponent(router.id.description, isDirectory: true)
+            .appendingPathComponent(root.id.description, isDirectory: true)
+        let forkDir = rootDir.appendingPathComponent(fork.id.description, isDirectory: true)
+
+        let rootSpawn = try #require(try SessionSidecar.read(in: rootDir)?.agentSpawn)
+        #expect(rootSpawn.parentSessionId == spawningSessionId)
+        #expect(rootSpawn.parentToolCallId == "agents-tool-call-1")
+        #expect(try SessionSidecar.read(in: forkDir)?.agentSpawn == nil)
+    }
+
     // MARK: - Recording levels
 
     @Test("a writer built at RecordingLevel.off writes nothing, wherever it was built")
@@ -585,7 +700,8 @@ struct SessionSidecarTests {
             recordingLevel: .off,
             profile: nil
         )
-        writer.write(instructions: nil, grammar: nil, forkedAtEntryCount: nil, to: dir)
+        writer.write(
+            instructions: nil, grammar: nil, forkedAtEntryCount: nil, workingDirectory: dir, to: dir)
 
         // The gate lives in the writer, not in whoever built it: `.off` means a
         // writer that writes nothing, so a durable root can always be handed one

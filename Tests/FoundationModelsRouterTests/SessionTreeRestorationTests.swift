@@ -266,6 +266,43 @@ struct SessionTreeRestorationTests {
         #expect(try reloadedTree.effectiveEntryEvents(forSession: forkB.id).count == 4)
     }
 
+    // MARK: - Durable working directory survives restoration (harness plan §7, task 6j4bven)
+
+    @Test(
+        "a session vended with an overridden working directory restores to that same directory, not its recording directory"
+    )
+    @MainActor
+    func restoredSessionReassemblesItsRecordedWorkingDirectoryOverride() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        let overrideDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+            try? FileManager.default.removeItem(at: overrideDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession(workingDirectory: overrideDir)
+        _ = try await root.respond(to: "hello")
+        #expect(root.workingDirectory == overrideDir)
+        // The recording directory is never the override: this is exercising a
+        // genuine divergence, not one that happens to coincide.
+        #expect(root.recordingDirectory != overrideDir)
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+
+        // Restoration reassembles the recorded override, not the (also
+        // restored, separately-verified-elsewhere) recording directory a
+        // caller never asked to run against.
+        #expect(restored.root.workingDirectory == overrideDir)
+        #expect(restored.root.id == root.id)
+    }
+
     // MARK: - Sidecars untouched by restoration
 
     @Test("restoreSessionTree writes no sidecar of its own; a later fork of a restored session writes exactly one")
@@ -396,6 +433,8 @@ struct SessionTreeRestorationTests {
         // bypassing the normal makeSession/fork vending paths, with a slot no
         // generation handle exists for.
         let fabricatedId = ULID.generate()
+        let fabricatedDirectory = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+            .appendingPathComponent(fabricatedId.description, isDirectory: true)
         try SessionSidecar.write(
             SessionSidecar(
                 slot: .embedding,
@@ -405,10 +444,10 @@ struct SessionTreeRestorationTests {
                 grammar: nil,
                 recordingLevel: .full,
                 forkedAtEntryCount: nil,
-                profile: nil
+                profile: nil,
+                workingDirectory: fabricatedDirectory
             ),
-            to: routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
-                .appendingPathComponent(fabricatedId.description, isDirectory: true)
+            to: fabricatedDirectory
         )
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)

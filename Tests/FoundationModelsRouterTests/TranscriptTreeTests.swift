@@ -584,7 +584,8 @@ struct TranscriptTreeTests {
                 grammar: nil,
                 recordingLevel: .full,
                 forkedAtEntryCount: nil,
-                profile: nil
+                profile: nil,
+                workingDirectory: notASessionDirectory
             ),
             to: notASessionDirectory
         )
@@ -613,9 +614,12 @@ struct TranscriptTreeTests {
         let rootDirectory = dir.appendingPathComponent(rootId.description, isDirectory: true)
         let first = dir.appendingPathComponent(duplicatedId.description, isDirectory: true)
         let second = rootDirectory.appendingPathComponent(duplicatedId.description, isDirectory: true)
-        try SessionSidecar.write(Self.sidecarFixture(forkedAtEntryCount: nil), to: rootDirectory)
-        try SessionSidecar.write(Self.sidecarFixture(forkedAtEntryCount: nil), to: first)
-        try SessionSidecar.write(Self.sidecarFixture(forkedAtEntryCount: 0), to: second)
+        try SessionSidecar.write(
+            Self.sidecarFixture(forkedAtEntryCount: nil, workingDirectory: rootDirectory), to: rootDirectory)
+        try SessionSidecar.write(
+            Self.sidecarFixture(forkedAtEntryCount: nil, workingDirectory: first), to: first)
+        try SessionSidecar.write(
+            Self.sidecarFixture(forkedAtEntryCount: 0, workingDirectory: second), to: second)
 
         #expect(
             throws: TranscriptTreeError.duplicateSessionId(
@@ -630,10 +634,12 @@ struct TranscriptTreeTests {
     /// A sidecar with placeholder facts, for hand-built tree fixtures that only
     /// care about the layout.
     ///
-    /// - Parameter forkedAtEntryCount: The cut point to record, or `nil` for a
-    ///   root session.
+    /// - Parameters:
+    ///   - forkedAtEntryCount: The cut point to record, or `nil` for a root
+    ///     session.
+    ///   - workingDirectory: The working directory to record.
     /// - Returns: The sidecar to write.
-    private static func sidecarFixture(forkedAtEntryCount: Int?) -> SessionSidecar {
+    private static func sidecarFixture(forkedAtEntryCount: Int?, workingDirectory: URL) -> SessionSidecar {
         SessionSidecar(
             slot: .standard,
             model: "org/model-a",
@@ -642,7 +648,8 @@ struct TranscriptTreeTests {
             grammar: nil,
             recordingLevel: .full,
             forkedAtEntryCount: forkedAtEntryCount,
-            profile: nil
+            profile: nil,
+            workingDirectory: workingDirectory
         )
     }
 
@@ -653,7 +660,7 @@ struct TranscriptTreeTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        func sidecar(forkedAtEntryCount: Int?) -> SessionSidecar {
+        func sidecar(forkedAtEntryCount: Int?, workingDirectory: URL) -> SessionSidecar {
             SessionSidecar(
                 slot: .standard,
                 model: "org/model-a",
@@ -662,7 +669,8 @@ struct TranscriptTreeTests {
                 grammar: nil,
                 recordingLevel: .full,
                 forkedAtEntryCount: forkedAtEntryCount,
-                profile: nil
+                profile: nil,
+                workingDirectory: workingDirectory
             )
         }
 
@@ -671,11 +679,13 @@ struct TranscriptTreeTests {
         let rootDirectory = dir.appendingPathComponent(rootId.description, isDirectory: true)
         let childDirectory = rootDirectory.appendingPathComponent(
             childId.description, isDirectory: true)
-        try SessionSidecar.write(sidecar(forkedAtEntryCount: nil), to: rootDirectory)
+        try SessionSidecar.write(
+            sidecar(forkedAtEntryCount: nil, workingDirectory: rootDirectory), to: rootDirectory)
         // Nested under a parent, so it inherits — yet records no cut point
         // saying how much. Only a hand-built tree can be in this state; a
         // vended fork always records one.
-        try SessionSidecar.write(sidecar(forkedAtEntryCount: nil), to: childDirectory)
+        try SessionSidecar.write(
+            sidecar(forkedAtEntryCount: nil, workingDirectory: childDirectory), to: childDirectory)
 
         let tree = try TranscriptTree.load(under: dir)
         #expect(try #require(tree.session(childId)).parentId == rootId)

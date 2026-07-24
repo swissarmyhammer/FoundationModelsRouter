@@ -306,7 +306,8 @@ struct TranscriptReconstructionTests {
                 grammar: nil,
                 recordingLevel: .full,
                 forkedAtEntryCount: nil,
-                profile: nil
+                profile: nil,
+                workingDirectory: sessionDir
             ),
             to: sessionDir
         )

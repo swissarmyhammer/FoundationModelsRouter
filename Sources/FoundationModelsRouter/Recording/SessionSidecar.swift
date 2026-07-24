@@ -21,12 +21,16 @@ let sessionSidecarFileName = "session.json"
 /// shared file collects records from every session (see plan.md's "Transcript
 /// fidelity" section).
 ///
-/// **Only primary facts.** A session's lineage is stated by the directory
-/// nesting — a root lives at `<routerId>/<rootId>/`, its fork at
+/// **Only primary facts.** A session's *same-tree* lineage is stated by the
+/// directory nesting — a root lives at `<routerId>/<rootId>/`, its fork at
 /// `.../<rootId>/<forkId>/`, a grandfork one level deeper — and its creation
 /// time by its ULID's own timestamp (see `Core/ULID.swift`). Neither is
 /// restated here: a fact recorded twice is a fact that can disagree with
-/// itself.
+/// itself. ``workingDirectory`` and ``agentSpawn`` are recorded because they
+/// are *not* implied by anything else on disk — an overridden working
+/// directory, and a spawn from a session that may sit under an entirely
+/// different recording tree, are both primary facts with nowhere else to be
+/// read back from (harness plan §7 creation-metadata ask, task 6j4bven).
 ///
 /// ``instructions``/``grammar`` are recorded (not merely implied by transcript
 /// content) so ``RoutedModel/restoreSessionTree(root:registry:)`` can rehydrate
@@ -80,6 +84,35 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         }
     }
 
+    /// The parent session and correlating tool-call this session was spawned
+    /// from, e.g. by a harness's "agents" tool creating a sub-agent session
+    /// mid-turn (harness plan §7 creation-metadata ask, task 6j4bven).
+    ///
+    /// Both facts travel together rather than as two independent optionals:
+    /// a transcript browser has no use for one without the other, since it is
+    /// the pair — which session, which of its tool calls — that names the
+    /// exact point in the parent's own recorded turn this session continues.
+    public struct AgentSpawn: Codable, Sendable, Equatable {
+        /// The id of the session, possibly under an entirely different
+        /// router or recording tree, whose turn spawned this session.
+        public let parentSessionId: ULID
+        /// The tool-call id, within `parentSessionId`'s turn, that spawned
+        /// this session — the correlation id a transcript browser matches
+        /// against that turn's recorded tool-call entry.
+        public let parentToolCallId: String
+
+        /// Creates an agent-spawn record.
+        ///
+        /// - Parameters:
+        ///   - parentSessionId: The spawning session's id.
+        ///   - parentToolCallId: The spawning tool-call's id, within that
+        ///     session's turn.
+        public init(parentSessionId: ULID, parentToolCallId: String) {
+            self.parentSessionId = parentSessionId
+            self.parentToolCallId = parentToolCallId
+        }
+    }
+
     /// The model slot this session runs against.
     public let slot: ModelSlot
     /// The concrete model reference this session runs against.
@@ -119,6 +152,39 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// in-memory value a browser reads is enriched.
     public let compactionCount: Int?
 
+    /// This session's own ``RoutedSession/workingDirectory`` — where its
+    /// tools resolved files, distinct from ``recordingDirectory`` whenever a
+    /// caller overrode it at creation (harness plan §7 creation-metadata
+    /// ask, task 6j4bven).
+    ///
+    /// Recorded for every session, root or fork, since a fork can carry its
+    /// own override too (see ``RoutedSessionActor/fork(workingDirectory:)``).
+    /// This is a primary fact with nowhere else to be read back from: unlike
+    /// lineage or creation time, an overridden working directory is not
+    /// implied by anything else on disk, so a caller restoring a stored
+    /// session (``RoutedModel/restoreSessionTree(root:registry:)``) could not
+    /// otherwise reassemble its own composition-layer state (config,
+    /// AGENTS.md instructions, confinement) against the directory the live
+    /// session actually ran with.
+    public let workingDirectory: URL
+
+    /// The parent session and tool-call correlation this session was spawned
+    /// from — e.g. a harness's "agents" tool creating a sub-agent session
+    /// mid-turn (harness plan §7 creation-metadata ask, task 6j4bven) — or
+    /// `nil` for a session vended with no such spawn context.
+    ///
+    /// Recorded on the spawned session's own root sidecar only: a fork's is
+    /// always `nil`, mirroring ``profile``'s root-only rule, since a fork's
+    /// lineage back to that root is already stated by directory nesting (see
+    /// ``forkedAtEntryCount``) — a browser walking the tree reaches the
+    /// root's sidecar and finds it there. This complements, rather than
+    /// restates, the existing same-tree fork lineage
+    /// (``RoutedSessionActor/parentId``): that lineage never crosses
+    /// recording roots, while an agent spawn routinely does — the parent
+    /// session named here may sit under an entirely different router or
+    /// recording tree, which only an explicit fact like this can bridge.
+    public let agentSpawn: AgentSpawn?
+
     /// Creates a session sidecar.
     ///
     /// - Parameters:
@@ -132,6 +198,9 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///     time, or `nil` for a root session.
     ///   - profile: The run's resolved-profile facts for a root session, or
     ///     `nil` for a fork.
+    ///   - workingDirectory: This session's own working directory.
+    ///   - agentSpawn: The parent session/tool-call this session was spawned
+    ///     from, or `nil`. Defaults to `nil`.
     ///   - compactionCount: This session's own recorded compaction count, or
     ///     `nil` when not yet computed. Always `nil` for a freshly-written
     ///     sidecar — see ``compactionCount``'s own doc comment.
@@ -144,6 +213,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         recordingLevel: RecordingLevel,
         forkedAtEntryCount: Int?,
         profile: ResolvedProfile?,
+        workingDirectory: URL,
+        agentSpawn: AgentSpawn? = nil,
         compactionCount: Int? = nil
     ) {
         self.slot = slot
@@ -154,6 +225,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.recordingLevel = recordingLevel
         self.forkedAtEntryCount = forkedAtEntryCount
         self.profile = profile
+        self.workingDirectory = workingDirectory
+        self.agentSpawn = agentSpawn
         self.compactionCount = compactionCount
     }
 
@@ -178,6 +251,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
             recordingLevel: recordingLevel,
             forkedAtEntryCount: forkedAtEntryCount,
             profile: profile,
+            workingDirectory: workingDirectory,
+            agentSpawn: agentSpawn,
             compactionCount: count
         )
     }
@@ -334,8 +409,20 @@ public struct SessionSidecarWriter: Sendable {
     ///   - grammar: The session's guided-generation grammar source, or `nil`.
     ///   - forkedAtEntryCount: The parent's transcript entry count at fork
     ///     time, or `nil` for a root session.
+    ///   - workingDirectory: The session's own working directory.
+    ///   - agentSpawn: The parent session/tool-call this session was spawned
+    ///     from, or `nil`. Recorded only when `forkedAtEntryCount` is `nil`
+    ///     (a root session), mirroring ``profile``'s own root-only rule —
+    ///     see ``SessionSidecar/agentSpawn``.
     ///   - directory: The session's own recording directory.
-    func write(instructions: String?, grammar: String?, forkedAtEntryCount: Int?, to directory: URL) {
+    func write(
+        instructions: String?,
+        grammar: String?,
+        forkedAtEntryCount: Int?,
+        workingDirectory: URL,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        to directory: URL
+    ) {
         // Nothing durable is recorded at `.off` — not a sidecar, and not a
         // transcript either, since the router's `GatingRecorder` drops every
         // event at this level. Returning before `SessionSidecar.write` is what
@@ -351,7 +438,9 @@ public struct SessionSidecarWriter: Sendable {
             grammar: grammar,
             recordingLevel: recordingLevel,
             forkedAtEntryCount: forkedAtEntryCount,
-            profile: forkedAtEntryCount == nil ? profile : nil
+            profile: forkedAtEntryCount == nil ? profile : nil,
+            workingDirectory: workingDirectory,
+            agentSpawn: forkedAtEntryCount == nil ? agentSpawn : nil
         )
         do {
             try SessionSidecar.write(sidecar, to: directory)
@@ -466,11 +555,16 @@ enum SessionSidecarOrigin: Sendable {
     ///   - grammar: The session's guided-generation grammar source, or `nil`.
     ///   - forkedAtEntryCount: The parent's transcript entry count at fork time,
     ///     or `nil` for a root session.
+    ///   - workingDirectory: The session's own working directory.
+    ///   - agentSpawn: The parent session/tool-call this session was spawned
+    ///     from, or `nil`. See ``SessionSidecar/agentSpawn``.
     ///   - directory: The session's own recording directory.
     func writeSidecarIfNew(
         instructions: String?,
         grammar: String?,
         forkedAtEntryCount: Int?,
+        workingDirectory: URL,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil,
         to directory: URL
     ) {
         guard case .new(let writer) = self else { return }
@@ -478,6 +572,8 @@ enum SessionSidecarOrigin: Sendable {
             instructions: instructions,
             grammar: grammar,
             forkedAtEntryCount: forkedAtEntryCount,
+            workingDirectory: workingDirectory,
+            agentSpawn: agentSpawn,
             to: directory
         )
     }

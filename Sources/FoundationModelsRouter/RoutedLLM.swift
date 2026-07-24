@@ -109,17 +109,26 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Ignored
     ///     otherwise. Defaults to ``CompactionPrompt/default``.
+    ///   - agentSpawn: The parent session/tool-call this session was spawned
+    ///     from — e.g. a harness's "agents" tool creating this session as a
+    ///     sub-agent mid-turn (harness plan §7 creation-metadata ask, task
+    ///     6j4bven) — or `nil` for a session vended with no such spawn
+    ///     context. Recorded onto this session's own sidecar (see
+    ///     ``SessionSidecar/agentSpawn``); a fork of this session never
+    ///     repeats it, since the fork's lineage back to this root is already
+    ///     stated by directory nesting. Defaults to `nil`.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
-        compactionPrompt: CompactionPrompt = .default
+        compactionPrompt: CompactionPrompt = .default,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) -> RoutedSession {
         makeSession(
             grammar: nil, instructions: instructions, workingDirectory: workingDirectory, tools: tools,
-            budget: budget, compactionPrompt: compactionPrompt)
+            budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -146,6 +155,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Defaults to
     ///     ``CompactionPrompt/default``.
+    ///   - agentSpawn: The parent session/tool-call this session was spawned
+    ///     from — see ``makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:)``.
+    ///     Defaults to `nil`.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -153,7 +165,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         workingDirectory: URL?,
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
-        compactionPrompt: CompactionPrompt = .default
+        compactionPrompt: CompactionPrompt = .default,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -230,7 +243,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             contextTokens: resolution.contextTokens,
             usageState: .none,
             autoCompactionBudget: budget,
-            autoCompactionPrompt: compactionPrompt
+            autoCompactionPrompt: compactionPrompt,
+            agentSpawn: agentSpawn
         )
     }
 

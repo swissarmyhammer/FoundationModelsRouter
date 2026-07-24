@@ -290,7 +290,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 id: node.id,
                 parentId: node.parentId,
                 recordingDirectory: node.directory,
-                workingDirectory: node.directory,
+                // Restored from the node's own sidecar (harness plan §7
+                // creation-metadata ask, task 6j4bven) rather than defaulted
+                // to `node.directory`: a session vended with an overridden
+                // working directory must reassemble against that same
+                // directory, not silently fall back to its recording
+                // directory, or a restored session's tools would resolve
+                // files from the wrong place.
+                workingDirectory: node.sidecar.workingDirectory,
                 backend: backend,
                 slot: slot,
                 model: model,

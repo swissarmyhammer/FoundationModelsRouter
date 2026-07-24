@@ -535,6 +535,13 @@ actor RecordingLanguageModelState {
             // `LanguageModelSession` — so there is no grammar to record.
             grammar: nil,
             forkedAtEntryCount: forkedAtEntryCount,
+            // This handle never exposes a working-directory override — the
+            // caller drives its own `LanguageModelSession` and any tools it
+            // hands it directly, with no Router-managed working directory of
+            // its own — so its recording directory doubles as its working
+            // directory, exactly as ``RoutedSession/workingDirectory``
+            // defaults to the recording directory when no override is given.
+            workingDirectory: recordingDirectory,
             to: recordingDirectory
         )
     }

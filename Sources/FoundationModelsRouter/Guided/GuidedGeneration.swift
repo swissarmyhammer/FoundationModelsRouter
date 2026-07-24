@@ -226,17 +226,22 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Defaults to
     ///     ``CompactionPrompt/default``.
+    ///   - agentSpawn: The parent session/tool-call this session was spawned
+    ///     from — see
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:)``.
+    ///     Defaults to `nil`.
     /// - Returns: A new guided ``RoutedSession``.
     public func makeGuidedSession(
         grammar: Grammar,
         instructions: String? = nil,
         workingDirectory: URL? = nil,
         budget: TokenBudget? = nil,
-        compactionPrompt: CompactionPrompt = .default
+        compactionPrompt: CompactionPrompt = .default,
+        agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) -> RoutedSession {
         makeSession(
             grammar: grammar, instructions: instructions, workingDirectory: workingDirectory,
-            budget: budget, compactionPrompt: compactionPrompt)
+            budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn)
     }
 }
 
