@@ -24,6 +24,25 @@ public struct TokenBudget: Sendable, Equatable {
     /// Compact down to at most this fraction of ``limit``.
     public var target: Double
 
+    /// The optional hard ceiling on measured ``RoutedSession/contextFill``, as
+    /// a fraction of ``limit`` — `nil` (the default) opts out entirely
+    /// (harness plan §5.1's mid-turn strategy, task g2hcm36).
+    ///
+    /// Unlike ``trigger`` (compact proactively, ahead of time, so a turn never
+    /// dies) this is a deterministic last resort: when set on a session's
+    /// auto-compaction budget, ``RoutedSessionActor`` checks fill against it
+    /// immediately before submitting a turn's own generate call — after any
+    /// proactive fold ``trigger`` already triggered, so this only ever fires
+    /// when fill is *still* at or above it (an oversized-tail transcript no
+    /// fold could bring down far enough). Fails fast with
+    /// ``ContextBudgetError/hardCeilingExceeded(fill:ceiling:)`` instead of
+    /// submitting a call doomed to overflow the backend's own context window,
+    /// and — because that error is treated exactly like
+    /// `LanguageModelError.contextSizeExceeded` — is still recovered by
+    /// auto-compaction's own reactive fold-harder-and-retry-once path, only
+    /// surfacing to the caller if the retry hits it again.
+    public var hardCeiling: Double?
+
     /// Creates a token budget.
     ///
     /// - Parameters:
@@ -33,10 +52,47 @@ public struct TokenBudget: Sendable, Equatable {
     ///     Defaults to `0.80`.
     ///   - target: Compact down to at most this fraction of `limit`.
     ///     Defaults to `0.50`.
-    public init(limit: Int, trigger: Double = 0.80, target: Double = 0.50) {
+    ///   - hardCeiling: The optional hard ceiling on fill, as a fraction of
+    ///     `limit` — see ``hardCeiling``. Defaults to `nil` (opted out).
+    public init(limit: Int, trigger: Double = 0.80, target: Double = 0.50, hardCeiling: Double? = nil) {
         self.limit = limit
         self.trigger = trigger
         self.target = target
+        self.hardCeiling = hardCeiling
+    }
+}
+
+/// A typed, deterministic budget failure raised at the generate boundary
+/// itself (harness plan §5.1, task g2hcm36) — the alternative to letting a
+/// doomed submission run all the way to the backend and rely on it
+/// eventually throwing `LanguageModelError.contextSizeExceeded`.
+///
+/// Only ever thrown by ``RoutedSessionActor`` when a session's
+/// auto-compaction budget sets ``TokenBudget/hardCeiling``: immediately
+/// before submitting a turn's own generate call, measured
+/// ``RoutedSession/contextFill`` is checked against it, and this is thrown
+/// instead of running the call when fill is already at or over the ceiling.
+/// Treated exactly like `LanguageModelError.contextSizeExceeded` by
+/// auto-compaction's own reactive retry-once recovery: the session folds
+/// harder and retries once; a second hit (the fold could not bring fill
+/// under the ceiling — an unfoldable oversized transcript) surfaces this to
+/// the caller instead of looping.
+public enum ContextBudgetError: Error, Equatable, LocalizedError {
+    /// Measured ``RoutedSession/contextFill`` (`fill`) was at or above the
+    /// configured ``TokenBudget/hardCeiling`` (`ceiling`) immediately before
+    /// this turn's generate call would have been submitted.
+    case hardCeilingExceeded(fill: Double, ceiling: Double)
+
+    /// A human-readable description naming the measured fill and the
+    /// configured ceiling it was checked against.
+    public var errorDescription: String? {
+        switch self {
+        case .hardCeilingExceeded(let fill, let ceiling):
+            return """
+                Context fill \(fill) is at or above the configured hard ceiling \(ceiling); \
+                refusing to submit a doomed generate call.
+                """
+        }
     }
 }
 

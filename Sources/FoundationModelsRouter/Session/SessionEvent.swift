@@ -53,7 +53,17 @@ public enum SessionEvent: Sendable, Equatable {
     /// this type's own documentation for when this is emitted.
     case compaction(CompactionResult)
 
-    /// The turn closed, carrying its own measured token usage.
+    /// One physical generate attempt closed, carrying its own measured token
+    /// usage and the session's resulting ``RoutedSession/contextFill``.
+    ///
+    /// Emitted once per *inner* generate call, not once per logical turn
+    /// (harness plan §5.1, task g2hcm36): a turn auto-compaction retries
+    /// after a recovered overflow (``RoutedSession/compact(prompt:budget:)``'s
+    /// documented reactive pattern, driven automatically when a budget is
+    /// set) is two inner calls — the failed attempt and the retry — and each
+    /// closes with its own ``turnEnded(_:)``, carrying the fill measured at
+    /// that moment. This is what feeds a live context meter *during* a turn
+    /// rather than only once the whole (possibly retried) turn finishes.
     case turnEnded(TokenUsage)
 }
 
@@ -74,23 +84,36 @@ public enum ToolCallStatus: String, Sendable, Equatable, Codable {
     case failed
 }
 
-/// A turn's own measured token usage — the `(input, output)` delta
-/// ``RoutedSessionActor``'s chokepoint computes around one turn, wrapped for
+/// One generate attempt's own measured token usage — the `(input, output)`
+/// delta ``RoutedSessionActor``'s chokepoint computes around it — plus the
+/// session's resulting ``RoutedSession/contextFill``, wrapped for
 /// ``SessionEvent/turnEnded(_:)``.
 public struct TokenUsage: Sendable, Equatable {
-    /// Input (prompt) tokens this turn consumed.
+    /// Input (prompt) tokens this attempt consumed.
     public let tokensIn: Int
 
-    /// Output (completion) tokens this turn produced.
+    /// Output (completion) tokens this attempt produced.
     public let tokensOut: Int
+
+    /// The session's measured ``RoutedSession/contextFill`` immediately after
+    /// this attempt closed (harness plan §5.1, task g2hcm36) — the live
+    /// context-meter value a driver reports mid-turn, not only once a whole
+    /// (possibly retried) turn finishes. Unchanged from the prior attempt's
+    /// value when this one never reached the backend (mirrors
+    /// ``RoutedSession/contextFill``'s own "left untouched, not reset to a
+    /// meaningless zero delta" rule).
+    public let contextFill: Double
 
     /// Creates a token usage value.
     ///
     /// - Parameters:
-    ///   - tokensIn: Input tokens this turn consumed.
-    ///   - tokensOut: Output tokens this turn produced.
-    public init(tokensIn: Int, tokensOut: Int) {
+    ///   - tokensIn: Input tokens this attempt consumed.
+    ///   - tokensOut: Output tokens this attempt produced.
+    ///   - contextFill: The session's measured ``RoutedSession/contextFill``
+    ///     immediately after this attempt closed.
+    public init(tokensIn: Int, tokensOut: Int, contextFill: Double) {
         self.tokensIn = tokensIn
         self.tokensOut = tokensOut
+        self.contextFill = contextFill
     }
 }

@@ -1503,6 +1503,22 @@ actor RoutedSessionActor: RoutedSession {
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
         do {
+            // The hard-ceiling pre-check (harness plan §5.1, task g2hcm36):
+            // when the budget opts into ``TokenBudget/hardCeiling``, measured
+            // fill is checked *before* `body` ever submits this attempt's
+            // generate call — deterministic, so a transcript already too
+            // large to fit (typically because the proactive fold above
+            // couldn't bring it down far enough) fails fast rather than
+            // wasting a real generation call on a doomed submission. Thrown
+            // from inside this `do` block, exactly like a guided turn's
+            // pre-flight grammar-validation failure, so it is recorded as any
+            // other failed attempt below (zero-delta usage, since `backend`
+            // is never touched) and, via ``isRecoverableContextOverflow(_:)``,
+            // recovered by the same fold-harder-and-retry-once path as
+            // `LanguageModelError.contextSizeExceeded`.
+            if let budget = autoCompactionBudget, let hardCeiling = budget.hardCeiling, contextFill >= hardCeiling {
+                throw ContextBudgetError.hardCeilingExceeded(fill: contextFill, ceiling: hardCeiling)
+            }
             let response = try await body(composedPrompt)
             // A turn can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
@@ -1555,18 +1571,25 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
-    /// Whether `error` is the SDK's own context-overflow failure
-    /// (`LanguageModelError.contextSizeExceeded`, macOS 27) — the one
+    /// Whether `error` is a recoverable context-overflow failure —
+    /// the SDK's own `LanguageModelError.contextSizeExceeded` (macOS 27), hit
+    /// mid-generation, or this package's own deterministic
+    /// ``ContextBudgetError/hardCeilingExceeded(fill:ceiling:)``, hit
+    /// pre-flight by the hard-ceiling check in
     /// ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
+    /// — the two errors ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
     /// recovers from reactively when auto-compaction is opted in, mirroring
     /// the documented reactive recovery pattern on
     /// ``compact(prompt:budget:)``.
     ///
     /// - Parameter error: The error a turn attempt threw.
-    /// - Returns: `true` for a context-overflow failure, `false` for any
-    ///   other error.
+    /// - Returns: `true` for either recoverable context-overflow failure,
+    ///   `false` for any other error.
     private static func isRecoverableContextOverflow(_ error: Error) -> Bool {
         if case LanguageModelError.contextSizeExceeded = error {
+            return true
+        }
+        if case ContextBudgetError.hardCeilingExceeded = error {
             return true
         }
         return false
@@ -1824,9 +1847,14 @@ actor RoutedSessionActor: RoutedSession {
         // this chokepoint: emitted whenever the backend could report usage at
         // all, regardless of `diffIncludedResponse` — a turn rejected before
         // touching `backend` still measures a genuine (zero) delta between
-        // two real snapshots, so it still closes with a `turnEnded`.
+        // two real snapshots, so it still closes with a `turnEnded`. Reads
+        // `contextFill` *after* the `usageState` update above, so this
+        // attempt's own event carries the fill it just measured (or the
+        // still-unchanged prior value when this attempt never touched
+        // `backend`) — live, per inner call, not only once the whole
+        // (possibly retried) turn finishes (harness plan §5.1, task g2hcm36).
         if let usage {
-            onEvent?(.turnEnded(TokenUsage(tokensIn: usage.input, tokensOut: usage.output)))
+            onEvent?(.turnEnded(TokenUsage(tokensIn: usage.input, tokensOut: usage.output, contextFill: contextFill)))
         }
         return (diffIncludedResponse, usage, pendingEventsAttached)
     }

@@ -566,4 +566,120 @@ struct AutoCompactionTests {
         // Exactly two attempts: the original call plus the one retry.
         #expect(standardContainer.callLog.count == 2)
     }
+
+    // MARK: - Hard ceiling: deterministic fail-fast before a doomed generate (task g2hcm36)
+
+    @Test(
+        "a session whose budget sets a hard ceiling fails fast with ContextBudgetError before the doomed generate call even runs, then recovers via the same fold-harder-and-retry-once path as a context overflow, reporting live per-attempt contextFill"
+    )
+    @MainActor
+    func hardCeilingFailsFastThenRecoversWithLivePerAttemptFill() async throws {
+        // `trigger: 2.0` never fires proactively (fill tops out at 0.9 across
+        // this suite) — isolating the hard-ceiling pre-check in
+        // `runTurnAttempt` from the trigger-driven proactive fold in `runTurn`.
+        let hardCeilingBudget = TokenBudget(limit: Self.fixedBudget.limit, trigger: 2.0, target: 0.25, hardCeiling: 0.85)
+        let (session, standard, _) = try await Self.makeTriggeredSession(budget: hardCeilingBudget)
+        #expect(await session.contextFill == 0.9)
+
+        // A small increment for the triggering turn's own (retried) generate
+        // call, distinct from the warm-up turns' escalating increments, so
+        // the retry's own measured fill is unambiguously lower than the
+        // blocked attempt's stale 0.9 — proving the meter actually moved
+        // mid-turn rather than only once the whole turn finished.
+        standard.lastBackend?.usageIncrement = (input: 1_000, output: 0)
+
+        let events = try await Self.collectEvents(session, prompt: "turn 6")
+
+        guard case .turnEnded(let blockedUsage) = events.first else {
+            Issue.record(
+                "expected the first event to be turnEnded (the pre-flight-blocked attempt), got \(String(describing: events.first))"
+            )
+            return
+        }
+        // The blocked attempt never touched the backend: a genuine zero
+        // delta, and contextFill left exactly as it was before this turn
+        // (never reset to a meaningless zero).
+        #expect(blockedUsage == TokenUsage(tokensIn: 0, tokensOut: 0, contextFill: 0.9))
+
+        guard case .compaction(let result) = events[1] else {
+            Issue.record("expected the second event to be .compaction, got \(String(describing: events[1]))")
+            return
+        }
+        #expect(result.stagesApplied.contains("Summarization"))
+
+        // The blocked attempt's own generate call never ran: no textDelta
+        // appears before the fold.
+        #expect(!events[0..<2].contains { if case .textDelta = $0 { return true }; return false })
+        #expect(events.contains(.textDelta(Self.cannedText)))
+
+        guard case .turnEnded(let retryUsage) = events.last else {
+            Issue.record("expected the last event to be turnEnded (the recovered retry), got \(String(describing: events.last))")
+            return
+        }
+        // contextFill's own denominator is always the session's resolved
+        // `contextTokens` (100_000, per `makeTriggeredSession`'s own
+        // `router.resolve(profile: Self.profile(context: 100_000)...)`) —
+        // never `budget.limit`, which only sizes the compaction target.
+        #expect(retryUsage == TokenUsage(tokensIn: 1_000, tokensOut: 0, contextFill: 1_000.0 / 100_000.0))
+        // The context meter genuinely moved *during* this one logical turn,
+        // not only once it fully finished (harness plan §5.1, task g2hcm36).
+        #expect(retryUsage.contextFill < blockedUsage.contextFill)
+    }
+
+    @Test(
+        "a hard ceiling still not met after the one retry (an unfoldable transcript: the fold was a genuine no-op) surfaces ContextBudgetError.hardCeilingExceeded, never looping"
+    )
+    @MainActor
+    func hardCeilingStillExceededAfterRetrySurfacesError() async throws {
+        // `limit: 100_000` matches the session's own resolved `contextTokens`
+        // (`makeTriggeredSession`'s `router.resolve(profile: Self.profile(context: 100_000)...)`),
+        // and `target: 0.9` sits far above the tiny warm-up transcript's real
+        // size, so every fold this budget drives — including the reactive
+        // retry's own lowered-target fold — is a genuine no-op (nothing to
+        // shrink): `contextFill` never actually moves once measured. That
+        // deterministically guarantees the retry's own pre-check sees the
+        // exact same fill that tripped the first attempt, rather than
+        // depending on precise fold-sizing math to land above some
+        // threshold. `hardCeiling: 0.85` reuses the same window as
+        // `hardCeilingFailsFastThenRecoversWithLivePerAttemptFill` — above
+        // every warm-up turn's own pre-turn fill (≤ 0.75) but at/below the
+        // triggering turn's own 0.9.
+        let hardCeilingBudget = TokenBudget(limit: 100_000, trigger: 2.0, target: 0.9, hardCeiling: 0.85)
+        let (session, standard, _) = try await Self.makeTriggeredSession(budget: hardCeilingBudget)
+        #expect(await session.contextFill == 0.9)
+        let callsBeforeTriggeringTurn = standard.lastBackend?.callCount
+
+        var collected: [SessionEvent] = []
+        var caught: Error?
+        do {
+            for try await event in await session.streamEvents(to: "turn 6", maxTokens: nil) {
+                collected.append(event)
+            }
+        } catch {
+            caught = error
+        }
+
+        guard case .hardCeilingExceeded(let fill, let ceiling) = caught as? ContextBudgetError else {
+            Issue.record("expected ContextBudgetError.hardCeilingExceeded, got \(String(describing: caught))")
+            return
+        }
+        #expect(fill == 0.9)
+        #expect(ceiling == 0.85)
+
+        let compactionEvents = collected.filter { if case .compaction = $0 { return true }; return false }
+        // Exactly one fold ever ran (the one retry) before giving up — a
+        // second fold would mean looping.
+        #expect(compactionEvents.count == 1)
+        guard case .compaction(let result) = compactionEvents.first else {
+            Issue.record("expected a .compaction event")
+            return
+        }
+        // It was a genuine no-op — exactly why the retry hit the same
+        // ceiling again instead of recovering.
+        #expect(result.stagesApplied.isEmpty)
+
+        // Both attempts were blocked pre-flight; the original backend was
+        // never asked to generate again after the warm-up turns.
+        #expect(standard.lastBackend?.callCount == callsBeforeTriggeringTurn)
+    }
 }

@@ -412,7 +412,10 @@ struct SessionEventStreamTests {
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "hi"))
-        #expect(events.last == .turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5)))
+        // contextFill is this turn's usage over the profile's default context
+        // (``ProfileDefinition/defaultContext``, 8192) — this session was
+        // vended with no explicit `context:`.
+        #expect(events.last == .turnEnded(TokenUsage(tokensIn: 10, tokensOut: 5, contextFill: 15.0 / 8192.0)))
     }
 
     @Test("a backend reporting no usage never emits turnEnded")

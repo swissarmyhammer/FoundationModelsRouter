@@ -180,6 +180,18 @@ struct TokenBudgetTests {
         #expect(budget.target == 0.6)
     }
 
+    @Test("TokenBudget defaults hardCeiling to nil (opted out)")
+    func budgetDefaultsHardCeilingToNil() {
+        let budget = TokenBudget(limit: 4096)
+        #expect(budget.hardCeiling == nil)
+    }
+
+    @Test("TokenBudget accepts an overridden hardCeiling")
+    func budgetOverridesHardCeiling() {
+        let budget = TokenBudget(limit: 4096, hardCeiling: 0.95)
+        #expect(budget.hardCeiling == 0.95)
+    }
+
     // MARK: - Brand-new session
 
     @Test("a brand-new session reports contextFill ≈ 0 before its first turn")
