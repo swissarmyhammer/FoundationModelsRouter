@@ -13,11 +13,12 @@
 /// number unchanged.
 public struct ProfileDefinition: Sendable, Codable {
     /// The default working context size in tokens (8K), used both as the
-    /// initializer's default and as the resolve-path fallback for the
-    /// degenerate cases derivation itself can't recover from — no standard
-    /// candidate to anchor a ladder on, or every candidate's native max
-    /// context lookup failing — so those failures still resolve through the
-    /// ordinary fixed-context path instead of having nothing to loop over
+    /// initializer's default and as the resolve-path fallback.
+    ///
+    /// It covers degenerate cases derivation itself can't recover from — no
+    /// standard candidate to anchor a ladder on, or every candidate's native
+    /// max context lookup failing — so those failures still resolve through
+    /// the ordinary fixed-context path instead of having nothing to loop over
     /// (see ``JointFit``).
     public static let defaultContext = 8192
 
