@@ -1391,7 +1391,7 @@ actor RoutedSessionActor: RoutedSession {
         // ``dispatchNextPrompt()`` uses): a prompt waiting in the queue is left
         // exactly where it is rather than silently dequeued and discarded by
         // an unrelated ad hoc turn. An empty outbox drains to an empty
-        // `pendingEvents`, so ``composePrompt(pendingEvents:prompt:)`` returns
+        // `pendingEvents`, so ``composedPrompt(pendingEvents:prompt:)`` returns
         // `prompt` unchanged and ``appendingOperationEventSegments(_:to:)`` is
         // never invoked below — byte-identical to a session that never used
         // an outbox.
@@ -1498,7 +1498,7 @@ actor RoutedSessionActor: RoutedSession {
         allowOverflowRetry: Bool,
         _ body: (String) async throws -> String
     ) async throws -> String {
-        let composedPrompt = Self.composePrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
+        let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
 
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
@@ -1719,7 +1719,7 @@ actor RoutedSessionActor: RoutedSession {
     ///     outbox order.
     ///   - prompt: The caller's own prompt.
     /// - Returns: The composed, model-visible prompt string.
-    private static func composePrompt(pendingEvents: [OperationEvent], prompt: String) -> String {
+    private static func composedPrompt(pendingEvents: [OperationEvent], prompt: String) -> String {
         guard !pendingEvents.isEmpty else { return prompt }
         let preamble = pendingEvents.map(OperationEventSegment.renderedLine(for:)).joined(separator: "\n")
         return preamble + "\n\n" + prompt
@@ -1747,7 +1747,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// Returns a copy of `partial` with one ``OperationEventSegment`` appended
     /// to its recorded entry per event in `events`, in outbox order — the
-    /// durable counterpart to ``composePrompt(pendingEvents:prompt:)``'s text
+    /// durable counterpart to ``composedPrompt(pendingEvents:prompt:)``'s text
     /// preamble, attached only to what gets persisted, never to the SDK's own
     /// live transcript.
     ///

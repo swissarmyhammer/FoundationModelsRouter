@@ -408,6 +408,18 @@ struct GuidedGenerationTests {
     /// container: ``StubSessionBackend``'s guided `respond(to:following:maxTokens:)`
     /// already runs the real xgrammar-subset validation, so a plain stub
     /// backend serves both the warm-up turns and the triggering turn.
+    ///
+    /// `@unchecked Sendable` invariant: `lastBackend` is written exactly once
+    /// per container, inside `makeSession(instructions:)`, when
+    /// `makeGuidedSession` synchronously constructs that container's session.
+    /// For `standardContainer` that write happens on the test's own task, and
+    /// the test's only read of `lastBackend` immediately follows on that same
+    /// task with no suspension in between — so there is no concurrent access
+    /// to reason about. `flashContainer`'s `makeSession(instructions:)` may be
+    /// invoked again later, from inside `RoutedSessionActor`'s isolated fold
+    /// code when it builds the flash summarizer backend, but this test never
+    /// reads `flashContainer.lastBackend`, so that later write is never raced
+    /// against a read.
     private final class AutoCompactionTriggerContainer: LoadedLLMContainer, @unchecked Sendable {
         let responseText: String
         private(set) var lastBackend: StubSessionBackend?
