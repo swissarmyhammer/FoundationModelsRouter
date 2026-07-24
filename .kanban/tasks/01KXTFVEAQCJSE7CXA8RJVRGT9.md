@@ -28,8 +28,8 @@ comments:
 depends_on:
 - 01KXTFTPY5BCXGN9MFXFFSJQHA
 - 01KXTFV39FC09ZS0CZ1X3NGGMX
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: d280
 title: Examples/CompactionDemo + gated end-to-end round-trip test
 ---
 ## What

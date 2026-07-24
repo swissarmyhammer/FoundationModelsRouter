@@ -138,5 +138,29 @@ let package = Package(
             path: "Examples/CompactionDemo",
             exclude: ["README.md", "Fixtures"]
         ),
+        // Compaction-quality evals (compaction_plan.md §5), on Apple's
+        // Evaluations framework: `CompactionEvaluation` plants facts in the
+        // head of hand-written seed transcripts, folds with the
+        // `CompactionPrompt` under test, resumes a session over the result,
+        // and asks a question answerable only from the folded content.
+        // `import Evaluations` needs no extra linker/search-path
+        // configuration here — SwiftPM's `.testTarget` automatically adds
+        // the toolchain's test-only framework search path (the same one
+        // that makes `import Testing`/`XCTest` work), which is where
+        // `Evaluations.framework` itself lives (verified empirically: a
+        // throwaway SwiftPM package with a bare `import Evaluations` in a
+        // `.testTarget` builds and runs with zero unsafe flags). The one
+        // real-model `@Test` inside is runtime-gated on
+        // `FM_ROUTER_INTEGRATION_TESTS`, exactly like every other gated
+        // suite in `FoundationModelsRouterIntegrationTests` — the target
+        // itself always builds and its hermetic wiring tests always run
+        // under a plain `swift test`. Links the same Hub client + tokenizer
+        // products as the other gated suites, since the gated eval also
+        // resolves a real profile through `LiveModelLoader`.
+        .testTarget(
+            name: "FoundationModelsRouterEvals",
+            dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
+            path: "Tests/FoundationModelsRouterEvals"
+        ),
     ]
 )
