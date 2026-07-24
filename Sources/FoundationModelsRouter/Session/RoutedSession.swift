@@ -212,10 +212,19 @@ public protocol RoutedSession: Actor {
     /// never arrived within this turn's diff), and any
     /// ``SessionEvent/reasoningDelta(_:)`` the backend recorded; finally
     /// ``SessionEvent/turnEnded(_:)`` once the turn's own usage delta is
-    /// known. ``SessionEvent/compaction(_:)`` is emitted before those,
-    /// whenever this session auto-compacts itself mid-turn (only possible
-    /// when it was vended with a `budget` — see that case's own
-    /// documentation); a session with no `budget` set never emits it here.
+    /// known. ``SessionEvent/compaction(_:)`` is emitted whenever this
+    /// session auto-compacts itself mid-turn (only possible when it was
+    /// vended with a `budget` — see that case's own documentation), but
+    /// *where* in the sequence depends on which trigger fired: a **proactive**
+    /// fold (measured fill already over `budget.trigger` at turn start) runs
+    /// before generation begins, so its ``SessionEvent/compaction(_:)`` comes
+    /// before this turn's own textDelta/toolCall/toolStatus/turnEnded events;
+    /// a **reactive** fold (the turn overflowed the context window and is
+    /// being retried once) is only discovered after the failed attempt has
+    /// already run its course, so its ``SessionEvent/compaction(_:)`` is
+    /// emitted *after* that failed attempt's own ``SessionEvent/turnEnded(_:)``
+    /// and before the retried attempt's events. A session with no `budget`
+    /// set never emits it here.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.

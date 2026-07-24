@@ -398,6 +398,183 @@ struct GuidedGenerationTests {
         #expect(actor.autoCompactionPrompt == customPrompt)
     }
 
+    // MARK: - Guided session end-to-end auto-compaction trigger
+
+    /// Vends a single, test-retained ``StubSessionBackend`` per session,
+    /// mirroring `AutoCompactionTests.ConfiguredLLMContainer` — lets a test
+    /// mutate the returned backend's `usageIncrement` directly to drive
+    /// `contextFill` up to a budget's trigger. Unlike ``StubModelLoader``
+    /// above, this needs no `maxTokensSpy` wrapping and no separate guided
+    /// container: ``StubSessionBackend``'s guided `respond(to:following:maxTokens:)`
+    /// already runs the real xgrammar-subset validation, so a plain stub
+    /// backend serves both the warm-up turns and the triggering turn.
+    private final class AutoCompactionTriggerContainer: LoadedLLMContainer, @unchecked Sendable {
+        let responseText: String
+        private(set) var lastBackend: StubSessionBackend?
+
+        init(responseText: String) {
+            self.responseText = responseText
+        }
+
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            let backend = StubSessionBackend(responseText: responseText, instructions: instructions)
+            lastBackend = backend
+            return backend
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(responseText: responseText, entries: Array(transcript))
+        }
+    }
+
+    /// Vends `standard` for the `.standard` slot and `flash` for the `.flash`
+    /// slot — mirrors `AutoCompactionTests.PerSlotModelLoader`, needed here
+    /// (unlike this file's own ``StubModelLoader``, which ignores slot) so
+    /// the guided auto-compaction test can tell which slot's model actually
+    /// summarized.
+    private struct AutoCompactionPerSlotModelLoader: ModelLoader {
+        let standard: any LoadedLLMContainer
+        let flash: any LoadedLLMContainer
+        let dimension: Int
+
+        func loadLLM(
+            ref: ModelRef,
+            slot: ModelSlot,
+            context: Int,
+            reporting: @escaping @Sendable (DownloadProgress) -> Void
+        ) async throws -> any LoadedLLMContainer {
+            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
+            return slot == .flash ? flash : standard
+        }
+
+        func loadEmbedder(
+            ref: ModelRef,
+            slot: ModelSlot,
+            reporting: @escaping @Sendable (DownloadProgress) -> Void
+        ) async throws -> any LoadedEmbeddingContainer {
+            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
+            return StubEmbeddingContainer(dimension: dimension)
+        }
+
+        func preload(container: any LoadedModelContainer) async throws {}
+    }
+
+    /// A long-ish canned response repeated across every warm-up turn, so a
+    /// handful of turns' worth of transcript already carries a real,
+    /// non-trivial byte-size estimate — mirrors `AutoCompactionTests.cannedText`.
+    private static let autoCompactionCannedText = String(
+        repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
+
+    /// How many warm-up turns the guided trigger test drives — past
+    /// `TurnTruncation`'s default 4-turn recency window, so folding has real
+    /// old-span content to work with. Mirrors `AutoCompactionTests.turnCount`.
+    private static let autoCompactionTurnCount = 6
+
+    /// The exact entries the guided trigger test's warm-up turns produce,
+    /// computed without ever running a session — mirrors
+    /// `AutoCompactionTests.expectedWarmUpEntries()`.
+    private static func autoCompactionWarmUpEntries() -> [Transcript.Entry] {
+        (0..<autoCompactionTurnCount).flatMap { index -> [Transcript.Entry] in
+            [
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn \(index)"))])),
+                .response(
+                    Transcript.Response(
+                        assetIDs: [], segments: [.text(Transcript.TextSegment(content: autoCompactionCannedText))])),
+            ]
+        }
+    }
+
+    /// The estimated token size of just the warm-up entries' un-foldable
+    /// recency window (the newest 4 turns) — the floor no deterministic
+    /// stage can fold below, so a `budget.target` under this forces the
+    /// model-assisted ``Summarization`` stage (and therefore a real
+    /// summarizer call) to run. Mirrors `AutoCompactionTests.recencyWindowOnlyEstimate(_:)`.
+    private static func autoCompactionRecencyWindowOnlyEstimate(_ entries: [Transcript.Entry]) -> Int {
+        let (header, turns) = TranscriptTurns.split(entries)
+        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
+        return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
+    }
+
+    /// A budget whose target sits strictly below the warm-up transcript's own
+    /// recency-window floor — forcing the triggering fold to need the
+    /// model-assisted ``Summarization`` stage. Mirrors `AutoCompactionTests.fixedBudget`.
+    private static let autoCompactionFixedBudget: TokenBudget = {
+        let recencyOnly = autoCompactionRecencyWindowOnlyEstimate(autoCompactionWarmUpEntries())
+        return TokenBudget(limit: recencyOnly * 2, trigger: 0.8, target: 0.25)
+    }()
+
+    /// Drains `stream` into an array, in order — mirrors `AutoCompactionTests.collect(_:)`.
+    private static func collect(_ stream: AsyncThrowingStream<SessionEvent, Error>) async throws -> [SessionEvent] {
+        var events: [SessionEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+        return events
+    }
+
+    @Test(
+        "a guided session vended with a budget auto-compacts once measured fill reaches the trigger, proving the guided path actually exercises auto-compaction end-to-end (task 8213x39)"
+    )
+    @MainActor
+    func guidedSessionAutoCompactsAtTrigger() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let standardContainer = AutoCompactionTriggerContainer(responseText: Self.autoCompactionCannedText)
+        let flashContainer = AutoCompactionTriggerContainer(responseText: "FLASH-SUMMARY")
+        let loader = AutoCompactionPerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: 8)
+        let router = Router(
+            cacheDir: dir,
+            recorder: recorder,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: StubMetadataSource(raw: Self.rawMetadata),
+            loader: loader
+        )
+        // A 100,000-token working context, mirroring `AutoCompactionTests.makeTriggeredSession(budget:)`'s
+        // own profile so the same escalating-usage warm-up below produces
+        // the same 0.9 final fill.
+        var triggerProfile = Self.profile
+        triggerProfile.context = 100_000
+        let resolvedProfile = try await router.resolve(profile: triggerProfile, reporting: ResolutionProgress())
+
+        let session = resolvedProfile.standard.makeGuidedSession(
+            grammar: .jsonSchema(Self.smallSchema), budget: Self.autoCompactionFixedBudget)
+        let backend = try #require(standardContainer.lastBackend)
+
+        // Warm-up turns run through the guided path — `RoutedSessionActor.respond(to:maxTokens:)`
+        // forwards this session's own `grammar` to `backend.respond(to:following:maxTokens:)`
+        // (see that method's own doc comment) — with escalating measured
+        // usage crossing the fixed budget's 0.8 trigger only on the final
+        // warm-up turn, exactly like `AutoCompactionTests.makeTriggeredSession(budget:)`
+        // drives for the unguided path.
+        for turn in 0..<Self.autoCompactionTurnCount {
+            backend.usageIncrement = (input: (turn + 1) * 15_000, output: 0)
+            _ = try await session.respond(to: "turn \(turn)")
+        }
+        #expect(await session.contextFill == 0.9)
+
+        // The next turn should fold automatically, before its own work runs,
+        // with no caller-side `compact()` call anywhere in this test — the
+        // same proof `AutoCompactionTests.proactiveFoldPrefersFlashSummarizer()`
+        // gives for the unguided path, now for a session vended through
+        // `makeGuidedSession`.
+        let events = try await Self.collect(session.streamEvents(to: "turn 6", maxTokens: nil))
+
+        guard case .compaction(let result) = events.first else {
+            Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
+            return
+        }
+        #expect(result.stagesApplied.contains("Summarization"))
+        // The summary text is flash's own canned response — proof flash,
+        // not the session's own model, actually produced it, mirroring the
+        // unguided proof.
+        #expect(result.summary == "FLASH-SUMMARY")
+
+        // The triggering turn's own work still ran normally afterward.
+        #expect(events.contains(.textDelta(Self.autoCompactionCannedText)))
+    }
+
     @Test("the grammar travels with the session so a milestone-9 fork inherits it")
     @MainActor
     func grammarTravelsWithSession() async throws {
