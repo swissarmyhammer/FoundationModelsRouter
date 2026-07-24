@@ -17,6 +17,9 @@ enum CompactionEvalRealModel {
     /// runner resolves — see this enum's own doc comment for why that
     /// specific dense causal LM was chosen over a toy model.
     static let ref: ModelRef = "mlx-community/Qwen3.6-27B-mxfp4"
+
+    /// The maximum context window, in tokens, to load ``ref`` with — passed
+    /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.
     static let context = 8192
 }
 

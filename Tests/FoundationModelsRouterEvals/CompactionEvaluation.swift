@@ -11,7 +11,17 @@ import FoundationModels
 /// their `name`, so every call site must build an equal one from the same
 /// name rather than share a stored instance across API boundaries.
 enum CompactionEvalMetric {
+    /// The mechanical metric checking whether the resumed session's answer
+    /// contains the sample's ``CompactionEvaluationOutcome/factKeyPhrase`` —
+    /// pass/fail per sample, aggregated as a mean by
+    /// ``CompactionEvaluation/aggregateMetrics(using:)`` and asserted `>= 0.9`
+    /// by the gated `@Test`.
     static let factRetention = Metric("FactRetention")
+
+    /// The mechanical metric checking whether the fold's produced
+    /// `tokensAfter` stayed at or under the sample's
+    /// ``CompactionEvaluationOutcome/targetTokens`` — pass/fail per sample,
+    /// aggregated as a mean by ``CompactionEvaluation/aggregateMetrics(using:)``.
     static let underTarget = Metric("UnderTarget")
 
     /// The four-point scale both judged dimensions score on (compaction_plan.md
@@ -151,6 +161,11 @@ struct CompactionEvaluation: Evaluation {
         self.runSubject = runSubject
     }
 
+    /// The `Evaluation` protocol's sample loader: one ``Sample`` per seed in
+    /// ``seedsByID``, each pairing the seed's question with a
+    /// ``CompactionEvaluationOutcome`` ground truth — the planted fact, its
+    /// key phrase, the fold's target token count, and this evaluation's
+    /// ``prompt`` name.
     var dataset: ArrayLoader<Sample> {
         let targetTokens = Int((Double(budget.limit) * budget.target).rounded())
         let samples = seedsByID.values.sorted { $0.id < $1.id }.map { seed in
@@ -168,6 +183,19 @@ struct CompactionEvaluation: Evaluation {
         return ArrayLoader(samples: samples)
     }
 
+    /// The `Evaluation` protocol's per-sample subject work: looks the full
+    /// seed back up by `sample.expected.seedID`, runs ``runSubject`` to
+    /// compact its entries, resume a session over the result, and ask its
+    /// question, then wraps the produced answer and token counts in a
+    /// ``Subject``.
+    ///
+    /// - Parameter sample: The sample to produce a subject result for.
+    /// - Returns: The subject carrying the produced answer, token counts, and
+    ///   applied compaction stages.
+    /// - Throws: ``CompactionEvaluationError/missingExpectedValue`` if
+    ///   `sample` carries no `expected` value, or
+    ///   ``CompactionEvaluationError/unknownSeed(_:)`` if `expected.seedID`
+    ///   matches no seed this evaluation was constructed with.
     func subject(from sample: Sample) async throws -> Subject {
         guard let expected = sample.expected else { throw CompactionEvaluationError.missingExpectedValue }
         guard let seed = seedsByID[expected.seedID] else {
