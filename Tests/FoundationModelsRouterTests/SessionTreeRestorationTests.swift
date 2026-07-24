@@ -168,6 +168,71 @@ struct SessionTreeRestorationTests {
         return Set(tree.roots.flatMap(ids))
     }
 
+    // MARK: - Checkpoint-aware restore fixtures
+
+    /// Builds a `.response`-kind event carrying a text summary segment plus a
+    /// ``CompactionSegment`` — the exact shape a real compaction's
+    /// synthesized entry takes.
+    private static func compactionCheckpointEvent(
+        seq: Int,
+        sessionId: ULID,
+        routerId: ULID,
+        entryId: String,
+        summaryText: String = "summary",
+        content: CompactionSegment.Content
+    ) throws -> TranscriptEvent {
+        let contentJSON = String(data: try JSONEncoder().encode(content), encoding: .utf8)!
+        return TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: seq,
+            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+            kind: .response,
+            text: summaryText,
+            entry: TranscriptEntryPayload(
+                entryId: entryId,
+                segments: [
+                    .text(id: "\(entryId)-text", content: summaryText),
+                    .custom(
+                        id: "\(entryId)-segment",
+                        typeDiscriminator: CompactionSegment.typeDiscriminator,
+                        contentJSON: contentJSON,
+                        description: nil
+                    ),
+                ],
+                assetIds: []
+            )
+        )
+    }
+
+    /// Builds a stamped `.response`-kind event carrying real `tokensIn`/
+    /// `tokensOut` — the shape a genuine turn's diffed close takes, needed to
+    /// exercise ``TranscriptTree/restoredUsageState(in:)``'s "newest stamp
+    /// after the checkpoint" precedence tier.
+    private static func stampedResponseEvent(
+        seq: Int,
+        sessionId: ULID,
+        routerId: ULID,
+        entryId: String,
+        tokensIn: Int,
+        tokensOut: Int
+    ) -> TranscriptEvent {
+        TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: seq,
+            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+            kind: .response,
+            tokensIn: tokensIn,
+            tokensOut: tokensOut,
+            entry: TranscriptEntryPayload(
+                entryId: entryId,
+                segments: [.text(id: "\(entryId)-text", content: "reply")],
+                assetIds: []
+            )
+        )
+    }
+
     // MARK: - Tree shape restoration
 
     @Test(
@@ -466,5 +531,231 @@ struct SessionTreeRestorationTests {
 
         #expect(restored.root.grammar == .jsonSchema(ebnfSource))
         #expect(restored.root.grammar != .ebnf(ebnfSource))
+    }
+
+    // MARK: - Checkpoint-aware restore: restores a compacted, under-budget session
+
+    @Test(
+        "restoreSessionTree restores a compacted, under-budget session with unchanged id; its sidecar carries the compaction count and its restored fill reflects the checkpoint's own tokensAfter"
+    )
+    @MainActor
+    func restoringACompactedSessionYieldsCheckpointedWindowAndCompactionCount() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "turn 1")
+        _ = try await root.respond(to: "turn 2")
+
+        // Learn the real, SDK-assigned entry ids for turn 1 (to be folded
+        // away) and turn 2 (the surviving tail), then fabricate and append a
+        // compaction checkpoint referencing them directly onto the session's
+        // own transcript.jsonl — the exact shape `RoutedSession.compact(prompt:budget:)`
+        // itself appends, without driving the whole pipeline through a stub.
+        let routerDir = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let treeBeforeCheckpoint = try TranscriptTree.load(under: routerDir)
+        let rawEvents = try treeBeforeCheckpoint.events(forSession: root.id)
+        let prompts = rawEvents.filter { $0.kind == .prompt }
+        let responses = rawEvents.filter { $0.kind == .response }
+        let turn1PromptId = try #require(prompts.first?.entry?.entryId)
+        let turn1ResponseId = try #require(responses.first?.entry?.entryId)
+        let turn2PromptId = try #require(prompts.last?.entry?.entryId)
+        let turn2ResponseId = try #require(responses.last?.entry?.entryId)
+        let sessionContext = try #require(treeBeforeCheckpoint.session(root.id)?.sidecar.context)
+
+        let checkpointEvent = try Self.compactionCheckpointEvent(
+            seq: rawEvents.count,
+            sessionId: root.id,
+            routerId: router1.id,
+            entryId: "checkpoint-1",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: ["checkpoint-1", turn2PromptId, turn2ResponseId],
+                foldedEntryIds: [turn1PromptId, turn1ResponseId],
+                tokensBefore: 1_000,
+                tokensAfter: 321,
+                stagesApplied: ["Summarization"],
+                promptName: "default"
+            )
+        )
+        let transcriptURL = routerDir
+            .appendingPathComponent(root.id.description, isDirectory: true)
+            .appendingPathComponent("transcript.jsonl", isDirectory: false)
+        let existing = try String(contentsOf: transcriptURL, encoding: .utf8)
+        let checkpointLine = String(data: try JSONEncoder().encode(checkpointEvent), encoding: .utf8)!
+        try (existing + checkpointLine + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+
+        // "Tear down" and restore under a fresh process.
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+
+        #expect(restored.root.id == root.id)
+
+        let reloadedTree = try TranscriptTree.load(under: routerDir)
+        let restoredWindow = try reloadedTree.effectiveTranscript(forSession: root.id)
+        #expect(Array(restoredWindow).map(\.id) == ["checkpoint-1", turn2PromptId, turn2ResponseId])
+        #expect(reloadedTree.session(root.id)?.sidecar.compactionCount == 1)
+
+        // Under budget: the checkpoint is the newest thing (no turn ran
+        // after it before restore), so restored fill reports its own
+        // `tokensAfter` — never the full pre-fold size.
+        let fill = await restored.root.contextFill
+        #expect(fill == Double(321) / Double(sessionContext))
+    }
+
+    // MARK: - Checkpoint-aware restored fill precedence
+
+    @Test("restoredUsageState: a stamped response after the newest checkpoint wins over the checkpoint's own tokensAfter")
+    func restoredUsageStatePrefersStampAfterCheckpoint() throws {
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let checkpointEvent = try Self.compactionCheckpointEvent(
+            seq: 0,
+            sessionId: sessionId,
+            routerId: routerId,
+            entryId: "checkpoint-1",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: ["checkpoint-1"],
+                foldedEntryIds: [],
+                tokensBefore: 1_000,
+                tokensAfter: 300,
+                stagesApplied: ["Summarization"],
+                promptName: "default"
+            )
+        )
+        let stampedEvent = Self.stampedResponseEvent(
+            seq: 1, sessionId: sessionId, routerId: routerId, entryId: "post-response-1",
+            tokensIn: 50, tokensOut: 20
+        )
+
+        let state = TranscriptTree.restoredUsageState(in: [checkpointEvent, stampedEvent])
+        #expect(state == .measured(input: 50, output: 20))
+    }
+
+    @Test("restoredUsageState: a checkpoint with no stamped response after it falls back to the checkpoint's own tokensAfter")
+    func restoredUsageStateFallsBackToCheckpointTokensAfter() throws {
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let checkpointEvent = try Self.compactionCheckpointEvent(
+            seq: 0,
+            sessionId: sessionId,
+            routerId: routerId,
+            entryId: "checkpoint-1",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: ["checkpoint-1"],
+                foldedEntryIds: [],
+                tokensBefore: 1_000,
+                tokensAfter: 300,
+                stagesApplied: ["Summarization"],
+                promptName: "default"
+            )
+        )
+
+        let state = TranscriptTree.restoredUsageState(in: [checkpointEvent])
+        #expect(state == .measured(input: 300, output: 0))
+    }
+
+    @Test("restoredUsageState: no checkpoint at all falls back to the newest stamped response anywhere, else unknown")
+    func restoredUsageStateWithNoCheckpointFallsBackToPlainNewestStampOrUnknown() throws {
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let stampedEvent = Self.stampedResponseEvent(
+            seq: 0, sessionId: sessionId, routerId: routerId, entryId: "response-1",
+            tokensIn: 10, tokensOut: 5
+        )
+
+        #expect(TranscriptTree.restoredUsageState(in: [stampedEvent]) == .measured(input: 10, output: 5))
+        #expect(TranscriptTree.restoredUsageState(in: []) == .unknown)
+    }
+
+    @Test("restoredUsageState: a stamped response recorded before the checkpoint is ignored — only a stamp strictly after it, or its own tokensAfter, ever governs")
+    func restoredUsageStateIgnoresStampBeforeCheckpoint() throws {
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        // Deliberately implausible usage (999/999) on the pre-checkpoint
+        // stamp: if the "strictly after" boundary in `restoredUsageState`
+        // ever regressed to include the checkpoint's own index or anything
+        // before it, this value would leak through and the assertion below
+        // would fail.
+        let olderStampedEvent = Self.stampedResponseEvent(
+            seq: 0, sessionId: sessionId, routerId: routerId, entryId: "pre-response-1",
+            tokensIn: 999, tokensOut: 999
+        )
+        let checkpointEvent = try Self.compactionCheckpointEvent(
+            seq: 1,
+            sessionId: sessionId,
+            routerId: routerId,
+            entryId: "checkpoint-1",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: ["checkpoint-1"],
+                foldedEntryIds: ["pre-response-1"],
+                tokensBefore: 1_000,
+                tokensAfter: 300,
+                stagesApplied: ["Summarization"],
+                promptName: "default"
+            )
+        )
+
+        let state = TranscriptTree.restoredUsageState(in: [olderStampedEvent, checkpointEvent])
+        #expect(state == .measured(input: 300, output: 0))
+    }
+
+    @Test("restoredUsageState: the after-checkpoint slice starts strictly at checkpoint.index + 1, excluding the checkpoint event's own position")
+    func restoredUsageStateAfterSliceExcludesCheckpointsOwnIndex() throws {
+        // A real compaction checkpoint never carries a `tokensIn`/`tokensOut`
+        // stamp of its own — `RoutedSessionActor.compact(prompt:budget:)`
+        // appends its diff partials with no usage stamped on them (see
+        // `RoutedSession.swift`) — so this event is synthetic: it
+        // deliberately carries both a `CompactionSegment` *and* a stamp, the
+        // only way to make the exact array-slice boundary
+        // (`events[(checkpoint.index + 1)...]`, not `events[checkpoint.index...]`)
+        // observable rather than merely documented. If that boundary ever
+        // regressed to include the checkpoint's own index, `newestStampedUsage`
+        // would find this event's stamp (111/222) instead of falling back to
+        // its `tokensAfter` (300).
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let content = CompactionSegment.Content(
+            liveWindowEntryIds: ["checkpoint-1"],
+            foldedEntryIds: [],
+            tokensBefore: 1_000,
+            tokensAfter: 300,
+            stagesApplied: ["Summarization"],
+            promptName: "default"
+        )
+        let contentJSON = String(data: try JSONEncoder().encode(content), encoding: .utf8)!
+        let checkpointEventWithOwnStamp = TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: 0,
+            ts: Date(timeIntervalSince1970: 0),
+            kind: .response,
+            text: "summary",
+            tokensIn: 111,
+            tokensOut: 222,
+            entry: TranscriptEntryPayload(
+                entryId: "checkpoint-1",
+                segments: [
+                    .text(id: "checkpoint-1-text", content: "summary"),
+                    .custom(
+                        id: "checkpoint-1-segment",
+                        typeDiscriminator: CompactionSegment.typeDiscriminator,
+                        contentJSON: contentJSON,
+                        description: nil
+                    ),
+                ],
+                assetIds: []
+            )
+        )
+
+        let state = TranscriptTree.restoredUsageState(in: [checkpointEventWithOwnStamp])
+        #expect(state == .measured(input: 300, output: 0))
     }
 }

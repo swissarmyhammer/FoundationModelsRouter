@@ -218,7 +218,10 @@ public struct TranscriptTree: Sendable {
     /// - Returns: The raw node for `directory`.
     /// - Throws: ``TranscriptTreeError`` if the directory is not named for a
     ///   session id, its sidecar cannot be decoded, or the directory it nests
-    ///   under is not a session's (see ``parentId(of:sessionDirectoryPaths:routerDirectoryPath:)``).
+    ///   under is not a session's (see ``parentId(of:sessionDirectoryPaths:routerDirectoryPath:)``);
+    ///   otherwise if `directory`'s `transcript.jsonl` exists but cannot be
+    ///   read or decoded (needed to compute the sidecar's
+    ///   ``SessionSidecar/compactionCount``).
     private static func rawNode(
         in directory: URL,
         sessionDirectoryPaths: Set<String>,
@@ -238,6 +241,13 @@ public struct TranscriptTree: Sendable {
         guard let sidecar = decoded else {
             throw TranscriptTreeError.sidecarMissing(directory: directory)
         }
+        // Enriches the in-memory sidecar with this session's own recorded
+        // compaction count (never persisted back to the write-once
+        // `session.json` — see ``SessionSidecar/compactionCount``'s own doc
+        // comment), so a browser reading ``SessionNode/sidecar`` can badge a
+        // folded session with no second pass over its transcript.
+        let ownEvents = try decodeEvents(in: directory)
+        let compactionCount = compactionCheckpoints(in: ownEvents).count
         return RawNode(
             id: id,
             parentId: try parentId(
@@ -245,7 +255,7 @@ public struct TranscriptTree: Sendable {
                 sessionDirectoryPaths: sessionDirectoryPaths,
                 routerDirectoryPath: routerDirectoryPath
             ),
-            sidecar: sidecar,
+            sidecar: sidecar.withCompactionCount(compactionCount),
             directory: directory
         )
     }

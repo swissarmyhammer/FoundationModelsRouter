@@ -104,6 +104,20 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// Which concrete models won each slot on the run that created this
     /// session, or `nil` for a fork (see ``ResolvedProfile``).
     public let profile: ResolvedProfile?
+    /// How many ``CompactionSegment`` checkpoints this session's own
+    /// recorded transcript carries, so a browser can badge a folded session
+    /// (compaction_plan.md §3, "Identity") — or `nil` when not yet computed.
+    ///
+    /// Never written by ``SessionSidecarWriter`` — the sidecar lands
+    /// write-once, before a session records anything, long before any
+    /// compaction could run, so this field is always absent from the
+    /// literal `session.json` bytes on disk (and decodes as `nil` for every
+    /// existing recording, old or new). ``TranscriptTree/load(under:)``
+    /// populates it on each loaded ``SessionNode/sidecar`` — via
+    /// ``withCompactionCount(_:)`` — by counting that session's own
+    /// recorded checkpoints; the physical file is never rewritten, only the
+    /// in-memory value a browser reads is enriched.
+    public let compactionCount: Int?
 
     /// Creates a session sidecar.
     ///
@@ -118,6 +132,9 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///     time, or `nil` for a root session.
     ///   - profile: The run's resolved-profile facts for a root session, or
     ///     `nil` for a fork.
+    ///   - compactionCount: This session's own recorded compaction count, or
+    ///     `nil` when not yet computed. Always `nil` for a freshly-written
+    ///     sidecar — see ``compactionCount``'s own doc comment.
     public init(
         slot: ModelSlot,
         model: ModelRef,
@@ -126,7 +143,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         grammar: String?,
         recordingLevel: RecordingLevel,
         forkedAtEntryCount: Int?,
-        profile: ResolvedProfile?
+        profile: ResolvedProfile?,
+        compactionCount: Int? = nil
     ) {
         self.slot = slot
         self.model = model
@@ -136,6 +154,32 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.recordingLevel = recordingLevel
         self.forkedAtEntryCount = forkedAtEntryCount
         self.profile = profile
+        self.compactionCount = compactionCount
+    }
+
+    /// Returns a copy with ``compactionCount`` replaced by `count`, every
+    /// other field unchanged.
+    ///
+    /// ``TranscriptTree/load(under:)`` uses this to attach a session's own
+    /// computed compaction count onto its ``SessionNode/sidecar`` after
+    /// reading the write-once `session.json` bytes verbatim — the physical
+    /// file is never rewritten by this; it only enriches the in-memory
+    /// value a browser reads.
+    ///
+    /// - Parameter count: The computed compaction count.
+    /// - Returns: A copy carrying `count`.
+    func withCompactionCount(_ count: Int) -> SessionSidecar {
+        SessionSidecar(
+            slot: slot,
+            model: model,
+            context: context,
+            instructions: instructions,
+            grammar: grammar,
+            recordingLevel: recordingLevel,
+            forkedAtEntryCount: forkedAtEntryCount,
+            profile: profile,
+            compactionCount: count
+        )
     }
 
     /// Creates `directory` and writes `sidecar` into it as `session.json`,

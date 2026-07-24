@@ -222,25 +222,28 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
             let backend = routedLLM.container.makeSession(transcript: transcript)
-            // ``RoutedSession/contextFill``'s restored numerator: the newest
-            // stamped `.response` event's usage among this session's
-            // *effective* recorded events (its own file plus, for a fork,
-            // the inherited prefix of its ancestors' — the same span
-            // `effectiveTranscript` above reconstructs), or unknown when
-            // none carries a stamp — never a guess (compaction_plan.md
-            // §1.5). Deliberately ancestor-inclusive, not scoped to this
-            // node's own file alone: a freshly restored fork with no turns
-            // of its own yet should inherit its parent's last known fill
-            // rather than report unknown, mirroring live `fork()`'s own
-            // choice to inherit `usageState` from the session it forked
-            // from (see ``RoutedSessionActor/fork(workingDirectory:)``).
-            // Checkpoint-aware restore (deriving from the newest
-            // `CompactionSegment` when it is the newest thing) is a later
-            // task; this reads the newest stamp in the effective event
-            // stream regardless.
-            let restoredUsage = newestStampedUsage(in: try tree.effectiveEntryEvents(forSession: node.id))
-            let usageState: ContextUsageState =
-                restoredUsage.map { .measured(input: $0.input, output: $0.output) } ?? .unknown
+            // ``RoutedSession/contextFill``'s restored numerator
+            // (compaction_plan.md §1.5, checkpoint-aware restore
+            // precedence): the newest stamped `.response` event's usage
+            // recorded *after* the newest ``CompactionSegment`` checkpoint
+            // among this session's *effective* recorded events (its own
+            // file plus, for a fork, the inherited prefix of its
+            // ancestors' — the same span `effectiveTranscript` above
+            // reconstructs); when that checkpoint is itself the newest
+            // thing, its own ``CompactionSegment/Content/tokensAfter``; when
+            // there is no checkpoint at all, the newest stamp anywhere in
+            // the effective stream (the pre-compaction behavior,
+            // unchanged); else unknown — never a guess. See
+            // ``TranscriptTree/restoredUsageState(in:)``.
+            //
+            // Deliberately ancestor-inclusive, not scoped to this node's own
+            // file alone: a freshly restored fork with no turns of its own
+            // yet should inherit its parent's last known fill rather than
+            // report unknown, mirroring live `fork()`'s own choice to
+            // inherit `usageState` from the session it forked from (see
+            // ``RoutedSessionActor/fork(workingDirectory:)``).
+            let usageState = TranscriptTree.restoredUsageState(
+                in: try tree.effectiveEntryEvents(forSession: node.id))
             // `SessionSidecar.grammar` is only the grammar's `source`
             // string — it does not distinguish `.jsonSchema(_:)` from
             // `.ebnf(_:)`, which share that representation — so a session

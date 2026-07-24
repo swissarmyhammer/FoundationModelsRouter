@@ -37,8 +37,8 @@ depends_on:
 - 01KXTFS4FNT1P5F889D1PEQ9N7
 - 01KXTFSXYF1SH9WQ9Z2E3B6D6V
 - 01KXTFT9V4EPQJFJADAK36ZY10
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: d080
 title: 'RoutedSession.compact(): in-place fold on the actor'
 ---
 ## What

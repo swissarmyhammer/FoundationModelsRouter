@@ -313,6 +313,83 @@ struct TranscriptReconstructionTests {
         return sessionDir
     }
 
+    /// Builds a minimal, mapper-satisfying entry-kind event carrying a single
+    /// text segment — a hand-fabricated stand-in for a real recorded
+    /// `.instructions`/`.prompt`/`.response` line, used by the compaction
+    /// checkpoint fixtures below so they need no live backend.
+    private static func textEntryEvent(
+        seq: Int,
+        sessionId: ULID,
+        routerId: ULID,
+        kind: TranscriptEvent.Kind,
+        entryId: String,
+        text: String
+    ) -> TranscriptEvent {
+        TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: seq,
+            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+            kind: kind,
+            text: text,
+            entry: TranscriptEntryPayload(
+                entryId: entryId,
+                segments: [.text(id: "\(entryId)-text", content: text)],
+                toolDefinitions: kind == .instructions ? [] : nil,
+                assetIds: kind == .response ? [] : nil
+            )
+        )
+    }
+
+    /// Builds a `.response`-kind event carrying a text summary segment plus a
+    /// ``CompactionSegment`` — the exact shape a real compaction's
+    /// synthesized entry takes (see ``CompactionSegment``'s own doc comment
+    /// and ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:)``'s
+    /// `makeSummaryEntry`).
+    private static func compactionCheckpointEvent(
+        seq: Int,
+        sessionId: ULID,
+        routerId: ULID,
+        entryId: String,
+        summaryText: String,
+        content: CompactionSegment.Content
+    ) throws -> TranscriptEvent {
+        let contentJSON = String(data: try JSONEncoder().encode(content), encoding: .utf8)!
+        return TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: seq,
+            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+            kind: .response,
+            text: summaryText,
+            entry: TranscriptEntryPayload(
+                entryId: entryId,
+                segments: [
+                    .text(id: "\(entryId)-text", content: summaryText),
+                    .custom(
+                        id: "\(entryId)-segment",
+                        typeDiscriminator: CompactionSegment.typeDiscriminator,
+                        contentJSON: contentJSON,
+                        description: nil
+                    ),
+                ],
+                assetIds: []
+            )
+        )
+    }
+
+    /// Writes `events` as a session's `transcript.jsonl`, one JSON object per
+    /// line — the on-disk shape ``TranscriptTree`` reads.
+    private static func writeTranscript(_ events: [TranscriptEvent], to sessionDir: URL) throws {
+        let encoder = JSONEncoder()
+        let lines = try events.map { try encoder.encode($0) }.map { String(data: $0, encoding: .utf8)! }
+        try lines.joined(separator: "\n").write(
+            to: sessionDir.appendingPathComponent("transcript.jsonl", isDirectory: false),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
     private static func makeRouter(
         container: any LoadedLLMContainer,
         recorder: any TranscriptRecorder,
@@ -762,5 +839,240 @@ struct TranscriptReconstructionTests {
 
         let reconstructed = try tree.effectiveTranscript(forSession: root.id)
         #expect(Array(reconstructed).isEmpty)
+    }
+
+    // MARK: - Checkpoint-aware reconstruction: restore view, fullHistory view
+
+    /// Fabricates a single session whose transcript carries one compaction
+    /// checkpoint: a header instructions entry, an old prompt/response pair
+    /// (folded away), a recent prompt/response pair (kept), the checkpoint
+    /// itself, and one post-compaction prompt/response pair.
+    ///
+    /// - Returns: The tree, the session id, and every fabricated event in
+    ///   `seq` order — so a test can assert against the exact ids/order it
+    ///   fabricated rather than recomputing them.
+    private static func makeSingleCheckpointFixture() throws -> (
+        tree: TranscriptTree, sessionId: ULID, events: [TranscriptEvent]
+    ) {
+        let dir = Self.makeTempDir()
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let sessionDir = try Self.makeSessionDir(
+            dir.appendingPathComponent(sessionId.description, isDirectory: true))
+
+        let events = try [
+            Self.textEntryEvent(
+                seq: 0, sessionId: sessionId, routerId: routerId, kind: .instructions,
+                entryId: "instr-1", text: "system"),
+            Self.textEntryEvent(
+                seq: 1, sessionId: sessionId, routerId: routerId, kind: .prompt,
+                entryId: "old-prompt-1", text: "old prompt"),
+            Self.textEntryEvent(
+                seq: 2, sessionId: sessionId, routerId: routerId, kind: .response,
+                entryId: "old-response-1", text: "old response"),
+            Self.textEntryEvent(
+                seq: 3, sessionId: sessionId, routerId: routerId, kind: .prompt,
+                entryId: "recent-prompt-1", text: "recent prompt"),
+            Self.textEntryEvent(
+                seq: 4, sessionId: sessionId, routerId: routerId, kind: .response,
+                entryId: "recent-response-1", text: "recent response"),
+            Self.compactionCheckpointEvent(
+                seq: 5, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
+                summaryText: "summary of old turns",
+                content: CompactionSegment.Content(
+                    liveWindowEntryIds: ["instr-1", "checkpoint-1", "recent-prompt-1", "recent-response-1"],
+                    foldedEntryIds: ["old-prompt-1", "old-response-1"],
+                    tokensBefore: 1_000,
+                    tokensAfter: 200,
+                    stagesApplied: ["ToolOutputElision", "Summarization"],
+                    promptName: "default"
+                )
+            ),
+            Self.textEntryEvent(
+                seq: 6, sessionId: sessionId, routerId: routerId, kind: .prompt,
+                entryId: "post-prompt-1", text: "post prompt"),
+            Self.textEntryEvent(
+                seq: 7, sessionId: sessionId, routerId: routerId, kind: .response,
+                entryId: "post-response-1", text: "post response"),
+        ]
+        try Self.writeTranscript(events, to: sessionDir)
+
+        let tree = try TranscriptTree.load(under: dir)
+        return (tree, sessionId, events)
+    }
+
+    @Test("restore view (default): the newest checkpoint's ordered live-window entries, plus everything recorded after it — never the folded-away entries")
+    func restoreViewAppliesNewestCheckpoint() throws {
+        let (tree, sessionId, _) = try Self.makeSingleCheckpointFixture()
+
+        let reconstructed = try tree.effectiveTranscript(forSession: sessionId)
+        #expect(
+            Array(reconstructed).map(\.id) == [
+                "instr-1", "checkpoint-1", "recent-prompt-1", "recent-response-1",
+                "post-prompt-1", "post-response-1",
+            ])
+
+        // The default view is `.restore` — explicit and default agree.
+        let explicitRestore = try tree.effectiveTranscript(forSession: sessionId, view: .restore)
+        #expect(Array(explicitRestore).map(\.id) == Array(reconstructed).map(\.id))
+
+        // The folded-away entries never appear.
+        #expect(!Array(reconstructed).map(\.id).contains("old-prompt-1"))
+        #expect(!Array(reconstructed).map(\.id).contains("old-response-1"))
+    }
+
+    @Test("fullHistory view: every recorded entry, in seq order, with the compaction entry present as a fold marker rather than duplicating what it replaced")
+    func fullHistoryViewRetainsEveryEvent() throws {
+        let (tree, sessionId, events) = try Self.makeSingleCheckpointFixture()
+
+        let fullHistory = try tree.effectiveTranscript(forSession: sessionId, view: .fullHistory)
+        let fullHistoryIds = Array(fullHistory).map(\.id)
+        #expect(fullHistoryIds == events.map { $0.entry!.entryId })
+
+        // Every entry — including the folded-away ones and the checkpoint
+        // itself — appears exactly once: the checkpoint is a marker among
+        // what it replaced, never a duplicate rendering of it. Explicit
+        // per-id counts (not just the overall id-list equality above) so
+        // this would fail if a future fold-marker rendering re-embedded the
+        // folded entries' content alongside the checkpoint.
+        for id in fullHistoryIds {
+            #expect(fullHistoryIds.filter { $0 == id }.count == 1)
+        }
+
+        // The contrast that actually proves "fullHistory ignores the
+        // checkpoint": the restore view for the *same* fixture is strictly
+        // smaller (folded entries excluded), while fullHistory keeps every
+        // entry the session ever recorded, checkpoint included.
+        let restoreView = try tree.effectiveTranscript(forSession: sessionId)
+        #expect(fullHistory.count == events.count)
+        #expect(restoreView.count < fullHistory.count)
+    }
+
+    @Test("repeated compactions: only the newest checkpoint governs restore; the earlier one is a historical marker excluded from the restore view")
+    func repeatedCompactionsOnlyNewestGovernsRestore() throws {
+        let dir = Self.makeTempDir()
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let sessionDir = try Self.makeSessionDir(
+            dir.appendingPathComponent(sessionId.description, isDirectory: true))
+
+        let events = try [
+            Self.textEntryEvent(
+                seq: 0, sessionId: sessionId, routerId: routerId, kind: .instructions,
+                entryId: "instr-1", text: "system"),
+            Self.textEntryEvent(
+                seq: 1, sessionId: sessionId, routerId: routerId, kind: .prompt,
+                entryId: "old-prompt-1", text: "old prompt"),
+            Self.textEntryEvent(
+                seq: 2, sessionId: sessionId, routerId: routerId, kind: .response,
+                entryId: "old-response-1", text: "old response"),
+            Self.compactionCheckpointEvent(
+                seq: 3, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
+                summaryText: "first fold",
+                content: CompactionSegment.Content(
+                    liveWindowEntryIds: ["instr-1", "checkpoint-1"],
+                    foldedEntryIds: ["old-prompt-1", "old-response-1"],
+                    tokensBefore: 1_000,
+                    tokensAfter: 300,
+                    stagesApplied: ["Summarization"],
+                    promptName: "default"
+                )
+            ),
+            Self.textEntryEvent(
+                seq: 4, sessionId: sessionId, routerId: routerId, kind: .prompt,
+                entryId: "mid-prompt-1", text: "mid prompt"),
+            Self.textEntryEvent(
+                seq: 5, sessionId: sessionId, routerId: routerId, kind: .response,
+                entryId: "mid-response-1", text: "mid response"),
+            Self.compactionCheckpointEvent(
+                seq: 6, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-2",
+                summaryText: "second fold",
+                content: CompactionSegment.Content(
+                    // The second fold's live window folds the *first*
+                    // checkpoint away too, along with the turn after it.
+                    liveWindowEntryIds: ["instr-1", "checkpoint-2"],
+                    foldedEntryIds: ["checkpoint-1", "mid-prompt-1", "mid-response-1"],
+                    tokensBefore: 900,
+                    tokensAfter: 150,
+                    stagesApplied: ["Summarization"],
+                    promptName: "default"
+                )
+            ),
+            Self.textEntryEvent(
+                seq: 7, sessionId: sessionId, routerId: routerId, kind: .prompt,
+                entryId: "post-prompt-1", text: "post prompt"),
+        ]
+        try Self.writeTranscript(events, to: sessionDir)
+
+        let tree = try TranscriptTree.load(under: dir)
+        let reconstructed = try tree.effectiveTranscript(forSession: sessionId)
+        #expect(Array(reconstructed).map(\.id) == ["instr-1", "checkpoint-2", "post-prompt-1"])
+    }
+
+    @Test("a recording with no compaction checkpoint restores exactly as it always has, under either view")
+    func noCheckpointRestoresUnchanged() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let registry = BackendRegistry()
+        let container = TrackedLLMContainer(text: Self.cannedText, registry: registry)
+        let router = Self.makeRouter(
+            container: container,
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let root = profile.standard.makeSession()
+        _ = try await root.respond(to: "turn 1")
+        _ = try await root.respond(to: "turn 2")
+
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let backend = try #require(registry.created.first)
+
+        #expect(Array(try tree.effectiveTranscript(forSession: root.id)) == backend.transcriptEntries())
+        #expect(
+            Array(try tree.effectiveTranscript(forSession: root.id, view: .restore))
+                == backend.transcriptEntries())
+        #expect(
+            Array(try tree.effectiveTranscript(forSession: root.id, view: .fullHistory))
+                == backend.transcriptEntries())
+    }
+
+    @Test("a checkpoint naming a live-window entry id absent from the session's recorded events throws checkpointEntryMissing")
+    func checkpointNamingMissingLiveWindowEntryThrows() throws {
+        let dir = Self.makeTempDir()
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+        let sessionDir = try Self.makeSessionDir(
+            dir.appendingPathComponent(sessionId.description, isDirectory: true))
+
+        let checkpointEvent = try Self.compactionCheckpointEvent(
+            seq: 0, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
+            summaryText: "fold",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: ["checkpoint-1", "ghost-entry"],
+                foldedEntryIds: [],
+                tokensBefore: 100,
+                tokensAfter: 50,
+                stagesApplied: ["Summarization"],
+                promptName: "default"
+            )
+        )
+        try Self.writeTranscript([checkpointEvent], to: sessionDir)
+
+        let tree = try TranscriptTree.load(under: dir)
+        #expect(
+            throws: TranscriptReconstructionError.checkpointEntryMissing(
+                session: sessionId, seq: 0, entryId: "ghost-entry")
+        ) {
+            _ = try tree.effectiveTranscript(forSession: sessionId)
+        }
     }
 }

@@ -45,6 +45,17 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     /// documented or not, carries the same locatable context.
     case entryReconstructionFailed(session: ULID, seq: Int, underlying: TranscriptEntryReconstructionError)
 
+    /// The newest ``CompactionSegment`` checkpoint (found at the named
+    /// session's event `seq`) names a live-window entry id this session's
+    /// effective events do not contain.
+    ///
+    /// A checkpoint's own ``CompactionSegment/Content/liveWindowEntryIds``
+    /// are always drawn from entries already present when the fold ran (see
+    /// ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:)``),
+    /// so this is evidence of a truncated or hand-corrupted recording rather
+    /// than something the compaction pipeline itself can produce.
+    case checkpointEntryMissing(session: ULID, seq: Int, entryId: String)
+
     /// A localized message describing what error occurred.
     public var errorDescription: String? {
         switch self {
@@ -69,7 +80,175 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
             return """
                 Session \(session.description) event #\(seq) could not be reconstructed: \(underlying).
                 """
+        case .checkpointEntryMissing(let session, let seq, let entryId):
+            return """
+                Session \(session.description) event #\(seq)'s CompactionSegment names live-window \
+                entry id "\(entryId)", which this session's recorded events do not contain.
+                """
         }
+    }
+}
+
+/// Which view ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
+/// reconstructs (compaction_plan.md §3, "Checkpoint on restore").
+public enum TranscriptReconstructionView: Sendable, Equatable {
+    /// The checkpointed live window: the newest ``CompactionSegment``
+    /// checkpoint's ordered ``CompactionSegment/Content/liveWindowEntryIds``,
+    /// resolved back to their recorded entries, plus everything recorded
+    /// after the checkpoint — never the full pre-compaction history.
+    ///
+    /// A session with no recorded checkpoint reconstructs exactly as it
+    /// always has. Repeated compactions nest: only the newest checkpoint
+    /// governs — earlier ones become historical markers, reachable only
+    /// through ``fullHistory``.
+    ///
+    /// This is the default, and what ``RoutedModel/restoreSessionTree(root:registry:)``
+    /// always seeds a restored session's backend from.
+    case restore
+
+    /// Every recorded entry, in `seq` order, for browsers — the compaction
+    /// entry appears among the entries it replaced, as a fold marker: since
+    /// compaction only ever appends (nothing before it is ever touched or
+    /// removed), nothing is duplicated.
+    case fullHistory
+}
+
+extension TranscriptTree {
+    /// One recorded ``CompactionSegment`` checkpoint located within an
+    /// ordered event array: its position and the fold metadata it carries.
+    struct CompactionCheckpoint: Sendable {
+        /// The checkpoint event's index within the array it was found in.
+        let index: Int
+        /// The checkpoint event itself.
+        let event: TranscriptEvent
+        /// The fold metadata it carries.
+        let content: CompactionSegment.Content
+    }
+
+    /// Every ``CompactionSegment`` checkpoint among `events`, oldest first —
+    /// one per compaction this session's effective conversation ran.
+    ///
+    /// `events` is assumed already ordered the way
+    /// ``effectiveEntryEvents(forSession:)`` produces it (oldest first,
+    /// inherited-ancestor prefix before this session's own entries), so
+    /// array position — not ``TranscriptEvent/seq``, which is only unique
+    /// within one session's own file — is what "newest" means here.
+    static func compactionCheckpoints(in events: [TranscriptEvent]) -> [CompactionCheckpoint] {
+        events.enumerated().compactMap { index, event in
+            compactionSegmentContent(in: event).map { CompactionCheckpoint(index: index, event: event, content: $0) }
+        }
+    }
+
+    /// The newest ``CompactionSegment`` checkpoint among `events`, or `nil`
+    /// if none carries one. Repeated compactions nest: only this one governs
+    /// restore (compaction_plan.md §3).
+    static func newestCompactionCheckpoint(in events: [TranscriptEvent]) -> CompactionCheckpoint? {
+        compactionCheckpoints(in: events).last
+    }
+
+    /// Decodes `event`'s ``CompactionSegment/Content`` from its `.custom`
+    /// segment, when it carries one un-stripped.
+    ///
+    /// Returns `nil` — not a throw — when `event` carries no compaction
+    /// segment at all, or when a ``RecordingLevel/metadataOnly`` recording
+    /// stripped its content (`contentJSON` is empty and fails to decode): a
+    /// stripped checkpoint cannot govern restore, so callers fall back to
+    /// treating the session as uncompacted for filtering purposes. Nothing
+    /// is silently lost by this fallback: the checkpoint event itself is
+    /// then included unfiltered like any other event, and mapping it
+    /// through ``TranscriptEntryMapper/entry(from:kind:registry:)`` still
+    /// throws ``TranscriptReconstructionError/contentRemoved(session:seq:)``
+    /// for its stripped payload, exactly as it would without this fallback.
+    private static func compactionSegmentContent(in event: TranscriptEvent) -> CompactionSegment.Content? {
+        guard event.kind == .response, let segments = event.entry?.segments else { return nil }
+        for segment in segments {
+            guard case .custom(_, let discriminator, let contentJSON, _) = segment,
+                discriminator == CompactionSegment.typeDiscriminator,
+                let data = contentJSON.data(using: .utf8),
+                let content = try? JSONDecoder().decode(CompactionSegment.Content.self, from: data)
+            else { continue }
+            return content
+        }
+        return nil
+    }
+
+    /// Rebuilds `events` restricted to `checkpoint`'s checkpointed live
+    /// window: its ordered ``CompactionSegment/Content/liveWindowEntryIds``
+    /// (resolved back to their recorded events) followed by everything
+    /// recorded strictly after the checkpoint's own position.
+    ///
+    /// - Throws: ``TranscriptReconstructionError/checkpointEntryMissing(session:seq:entryId:)``
+    ///   if a listed live-window entry id names no event `events` contains.
+    static func restoreFilteredEvents(
+        _ events: [TranscriptEvent],
+        checkpoint: CompactionCheckpoint
+    ) throws -> [TranscriptEvent] {
+        let byEntryId = Dictionary(
+            events.compactMap { event in event.entry.map { ($0.entryId, event) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let liveWindow = try checkpoint.content.liveWindowEntryIds.map { entryId -> TranscriptEvent in
+            guard let event = byEntryId[entryId] else {
+                throw TranscriptReconstructionError.checkpointEntryMissing(
+                    session: checkpoint.event.sessionId,
+                    seq: checkpoint.event.seq,
+                    entryId: entryId
+                )
+            }
+            return event
+        }
+        let after = Array(events[(checkpoint.index + 1)...])
+        return liveWindow + after
+    }
+
+    /// `rawEvents` restricted to `view` (compaction_plan.md §3):
+    ///
+    /// - ``TranscriptReconstructionView/restore``: the newest checkpoint's
+    ///   live window plus everything recorded after it, or `rawEvents`
+    ///   unchanged when no checkpoint exists.
+    /// - ``TranscriptReconstructionView/fullHistory``: `rawEvents` unchanged.
+    ///
+    /// - Throws: ``TranscriptReconstructionError/checkpointEntryMissing(session:seq:entryId:)``.
+    static func reconstructableEvents(
+        _ rawEvents: [TranscriptEvent],
+        view: TranscriptReconstructionView
+    ) throws -> [TranscriptEvent] {
+        guard view == .restore, let checkpoint = newestCompactionCheckpoint(in: rawEvents) else {
+            return rawEvents
+        }
+        return try restoreFilteredEvents(rawEvents, checkpoint: checkpoint)
+    }
+
+    /// The restored ``ContextUsageState`` `events` implies
+    /// (compaction_plan.md §1.5, checkpoint-aware restore precedence), used
+    /// by ``RoutedModel/restoreSessionTree(root:registry:)`` to seed a
+    /// restored session's ``RoutedSession/contextFill``:
+    ///
+    /// 1. The newest stamped `.response` event recorded *after* the newest
+    ///    ``CompactionSegment`` checkpoint, when one exists.
+    /// 2. Else, when that checkpoint is itself the newest thing (no turn ran
+    ///    after it), its own ``CompactionSegment/Content/tokensAfter`` —
+    ///    mirroring ``RoutedSessionActor/compact(prompt:budget:)``'s own
+    ///    choice to report its fold's `tokensAfter` immediately after
+    ///    folding, before the next live turn re-measures.
+    /// 3. Else (no checkpoint recorded at all) the newest stamped `.response`
+    ///    event anywhere in `events` — the pre-compaction behavior,
+    ///    unchanged.
+    /// 4. Else ``ContextUsageState/unknown`` — never a guess.
+    ///
+    /// - Parameter events: A session's raw effective recorded events, in
+    ///   order (as ``effectiveEntryEvents(forSession:)`` returns them —
+    ///   unfiltered, so the checkpoint's own position can be located).
+    /// - Returns: The restored usage state.
+    static func restoredUsageState(in events: [TranscriptEvent]) -> ContextUsageState {
+        guard let checkpoint = newestCompactionCheckpoint(in: events) else {
+            return newestStampedUsage(in: events).map { .measured(input: $0.input, output: $0.output) } ?? .unknown
+        }
+        let afterCheckpoint = Array(events[(checkpoint.index + 1)...])
+        if let stamped = newestStampedUsage(in: afterCheckpoint) {
+            return .measured(input: stamped.input, output: stamped.output)
+        }
+        return .measured(input: checkpoint.content.tokensAfter, output: 0)
     }
 }
 
@@ -104,15 +283,25 @@ extension TranscriptTree {
     ///     segment still throws
     ///     ``TranscriptReconstructionError/unregisteredCustomSegmentType(session:seq:discriminator:)``
     ///     unless the caller supplies a registry that also knows about it.
+    ///   - view: Which view to reconstruct (compaction_plan.md §3,
+    ///     "Checkpoint on restore"). Defaults to
+    ///     ``TranscriptReconstructionView/restore``: the newest recorded
+    ///     ``CompactionSegment`` checkpoint's live window plus everything
+    ///     after it, or every event when the session carries no checkpoint.
+    ///     ``TranscriptReconstructionView/fullHistory`` keeps every event,
+    ///     for browsers.
     /// - Returns: The reconstructed transcript.
     /// - Throws: Everything ``effectiveEntryEvents(forSession:)`` throws
     ///   (``TranscriptTreeError``), plus ``TranscriptReconstructionError``
-    ///   when an event cannot be honestly rebuilt.
+    ///   when an event cannot be honestly rebuilt, or when `view` is
+    ///   ``TranscriptReconstructionView/restore`` and the newest checkpoint
+    ///   names a live-window entry id this session's events do not contain.
     public func effectiveTranscript(
         forSession id: ULID,
-        registry: CustomSegmentRegistry = .routerDefault
+        registry: CustomSegmentRegistry = .routerDefault,
+        view: TranscriptReconstructionView = .restore
     ) throws -> Transcript {
-        let events = try effectiveEntryEvents(forSession: id)
+        let events = try Self.reconstructableEvents(effectiveEntryEvents(forSession: id), view: view)
         var entries: [Transcript.Entry] = []
         entries.reserveCapacity(events.count)
         for event in events {
