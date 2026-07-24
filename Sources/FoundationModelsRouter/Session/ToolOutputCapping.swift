@@ -97,6 +97,25 @@ enum ToolOutputCapping {
         }
         return open(tool)
     }
+
+    /// Applies ``wrapping(_:toTokenLimit:)`` only when a limit is actually
+    /// configured — the shared guard-and-wrap both of Router's tool-instancing
+    /// seams need (``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:)``
+    /// for a root session, ``RoutedSessionActor/fork(workingDirectory:)`` for
+    /// a forked one), so neither has to restate the `guard let limit else`
+    /// pattern itself.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to consider for capping.
+    ///   - limit: The token limit to cap to, or `nil` (e.g. no
+    ///     ``TokenBudget`` configured, or a `TokenBudget` with no
+    ///     ``TokenBudget/toolOutputLimit``) to leave `tool` uncapped.
+    /// - Returns: `tool` unchanged when `limit` is `nil`; otherwise the
+    ///   result of ``wrapping(_:toTokenLimit:)``.
+    static func optionallyCapped(_ tool: any Tool, toTokenLimit limit: Int?) -> any Tool {
+        guard let limit else { return tool }
+        return wrapping(tool, toTokenLimit: limit)
+    }
 }
 
 /// A `Tool` decorator that caps a wrapped tool's `String` output to a fixed

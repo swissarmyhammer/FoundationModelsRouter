@@ -204,7 +204,7 @@ public enum Compactor {
         let totalBytes = transcript.reduce(into: 0) { total, entry in
             total += payloadByteCount(of: entry)
         }
-        return Int((Double(totalBytes) / charsPerTokenEstimate).rounded(.up))
+        return estimatedTokenCount(bytes: totalBytes)
     }
 
     /// Estimates `text`'s size in tokens using the same
@@ -216,7 +216,19 @@ public enum Compactor {
     /// - Parameter text: The text to estimate.
     /// - Returns: The estimated token count.
     static func estimatedTokenCount(of text: String) -> Int {
-        Int((Double(text.utf8.count) / charsPerTokenEstimate).rounded(.up))
+        estimatedTokenCount(bytes: text.utf8.count)
+    }
+
+    /// Converts a raw byte count into an estimated token count via
+    /// ``charsPerTokenEstimate``, rounding up — the shared arithmetic both
+    /// ``estimatedTokenCount(of:)`` overloads apply to their respective byte
+    /// counts (a transcript's total payload size, or a single string's UTF-8
+    /// size).
+    ///
+    /// - Parameter bytes: The byte count to convert.
+    /// - Returns: The estimated token count.
+    private static func estimatedTokenCount(bytes: Int) -> Int {
+        Int((Double(bytes) / charsPerTokenEstimate).rounded(.up))
     }
 
     /// The JSON-encoded byte size of `entry`'s ``TranscriptEntryPayload``

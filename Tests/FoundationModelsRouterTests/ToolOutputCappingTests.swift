@@ -199,6 +199,30 @@ struct ToolOutputCappingTests {
 
     // MARK: - Stub container capturing the threaded tool list
 
+    /// `@unchecked Sendable` invariant: `lastTools` is written only inside
+    /// `makeSession(instructions:tools:)`; `lastBackend` is written by both
+    /// that method and `makeSession(instructions:)` (required by
+    /// `LoadedLLMContainer` — see `ModelLoader.swift` — and, in production,
+    /// the entry point `performAutoCompaction`/`fold` calls on the *flash*
+    /// tier's container, from `RoutedSessionActor`'s own actor isolation, to
+    /// build the compaction summarizer). Both overloads write synchronously
+    /// (no `await` between call and write) from whichever context calls
+    /// them.
+    ///
+    /// This suite's `StubModelLoader` always vends the *same*
+    /// `ToolCapturingLLMContainer` instance regardless of slot, so a test
+    /// that ever exercised `RoutedSession.compact(prompt:budget:)` or
+    /// triggered auto-compaction would call `makeSession(instructions:)`
+    /// from `RoutedSessionActor`'s isolation — a different context from the
+    /// `@MainActor` test body — and this class would need real
+    /// synchronization. No test in this suite does that: every test here
+    /// only calls `makeSession(tools:budget:)`/`fork(workingDirectory:)`,
+    /// both of which drive `makeSession(instructions:tools:)` synchronously
+    /// from the `@MainActor` test method, and reads `lastTools`/`lastBackend`
+    /// only afterward, from that same method — so every write and every read
+    /// this suite actually performs land on the same thread, never
+    /// concurrently. A future test that adds `.compact()` coverage against
+    /// this container must revisit this invariant.
     private final class ToolCapturingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         private(set) var lastTools: [any Tool] = []
         private(set) var lastBackend: StubSessionBackend?
