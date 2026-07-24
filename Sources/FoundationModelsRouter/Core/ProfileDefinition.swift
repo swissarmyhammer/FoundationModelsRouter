@@ -1,5 +1,4 @@
-/// An authored profile: the named set of candidate models the router resolves
-/// from, plus the working context budget those models run under.
+/// An authored profile: the named set of candidate models the router resolves from, plus the working context budget those models run under.
 ///
 /// Each slot (`standard`, `flash`, `embedding`) lists candidate ``ModelRef``s in
 /// preference order; resolution picks the first that fits the request and
@@ -12,8 +11,7 @@
 /// the key decodes to `nil`, and legacy JSON carrying a number decodes to that
 /// number unchanged.
 public struct ProfileDefinition: Sendable, Codable {
-    /// The default working context size in tokens (8K), used both as the
-    /// initializer's default and as the resolve-path fallback.
+    /// The default working context size in tokens (8K), used both as the initializer's default and as the resolve-path fallback.
     ///
     /// It covers degenerate cases derivation itself can't recover from — no
     /// standard candidate to anchor a ladder on, or every candidate's native
@@ -37,9 +35,7 @@ public struct ProfileDefinition: Sendable, Codable {
     /// Candidate models for the `embedding` slot, in preference order.
     public var embedding: [ModelRef]
 
-    /// The working context size in tokens, or `nil` to derive it at resolve
-    /// time from each candidate's native max context (``RepoMetadata/nativeMaxContext``)
-    /// instead of a caller-supplied figure.
+    /// The working context size in tokens, or `nil` to derive it at resolve time from each candidate's native max context (``RepoMetadata/nativeMaxContext``) instead of a caller-supplied figure.
     ///
     /// Scales the KV-cache footprint and determines candidate fit once
     /// resolved to a concrete value. Defaults to ``defaultContext`` (8192)
@@ -74,9 +70,7 @@ public struct ProfileDefinition: Sendable, Codable {
         self.context = context
     }
 
-    /// The per-slot candidate lists keyed by ``ModelSlot``, exposing the slot
-    /// candidates as data so callers resolve a slot's candidates by lookup
-    /// rather than by branching over the slot.
+    /// The per-slot candidate lists keyed by ``ModelSlot``, exposing the slot candidates as data so callers resolve a slot's candidates by lookup rather than by branching over the slot.
     ///
     /// The mapping is total — it contains an entry for every ``ModelSlot``
     /// case — and each list preserves the author's preference order.
