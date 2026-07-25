@@ -3,7 +3,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Tests for ``AsyncSemaphore``, the fair (FIFO) await-based concurrency
-/// primitive both router gates are built on (per-model serial gate at value 1,
+/// primitive both router gates are built on (per-model generation gate at value 1,
 /// fork admission at value `maxConcurrentForks`).
 ///
 /// The suite avoids sleep-based timing. Concurrency is observed through an

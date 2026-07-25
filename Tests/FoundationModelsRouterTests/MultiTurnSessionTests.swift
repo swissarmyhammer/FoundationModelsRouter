@@ -10,8 +10,8 @@ import Testing
 /// call), ``RoutedSession/fork(workingDirectory:)`` must seed the child's
 /// backend from a *copy* of the parent's accumulated call history via
 /// ``LanguageModelSessionBackend/makeFork()``, and that `makeFork()` call must
-/// happen strictly after any in-flight generation on the parent has released
-/// the model's serial gate — never concurrently with it.
+/// happen strictly after any in-flight turn on the parent has released that
+/// session's turn lock — never concurrently with it.
 ///
 /// The companion gated integration suite
 /// (`Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`)
@@ -33,7 +33,7 @@ struct MultiTurnSessionTests {
     ///
     /// `@unchecked Sendable` is safe for the same reason `StubSessionBackend`
     /// is: `RoutedSessionActor` drives every method call on one backend
-    /// through the model's serial gate, so there is never concurrent access to
+    /// through the owning session's turn lock, so there is never concurrent access to
     /// guard against in practice.
     private final class TrackingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         /// The real stub every call is forwarded to.
@@ -114,7 +114,7 @@ struct MultiTurnSessionTests {
         }
     }
 
-    // MARK: - Parkable stub backend (serial-gate race proof)
+    // MARK: - Parkable stub backend (generation-gate race proof)
 
     /// A synchronized event log a test polls without sleeping, recording the
     /// order generation and fork work actually ran in.
@@ -147,7 +147,7 @@ struct MultiTurnSessionTests {
     /// immutable references to independently `Sendable` types (``EventLog``
     /// is lock-guarded; `AsyncSemaphore` is itself `Sendable`), and
     /// `RoutedSessionActor` drives every method call on one backend through
-    /// the model's serial gate — the very property this test suite proves —
+    /// the owning session's turn lock — the very property this test suite proves —
     /// so there is no concurrent access to guard against in practice.
     private final class ParkableSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let log: EventLog
@@ -408,11 +408,11 @@ struct MultiTurnSessionTests {
         #expect(childBackend.receivedPrompts == ["one", "two", "child turn"])
     }
 
-    // MARK: - fork() holds the serial gate across makeFork()
+    // MARK: - fork() holds the turn lock across makeFork()
 
-    @Test("fork() holds the serial gate during makeFork(): an in-flight respond() and a concurrent fork() never race")
+    @Test("fork() holds the turn lock during makeFork(): an in-flight respond() and a concurrent fork() never race")
     @MainActor
-    func forkHoldsSerialGateDuringMakeFork() async throws {
+    func forkHoldsTurnLockDuringMakeFork() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -425,28 +425,28 @@ struct MultiTurnSessionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        let generationGate = profile.standard.generationGate
+        let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
-        // Start a respond() call; it acquires the serial gate and parks inside
-        // the backend body, holding the gate the whole time it is parked.
+        // Start a respond() call; it acquires this session's turn lock and parks
+        // inside the backend body, holding the lock the whole time it is parked.
         let respondTask = Task { try await session.respond(to: "turn") }
-        await Self.spin(until: { generationGate.availablePermits == 0 })
+        await Self.spin(until: { turnLock.availablePermits == 0 })
         await Self.spin(until: { log.events.contains("respond-enter") })
 
-        // Concurrently start a fork. It must queue behind the serial gate
-        // rather than reading (forking) the backend's state while the turn
-        // above is still in flight — this is exactly the race
-        // `RoutedSessionActor.fork()` closes by acquiring `generationGate` before
+        // Concurrently start a fork. It must queue behind the turn lock rather
+        // than reading (forking) the backend's state while the turn above is
+        // still in flight — this is exactly the race
+        // `RoutedSessionActor.fork()` closes by acquiring `turnLock` before
         // calling `backend.makeFork()`.
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        await Self.spin(until: { generationGate.waiterCount >= 1 })
+        await Self.spin(until: { turnLock.waiterCount >= 1 })
 
         // The fork has not reached makeFork() yet: it is parked behind the
         // still-open respond() call.
         #expect(!log.events.contains("makeFork"))
 
         // Release the parked respond(); only once it completes and releases
-        // the serial gate can the fork proceed to call makeFork().
+        // the turn lock can the fork proceed to call makeFork().
         releaseGate.signal()
         _ = try await respondTask.value
         _ = try await forkTask.value

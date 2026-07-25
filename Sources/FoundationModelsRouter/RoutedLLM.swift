@@ -222,9 +222,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
             originalTools: tools,
             outbox: outbox,
-            // The serial and fork-admission gates are the model handle's, shared
-            // across all its sessions and forks. A root session holds no
-            // fork-admission permit.
+            // The generation and fork-admission gates are the model handle's,
+            // shared across all its sessions and forks — the session mints its
+            // own per-session turn lock. A root session holds no fork-admission
+            // permit.
             generationGate: generationGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: false,

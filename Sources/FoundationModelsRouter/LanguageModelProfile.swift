@@ -113,14 +113,20 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// reads it to retain the profile (see ``makeSession(instructions:workingDirectory:)``).
     let owningProfileBox = OwningProfileBox()
 
-    /// The per-model serial generation gate (a fair FIFO ``AsyncSemaphore`` at
-    /// value `1`).
+    /// The per-model generation gate (a fair FIFO ``AsyncSemaphore`` at value
+    /// `1`) — the throughput half of the split gate.
     ///
     /// Every ``RoutedSession`` vended from this handle — the root session and all
     /// its forks alike — shares this one gate, so their generations serialize
     /// rather than interleave: MLX generation runs a single GPU stream and is not
     /// safe to interleave. Only the generation-session surface acquires it; the
     /// embedding handle never does.
+    ///
+    /// Deliberately *not* the lock that makes a single session's turns correct —
+    /// that is each session's own ``RoutedSessionActor/turnLock``. Keeping the
+    /// two apart is what lets a turn hand this gate back mid-turn while it waits
+    /// on a person (``RoutedSession/awaitingUser(_:)``), so one slow human
+    /// answer no longer blocks every other session on the model.
     let generationGate = AsyncSemaphore(value: 1)
 
     /// The fork-admission gate (a fair FIFO ``AsyncSemaphore`` at value

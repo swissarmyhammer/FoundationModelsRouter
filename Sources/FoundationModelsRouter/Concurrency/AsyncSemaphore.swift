@@ -2,10 +2,11 @@ import Synchronization
 
 /// A fair (FIFO), `await`-based counting semaphore.
 ///
-/// This is the single concurrency primitive both router gates are built on (see
-/// the plan's "Concurrency" section): value `1` gives the per-model serial
-/// generation gate, and value `maxConcurrentForks` gives the fork-admission
-/// gate. Unlike `DispatchSemaphore` it never blocks a thread — a caller with no
+/// This is the single concurrency primitive every router gate is built on (see
+/// the plan's "Concurrency" section): value `1` gives both the per-model
+/// generation gate (``RoutedModel/generationGate``) and each session's own turn
+/// lock (``RoutedSessionActor/turnLock``), and value `maxConcurrentForks` gives
+/// the fork-admission gate. Unlike `DispatchSemaphore` it never blocks a thread — a caller with no
 /// permit available suspends its task and is resumed cooperatively when a permit
 /// is signalled.
 ///

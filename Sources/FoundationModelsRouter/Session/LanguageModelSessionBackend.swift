@@ -93,11 +93,15 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
 
     /// The backend's current full transcript, in order.
     ///
-    /// **Only safe to call while holding the model's serial gate**
-    /// (``RoutedModel/generationGate``) — the same discipline ``makeFork()``
+    /// **Only safe to call while holding the owning session's turn lock**
+    /// (``RoutedSessionActor/turnLock``) — the same discipline ``makeFork()``
     /// requires, since a concrete conformer (e.g. `MLXFoundationModelsSessionBackend`)
     /// reads this straight off a live, mutable session that a concurrent
-    /// generation call could otherwise still be appending to.
+    /// generation call could otherwise still be appending to. The turn lock,
+    /// not the per-model ``RoutedModel/generationGate``, is what serializes
+    /// this: a turn keeps its session's turn lock for the whole turn, while it
+    /// may hand the generation gate back mid-turn to wait on a human (see
+    /// ``RoutedSession/awaitingUser(_:)``).
     ///
     /// - Returns: Every transcript entry this backend has accumulated so far,
     ///   in order.
@@ -106,8 +110,8 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// The backend's cumulative input/output token usage so far, or `nil`
     /// when the backend cannot report usage.
     ///
-    /// **Only safe to call while holding the model's serial gate**
-    /// (``RoutedModel/generationGate``) — the same discipline ``transcriptEntries()``
+    /// **Only safe to call while holding the owning session's turn lock**
+    /// (``RoutedSessionActor/turnLock``) — the same discipline ``transcriptEntries()``
     /// requires, since a concrete conformer (e.g.
     /// `MLXFoundationModelsSessionBackend`) reads this straight off a live,
     /// mutable session that a concurrent generation call could otherwise

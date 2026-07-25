@@ -13,7 +13,7 @@ import Testing
 ///   like the shared ``StubSessionBackend``, so a fork's ``makeFork()``-seeded
 ///   transcript inheritance and independent divergence are observed exactly;
 /// - the same backend, when wired with a test-controlled ``SerialObserver`` +
-///   release gate, can park `respond` on it, so the per-model serial gate's
+///   release gate, can park `respond` on it, so the per-model generation gate's
 ///   non-overlap and FIFO order are made deterministic through the semaphore's
 ///   `waiterCount` observability rather than sleeps.
 ///
@@ -24,7 +24,7 @@ struct ForkConcurrencyTests {
     // MARK: - Serial-gate observability
 
     /// Tracks the order `respond` bodies enter the model and the peak concurrency,
-    /// so the serial gate's non-overlap and FIFO order can be asserted.
+    /// so the generation gate's non-overlap and FIFO order can be asserted.
     private actor SerialObserver {
         private(set) var entryOrder: [Int] = []
         private(set) var active = 0
@@ -116,14 +116,14 @@ struct ForkConcurrencyTests {
         }
 
         /// No synthetic transcript is tracked here — this suite exercises
-        /// call-count/prompt-history/serial-gate/admission-gate behavior, not
+        /// call-count/prompt-history/generation-gate/admission-gate behavior, not
         /// transcript accumulation, so there is nothing meaningful to report.
         func transcriptEntries() -> [Transcript.Entry] {
             []
         }
 
         /// No usage is tracked here — this suite exercises call-count/prompt-
-        /// history/serial-gate/admission-gate behavior, not token metering.
+        /// history/generation-gate/admission-gate behavior, not token metering.
         func usageTokenCounts() -> (input: Int, output: Int)? {
             nil
         }
@@ -171,7 +171,7 @@ struct ForkConcurrencyTests {
         /// default. `TrackingSessionBackend` never models a synthetic
         /// transcript (its ``TrackingSessionBackend/transcriptEntries()``
         /// always reports empty, by design — this suite exercises
-        /// call-count/prompt-history/serial-gate behavior, not transcript
+        /// call-count/prompt-history/generation-gate behavior, not transcript
         /// accumulation), so `transcript`'s entries have nothing to seed; only
         /// the tracking invariant itself needs to be preserved here.
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -402,7 +402,7 @@ struct ForkConcurrencyTests {
         _ = parent
     }
 
-    // MARK: - Per-model serial gate
+    // MARK: - Per-model generation gate
 
     @Test("concurrent respond() on one model never overlap and run FIFO")
     @MainActor
@@ -423,7 +423,7 @@ struct ForkConcurrencyTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         // Four callers over the SAME model: a root session and three forks. They
-        // share the model's serial gate, so their respond calls must serialize.
+        // share the model's generation gate, so their respond calls must serialize.
         let root = profile.standard.makeSession()
         let fork1 = try await root.fork(workingDirectory: nil)
         let fork2 = try await root.fork(workingDirectory: nil)
@@ -432,13 +432,13 @@ struct ForkConcurrencyTests {
 
         let generationGate = profile.standard.generationGate
 
-        // Launch call 0; it takes the only serial permit and parks in respond.
+        // Launch call 0; it takes the only generation permit and parks in respond.
         let task0 = Task { try await callers[0].respond(to: "0") }
         await Self.spin(until: { generationGate.availablePermits == 0 })
         await Self.spin(until: { await observer.entryOrder == [0] })
 
         // Launch calls 1, 2, 3 one at a time, each only after the previous has
-        // actually parked on the serial gate — establishing a deterministic FIFO
+        // actually parked on the generation gate — establishing a deterministic FIFO
         // arrival order without sleeping.
         let task1 = Task { try await callers[1].respond(to: "1") }
         await Self.spin(until: { generationGate.waiterCount == 1 })

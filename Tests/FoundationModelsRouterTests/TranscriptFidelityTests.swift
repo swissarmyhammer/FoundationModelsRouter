@@ -46,8 +46,8 @@ struct TranscriptFidelityTests {
     /// between turns and this session's `respond`/`streamResponse`/
     /// `transcriptEntries()` calls during a turn all happen on the awaited
     /// `@MainActor` test method, one at a time, and any read from inside
-    /// `RoutedSessionActor`'s chokepoint is further serialized by the model's
-    /// serial gate — nothing ever touches this instance concurrently.
+    /// `RoutedSessionActor`'s chokepoint is further serialized by the owning
+    /// session's turn lock — nothing ever touches this instance concurrently.
     private final class VariableTranscriptBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum StubError: Error { case boom }
 

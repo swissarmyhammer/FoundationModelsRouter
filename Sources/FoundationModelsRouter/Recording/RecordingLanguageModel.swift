@@ -401,7 +401,7 @@ actor RecordingLanguageModelState {
         await recordSessionMetaIfNeeded()
     }
 
-    /// Acquires the shared serial gate (via ``enterGateAndRecordMeta(_:)``)
+    /// Acquires the shared generation gate (via ``enterGateAndRecordMeta(_:)``)
     /// — without releasing it — and diffs `transcript` against last-seen,
     /// appending whatever is new. The shared chokepoint behind both
     /// ``generate(request:channel:innerRespond:)`` and ``sync(_:)``, which

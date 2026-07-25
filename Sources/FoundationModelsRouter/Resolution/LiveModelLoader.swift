@@ -192,11 +192,13 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
 /// certifies the type as safe to *hold* across an isolation boundary, not
 /// safe for *concurrent* calls. Concurrent access to this backend's
 /// ``session`` is safe in practice because every call runs inside
-/// ``RoutedSessionActor``'s `generationGate` — an `AsyncSemaphore` at value 1,
-/// shared with the session's forks — so at most one generation call against a
-/// given model's family of sessions is ever in flight at a time; this
-/// backend's session is never actually touched from two tasks concurrently
-/// despite being a reference type.
+/// ``RoutedSessionActor``'s `turnLock` — an `AsyncSemaphore` at value 1, held
+/// for the whole of every turn on the owning session — so at most one call
+/// against a given session's backend is ever in flight at a time, and the
+/// nested per-model `generationGate` further limits actual generation to one
+/// call across that model's whole family of sessions; this backend's session is
+/// never actually touched from two tasks concurrently despite being a reference
+/// type.
 final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
     /// The `LanguageModel` conformance ``makeFork()`` builds its forked session
     /// over, seeded from this backend's own accumulated transcript.
@@ -463,7 +465,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///
     /// See the protocol requirement's doc comment
     /// (``LanguageModelSessionBackend/transcriptEntries()``) for the
-    /// serial-gate precondition this call must be made under.
+    /// turn-lock precondition this call must be made under.
     func transcriptEntries() -> [FoundationModels.Transcript.Entry] {
         Array(liveSession.transcript)
     }
@@ -472,7 +474,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///
     /// See the protocol requirement's doc comment
     /// (``LanguageModelSessionBackend/usageTokenCounts()``) for the
-    /// serial-gate precondition this call must be made under.
+    /// turn-lock precondition this call must be made under.
     ///
     /// **Empirical status: unverified in this environment.** `LanguageModelSession.usage`
     /// (`Usage{input: Input{totalTokenCount, cachedTokenCount}, output:

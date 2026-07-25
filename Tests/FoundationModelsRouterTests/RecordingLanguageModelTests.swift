@@ -23,7 +23,7 @@ struct RecordingLanguageModelTests {
 
     /// Tracks how many stub-model calls are concurrently "in flight" (parked
     /// on ``releaseGate``, below), so a test can assert the model's shared
-    /// serial gate never lets two calls overlap.
+    /// generation gate never lets two calls overlap.
     private actor SerialObserver {
         private(set) var active = 0
         private(set) var maxActive = 0
@@ -63,7 +63,7 @@ struct RecordingLanguageModelTests {
     /// When ``observer``/``releaseGate`` are set, every call parks on the
     /// release gate after recording entry into ``observer`` — the seam
     /// ``generationGateSerializesAcrossHandles()`` uses to prove two concurrent
-    /// calls sharing one model's serial gate never overlap.
+    /// calls sharing one model's generation gate never overlap.
     private struct StubUnderlyingModel: LanguageModel {
         let cannedResponseText: String
         let toolName: String?
@@ -480,7 +480,7 @@ struct RecordingLanguageModelTests {
 
     // MARK: - Serial gate
 
-    @Test("generate acquires the model's shared serial gate; two handles over the same model never overlap")
+    @Test("generate acquires the model's shared generation gate; two handles over the same model never overlap")
     @MainActor
     func generationGateSerializesAcrossHandles() async throws {
         let dir = Self.makeTempDir()

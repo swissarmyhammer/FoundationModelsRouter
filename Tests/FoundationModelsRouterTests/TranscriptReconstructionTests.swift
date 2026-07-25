@@ -29,7 +29,7 @@ struct TranscriptReconstructionTests {
     /// time by this suite's single awaited `@MainActor` test method — no two
     /// backends are ever created concurrently within a test — with any read
     /// from inside `RoutedSessionActor`'s chokepoint further serialized by
-    /// the model's per-model serial gate (``RoutedModel/generationGate``).
+    /// the owning session's turn lock (``RoutedSessionActor/turnLock``).
     /// Nothing ever touches this instance concurrently.
     private final class BackendRegistry: @unchecked Sendable {
         private(set) var created: [TrackedStubBackend] = []
@@ -52,7 +52,7 @@ struct TranscriptReconstructionTests {
     /// `RoutedSessionActor`'s chokepoint — and both paths are driven one call
     /// at a time by this suite's single awaited `@MainActor` test method,
     /// with any actor-internal access further serialized by the model's
-    /// per-model serial gate (``RoutedModel/generationGate``). Nothing ever
+    /// per-model generation gate (``RoutedModel/generationGate``). Nothing ever
     /// touches an instance concurrently.
     private final class TrackedStubBackend: LanguageModelSessionBackend, @unchecked Sendable {
         enum StubError: Error, Equatable { case boom }

@@ -34,7 +34,7 @@ import FoundationModels
 ///
 /// Like the live conformance it stands in for, this is a plain mutable class
 /// rather than an actor: ``RoutedSessionActor`` only ever drives one backend
-/// method at a time (serialized by the model's own serial gate), so there is
+/// method at a time (serialized by the owning session's turn lock), so there is
 /// no concurrent access to guard against in practice.
 /// A ``LoadedLLMContainer`` whose `makeSession(transcript:)` has no special
 /// wrapping/invariant/spy requirement beyond seeding a plain

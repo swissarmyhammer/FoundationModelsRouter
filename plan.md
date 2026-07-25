@@ -705,7 +705,9 @@ to make this a real cost.
 Generation on a resident model is **serialized** — one at a time per model, FIFO.
 Concurrent `respond()` calls (including from forks of the same model) **queue** rather
 than run in parallel: MLX generation isn't safe to interleave on a single model's
-weights, and the GPU runs one stream anyway. Each `RoutedLLM` owns a serial gate.
+weights, and the GPU runs one stream anyway. Each `RoutedLLM` owns a **generation
+gate**; each session additionally owns a **turn lock** of its own (see "Human
+waits must not stall the model").
 
 **Fork fan-out is bounded** by `maxConcurrentForks` (a `Router` setting): at most that
 many fork sessions are in flight at once, capping the K× prefix-KV cost of `copy()`
@@ -713,9 +715,9 @@ many fork sessions are in flight at once, capping the K× prefix-KV cost of `cop
 `fork()` past the limit **awaits a free slot**, which frees when a fork is released —
 so a wide subagent fan-out self-throttles instead of OOMing.
 
-Both gates are the same primitive: a **fair (FIFO) async semaphore** (await-based, not
-a thread-blocking `DispatchSemaphore`) — value 1 for the per-model serial gate, value
-`maxConcurrentForks` for fork admission.
+Every gate is the same primitive: a **fair (FIFO) async semaphore** (await-based, not
+a thread-blocking `DispatchSemaphore`) — value 1 for the per-model generation gate
+and for each session's turn lock, value `maxConcurrentForks` for fork admission.
 
 **Guided output is whole-chunk, not streamed:** `respond(to:generating:)` / `matching:`
 / `following:` return the complete, schema-valid result. Token streaming
@@ -730,9 +732,12 @@ layer up:
 - **Serialization is structural, not policy.** Concurrent `respond()` /
   `streamResponse()` / `streamEvents()` calls on one session (or its forks,
   which share the same model) never interleave — they queue on the
-  per-model serial gate (see Concurrency above) and run strictly in
-  submission order. A caller never observes a half-produced turn
-  interleaved with another's.
+  session's own turn lock and, inside it, the per-model generation gate
+  (see Concurrency above). Order is strict submission order *within* a session
+  (its turn lock is FIFO) and FIFO arrival order at the generation gate across
+  sessions — so a turn on an idle session may overtake one still queued on a
+  busy session's turn lock, which is the throughput the split buys. A caller
+  never observes a half-produced turn interleaved with another's.
 - **No automatic turn loop.** Nothing in this package auto-drains queued
   work; a session only ever runs a turn because a caller called
   `respond`/`streamResponse`/`streamEvents`, or a driver explicitly pulled
@@ -751,9 +756,56 @@ layer up:
   can cancel by cancelling its own enclosing `Task`. Router adds no
   parallel cancellation mechanism on top of that.
 
-## Root and sub-agent: one session surface (harness plan §5.2 absorbed)
+### Human waits must not stall the model: the gate is split
 
-The harness plan drew a line between a **root** session (a user-facing
+A tool call that awaits a **human** — MCP elicitation, a permission prompt — is
+not waiting on the model, and does not hold the model hostage while it waits.
+
+FoundationModels invokes tools *inside* the model call `runTurnAttempt` awaits, so
+a tool's `await` happens with the turn's gates held. Were that one gate the
+per-model one, *shared with every other session and fork on the model*, one user
+taking a minute to answer would block every other session on that model
+head-of-line for the whole minute.
+
+**One semaphore was doing two different jobs.** They are separate:
+
+- **Per-session turn lock — correctness.** `RoutedSessionActor.turnLock`, one per
+  session. One `LanguageModelSession` never has two turns in flight; this also
+  protects the `transcript` read that `makeFork(tools:)` races against. **Never
+  released early.**
+- **Per-model generation gate — throughput.** `RoutedModel.generationGate`,
+  shared by a model's whole family of sessions and forks. Serializes actual model
+  work. **This** is the one released while waiting on a person.
+
+A turn takes the turn lock first and a generation permit inside it; `fork()` takes
+only the turn lock. The scoped release:
+
+```swift
+/// Releases the per-model generation gate for the duration of `body`,
+/// re-acquiring before returning. For waits on a *human* — never on the model.
+func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T
+```
+
+This is sound precisely because **no model work is in flight**: the SDK is
+suspended awaiting the tool call. Releasing the per-model gate lets other sessions
+generate; keeping the per-session lock still prevents a second turn here, and
+still blocks a concurrent fork's transcript read. Overlapping waits inside one
+turn release once and re-acquire once, and a call made with no turn in flight
+releases nothing rather than minting a permit the session never held.
+
+**Router does not implement elicitation** — it has no user channel, and
+`SessionOutbox`/`SessionEvent` is a one-way outbound projection, not a
+request/response with a human. Elicitation lives in **FoundationModelsACPAgent**,
+which depends on both Router and `FoundationModelsMCP` and is therefore the right
+caller for `awaitingUser`. Router's whole contribution is making the wait cheap.
+
+Note the re-acquire is itself a wait: a tool resuming after a long human pause may
+queue behind other sessions' turns. That is correct — it is now an ordinary
+competitor for the model rather than the owner of it.
+
+## Root and sub-agent: one session surface
+
+The design draws a line between a **root** session (a user-facing
 conversation living for hours) and a **sub-agent** session (spawned
 mid-task, often one giant turn, ephemeral). Router does not model that as
 two types — there is exactly one `RoutedSession`/`RoutedSessionActor`, and
@@ -1065,6 +1117,16 @@ these occur on today's MLX text paths — instructions, text prompts/responses, 
 responses, and tool traffic round-trip losslessly.
 
 ## Decisions
+
+- **Human waits release the model gate (decided):** the single serial gate is
+  split into a **per-session turn lock** (correctness — never released early) and a
+  **per-model generation gate** (throughput), and `RoutedSession.awaitingUser { }`
+  releases only the latter for the duration of a wait on a person. Without this, a
+  tool call that awaits a user holds a per-model lock across the whole turn and
+  blocks every other session and fork on that model. Router **does not** implement
+  elicitation itself — it owns no user channel; the coordinator lives in
+  FoundationModelsACPAgent, which calls `awaitingUser`. See **Human waits must not
+  stall the model**.
 
 - **Collapse: `FoundationModelsAgentHarness` folds into Router (2026-07-23)**
   — the harness's turn loop, token accounting, and compaction policy had

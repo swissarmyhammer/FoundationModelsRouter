@@ -25,11 +25,14 @@ private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 /// pair — except on the throwing path, which still guarantees at least one
 /// trace: either a real `.response` entry the SDK appended before failing, or
 /// a synthetic bodyless close when it appended none. Concurrent generations on
-/// one model do not interleave:
-/// the chokepoint runs inside the model's per-model serial gate
-/// (``RoutedModel/generationGate``, a fair FIFO ``AsyncSemaphore`` at value 1) that a
-/// session shares with all its forks, so calls on one model queue rather than
-/// overlap — MLX generation runs a single GPU stream. The generation itself runs
+/// one model do not interleave: the chokepoint runs inside two nested fair FIFO
+/// ``AsyncSemaphore`` gates, each at value 1 — this session's own
+/// ``RoutedSessionActor/turnLock``, so one session never has two turns in
+/// flight, and then the model's ``RoutedModel/generationGate``, shared with
+/// every other session and fork over that model, so real model work queues
+/// rather than overlaps (MLX generation runs a single GPU stream). Only the
+/// generation gate is ever handed back mid-turn, and only for a wait on a
+/// person (``RoutedSession/awaitingUser(_:)``). The generation itself runs
 /// through Apple's own `LanguageModelSession` (`FoundationModels`, macOS 27+),
 /// backed by a resident MLX model conformed to the `LanguageModel` protocol via
 /// `MLXLanguageModel` (`MLXFoundationModels`) — never `MLXLMCommon`'s own
@@ -235,6 +238,72 @@ public protocol RoutedSession: Actor {
     ///   produced first).
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
 
+    /// Runs `body` with the per-model generation gate released, re-acquiring it
+    /// before returning — for a wait on a **human**, never on the model.
+    ///
+    /// A tool invoked mid-turn that awaits a person (an MCP elicitation, a
+    /// permission prompt) is not waiting on the model, but the SDK calls tools
+    /// from *inside* the model call, so without this the wait would be served
+    /// holding the model's ``RoutedModel/generationGate`` — head-of-line
+    /// blocking every other session and fork over that model for however long
+    /// the person takes. Wrapping the wait in this hands the generation gate
+    /// back for its duration, so other sessions generate meanwhile.
+    ///
+    /// This is sound precisely because no model work is in flight while `body`
+    /// runs: the SDK is suspended awaiting the tool call. Correctness does not
+    /// rest on the generation gate anyway — this session keeps its own turn
+    /// lock throughout, so a second turn here still cannot start and a
+    /// concurrent ``fork(workingDirectory:)``'s transcript read is still
+    /// serialized against this turn.
+    ///
+    /// Re-acquiring is itself a wait: a tool resuming after a long pause may
+    /// queue behind other sessions' turns. That is the point — it becomes an
+    /// ordinary competitor for the model rather than its owner. The
+    /// re-acquire happens on every exit from `body`, including a throw and a
+    /// cancellation, so a permit can never leak.
+    ///
+    /// Overlapping calls — two tools of one turn both awaiting a person — release
+    /// once, on the outermost, and re-acquire once, when the last of them
+    /// finishes. That rests on an assumption about the SDK, recorded here as one:
+    /// **empirical status unverified in this environment** — that FoundationModels
+    /// resumes a turn's parallel tool calls together, so no model work runs until
+    /// the last of them returns. Were that wrong, generation would resume after
+    /// the first tool returned while a sibling wait still held the loan open, and
+    /// the release would need to be per-tool rather than per-turn. The gate's
+    /// count does not depend on it either way.
+    ///
+    /// Misuse cannot corrupt the gate's count, but it does forfeit the
+    /// serialization the gate exists for, so mind the precondition below. A wait
+    /// with no turn in flight has no permit to hand back and releases nothing
+    /// rather than signalling one that was never acquired; a wait whose lending
+    /// turn ends before the wait does hands the permit straight back instead of
+    /// stranding it, even when the turn ends mid-re-acquire (see
+    /// ``RoutedSessionActor/endHumanWait()``). The count stays exact in every
+    /// ordering — but a wait that overlaps a turn it is not part of hands that
+    /// turn's permit back while the model is still generating, and nothing can
+    /// detect that from here. An out-of-turn wait also inflates the wait depth, so
+    /// a *legitimate* in-turn wait arriving while it is outstanding is no longer
+    /// the outermost one and releases nothing at all: that turn silently goes back
+    /// to blocking the model for the length of its human wait. Accounting survives
+    /// misuse; the optimization does not.
+    ///
+    /// Router deliberately does **not** implement elicitation itself: it owns
+    /// no channel to a user, and ``outbox`` is a one-way outbound projection
+    /// rather than a request/response with a person. This method is the whole
+    /// of Router's contribution — making the wait cheap for whichever
+    /// coordinator upstairs actually owns the user channel.
+    ///
+    /// - Precondition: Call this from inside a tool the SDK invoked for *this*
+    ///   session's own in-flight turn, and do not let the wait outlive that tool
+    ///   call. That is what makes the release sound — the turn is suspended
+    ///   awaiting the tool, so there is no model work left for the gate to
+    ///   protect.
+    /// - Parameter body: The wait on a person to run with the generation gate
+    ///   released.
+    /// - Returns: Whatever `body` returns.
+    /// - Throws: Rethrows any error thrown by `body`, after re-acquiring.
+    func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T
+
     /// Forks a child session over the same resident model.
     ///
     /// The child takes a fresh id with ``parentId`` set to this session's id and
@@ -253,8 +322,8 @@ public protocol RoutedSession: Actor {
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
-    /// - Throws: Nothing in the current implementation — the admission and
-    ///   serial gates never throw and ``LanguageModelSessionBackend/makeFork()``
+    /// - Throws: Nothing in the current implementation — the admission gate and
+    ///   turn lock never throw and ``LanguageModelSessionBackend/makeFork()``
     ///   is non-throwing; declared `async throws` to match ``RoutedSession``'s
     ///   other generation entry points and leave room for a future conforming
     ///   backend whose fork can fail.
@@ -634,12 +703,62 @@ actor RoutedSessionActor: RoutedSession {
     /// delivery never migrates between sessions.
     nonisolated let outbox: SessionOutbox
 
-    /// The per-model serial generation gate, shared with the owning model's other
-    /// sessions and forks.
+    /// This session's own turn lock (a fair FIFO ``AsyncSemaphore`` at value 1)
+    /// — the correctness half of the split gate.
     ///
-    /// Every ``generate(grammar:_:)`` runs inside it, so generations on one
-    /// model serialize rather than interleave.
+    /// Taken for the whole of every turn and never handed back early, so this
+    /// session never has two turns in flight and a concurrent
+    /// ``fork(workingDirectory:)``'s read of ``backend``'s conversation state is
+    /// serialized against any turn still in flight — including one parked in
+    /// ``awaitingUser(_:)``. Fresh per session: a fork gets its own, since it
+    /// drives its own backend.
+    ///
+    /// Not `private` only so a test can observe its
+    /// ``AsyncSemaphore/waiterCount``, exactly as ``RoutedModel/generationGate``
+    /// is; nothing outside this file acquires it.
+    nonisolated let turnLock = AsyncSemaphore(value: 1)
+
+    /// The per-model generation gate, shared with the owning model's other
+    /// sessions and forks — the throughput half of the split gate.
+    ///
+    /// Serializes real model work across one model's whole family of sessions
+    /// and forks, so generations queue rather than interleave. Unlike
+    /// ``turnLock`` this one *is* handed back mid-turn, for a wait on a person
+    /// — see ``awaitingUser(_:)``.
     private nonisolated let generationGate: AsyncSemaphore
+
+    /// Whether the turn in flight on this session holds a ``generationGate``
+    /// permit.
+    ///
+    /// `false` between turns and while a human wait has handed the permit back,
+    /// so ``awaitingUser(_:)`` can tell a real mid-turn release from a call made
+    /// with no turn in flight at all — where signalling would mint a permit this
+    /// session never acquired.
+    private var holdsGenerationPermit = false
+
+    /// How many ``awaitingUser(_:)`` calls are currently outstanding on this
+    /// session.
+    ///
+    /// Only the outermost releases the generation permit and only the last to
+    /// finish re-acquires it, so two tools of one turn both awaiting a person
+    /// cannot double-signal the gate.
+    private var humanWaitDepth = 0
+
+    /// The id of the turn currently holding ``turnLock``, or `nil` between turns.
+    ///
+    /// Identities rather than a flag because the question a human wait has to
+    /// answer is not "was a permit released?" but "is the turn that lent it still
+    /// the one in flight?" — and it has to answer that *after* its re-acquire
+    /// suspends, by which time the answer may have changed. Monotonic, so a later
+    /// turn can never be mistaken for the one that lent (no ABA).
+    private var currentTurnID: UInt64?
+
+    /// The last id ``beginTurn()`` handed out.
+    private var lastTurnID: UInt64 = 0
+
+    /// The turn the outermost outstanding ``awaitingUser(_:)`` borrowed this
+    /// session's generation permit from, or `nil` when no loan is open.
+    private var humanWaitLenderTurnID: UInt64?
 
     /// The fork-admission gate, shared with the owning model.
     ///
@@ -669,8 +788,8 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// `0` for a root session — nothing has been persisted yet. For a fork,
     /// this is the parent's entry count *at fork time*
-    /// (``fork(workingDirectory:)`` captures it inside the serial gate it
-    /// already holds, before ``LanguageModelSessionBackend/makeFork()`` seeds
+    /// (``fork(workingDirectory:)`` captures it inside the turn-lock window it
+    /// takes, before ``LanguageModelSessionBackend/makeFork()`` seeds
     /// the child), so the inherited history the child's backend starts holding
     /// is never re-persisted into the child's own transcript.
     private var persistedEntryCount: Int
@@ -853,8 +972,10 @@ actor RoutedSessionActor: RoutedSession {
     /// for manual `/compact` binding upstairs" (task 8213x39): always
     /// summarizes with a fresh, disposable backend over this session's own
     /// model (``BackendCompactionSummarizer``), unchanged from before
-    /// auto-compaction existed. Acquires ``generationGate`` for the duration,
-    /// since a caller can invoke this at any time, then runs the shared fold
+    /// auto-compaction existed. Takes this session's turn lock and a generation
+    /// permit for the duration (``beginTurn()``) since a caller can invoke this
+    /// at any time — folding reads and swaps ``backend`` and runs real model
+    /// work, so it is a turn as far as both gates are concerned — then runs the shared fold
     /// mechanics in ``fold(prompt:budget:summarizer:)``. See that method's
     /// doc comment for what folding does.
     @discardableResult
@@ -862,17 +983,18 @@ actor RoutedSessionActor: RoutedSession {
         prompt: CompactionPrompt = .default,
         budget: TokenBudget? = nil
     ) async throws -> CompactionResult {
-        await generationGate.wait()
-        defer { generationGate.signal() }
+        await beginTurn()
+        defer { endTurn() }
         return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
     }
 
     /// Auto-compaction's own fold entry point (task 8213x39,
     /// ``autoCompactionBudget``): called from inside
     /// ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``, which already
-    /// holds ``generationGate`` for the whole turn, so this deliberately never
-    /// acquires it itself — unlike ``compact(prompt:budget:)``, doing so here
-    /// would deadlock against the very turn driving it.
+    /// holds ``turnLock`` and a ``generationGate`` permit for the whole turn, so
+    /// this deliberately never acquires either itself — unlike
+    /// ``compact(prompt:budget:)``, doing so here would deadlock against the
+    /// very turn driving it.
     ///
     /// Chooses its summarizer by preference rather than always this
     /// session's own model: the profile's ``LanguageModelProfile/flash`` slot
@@ -934,11 +1056,11 @@ actor RoutedSessionActor: RoutedSession {
     /// returns the original transcript unchanged and this method leaves
     /// ``backend`` exactly as it was.
     ///
-    /// Assumes ``generationGate`` is already held by the caller — this method
-    /// never acquires or releases it, so it is safe to call from inside the
-    /// turn chokepoint (``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``),
-    /// which holds the gate for the whole turn, as well as from
-    /// ``compact(prompt:budget:)``, which acquires it itself first.
+    /// Assumes both gates are already held by the caller — this method never
+    /// acquires or releases either, so it is safe to call from inside the turn
+    /// chokepoint (``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``),
+    /// which holds them for the whole turn, as well as from
+    /// ``compact(prompt:budget:)``, which takes them itself first.
     ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to `summarizer` when the
@@ -1222,6 +1344,119 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// See ``RoutedSession/awaitingUser(_:)``.
+    ///
+    /// Hands the generation permit back around `body` and re-acquires it on
+    /// every exit — normal return, throw, or cancellation — so the pairing holds
+    /// whatever `body` does; ``AsyncSemaphore/wait()`` is non-throwing and
+    /// completes even for a cancelled task, so a cancelled human wait still
+    /// leaves the gate counts balanced. `body` runs with this actor reentrant
+    /// (it suspends at its own awaits, exactly as the model call it was invoked
+    /// from does), which is what lets a second turn arrive and park on
+    /// ``turnLock`` while a person is being waited on.
+    func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
+        beginHumanWait()
+        do {
+            let value = try await body()
+            await endHumanWait()
+            return value
+        } catch {
+            await endHumanWait()
+            throw error
+        }
+    }
+
+    /// Acquires both of a turn's gates: this session's ``turnLock`` first, then
+    /// a ``generationGate`` permit.
+    ///
+    /// Always in that order, and never the reverse: every other holder of the
+    /// turn lock (``fork(workingDirectory:)``) takes it without ever wanting the
+    /// generation gate, so a single acquisition order is what keeps the pair
+    /// deadlock-free. Paired with exactly one ``endTurn()``.
+    private func beginTurn() async {
+        await turnLock.wait()
+        lastTurnID += 1
+        currentTurnID = lastTurnID
+        await acquireGenerationPermit()
+    }
+
+    /// Releases what ``beginTurn()`` acquired, innermost first.
+    ///
+    /// Synchronous, so it can run from a `defer` on every exit path a turn has.
+    ///
+    /// A turn whose own tool waited on a person always arrives here holding its
+    /// permit again — ``endHumanWait()`` re-acquires before `body`'s caller
+    /// resumes, on the throwing path as much as the returning one. A wait that
+    /// broke ``RoutedSession/awaitingUser(_:)``'s precondition can nonetheless
+    /// have taken this turn's permit and still be outstanding (it was started
+    /// from outside the turn, or outlives the tool call). Signalling anyway would
+    /// return a permit *twice* for one acquisition, and `AsyncSemaphore` has no
+    /// ceiling to absorb that: the gate would admit two concurrent generations
+    /// and stay inflated. So the permit is released only if this turn still holds
+    /// it; clearing ``currentTurnID`` is what tells the outstanding wait, when it
+    /// finally gets a permit, that its lender is gone and the permit is not its
+    /// to keep.
+    private func endTurn() {
+        currentTurnID = nil
+        if holdsGenerationPermit {
+            releaseGenerationPermit()
+        }
+        turnLock.signal()
+    }
+
+    /// Takes a ``generationGate`` permit and records that this session holds it.
+    private func acquireGenerationPermit() async {
+        await generationGate.wait()
+        holdsGenerationPermit = true
+    }
+
+    /// Hands this session's ``generationGate`` permit back.
+    private func releaseGenerationPermit() {
+        holdsGenerationPermit = false
+        generationGate.signal()
+    }
+
+    /// Enters a human wait, releasing the generation permit when this is the
+    /// outermost one *and* a turn actually holds a permit to release.
+    ///
+    /// With no turn in flight there is no permit to give back, and signalling
+    /// anyway would mint one this session never acquired — so it releases nothing
+    /// and records no lender, which is what makes ``endHumanWait()`` symmetric.
+    private func beginHumanWait() {
+        humanWaitDepth += 1
+        guard humanWaitDepth == 1 else { return }
+        guard holdsGenerationPermit, let lender = currentTurnID else { return }
+        humanWaitLenderTurnID = lender
+        releaseGenerationPermit()
+    }
+
+    /// Leaves a human wait, re-acquiring the permit the outermost wait released
+    /// and keeping it only if the turn that lent it is still the one in flight.
+    ///
+    /// The re-acquire is a real suspension point — it is a contended gate, that
+    /// is the whole point — so this actor is reentrant across it and the lending
+    /// turn can finish *inside* that window. Re-checking only before the acquire
+    /// would then leave this session holding a permit no turn will ever release,
+    /// parking every later turn on every session and fork over the model forever:
+    /// worse than the drifted count the check exists to prevent. So the lender is
+    /// re-validated after the acquire, and an orphaned permit is handed straight
+    /// back to whoever is next in the gate's queue.
+    ///
+    /// The depth drops back to zero only after all of that, deliberately: a
+    /// nested wait arriving mid-re-acquire would otherwise see depth `0`, mistake
+    /// itself for the outermost one, and release a permit this session does not
+    /// yet hold.
+    private func endHumanWait() async {
+        if humanWaitDepth == 1, let lender = humanWaitLenderTurnID {
+            humanWaitLenderTurnID = nil
+            await acquireGenerationPermit()
+            if currentTurnID != lender {
+                releaseGenerationPermit()
+            }
+        }
+        humanWaitDepth -= 1
+    }
+
     /// Forks a child session over the same resident model. See
     /// ``RoutedSession/fork(workingDirectory:)`` for the full contract.
     ///
@@ -1229,7 +1464,7 @@ actor RoutedSessionActor: RoutedSession {
     /// tools from ``originalTools`` (never this session's own already-instanced
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
     /// pristine state before being wired to the child's fresh outbox. Acquires
-    /// ``generationGate`` just long enough to read `backend`'s conversation state
+    /// ``turnLock`` just long enough to read `backend`'s conversation state
     /// and entry count together, closing the race against a concurrent
     /// in-flight turn mutating that same state. The child's
     /// ``recordingDirectory`` nests directly under this session's, and it
@@ -1262,7 +1497,7 @@ actor RoutedSessionActor: RoutedSession {
         // untouched by this and keep posting to this session's own `outbox`
         // — including any detached work that captured this session's sink
         // before the fork — so event delivery never migrates to the child.
-        // Computed before the serial-gate window below purely because it has
+        // Computed before the turn-lock window below purely because it has
         // no dependency on `backend`'s state; `childTools` is then threaded
         // into `backend.makeFork(tools:)` itself, so the live model backing
         // the fork actually calls these child-instanced tools rather than
@@ -1281,17 +1516,23 @@ actor RoutedSessionActor: RoutedSession {
             return ToolOutputCapping.optionallyCapped(connected, toTokenLimit: autoCompactionBudget?.toolOutputLimit)
         }
 
-        // Acquire the serial gate before reading `backend`'s conversation state to
-        // fork it. `generate(grammar:_:)` releases this same gate only
-        // *after* `body()` returns, but `body()` itself suspends across an await
-        // while the model generates — so a concurrent turn can be mid-flight,
-        // outside the gate's protection window as far as `backend` internals are
-        // concerned, mutating the underlying `LanguageModelSession.transcript` at
-        // the exact moment `makeFork(tools:)` would otherwise read it. Taking the
-        // gate here serializes the fork's read against any in-flight generation,
-        // closing that data race; releasing it immediately after capturing the
-        // forked backend keeps the hold no longer than necessary.
-        await generationGate.wait()
+        // Acquire this session's turn lock before reading `backend`'s
+        // conversation state to fork it. `generate(grammar:_:)` releases that
+        // same lock only *after* `body()` returns, but `body()` itself suspends
+        // across an await while the model generates — so a concurrent turn can be
+        // mid-flight, outside the lock's protection window as far as `backend`
+        // internals are concerned, mutating the underlying
+        // `LanguageModelSession.transcript` at the exact moment
+        // `makeFork(tools:)` would otherwise read it. Taking the lock here
+        // serializes the fork's read against any in-flight turn, closing that
+        // data race; releasing it immediately after capturing the forked backend
+        // keeps the hold no longer than necessary.
+        //
+        // The turn lock rather than the per-model generation gate, deliberately:
+        // a turn parked in ``awaitingUser(_:)`` has handed the generation gate
+        // back to let other sessions generate, but it is still very much in
+        // flight and its `backend` is still mid-turn.
+        await turnLock.wait()
         // Captured in the same gate window as `makeFork(tools:)`, so it names
         // exactly the entry count the child's seeded backend starts holding —
         // the child's own `persistedEntryCount` baseline, so the parent's history
@@ -1299,7 +1540,7 @@ actor RoutedSessionActor: RoutedSession {
         // transcript (see ``persistedEntryCount``).
         let entryCountAtFork = backend.transcriptEntries().count
         let forkedBackend = backend.makeFork(tools: childTools)
-        generationGate.signal()
+        turnLock.signal()
 
         let childId = ULID.generate()
         // The child's transcript nests directly *under this session's* directory,
@@ -1383,10 +1624,11 @@ actor RoutedSessionActor: RoutedSession {
     /// The single recorder-bracketed generation chokepoint every public method
     /// funnels through.
     ///
-    /// The whole bracket runs inside the model's per-model serial gate
-    /// (``RoutedModel/generationGate``), so concurrent generations on one model —
-    /// including from forks that share the gate — queue in FIFO order rather than
-    /// interleave. Inside the gate it first lazily records the session's
+    /// The whole bracket runs inside this session's ``turnLock`` and, nested
+    /// inside that, the model's per-model ``RoutedModel/generationGate``, so two
+    /// turns on one session can never interleave and concurrent generations on
+    /// one model — including from forks that share the gate — queue in FIFO
+    /// order rather than interleave. Inside the gates it first lazily records the session's
     /// first-line `session` meta event (once per session), drains ``outbox``
     /// and composes this turn's prompt (see below), then runs `body`, then
     /// snapshot-diffs ``backend``'s real transcript (see
@@ -1425,18 +1667,18 @@ actor RoutedSessionActor: RoutedSession {
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: (String) async throws -> String
     ) async throws -> String {
-        // Acquire the serial permit for the whole bracket, releasing it on every
-        // path with a `defer` (the recording bracket stays in this actor's
-        // isolation region, so the gated work is not sent across an isolation
-        // boundary as a `withPermit` closure would be). `wait()`/`signal()` pair
-        // exactly like `withPermit`, so no permit can leak.
-        await generationGate.wait()
-        defer { generationGate.signal() }
+        // Acquire both gates for the whole bracket, releasing them on every path
+        // with a `defer` (the recording bracket stays in this actor's isolation
+        // region, so the gated work is not sent across an isolation boundary as a
+        // `withPermit` closure would be). `beginTurn()`/`endTurn()` pair exactly
+        // like `withPermit`, so no permit can leak.
+        await beginTurn()
+        defer { endTurn() }
 
         await recordSessionMetaIfNeeded()
 
         // Drain-on-turn: everything staged in `outbox` since the last turn is
-        // folded into *this* turn's prompt, here inside the serial gate so a
+        // folded into *this* turn's prompt, here inside the turn lock so a
         // drain never interleaves with a concurrent turn. This caller supplies
         // its own prompt directly, so only events are drained — never the
         // queued-prompt FIFO (see ``SessionOutbox/drainPendingEvents()``, as
@@ -1670,7 +1912,7 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// Dequeues the front queued prompt together with any pending
     /// turn-riding events in one atomic ``SessionOutbox/drainForDispatch()``
-    /// call, inside the same serial gate ``generate(grammar:prompt:_:)`` runs
+    /// call, inside the same two gates ``generate(grammar:prompt:_:)`` runs
     /// its own bracket in — so a dispatch never interleaves with a concurrent
     /// ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)`` turn, and
     /// races ``cancel(_:)``/``replace(_:prompt:)`` exactly at the drain: once
@@ -1682,8 +1924,8 @@ actor RoutedSessionActor: RoutedSession {
     /// Honors ``grammar`` exactly like ``respond(to:maxTokens:)``: a guided
     /// session constrains this turn's response too.
     func dispatchNextPrompt() async throws -> String? {
-        await generationGate.wait()
-        defer { generationGate.signal() }
+        await beginTurn()
+        defer { endTurn() }
 
         let drained = await outbox.drainForDispatch()
         let pendingEvents = drained.events.map(\.event)
