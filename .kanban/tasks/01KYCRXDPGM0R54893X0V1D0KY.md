@@ -138,8 +138,27 @@ comments:
 
     Non-defect for any later re-review: `currentTurnID` still appears in this card's `.md` and `.jsonl`. That is the verbatim finding text and the append-only audit log, which must name the old identifier to make sense; not rewritten.
   timestamp: 2026-07-25T21:10:58.670067+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kydjycp74bg4nqyqb92xy3yc
+  text: |-
+    Orchestrator (/finish) — task complete in 2 iterations.
+
+    **Iteration 1** — implement landed the split gate green; checkpoint `97b5aab` (24 files, +1470/-125, new `HumanWaitGateTests.swift` tracked). Review of that delta: 4 findings recorded (62 confirmed / 91 refuted by the engine; 58 dropped as pre-existing test-code refactors).
+
+    **Iteration 2** — the 4 findings fixed (`*TurnID` → `*TurnId` intra-file consistency, `100_000` spin cap → `spinYieldLimit`); checkpoint `3f3f58f` (4 files, +60/-14). Review of that delta: **clean, 0 in-scope findings** → `done`.
+
+    Final test status: `swift build --build-tests` exit 0, zero Swift compiler warnings verified on a forced full recompile of all 131 files (not a cache hit); full `swift test` exit 0 at **587 tests / 68 suites** (557/57 + 18/7 + 12/4). Affected concurrency suites run 10× consecutively with no flakiness. Both checkpoints are local commits only — **nothing pushed**, branch is `ahead 2` of `origin/main`.
+
+    **Follow-up work this task deliberately did not do** (needs its own card — out of scope here, not defects introduced by this change):
+    - `RoutedSession.swift` — three-way near-verbatim duplication across `streamResponse` / `streamEvents` / `streamEventsGenerating`+`streamGenerating` (~lines 896/960/990). A real consolidation touching public streaming entry points.
+    - `RoutedSession.swift:1270` — magic numbers in `max(target / 2, 0.1)` (retry-fold halving factor and minimum target).
+    - The identical bare `for _ in 0..<100_000` spin cap persists in `RecordingLanguageModelTests.swift:337`, `MultiTurnSessionTests.swift:344`, `ForkConcurrencyTests.swift:299` — three occurrences of one magic bound in a single target is the rule-of-three case for a shared test helper rather than four private constants.
+    - `SessionOutbox.ItemID` and `event.correlationID` still use the `ID` spelling. Aligning them with the repo's `Id` convention is a **breaking public-API change**, so it needs its own task.
+
+    **Verification note worth keeping:** an initial `swift build` can be a full cache hit and therefore cannot surface compiler warnings — SwiftPM is content-hash based, so `touch` alone does not invalidate it. Warning claims need a forced recompile of the package's own targets to mean anything. The `missing creator for mutated node: mlx-swift_Cmlx.bundle` warning is pre-existing, comes from the vendored dependency's resource bundle rather than the Swift compiler, and is not actionable from this repo.
+  timestamp: 2026-07-25T21:29:49.511128+00:00
+position_column: done
+position_ordinal: e080
 title: Split the serial gate so human waits do not stall the model
 ---
 ## What

@@ -748,13 +748,50 @@ layer up:
   tool-posted events, and its `nextEvent()` is the idle-wakeup a driver
   loop awaits instead of polling — but the loop that calls it is always
   the caller's own `Task`, never something Router starts on its own.
-- **Cancellation is queue-side.** `cancel(_:)` withdraws a still-pending
-  queued prompt before it is ever dispatched — a cancelled prompt never
-  produces a turn. There is no separate "abort an in-flight turn"
-  primitive: a turn already handed to the model runs to completion inside
-  the actor's isolated call, exactly like any other `async` work a caller
-  can cancel by cancelling its own enclosing `Task`. Router adds no
-  parallel cancellation mechanism on top of that.
+- **Cancellation comes in two halves, queue-side and in-flight.**
+  `cancel(_:)` withdraws a still-pending queued prompt before it is ever
+  dispatched — a cancelled prompt never produces a turn. `cancelCurrentTurn()`
+  is its in-flight counterpart: it cancels the `Task` Router runs the model call
+  in, so cancellation propagates *into* the tool calls the SDK invokes from
+  inside that call. That is the link that makes `ACP session/cancel` reach MCP's
+  `notifications/cancelled`: the downstream half (Swift cancellation ->
+  `notifications/cancelled`) is `FoundationModelsMCP`'s, the upstream half is the
+  client's, and this is Router's. Cancelling a turn's own enclosing `Task` still
+  propagates exactly as it always did — the model call is wrapped in
+  `withTaskCancellationHandler` precisely so wrapping it in a task of Router's own
+  costs the caller nothing.
+
+  Only the model call is inside the cancelled region. A turn's recording is not,
+  so a cancelled turn is recorded exactly like any other failed turn — whatever
+  the SDK durably appended, plus the synthetic bodyless close — rather than left
+  half-written, and its drained outbox events follow the same
+  attach-or-requeue rule as any other turn's (a dispatched *prompt*, already
+  committed by its drain, stays spent). Gate accounting is untouched: a
+  cancellation landing on a turn parked in `awaitingUser` still re-acquires the
+  lent permit and still releases it on the way out. A streaming turn finishes its
+  stream with `CancellationError` and keeps every fragment already yielded —
+  truncated, never retracted — since an `AsyncThrowingStream` whose consumer is
+  cancelled merely *ends*, and a half-produced response is not a turn that
+  finished. Neither route lets a cancelled turn re-enter the model on its
+  compact-and-retry-once path; what neither route interrupts is a fold already in
+  progress.
+
+  **Past the process boundary it is advisory.** `notifications/cancelled` is a
+  notification, not a command, and cancellation inside this process is
+  cooperative *once a model call is under way*: model work and tools that never
+  check it run to completion, and Router then returns their response rather than
+  fabricating a failure it never observed. A cancellation landing before any model
+  call has started is the other case — nothing is under way to observe it, so the
+  turn throws `CancellationError` without calling the model. That is what keeps
+  cancellation-immune gate acquisition honest: a cancelled turn still takes its
+  place in the queue, but it does not then run anyway when it gets there. The
+  honest report is "we stopped listening", never "it stopped". Router still
+  invents no stop reason of its own — mapping either outcome onto a client-facing
+  one is the coordinator's job.
+
+  Abandoning a `streamResponse`/`streamEvents` stream is the same cancellation
+  under another name: the wrapper task is cancelled, so the turn behind it is cut
+  short and recorded as a cancelled turn rather than a completed one.
 
 ### Human waits must not stall the model: the gate is split
 

@@ -7,6 +7,26 @@ import os
 /// shrink to (see ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``).
 private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 
+/// The outcome of ``RoutedSession/cancelCurrentTurn()``.
+public enum TurnCancellationResult: Sendable, Equatable {
+    /// A turn was in flight and cancellation was requested of it.
+    ///
+    /// "Requested" rather than "stopped", deliberately: cancellation is
+    /// cooperative here and advisory past the process boundary, so this reports
+    /// what Router did, never what the model or an MCP server on the far side of
+    /// a tool call chose to do about it. It says a turn held the session's turn
+    /// lock and the cancellation was recorded against it — not that anything in
+    /// flight has stopped, and not even that there was a model call to stop (a
+    /// turn folding its own transcript has none; see
+    /// ``RoutedSession/cancelCurrentTurn()``).
+    case requested
+
+    /// No turn was in flight, so there was nothing to cancel and nothing
+    /// happened — the state a second cancellation, or one arriving after the
+    /// turn already finished, reports.
+    case noTurnInFlight
+}
+
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
@@ -187,6 +207,17 @@ public protocol RoutedSession: Actor {
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
+    /// Abandoning the stream — breaking out of the loop, or dropping the
+    /// iterator — cancels the turn behind it, exactly as ``cancelCurrentTurn()``
+    /// would and by the same machinery: the turn is cut short, the error it
+    /// unwinds with goes nowhere (the stream that would carry it is already
+    /// terminated), and it is *recorded* as a cancelled turn rather than a
+    /// completed one — whatever the SDK durably appended, plus the synthetic
+    /// bodyless close, with its drained outbox events following the same
+    /// attach-or-requeue rule. A consumer that wants the turn recorded as a whole
+    /// turn has to drain the stream to its end. Fragments already yielded stay
+    /// yielded either way.
+    ///
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
@@ -233,10 +264,105 @@ public protocol RoutedSession: Actor {
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
     ///     use the underlying model's own default ceiling.
+    /// Abandoning this stream cancels the turn behind it and has it recorded as a
+    /// cancelled turn, exactly as described on ``streamResponse(to:maxTokens:)``.
+    ///
     /// - Returns: A stream of session events, finishing when the turn
     ///   completes or throwing if it fails (after yielding whatever the turn
     ///   produced first).
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
+
+    /// Cancels the turn currently in flight on this session — best-effort, and
+    /// additive to ``cancel(_:)`` rather than a replacement for it.
+    ///
+    /// ``cancel(_:)`` withdraws a *queued* prompt before it is ever dispatched;
+    /// this reaches a turn already handed to the model. What it actually does is
+    /// cancel the `Task` Router runs the model call in, so cancellation
+    /// propagates *into* the tool calls the SDK invokes from inside that call —
+    /// which is the whole point of it existing. A tool awaiting a long-running
+    /// MCP call sees `CancellationError` at its own `await`, and
+    /// `FoundationModelsMCP` turns that Swift-level cancellation into a
+    /// protocol-level `notifications/cancelled` for the server behind it.
+    ///
+    /// **Propagation past the process boundary is advisory.** MCP's
+    /// `notifications/cancelled` is a notification, not a command: a server may
+    /// keep working, and nothing on this side can make it stop. The honest
+    /// report is "we stopped listening", never "it stopped".
+    ///
+    /// What is observable afterwards:
+    ///
+    /// - **The turn's caller** — whoever awaits ``respond(to:maxTokens:)``,
+    ///   ``streamResponse(to:maxTokens:)``, ``streamEvents(to:maxTokens:)``, or
+    ///   ``dispatchNextPrompt()`` — receives `CancellationError` once the model
+    ///   work unwinds. A stream stops mid-flight and finishes with that error,
+    ///   keeping every fragment it had already yielded: a cancelled stream is
+    ///   truncated, never retracted. Once a model call is under way on the
+    ///   whole-response path, cancellation is cooperative all the way down: model
+    ///   work and tools that never check it run to completion and the turn returns
+    ///   its response normally, because Router does not fabricate a failure it did
+    ///   not observe. A cancellation that lands *before* any model call starts is
+    ///   the other case — nothing is under way to observe it, so the turn throws
+    ///   `CancellationError` and never calls the model at all. Both routes behave
+    ///   that way, and both windows are real: a turn can sit on this session's turn
+    ///   lock behind another turn (gate acquisition is cancellation-immune by
+    ///   design, so a cancelled turn still takes its place in line rather than
+    ///   vanishing from it), and a turn can sit between its own attempts. Mapping
+    ///   either outcome onto a
+    ///   client-facing stop reason (ACP's `cancelled`, say) belongs to whichever
+    ///   coordinator owns the channel to the user — Router owns none and invents
+    ///   no stop reason of its own.
+    /// - **The transcript** records a cancelled turn exactly like any other
+    ///   failed turn, and never half-written: recording runs *outside* the
+    ///   cancelled region, so the turn's post-generation snapshot diff still
+    ///   persists whatever the SDK durably appended before unwinding, and the
+    ///   synthetic bodyless `.response` close still lands when the SDK appended
+    ///   no `.response` of its own — exactly one close per turn, as ever. The
+    ///   session stays usable: the next turn on it runs normally.
+    /// - **The outbox** follows the same attach-or-requeue rule as any other
+    ///   turn: a cancelled turn whose diff produced a `.prompt`-kind partial did
+    ///   durably deliver the events it drained, so they are recorded as
+    ///   delivered; one whose diff produced none never delivered them, so they
+    ///   are re-queued onto ``outbox`` for a future turn rather than lost. A
+    ///   cancelled ``dispatchNextPrompt()`` turn's *prompt* is a separate question
+    ///   with a separate answer: ``SessionOutbox/drainForDispatch()`` is that
+    ///   prompt's commit point — the very boundary that makes a racing
+    ///   ``cancel(_:)`` report ``SessionOutbox/PromptQueueMutationResult/alreadySent``
+    ///   — and a cancellation does not roll it back. The prompt is spent, because
+    ///   re-queueing it would resurrect an id the caller has already been told was
+    ///   sent.
+    /// - **The gates** stay exactly balanced, including when the cancellation
+    ///   lands on a turn parked in ``awaitingUser(_:)``: the wait re-acquires the
+    ///   permit it lent (``AsyncSemaphore``'s acquire completes even for a
+    ///   cancelled task) and the turn releases it on the way out, so no permit is
+    ///   minted or stranded and no other session over the model is blocked.
+    ///
+    /// Only the turn *in flight* is affected. A turn queued behind it (a
+    /// concurrent ``respond(to:maxTokens:)`` parked on this session's turn lock)
+    /// is untouched and will still run — cancelling that one remains its own
+    /// caller's `Task`'s business, exactly as before, and cancelling a turn's
+    /// enclosing `Task` still propagates into the model call the way it always
+    /// did — and past this point the two routes are equivalent, since neither
+    /// lets the model be re-entered on behalf of a turn already cancelled.
+    ///
+    /// A cancellation that lands while the in-flight turn holds no model call at
+    /// all — during an auto-compaction fold, or between a failed attempt and its
+    /// overflow retry — is remembered against that turn and honored by its next
+    /// model call: that next call is never made, so a cancelled turn never re-runs
+    /// the model or the tool calls that come with it. What that does *not* do is
+    /// interrupt the fold already running, and the same goes for a caller-driven
+    /// ``compact(prompt:budget:)``, which holds the turn lock too: that summarizer
+    /// work is its own caller's `Task` to cancel.
+    ///
+    /// Safe at any time and any number of times: a second cancellation of the
+    /// same turn requests what was already requested, and a cancellation with no
+    /// turn in flight does nothing at all.
+    ///
+    /// - Returns: ``TurnCancellationResult/requested`` when a turn was in flight
+    ///   and cancellation was requested of it, or
+    ///   ``TurnCancellationResult/noTurnInFlight`` when there was nothing to
+    ///   cancel.
+    @discardableResult
+    func cancelCurrentTurn() async -> TurnCancellationResult
 
     /// Runs `body` with the per-model generation gate released, re-acquiring it
     /// before returning — for a wait on a **human**, never on the model.
@@ -479,7 +605,9 @@ extension RoutedSession {
     /// - Returns: Whether the prompt was still pending and was removed, or
     ///   had already been drained for dispatch by
     ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
-    ///   A cancelled prompt never produces a turn.
+    ///   A cancelled prompt never produces a turn. For the in-flight
+    ///   counterpart — stopping a turn already handed to the model — see
+    ///   ``cancelCurrentTurn()``.
     @discardableResult
     public func cancel(_ id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult {
         await outbox.cancel(id: id)
@@ -759,6 +887,29 @@ actor RoutedSessionActor: RoutedSession {
     /// The turn the outermost outstanding ``awaitingUser(_:)`` borrowed this
     /// session's generation permit from, or `nil` when no loan is open.
     private var humanWaitLenderTurnId: UInt64?
+
+    /// The in-flight turn's model call — the task ``cancelCurrentTurn()`` cancels
+    /// — or `nil` whenever no model call is outstanding.
+    ///
+    /// Only the model call itself runs in this task, never the turn's recording:
+    /// cancelling it unwinds `body` and every tool the SDK invoked from inside
+    /// it, while the snapshot diff, the synthetic close, and the
+    /// attach-or-requeue decision all run afterwards on the ordinary throwing
+    /// path. That is what makes a cancelled turn a *recorded* turn rather than a
+    /// half-written one.
+    private var inFlightModelCall: Task<String, Error>?
+
+    /// The turn a ``cancelCurrentTurn()`` has been requested for, or `nil` when
+    /// none is outstanding.
+    ///
+    /// A cancellation can land while a turn holds ``turnLock`` with no model call
+    /// outstanding to cancel — during its proactive auto-compaction fold, or
+    /// between a failed attempt and its overflow retry. Recording it here is what
+    /// makes that cancellation land on the turn's next model call instead of
+    /// being dropped. Keyed by turn identity rather than a bare flag, so it can
+    /// never bleed into a later turn (ids are monotonic, and ``endTurn()`` clears
+    /// it regardless).
+    private var cancelRequestedTurnId: UInt64?
 
     /// The fork-admission gate, shared with the owning model.
     ///
@@ -1234,18 +1385,30 @@ actor RoutedSessionActor: RoutedSession {
     ///   - continuation: The stream continuation each wrapped chunk is yielded to.
     ///   - wrapChunk: Wraps a raw text chunk into `continuation`'s element type.
     /// - Returns: The accumulated, unwrapped response text.
-    /// - Throws: Any error thrown by the model.
+    /// - Throws: Any error thrown by the model, or `CancellationError` when this
+    ///   turn's model call was cancelled part-way through the stream.
     private func streamGeneratingBody<Element>(
         composedPrompt: String,
         maxTokens: Int?,
         into continuation: AsyncThrowingStream<Element, Error>.Continuation,
-        wrapChunk: (String) -> Element
+        wrapChunk: @Sendable (String) -> Element
     ) async throws -> String {
         var response = ""
         for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
             continuation.yield(wrapChunk(chunk))
             response += chunk
         }
+        // An `AsyncThrowingStream` whose consumer is cancelled *ends* — its
+        // `next()` returns `nil` rather than throwing — so a cancelled streaming
+        // turn would otherwise fall out of that loop holding a half-produced
+        // `response` and be reported as a turn that simply finished, indexed
+        // recording and all. It did not finish: it was cut short (see
+        // ``RoutedSession/cancelCurrentTurn()``). Raising it here routes a
+        // truncated stream into the same failed-turn handling every other
+        // mid-generation failure takes, so the caller can tell the two apart.
+        // Whatever was already yielded stays yielded — a cancelled stream is
+        // truncated, never retracted.
+        try Task.checkCancellation()
         return response
     }
 
@@ -1272,7 +1435,7 @@ actor RoutedSessionActor: RoutedSession {
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
         _ = try await generate(prompt: prompt) { composedPrompt in
-            try await streamGeneratingBody(
+            try await self.streamGeneratingBody(
                 composedPrompt: composedPrompt,
                 maxTokens: maxTokens,
                 into: continuation,
@@ -1335,7 +1498,7 @@ actor RoutedSessionActor: RoutedSession {
         // wrapping each chunk as a ``SessionEvent/textDelta(_:)`` instead of
         // yielding it verbatim.
         _ = try await generate(prompt: prompt, onEvent: { continuation.yield($0) }) { composedPrompt in
-            try await streamGeneratingBody(
+            try await self.streamGeneratingBody(
                 composedPrompt: composedPrompt,
                 maxTokens: maxTokens,
                 into: continuation,
@@ -1364,6 +1527,28 @@ actor RoutedSessionActor: RoutedSession {
             await endHumanWait()
             throw error
         }
+    }
+
+    /// See ``RoutedSession/cancelCurrentTurn()``.
+    ///
+    /// Synchronous here even though the protocol declares it `async`, exactly
+    /// like ``contextFill``: it runs on this actor's own executor and touches
+    /// only actor-isolated state, so every call from outside still crosses
+    /// isolation through an implicit `await` at the call site.
+    ///
+    /// ``currentTurnId`` — set for exactly as long as a turn holds ``turnLock``
+    /// — is what "a turn is in flight" means here, so this reports honestly for a
+    /// session with nothing running and for one whose next turn is still parked
+    /// on the lock. The request is recorded *and* the outstanding model call
+    /// cancelled, rather than one or the other: the task covers a turn that is
+    /// generating right now, and the recorded id covers a turn that is between
+    /// model calls (see ``cancelRequestedTurnId``).
+    @discardableResult
+    func cancelCurrentTurn() -> TurnCancellationResult {
+        guard let turnId = currentTurnId else { return .noTurnInFlight }
+        cancelRequestedTurnId = turnId
+        inFlightModelCall?.cancel()
+        return .requested
     }
 
     /// Acquires both of a turn's gates: this session's ``turnLock`` first, then
@@ -1398,6 +1583,11 @@ actor RoutedSessionActor: RoutedSession {
     /// to keep.
     private func endTurn() {
         currentTurnId = nil
+        // The request only ever applied to the turn now ending, and turn ids are
+        // monotonic, so this is belt-and-braces rather than load-bearing — but it
+        // keeps "is a cancellation outstanding?" answerable without also knowing
+        // which turn is in flight.
+        cancelRequestedTurnId = nil
         if holdsGenerationPermit {
             releaseGenerationPermit()
         }
@@ -1610,7 +1800,7 @@ actor RoutedSessionActor: RoutedSession {
     ///     use the underlying model's own default ceiling.
     /// - Returns: A closure that, given this turn's composed prompt, submits
     ///   it to `backend.respond` — following `grammar` when present.
-    private func respondBody(grammar: Grammar?, maxTokens: Int?) -> (String) async throws -> String {
+    private func respondBody(grammar: Grammar?, maxTokens: Int?) -> @Sendable (String) async throws -> String {
         guard let grammar else {
             return { composedPrompt in
                 try await self.backend.respond(to: composedPrompt, maxTokens: maxTokens)
@@ -1665,7 +1855,7 @@ actor RoutedSessionActor: RoutedSession {
         grammar: Grammar? = nil,
         prompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
-        _ body: (String) async throws -> String
+        _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         // Acquire both gates for the whole bracket, releasing them on every path
         // with a `defer` (the recording bracket stays in this actor's isolation
@@ -1732,7 +1922,7 @@ actor RoutedSessionActor: RoutedSession {
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
-        _ body: (String) async throws -> String
+        _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         if let budget = autoCompactionBudget, contextFill >= budget.trigger {
             let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
@@ -1791,7 +1981,7 @@ actor RoutedSessionActor: RoutedSession {
         ownPrompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
         allowOverflowRetry: Bool,
-        _ body: (String) async throws -> String
+        _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         let composedPrompt = Self.composedPrompt(pendingEvents: pendingEvents, prompt: ownPrompt)
 
@@ -1814,7 +2004,7 @@ actor RoutedSessionActor: RoutedSession {
             if let budget = autoCompactionBudget, let hardCeiling = budget.hardCeiling, contextFill >= hardCeiling {
                 throw ContextBudgetError.hardCeilingExceeded(fill: contextFill, ceiling: hardCeiling)
             }
-            let response = try await body(composedPrompt)
+            let response = try await runCancellableModelCall(composedPrompt: composedPrompt, body)
             // A turn can succeed (return a response) yet still leave the SDK's
             // transcript unchanged for some future conformer — attach-or-requeue
             // applies uniformly on both exits (see the catch branch's matching
@@ -1863,6 +2053,64 @@ actor RoutedSessionActor: RoutedSession {
             return try await runTurnAttempt(
                 grammar: grammar, pendingEvents: [], ownPrompt: ownPrompt, onEvent: onEvent,
                 allowOverflowRetry: false, body)
+        }
+    }
+
+    /// Runs one attempt's model call in a task this session can cancel from
+    /// outside the turn, and awaits its result.
+    ///
+    /// The whole cancellation boundary in-flight cancellation needs — and
+    /// deliberately the *only* part of a turn inside it. Cancelling
+    /// ``inFlightModelCall`` unwinds `body` and, because the SDK invokes tools
+    /// from inside the model call, every tool call running under it; the turn's
+    /// recording runs after this returns or throws and is never cancelled with
+    /// it (see ``RoutedSession/cancelCurrentTurn()``).
+    ///
+    /// The unstructured task is bracketed by `withTaskCancellationHandler` so
+    /// cancelling the *caller's* own enclosing `Task` still reaches the model
+    /// call: an unstructured task is not a child, so nothing would propagate into
+    /// it otherwise — and that propagation is a contract Router had before it had
+    /// a cancellation primitive of its own (plan.md, "Turn loop").
+    ///
+    /// - Parameters:
+    ///   - composedPrompt: This attempt's composed prompt, handed to `body`.
+    ///   - body: The model work to run.
+    /// - Returns: The response text `body` produced.
+    /// - Throws: Whatever `body` throws — `CancellationError` when the model work
+    ///   observed a cancellation — or `CancellationError` directly when this turn
+    ///   had already been cancelled, by either route, before its model call
+    ///   started.
+    private func runCancellableModelCall(
+        composedPrompt: String,
+        _ body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        // A cancellation that landed while this turn held no model call — during
+        // its proactive fold, or between a failed attempt and this retry — had no
+        // task to cancel, so it is honored here instead of being dropped, and the
+        // model (with every tool call it would make) is never re-entered on behalf
+        // of a turn already cancelled. Both routes are checked so neither can do
+        // what the other cannot: `Task.isCancelled` is the turn's own caller having
+        // cancelled its enclosing task, ``cancelRequestedTurnId`` is
+        // ``cancelCurrentTurn()``.
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        if let turnId = currentTurnId, cancelRequestedTurnId == turnId {
+            throw CancellationError()
+        }
+        let modelCall = Task { try await body(composedPrompt) }
+        inFlightModelCall = modelCall
+        // Identity-matched rather than unconditional, so a later attempt's own
+        // model call is never cleared by an earlier one's unwind.
+        defer {
+            if inFlightModelCall == modelCall {
+                inFlightModelCall = nil
+            }
+        }
+        return try await withTaskCancellationHandler {
+            try await modelCall.value
+        } onCancel: {
+            modelCall.cancel()
         }
     }
 
