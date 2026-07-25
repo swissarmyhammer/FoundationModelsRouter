@@ -2,7 +2,7 @@ import FoundationModels
 
 /// Caps a tool's own output to ``TokenBudget/toolOutputLimit`` tokens before
 /// the model — or the transcript's own recorded `.toolOutput` entry — ever
-/// sees it (harness plan §5.1 seam 2, task 1334fk3).
+/// sees it (compaction_plan.md §1.7 seam 2, task 1334fk3).
 ///
 /// Tool outputs, not prompts, are what blow a turn's context window
 /// mid-turn, and Router's own tool-instancing pipeline
@@ -10,8 +10,8 @@ import FoundationModels
 /// ``RoutedSessionActor/fork(workingDirectory:)``) is the one seam that sees
 /// every tool call's result before the model does — the same seam
 /// ``EventEmittingTool``/``ForkableTool`` already hook into. This absorbs the
-/// harness's own external `ObservedTool` capping job into that seam instead
-/// of a wrapper the harness would otherwise have to maintain on its own.
+/// external per-tool capping wrapper job into that seam instead
+/// of a wrapper consumers would otherwise have to maintain on their own.
 enum ToolOutputCapping {
     /// Truncates `text` to at most `limit` estimated tokens
     /// (``Compactor``'s own character-ratio estimate — compaction_plan.md

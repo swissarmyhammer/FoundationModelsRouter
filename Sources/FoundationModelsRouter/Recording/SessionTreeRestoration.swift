@@ -158,7 +158,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// **Fork-admission gates.** Every restored node is constructed with
     /// `holdsAdmissionPermit: false` and shares this profile's normal
-    /// per-model `serialGate`/`forkAdmissionGate` — restoring does not consume
+    /// per-model `generationGate`/`forkAdmissionGate` — restoring does not consume
     /// a fork-admission permit, because admission bounds in-flight *new* forks,
     /// and a restored session is a reconstruction of one that was already
     /// admitted (and, for a root, never needed admission at all).
@@ -290,7 +290,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 id: node.id,
                 parentId: node.parentId,
                 recordingDirectory: node.directory,
-                // Restored from the node's own sidecar (harness plan §7
+                // Restored from the node's own sidecar (task 6j4bven
                 // creation-metadata ask, task 6j4bven) rather than defaulted
                 // to `node.directory`: a session vended with an overridden
                 // working directory must reassemble against that same
@@ -313,7 +313,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 tools: instancedTools,
                 originalTools: tools,
                 outbox: outbox,
-                serialGate: routedLLM.serialGate,
+                generationGate: routedLLM.generationGate,
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,
                 persistedEntryCount: transcript.count,

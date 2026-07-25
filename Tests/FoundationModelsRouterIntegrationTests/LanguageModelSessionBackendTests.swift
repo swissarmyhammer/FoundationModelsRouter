@@ -378,7 +378,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             recorder: recorder,
             instructions: nil,
             grammar: nil,
-            serialGate: standard.serialGate,
+            generationGate: standard.generationGate,
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,

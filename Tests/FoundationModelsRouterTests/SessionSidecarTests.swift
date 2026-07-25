@@ -523,7 +523,7 @@ struct SessionSidecarTests {
         let recordingDirectory = standard.recordingDirectory(forSessionId: sessionId)
 
         // Assembled by hand rather than vended from `makeSession()`, the way a
-        // harness that needs the backend object itself must — and nothing here
+        // consumer that needs the backend object itself must — and nothing here
         // writes a sidecar. Landing one is the session's own job, so that a
         // durable session directory holding a transcript and no `session.json`
         // — the tree ``TranscriptTree/load(under:)`` refuses — cannot be built
@@ -541,7 +541,7 @@ struct SessionSidecarTests {
             recorder: standard.recorder,
             instructions: instructions,
             grammar: nil,
-            serialGate: standard.serialGate,
+            generationGate: standard.generationGate,
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
@@ -640,7 +640,7 @@ struct SessionSidecarTests {
         #expect(try SessionSidecar.read(in: forkDir)?.profile == nil)
     }
 
-    // MARK: - Durable working directory (harness plan §7, task 6j4bven)
+    // MARK: - Durable working directory (task 6j4bven)
 
     @Test(
         "a root's sidecar records its default working directory (the recording directory); an override records verbatim, and a fork's own override records independently of its root's"
@@ -680,7 +680,7 @@ struct SessionSidecarTests {
         #expect(try SessionSidecar.read(in: forkDir)?.workingDirectory == overrideDir)
     }
 
-    // MARK: - Agent-spawn context (harness plan §7, task 6j4bven)
+    // MARK: - Agent-spawn context (task 6j4bven)
 
     @Test(
         "a session vended with an agentSpawn records it on its own root sidecar; a fork taken from it records none, since its lineage is already stated by nesting"

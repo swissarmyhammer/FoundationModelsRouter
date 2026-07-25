@@ -30,7 +30,7 @@ let sessionSidecarFileName = "session.json"
 /// are *not* implied by anything else on disk — an overridden working
 /// directory, and a spawn from a session that may sit under an entirely
 /// different recording tree, are both primary facts with nowhere else to be
-/// read back from (harness plan §7 creation-metadata ask, task 6j4bven).
+/// read back from (creation-metadata task 6j4bven).
 ///
 /// ``instructions``/``grammar`` are recorded (not merely implied by transcript
 /// content) so ``RoutedModel/restoreSessionTree(root:registry:)`` can rehydrate
@@ -85,8 +85,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     }
 
     /// The parent session and correlating tool-call this session was spawned
-    /// from, e.g. by a harness's "agents" tool creating a sub-agent session
-    /// mid-turn (harness plan §7 creation-metadata ask, task 6j4bven).
+    /// from, e.g. by an agents tool creating a sub-agent session
+    /// mid-turn (creation-metadata task 6j4bven).
     ///
     /// Both facts travel together rather than as two independent optionals:
     /// a transcript browser has no use for one without the other, since it is
@@ -154,7 +154,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     /// This session's own ``RoutedSession/workingDirectory`` — where its
     /// tools resolved files, distinct from ``recordingDirectory`` whenever a
-    /// caller overrode it at creation (harness plan §7 creation-metadata
+    /// caller overrode it at creation (task 6j4bven creation-metadata
     /// ask, task 6j4bven).
     ///
     /// Recorded for every session, root or fork, since a fork can carry its
@@ -184,8 +184,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     public let workingDirectory: URL
 
     /// The parent session and tool-call correlation this session was spawned
-    /// from — e.g. a harness's "agents" tool creating a sub-agent session
-    /// mid-turn (harness plan §7 creation-metadata ask, task 6j4bven) — or
+    /// from — e.g. an agents tool creating a sub-agent session
+    /// mid-turn (creation-metadata task 6j4bven) — or
     /// `nil` for a session vended with no such spawn context.
     ///
     /// Recorded on the spawned session's own root sidecar only: a fork's is
@@ -534,7 +534,7 @@ public struct SessionSidecarWriter: Sendable {
 ///
 /// A session lands its own sidecar as it comes into existence, so whoever builds
 /// one — ``RoutedModel/makeSession(grammar:instructions:workingDirectory:)``,
-/// ``RoutedSessionActor/fork(workingDirectory:)``, or a harness assembling an
+/// ``RoutedSessionActor/fork(workingDirectory:)``, or a composition assembling an
 /// actor by hand because it needs the backend object itself — cannot record a
 /// durable session directory holding a transcript and no sidecar beside it, the
 /// tree ``TranscriptTree/load(under:)`` refuses to read. It was a bare

@@ -266,7 +266,7 @@ struct SessionTreeRestorationTests {
         #expect(try reloadedTree.effectiveEntryEvents(forSession: forkB.id).count == 4)
     }
 
-    // MARK: - Durable working directory survives restoration (harness plan §7, task 6j4bven)
+    // MARK: - Durable working directory survives restoration (task 6j4bven)
 
     @Test(
         "a session vended with an overridden working directory restores to that same directory, not its recording directory"

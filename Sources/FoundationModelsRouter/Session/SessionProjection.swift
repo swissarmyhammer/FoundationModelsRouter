@@ -2,9 +2,9 @@ import Foundation
 import Observation
 
 /// The `@MainActor`/`@Observable` mirror of one ``RoutedSession``'s live
-/// state — SwiftUI's binding surface for a session (harness-collapse item:
-/// absorbs the harness's `HarnessState`, harness plan §10 item 2c
-/// "observable transcript").
+/// state — SwiftUI's binding surface for a session (absorbs the
+/// FoundationModelsAgents plan §10 observable-state ask, the "observable
+/// transcript").
 ///
 /// ``RoutedSession``/``RoutedSessionActor`` is an actor and so cannot itself
 /// be `@Observable` (see ``ResolutionProgress`` for the same pattern applied
@@ -129,7 +129,7 @@ public final class SessionProjection {
 
     /// The session's most recently measured ``RoutedSession/contextFill``,
     /// live mid-turn — updated by every ``SessionEvent/turnEnded(_:)``,
-    /// including a retried attempt's own (harness plan §5.1), not only once
+    /// including a retried attempt's own (compaction_plan.md §1.7), not only once
     /// per logical turn.
     public private(set) var contextFill: Double = 0
 

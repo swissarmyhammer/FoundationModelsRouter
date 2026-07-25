@@ -207,7 +207,7 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
 /// itself isolated (`LanguageModelExecutor`'s protocol requirement is
 /// `nonisolated(nonsending)`) and ``RecordingLanguageModel/sync(_:)`` is called
 /// directly by a turn owner, potentially from any isolation domain. Both entry
-/// points additionally acquire the shared ``RoutedModel/serialGate`` around
+/// points additionally acquire the shared ``RoutedModel/generationGate`` around
 /// their whole diff-and-record (and, for `generate`, the inner passthrough)
 /// work — the same gate ``RoutedSessionActor``'s own chokepoint acquires — so
 /// a `generate` and a `sync` on the same handle can never interleave and
@@ -229,7 +229,7 @@ actor RecordingLanguageModelState {
     /// The owning model's shared serial generation gate — the same one
     /// ``RoutedSessionActor`` acquires, so generation on this handle and on
     /// any ``RoutedSession`` over the same model serialize together.
-    nonisolated let serialGate: AsyncSemaphore
+    nonisolated let generationGate: AsyncSemaphore
     /// The sidecar writer this handle's own `session.json` is written
     /// through, or `nil`.
     nonisolated let sessionSidecarWriter: SessionSidecarWriter?
@@ -279,7 +279,7 @@ actor RecordingLanguageModelState {
     ///   - slot: The model slot this handle runs against.
     ///   - model: The concrete model reference.
     ///   - recorder: The recorder every diffed event is appended through.
-    ///   - serialGate: The owning model's shared serial generation gate.
+    ///   - generationGate: The owning model's shared serial generation gate.
     ///   - sessionSidecarWriter: The sidecar writer this handle's own
     ///     `session.json` is written through, or `nil`.
     ///   - wrapped: The raw model this handle passes generation straight
@@ -302,7 +302,7 @@ actor RecordingLanguageModelState {
         slot: ModelSlot,
         model: ModelRef,
         recorder: any TranscriptRecorder,
-        serialGate: AsyncSemaphore,
+        generationGate: AsyncSemaphore,
         sessionSidecarWriter: SessionSidecarWriter?,
         wrapped: any LanguageModel,
         profile: LanguageModelProfile,
@@ -316,7 +316,7 @@ actor RecordingLanguageModelState {
         self.slot = slot
         self.model = model
         self.recorder = recorder
-        self.serialGate = serialGate
+        self.generationGate = generationGate
         self.sessionSidecarWriter = sessionSidecarWriter
         self.wrapped = wrapped
         self.profile = profile
@@ -347,7 +347,7 @@ actor RecordingLanguageModelState {
         ) async throws -> Void
     ) async throws {
         await enterGateAndDiff(request.transcript)
-        defer { serialGate.signal() }
+        defer { generationGate.signal() }
         try await innerRespond(request, channel)
     }
 
@@ -365,7 +365,7 @@ actor RecordingLanguageModelState {
     ///     to leave both unset (see ``RecordingLanguageModel/sync(_:usage:)``).
     func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
         await enterGateAndDiff(transcript, usage: usage)
-        serialGate.signal()
+        generationGate.signal()
     }
 
     /// Folds this handle's recording forward across a compaction (see
@@ -381,7 +381,7 @@ actor RecordingLanguageModelState {
     func noteCompaction(_ compacted: Transcript) async {
         await enterGateAndRecordMeta(compacted)
         await diffAndRecordCompaction(compacted: compacted)
-        serialGate.signal()
+        generationGate.signal()
     }
 
     /// Writes this handle's sidecar on first use, acquires the shared serial
@@ -397,7 +397,7 @@ actor RecordingLanguageModelState {
     ///   (mined for leading instructions) on first use.
     private func enterGateAndRecordMeta(_ transcript: Transcript) async {
         writeSidecarIfNeeded(transcript: transcript)
-        await serialGate.wait()
+        await generationGate.wait()
         await recordSessionMetaIfNeeded()
     }
 

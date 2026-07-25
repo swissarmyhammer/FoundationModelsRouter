@@ -192,7 +192,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
 /// certifies the type as safe to *hold* across an isolation boundary, not
 /// safe for *concurrent* calls. Concurrent access to this backend's
 /// ``session`` is safe in practice because every call runs inside
-/// ``RoutedSessionActor``'s `serialGate` — an `AsyncSemaphore` at value 1,
+/// ``RoutedSessionActor``'s `generationGate` — an `AsyncSemaphore` at value 1,
 /// shared with the session's forks — so at most one generation call against a
 /// given model's family of sessions is ever in flight at a time; this
 /// backend's session is never actually touched from two tasks concurrently

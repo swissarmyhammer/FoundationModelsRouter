@@ -94,7 +94,7 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// The backend's current full transcript, in order.
     ///
     /// **Only safe to call while holding the model's serial gate**
-    /// (``RoutedModel/serialGate``) — the same discipline ``makeFork()``
+    /// (``RoutedModel/generationGate``) — the same discipline ``makeFork()``
     /// requires, since a concrete conformer (e.g. `MLXFoundationModelsSessionBackend`)
     /// reads this straight off a live, mutable session that a concurrent
     /// generation call could otherwise still be appending to.
@@ -107,7 +107,7 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// when the backend cannot report usage.
     ///
     /// **Only safe to call while holding the model's serial gate**
-    /// (``RoutedModel/serialGate``) — the same discipline ``transcriptEntries()``
+    /// (``RoutedModel/generationGate``) — the same discipline ``transcriptEntries()``
     /// requires, since a concrete conformer (e.g.
     /// `MLXFoundationModelsSessionBackend`) reads this straight off a live,
     /// mutable session that a concurrent generation call could otherwise

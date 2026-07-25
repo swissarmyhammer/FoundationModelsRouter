@@ -425,21 +425,21 @@ struct MultiTurnSessionTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        let serialGate = profile.standard.serialGate
+        let generationGate = profile.standard.generationGate
 
         // Start a respond() call; it acquires the serial gate and parks inside
         // the backend body, holding the gate the whole time it is parked.
         let respondTask = Task { try await session.respond(to: "turn") }
-        await Self.spin(until: { serialGate.availablePermits == 0 })
+        await Self.spin(until: { generationGate.availablePermits == 0 })
         await Self.spin(until: { log.events.contains("respond-enter") })
 
         // Concurrently start a fork. It must queue behind the serial gate
         // rather than reading (forking) the backend's state while the turn
         // above is still in flight — this is exactly the race
-        // `RoutedSessionActor.fork()` closes by acquiring `serialGate` before
+        // `RoutedSessionActor.fork()` closes by acquiring `generationGate` before
         // calling `backend.makeFork()`.
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        await Self.spin(until: { serialGate.waiterCount >= 1 })
+        await Self.spin(until: { generationGate.waiterCount >= 1 })
 
         // The fork has not reached makeFork() yet: it is parked behind the
         // still-open respond() call.

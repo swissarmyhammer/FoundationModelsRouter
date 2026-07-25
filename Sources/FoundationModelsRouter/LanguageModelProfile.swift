@@ -121,7 +121,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// rather than interleave: MLX generation runs a single GPU stream and is not
     /// safe to interleave. Only the generation-session surface acquires it; the
     /// embedding handle never does.
-    let serialGate = AsyncSemaphore(value: 1)
+    let generationGate = AsyncSemaphore(value: 1)
 
     /// The fork-admission gate (a fair FIFO ``AsyncSemaphore`` at value
     /// `maxConcurrentForks`).

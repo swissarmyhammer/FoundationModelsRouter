@@ -62,7 +62,7 @@ struct RecordingLanguageModelTests {
     ///
     /// When ``observer``/``releaseGate`` are set, every call parks on the
     /// release gate after recording entry into ``observer`` — the seam
-    /// ``serialGateSerializesAcrossHandles()`` uses to prove two concurrent
+    /// ``generationGateSerializesAcrossHandles()`` uses to prove two concurrent
     /// calls sharing one model's serial gate never overlap.
     private struct StubUnderlyingModel: LanguageModel {
         let cannedResponseText: String
@@ -482,7 +482,7 @@ struct RecordingLanguageModelTests {
 
     @Test("generate acquires the model's shared serial gate; two handles over the same model never overlap")
     @MainActor
-    func serialGateSerializesAcrossHandles() async throws {
+    func generationGateSerializesAcrossHandles() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -504,19 +504,19 @@ struct RecordingLanguageModelTests {
 
         let handleA = profile.standard.makeLanguageModel()
         let handleB = profile.standard.makeLanguageModel()
-        let serialGate = profile.standard.serialGate
+        let generationGate = profile.standard.generationGate
 
         let sessionA = LanguageModelSession(model: handleA, tools: [])
         let sessionB = LanguageModelSession(model: handleB, tools: [])
 
         let taskA = Task { _ = try await sessionA.respond(to: "a") }
         await Self.spin(until: { await observer.active == 1 })
-        #expect(serialGate.availablePermits == 0)
+        #expect(generationGate.availablePermits == 0)
 
         // handleB's call queues on the shared gate rather than reaching the
         // model concurrently with handleA's still-parked call.
         let taskB = Task { _ = try await sessionB.respond(to: "b") }
-        await Self.spin(until: { serialGate.waiterCount == 1 })
+        await Self.spin(until: { generationGate.waiterCount == 1 })
         #expect(await observer.active == 1)
         #expect(await observer.maxActive == 1)
 

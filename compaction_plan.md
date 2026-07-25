@@ -203,7 +203,7 @@ Proactive use (check `contextFill` ≥ `trigger` between turns — turns never
 die) is preferred; reactive use (catch `exceededContextWindowSize`, compact
 with a lowered target, retry once) is the documented recovery path.
 
-### 1.6 Loop policy: the auto-compaction opt-in (harness plan §5 absorbed)
+### 1.6 Loop policy: the auto-compaction opt-in
 
 §1.4/§1.5 above document the proactive/reactive *pattern* as something a
 caller drives by hand. `FoundationModelsAgentHarness`'s plan §5 asked for a
@@ -231,13 +231,13 @@ already over; if the call still fails with
 folds with a lowered target and **retries exactly once** before surfacing
 the error — never looping. The retry re-runs the turn's own tool calls, so
 non-idempotent side effects can happen twice; the recorded transcript
-keeps both attempts, exactly as harness plan §5.1 called out. A session
+keeps both attempts, exactly as compaction_plan.md §1.7 called out. A session
 with no `budget` set never auto-compacts; `compact()` remains the manual,
 always-available entry point (e.g. for a `/compact` command upstairs).
 
-### 1.7 Mid-turn strategy: the two in-loop seams (harness plan §5.1 absorbed)
+### 1.7 Mid-turn strategy: the two in-loop seams
 
-The hard case harness plan §5.1 identified stands regardless of who owns
+The hard case compaction_plan.md §1.7 identified stands regardless of who owns
 the loop: Apple's `LanguageModelSession` runs the whole model → tool →
 model cycle inside one `respond`/`streamResponse` call, and nothing outside
 it regains control until the turn ends — a tool-heavy turn can blow the
@@ -263,7 +263,7 @@ otherwise have to maintain:
 
 Fold-below-the-session — rewriting the transcript forwarded to the model so
 it sees a folded window while the session keeps its full one — remains the
-parked research question harness plan §5.1 recorded: still not attempted,
+parked research question compaction_plan.md §1.7 recorded: still not attempted,
 because the session's and model's views of history would diverge.
 
 ## 2. The default compaction prompt

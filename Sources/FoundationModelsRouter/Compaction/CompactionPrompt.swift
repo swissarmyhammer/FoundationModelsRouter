@@ -5,7 +5,7 @@
 ///
 /// Passed to ``Compactor/compact(_:prompt:budget:summarizer:)``; consumers
 /// pass their own value to specialize summarization for their domain (e.g. a
-/// coding harness adding "always list test commands") while keeping
+/// coding agent adding "always list test commands") while keeping
 /// ``default`` as the research-backed starting point.
 public struct CompactionPrompt: Sendable, Equatable {
     /// This prompt's name, recorded verbatim in

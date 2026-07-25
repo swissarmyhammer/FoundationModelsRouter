@@ -96,8 +96,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     no explicit wiring call is ever needed: implementing the protocol
     ///     IS the subscription. A tool that does not conform passes through
     ///     untouched. Defaults to no tools.
-    ///   - budget: The auto-compaction opt-in (harness-collapse "the session
-    ///     that manages its own window", task 8213x39), or `nil` (the
+    ///   - budget: The auto-compaction opt-in (the "session
+    ///     that manages its own window" opt-in, task 8213x39), or `nil` (the
     ///     default) for manual-only compaction via
     ///     ``RoutedSession/compact(prompt:budget:)``. When set, the vended
     ///     session checks measured ``RoutedSession/contextFill`` against
@@ -110,8 +110,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     folds send to the summarizer, when `budget` is set. Ignored
     ///     otherwise. Defaults to ``CompactionPrompt/default``.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from — e.g. a harness's "agents" tool creating this session as a
-    ///     sub-agent mid-turn (harness plan §7 creation-metadata ask, task
+    ///     from — e.g. an agents tool creating this session as a
+    ///     sub-agent mid-turn (creation-metadata task
     ///     6j4bven) — or `nil` for a session vended with no such spawn
     ///     context. Recorded onto this session's own sidecar (see
     ///     ``SessionSidecar/agentSpawn``); a fork of this session never
@@ -225,7 +225,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // The serial and fork-admission gates are the model handle's, shared
             // across all its sessions and forks. A root session holds no
             // fork-admission permit.
-            serialGate: serialGate,
+            generationGate: generationGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: false,
             // A root session starts with nothing persisted: the first turn's
@@ -309,7 +309,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             slot: slot,
             model: chosen,
             recorder: recorder,
-            serialGate: serialGate,
+            generationGate: generationGate,
             sessionSidecarWriter: sessionSidecarWriter,
             wrapped: container.languageModel,
             profile: owningProfile,

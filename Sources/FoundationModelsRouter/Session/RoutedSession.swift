@@ -27,7 +27,7 @@ private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 /// a synthetic bodyless close when it appended none. Concurrent generations on
 /// one model do not interleave:
 /// the chokepoint runs inside the model's per-model serial gate
-/// (``RoutedModel/serialGate``, a fair FIFO ``AsyncSemaphore`` at value 1) that a
+/// (``RoutedModel/generationGate``, a fair FIFO ``AsyncSemaphore`` at value 1) that a
 /// session shares with all its forks, so calls on one model queue rather than
 /// overlap — MLX generation runs a single GPU stream. The generation itself runs
 /// through Apple's own `LanguageModelSession` (`FoundationModels`, macOS 27+),
@@ -191,7 +191,7 @@ public protocol RoutedSession: Actor {
     /// Streams a rich event sequence for a prompt as it is produced,
     /// recording the call exactly like ``streamResponse(to:maxTokens:)``.
     ///
-    /// The harness-collapse item absorbing `HarnessEvent` (harness plan §4):
+    /// The full-fidelity session event stream:
     /// where ``streamResponse(to:maxTokens:)`` only ever yields the model's
     /// text fragments, this surfaces the same turn's tool calls, tool
     /// lifecycle, reasoning, and closing usage too — everything the
@@ -447,7 +447,7 @@ extension RoutedSession {
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:serialGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -466,7 +466,7 @@ func makeRoutedSessionActor(
     tools: [any Tool],
     originalTools: [any Tool] = [],
     outbox: SessionOutbox = SessionOutbox(),
-    serialGate: AsyncSemaphore,
+    generationGate: AsyncSemaphore,
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
     persistedEntryCount: Int,
@@ -493,7 +493,7 @@ func makeRoutedSessionActor(
         tools: tools,
         originalTools: originalTools,
         outbox: outbox,
-        serialGate: serialGate,
+        generationGate: generationGate,
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
         persistedEntryCount: persistedEntryCount,
@@ -639,7 +639,7 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// Every ``generate(grammar:_:)`` runs inside it, so generations on one
     /// model serialize rather than interleave.
-    private nonisolated let serialGate: AsyncSemaphore
+    private nonisolated let generationGate: AsyncSemaphore
 
     /// The fork-admission gate, shared with the owning model.
     ///
@@ -700,7 +700,7 @@ actor RoutedSessionActor: RoutedSession {
     /// rather than resetting it to a meaningless zero delta.
     private var usageState: ContextUsageState
 
-    /// The auto-compaction opt-in (harness-collapse "session manages its own
+    /// The auto-compaction opt-in (the "session manages its own
     /// window", task 8213x39), or `nil` for the default manual-only
     /// behavior. When set, ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
     /// checks measured ``contextFill`` against ``TokenBudget/trigger`` before
@@ -765,7 +765,7 @@ actor RoutedSessionActor: RoutedSession {
         tools: [any Tool] = [],
         originalTools: [any Tool] = [],
         outbox: SessionOutbox = SessionOutbox(),
-        serialGate: AsyncSemaphore,
+        generationGate: AsyncSemaphore,
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
         persistedEntryCount: Int,
@@ -791,7 +791,7 @@ actor RoutedSessionActor: RoutedSession {
         self.tools = tools
         self.originalTools = originalTools
         self.outbox = outbox
-        self.serialGate = serialGate
+        self.generationGate = generationGate
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
@@ -853,7 +853,7 @@ actor RoutedSessionActor: RoutedSession {
     /// for manual `/compact` binding upstairs" (task 8213x39): always
     /// summarizes with a fresh, disposable backend over this session's own
     /// model (``BackendCompactionSummarizer``), unchanged from before
-    /// auto-compaction existed. Acquires ``serialGate`` for the duration,
+    /// auto-compaction existed. Acquires ``generationGate`` for the duration,
     /// since a caller can invoke this at any time, then runs the shared fold
     /// mechanics in ``fold(prompt:budget:summarizer:)``. See that method's
     /// doc comment for what folding does.
@@ -862,15 +862,15 @@ actor RoutedSessionActor: RoutedSession {
         prompt: CompactionPrompt = .default,
         budget: TokenBudget? = nil
     ) async throws -> CompactionResult {
-        await serialGate.wait()
-        defer { serialGate.signal() }
+        await generationGate.wait()
+        defer { generationGate.signal() }
         return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
     }
 
     /// Auto-compaction's own fold entry point (task 8213x39,
     /// ``autoCompactionBudget``): called from inside
     /// ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``, which already
-    /// holds ``serialGate`` for the whole turn, so this deliberately never
+    /// holds ``generationGate`` for the whole turn, so this deliberately never
     /// acquires it itself — unlike ``compact(prompt:budget:)``, doing so here
     /// would deadlock against the very turn driving it.
     ///
@@ -934,7 +934,7 @@ actor RoutedSessionActor: RoutedSession {
     /// returns the original transcript unchanged and this method leaves
     /// ``backend`` exactly as it was.
     ///
-    /// Assumes ``serialGate`` is already held by the caller — this method
+    /// Assumes ``generationGate`` is already held by the caller — this method
     /// never acquires or releases it, so it is safe to call from inside the
     /// turn chokepoint (``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``),
     /// which holds the gate for the whole turn, as well as from
@@ -1229,7 +1229,7 @@ actor RoutedSessionActor: RoutedSession {
     /// tools from ``originalTools`` (never this session's own already-instanced
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
     /// pristine state before being wired to the child's fresh outbox. Acquires
-    /// ``serialGate`` just long enough to read `backend`'s conversation state
+    /// ``generationGate`` just long enough to read `backend`'s conversation state
     /// and entry count together, closing the race against a concurrent
     /// in-flight turn mutating that same state. The child's
     /// ``recordingDirectory`` nests directly under this session's, and it
@@ -1291,7 +1291,7 @@ actor RoutedSessionActor: RoutedSession {
         // gate here serializes the fork's read against any in-flight generation,
         // closing that data race; releasing it immediately after capturing the
         // forked backend keeps the hold no longer than necessary.
-        await serialGate.wait()
+        await generationGate.wait()
         // Captured in the same gate window as `makeFork(tools:)`, so it names
         // exactly the entry count the child's seeded backend starts holding —
         // the child's own `persistedEntryCount` baseline, so the parent's history
@@ -1299,7 +1299,7 @@ actor RoutedSessionActor: RoutedSession {
         // transcript (see ``persistedEntryCount``).
         let entryCountAtFork = backend.transcriptEntries().count
         let forkedBackend = backend.makeFork(tools: childTools)
-        serialGate.signal()
+        generationGate.signal()
 
         let childId = ULID.generate()
         // The child's transcript nests directly *under this session's* directory,
@@ -1331,7 +1331,7 @@ actor RoutedSessionActor: RoutedSession {
             tools: childTools,
             originalTools: originalTools,
             outbox: childOutbox,
-            serialGate: serialGate,
+            generationGate: generationGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true,
             persistedEntryCount: entryCountAtFork,
@@ -1384,7 +1384,7 @@ actor RoutedSessionActor: RoutedSession {
     /// funnels through.
     ///
     /// The whole bracket runs inside the model's per-model serial gate
-    /// (``RoutedModel/serialGate``), so concurrent generations on one model —
+    /// (``RoutedModel/generationGate``), so concurrent generations on one model —
     /// including from forks that share the gate — queue in FIFO order rather than
     /// interleave. Inside the gate it first lazily records the session's
     /// first-line `session` meta event (once per session), drains ``outbox``
@@ -1430,8 +1430,8 @@ actor RoutedSessionActor: RoutedSession {
         // isolation region, so the gated work is not sent across an isolation
         // boundary as a `withPermit` closure would be). `wait()`/`signal()` pair
         // exactly like `withPermit`, so no permit can leak.
-        await serialGate.wait()
-        defer { serialGate.signal() }
+        await generationGate.wait()
+        defer { generationGate.signal() }
 
         await recordSessionMetaIfNeeded()
 
@@ -1556,7 +1556,7 @@ actor RoutedSessionActor: RoutedSession {
         let started = Date()
         let usageBefore = backend.usageTokenCounts()
         do {
-            // The hard-ceiling pre-check (harness plan §5.1, task g2hcm36):
+            // The hard-ceiling pre-check (compaction_plan.md §1.7, task g2hcm36):
             // when the budget opts into ``TokenBudget/hardCeiling``, measured
             // fill is checked *before* `body` ever submits this attempt's
             // generate call — deterministic, so a transcript already too
@@ -1682,8 +1682,8 @@ actor RoutedSessionActor: RoutedSession {
     /// Honors ``grammar`` exactly like ``respond(to:maxTokens:)``: a guided
     /// session constrains this turn's response too.
     func dispatchNextPrompt() async throws -> String? {
-        await serialGate.wait()
-        defer { serialGate.signal() }
+        await generationGate.wait()
+        defer { generationGate.signal() }
 
         let drained = await outbox.drainForDispatch()
         let pendingEvents = drained.events.map(\.event)
@@ -1905,7 +1905,7 @@ actor RoutedSessionActor: RoutedSession {
         // attempt's own event carries the fill it just measured (or the
         // still-unchanged prior value when this attempt never touched
         // `backend`) — live, per inner call, not only once the whole
-        // (possibly retried) turn finishes (harness plan §5.1, task g2hcm36).
+        // (possibly retried) turn finishes (compaction_plan.md §1.7, task g2hcm36).
         if let usage {
             onEvent?(.turnEnded(TokenUsage(tokensIn: usage.input, tokensOut: usage.output, contextFill: contextFill)))
         }

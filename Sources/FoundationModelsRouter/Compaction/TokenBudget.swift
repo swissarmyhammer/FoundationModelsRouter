@@ -26,7 +26,7 @@ public struct TokenBudget: Sendable, Equatable {
 
     /// The optional hard ceiling on measured ``RoutedSession/contextFill``, as
     /// a fraction of ``limit`` — `nil` (the default) opts out entirely
-    /// (harness plan §5.1's mid-turn strategy, task g2hcm36).
+    /// (compaction_plan.md §1.7's mid-turn strategy, task g2hcm36).
     ///
     /// Unlike ``trigger`` (compact proactively, ahead of time, so a turn never
     /// dies) this is a deterministic last resort: when set on a session's
@@ -44,7 +44,7 @@ public struct TokenBudget: Sendable, Equatable {
     public var hardCeiling: Double?
 
     /// The optional cap, in tokens, on any single tool call's own result —
-    /// `nil` (the default) opts out entirely (harness plan §5.1 seam 2, task
+    /// `nil` (the default) opts out entirely (compaction_plan.md §1.7 seam 2, task
     /// 1334fk3).
     ///
     /// Unlike ``limit``/``trigger``/``target`` (measured against the whole
@@ -59,7 +59,7 @@ public struct TokenBudget: Sendable, Equatable {
     /// explicit `"… [truncated: N of M tokens]"` marker appended — never
     /// silently dropped — so both the model and a driver watching
     /// ``SessionEvent/toolStatus(id:status:summary:)`` see that a result was
-    /// capped. Replaces the harness's own external `ObservedTool` capping
+    /// capped. Replaces an external per-tool capping
     /// job.
     public var toolOutputLimit: Int?
 
@@ -93,7 +93,7 @@ public struct TokenBudget: Sendable, Equatable {
 }
 
 /// A typed, deterministic budget failure raised at the generate boundary
-/// itself (harness plan §5.1, task g2hcm36) — the alternative to letting a
+/// itself (compaction_plan.md §1.7, task g2hcm36) — the alternative to letting a
 /// doomed submission run all the way to the backend and rely on it
 /// eventually throwing `LanguageModelError.contextSizeExceeded`.
 ///

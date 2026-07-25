@@ -33,7 +33,7 @@ struct ExamplesTests {
     /// every example runs with no network, GPU, or download.
     ///
     /// In production, `Router` is built with a configured `LiveModelLoader` and a
-    /// durable `recordingsDir`; here the harness injects fixed-budget /
+    /// durable `recordingsDir`; here the demo injects fixed-budget /
     /// canned-output stubs and an in-memory recorder. This is the single place
     /// the examples depart from production code — everything the example bodies
     /// do with the returned `Router` is the real public API.

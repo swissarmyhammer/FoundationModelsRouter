@@ -406,7 +406,7 @@ struct ForkConcurrencyTests {
 
     @Test("concurrent respond() on one model never overlap and run FIFO")
     @MainActor
-    func serialGateSerializesAndIsFIFO() async throws {
+    func generationGateSerializesAndIsFIFO() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -430,22 +430,22 @@ struct ForkConcurrencyTests {
         let fork3 = try await root.fork(workingDirectory: nil)
         let callers: [RoutedSession] = [root, fork1, fork2, fork3]
 
-        let serialGate = profile.standard.serialGate
+        let generationGate = profile.standard.generationGate
 
         // Launch call 0; it takes the only serial permit and parks in respond.
         let task0 = Task { try await callers[0].respond(to: "0") }
-        await Self.spin(until: { serialGate.availablePermits == 0 })
+        await Self.spin(until: { generationGate.availablePermits == 0 })
         await Self.spin(until: { await observer.entryOrder == [0] })
 
         // Launch calls 1, 2, 3 one at a time, each only after the previous has
         // actually parked on the serial gate — establishing a deterministic FIFO
         // arrival order without sleeping.
         let task1 = Task { try await callers[1].respond(to: "1") }
-        await Self.spin(until: { serialGate.waiterCount == 1 })
+        await Self.spin(until: { generationGate.waiterCount == 1 })
         let task2 = Task { try await callers[2].respond(to: "2") }
-        await Self.spin(until: { serialGate.waiterCount == 2 })
+        await Self.spin(until: { generationGate.waiterCount == 2 })
         let task3 = Task { try await callers[3].respond(to: "3") }
-        await Self.spin(until: { serialGate.waiterCount == 3 })
+        await Self.spin(until: { generationGate.waiterCount == 3 })
 
         // Only one body has entered so far — the gate held the rest out.
         #expect(await observer.entryOrder == [0])

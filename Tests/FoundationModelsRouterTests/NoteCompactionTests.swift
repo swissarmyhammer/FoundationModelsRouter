@@ -9,7 +9,7 @@ import Testing
 /// bare-session entry point that folds a fresh (post-compaction) transcript
 /// into a handle's recording — the counterpart to `RoutedSession.compact()`
 /// for a caller driving a bare `LanguageModelSession` directly over the
-/// recording handle (the agent harness, the ACP bridge).
+/// recording handle (external consumers).
 ///
 /// Unlike ``RecordingLanguageModel/sync(_:usage:)``'s differ, which is
 /// count-based (only ever grows), a fold's compacted transcript is typically

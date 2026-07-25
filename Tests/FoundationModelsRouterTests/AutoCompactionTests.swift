@@ -658,7 +658,7 @@ struct AutoCompactionTests {
         // never `budget.limit`, which only sizes the compaction target.
         #expect(retryUsage == TokenUsage(tokensIn: 1_000, tokensOut: 0, contextFill: 1_000.0 / 100_000.0))
         // The context meter genuinely moved *during* this one logical turn,
-        // not only once it fully finished (harness plan §5.1, task g2hcm36).
+        // not only once it fully finished (compaction_plan.md §1.7, task g2hcm36).
         #expect(retryUsage.contextFill < blockedUsage.contextFill)
     }
 
