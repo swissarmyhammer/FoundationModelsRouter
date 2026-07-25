@@ -291,12 +291,21 @@ struct HumanWaitGateTests {
         )
     }
 
-    /// Spins cooperatively until `condition` holds or a bounded number of yields
+    /// How many cooperative yields ``spin(until:)`` gives a condition before it
+    /// gives up.
+    ///
+    /// A timeout measured in scheduler hops rather than wall clock: high enough
+    /// that a state change these tests genuinely order behind a handful of task
+    /// suspensions always lands, low enough that a condition which never holds
+    /// gives up in well under a second instead of hanging the suite.
+    private static let spinYieldLimit = 100_000
+
+    /// Spins cooperatively until `condition` holds or ``spinYieldLimit`` yields
     /// elapse, so a scheduler-ordered state change is observed without a sleep —
     /// and a condition that never holds fails an assertion rather than hanging
     /// the suite.
     private static func spin(until condition: @Sendable () async -> Bool) async {
-        for _ in 0..<100_000 {
+        for _ in 0..<spinYieldLimit {
             if await condition() { return }
             await Task.yield()
         }

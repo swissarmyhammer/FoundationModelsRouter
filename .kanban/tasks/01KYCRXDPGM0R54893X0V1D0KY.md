@@ -115,6 +115,29 @@ comments:
 
     **Hygiene note:** the implementing agent ran `git checkout -- Sources Tests` to undo the unwanted formatter run, and a concurrent commit (26d6d9d) landed mid-task sweeping part of this task's `serialGate`→`generationGate` rename into HEAD. /test is verifying nothing was lost.
   timestamp: 2026-07-25T19:40:44.663934+00:00
+- actor: claude-code
+  id: 01kydhvwbegx0beys03qj8n46c
+  text: |-
+    Review findings (2026-07-25 14:49) worked. All four boxes now `- [x]`; task left in `doing`.
+
+    **Finding 1 — `ID` -> `Id` rename.** All 13 references renamed in `Sources/FoundationModelsRouter/Session/RoutedSession.swift`, including the DocC `` ``currentTurnId`` `` link in `endTurn()`'s doc comment: `currentTurnID` (6) -> `currentTurnId`, `lastTurnID` (3) -> `lastTurnId`, `humanWaitLenderTurnID` (4) -> `humanWaitLenderTurnId`. All three are `private` and nothing in Tests referenced them, so the rename is confined to one file. (Finding cited lines 554/557/561; they are at 754/757/761 — the file grew after the review snapshot.)
+
+    **Zero-recurrence sweep, as the finding demanded.** Swept every `ID`/`IDs`-suffixed identifier across all 19 Sources/Tests files that commit `97b5aab` touched. What remains is `assetIDs` (Apple's `Transcript.Response(assetIDs:)`), `SessionOutbox.ItemID`, `ULID`, `UUID` — all external APIs or pre-existing public types, none introduced by this task (`git show 97b5aab -- Sources Tests | grep -c ItemID` == 0; `ItemID` is declared in `SessionOutbox.swift`, which this task never touched, and renaming a public type would be a breaking API change and out of scope). The repo-wide `ID` users `correlationID`, `taskID`, `seedID`, `tasksByID`, `seedsByID`, `firstID` all live exclusively in files this task never touched. So: no other identifier introduced by this task carries the inconsistency.
+
+    **Load-bearing logic untouched, proved mechanically rather than by eye.** The double-check agent reverse-applied the three renames to the working-tree file and diffed against `git show HEAD:...RoutedSession.swift` — **empty diff**. The change is provably a pure identifier substitution: `endHumanWait()`'s acquire-then-revalidate ordering (`await acquireGenerationPermit()` *then* `if currentTurnId != lender { releaseGenerationPermit() }`), `endTurn()`'s `currentTurnId = nil` ahead of its `if holdsGenerationPermit` guard, and `beginTurn()`'s stamp-then-acquire order are byte-for-byte unchanged. The post-acquire re-validation was not weakened.
+
+    **Finding 2 — named cap.** The `100_000` cap was already centralized in the single `spin(until:)` helper, so one extraction covers all ten spin call sites: `private static let spinYieldLimit = 100_000`, with a doc comment explaining it as a timeout in scheduler hops rather than wall clock. **Deviation from the finding's literal suggestion, deliberate:** it suggested `SPIN_TIMEOUT_ITERATIONS`; SCREAMING_SNAKE is neither Swift convention nor this repo's — the file's own sibling constant is `private static let stubDimension = 8`, so `spinYieldLimit` matches. Noted in the checklist item rather than silently changed.
+
+    Swept the rest of the added code for bare caps: no multi-digit literal was added to `Sources` by `97b5aab` at all (its Sources diff is code + doc comments only). Inside `HumanWaitGateTests.swift` the remaining literals are fixture data replicated verbatim from the prevailing pattern — `maxConcurrentForks: 4` (also in `TranscriptReconstructionTests`, `TranscriptTreeTests`), `totalRAM: 64 << 30` (a dozen suites), the model-config JSON, `stubDimension` (already named) — plus `AsyncSemaphore(value: 0/1)` rendezvous counts and `#expect(... == 1)` exact-state assertions. None is an unnamed cap. The ten pre-existing test files were not touched; note for the record that `RecordingLanguageModelTests`, `MultiTurnSessionTests` and `ForkConcurrencyTests` each still carry their own bare `100_000` spin cap, explicitly out of scope here.
+
+    **Worth keeping — the "well under a second" doc claim was checked, and my first check was too weak.** I benchmarked an exhausted 100_000-yield spin at ~30 ms, but in an *optimized standalone* binary, which is the wrong configuration (`swift test` builds debug, and every test in this suite is `@MainActor`). The verifier re-measured: MainActor-isolated top-level code takes **0.897 s**, and **1.66 s** with an actor-hopping condition — which would have falsified the claim. But that shape does not match the code: `spin(until:)` is *nonisolated* async, so under Swift 6 language mode (tools-version 6.1, no `NonisolatedNonsendingByDefault`) its loop does not inherit the caller's MainActor. Reproducing the exact shape at `-Onone -swift-version 6` gives **0.046–0.060 s**, with either a lock-read or an actor-isolated condition. Claim holds by ~20x. Lesson for the next agent: benchmark in the configuration the tests actually run in, and check the isolation the loop really has, not the caller's.
+
+    `swift format` again deliberately not run, for the reasons already on this card.
+
+    Verification (fresh, both edits in place): `swift build` exit 0 "Build complete!" with no new warnings; full `swift test` exit 0 at **587 tests / 68 suites** (557/57 + 18/7 + 12/4), zero issues — identical to the pre-change baseline, nothing lost or newly skipped. `swift test --filter HumanWaitGateTests` run 3x: 9/9 each time. Adversarial double-check: **PASS**, no findings, having independently reproduced the build, the full suite, and the filtered suite. Working tree is exactly two files, 23 insertions / 14 deletions, every line attributable to one of the two findings.
+
+    Non-defect for any later re-review: `currentTurnID` still appears in this card's `.md` and `.jsonl`. That is the verbatim finding text and the append-only audit log, which must name the old identifier to make sense; not rewritten.
+  timestamp: 2026-07-25T21:10:58.670067+00:00
 position_column: doing
 position_ordinal: '80'
 title: Split the serial gate so human waits do not stall the model
@@ -176,3 +199,12 @@ The re-acquire is itself a wait -- a tool resuming after a long pause may queue 
 ## Workflow
 
 - Use `/tdd` -- write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-07-25 14:49)
+
+Scope: `HEAD~1..HEAD` (commit `97b5aab`). 62 findings returned by the engine; 58 dropped under the review skill's standing exception against refactoring pre-existing test code (stub/fixture deduplication, named-constant extraction, and added doc comments in test files whose only change in this commit was the `serialGate` -> `generationGate` comment rename). The four below are the surviving items.
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:554` — Property name `currentTurnID` uses uppercase `ID` suffix, inconsistent with codebase pattern of `Id`. Other identifiers in this file use `routerId`, `sessionId`, `parentId`, `toolCallIds` — all using `Id` or `Ids` not `ID` or `IDs`. Rename to `currentTurnId`.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:557` — Property name `lastTurnID` uses uppercase `ID` suffix, inconsistent with codebase pattern of `Id`. Should match `routerId`, `sessionId`, `parentId` convention throughout the file. Rename to `lastTurnId`.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:561` — Property name `humanWaitLenderTurnID` uses uppercase `ID` suffix, inconsistent with codebase pattern of `Id`. Should match `routerId`, `sessionId`, `parentId` convention throughout the file. Rename to `humanWaitLenderTurnId`.
+- [x] `Tests/FoundationModelsRouterTests/HumanWaitGateTests.swift:329` — Hardcoded literal 100_000 is a spin-loop iteration limit acting as a timeout; this configuration value should be a named constant. Extracted as `private static let spinYieldLimit = 100_000` (repo/Swift lowerCamelCase rather than the finding's `SPIN_TIMEOUT_ITERATIONS`, matching the file's existing `stubDimension`) and used as `for _ in 0..<spinYieldLimit`.

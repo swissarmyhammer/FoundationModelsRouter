@@ -751,14 +751,14 @@ actor RoutedSessionActor: RoutedSession {
     /// the one in flight?" — and it has to answer that *after* its re-acquire
     /// suspends, by which time the answer may have changed. Monotonic, so a later
     /// turn can never be mistaken for the one that lent (no ABA).
-    private var currentTurnID: UInt64?
+    private var currentTurnId: UInt64?
 
     /// The last id ``beginTurn()`` handed out.
-    private var lastTurnID: UInt64 = 0
+    private var lastTurnId: UInt64 = 0
 
     /// The turn the outermost outstanding ``awaitingUser(_:)`` borrowed this
     /// session's generation permit from, or `nil` when no loan is open.
-    private var humanWaitLenderTurnID: UInt64?
+    private var humanWaitLenderTurnId: UInt64?
 
     /// The fork-admission gate, shared with the owning model.
     ///
@@ -1375,8 +1375,8 @@ actor RoutedSessionActor: RoutedSession {
     /// deadlock-free. Paired with exactly one ``endTurn()``.
     private func beginTurn() async {
         await turnLock.wait()
-        lastTurnID += 1
-        currentTurnID = lastTurnID
+        lastTurnId += 1
+        currentTurnId = lastTurnId
         await acquireGenerationPermit()
     }
 
@@ -1393,11 +1393,11 @@ actor RoutedSessionActor: RoutedSession {
     /// return a permit *twice* for one acquisition, and `AsyncSemaphore` has no
     /// ceiling to absorb that: the gate would admit two concurrent generations
     /// and stay inflated. So the permit is released only if this turn still holds
-    /// it; clearing ``currentTurnID`` is what tells the outstanding wait, when it
+    /// it; clearing ``currentTurnId`` is what tells the outstanding wait, when it
     /// finally gets a permit, that its lender is gone and the permit is not its
     /// to keep.
     private func endTurn() {
-        currentTurnID = nil
+        currentTurnId = nil
         if holdsGenerationPermit {
             releaseGenerationPermit()
         }
@@ -1425,8 +1425,8 @@ actor RoutedSessionActor: RoutedSession {
     private func beginHumanWait() {
         humanWaitDepth += 1
         guard humanWaitDepth == 1 else { return }
-        guard holdsGenerationPermit, let lender = currentTurnID else { return }
-        humanWaitLenderTurnID = lender
+        guard holdsGenerationPermit, let lender = currentTurnId else { return }
+        humanWaitLenderTurnId = lender
         releaseGenerationPermit()
     }
 
@@ -1447,10 +1447,10 @@ actor RoutedSessionActor: RoutedSession {
     /// itself for the outermost one, and release a permit this session does not
     /// yet hold.
     private func endHumanWait() async {
-        if humanWaitDepth == 1, let lender = humanWaitLenderTurnID {
-            humanWaitLenderTurnID = nil
+        if humanWaitDepth == 1, let lender = humanWaitLenderTurnId {
+            humanWaitLenderTurnId = nil
             await acquireGenerationPermit()
-            if currentTurnID != lender {
+            if currentTurnId != lender {
                 releaseGenerationPermit()
             }
         }
