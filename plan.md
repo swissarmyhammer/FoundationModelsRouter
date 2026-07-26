@@ -773,8 +773,25 @@ layer up:
   truncated, never retracted — since an `AsyncThrowingStream` whose consumer is
   cancelled merely *ends*, and a half-produced response is not a turn that
   finished. Neither route lets a cancelled turn re-enter the model on its
-  compact-and-retry-once path; what neither route interrupts is a fold already in
-  progress.
+  compact-and-retry-once path.
+
+  **A fold is cancellable too**, by both routes. Compaction's expensive part is a
+  real summarization generation, and a turn folding its own transcript has no
+  `body(composedPrompt)` outstanding — so a fold's summarizer calls are run
+  through the same cancellation boundary a turn's model call is, and a stop
+  landing in one abandons the fold instead of being waited out. That holds for a
+  proactive auto-fold, for the reactive compact-and-retry-once fold, and for a
+  caller-driven `compact()`, which takes the turn lock the same way. A fold's
+  *deterministic* stages are deliberately left alone: they call no model, finish
+  in bounded local work, and adding checks inside them would only make a cheap
+  fold slower and its result nondeterministic. An abandoned fold is never a
+  half-applied one — a fold records its new entries, swaps its transcript, and
+  re-reports its fill only after summarization returns — and the turn it was
+  folding for records the same lone bodyless close, and re-queues the outbox
+  events it had drained, exactly like any other cut-short turn. That re-queue is
+  the load-bearing part: the proactive fold runs *before* the attempt that owns a
+  turn's recording, so its failure path re-queues and records itself rather than
+  letting a drained outbox vanish with the turn.
 
   **Past the process boundary it is advisory.** `notifications/cancelled` is a
   notification, not a command, and cancellation inside this process is

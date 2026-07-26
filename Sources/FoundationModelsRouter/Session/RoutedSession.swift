@@ -4,8 +4,17 @@ import Operations
 import os
 
 /// The logger ``RoutedSessionActor`` reports a defensively-clamped transcript
-/// shrink to (see ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``).
+/// shrink to (see
+/// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``).
 private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
+
+/// The logger ``RoutedSessionActor`` reports an abandoned fold's discarded
+/// summarizer failure to (see
+/// ``RoutedSessionActor/noteAbandonedFold(discarding:tier:)``).
+///
+/// Its own category rather than ``sessionRecordingLogger``'s: what it reports is a
+/// compaction outcome, not a recording one.
+private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
 
 /// The outcome of ``RoutedSession/cancelCurrentTurn()``.
 public enum TurnCancellationResult: Sendable, Equatable {
@@ -17,7 +26,7 @@ public enum TurnCancellationResult: Sendable, Equatable {
     /// a tool call chose to do about it. It says a turn held the session's turn
     /// lock and the cancellation was recorded against it — not that anything in
     /// flight has stopped, and not even that there was a model call to stop (a
-    /// turn folding its own transcript has none; see
+    /// turn part-way through a fold's deterministic stages has none; see
     /// ``RoutedSession/cancelCurrentTurn()``).
     case requested
 
@@ -179,6 +188,12 @@ public protocol RoutedSession: Actor {
     /// }
     /// ```
     ///
+    /// A fold takes this session's turn lock for its duration, so it is a turn as
+    /// far as ``cancelCurrentTurn()`` is concerned: a stop landing in its
+    /// model-assisted stage abandons it and throws `CancellationError` here,
+    /// leaving this session exactly as it was — see that method for what a
+    /// cancelled fold does and does not interrupt.
+    ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer when the
     ///     model-assisted stage runs. Defaults to ``CompactionPrompt/default``.
@@ -187,7 +202,8 @@ public protocol RoutedSession: Actor {
     ///     trigger/target (compaction_plan.md §1.4).
     /// - Returns: What the fold did.
     /// - Throws: Whatever the summarizer throws, when the model-assisted
-    ///   stage runs and fails.
+    ///   stage runs and fails, or `CancellationError` when this fold was
+    ///   cancelled.
     @discardableResult
     func compact(prompt: CompactionPrompt, budget: TokenBudget?) async throws -> CompactionResult
 
@@ -345,13 +361,31 @@ public protocol RoutedSession: Actor {
     /// lets the model be re-entered on behalf of a turn already cancelled.
     ///
     /// A cancellation that lands while the in-flight turn holds no model call at
-    /// all — during an auto-compaction fold, or between a failed attempt and its
-    /// overflow retry — is remembered against that turn and honored by its next
-    /// model call: that next call is never made, so a cancelled turn never re-runs
-    /// the model or the tool calls that come with it. What that does *not* do is
-    /// interrupt the fold already running, and the same goes for a caller-driven
-    /// ``compact(prompt:budget:)``, which holds the turn lock too: that summarizer
-    /// work is its own caller's `Task` to cancel.
+    /// all — between a failed attempt and its overflow retry, say — is remembered
+    /// against that turn and honored by its next model call: that next call is
+    /// never made, so a cancelled turn never re-runs the model or the tool calls
+    /// that come with it.
+    ///
+    /// A turn **folding its own transcript** is reached too, by both routes. A
+    /// fold's model-assisted summarization is a model call the turn owns, so it is
+    /// cancelled where it stands instead of waited out — each of a map-reduced
+    /// fold's several calls included, and a caller-driven
+    /// ``compact(prompt:budget:)``, which holds the turn lock the same way,
+    /// included as well. What is *not* interrupted is a fold's deterministic
+    /// stages: they call no model, finish in bounded local work, and are left
+    /// alone rather than made slower and nondeterministic for no gain. An
+    /// abandoned fold leaves this session exactly as it was — never a half-applied
+    /// fold, since a fold records its new entries, swaps its transcript, and
+    /// re-reports its fill only once summarization has returned.
+    ///
+    /// What the caller then sees depends on whose fold it was. A **turn's** own fold
+    /// throws `CancellationError` without the model ever being called for that
+    /// turn's prompt, and the turn is recorded exactly like any other cut-short one:
+    /// the same lone bodyless close, and its drained outbox events treated by the
+    /// same attach-or-requeue rule. A cancelled **``compact(prompt:budget:)``**
+    /// throws `CancellationError` and nothing else: it drained no outbox and owns no
+    /// turn recording of its own, so it leaves no trace beyond the gates it hands
+    /// back.
     ///
     /// Safe at any time and any number of times: a second cancellation of the
     /// same turn requests what was already requested, and a cancellation with no
@@ -749,6 +783,55 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
     }
 }
 
+/// Wraps another ``CompactionSummarizer`` so every model call it makes runs
+/// inside the owning session's turn-cancellation boundary
+/// (``RoutedSessionActor/runCancellableModelCall(composedPrompt:_:)``), rather
+/// than as work only the fold's own caller could ever interrupt.
+///
+/// This is what makes a client stop land during a **fold**. A fold's
+/// model-assisted ``Summarization`` stage is the expensive part of compaction —
+/// a real generation, map-reduced over the whole folded span — and a turn
+/// folding its own transcript has no `body(composedPrompt)` outstanding for
+/// ``RoutedSession/cancelCurrentTurn()`` to cancel, so before this a stop
+/// arriving mid-fold was remembered but the fold was waited out. Routing each
+/// `summarize(_:)` through the same boundary a turn's own model call uses gives
+/// the whole contract at once: the pre-flight check on both cancellation routes,
+/// registration as the turn's ``RoutedSessionActor/inFlightModelCall`` so
+/// `cancelCurrentTurn()` reaches a summarizer call already in flight, and the
+/// `withTaskCancellationHandler` that keeps a caller able to cancel the fold by
+/// cancelling its own enclosing `Task`.
+///
+/// Only ever wrapped around a summarizer that exists: a deterministic-only fold
+/// makes no model call, so it gains no check and stays exactly as fast and as
+/// deterministic as it was.
+private struct CancellableCompactionSummarizer: CompactionSummarizer {
+    /// The summarizer whose calls are being made cancellable.
+    let base: any CompactionSummarizer
+
+    /// The session whose in-flight turn those calls belong to.
+    let session: RoutedSessionActor
+
+    func summarize(_ prompt: String) async throws -> String {
+        // Each of a map-reduce fold's several calls is registered, and cancellable,
+        // on its own — so a cancellation landing between two chunks is honored by
+        // the next chunk's pre-flight check rather than waiting out the rest of the
+        // fold.
+        //
+        // Sound only because ``Summarization`` makes those calls *serially*:
+        // ``RoutedSessionActor/inFlightModelCall`` holds one call at a time, so
+        // chunks summarized concurrently would leave only the last-registered one
+        // reachable by ``RoutedSession/cancelCurrentTurn()`` — the caller-cancels
+        // route would still reach each of them through its own
+        // `withTaskCancellationHandler`, so the exposure is to that primitive
+        // specifically. Parallelizing either of ``Summarization``'s summarizeOnce
+        // loops therefore means registering a *set* of in-flight calls, not one —
+        // see the matching note in Sources/FoundationModelsRouter/Compaction/Summarization.swift.
+        try await session.runCancellableModelCall(composedPrompt: prompt) { [base] promptText in
+            try await base.summarize(promptText)
+        }
+    }
+}
+
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
     nonisolated let routerId: ULID
@@ -903,8 +986,9 @@ actor RoutedSessionActor: RoutedSession {
     /// none is outstanding.
     ///
     /// A cancellation can land while a turn holds ``turnLock`` with no model call
-    /// outstanding to cancel — during its proactive auto-compaction fold, or
-    /// between a failed attempt and its overflow retry. Recording it here is what
+    /// outstanding to cancel — inside the deterministic stages of an
+    /// auto-compaction fold, between two of a fold's summarizer calls, or between
+    /// a failed attempt and its overflow retry. Recording it here is what
     /// makes that cancellation land on the turn's next model call instead of
     /// being dropped. Keyed by turn identity rather than a bare flag, so it can
     /// never bleed into a later turn (ids are monotonic, and ``endTurn()`` clears
@@ -1167,9 +1251,21 @@ actor RoutedSessionActor: RoutedSession {
     ///     actually runs.
     ///   - budget: The token budget to fold against.
     /// - Returns: What the fold did.
-    /// - Throws: Nothing from summarization — every tier that can throw is
-    ///   caught and the next tier tried; only ``Compactor/compact(_:prompt:budget:summarizer:)``'s
-    ///   own non-summarizer failure modes (none today) would propagate.
+    /// - Throws: `CancellationError`, and nothing else, when a tier fails *and* a
+    ///   cancellation is outstanding against this turn (``isTurnCancelled``) — the
+    ///   one case not degraded to the next tier, because degrading a cancelled fold
+    ///   would answer a stop by making more model calls, and would then apply a
+    ///   cheaper fold to a turn that is unwinding anyway. The condition is that
+    ///   cancellation, never the failure's own type: a summarizer that raises
+    ///   `CancellationError` out of its own internals with nothing cancelled here
+    ///   is an ordinary failure and degrades like any other. So the guarantee above
+    ///   still holds unqualified — a broken summarizer model cannot block an
+    ///   automatic fold — and only ``Compactor/compact(_:prompt:budget:summarizer:)``'s
+    ///   own non-summarizer failure modes (none today) would otherwise propagate.
+    ///   Whatever the abandoned tier threw, unless it is itself a `CancellationError`,
+    ///   is reported to the log on the way out
+    ///   (``noteAbandonedFold(discarding:tier:)``) rather than lost, since the
+    ///   `CancellationError` this throws instead carries none of it.
     private func performAutoCompaction(
         prompt: CompactionPrompt,
         budget: TokenBudget
@@ -1181,14 +1277,91 @@ actor RoutedSessionActor: RoutedSession {
                     summarizer: BackendCompactionSummarizer(backend: profile.flash.container.makeSession(instructions: nil))
                 )
             } catch {
+                // A fold cancelled part-way is abandoned outright rather than
+                // degraded to the next tier: answering a stop with *more* model
+                // calls, and then applying a cheaper fold to a turn that is unwinding
+                // anyway, is not what a stop means. Keyed on a cancellation actually
+                // being outstanding rather than on the error's own type, because a
+                // ``LanguageModelSessionBackend`` conformer is free to surface
+                // `CancellationError` from internals of its own with nothing
+                // cancelled here — an ordinary summarizer failure, and the next
+                // tier's business exactly as before.
+                if isTurnCancelled {
+                    noteAbandonedFold(discarding: error, tier: .flash)
+                    throw CancellationError()
+                }
                 // Fall through to the own-model tier below.
             }
         }
         do {
             return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
         } catch {
+            // Same reasoning as the flash tier above, and the *only* guard on this
+            // path for a session that already is the flash slot and so skipped it.
+            if isTurnCancelled {
+                noteAbandonedFold(discarding: error, tier: .ownModel)
+                throw CancellationError()
+            }
             return try await fold(prompt: prompt, budget: budget, summarizer: nil)
         }
+    }
+
+    /// Which of ``performAutoCompaction(prompt:budget:)``'s model-assisted tiers a
+    /// fold ran on, so a report about one names it from a single place rather than
+    /// from a string literal per throw site.
+    private enum FoldSummarizerTier: String {
+        /// The profile's ``LanguageModelProfile/flash`` slot.
+        case flash
+
+        /// This session's own model.
+        case ownModel = "own-model"
+    }
+
+    /// Reports the summarizer failure an abandoned fold is discarding, so a genuine
+    /// fault that merely coincided with a stop does not vanish without trace.
+    ///
+    /// A fold abandoned for a cancellation throws `CancellationError` whatever its
+    /// tier actually threw — that is what the caller of a stopped turn has to see,
+    /// and `CancellationError` carries no underlying failure — so the tier's own
+    /// error is otherwise dropped on the floor. Nearly always it *is* that
+    /// cancellation and there is nothing to say; anything else is a summarizer fault
+    /// that a stop happened to race, and it is logged here. Reported the way
+    /// ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``'s
+    /// shrink guard reports its own swallowed anomaly, which is this file's other
+    /// "dropped, so say so" case.
+    ///
+    /// The type test is about log noise alone. What abandons a fold is
+    /// ``isTurnCancelled`` and never an error's type — keying that decision on
+    /// `CancellationError` is the defect this method must not reintroduce.
+    ///
+    /// It is a heuristic in both directions, and neither miss costs more than a log
+    /// line: a conformer raising `CancellationError` out of internals of its own —
+    /// the case ``LanguageModelSessionBackend`` explicitly allows, and the reason the
+    /// abandon decision is not keyed on the type — goes unreported when a stop
+    /// happens to be outstanding, and a conformer that wraps a real cancellation in
+    /// an error type of its own is reported as a fault. So "logged" does not prove
+    /// "genuine", nor "unlogged" prove "routine".
+    ///
+    /// Only the tier, the session, and the error's *type* are logged publicly. The
+    /// description is left at `os.Logger`'s redacted default: this error comes out of
+    /// a summarizer call whose prompt is the rendered folded span, so a conformer that
+    /// echoes its request or partial output into the description would otherwise write
+    /// transcript content to the unified log. The shrink guard above marks only counts
+    /// and ids public for the same reason.
+    ///
+    /// - Parameters:
+    ///   - error: The failure the abandoned tier threw.
+    ///   - tier: The tier that threw it.
+    private func noteAbandonedFold(discarding error: Error, tier: FoldSummarizerTier) {
+        guard !(error is CancellationError) else { return }
+        sessionCompactionLogger.warning(
+            """
+            abandoning the \(tier.rawValue, privacy: .public) summarizer tier's fold for session \
+            \(self.id.description, privacy: .public) because a stop is outstanding against its turn; \
+            discarding the \(String(describing: type(of: error)), privacy: .public) it raised: \
+            \(error.localizedDescription)
+            """
+        )
     }
 
     /// The fold mechanics ``compact(prompt:budget:)`` and
@@ -1220,10 +1393,17 @@ actor RoutedSessionActor: RoutedSession {
     ///     session's own resolved working context at the default
     ///     trigger/target.
     ///   - summarizer: The model to summarize with, or `nil` to degrade to
-    ///     the deterministic-only pipeline.
+    ///     the deterministic-only pipeline. A non-`nil` summarizer is wrapped in
+    ///     ``CancellableCompactionSummarizer`` before the pipeline sees it, so
+    ///     each of its model calls is cancellable as this turn's own.
     /// - Returns: What the fold did.
     /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified, when
-    ///   the model-assisted stage runs and fails.
+    ///   the model-assisted stage runs and fails — including `CancellationError`
+    ///   when this turn was cancelled before or during a summarizer call. A fold
+    ///   that throws leaves this session exactly as it was: the fold's own
+    ///   entries are recorded, ``backend`` swapped, and ``usageState`` updated
+    ///   only after the pipeline has returned, so an abandoned fold is never a
+    ///   half-applied one.
     private func fold(
         prompt: CompactionPrompt,
         budget: TokenBudget?,
@@ -1236,7 +1416,11 @@ actor RoutedSessionActor: RoutedSession {
             Transcript(entries: entries),
             prompt: prompt,
             budget: resolvedBudget,
-            summarizer: summarizer
+            // Wrapped, never handed over bare: a fold's summarizer call is a model
+            // call this session's turn owns, and must be cancellable as one (see
+            // ``CancellableCompactionSummarizer``). A `nil` summarizer stays `nil`,
+            // so a deterministic-only fold is untouched.
+            summarizer: summarizer.map { CancellableCompactionSummarizer(base: $0, session: self) }
         )
 
         // Nothing to fold (already under target) or every stage ran and
@@ -1902,6 +2086,13 @@ actor RoutedSessionActor: RoutedSession {
     /// been reached. The reactive half (retry once on context overflow) is
     /// in ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``.
     ///
+    /// That fold can fail — a stop landing in its summarizer call unwinds it (see
+    /// ``RoutedSession/cancelCurrentTurn()``) — and it runs *before* the attempt
+    /// that owns a turn's recording, so this method records the cut-short turn
+    /// itself on that path (``recordFailedTurn(grammar:since:usageBefore:pendingEvents:onEvent:)``).
+    /// Without it, a turn abandoned in its own fold would destroy the outbox
+    /// events it had already drained and leave no trace of itself at all.
+    ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn,
     ///     stamped onto every event this turn appends.
@@ -1916,7 +2107,9 @@ actor RoutedSessionActor: RoutedSession {
     ///     composed prompt and returning the response text callers receive.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, after recording whatever the SDK
-    ///   appended plus the bodyless close event.
+    ///   appended plus the bodyless close event — or `CancellationError` from the
+    ///   proactive fold, before `body` is ever called, recorded exactly the same
+    ///   way.
     private func runTurn(
         grammar: Grammar?,
         pendingEvents: [OperationEvent],
@@ -1925,8 +2118,27 @@ actor RoutedSessionActor: RoutedSession {
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
         if let budget = autoCompactionBudget, contextFill >= budget.trigger {
-            let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
-            onEvent?(.compaction(result))
+            let started = Date()
+            let usageBefore = backend.usageTokenCounts()
+            do {
+                let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
+                onEvent?(.compaction(result))
+            } catch {
+                // A fold can now throw — a stop landing inside its summarizer call
+                // unwinds it (see ``CancellableCompactionSummarizer``) — and this
+                // turn has not reached `runTurnAttempt`, where a failed turn's
+                // recording and the outbox's attach-or-requeue rule both live. So
+                // the fold's failure path has to run them here, or the events this
+                // turn already *destructively* drained would be destroyed and the
+                // turn would leave no trace at all. Neither is a formality: an
+                // abandoned fold leaves `backend` exactly as it was, so the diff
+                // finds no `.prompt` partial to attach those events to and
+                // re-queues them, and the synthetic bodyless close is the trace.
+                await recordFailedTurn(
+                    grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
+                    onEvent: onEvent)
+                throw error
+            }
         }
 
         return try await runTurnAttempt(
@@ -2015,31 +2227,9 @@ actor RoutedSessionActor: RoutedSession {
                 onEvent: onEvent)
             return response
         } catch {
-            // Whatever the SDK durably appended before failing is still diffed
-            // and persisted, with `ms` stamped the same way as the success path
-            // (on the diff's own last `.response`-kind entry, if any) — a
-            // post-generation failure can still leave the SDK having appended a
-            // genuine `.response` entry before throwing.
-            let (diffIncludedResponse, usage) = await finishTurnAndRequeueIfUnattached(
+            await recordFailedTurn(
                 grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
                 onEvent: onEvent)
-            // Only synthesize the router-only bodyless close when the SDK's own
-            // diff did *not* already include a `.response`-kind entry — otherwise
-            // this would double up two `.response` events for one turn, breaking
-            // the "exactly one close per turn" invariant. This still guarantees
-            // every failed turn leaves a trace: either the SDK's own `.response`
-            // entry (mapped above) or this synthetic one.
-            if !diffIncludedResponse {
-                await append(
-                    partial: makePartialEvent(
-                        kind: .response,
-                        grammar: grammar,
-                        since: started,
-                        tokensIn: usage?.input,
-                        tokensOut: usage?.output
-                    )
-                )
-            }
 
             guard allowOverflowRetry, let budget = autoCompactionBudget, Self.isRecoverableContextOverflow(error) else {
                 throw error
@@ -2056,6 +2246,54 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// Records a turn that ended in a failure: the post-failure transcript diff,
+    /// the outbox's attach-or-requeue rule, and the synthetic bodyless close.
+    ///
+    /// Whatever the SDK durably appended before failing is still diffed and
+    /// persisted, with `ms` stamped the same way as the success path (on the
+    /// diff's own last `.response`-kind entry, if any) — a post-generation
+    /// failure can still leave the SDK having appended a genuine `.response`
+    /// entry before throwing. The router-only bodyless close is synthesized only
+    /// when that diff did *not* already include a `.response`-kind entry, since
+    /// otherwise one turn would close twice, breaking the "exactly one close per
+    /// turn" invariant. Either way every failed turn leaves a trace: the SDK's
+    /// own `.response` entry, or this synthetic one.
+    ///
+    /// Shared by the two places a turn can fail, so neither can drift into
+    /// recording a different shape than the other: a physical attempt that threw
+    /// (``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``'s
+    /// catch) and a turn cut short inside the proactive fold it runs *before* its
+    /// first attempt (``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``).
+    ///
+    /// - Parameters:
+    ///   - grammar: The guided-generation grammar in force for this turn.
+    ///   - since: The turn's start time, stamped as `ms`.
+    ///   - usageBefore: The token-usage snapshot taken before the failed work ran.
+    ///   - pendingEvents: The events this turn drained from ``outbox``, re-queued
+    ///     unless the diff produced a `.prompt`-kind partial to attach them to.
+    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, or `nil`.
+    private func recordFailedTurn(
+        grammar: Grammar?,
+        since started: Date,
+        usageBefore: (input: Int, output: Int)?,
+        pendingEvents: [OperationEvent],
+        onEvent: ((SessionEvent) -> Void)? = nil
+    ) async {
+        let (diffIncludedResponse, usage) = await finishTurnAndRequeueIfUnattached(
+            grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
+            onEvent: onEvent)
+        guard !diffIncludedResponse else { return }
+        await append(
+            partial: makePartialEvent(
+                kind: .response,
+                grammar: grammar,
+                since: started,
+                tokensIn: usage?.input,
+                tokensOut: usage?.output
+            )
+        )
+    }
+
     /// Runs one attempt's model call in a task this session can cancel from
     /// outside the turn, and awaits its result.
     ///
@@ -2065,6 +2303,11 @@ actor RoutedSessionActor: RoutedSession {
     /// from inside the model call, every tool call running under it; the turn's
     /// recording runs after this returns or throws and is never cancelled with
     /// it (see ``RoutedSession/cancelCurrentTurn()``).
+    ///
+    /// `fileprivate` rather than `private` for one caller:
+    /// ``CancellableCompactionSummarizer``, which routes a fold's own summarizer
+    /// call through here so that model call is cancellable on exactly the same
+    /// terms as a turn's.
     ///
     /// The unstructured task is bracketed by `withTaskCancellationHandler` so
     /// cancelling the *caller's* own enclosing `Task` still reaches the model
@@ -2080,22 +2323,16 @@ actor RoutedSessionActor: RoutedSession {
     ///   observed a cancellation — or `CancellationError` directly when this turn
     ///   had already been cancelled, by either route, before its model call
     ///   started.
-    private func runCancellableModelCall(
+    fileprivate func runCancellableModelCall(
         composedPrompt: String,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        // A cancellation that landed while this turn held no model call — during
-        // its proactive fold, or between a failed attempt and this retry — had no
-        // task to cancel, so it is honored here instead of being dropped, and the
-        // model (with every tool call it would make) is never re-entered on behalf
-        // of a turn already cancelled. Both routes are checked so neither can do
-        // what the other cannot: `Task.isCancelled` is the turn's own caller having
-        // cancelled its enclosing task, ``cancelRequestedTurnId`` is
-        // ``cancelCurrentTurn()``.
-        if Task.isCancelled {
-            throw CancellationError()
-        }
-        if let turnId = currentTurnId, cancelRequestedTurnId == turnId {
+        // A cancellation that landed while this turn held no model call — inside a
+        // fold's deterministic stages, between two of its summarizer calls, or
+        // between a failed attempt and this retry — had no task to cancel, so it is
+        // honored here instead of being dropped, and the model (with every tool call
+        // it would make) is never re-entered on behalf of a turn already cancelled.
+        if isTurnCancelled {
             throw CancellationError()
         }
         let modelCall = Task { try await body(composedPrompt) }
@@ -2112,6 +2349,23 @@ actor RoutedSessionActor: RoutedSession {
         } onCancel: {
             modelCall.cancel()
         }
+    }
+
+    /// Whether a cancellation is outstanding against the turn in flight, by either
+    /// route — the single predicate every "is this turn still wanted?" decision
+    /// asks, so the two routes can never diverge between them.
+    ///
+    /// `Task.isCancelled` is this turn's own caller having cancelled its enclosing
+    /// task; ``cancelRequestedTurnId`` is ``RoutedSession/cancelCurrentTurn()``
+    /// having recorded a request against the turn now holding ``turnLock``. Both are
+    /// asked, so neither route can do what the other cannot.
+    ///
+    /// Read *after* every `await` that matters, never cached across one: what makes
+    /// this correct is that it is cheap to re-ask.
+    private var isTurnCancelled: Bool {
+        if Task.isCancelled { return true }
+        guard let turnId = currentTurnId else { return false }
+        return cancelRequestedTurnId == turnId
     }
 
     /// Whether `error` is a recoverable context-overflow failure —

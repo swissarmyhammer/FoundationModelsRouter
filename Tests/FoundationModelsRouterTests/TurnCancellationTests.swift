@@ -45,12 +45,16 @@ struct TurnCancellationTests {
         }
     }
 
-    /// Failures a test's own stand-in tool raises to mark a path that must never
-    /// be taken.
+    /// Failures a test's own stand-in tool raises — to mark a path that must never
+    /// be taken, or to stand in for a fault the model itself would raise.
     private enum ProbeError: Error, Equatable {
         /// The overflow retry re-entered the model even though the turn had
         /// already been cancelled.
         case modelReenteredAfterCancellation
+
+        /// A summarizer call failed for a reason of its own, with nothing about it
+        /// cancellation-shaped.
+        case summarizerFailed
     }
 
     // MARK: - Turn observability
@@ -135,16 +139,65 @@ struct TurnCancellationTests {
         /// This backend's synthetic transcript, as of this read.
         var entries: [Transcript.Entry] { transcript.withLock { $0 } }
 
+        /// What ``usageTokenCounts()`` reports: how many input tokens each
+        /// completed turn adds to a running total, and that total so far.
+        private struct Metering {
+            /// The input tokens one completed turn adds, or `nil` for a backend
+            /// that reports no usage at all.
+            var inputTokensPerTurn: Int?
+
+            /// Every metered turn's input tokens so far.
+            var totalInputTokens = 0
+        }
+
+        /// This backend's measured usage — behind a lock for the same reason
+        /// ``transcript`` is, and mutable because a fold fixture starts metering
+        /// between two turns.
+        private let metering: Mutex<Metering>
+
         init(
             hook: TurnHook,
             observer: TurnObserver,
             appendsPromptBeforeToolCall: Bool,
-            entries: [Transcript.Entry] = []
+            entries: [Transcript.Entry] = [],
+            inputTokensPerTurn: Int? = nil
         ) {
             self.hook = hook
             self.observer = observer
             self.appendsPromptBeforeToolCall = appendsPromptBeforeToolCall
             self.transcript = Mutex(entries)
+            self.metering = Mutex(Metering(inputTokensPerTurn: inputTokensPerTurn))
+        }
+
+        /// The input tokens each completed turn adds to this backend's measured
+        /// usage, as of this read — carried over to every backend derived from
+        /// this one, so a fold that swaps the session's backend does not silently
+        /// stop it measuring.
+        var inputTokensPerTurn: Int? { metering.withLock { $0.inputTokensPerTurn } }
+
+        /// Starts reporting measured usage: `inputTokensPerTurn` input tokens for
+        /// every turn completed from here on.
+        ///
+        /// A fold fixture starts metering only for its *last* warm-up turn: a
+        /// session measuring usage from its first turn would cross its budget's
+        /// trigger with almost nothing in its transcript, and a fold with no old
+        /// span left to summarize never makes a summarizer call at all.
+        ///
+        /// - Parameter inputTokensPerTurn: The input tokens each completed turn
+        ///   adds to the running total.
+        func startMetering(inputTokensPerTurn: Int) {
+            metering.withLock { $0.inputTokensPerTurn = inputTokensPerTurn }
+        }
+
+        /// Adds one completed turn's measured input tokens to the running total,
+        /// so that turn's own delta — the difference between the snapshots the
+        /// session takes either side of it — is exactly
+        /// ``Metering/inputTokensPerTurn``.
+        private func meterOneTurn() {
+            metering.withLock { state in
+                guard let perTurn = state.inputTokensPerTurn else { return }
+                state.totalInputTokens += perTurn
+            }
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
@@ -165,6 +218,7 @@ struct TurnCancellationTests {
             }
             let responseText = "ok-\(prompt)"
             appendResponse(responseText)
+            meterOneTurn()
             await observer.exit(prompt)
             return responseText
         }
@@ -224,6 +278,7 @@ struct TurnCancellationTests {
                     }
                     let responseText = "ok-\(prompt)"
                     self.appendResponse(responseText)
+                    self.meterOneTurn()
                     continuation.yield(String(responseText.dropFirst(Self.firstStreamedChunk.count)))
                     await observer.exit(prompt)
                     continuation.finish()
@@ -244,34 +299,69 @@ struct TurnCancellationTests {
             entries
         }
 
-        /// No usage is tracked here — this suite exercises cancellation, not
-        /// metering.
+        /// This backend's measured usage, or `nil` until ``startMetering(inputTokensPerTurn:)``
+        /// is called — the default, and what every test here but the fold ones
+        /// wants: a session with no measured usage has no measured
+        /// ``RoutedSession/contextFill``, so no proactive fold can trigger.
         func usageTokenCounts() -> (input: Int, output: Int)? {
-            nil
+            metering.withLock { state -> (input: Int, output: Int)? in
+                guard state.inputTokensPerTurn != nil else { return nil }
+                return (input: state.totalInputTokens, output: 0)
+            }
         }
 
         func makeFork() -> any LanguageModelSessionBackend {
             HookedSessionBackend(
-                hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall, entries: entries)
+                hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall,
+                entries: entries, inputTokensPerTurn: inputTokensPerTurn)
+        }
+
+        /// Honors the replacement transcript rather than taking
+        /// ``LanguageModelSessionBackend``'s `makeFork()`-based default, which
+        /// keeps this backend's own entries instead.
+        ///
+        /// A fold swaps the session's backend for one seeded with the *folded*
+        /// transcript and sets `persistedEntryCount` from that same transcript, so
+        /// a fixture that ignored the replacement would leave the two disagreeing
+        /// and have the next turn's diff record entries no real session would. The
+        /// running usage total deliberately starts over, the way a genuinely new
+        /// session over the same model does; the per-turn measurement carries on.
+        func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
+            HookedSessionBackend(
+                hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall,
+                entries: Array(transcript), inputTokensPerTurn: inputTokensPerTurn)
         }
     }
 
     /// A ``LoadedLLMContainer`` vending ``HookedSessionBackend``s wired to one
     /// shared hook and observer.
     ///
-    /// Immutable after construction, so it is plainly `Sendable`: every test here
-    /// observes turns through the shared ``TurnObserver`` and the recorder rather
-    /// than by reaching for a particular session's backend.
+    /// Almost every test here observes turns through the shared ``TurnObserver``
+    /// and the recorder rather than by reaching for a particular session's
+    /// backend; the exception is ``lastVendedBackend``, which the fold fixture
+    /// needs (see its doc), so the vended backend is retained behind a lock.
     private final class HookedLLMContainer: LoadedLLMContainer {
         private let hook: TurnHook
         private let observer: TurnObserver
         private let appendsPromptBeforeToolCall: Bool
+
+        /// The most recently vended backend.
+        private let lastVended = Mutex<HookedSessionBackend?>(nil)
 
         init(hook: TurnHook, observer: TurnObserver, appendsPromptBeforeToolCall: Bool) {
             self.hook = hook
             self.observer = observer
             self.appendsPromptBeforeToolCall = appendsPromptBeforeToolCall
         }
+
+        /// The backend this container vended most recently — the one the session
+        /// built right after it is driving.
+        ///
+        /// The only way to reach it: `RoutedSessionActor.backend` is `private` and
+        /// ``RoutedSession`` exposes no accessor for it, and
+        /// ``makeFoldTriggeredSession(_:budget:)`` has to start metering on the
+        /// session's own backend to move its measured ``RoutedSession/contextFill``.
+        var lastVendedBackend: HookedSessionBackend? { lastVended.withLock { $0 } }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             makeHookedBackend(entries: [])
@@ -282,8 +372,10 @@ struct TurnCancellationTests {
         }
 
         private func makeHookedBackend(entries: [Transcript.Entry]) -> HookedSessionBackend {
-            HookedSessionBackend(
+            let backend = HookedSessionBackend(
                 hook: hook, observer: observer, appendsPromptBeforeToolCall: appendsPromptBeforeToolCall, entries: entries)
+            lastVended.withLock { $0 = backend }
+            return backend
         }
     }
 
@@ -413,6 +505,181 @@ struct TurnCancellationTests {
         target: inertFoldTarget
     )
 
+    // MARK: - Fold fixtures
+
+    /// The compaction prompt a fold test vends its session with, so the mid-turn
+    /// hook can tell a fold's own **summarizer** call from an ordinary turn: the
+    /// prompt ``Summarization`` sends is this text followed by the rendered span
+    /// being condensed, so a prefix match on it fires for exactly the fold's model
+    /// calls and for nothing else (see ``isSummarizerCall``).
+    private static let foldSummarizerPrompt = CompactionPrompt(
+        name: "turn-cancellation-fold-park",
+        text: "PARK-INSIDE-THE-FOLD"
+    )
+
+    /// Whether the model call carrying `prompt` is a fold's own summarizer call.
+    private static let isSummarizerCall: @Sendable (String) -> Bool = {
+        $0.hasPrefix(foldSummarizerPrompt.text)
+    }
+
+    /// Matches a fold's **first** summarizer call and no later one — what every test
+    /// that parks inside a fold parks on.
+    ///
+    /// Single-shot deliberately. A fold test parks in that first call and cancels
+    /// there; a regression that then let the fold degrade to another tier would park
+    /// a *second* call on a semaphore nothing is left to signal, hanging the suite
+    /// instead of failing the assertion that caught it. Letting later calls run
+    /// straight through turns that same regression into a fast, ordinary failure —
+    /// the turn finishes and the `CancellationError` expectation fails.
+    ///
+    /// - Returns: A predicate that is `true` exactly once, for the first summarizer
+    ///   call it sees.
+    private static func firstSummarizerCall() -> @Sendable (String) -> Bool {
+        let callsSeen = Mutex(0)
+        return { prompt in
+            guard isSummarizerCall(prompt) else { return false }
+            return callsSeen.withLock { seen -> Bool in
+                seen += 1
+                return seen == 1
+            }
+        }
+    }
+
+    /// How many of the newest turns every compaction stage leaves untouched —
+    /// ``ToolOutputElision``/``TurnTruncation``/``Summarization``'s shared
+    /// `keepRecentTurns` default, which a fold test's warm-up must exceed for a
+    /// fold to have any old span left to summarize.
+    private static let foldRecencyWindowTurns = 4
+
+    /// How many warm-up turns ``makeFoldTriggeredSession(_:budget:)`` drives
+    /// before the turn that folds — past ``foldRecencyWindowTurns``, so the fold
+    /// has an old span to condense and therefore a real summarizer call to make.
+    private static let foldWarmUpTurnCount = 6
+
+    /// The measured fill a fold test's budget folds at — ``TokenBudget``'s own
+    /// default trigger, spelled out because these budgets are built by
+    /// ``foldBudget(targetTokens:)`` rather than by ``TokenBudget/init(limit:)``.
+    private static let foldFillTrigger = 0.8
+
+    /// The share of the session's own resolved context window the last warm-up
+    /// turn measures, above ``foldFillTrigger`` so the *next* turn folds.
+    private static let foldTriggeringFillFraction = 0.9
+
+    /// The fraction of a fold budget's `limit` its target sits at — an arbitrary
+    /// choice ``foldBudget(targetTokens:)`` inverts, present only so a wanted
+    /// target size can be stated directly instead of back-computed at each call
+    /// site.
+    private static let foldTargetFraction = 0.25
+
+    /// A budget that folds to `targetTokens`, stated as the size it lands on
+    /// rather than as ``TokenBudget``'s own `limit`/`target` pair —
+    /// ``Compactor`` folds to `limit * target`, so this inverts that.
+    ///
+    /// - Parameter targetTokens: The estimated token size the fold should aim for.
+    /// - Returns: A budget with that target size and ``foldFillTrigger``'s trigger.
+    private static func foldBudget(targetTokens: Int) -> TokenBudget {
+        TokenBudget(
+            limit: Int(Double(targetTokens) / foldTargetFraction),
+            trigger: foldFillTrigger,
+            target: foldTargetFraction
+        )
+    }
+
+    /// The prompt ``cancellingTheReactiveFoldStopsTheRetry()`` drives its turn with,
+    /// named because its mid-turn hook has to tell that turn's own model call (which
+    /// must overflow) from the fold's summarizer call (which must park).
+    private static let overflowingFoldPrompt = "overflows-then-folds"
+
+    /// The prompt ``makeFoldTriggeredSession(_:budget:metersTriggeringFill:)``'s
+    /// warm-up turn `index` sends.
+    private static func warmUpPrompt(_ index: Int) -> String { "warm-\(index)" }
+
+    /// The exact transcript entries those warm-up turns leave behind, computed
+    /// without running a session: ``HookedSessionBackend`` appends one `.prompt`
+    /// carrying the turn's own prompt and one `.response` carrying `"ok-"` plus
+    /// it, so both budgets below can be sized up front from this alone.
+    private static func warmUpEntries() -> [Transcript.Entry] {
+        (0..<foldWarmUpTurnCount).flatMap { index -> [Transcript.Entry] in
+            let prompt = warmUpPrompt(index)
+            return [
+                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])),
+                .response(
+                    Transcript.Response(
+                        assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok-\(prompt)"))])),
+            ]
+        }
+    }
+
+    /// The estimated size of just ``warmUpEntries()``'s recency window — the floor
+    /// the deterministic stages bottom out at, since ``TurnTruncation`` drops the
+    /// older turns outright and leaves this untouched.
+    private static func warmUpRecencyWindowEstimate() -> Int {
+        let (header, turns) = TranscriptTurns.split(warmUpEntries())
+        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: foldRecencyWindowTurns)
+        return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
+    }
+
+    /// A budget the deterministic stages **cannot** satisfy: its target is half the
+    /// warm-up transcript's recency-window floor, so ``ToolOutputElision`` (nothing
+    /// to elide — these turns make no tool calls) and ``TurnTruncation`` (which
+    /// bottoms out at that floor) both leave it over target, and the fold goes on
+    /// to call the summarizer. That call is the model-assisted stage these tests
+    /// cancel inside.
+    private static var summarizingFoldBudget: TokenBudget {
+        foldBudget(targetTokens: warmUpRecencyWindowEstimate() / 2)
+    }
+
+    /// A budget the deterministic stages **can** satisfy: its target sits midway
+    /// between the recency-window floor ``TurnTruncation`` lands on and the whole
+    /// warm-up transcript, so the fold finishes deterministically and never makes a
+    /// model call at all.
+    private static var deterministicFoldBudget: TokenBudget {
+        let whole = Compactor.estimatedTokenCount(of: Transcript(entries: warmUpEntries()))
+        return foldBudget(targetTokens: (warmUpRecencyWindowEstimate() + whole) / 2)
+    }
+
+    /// A session whose measured ``RoutedSession/contextFill`` has already cleared
+    /// `budget`'s trigger, holding ``foldWarmUpTurnCount`` turns of real content —
+    /// so the *next* turn on it folds proactively, before running any model work of
+    /// its own.
+    ///
+    /// - Parameters:
+    ///   - fixture: The fixture to vend the session from.
+    ///   - budget: The auto-compaction opt-in to vend it with, sized by
+    ///     ``summarizingFoldBudget`` or ``deterministicFoldBudget``.
+    ///   - metersTriggeringFill: Whether the last warm-up turn measures enough usage
+    ///     to clear `budget`'s trigger. `true` (the default) for a test about the
+    ///     *proactive* fold; `false` for one about the **reactive**
+    ///     compact-and-retry-once fold, where a proactive fold firing first would
+    ///     fold the transcript out from under it — with no measured usage, fill stays
+    ///     at `0` and the proactive gate never fires.
+    /// - Returns: The session, warmed up, and over its trigger unless metering was
+    ///   declined.
+    private static func makeFoldTriggeredSession(
+        _ fixture: Fixture,
+        budget: TokenBudget,
+        metersTriggeringFill: Bool = true
+    ) async throws -> any RoutedSession {
+        let session = fixture.model.makeSession(budget: budget, compactionPrompt: foldSummarizerPrompt)
+        let backend = try #require(fixture.container.lastVendedBackend)
+        let contextTokens = try #require(session as? RoutedSessionActor).contextTokens
+
+        for index in 0..<(foldWarmUpTurnCount - 1) {
+            _ = try await session.respond(to: warmUpPrompt(index))
+        }
+        // Only the last warm-up turn measures, and its delta between the snapshots
+        // taken either side of it is what `contextFill` then reports — see
+        // ``HookedSessionBackend/startMetering(inputTokensPerTurn:)`` for why not
+        // from the first turn.
+        if metersTriggeringFill {
+            backend.startMetering(inputTokensPerTurn: Int(Double(contextTokens) * foldTriggeringFillFraction))
+        }
+        _ = try await session.respond(to: warmUpPrompt(foldWarmUpTurnCount - 1))
+
+        #expect((await session.contextFill >= budget.trigger) == metersTriggeringFill)
+        return session
+    }
+
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("TurnCancellationTests-\(UUID().uuidString)", isDirectory: true)
@@ -465,12 +732,60 @@ struct TurnCancellationTests {
         return (try? await task.value) != nil
     }
 
+    /// The events one further turn on `session` produced, or `nil` when that turn
+    /// never reached the model.
+    ///
+    /// ``followUpTurnCompletes(on:observer:prompt:)`` for a test that has to *see*
+    /// what the next turn did — its own ``SessionEvent/compaction(_:)``, say — and
+    /// bounded by the same spin for the same reason: a regression that stranded a
+    /// generation permit would hang the suite rather than fail the test that caught
+    /// it.
+    ///
+    /// Unlike that method, this one *does* await the task on its give-up path, and
+    /// the difference is deliberate — do not "fix" the two to match. This task
+    /// consumes an `AsyncThrowingStream`, whose `next()` is cancellation-aware and
+    /// ends, so cancelling it always completes it. ``followUpTurnCompletes(on:observer:prompt:)``
+    /// wraps a bare `respond(to:)` that can be parked in ``AsyncSemaphore/wait()``,
+    /// which ignores cancellation by design, so awaiting it there would hang exactly
+    /// when the helper exists to avoid hanging.
+    ///
+    /// - Parameters:
+    ///   - session: The session to run one more turn on.
+    ///   - observer: The observer that turn's model call reports to.
+    ///   - prompt: That turn's prompt.
+    /// - Returns: The turn's events in order, or `nil` when it never ran or failed.
+    private static func followUpTurnEvents(
+        on session: any RoutedSession,
+        observer: TurnObserver,
+        prompt: String = "after"
+    ) async -> [SessionEvent]? {
+        let delivered = DeliveredEvents()
+        let task = Task {
+            for try await event in await session.streamEvents(to: prompt) {
+                await delivered.append(event)
+            }
+        }
+        await spin(until: { await observer.exited.contains(prompt) })
+        guard await observer.exited.contains(prompt) else {
+            task.cancel()
+            _ = try? await task.value
+            return nil
+        }
+        guard (try? await task.value) != nil else { return nil }
+        return await delivered.events
+    }
+
     /// The one live model handle every session in a test is vended from, plus the
     /// container, observer, and hook wired behind it.
     private struct Fixture {
         let observer: TurnObserver
         let hook: TurnHook
         let recorder: InMemoryRecorder
+
+        /// The container every session in a test is vended from, for the one
+        /// question the observer cannot answer — see
+        /// ``HookedLLMContainer/lastVendedBackend``.
+        let container: HookedLLMContainer
 
         /// Retained for the fixture's whole lifetime: a ``RoutedLLM`` holds its
         /// owning profile weakly, so dropping this would make `makeSession` trap.
@@ -508,7 +823,7 @@ struct TurnCancellationTests {
             loader: StubModelLoader(container: container, dimension: stubDimension)
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        return Fixture(observer: observer, hook: hook, recorder: recorder, profile: profile)
+        return Fixture(observer: observer, hook: hook, recorder: recorder, container: container, profile: profile)
     }
 
     /// Installs a mid-turn hook that parks the turn named `prompt` inside a tool
@@ -519,12 +834,11 @@ struct TurnCancellationTests {
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose hook to install into.
-    ///   - prompt: The turn's own prompt text to park on, matched as a suffix of
-    ///     what the backend actually receives: a turn that drained outbox events
-    ///     is handed those events as a preamble followed by its own prompt (see
-    ///     ``RoutedSessionActor/composedPrompt(pendingEvents:prompt:)``), so an
-    ///     equality check here would silently never fire for exactly the turns the
-    ///     outbox tests park. Every other turn runs straight through.
+    ///   - parksOn: Whether the model call carrying this prompt is the one to
+    ///     park. Every call it rejects runs straight through, so one hook serves a
+    ///     whole test: an ordinary turn's prompt (see
+    ///     ``parkInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``) or
+    ///     a fold's own summarizer call (see ``isSummarizerCall``).
     ///   - insideTool: Signalled once the turn is provably suspended inside the
     ///     tool call, so a test cancels at a known point rather than racing to
     ///     get there.
@@ -539,7 +853,7 @@ struct TurnCancellationTests {
     ///   regression stops cancellation reaching the tool at all.
     private static func parkInsideCancellationAwareTool(
         _ fixture: Fixture,
-        prompt: String,
+        parkingOn parksOn: @escaping @Sendable (String) -> Bool,
         insideTool: AsyncSemaphore,
         humanWait: (any RoutedSession)? = nil
     ) -> AsyncSemaphore {
@@ -560,7 +874,7 @@ struct TurnCancellationTests {
             }
         }
         fixture.hook.midTurn = { turnPrompt in
-            guard turnPrompt.hasSuffix(prompt) else { return }
+            guard parksOn(turnPrompt) else { return }
             guard let humanWait else {
                 try await park()
                 return
@@ -568,6 +882,36 @@ struct TurnCancellationTests {
             try await humanWait.awaitingUser(park)
         }
         return parked
+    }
+
+    /// Parks the turn whose own prompt is `prompt`, matched as a **suffix** of
+    /// what the backend actually receives: a turn that drained outbox events is
+    /// handed those events as a preamble followed by its own prompt (see
+    /// ``RoutedSessionActor/composedPrompt(pendingEvents:prompt:)``), so an
+    /// equality check would silently never fire for exactly the turns the outbox
+    /// tests park.
+    ///
+    /// The common case, and a thin spelling of
+    /// ``parkInsideCancellationAwareTool(_:parkingOn:insideTool:humanWait:)`` — a
+    /// fold test parks on that one's predicate instead, since a summarizer call is
+    /// identified by its *prefix*.
+    ///
+    /// - Parameters:
+    ///   - fixture: The fixture whose hook to install into.
+    ///   - prompt: The turn's own prompt text to park on.
+    ///   - insideTool: Signalled once the turn is provably suspended inside the
+    ///     tool call.
+    ///   - humanWait: The session to park inside ``RoutedSession/awaitingUser(_:)``
+    ///     on, or `nil` to park directly in the tool call.
+    /// - Returns: The semaphore the tool parks on.
+    private static func parkInsideCancellationAwareTool(
+        _ fixture: Fixture,
+        prompt: String,
+        insideTool: AsyncSemaphore,
+        humanWait: (any RoutedSession)? = nil
+    ) -> AsyncSemaphore {
+        parkInsideCancellationAwareTool(
+            fixture, parkingOn: { $0.hasSuffix(prompt) }, insideTool: insideTool, humanWait: humanWait)
     }
 
     /// Waits for a cancellation the test has just requested to reach the tool
@@ -592,17 +936,45 @@ struct TurnCancellationTests {
         observer: TurnObserver,
         parked: AsyncSemaphore
     ) async {
+        guard await awaitCancellationReachingTheTool(turnTask, observer: observer, parked: parked) else { return }
+        await #expect(throws: CancellationError.self) {
+            try await turnTask.value
+        }
+    }
+
+    /// Waits for a cancellation the test has just requested to reach the parked tool,
+    /// reporting an issue and force-unwinding the turn if it never does.
+    ///
+    /// ``awaitCancelledUnwind(_:observer:parked:)`` minus its final assertion, for the
+    /// one caller that cannot make it: a consumer which cancelled *its own* task
+    /// mid-`AsyncThrowingStream` sees that stream **finish** rather than throw, so
+    /// there is no `CancellationError` for it to catch even though the turn behind the
+    /// stream was cancelled (see
+    /// ``cancelledProactiveFoldReportsNoCompaction(route:)``). Factored out rather than
+    /// duplicated, so both spellings share one bound and one diagnostic.
+    ///
+    /// - Parameters:
+    ///   - turnTask: The task awaiting the cancelled turn, whatever it returns.
+    ///   - observer: The observer the parked tool reports its cancellation to.
+    ///   - parked: The semaphore ``parkInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``
+    ///     returned for that tool.
+    /// - Returns: Whether the cancellation reached the tool. `false` means an issue was
+    ///   already recorded and the turn already unwound by force, so the caller should
+    ///   assert nothing further.
+    private static func awaitCancellationReachingTheTool<Value: Sendable>(
+        _ turnTask: Task<Value, Error>,
+        observer: TurnObserver,
+        parked: AsyncSemaphore
+    ) async -> Bool {
         await spin(until: { await observer.toolSawCancellation })
         guard await observer.toolSawCancellation else {
             Issue.record("cancellation never reached the tool call running inside the model call")
             parked.signal()
             turnTask.cancel()
             _ = try? await turnTask.value
-            return
+            return false
         }
-        await #expect(throws: CancellationError.self) {
-            try await turnTask.value
-        }
+        return true
     }
 
     // MARK: - The regression: a stop must reach a running tool call
@@ -1128,4 +1500,465 @@ struct TurnCancellationTests {
         #expect(await fixture.recorder.events.isEmpty)
         #expect(await session.pendingPrompts().isEmpty)
     }
+
+    // MARK: - A stop lands during a compaction fold too
+
+    @Test(
+        "cancelling a turn parked inside its proactive fold's summarizer call stops the fold instead of waiting it out",
+        arguments: CancellationRoute.allCases)
+    @MainActor
+    func cancellingAProactiveFoldStopsIt(route: CancellationRoute) async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let parked = Self.parkInsideCancellationAwareTool(
+            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+
+        let turnTask = Task { try await session.respond(to: "folds-first") }
+        await insideSummarizer.wait()
+
+        switch route {
+        case .routerAPI:
+            #expect(await session.cancelCurrentTurn() == .requested)
+        case .callerTask:
+            turnTask.cancel()
+        }
+
+        // A fold's summarizer call is a model call like any other, so both routes
+        // reach the work running inside it and the turn unwinds with the same
+        // `CancellationError` a cancelled generation gives.
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        #expect(await fixture.observer.toolSawCancellation)
+
+        // No further model call is *entered* while unwinding: the stop costs no more
+        // model work than the call it landed in. Deliberately not read as a guard on
+        // the tier-degrading rule itself — `runCancellableModelCall`'s pre-flight
+        // check refuses a later tier's call before the hook is ever reached, so this
+        // count stays `1` either way. `cancelledProactiveFoldReportsNoCompaction` is
+        // what pins the rule.
+        #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
+
+        // And the turn the fold was folding for never ran: with nothing under way
+        // once the fold is gone, its own model call is never made.
+        #expect(await fixture.observer.entered.contains("folds-first") == false)
+    }
+
+    @Test("a summarizer that raises CancellationError with no stop outstanding is an ordinary failure, and still degrades")
+    @MainActor
+    func summarizerCancellationErrorWithNoStopOutstandingStillDegrades() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+
+        // `LanguageModelSessionBackend` is a public protocol, and a conformer is free
+        // to surface `CancellationError` from internals of its own — a timeout, a
+        // task group it manages — with nothing cancelled on this side at all. That is
+        // an ordinary summarizer failure, so the fold must degrade to the next tier
+        // exactly as it does for any other one, rather than reading the error's
+        // *type* as a stop and killing a turn nobody asked to stop.
+        let summarizerCalls = Mutex(0)
+        fixture.hook.midTurn = { prompt in
+            guard Self.isSummarizerCall(prompt) else { return }
+            let isFirstCall = summarizerCalls.withLock { calls -> Bool in
+                calls += 1
+                return calls == 1
+            }
+            guard isFirstCall else { return }
+            throw CancellationError()
+        }
+
+        // No cancel anywhere in this test, so this turn cannot park: it either folds
+        // and answers, or fails.
+        #expect(try await session.respond(to: "folds-first") == "ok-folds-first")
+
+        // Two summarizer calls: the flash tier's failure, then the own-model tier
+        // that actually produced the summary.
+        #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 2)
+    }
+
+    @Test("a genuine summarizer fault that coincides with a stop ends the turn as cancelled, and still does not degrade")
+    @MainActor
+    func summarizerFaultCoincidingWithAStopIsAbandonedAsCancelled() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+
+        // The race this pins is the inverse of
+        // ``summarizerCancellationErrorWithNoStopOutstandingStillDegrades()``: there a
+        // cancellation-shaped error arrives with no stop outstanding, here a plainly
+        // unrelated fault arrives with one. The stop wins — the caller is told its turn
+        // was cancelled rather than handed a fold failure it never asked about, and the
+        // fold is still not degraded to the next tier. What becomes of the discarded
+        // fault is a log line rather than a rethrow, which is the one part of this no
+        // test can observe (see ``RoutedSessionActor``'s abandoned-fold report).
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let release = AsyncSemaphore(value: 0)
+        let parksOn = Self.firstSummarizerCall()
+        fixture.hook.midTurn = { prompt in
+            guard parksOn(prompt) else { return }
+            insideSummarizer.signal()
+            await release.wait()
+            throw ProbeError.summarizerFailed
+        }
+
+        // Streamed, because the *only* observable difference between abandoning this
+        // fold and degrading it to the deterministic-only tier is the
+        // ``SessionEvent/compaction(_:)`` that tier's empty result would deliver — see
+        // the assertion below.
+        let delivered = DeliveredEvents()
+        let turnTask = Task {
+            for try await event in await session.streamEvents(to: "folds-first") {
+                await delivered.append(event)
+            }
+        }
+        await insideSummarizer.wait()
+        #expect(await session.cancelCurrentTurn() == .requested)
+        // Released by the test rather than by the cancellation, so this turn unwinds
+        // through the fault's path and not through the parked tool's own.
+        release.signal()
+
+        await #expect(throws: CancellationError.self) {
+            try await turnTask.value
+        }
+        // Not degraded: a fault is no licence to answer the stop by folding anyway.
+        // This is the assertion that pins the rule — the summarizer-call count below
+        // cannot, because a degraded tier's call is refused by
+        // `runCancellableModelCall`'s pre-flight check before the hook is ever
+        // reached, so it stays `1` either way (the same caveat
+        // ``cancellingAProactiveFoldStopsIt(route:)`` records).
+        let compactions = await delivered.events.compactMap { event -> CompactionResult? in
+            guard case .compaction(let result) = event else { return nil }
+            return result
+        }
+        #expect(compactions.isEmpty)
+        #expect(await fixture.observer.entered.filter(Self.isSummarizerCall).count == 1)
+        #expect(await fixture.observer.entered.contains("folds-first") == false)
+
+        // And this path gave its gates back too, fault and stop together.
+        fixture.hook.midTurn = nil
+        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+    }
+
+    @Test(
+        "cancelling a caller-driven compact() stops it too, by either route — it holds the turn lock the same way",
+        arguments: CancellationRoute.allCases)
+    @MainActor
+    func cancellingACallerDrivenCompactStopsIt(route: CancellationRoute) async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        // Warmed up for its transcript alone here: a manual fold needs no trigger,
+        // just enough old content for the model-assisted stage to have work to do.
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let parked = Self.parkInsideCancellationAwareTool(
+            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+
+        let compactTask = Task {
+            try await session.compact(prompt: Self.foldSummarizerPrompt, budget: Self.summarizingFoldBudget)
+        }
+        await insideSummarizer.wait()
+
+        // A manual fold is not a "turn" a caller ever asked to generate, but it holds
+        // the turn lock and runs real model work, so a stop reaches it on exactly the
+        // same terms — a caller no longer has to own an enclosing `Task` to get out.
+        //
+        // Both routes, because routing the summarizer through the turn's own
+        // cancellable model call *changed* how the caller's route arrives here: a
+        // caller's cancellation used to propagate structurally, through the very task
+        // that called `compact()`, and now has to reach an unstructured task by
+        // `withTaskCancellationHandler` and the pre-flight check instead. That is the
+        // most-changed behavior on this path, so it is the one least safe to leave to
+        // the other route's coverage.
+        switch route {
+        case .routerAPI:
+            #expect(await session.cancelCurrentTurn() == .requested)
+        case .callerTask:
+            compactTask.cancel()
+        }
+        await Self.awaitCancelledUnwind(compactTask, observer: fixture.observer, parked: parked)
+        #expect(await fixture.observer.toolSawCancellation)
+
+        // And it gave its gates back on the way out, so the session still generates.
+        fixture.hook.midTurn = nil
+        #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
+    }
+
+    @Test(
+        "a turn cancelled inside its own proactive fold re-queues the outbox events it had drained",
+        arguments: CancellationRoute.allCases)
+    @MainActor
+    func cancelledProactiveFoldRequeuesItsDrainedEvents(route: CancellationRoute) async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+
+        // Staged after the warm-up, so this turn is the one that drains it.
+        let posted = OperationEvent(
+            tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
+        await session.outbox.post(posted)
+
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let parked = Self.parkInsideCancellationAwareTool(
+            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+
+        let turnTask = Task { try await session.respond(to: "folds-first") }
+        await insideSummarizer.wait()
+        // Both routes, because losing a drained outbox is a silent data-loss bug
+        // rather than a visible failure: on the caller-cancels route the re-queue
+        // itself runs inside an already-cancelled task, so nothing about it may
+        // depend on the task still being live.
+        switch route {
+        case .routerAPI:
+            #expect(await session.cancelCurrentTurn() == .requested)
+        case .callerTask:
+            turnTask.cancel()
+        }
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+
+        // The fold threw before the turn ever reached the model, so nothing this
+        // turn drained was delivered — and the drain must not have destroyed it.
+        // The re-queue for this window is the whole reason the fold could not
+        // simply be made to throw.
+        let pending = await session.outbox.pending()
+        #expect(pending.events.map(\.event) == [posted])
+    }
+
+    @Test(
+        "a turn cancelled inside its own proactive fold reports no compaction, because none happened",
+        arguments: CancellationRoute.allCases)
+    @MainActor
+    func cancelledProactiveFoldReportsNoCompaction(route: CancellationRoute) async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let parked = Self.parkInsideCancellationAwareTool(
+            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+
+        let recordedBefore = await fixture.recorder.events.count
+
+        // Streamed, because ``SessionEvent/compaction(_:)`` is only observable to a
+        // consumer that asked for this turn's events.
+        let delivered = DeliveredEvents()
+        let turnTask = Task {
+            for try await event in await session.streamEvents(to: "folds-first") {
+                await delivered.append(event)
+            }
+        }
+        await insideSummarizer.wait()
+        // Both routes, because the rule this pins — a cancelled fold is abandoned
+        // rather than degraded — is decided by a predicate that asks each route
+        // separately, so its holding for one says nothing about the other.
+        //
+        // What the *consumer* sees is the one thing that genuinely differs by route
+        // here, and it differs for a reason outside this package: cancelling a task
+        // suspended in `AsyncThrowingStream.next()` **finishes** that stream rather
+        // than throwing from it. So only the router-API route can be asserted with
+        // ``awaitCancelledUnwind(_:observer:parked:)``.
+        switch route {
+        case .routerAPI:
+            #expect(await session.cancelCurrentTurn() == .requested)
+            // The consumer is not what was cancelled, so it is told: the stream ends
+            // by throwing the turn's own `CancellationError`.
+            await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        case .callerTask:
+            // Cancelling the consumer terminates the stream, which cancels the task
+            // the turn itself runs in — the abandoned-stream shape
+            // ``abandoningAStreamRecordsTheTurnAsCancelled()`` pins from the other
+            // side. What this route can therefore show is that the fold let go and
+            // the consumer came back at all, not an error it could never observe.
+            turnTask.cancel()
+            guard await Self.awaitCancellationReachingTheTool(
+                turnTask, observer: fixture.observer, parked: parked)
+            else { return }
+            // Safe to await, for ``followUpTurnEvents(on:observer:prompt:)``'s reason:
+            // a stream consumer's `next()` is cancellation-aware and always ends.
+            _ = try? await turnTask.value
+        }
+
+        // A cancelled fold is abandoned outright, not degraded down to the
+        // deterministic-only tier the way a broken summarizer is: so the consumer is
+        // never told a fold happened, and every `.compaction` this session reports
+        // describes work it really did. Pinned by the router-API route — on the
+        // caller-cancels one it holds trivially, since a consumer that cancelled itself
+        // receives nothing further whatever the fold went on to do.
+        let compactions = await delivered.events.compactMap { event -> CompactionResult? in
+            guard case .compaction(let result) = event else { return nil }
+            return result
+        }
+        #expect(compactions.isEmpty)
+
+        // What the caller-cancels route pins instead, and the reason it is worth
+        // running: a streamed turn cut short inside its fold is recorded like every
+        // other one — a lone bodyless close — even though on that route the recording
+        // runs inside an already-cancelled task. Spun for rather than read straight,
+        // because a cancelled consumer returns before the producer behind it has
+        // finished recording (the same ordering
+        // ``abandoningAStreamRecordsTheTurnAsCancelled()`` waits on).
+        await Self.spin(until: { await fixture.recorder.events.count == recordedBefore + 1 })
+        let recorded = await fixture.recorder.events
+        #expect(recorded.count == recordedBefore + 1)
+        #expect(recorded.last?.kind == .response)
+        #expect(recorded.last?.text == nil)
+    }
+
+    @Test(
+        "a turn cancelled inside its own proactive fold leaves the transcript exactly as it was, plus one close",
+        arguments: CancellationRoute.allCases)
+    @MainActor
+    func cancelledProactiveFoldLeavesTheTranscriptUntouched(route: CancellationRoute) async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
+
+        let fillBefore = await session.contextFill
+        let recordedBefore = await fixture.recorder.events.count
+
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let parked = Self.parkInsideCancellationAwareTool(
+            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+
+        let turnTask = Task { try await session.respond(to: "folds-first") }
+        await insideSummarizer.wait()
+        // Both routes, because of the recording assertions below: on the
+        // caller-cancels route the cut-short turn's own recording runs inside an
+        // already-cancelled task, which is the riskier of the two for anything that
+        // must still happen on the way out.
+        switch route {
+        case .routerAPI:
+            #expect(await session.cancelCurrentTurn() == .requested)
+        case .callerTask:
+            turnTask.cancel()
+        }
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+
+        // Never a half-applied fold: a fold records its new entries, swaps
+        // `backend`, and reports its own post-fold size as this session's fill —
+        // all of it only once the summarizer has returned. An abandoned fold does
+        // none of it, so measured fill is byte-identical to what it was before.
+        #expect(await session.contextFill == fillBefore)
+
+        // Recorded like every other failed turn, and no differently for having
+        // been cut short in a fold: exactly one close, bodyless, with no `.prompt`
+        // of its own because the model was never called.
+        let recorded = await fixture.recorder.events
+        #expect(recorded.count == recordedBefore + 1)
+        #expect(recorded.last?.kind == .response)
+        #expect(recorded.last?.text == nil)
+
+        // The session keeps working, and the abandoned fold left the transcript it
+        // was folding alone: the *next* turn folds for real, and its fold measures
+        // exactly the untouched warm-up transcript. Had the cancelled fold swapped
+        // `backend` for a folded one, this would measure the smaller, folded size —
+        // which is what makes this an assertion about `backend` itself and not only
+        // about the ordering inside `fold`. The hook is cleared first, or that next
+        // fold would park in the summarizer all over again.
+        fixture.hook.midTurn = nil
+        let followUp = try #require(await Self.followUpTurnEvents(on: session, observer: fixture.observer))
+        let untouchedSize = Compactor.estimatedTokenCount(of: Transcript(entries: Self.warmUpEntries()))
+        let folds = followUp.compactMap { event -> CompactionResult? in
+            guard case .compaction(let result) = event else { return nil }
+            return result
+        }
+        #expect(folds.map(\.tokensBefore) == [untouchedSize])
+    }
+
+    @Test("cancelling a turn inside its reactive compact-and-retry-once fold stops the retry, leaving one close")
+    @MainActor
+    func cancellingTheReactiveFoldStopsTheRetry() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        // Unmetered, so the proactive gate never fires and the only fold in play is
+        // the one this turn's own context overflow triggers.
+        let session = try await Self.makeFoldTriggeredSession(
+            fixture, budget: Self.summarizingFoldBudget, metersTriggeringFill: false)
+
+        let recordedBefore = await fixture.recorder.events.count
+        let insideSummarizer = AsyncSemaphore(value: 0)
+        let parked = Self.parkInsideCancellationAwareTool(
+            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        // Composed on top of the summarizer park rather than replacing it: this turn
+        // has to overflow *and then* park inside the fold that overflow triggers.
+        let parkInSummarizer = fixture.hook.midTurn
+        fixture.hook.midTurn = { prompt in
+            guard prompt.hasSuffix(Self.overflowingFoldPrompt) else {
+                try await parkInSummarizer?(prompt)
+                return
+            }
+            throw LanguageModelError.contextSizeExceeded(
+                .init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow"))
+        }
+
+        let turnTask = Task { try await session.respond(to: Self.overflowingFoldPrompt) }
+        await insideSummarizer.wait()
+        #expect(await session.cancelCurrentTurn() == .requested)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+
+        // The retry never ran: the model saw this turn exactly once, and what the
+        // caller gets is the cancellation rather than the overflow it was recovering
+        // from.
+        #expect(await fixture.observer.entered.filter { $0.hasSuffix(Self.overflowingFoldPrompt) }.count == 1)
+
+        // One close, not two: the failed attempt's own, recorded before the fold
+        // started. The retry that would have written the second never happened, and
+        // the cancelled fold adds none of its own.
+        let recorded = await fixture.recorder.events
+        #expect(recorded.count == recordedBefore + 2)
+        #expect(Array(recorded.map(\.kind).suffix(2)) == [.prompt, .response])
+        #expect(recorded.last?.text == nil)
+    }
+
+    @Test("a deterministic-only fold with no cancellation outstanding folds and runs its turn exactly as before")
+    @MainActor
+    func deterministicOnlyFoldIsUnaffected() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fixture = try await Self.makeFixture(cacheDir: dir)
+        let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.deterministicFoldBudget)
+
+        // No hook installed, and none needed: this fold makes no model call at all,
+        // which is exactly what must stay true — a cheap fold gained no cancellation
+        // check of its own.
+        var events: [SessionEvent] = []
+        for try await event in await session.streamEvents(to: "folds-deterministically") {
+            events.append(event)
+        }
+
+        guard case .compaction(let result) = events.first else {
+            Issue.record("expected the turn's first event to be .compaction, got \(String(describing: events.first))")
+            return
+        }
+        #expect(result.stagesApplied == [ToolOutputElision.stageName, TurnTruncation.stageName])
+        #expect(result.summary == nil)
+        #expect(await fixture.observer.entered.contains(where: Self.isSummarizerCall) == false)
+
+        // And the turn's own work ran normally straight after the fold.
+        let streamedText = events.compactMap { event -> String? in
+            guard case .textDelta(let text) = event else { return nil }
+            return text
+        }.joined()
+        #expect(streamedText == "ok-folds-deterministically")
+    }
 }
+

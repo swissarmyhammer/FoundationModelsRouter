@@ -199,6 +199,8 @@ public struct Summarization: Sendable {
         }
 
         var chunkSummaries: [String] = []
+        // Serial deliberately: a fold's cancellability depends on it, and on more
+        // than this file — see ``summarizeOnce(_:prompt:summarizer:)``.
         for chunk in chunks {
             chunkSummaries.append(try await summarizeOnce(Self.render(chunk), prompt: prompt, summarizer: summarizer))
         }
@@ -258,6 +260,8 @@ public struct Summarization: Sendable {
         }
 
         var nextRound: [String] = []
+        // Serial deliberately, for the reason the map loop in
+        // ``summarize(_:prompt:summarizer:)`` is — see ``summarizeOnce(_:prompt:summarizer:)``.
         for group in groups {
             nextRound.append(
                 try await summarizeOnce(group.joined(separator: "\n\n"), prompt: prompt, summarizer: summarizer))
@@ -269,6 +273,19 @@ public struct Summarization: Sendable {
     /// call, used identically for a map call (rendering one chunk of turns)
     /// and every reduce-round call (joining prior summaries) — the same
     /// "instructions, then the thing to condense" shape throughout.
+    ///
+    /// The calls one fold makes through here must stay **serial**, and the reason
+    /// lives outside this file: a session folding its own transcript hands
+    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` a `summarizer` that
+    /// registers each call as that turn's one in-flight model call, which is what
+    /// lets a client stop interrupt a fold already under way rather than wait it out (see
+    /// Sources/FoundationModelsRouter/Session/RoutedSession.swift). Only one call can be
+    /// registered at a time, so summarizing chunks — or reduce-round groups —
+    /// concurrently would leave every call but the last-registered one unreachable by
+    /// the session's own stop primitive. (A caller cancelling its enclosing task would
+    /// still reach each of them, so the exposure is specific to that primitive, not to
+    /// cancellation in general.) Parallelize either loop above only together with that
+    /// registration.
     private func summarizeOnce(
         _ content: String,
         prompt: CompactionPrompt,
