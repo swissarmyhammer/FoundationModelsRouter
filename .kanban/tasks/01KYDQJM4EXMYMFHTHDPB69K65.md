@@ -184,8 +184,29 @@ comments:
 
     **Verification on the final tree.** `swift build --build-tests` exit 0 after `touch`ing every `.swift` file under `Sources Tests Examples` (a real recompile of all six targets, including the `MultiModelGeneration` and `CompactionDemo` executables — 7.84s, not a cache hit), with no first-party diagnostics; the only warning is SwiftPM's pre-existing vendored `missing creator for mutated node: mlx-swift_Cmlx.bundle`. Full `swift test` exit 0 at **610 tests / 69 suites** (580/58 + 18/7 + 12/4) on three consecutive runs — unchanged from the pre-refactor count, as a pure extraction must be. No `swift format` run.
   timestamp: 2026-07-26T03:05:34.256263+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kye73hj6gpe90ndyzwpw1dpf
+  text: |-
+    Orchestrator (/finish) — task complete in 2 iterations.
+
+    **Iteration 1** — fold cancellation landed, plus three findings handed back by the verification pass (parameterize both cancellation routes on 6 tests; stop `performAutoCompaction` from swallowing a genuine summarizer fault that coincides with a stop). Checkpoint `fbbe4c3` (6 files, +1374/-93). Review of that delta: 1 finding (the duplicated tier guard); 6 engine findings dropped as out-of-delta, every one with a stale line citation — each was resolved by `git blame` on the actual identifier rather than by trusting the cited line.
+
+    **Iteration 2** — guard extracted into `abandonFoldIfCancelled(discarding:tier:)`; checkpoint `be534ce` (3 files, +83/-21, `Tests/` untouched). Review of that delta: **clean, 0 findings** → `done`.
+
+    Final test status: `swift build --build-tests` exit 0 with zero first-party diagnostics, verified on a real recompile of all six targets after touching all 219 first-party Swift files under `Sources Tests Examples`; full `swift test` exit 0 at **610 tests / 69 suites** (580/58 + 18/7 + 12/4), up from the 601/69 baseline. `TurnCancellationTests` is 23 tests / 29 cases, 6 of them parameterized over both cancellation routes. No hangs or flakes across 4 full runs plus 5 timed concurrency/compaction runs. All commits **local only — nothing pushed**.
+
+    **Two things caught by adversarial review that are worth carrying forward:**
+    - **A privacy leak, nearly shipped.** An earlier draft put `privacy: .public` on `error.localizedDescription` in the fold's failure log. The summarizer's prompt *is* the rendered folded transcript span, so that would have written user transcript content unredacted to the unified log. Only `tier.rawValue`, the session id, and the error *type* are public now. Any future logging on a compaction or summarization path deserves the same check.
+    - **A test that claimed a guarantee it did not test.** The first "does not degrade" test stayed green with *both* `isTurnCancelled` guards deleted, because `runCancellableModelCall`'s pre-flight refuses a degraded tier's call before the hook is reached. It is now stream-driven with `#expect(compactions.isEmpty)`, and that mutation fails it.
+
+    **Verification-methodology note, generalizable:** `swift test --filter` given a *display name* string matches nothing, prints only `warning: No matching test cases were run`, and **exits 0**. Any verification that filters by display name reports a false pass. Filters must use the Swift function or type name (`proactiveFoldFallsBackToOwnModelWhenFlashFails`, not "when the flash summarizer fails…").
+
+    **Pre-existing coverage gap, flagged by two independent reviewers, deliberately NOT fixed here and NOT a regression** — worth its own card if wanted: no test drives *both* summarizer tiers failing, so the own-model → deterministic (`summarizer: nil`) fall-through in `performAutoCompaction` is guaranteed by inspection rather than by a test. It is the one branch in that function the 610-test suite never reaches, and it sits directly downstream of the two guards this task added. `deterministicOnlyFoldIsUnaffected` reaches that fold by a deterministic-only budget instead, and `proactiveFoldFallsBackToOwnModelWhenFlashFails` covers only the first hop. The line is byte-identical before and after this task.
+
+    **One structural constraint documented in comments rather than enforced:** per-chunk `inFlightModelCall` registration is only safe because `Summarization` invokes `summarizeOnce` in a **serial** loop. Parallelize that loop and only the last-registered chunk stays cancellable. The comment names the invariant, the failure mode, and where the enforcing code lives; the reviewer judged it sufficient.
+  timestamp: 2026-07-26T03:22:09.862653+00:00
+position_column: done
+position_ordinal: e280
 title: Make a compaction fold observe cancellation, so a client stop lands during a long fold too
 ---
 ## What
