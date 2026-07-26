@@ -372,15 +372,46 @@ struct TurnCancellationTests {
 
     private static let stubDimension = 8
 
-    /// The auto-compaction opt-in ``cancellationSurvivesIntoTheOverflowRetry()``
+    /// The scale a fold's target size is measured against — ``Compactor`` folds
+    /// down to `limit * target` tokens — set far above anything
+    /// ``cancellationSurvivesIntoTheOverflowRetry(route:)`` puts in a transcript,
+    /// so even the *reactive* fold finds nothing to shed and lands as a no-op,
+    /// leaving the retry itself as the only thing left to observe.
+    ///
+    /// Not a stand-in for the session's context window: that is the profile's
+    /// resolved ``SlotResolution/contextTokens``, which is what
+    /// ``RoutedSession/contextFill`` divides by. A budget's `limit` never enters
+    /// a fill measurement, so raising this does not move fill.
+    private static let noOpFoldScale = 100_000
+
+    /// A `trigger` above `1.0` — a fraction measured fill does not reach — so no
+    /// *proactive* fold ever runs and the reactive compact-and-retry-once path is
+    /// the only fold in play.
+    ///
+    /// Belt and braces rather than the operative reason:
+    /// ``cancellationSurvivesIntoTheOverflowRetry(route:)`` sends a single
+    /// prompt, so nothing has been metered yet when the proactive gate reads
+    /// ``RoutedSession/contextFill`` and it sees `0` — under even the `0.80`
+    /// default. Pinning the trigger above `1.0` keeps the proactive fold out of
+    /// the way should that test ever grow a turn that does meter usage.
+    private static let unreachableFillTrigger = 2.0
+
+    /// The fraction of ``noOpFoldScale`` a fold aims to come down to, spelled out
+    /// rather than left to the `0.50` default so the fold's target size is
+    /// visible at the call site.
+    ///
+    /// Inert either way: at this scale the target — and the halved one the
+    /// overflow retry folds harder to — stays far above the transcript.
+    private static let inertFoldTarget = 0.25
+
+    /// The auto-compaction opt-in ``cancellationSurvivesIntoTheOverflowRetry(route:)``
     /// vends its session with: enough to turn on the reactive
     /// compact-and-retry-once recovery, and nothing else.
-    ///
-    /// `trigger` is deliberately unreachable — measured fill is a fraction, so no
-    /// *proactive* fold ever runs and the only fold in play is the reactive one —
-    /// and `limit` is far above that test's tiny transcript, so even the reactive
-    /// fold lands as a no-op and the retry itself is all that is left to observe.
-    private static let unreachableTriggerBudget = TokenBudget(limit: 100_000, trigger: 2.0, target: 0.25)
+    private static let unreachableTriggerBudget = TokenBudget(
+        limit: noOpFoldScale,
+        trigger: unreachableFillTrigger,
+        target: inertFoldTarget
+    )
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory

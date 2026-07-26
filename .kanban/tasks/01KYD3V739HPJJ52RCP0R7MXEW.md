@@ -93,6 +93,47 @@ comments:
 
     **Test-authoring convention established here, worth keeping:** every cancel-then-await test routes through a shared `awaitCancelledUnwind` helper that forces the park open on timeout, so a propagation regression fails in ~0.3s instead of hanging the suite. Bare `await session.respond(...)` after a cancel turns a stranded-permit regression into a suite hang instead of a test failure — the exact defect class two prior reviews found in this file.
   timestamp: 2026-07-25T23:13:13.589442+00:00
+- actor: claude-code
+  id: 01kydss6sh71qx5f3t3phjnyj1
+  text: |-
+    Review pass on HEAD~1..HEAD (f62bb01): engine returned 2 confirmed findings out of 16 attempted validator/file pairs. One was dropped as outside the reviewed checkpoint delta and is NOT recorded as a checklist item:
+
+    Dropped: "RoutedSession.swift:1146 — hardcoded 0.1 floor in fold-target calculation should be a named constant." Verified out-of-delta: no diff hunk in f62bb01 covers line 1146; the file's only `0.1` is at line 2153 (`max(target / 2, 0.1)`), `git blame` attributes it to 97b5aabe, and `git show f62bb01` added no line containing `0.1`. Pre-existing untouched Sources code with a mis-cited line number. If the named-constant promotion is wanted, it needs its own task.
+
+    Recorded finding (TurnCancellationTests.swift:383) is in-delta — the file was added by f62bb01, so it is new test code, not a refactor of pre-existing tests. Engine's cited line 254 was corrected to 383, the actual site of `TokenBudget(limit: 100_000, trigger: 2.0, target: 0.25)`.
+  timestamp: 2026-07-25T23:29:19.665319+00:00
+- actor: claude-code
+  id: 01kydtydeazzwzcn0bp229xszc
+  text: |-
+    Review finding (TurnCancellationTests.swift:383) fixed; pulled back to `doing`, checklist item flipped to `- [x]`, left in `doing`. State: `swift build` exit 0, full `swift test` exit 0 at **601 tests / 69 suites** (571/58 + 18/7 + 12/4) — unchanged count, as expected for a rename-only change. Zero warnings attributable to the file, on a compile that provably rebuilt it (probe-warning check: appended an unused-value probe, confirmed the warning surfaces with this file's path, reverted).
+
+    The three values are byte-preserved (`100_000` / `2.0` / `0.25`) and now read as named constants:
+
+    - `noOpFoldScale = 100_000`
+    - `unreachableFillTrigger = 2.0`
+    - `inertFoldTarget = 0.25`
+
+    The engine's suggested names (`unreachableTriggerLimit`/`Threshold`/`Target`) were deliberately **not** used: they merely restate the parameter names, which is the thing the finding objected to. Each constant instead says what the value means for the test, in the style of `spinYieldLimit` from 3f3f58f.
+
+    **The interesting part: writing honest docs for these constants exposed that my original mental model of the budget was wrong, and the first draft encoded it.** An adversarial reviewer caught four false claims; all four verified against source before fixing:
+
+    1. **`budget.limit` is not `contextFill`'s denominator.** `contextFill` is `usageState.fill(contextTokens:)` → `(input + output) / contextTokens`, and `contextTokens` comes from the *resolution* (`RoutedLLM.makeSession` passes `resolution.contextTokens`). This test's profile declares no `context:`, so the denominator is `ProfileDefinition.defaultContext` = **8192**, not the 100_000 in the budget — a >12x divergence. My first draft named the constant `neverFilledContextLimit` and said fill was "this turn's tokens over" it. Wrong, and worse than the comment it replaced (which claimed nothing about a denominator). `budget.limit` appears in exactly two places in the library — `Compactor`'s `targetTokens` and the `loweredBudget` passthrough — neither a fill measurement.
+    2. **`limit`'s only real role is the fold-size scale**: `Compactor.swift` computes `targetTokens = Int((Double(budget.limit) * budget.target).rounded())` then `guard tokensBefore > targetTokens else { return (transcript, ...) }`. Hence the rename to `noOpFoldScale`, and a second doc paragraph that calls the 100_000-vs-8192 divergence out explicitly rather than leaving it as a trap for whoever next tries to move fill by raising `limit`. Note `TokenBudget.limit`'s own doc says it is "normally a profile's resolved `SlotResolution/contextTokens`" — this test is deliberately not normal, so saying so is the point.
+    3. **Opting in to auto-compaction does not require naming a target.** `TokenBudget.init` defaults `trigger: 0.80, target: 0.50`, so `TokenBudget(limit:)` alone opts in — a non-nil budget is the whole opt-in. My first draft justified `0.25` as "present only because opting in means naming a target", which was simply false. It now says the target is spelled out rather than defaulted so the fold's target size is visible at the call site.
+    4. **`trigger: 2.0` is belt-and-braces, not the operative reason no proactive fold runs.** The gate is `if let budget = autoCompactionBudget, contextFill >= budget.trigger` at `runTurn` entry; this test sends one prompt, so `usageState` is `.none` → fill `0`, which is under even the `0.80` default. Reviewer added a detail worth keeping: the gate is read *once* per turn, because the overflow retry re-enters `runTurnAttempt`, not `runTurn` — so it cannot observe post-metering fill here at all. `> 1.0` is what keeps it out of the way should the test ever grow a metering turn.
+
+    Also verified while sweeping: the reactive fold is genuinely exercised, not hypothetical — `performAutoCompaction(prompt:budget: loweredBudget)` runs before the retry attempt, with `loweredRetryTarget(from: 0.25)` = `max(0.125, 0.1)` = 0.125, so `targetTokens` = 12,500, far above this transcript, and the fold returns unchanged. So "lands as a no-op" is a load-bearing claim about code that runs.
+
+    **Sweep result — two deliberate non-changes, both confirmed correct by the reviewer:**
+
+    - `spin(until:)`'s iteration cap in this file was **already** `spinYieldLimit` (inherited from 3f3f58f, which named it in the sibling `HumanWaitGateTests`), so there was nothing to fix there.
+    - `.init(contextSize: 100, tokenCount: 150, debugDescription: "stub context overflow")` left alone. `Sources/` only ever pattern-matches `if case LanguageModelError.contextSizeExceeded = error` (RoutedSession.swift) and never binds the payload — `grep -rn '\.contextSize\b\|\.tokenCount\b' Sources/` is zero hits — so those numbers configure nothing, and the literal is verbatim in `ExamplesTests.swift` and `AutoCompactionTests.swift`. Naming them here alone would add no information and diverge from the idiom.
+    - The rest of the file's numerics (`maxConcurrentForks: 4`, `totalRAM: 64 << 30`, `stubDimension = 8`, the stub metadata JSON, `bytesDownloaded: 1`, `repeating: 0.5`, `AsyncSemaphore(value: 0)`, assertion expected-values) are the stub-fixture boilerplate that is verbatim-identical across the sibling test files — out of scope per the same rule that dropped 58 such findings, and naming them here alone would break the prevailing pattern.
+
+    One genuinely unique bare numeric noted and **left** as out of scope for a review-findings fix: `await Self.spin(until: { await fixture.recorder.events.count == 3 })` in `abandoningAStreamRecordsTheTurnAsCancelled` duplicates the arity asserted five lines later as `events.map(\.kind) == [.session, .prompt, .response]`. It is a spin threshold coupled to an assertion by hand — a real (if minor) DRY smell in a *different* test than the finding cited. Flagging rather than fixing; say the word and it becomes its own task.
+
+    Load-bearing behavior untouched, as instructed: no change to the pre-check's `Task.isCancelled` + recorded-request throw, the post-loop `try Task.checkCancellation()`, gate accounting, or `endHumanWait()`'s re-validation. `Sources/` has zero diff — the entire change is doc comments and three constant names in one test file. `^pb69k65` (cancellable folds) not touched.
+  timestamp: 2026-07-25T23:49:38.890807+00:00
 position_column: doing
 position_ordinal: '80'
 title: Chain cancellation into in-flight turns so a client stop reaches running tool calls
@@ -149,3 +190,7 @@ Document explicitly that cancellation is **best-effort past the boundary**: MCP'
 ## Outcome
 
 `RoutedSession.cancelCurrentTurn() -> TurnCancellationResult` (`.requested` / `.noTurnInFlight`). Only `body(composedPrompt)` runs inside the cancellable task, so recording stays outside the cancelled region and a cancelled turn is recorded exactly like any other failed turn. `withTaskCancellationHandler` preserves the pre-existing "cancel your own enclosing Task" propagation. `StopReason` deliberately not introduced: no such type exists in this package and Router owns no client channel — the caller observes `CancellationError` (or a normal response, when the work ignored cancellation) and maps it to its own stop reason. Outbox rule: the existing attach-or-requeue rule, unchanged, documented and asserted both ways.
+
+## Review Findings (2026-07-25 18:21)
+
+- [x] `Tests/FoundationModelsRouterTests/TurnCancellationTests.swift:383` — Hardcoded numeric configuration values in TokenBudget constructor should be named constants: `100_000` (limit), `2.0` (trigger threshold), and `0.25` (target ratio) lack self-documenting names and make the test setup harder to understand. Extract the numeric values into named constants: `private static let unreachableTriggerLimit = 100_000`, `private static let unreachableTriggerThreshold = 2.0`, `private static let unreachableTriggerTarget = 0.25`, then use them in the TokenBudget constructor.
