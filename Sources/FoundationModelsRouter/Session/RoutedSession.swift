@@ -1277,44 +1277,62 @@ actor RoutedSessionActor: RoutedSession {
                     summarizer: BackendCompactionSummarizer(backend: profile.flash.container.makeSession(instructions: nil))
                 )
             } catch {
-                // A fold cancelled part-way is abandoned outright rather than
-                // degraded to the next tier: answering a stop with *more* model
-                // calls, and then applying a cheaper fold to a turn that is unwinding
-                // anyway, is not what a stop means. Keyed on a cancellation actually
-                // being outstanding rather than on the error's own type, because a
-                // ``LanguageModelSessionBackend`` conformer is free to surface
-                // `CancellationError` from internals of its own with nothing
-                // cancelled here — an ordinary summarizer failure, and the next
-                // tier's business exactly as before.
-                if isTurnCancelled {
-                    noteAbandonedFold(discarding: error, tier: .flash)
-                    throw CancellationError()
-                }
+                try abandonFoldIfCancelled(discarding: error, tier: .flash)
                 // Fall through to the own-model tier below.
             }
         }
         do {
             return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
         } catch {
-            // Same reasoning as the flash tier above, and the *only* guard on this
-            // path for a session that already is the flash slot and so skipped it.
-            if isTurnCancelled {
-                noteAbandonedFold(discarding: error, tier: .ownModel)
-                throw CancellationError()
-            }
+            // The *only* abandon guard on this path for a session that already is the
+            // flash slot and so skipped the tier above.
+            try abandonFoldIfCancelled(discarding: error, tier: .ownModel)
             return try await fold(prompt: prompt, budget: budget, summarizer: nil)
         }
     }
 
     /// Which of ``performAutoCompaction(prompt:budget:)``'s model-assisted tiers a
     /// fold ran on, so a report about one names it from a single place rather than
-    /// from a string literal per throw site.
+    /// from a string literal at each tier's `catch`.
     private enum FoldSummarizerTier: String {
         /// The profile's ``LanguageModelProfile/flash`` slot.
         case flash
 
         /// This session's own model.
         case ownModel = "own-model"
+    }
+
+    /// Abandons the fold a model-assisted tier just failed when a stop is outstanding
+    /// against this turn, and otherwise returns so that tier can degrade.
+    ///
+    /// Shared by both of ``performAutoCompaction(prompt:budget:)``'s model-assisted
+    /// tiers — the two ``FoldSummarizerTier`` cases, since the deterministic fold
+    /// beneath them makes no model call to abandon — so the one decision they make
+    /// identically cannot drift apart between them. What differs per tier is what
+    /// happens on the way out of it — the flash tier falls through to the own-model
+    /// tier, the own-model tier to that deterministic (`nil`-summarizer) fold — so
+    /// returning normally is all this does when nothing is cancelled, and each
+    /// fall-through stays at its own call site.
+    ///
+    /// Keyed on ``isTurnCancelled``, never on the failure's own type: a
+    /// ``LanguageModelSessionBackend`` conformer is free to surface
+    /// `CancellationError` from internals of its own with nothing cancelled here,
+    /// which is an ordinary summarizer failure and the next tier's business exactly
+    /// as before. See ``performAutoCompaction(prompt:budget:)``'s `- Throws:` for why
+    /// a fold under an outstanding stop is abandoned rather than degraded.
+    ///
+    /// - Parameters:
+    ///   - error: The failure the tier threw. When the fold is abandoned it is
+    ///     reported by ``noteAbandonedFold(discarding:tier:)`` — unless it is itself
+    ///     a `CancellationError`, the usual case and the one with nothing to say —
+    ///     since the `CancellationError` thrown in its place carries none of it.
+    ///   - tier: The tier that threw it.
+    /// - Throws: `CancellationError` when a cancellation is outstanding against this
+    ///   turn, and nothing at all otherwise.
+    private func abandonFoldIfCancelled(discarding error: Error, tier: FoldSummarizerTier) throws {
+        guard isTurnCancelled else { return }
+        noteAbandonedFold(discarding: error, tier: tier)
+        throw CancellationError()
     }
 
     /// Reports the summarizer failure an abandoned fold is discarding, so a genuine
