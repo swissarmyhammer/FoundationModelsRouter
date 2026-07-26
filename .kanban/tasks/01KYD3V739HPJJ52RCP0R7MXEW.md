@@ -134,8 +134,26 @@ comments:
 
     Load-bearing behavior untouched, as instructed: no change to the pre-check's `Task.isCancelled` + recorded-request throw, the post-loop `try Task.checkCancellation()`, gate accounting, or `endHumanWait()`'s re-validation. `Sources/` has zero diff — the entire change is doc comments and three constant names in one test file. `^pb69k65` (cancellable folds) not touched.
   timestamp: 2026-07-25T23:49:38.890807+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kydvywc5n3tepcqexd3wekxf
+  text: |-
+    Orchestrator (/finish) — task complete in 2 iterations.
+
+    **Iteration 1** — implement landed `cancelCurrentTurn()`; checkpoint `f62bb01` (9 files, +1593/-34, new `TurnCancellationTests.swift`). Review of that delta: 1 finding (bare `TokenBudget` literals in the new test file); one engine finding dropped as out-of-delta with evidence (a `0.1` fold-target floor mis-cited at `RoutedSession.swift:1146`; the real site is line 2153, blamed to `97b5aab`, pre-existing).
+
+    **Iteration 2** — finding fixed; checkpoint `0bfcc25` (3 files, +89/-7, `Sources/` diff empty). Review of that delta: **clean, 0 findings** → `done`.
+
+    Final test status: `swift build --build-tests` exit 0, zero first-party compiler warnings verified after invalidating all 135 first-party Swift files (not a cache hit); full `swift test` exit 0 at **601 tests / 69 suites** (571/58 + 18/7 + 12/4), up from the 587/68 baseline. No hangs or flakes across 25+ runs of the concurrency suites, including 6 concurrent runs under CPU saturation. The new tests were proven non-vacuous by mutation: deleting `try Task.checkCancellation()` after the streaming loop fails 2 tests, and deleting the pre-flight cancel guard in `runCancellableModelCall` fails the parameterized overflow-retry test. Both mutations reverted and the file restored byte-identical. All commits are **local only — nothing pushed**; `main` is 5 commits ahead of `origin/main` (`97b5aab`, `3f3f58f`, `f62bb01`, `0bfcc25` plus one earlier).
+
+    **A correction worth keeping, because the first draft got it backwards:** `budget.limit` is **not** `contextFill`'s denominator. `contextFill` is `(input + output) / contextTokens`, where `contextTokens` is the profile's resolved `SlotResolution/contextTokens` — for a profile that declares no `context:`, that is `ProfileDefinition.defaultContext` (8192), *not* the budget's limit. `budget.limit`'s only role in the library is the fold scale in `Compactor` (`targetTokens = Int((Double(budget.limit) * budget.target).rounded())`) plus a pass-through that preserves `limit` while lowering `target` for the retry. Raising `limit` therefore does not move fill. The test constant is named `noOpFoldScale` for that reason, and the 100_000-vs-8192 divergence is called out in its doc rather than hidden. Relatedly: `trigger: 2.0` is belt-and-braces, not the operative reason no proactive fold runs — fill is `0` on a first turn (`usageState` is `.none`), below even the 0.80 default, and the proactive gate at `runTurn` entry is read exactly once because the overflow retry re-enters `runTurnAttempt`, not `runTurn`.
+
+    **Follow-up left undone, deliberately** (noted by two reviewers, neither gating):
+    - In `abandoningAStreamRecordsTheTurnAsCancelled`, `await Self.spin(until: { await fixture.recorder.events.count == 3 })` hand-duplicates the arity asserted five lines later as `[.session, .prompt, .response]`. Derive the `3` from the expected-events array instead of restating it. Needs its own card if wanted.
+    - `RoutedSession.swift:2153`'s `max(target / 2, 0.1)` magic numbers — pre-existing, out of this delta, needs its own card.
+    - The compaction-fold cancellability hazard is filed as `^pb69k65` and is being picked up next.
+  timestamp: 2026-07-26T00:07:22.757221+00:00
+position_column: done
+position_ordinal: e180
 title: Chain cancellation into in-flight turns so a client stop reaches running tool calls
 ---
 ## What
