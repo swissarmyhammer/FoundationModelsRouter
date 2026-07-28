@@ -432,9 +432,65 @@ public actor Router {
 
     // MARK: - Residency
 
-    /// Acquires the generation slot for `key`: reuses an already-pooled entry
-    /// (bumping its refcount) or downloads, and inserts a fresh pool entry
-    /// with newly-minted gates when none exists yet.
+    /// Acquires the pooled model identified by `key`: reuses an
+    /// already-pooled entry (bumping its refcount) or downloads through
+    /// `load` and inserts a fresh pool entry with newly-minted gates when
+    /// none exists yet.
+    ///
+    /// Shared by ``acquireLLM(key:chosen:slot:context:footprintBytes:newKeys:progress:)``
+    /// and ``acquireEmbedder(key:chosen:footprintBytes:newKeys:progress:)``:
+    /// the generation and embedding slots acquire identically except for the
+    /// loader call and the concrete container type, which `load` and `wrap`
+    /// supply.
+    ///
+    /// - Parameters:
+    ///   - key: This candidate's exact residency identity.
+    ///   - chosen: The chosen model reference.
+    ///   - slot: The slot being acquired.
+    ///   - footprintBytes: This slot's `× 1.2` footprint, recorded on a fresh
+    ///     pool entry as its steady-state cost.
+    ///   - newKeys: Accumulates `key` when this call inserted a fresh entry,
+    ///     so the caller knows which acquired keys still need preloading.
+    ///   - progress: The progress to drive through acquisition.
+    ///   - load: The loader call producing a fresh resident container.
+    ///   - wrap: Wraps a freshly-loaded container into the type-erased
+    ///     ``PooledContainer`` stored on the pool entry.
+    /// - Returns: `key`, for the caller's own bookkeeping.
+    /// - Throws: Any error the loader raises downloading a fresh container.
+    private func acquireModel<Loaded>(
+        key: ResidencyKey,
+        chosen: ModelRef,
+        slot: ModelSlot,
+        footprintBytes: Int64,
+        newKeys: inout Set<ResidencyKey>,
+        progress: ResolutionProgress,
+        load: (ModelRef, ModelSlot, @escaping @Sendable (DownloadProgress) -> Void) async throws ->
+            Loaded,
+        wrap: (Loaded) -> PooledContainer
+    ) async throws -> ResidencyKey {
+        if var entry = pool[key] {
+            entry.refcount += 1
+            pool[key] = entry
+            await setSlotState(slot, to: .ready, progress: progress)
+            return key
+        }
+        let container = try await download(ref: chosen, slot: slot, progress: progress, load: load)
+        pool[key] = PoolEntry(
+            refcount: 1,
+            footprintBytes: footprintBytes,
+            container: wrap(container),
+            generationGate: AsyncSemaphore(value: 1),
+            forkAdmissionGate: AsyncSemaphore(value: maxConcurrentForks)
+        )
+        newKeys.insert(key)
+        return key
+    }
+
+    /// Acquires the generation slot for `key` from its pooled entry.
+    ///
+    /// The `.standard` and `.flash` slots acquire identically, differing
+    /// only by slot and context, so both go through
+    /// ``acquireModel(key:chosen:slot:footprintBytes:newKeys:progress:load:wrap:)``.
     ///
     /// - Parameters:
     ///   - key: This candidate's exact residency identity.
@@ -457,26 +513,16 @@ public actor Router {
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
     ) async throws -> ResidencyKey {
-        if pool[key] != nil {
-            pool[key]!.refcount += 1
-            await setSlotState(slot, to: .ready, progress: progress)
-            return key
-        }
-        let container = try await download(ref: chosen, slot: slot, progress: progress) {
-            try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2)
-        }
-        pool[key] = PoolEntry(
-            refcount: 1,
-            footprintBytes: footprintBytes,
-            container: .llm(container),
-            generationGate: AsyncSemaphore(value: 1),
-            forkAdmissionGate: AsyncSemaphore(value: maxConcurrentForks)
+        try await acquireModel(
+            key: key, chosen: chosen, slot: slot, footprintBytes: footprintBytes,
+            newKeys: &newKeys, progress: progress,
+            load: { try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2) },
+            wrap: { .llm($0) }
         )
-        newKeys.insert(key)
-        return key
     }
 
-    /// Acquires the embedding slot for `key` — the ``acquireLLM(key:chosen:slot:context:footprintBytes:newKeys:progress:)``
+    /// Acquires the embedding slot for `key` from its pooled entry — the
+    /// ``acquireLLM(key:chosen:slot:context:footprintBytes:newKeys:progress:)``
     /// counterpart for the embedding role, which has no context axis and a
     /// different loader call.
     private func acquireEmbedder(
@@ -486,23 +532,12 @@ public actor Router {
         newKeys: inout Set<ResidencyKey>,
         progress: ResolutionProgress
     ) async throws -> ResidencyKey {
-        if pool[key] != nil {
-            pool[key]!.refcount += 1
-            await setSlotState(.embedding, to: .ready, progress: progress)
-            return key
-        }
-        let container = try await download(ref: chosen, slot: .embedding, progress: progress) {
-            try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2)
-        }
-        pool[key] = PoolEntry(
-            refcount: 1,
-            footprintBytes: footprintBytes,
-            container: .embedding(container),
-            generationGate: AsyncSemaphore(value: 1),
-            forkAdmissionGate: AsyncSemaphore(value: maxConcurrentForks)
+        try await acquireModel(
+            key: key, chosen: chosen, slot: .embedding, footprintBytes: footprintBytes,
+            newKeys: &newKeys, progress: progress,
+            load: { try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2) },
+            wrap: { .embedding($0) }
         )
-        newKeys.insert(key)
-        return key
     }
 
     /// Decrements the resident-model references a profile identified by
