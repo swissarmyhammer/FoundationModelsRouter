@@ -421,7 +421,7 @@ public actor Router {
             // undone — so a partial failure never leaks a phantom-resident
             // pool entry with no owning profile.
             for key in slotKeys.values {
-                await releaseKey(key)
+                await releaseKey(key: key)
             }
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow.
@@ -532,13 +532,13 @@ public actor Router {
         defer { poolLock.signal() }
         guard let keys = residentProfiles.removeValue(forKey: token) else { return }
         for key in keys {
-            await releaseKey(key)
+            await releaseKey(key: key)
         }
     }
 
     /// Decrements one pooled model's refcount by one, evicting it through the
     /// loader once it reaches zero. A no-op if `key` is not currently pooled.
-    private func releaseKey(_ key: ResidencyKey) async {
+    private func releaseKey(key: ResidencyKey) async {
         guard var entry = pool[key] else { return }
         entry.refcount -= 1
         if entry.refcount <= 0 {
@@ -642,6 +642,16 @@ public actor Router {
         return membership
     }
 
+    /// The shared "no metadata fetched for this candidate" diagnostic, used
+    /// everywhere ``sizeCandidates(profile:)`` came up empty for a `ref` that
+    /// ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``
+    /// or ``runJointFit(profile:budget:metadataByRef:residentKeys:progress:)``'s
+    /// `nativeMaxContext` closure needs sized — kept in one place so both
+    /// sites can't drift out of wording sync.
+    private static func unsizedCandidateMessage(for ref: ModelRef) -> String {
+        "candidate \(ref.stringValue) was not sized"
+    }
+
     /// The raw footprint bytes for one candidate at a context, conservatively
     /// sized across every slot it is a candidate for: the embedding
     /// interpretation has no KV cache (weights alone), while standard/flash
@@ -663,7 +673,7 @@ public actor Router {
         residentKeys: Set<ResidencyKey>
     ) -> Result<Int64, RepoMetadataError> {
         guard let metadataResult = metadataByRef[ref] else {
-            return .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized"))
+            return .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref)))
         }
         switch metadataResult {
         case .failure(let error):
@@ -715,7 +725,7 @@ public actor Router {
                 },
                 nativeMaxContext: { ref in
                     (metadataByRef[ref]
-                        ?? .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized")))
+                        ?? .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref))))
                         .map(\.nativeMaxContext)
                 }
             )
@@ -854,13 +864,18 @@ public actor Router {
         )
     }
 
-    /// Builds a generation handle for a slot from its pooled entry, stamping
-    /// it with this router's id, recorder, and transcripts root, and reusing
-    /// the pool entry's own generation/fork-admission gates.
+    /// Builds a routed model handle for `slot` from its pooled entry,
+    /// stamping it with this router's id, recorder, and transcripts root, and
+    /// reusing the pool entry's own generation/fork-admission gates.
     ///
-    /// The `.standard` and `.flash` slots construct identical ``RoutedLLM``
-    /// handles differing only by slot, chosen ref, resolution, and pool key, so
-    /// both go through this one helper.
+    /// Shared by ``makeRoutedLLM(slot:chosen:resolution:key:resolvedProfile:)``
+    /// and ``makeRoutedEmbedder(chosen:resolution:key:resolvedProfile:)``:
+    /// the `.standard`/`.flash` generation handles and the embedding handle
+    /// are built identically except for the concrete container type they
+    /// unwrap from the pool entry's type-erased ``PooledContainer``, which
+    /// `unwrap` supplies. `maxConcurrentForks` is passed uniformly even
+    /// though the embedding handle never forks — it is unused whenever
+    /// `forkAdmissionGate` is supplied, as it always is here.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -870,18 +885,24 @@ public actor Router {
     ///     for its container and gates.
     ///   - resolvedProfile: The run's resolved-profile facts, recorded onto
     ///     the sidecar of every root session vended from this handle.
-    /// - Returns: The routed generation handle.
-    private func makeRoutedLLM(
+    ///   - unwrap: Extracts this handle's concrete container type from the
+    ///     pooled entry's ``PooledContainer``, or `nil` if the entry holds
+    ///     the other container kind.
+    /// - Returns: The routed model handle.
+    private func makeRoutedModel<Container: Sendable>(
         slot: ModelSlot,
         chosen: ModelRef,
         resolution: SlotResolution,
         key: ResidencyKey,
-        resolvedProfile: SessionSidecar.ResolvedProfile
-    ) -> RoutedLLM {
-        guard let entry = pool[key], case .llm(let container) = entry.container else {
-            preconditionFailure("an .llm ResidencyKey acquired this resolve must have an .llm pool entry")
+        resolvedProfile: SessionSidecar.ResolvedProfile,
+        unwrap: (PooledContainer) -> Container?
+    ) -> RoutedModel<Container> {
+        guard let entry = pool[key], let container = unwrap(entry.container) else {
+            preconditionFailure(
+                "a ResidencyKey acquired this resolve must have a matching pool entry for \(slot)"
+            )
         }
-        return RoutedLLM(
+        return RoutedModel(
             slot: slot,
             chosen: chosen,
             footprintBytes: Self.chosenFootprint(for: resolution),
@@ -901,39 +922,48 @@ public actor Router {
         )
     }
 
+    /// Builds a generation handle for a slot from its pooled entry.
+    ///
+    /// The `.standard` and `.flash` slots construct identical ``RoutedLLM``
+    /// handles differing only by slot, chosen ref, resolution, and pool key,
+    /// so both go through ``makeRoutedModel(slot:chosen:resolution:key:resolvedProfile:unwrap:)``.
+    private func makeRoutedLLM(
+        slot: ModelSlot,
+        chosen: ModelRef,
+        resolution: SlotResolution,
+        key: ResidencyKey,
+        resolvedProfile: SessionSidecar.ResolvedProfile
+    ) -> RoutedLLM {
+        makeRoutedModel(
+            slot: slot, chosen: chosen, resolution: resolution, key: key,
+            resolvedProfile: resolvedProfile
+        ) { container in
+            guard case .llm(let llm) = container else { return nil }
+            return llm
+        }
+    }
+
     /// Builds the embedding handle from its pooled entry — the
     /// ``makeRoutedLLM(slot:chosen:resolution:key:resolvedProfile:)``
     /// counterpart for the embedding role.
+    ///
+    /// The embedding handle never vends a session, so its writer is never
+    /// reached — it is carried anyway because a durable root and its writer
+    /// are one value, which is what keeps the generation handles from being
+    /// handed a root with no writer.
     private func makeRoutedEmbedder(
         chosen: ModelRef,
         resolution: SlotResolution,
         key: ResidencyKey,
         resolvedProfile: SessionSidecar.ResolvedProfile
     ) -> RoutedEmbedder {
-        guard let entry = pool[key], case .embedding(let container) = entry.container else {
-            preconditionFailure("an .embedding ResidencyKey acquired this resolve must have an .embedding pool entry")
+        makeRoutedModel(
+            slot: .embedding, chosen: chosen, resolution: resolution, key: key,
+            resolvedProfile: resolvedProfile
+        ) { container in
+            guard case .embedding(let embedder) = container else { return nil }
+            return embedder
         }
-        return RoutedEmbedder(
-            slot: .embedding,
-            chosen: chosen,
-            footprintBytes: Self.chosenFootprint(for: resolution),
-            resolution: resolution,
-            container: container,
-            routerId: id,
-            recorder: recorder,
-            // The embedding handle never vends a session, so its writer is
-            // never reached — it is here because a durable root and its
-            // writer are one value, which is what keeps the generation
-            // handles from being handed a root with no writer.
-            durableRecording: makeDurableRecording(
-                slot: .embedding,
-                chosen: chosen,
-                resolution: resolution,
-                resolvedProfile: resolvedProfile
-            ),
-            generationGate: entry.generationGate,
-            forkAdmissionGate: entry.forkAdmissionGate
-        )
     }
 
     /// Pairs this run's durable transcripts root with the sidecar writer

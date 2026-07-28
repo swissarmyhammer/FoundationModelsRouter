@@ -63,6 +63,27 @@ comments:
   id: 01kynb3hbqm3r01g87s0sjrxwv
   text: 'Implementation landed via implementer subagent (TDD). Chose shape: one Router with several resident profiles (Router already owns loader/probe/budget machinery). New ResidencyKey (ModelRef + role) identifies resident artifacts; refcounted pool[ResidencyKey: PoolEntry] + residentProfiles[ULID: [ResidencyKey]] replaces old single residencyState enum. resolve() prices already-resident candidates at zero marginal cost so the union of resident models is priced against one budget. Adversarial review caught a real TOCTOU race in release() (unlocked decrement could evict a key resolve() had already priced as free, corrupting budget accounting toward OOM) — fixed by serializing all pool mutations through one poolLock semaphore; regression test added and confirmed RED then GREEN across repeated runs. Reused pool entries share generationGate/forkAdmissionGate across profiles so shared-model generation actually serializes. RouterError.profileAlreadyResident removed (nothing throws it now). New PooledResidencyTests.swift (8 tests) covers all acceptance criteria + required test cases + the race regression; 4 pre-existing tests updated from old one-active-profile-throws behavior to new pooled-sharing behavior (that old behavior is exactly what this task replaces). swift build clean, swift test green (594+18+12 = 624 tests, 0 failures). Two double-check rounds: first REVISE (the race bug), fixed, second PASS. Task left in doing for checkpoint + review.'
   timestamp: 2026-07-28T21:46:44.983877+00:00
+- actor: claude-code
+  id: 01kyndnqw3xxbd8k3wfqvfp8h7
+  text: 'Checkpoint committed (f6ea064). Review pass 1 scoped to HEAD~1..HEAD: 15 engine findings, 5 dropped per never-refactor-existing-tests exception (ExamplesTests.swift and ToolIntegrationTests.swift findings targeted lines outside this commit''s touched hunks). 10 kept and appended: LanguageModelProfile.swift register(_:) label, Router.swift releaseKey(_:) label, two repeated "candidate ... was not sized" string literal sites needing a shared constant, makeRoutedLLM/makeRoutedEmbedder near-duplicate builders needing extraction, and 4x repeated hardcoded 1_000 headroom buffer in the new PooledResidencyTests.swift needing a shared constant. Task remains in review; looping back to implement.'
+  timestamp: 2026-07-28T22:31:38.627155+00:00
+- actor: claude-code
+  id: 01kyne4k3g79g31xfk0bzj93nv
+  text: |-
+    Resolved all 10 review findings from the 2026-07-28 17:12 pass:
+
+    1-2. Argument label renames: `OwningProfileBox.register(_:)` → `register(profile:)` (3 call sites in LanguageModelProfile.init updated); `Router.releaseKey(_:)` → `releaseKey(key:)` (2 call sites updated: resolve()'s rollback loop and release(token:)).
+
+    3-4 (Router.swift:388, 454 — same underlying finding reported at both sites). Extracted the repeated "candidate ... was not sized" diagnostic into a new `private static func unsizedCandidateMessage(for ref: ModelRef) -> String` on Router, called from both `footprintBytes(for:context:metadataByRef:membership:residentKeys:)` and `runJointFit`'s `nativeMaxContext` closure.
+
+    5. Extracted the shared logic between `makeRoutedLLM` and `makeRoutedEmbedder` into a new generic `private func makeRoutedModel<Container: Sendable>(slot:chosen:resolution:key:resolvedProfile:unwrap:) -> RoutedModel<Container>`. It does the pool lookup + RoutedModel construction (footprint, durable recording, gates) that was identical between the two; each caller passes an `unwrap: (PooledContainer) -> Container?` closure to extract its concrete container type from the pool entry's `PooledContainer` enum. `makeRoutedLLM` passes `slot` through and unwraps `.llm`; `makeRoutedEmbedder` hardcodes `slot: .embedding` and unwraps `.embedding`. `maxConcurrentForks` is now passed uniformly by the shared helper — verified safe because `forkAdmissionGate` is always supplied explicitly at both call sites, so `RoutedModel.init`'s `?? AsyncSemaphore(value: maxConcurrentForks)` fallback never triggers.
+
+    6. Extracted the repeated `1_000` headroom-buffer literal in the new PooledResidencyTests.swift into `private static let headroomBufferBytes: Int64 = 1_000`, used at all 8 call sites (the review flagged 4; all 8 occurrences of the same magic number were normalized for consistency).
+
+    Verification: `swift build` exit 0, zero warnings. `swift test`: 594/594 + 18/18 + 12/12 = 624/624 passing, zero failures (matches the pre-fix baseline count, confirming no regressions). LSP diagnostics on the working tree: 0 errors, 0 warnings. Adversarial double-check dispatched to independently verify the diff and re-run build/test.
+
+    All 10 checklist items in the "## Review Findings" section flipped to `- [x]`. Task left in `doing` per the implement workflow — `/review` is the next step.
+  timestamp: 2026-07-28T22:39:45.264887+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Pooled model residency: per-project profiles sharing one budget'
@@ -124,3 +145,20 @@ Requirements either way:
 ## Workflow
 
 - Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-07-28 17:12)
+
+Scope: `HEAD~1..HEAD` (checkpoint commit f6ea064).
+
+- [x] `Sources/FoundationModelsRouter/LanguageModelProfile.swift:1` — No magic numbers found in this file. N/A.
+- [x] `Sources/FoundationModelsRouter/LanguageModelProfile.swift:51` — First argument label omitted in non-conversion method. The `register` method accepts a `LanguageModelProfile` parameter for side effects, not a value-preserving conversion, so the parameter should have a label. Change `func register(_ profile: LanguageModelProfile)` to `func register(profile: LanguageModelProfile)`, and update the call sites (line 181-183) to use the labeled parameter: `register(profile: self)`.
+- [x] `Sources/FoundationModelsRouter/Router.swift:362` — First argument label omitted in non-conversion method. The `releaseKey` method modifies pool state (side effects), not a value-preserving conversion, so the parameter should have a label for clarity. Change `private func releaseKey(_ key: ResidencyKey) async` to `private func releaseKey(key: ResidencyKey) async`, and update call sites (line 333 in `release(token:)`) to `await releaseKey(key: key)`.
+- [x] `Sources/FoundationModelsRouter/Router.swift:388` — Repeated string literal that should be a named constant. The error message `"candidate \(ref.stringValue) was not sized"` appears in at least two places (here and in `runJointFit`), making the string maintenance fragile — a typo or change in one location will drift from the other. Define a module-level or type-level constant like `private static let unsizedCandidateErrorMessage = "candidate \(ref.stringValue) was not sized"` and reuse it in both locations.
+- [x] `Sources/FoundationModelsRouter/Router.swift:454` — Repeated string literal that should be a named constant. The error message `"candidate \(ref.stringValue) was not sized"` appears in at least two places (here and in `footprintBytes`), making the string maintenance fragile — a change in one location will drift from the other. Define a module-level or type-level constant like `private static let unsizedCandidateErrorMessage = "candidate \(ref.stringValue) was not sized"` and reuse it in both locations.
+- [x] `Sources/FoundationModelsRouter/Router.swift:574` — makeRoutedLLM and makeRoutedEmbedder (line ~574 and ~606) are near-verbatim duplicates that differ only by the slot handling, guard pattern, container type, and maxConcurrentForks parameter. The RoutedModel initialization is nearly identical and could drift. Extract a shared builder function that takes the slot, container type, guard/precondition closure, and other parameters. Use this to eliminate duplication in the RoutedModel initialization logic that currently repeats across both functions.
+- [x] `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift:243` — Duplicate hardcoded headroom buffer 1_000 bytes in router configuration for releasingOneProfileKeepsSharedModelLoadedForTheOther test. Use shared constant: define at file scope `private static let headroomBufferBytes: Int64 = 1_000`.
+- [x] `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift:376` — Duplicate hardcoded headroom buffer 1_000 bytes in router configuration for sameRepoDifferentRevisionDoesNotShare test. Use shared constant: `private static let headroomBufferBytes: Int64 = 1_000`.
+- [x] `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift:413` — Duplicate hardcoded headroom buffer 1_000 bytes in router configuration for singleProfileCallerSequentialUseIsUnaffected test. Use shared constant: `private static let headroomBufferBytes: Int64 = 1_000`.
+- [x] `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift:443` — Duplicate hardcoded headroom buffer 1_000 bytes in router configuration for releaseCannotRaceAnInFlightResolveAndCorruptAccounting test. Use shared constant: `private static let headroomBufferBytes: Int64 = 1_000`.
+
+_Note: 5 engine findings were dropped from this report under the "never ask to refactor existing tests" rule — `ExamplesTests.swift:532,561,575,576` and `ToolIntegrationTests.swift:77` all target test code that already existed prior to this commit's diff hunks (confirmed via `git diff HEAD~1..HEAD`), not new test code added by this change._

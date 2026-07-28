@@ -22,14 +22,14 @@ final class OwningProfileBox: @unchecked Sendable {
     /// profile is released.
     private weak var stored: LanguageModelProfile?
 
-    /// Creates an empty box, filled later by ``register(_:)``.
+    /// Creates an empty box, filled later by ``register(profile:)``.
     init() {}
 
     /// Records the owning profile. Called once, from ``LanguageModelProfile``'s
     /// initializer, before the profile escapes to any other thread.
     ///
     /// - Parameter profile: The profile that owns the model holding this box.
-    func register(_ profile: LanguageModelProfile) {
+    func register(profile: LanguageModelProfile) {
         lock.withLock { stored = profile }
     }
 
@@ -287,9 +287,9 @@ public final class LanguageModelProfile: Sendable {
         // Register the weak back-reference now that `self` is fully initialized,
         // so a session vended from any of these handles can retain this profile
         // and keep the resident models alive for its lifetime.
-        standard.owningProfileBox.register(self)
-        flash.owningProfileBox.register(self)
-        embedding.owningProfileBox.register(self)
+        standard.owningProfileBox.register(profile: self)
+        flash.owningProfileBox.register(profile: self)
+        embedding.owningProfileBox.register(profile: self)
     }
 
     /// Decrements this profile's reference on each of its resident models

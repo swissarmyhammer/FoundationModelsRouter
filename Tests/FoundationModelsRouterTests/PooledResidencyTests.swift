@@ -212,6 +212,12 @@ struct PooledResidencyTests {
     /// flash (each ≈14_516_583) + embedding (12_000_000).
     private static let oneTrioFootprint: Int64 = 14_516_583 + 14_516_583 + 12_000_000
 
+    /// Headroom added on top of a whole number of trio footprints when sizing
+    /// a test router's simulated RAM, so a budget meant to fit exactly N
+    /// trios isn't rejected by an off-by-a-few-bytes rounding difference
+    /// between this constant's footprint arithmetic and the joint fit's own.
+    private static let headroomBufferBytes: Int64 = 1_000
+
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PooledResidencyTests-\(UUID().uuidString)", isDirectory: true)
@@ -255,7 +261,7 @@ struct PooledResidencyTests {
         let spy = LoadSpy()
         // Budget generous enough for one trio; the second profile reuses the
         // very same models, so it costs nothing marginal and must still fit.
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + 1_000, cacheDir: dir)
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
 
         let shared = ProfileDefinition(
             name: "shared",
@@ -289,7 +295,7 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Fits two full disjoint trios comfortably, not three.
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + 1_000, cacheDir: dir)
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
 
         let profileA = ProfileDefinition(
             name: "a", description: "profile A",
@@ -327,7 +333,7 @@ struct PooledResidencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
         // Room for exactly one trio, nothing left for a second, disjoint one.
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + 1_000, cacheDir: dir)
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
 
         let profileA = ProfileDefinition(
             name: "a", description: "profile A",
@@ -361,7 +367,7 @@ struct PooledResidencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + 1_000, cacheDir: dir)
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
 
         let shared = ProfileDefinition(
             name: "shared", description: "both profiles want the identical models",
@@ -394,7 +400,7 @@ struct PooledResidencyTests {
         let releaseGate = AsyncSemaphore(value: 0)
         let router = Self.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + 1_000,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes,
             cacheDir: dir,
             llmContainer: { _ in ParkingLLMContainer(observer: observer, releaseGate: releaseGate) }
         )
@@ -435,7 +441,7 @@ struct PooledResidencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + 1_000, cacheDir: dir)
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
 
         let unpinned = ProfileDefinition(
             name: "unpinned", description: "tracks the default revision",
@@ -466,7 +472,7 @@ struct PooledResidencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + 1_000, cacheDir: dir)
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
 
         let profile = ProfileDefinition(
             name: "solo", description: "one profile, used sequentially",
@@ -520,7 +526,7 @@ struct PooledResidencyTests {
 
         let router = Self.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + 1_000,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes,
             cacheDir: dir,
             gatedRef: gatedRef,
             entrySignal: entrySignal,
