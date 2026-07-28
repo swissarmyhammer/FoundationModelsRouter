@@ -3,7 +3,7 @@ import Foundation
 /// The default in-flight fork-session ceiling per resolved profile.
 ///
 /// Shared between ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``
-/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:durableRecording:maxConcurrentForks:)``'s
+/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:durableRecording:maxConcurrentForks:generationGate:forkAdmissionGate:)``'s
 /// own default, so a ``RoutedModel`` constructed directly (outside a
 /// ``Router``, e.g. in tests) admits the same ceiling a router-vended one
 /// would.
@@ -36,12 +36,80 @@ public enum RecordingLevel: String, Sendable, Codable, Equatable {
     case full
 }
 
-/// A failure operating the ``Router`` lifecycle.
-public enum RouterError: Error, Equatable {
-    /// A profile is already resident: the router admits one active profile at a
-    /// time so it never over-commits RAM. Release the resident profile (see
-    /// ``LanguageModelProfile/release()``) before resolving another.
-    case profileAlreadyResident
+/// The exact identity of a resident model artifact: what determines whether
+/// two candidate resolutions can share one loaded instance.
+///
+/// Two candidates share a pool entry only when both the ``ModelRef`` (which
+/// already carries the pinned revision, if any — see ``ModelRef``) *and* the
+/// ``Role`` match. A ref used as a generation model at two different working
+/// contexts is **not** interchangeable — the KV cache is sized into the
+/// loaded container at load time — so ``Role/llm(context:)`` carries the
+/// context; a ref used as an embedder has no such axis (``Footprint/embedder(weightBytes:)``
+/// carries no KV term), so ``Role/embedding`` carries none either. A ref
+/// loaded as an embedder is never interchangeable with the same ref loaded as
+/// a generation model, since the two produce structurally different
+/// container types (``LoadedEmbeddingContainer`` vs. ``LoadedLLMContainer``).
+private struct ResidencyKey: Hashable, Sendable {
+    /// The role a resident model was loaded under, and the load-time
+    /// parameter (if any) that changes its resident bytes.
+    enum Role: Hashable, Sendable {
+        /// Loaded as a generation model at this working context.
+        case llm(context: Int)
+        /// Loaded as an embedder — context-independent (weights only).
+        case embedding
+    }
+
+    /// The model reference (repo + optional pinned revision).
+    let ref: ModelRef
+
+    /// The role this instance was loaded under.
+    let role: Role
+}
+
+/// A pool entry's loaded container, distinguishing the two container
+/// protocols so a reused entry can be handed back to whichever concrete
+/// handle (``RoutedLLM`` / ``RoutedEmbedder``) needs it without a runtime
+/// cast from the common ``LoadedModelContainer`` base.
+private enum PooledContainer: Sendable {
+    case llm(any LoadedLLMContainer)
+    case embedding(any LoadedEmbeddingContainer)
+
+    /// The container upcast to the common base, for ``ModelLoader/evict(container:)``.
+    var erased: any LoadedModelContainer {
+        switch self {
+        case .llm(let container): return container
+        case .embedding(let container): return container
+        }
+    }
+}
+
+/// One resident model in the router's pool: reference-counted across every
+/// profile currently referencing it, evicted only once that count reaches
+/// zero.
+///
+/// `generationGate`/`forkAdmissionGate` are minted once, at first load, and
+/// handed to every ``RoutedModel`` built over this entry from then on — a
+/// second profile that reuses this entry gets the *same* gate instances, so
+/// generation across both profiles' handles still serializes against the one
+/// underlying model (see ``RoutedModel/generationGate``).
+private struct PoolEntry: Sendable {
+    /// How many profiles currently reference this model.
+    var refcount: Int
+
+    /// This model's own `× 1.2` margined footprint, as first computed when it
+    /// was loaded — the real, steady-state cost charged against the shared
+    /// budget for as long as this entry exists, independent of whatever
+    /// marginal (possibly zero) cost a later resolve computed when reusing it.
+    let footprintBytes: Int64
+
+    /// The loaded container.
+    let container: PooledContainer
+
+    /// The shared generation gate every handle built over this entry reuses.
+    let generationGate: AsyncSemaphore
+
+    /// The shared fork-admission gate every handle built over this entry reuses.
+    let forkAdmissionGate: AsyncSemaphore
 }
 
 /// The shared entry point: built once at app start, it resolves authored
@@ -53,6 +121,26 @@ public enum RouterError: Error, Equatable {
 /// budget, a ``MetadataSource`` for sizing, and a ``ModelLoader`` for the
 /// download+load. Its ``id`` is the recording root every session and transcript
 /// hangs off of, sortable by construction time.
+///
+/// ## Pooled residency
+///
+/// A router admits several concurrently resident profiles, not one at a
+/// time: the memory budget still has exactly one authority (this actor), but
+/// that authority now prices the *union* of every currently resident model
+/// against the one shared budget, rather than one profile's trio against the
+/// whole budget. Residency is reference-counted per ``ResidencyKey`` (a
+/// model's ref, revision, and load-time role/context — see that type) across
+/// every profile that references it: two profiles naming the same model
+/// share one loaded instance and its generation gate, and a model stays
+/// loaded only while at least one profile still references it (see
+/// ``resolve(_:reporting:)`` and ``release(token:)``).
+///
+/// `resolve(_:reporting:)` itself is single-flight — serialized by
+/// `poolLock` — so the budget decision for a new resolve is never
+/// made against a stale snapshot of the pool while another resolve is
+/// concurrently downloading. This does not limit concurrency where it
+/// matters: once resident, every profile's sessions generate fully
+/// concurrently against their own (possibly shared) models.
 public actor Router {
     /// The recording root id; sortable by construction time.
     ///
@@ -97,36 +185,46 @@ public actor Router {
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
 
-    /// The router's mutually-exclusive residency state, making impossible states
-    /// unrepresentable: it is either idle, resolving, or resident — never, say,
-    /// "resident and resolving" at once.
+    /// Serializes every entry point that mutates ``pool`` — ``resolve(_:reporting:)``
+    /// end to end *and* ``release(token:)`` — so the budget decision (effective-
+    /// budget computation → joint fit → pool acquisition) a resolve makes is
+    /// never invalidated by a concurrent mutation. This is the single
+    /// authority the correctness requirement calls for: two concurrent
+    /// resolves must never each independently price a candidate against the
+    /// same "what's left" snapshot of the pool, and a release must never
+    /// evict a key a resolve's already-committed pricing decision assumed
+    /// was still free to reuse.
     ///
-    /// The ``ResidencyState/resident(_:)`` case carries the residency token of the
-    /// currently resident profile: a unique, never-reused ``ULID`` (not an
-    /// `ObjectIdentifier`, whose address-derived value a freed profile could hand
-    /// to a later one), so it imposes the one-active-profile rule without keeping a
-    /// dropped profile alive and without a stale release ever matching a newer
-    /// profile. The ``ResidencyState/resolving`` case is entered synchronously
-    /// before the first suspension so a second ``resolve(_:reporting:)`` entering
-    /// during the download/load awaits is rejected rather than racing to
-    /// over-commit.
-    private var residencyState: ResidencyState = .idle
+    /// The `release(token:)`-vs-`resolve(_:reporting:)` half of that is not
+    /// optional: `resolve(_:reporting:)` prices an already-pooled candidate
+    /// at zero marginal cost up front, then only actually re-acquires
+    /// (refcount-bumps) it several `await`s later in its acquisition loop.
+    /// Without this lock also guarding `release(token:)`, a concurrent
+    /// release could evict that exact key in between — the later acquisition
+    /// step would then find it gone, silently reload it, and permanently
+    /// record it in the pool at the stale zero footprint the pricing
+    /// decision had already committed to, eroding every future budget
+    /// computation toward an eventual OOM.
+    ///
+    /// A deliberate simplification: mutation is single-flight even though
+    /// resident profiles run fully concurrently once resolved (their
+    /// sessions never touch this lock). A finer-grained scheme — reserving
+    /// just-decided keys before releasing the lock so independent downloads
+    /// could overlap — is not needed by anything this router promises today.
+    private let poolLock = AsyncSemaphore(value: 1)
 
-    /// The router's mutually-exclusive residency lifecycle.
-    ///
-    /// Modeling the states as one enum makes the impossible combinations — such
-    /// as "resident while resolving" — unrepresentable, unlike a separate
-    /// residency-token optional and in-flight flag.
-    private enum ResidencyState {
-        /// No profile is resident and none is being resolved.
-        case idle
-        /// A ``Router/resolve(_:reporting:)`` is in flight; a second concurrent
-        /// resolve is rejected until it settles.
-        case resolving
-        /// A profile is resident, carrying its unique residency token so a stale
-        /// release cannot clobber a newer profile.
-        case resident(ULID)
-    }
+    /// The resident-model pool, keyed by exact artifact identity and
+    /// reference-counted across every profile that references it. The
+    /// authority ``resolve(_:reporting:)`` and ``release(token:)`` operate on.
+    private var pool: [ResidencyKey: PoolEntry] = [:]
+
+    /// Which pool keys each currently resident profile (by its residency
+    /// token) holds a reference on — exactly three entries per profile
+    /// (standard, flash, embedding), which may repeat if a profile's own
+    /// slots share a key. ``release(token:)`` decrements exactly these on
+    /// release, then forgets the token, making a double release or a stale
+    /// `deinit` a safe no-op.
+    private var residentProfiles: [ULID: [ResidencyKey]] = [:]
 
     /// Creates a router.
     ///
@@ -194,95 +292,137 @@ public actor Router {
     /// this machine, reporting progress through `sizing → downloading → loading →
     /// ready` (or `failed`).
     ///
-    /// Computes the budget from the host profile, sizes every candidate via repo
-    /// metadata, runs joint fit to pick the trio, then downloads, loads, and
-    /// preloads the chosen three. On an unsatisfiable profile it sets the
+    /// Computes the *effective* budget — the machine budget less every
+    /// currently pooled model's own footprint — sizes every candidate via repo
+    /// metadata (candidates already pool-resident cost nothing marginal, see
+    /// ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``),
+    /// runs joint fit to pick the trio, then acquires each slot: reusing a
+    /// pooled model when one already matches, or downloading, loading, and
+    /// preloading a genuinely new one. On an unsatisfiable profile it sets the
     /// progress phase to ``ResolutionProgress/Phase/failed(_:)`` and throws
-    /// ``ResolutionFailure`` carrying the per-slot diagnostics.
+    /// ``ResolutionFailure`` carrying the per-slot diagnostics — including the
+    /// case where the profile's union with what's already resident would
+    /// exceed the budget and nothing resident is evictable (every currently
+    /// pooled model is still referenced by a live profile).
+    ///
+    /// Single-flight: the whole pipeline (through the final pool acquisition)
+    /// is serialized against any other in-flight ``resolve(_:reporting:)`` on
+    /// this router, so the budget decision is always made against a
+    /// consistent snapshot of the pool.
     ///
     /// - Parameters:
     ///   - def: The authored profile to resolve.
     ///   - progress: The UI-bindable progress to drive (mutated on the main actor).
     /// - Returns: The resolved, resident profile.
-    /// - Throws: ``ResolutionFailure`` when no trio co-fits the budget, or any
-    ///   download/load error from the ``ModelLoader``.
+    /// - Throws: ``ResolutionFailure`` when no trio co-fits the effective
+    ///   budget, or any download/load error from the ``ModelLoader``.
     public func resolve(
         profile def: ProfileDefinition,
         reporting progress: ResolutionProgress
     ) async throws -> LanguageModelProfile {
-        guard case .idle = residencyState else {
-            throw RouterError.profileAlreadyResident
-        }
-        residencyState = .resolving
-        // If resolution throws before reaching residency, return to idle; a
-        // successful resolve sets `.resident(token)` below, which this leaves
-        // untouched.
-        defer {
-            if case .resolving = residencyState { residencyState = .idle }
-        }
+        await poolLock.wait()
+        defer { poolLock.signal() }
 
         await beginSizing(progress: progress)
-        let budget = hostBudget()
+        let totalBudget = hostBudget()
+        let residentFootprint = pool.values.reduce(Int64(0)) { $0 + $1.footprintBytes }
+        let effectiveBudget = totalBudget - residentFootprint
         let metadataByRef = await sizeCandidates(profile: def)
+        let residentKeys = Set(pool.keys)
 
-        let resolution = try await runJointFit(profile: def, budget: budget, metadataByRef: metadataByRef, progress: progress)
+        let resolution = try await runJointFit(
+            profile: def,
+            budget: effectiveBudget,
+            metadataByRef: metadataByRef,
+            residentKeys: residentKeys,
+            progress: progress
+        )
         await markChosen(resolution: resolution, progress: progress)
 
+        // Populated incrementally as each slot is acquired, so a mid-pipeline
+        // failure's `catch` below can see exactly what this attempt already
+        // holds and roll it back — whether that slot was freshly loaded or
+        // reused (bumped) an already-resident entry.
+        var slotKeys: [ModelSlot: ResidencyKey] = [:]
+        var newKeys: Set<ResidencyKey> = []
         do {
             await setPhase(.downloading, progress: progress)
-            // Both generation slots download and load identically — only the chosen
-            // ref and slot differ — so they run through one loop over the (ref, slot)
-            // pairs in standard-before-flash order. The embedding slot uses a
-            // different loader call (no `context`) and stays separate.
-            var generationContainers: [ModelSlot: any LoadedLLMContainer] = [:]
+            // Both generation slots acquire identically — only the chosen ref,
+            // slot, and context differ — so they run through one loop over the
+            // (ref, slot) pairs in standard-before-flash order. The embedding
+            // slot uses a different loader call (no `context`) and stays
+            // separate.
             for (chosen, slot) in [
                 (resolution.standard, ModelSlot.standard), (resolution.flash, ModelSlot.flash),
             ] {
-                // The context joint fit actually resolved this slot at — the
-                // authored `def.context` verbatim when explicit, or the rung
-                // the ladder settled on when it was `nil` (see `JointFit`).
-                let context = Self.slotResolution(for: resolution, slot: slot).contextTokens
-                generationContainers[slot] = try await download(ref: chosen, slot: slot, progress: progress) {
-                    try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2)
-                }
-            }
-            // Total by construction: the loop above populates both generation
-            // slots, and `loadLLM` returns a non-optional container.
-            guard let standardContainer = generationContainers[.standard],
-                  let flashContainer = generationContainers[.flash]
-            else {
-                preconditionFailure("download loop populates both .standard and .flash generation slots")
-            }
-            let embeddingContainer = try await download(ref: resolution.embedding, slot: .embedding, progress: progress) {
-                try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2)
+                let slotRes = Self.slotResolution(for: resolution, slot: slot)
+                let key = try await acquireLLM(
+                    key: ResidencyKey(ref: chosen, role: .llm(context: slotRes.contextTokens)),
+                    chosen: chosen,
+                    slot: slot,
+                    context: slotRes.contextTokens,
+                    footprintBytes: Self.chosenFootprint(for: slotRes),
+                    newKeys: &newKeys,
+                    progress: progress
+                )
+                slotKeys[slot] = key
             }
 
+            let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
+            let embeddingKey = try await acquireEmbedder(
+                key: ResidencyKey(ref: resolution.embedding, role: .embedding),
+                chosen: resolution.embedding,
+                footprintBytes: Self.chosenFootprint(for: embeddingRes),
+                newKeys: &newKeys,
+                progress: progress
+            )
+            slotKeys[.embedding] = embeddingKey
+
             await setPhase(.loading, progress: progress)
-            // `finalize` takes the common `any LoadedModelContainer` base, so the
-            // heterogeneous LLM/embedding containers upcast into one pair list and
-            // finalize through a single loop — matching the download section above.
-            let finalizePairs: [(ModelSlot, any LoadedModelContainer)] = [
-                (.standard, standardContainer),
-                (.flash, flashContainer),
-                (.embedding, embeddingContainer),
-            ]
-            for (slot, container) in finalizePairs {
-                try await finalize(slot: slot, container: container, progress: progress)
+            // Only the freshly-acquired keys need preloading — a reused key
+            // was already preloaded the resolve that first loaded it — and
+            // each distinct key is preloaded at most once even if two slots
+            // in this same resolve share it (e.g. `standard` and `flash`
+            // both winning the identical ref+context).
+            var preloadedKeys: Set<ResidencyKey> = []
+            for slot in [ModelSlot.standard, .flash, .embedding] {
+                guard let key = slotKeys[slot], newKeys.contains(key) else { continue }
+                guard let entry = pool[key] else {
+                    preconditionFailure("a freshly-acquired key must still be in the pool")
+                }
+                if preloadedKeys.contains(key) {
+                    await setSlotState(slot, to: .ready, progress: progress)
+                    continue
+                }
+                try await finalize(slot: slot, container: entry.container.erased, progress: progress)
+                preloadedKeys.insert(key)
             }
 
             await complete(progress: progress)
+            guard let standardKey = slotKeys[.standard], let flashKey = slotKeys[.flash],
+                  let embeddingKey = slotKeys[.embedding]
+            else {
+                preconditionFailure("the acquisition loop above populates all three slot keys")
+            }
             let residencyToken = ULID.generate()
             let profile = buildProfile(
                 definition: def,
                 resolution: resolution,
-                standardContainer: standardContainer,
-                flashContainer: flashContainer,
-                embeddingContainer: embeddingContainer,
+                standardKey: standardKey,
+                flashKey: flashKey,
+                embeddingKey: embeddingKey,
                 residencyToken: residencyToken
             )
-            residencyState = .resident(residencyToken)
+            residentProfiles[residencyToken] = Array(slotKeys.values)
             return profile
         } catch {
+            // Give back everything this attempt already acquired — a fresh
+            // load is fully evicted, a reused entry's refcount bump is
+            // undone — so a partial failure never leaks a phantom-resident
+            // pool entry with no owning profile.
+            for key in slotKeys.values {
+                await releaseKey(key)
+            }
             // A download/load/preload failure must move the bound progress to
             // `.failed` so a UI does not hang mid-pipeline, then rethrow.
             await recordLoadFailure(error: error, progress: progress)
@@ -292,28 +432,120 @@ public actor Router {
 
     // MARK: - Residency
 
-    /// Evicts a resident profile's three containers through the loader and frees
-    /// the residency slot, so the next ``resolve(_:reporting:)`` can proceed.
-    ///
-    /// Called by ``LanguageModelProfile/release()`` (and its `deinit`). Matching
-    /// on the unique residency `token` makes it idempotent and safe against a
-    /// stale caller: it only evicts and clears while `token` is the token
-    /// currently resident, so a double release — or a `deinit` firing after an
-    /// explicit release, or after a *different* profile has since been resolved —
-    /// is a no-op that cannot evict the wrong models or clobber another profile's
-    /// residency. Because the token is never reused (unlike an address-derived
-    /// `ObjectIdentifier`), a freed profile's `deinit` can never collide with a
-    /// later profile's token. The slot is cleared before eviction so a concurrent
-    /// release of the same profile cannot double-evict.
+    /// Acquires the generation slot for `key`: reuses an already-pooled entry
+    /// (bumping its refcount) or downloads, and inserts a fresh pool entry
+    /// with newly-minted gates when none exists yet.
     ///
     /// - Parameters:
-    ///   - token: The residency token of the profile asking to be released.
-    ///   - containers: That profile's three resident containers, to evict.
-    func release(token: ULID, containers: [any LoadedModelContainer]) async {
-        guard case .resident(let current) = residencyState, current == token else { return }
-        residencyState = .idle
-        for container in containers {
-            await loader.evict(container: container)
+    ///   - key: This candidate's exact residency identity.
+    ///   - chosen: The chosen model reference.
+    ///   - slot: The slot being acquired (`.standard`/`.flash`).
+    ///   - context: The working context to load a fresh container at.
+    ///   - footprintBytes: This slot's `× 1.2` footprint, recorded on a fresh
+    ///     pool entry as its steady-state cost.
+    ///   - newKeys: Accumulates `key` when this call inserted a fresh entry,
+    ///     so the caller knows which acquired keys still need preloading.
+    ///   - progress: The progress to drive through acquisition.
+    /// - Returns: `key`, for the caller's own bookkeeping.
+    /// - Throws: Any error the loader raises downloading a fresh container.
+    private func acquireLLM(
+        key: ResidencyKey,
+        chosen: ModelRef,
+        slot: ModelSlot,
+        context: Int,
+        footprintBytes: Int64,
+        newKeys: inout Set<ResidencyKey>,
+        progress: ResolutionProgress
+    ) async throws -> ResidencyKey {
+        if pool[key] != nil {
+            pool[key]!.refcount += 1
+            await setSlotState(slot, to: .ready, progress: progress)
+            return key
+        }
+        let container = try await download(ref: chosen, slot: slot, progress: progress) {
+            try await loader.loadLLM(ref: $0, slot: $1, context: context, reporting: $2)
+        }
+        pool[key] = PoolEntry(
+            refcount: 1,
+            footprintBytes: footprintBytes,
+            container: .llm(container),
+            generationGate: AsyncSemaphore(value: 1),
+            forkAdmissionGate: AsyncSemaphore(value: maxConcurrentForks)
+        )
+        newKeys.insert(key)
+        return key
+    }
+
+    /// Acquires the embedding slot for `key` — the ``acquireLLM(key:chosen:slot:context:footprintBytes:newKeys:progress:)``
+    /// counterpart for the embedding role, which has no context axis and a
+    /// different loader call.
+    private func acquireEmbedder(
+        key: ResidencyKey,
+        chosen: ModelRef,
+        footprintBytes: Int64,
+        newKeys: inout Set<ResidencyKey>,
+        progress: ResolutionProgress
+    ) async throws -> ResidencyKey {
+        if pool[key] != nil {
+            pool[key]!.refcount += 1
+            await setSlotState(.embedding, to: .ready, progress: progress)
+            return key
+        }
+        let container = try await download(ref: chosen, slot: .embedding, progress: progress) {
+            try await loader.loadEmbedder(ref: $0, slot: $1, reporting: $2)
+        }
+        pool[key] = PoolEntry(
+            refcount: 1,
+            footprintBytes: footprintBytes,
+            container: .embedding(container),
+            generationGate: AsyncSemaphore(value: 1),
+            forkAdmissionGate: AsyncSemaphore(value: maxConcurrentForks)
+        )
+        newKeys.insert(key)
+        return key
+    }
+
+    /// Decrements the resident-model references a profile identified by
+    /// `token` was granted at resolve time, evicting through the loader only
+    /// whichever pooled models drop to zero references as a result — a model
+    /// another still-live profile also references stays resident.
+    ///
+    /// Called by ``LanguageModelProfile/release()`` (and its `deinit`), and
+    /// by ``resolve(_:reporting:)`` itself to roll back a failed attempt.
+    /// Idempotent and safe against staleness: `token` is looked up (and
+    /// removed) from ``residentProfiles``, so a double release — or a
+    /// `deinit` firing after an explicit release — finds nothing and is a
+    /// no-op, and can never clobber a different, still-live profile's
+    /// references. Because the token is never reused (unlike an
+    /// address-derived `ObjectIdentifier`), a freed profile's `deinit` can
+    /// never collide with a later profile's token.
+    ///
+    /// Also serialized by ``poolLock`` against any in-flight
+    /// ``resolve(_:reporting:)`` — see that property's doc comment for why
+    /// this is not optional: without it, this could evict a key a
+    /// concurrent resolve's already-committed pricing decision assumed was
+    /// still free to reuse.
+    ///
+    /// - Parameter token: The residency token of the profile asking to be released.
+    func release(token: ULID) async {
+        await poolLock.wait()
+        defer { poolLock.signal() }
+        guard let keys = residentProfiles.removeValue(forKey: token) else { return }
+        for key in keys {
+            await releaseKey(key)
+        }
+    }
+
+    /// Decrements one pooled model's refcount by one, evicting it through the
+    /// loader once it reaches zero. A no-op if `key` is not currently pooled.
+    private func releaseKey(_ key: ResidencyKey) async {
+        guard var entry = pool[key] else { return }
+        entry.refcount -= 1
+        if entry.refcount <= 0 {
+            pool.removeValue(forKey: key)
+            await loader.evict(container: entry.container.erased)
+        } else {
+            pool[key] = entry
         }
     }
 
@@ -343,7 +575,7 @@ public actor Router {
     /// cached here: ``JointFit``'s context ladder queries footprint and
     /// native-max-context at however many different context rungs it needs
     /// while deriving the working context, all purely sync from the metadata
-    /// already in hand (see ``footprintBytes(for:context:metadataByRef:membership:)``),
+    /// already in hand (see ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``),
     /// no further I/O once this returns.
     private func sizeCandidates(
         profile def: ProfileDefinition
@@ -399,7 +631,7 @@ public actor Router {
     /// A ref shared across slots (e.g. one small model listed as both an
     /// embedding and a standard candidate) must be sized under *every*
     /// interpretation it could be used under — see
-    /// ``footprintBytes(for:context:metadataByRef:membership:)``.
+    /// ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``.
     private static func slotMembership(profile def: ProfileDefinition) -> [ModelRef: Set<ModelSlot>] {
         var membership: [ModelRef: Set<ModelSlot>] = [:]
         for (slot, refs) in def.candidatesBySlot {
@@ -415,11 +647,20 @@ public actor Router {
     /// interpretation has no KV cache (weights alone), while standard/flash
     /// do — a ref that is a candidate for both is sized under both and the
     /// larger figure is kept, so neither slot's fit test under-estimates it.
+    ///
+    /// Pool-aware: for each interpretation, the figure charged against the
+    /// budget is `0` when that exact ``ResidencyKey`` is already resident
+    /// (`residentKeys`) — reusing an already-loaded model costs nothing
+    /// marginal — and the real raw footprint otherwise. This is what makes an
+    /// already-resident candidate "free" to reuse in a later profile's joint
+    /// fit while a genuinely new candidate is still charged its real cost
+    /// against whatever budget remains.
     private static func footprintBytes(
         for ref: ModelRef,
         context: Int,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
-        membership: [ModelRef: Set<ModelSlot>]
+        membership: [ModelRef: Set<ModelSlot>],
+        residentKeys: Set<ResidencyKey>
     ) -> Result<Int64, RepoMetadataError> {
         guard let metadataResult = metadataByRef[ref] else {
             return .failure(.metadataUnavailable("candidate \(ref.stringValue) was not sized"))
@@ -431,11 +672,14 @@ public actor Router {
             let slots = membership[ref] ?? []
             var candidates: [Int64] = []
             if slots.contains(.embedding) {
-                candidates.append(
-                    Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context))
+                let key = ResidencyKey(ref: ref, role: .embedding)
+                let raw = Footprint.embedder(weightBytes: metadata.weightBytes).footprint(context: context)
+                candidates.append(residentKeys.contains(key) ? 0 : raw)
             }
             if slots.contains(.standard) || slots.contains(.flash) {
-                candidates.append(metadata.footprint.footprint(context: context))
+                let key = ResidencyKey(ref: ref, role: .llm(context: context))
+                let raw = metadata.footprint.footprint(context: context)
+                candidates.append(residentKeys.contains(key) ? 0 : raw)
             }
             // Total by construction: every ref in `metadataByRef` came from
             // `def.candidatesBySlot`, so `membership[ref]` always has at
@@ -455,6 +699,7 @@ public actor Router {
         profile def: ProfileDefinition,
         budget: Int64,
         metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>],
+        residentKeys: Set<ResidencyKey>,
         progress: ResolutionProgress
     ) async throws -> JointResolution {
         let membership = Self.slotMembership(profile: def)
@@ -463,7 +708,10 @@ public actor Router {
                 profile: def,
                 budgetBytes: budget,
                 footprint: { ref, context in
-                    Self.footprintBytes(for: ref, context: context, metadataByRef: metadataByRef, membership: membership)
+                    Self.footprintBytes(
+                        for: ref, context: context, metadataByRef: metadataByRef,
+                        membership: membership, residentKeys: residentKeys
+                    )
                 },
                 nativeMaxContext: { ref in
                     (metadataByRef[ref]
@@ -561,14 +809,14 @@ public actor Router {
 
     // MARK: - Profile assembly
 
-    /// Assembles the resolved profile from the loaded containers and the
+    /// Assembles the resolved profile from the pool's loaded containers and the
     /// per-slot resolutions, stamping each handle with the router's id and recorder.
     private func buildProfile(
         definition def: ProfileDefinition,
         resolution: JointResolution,
-        standardContainer: any LoadedLLMContainer,
-        flashContainer: any LoadedLLMContainer,
-        embeddingContainer: any LoadedEmbeddingContainer,
+        standardKey: ResidencyKey,
+        flashKey: ResidencyKey,
+        embeddingKey: ResidencyKey,
         residencyToken: ULID
     ) -> LanguageModelProfile {
         let embeddingRes = Self.slotResolution(for: resolution, slot: .embedding)
@@ -584,64 +832,56 @@ public actor Router {
             standard: makeRoutedLLM(
                 slot: .standard,
                 chosen: resolution.standard,
-                container: standardContainer,
                 resolution: Self.slotResolution(for: resolution, slot: .standard),
+                key: standardKey,
                 resolvedProfile: resolvedProfile
             ),
             flash: makeRoutedLLM(
                 slot: .flash,
                 chosen: resolution.flash,
-                container: flashContainer,
                 resolution: Self.slotResolution(for: resolution, slot: .flash),
+                key: flashKey,
                 resolvedProfile: resolvedProfile
             ),
-            embedding: RoutedEmbedder(
-                slot: .embedding,
+            embedding: makeRoutedEmbedder(
                 chosen: resolution.embedding,
-                footprintBytes: Self.chosenFootprint(for: embeddingRes),
                 resolution: embeddingRes,
-                container: embeddingContainer,
-                routerId: id,
-                recorder: recorder,
-                // The embedding handle never vends a session, so its writer is
-                // never reached — it is here because a durable root and its
-                // writer are one value, which is what keeps the two generation
-                // handles above from being handed a root with no writer.
-                durableRecording: makeDurableRecording(
-                    slot: .embedding,
-                    chosen: resolution.embedding,
-                    resolution: embeddingRes,
-                    resolvedProfile: resolvedProfile
-                )
+                key: embeddingKey,
+                resolvedProfile: resolvedProfile
             ),
             router: self,
             residencyToken: residencyToken
         )
     }
 
-    /// Builds a generation handle for a slot, stamping it with this router's id,
-    /// recorder, and transcripts root.
+    /// Builds a generation handle for a slot from its pooled entry, stamping
+    /// it with this router's id, recorder, and transcripts root, and reusing
+    /// the pool entry's own generation/fork-admission gates.
     ///
     /// The `.standard` and `.flash` slots construct identical ``RoutedLLM``
-    /// handles differing only by slot, chosen ref, container, and resolution, so
+    /// handles differing only by slot, chosen ref, resolution, and pool key, so
     /// both go through this one helper.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
     ///   - chosen: The chosen model reference for the slot.
-    ///   - container: The loaded, resident generation container.
     ///   - resolution: Why this model won its slot.
+    ///   - key: This slot's exact residency identity, looked up in ``pool``
+    ///     for its container and gates.
     ///   - resolvedProfile: The run's resolved-profile facts, recorded onto
     ///     the sidecar of every root session vended from this handle.
     /// - Returns: The routed generation handle.
     private func makeRoutedLLM(
         slot: ModelSlot,
         chosen: ModelRef,
-        container: any LoadedLLMContainer,
         resolution: SlotResolution,
+        key: ResidencyKey,
         resolvedProfile: SessionSidecar.ResolvedProfile
     ) -> RoutedLLM {
-        RoutedLLM(
+        guard let entry = pool[key], case .llm(let container) = entry.container else {
+            preconditionFailure("an .llm ResidencyKey acquired this resolve must have an .llm pool entry")
+        }
+        return RoutedLLM(
             slot: slot,
             chosen: chosen,
             footprintBytes: Self.chosenFootprint(for: resolution),
@@ -655,7 +895,44 @@ public actor Router {
                 resolution: resolution,
                 resolvedProfile: resolvedProfile
             ),
-            maxConcurrentForks: maxConcurrentForks
+            maxConcurrentForks: maxConcurrentForks,
+            generationGate: entry.generationGate,
+            forkAdmissionGate: entry.forkAdmissionGate
+        )
+    }
+
+    /// Builds the embedding handle from its pooled entry — the
+    /// ``makeRoutedLLM(slot:chosen:resolution:key:resolvedProfile:)``
+    /// counterpart for the embedding role.
+    private func makeRoutedEmbedder(
+        chosen: ModelRef,
+        resolution: SlotResolution,
+        key: ResidencyKey,
+        resolvedProfile: SessionSidecar.ResolvedProfile
+    ) -> RoutedEmbedder {
+        guard let entry = pool[key], case .embedding(let container) = entry.container else {
+            preconditionFailure("an .embedding ResidencyKey acquired this resolve must have an .embedding pool entry")
+        }
+        return RoutedEmbedder(
+            slot: .embedding,
+            chosen: chosen,
+            footprintBytes: Self.chosenFootprint(for: resolution),
+            resolution: resolution,
+            container: container,
+            routerId: id,
+            recorder: recorder,
+            // The embedding handle never vends a session, so its writer is
+            // never reached — it is here because a durable root and its
+            // writer are one value, which is what keeps the generation
+            // handles from being handed a root with no writer.
+            durableRecording: makeDurableRecording(
+                slot: .embedding,
+                chosen: chosen,
+                resolution: resolution,
+                resolvedProfile: resolvedProfile
+            ),
+            generationGate: entry.generationGate,
+            forkAdmissionGate: entry.forkAdmissionGate
         )
     }
 

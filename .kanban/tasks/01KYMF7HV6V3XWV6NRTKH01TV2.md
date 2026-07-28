@@ -1,6 +1,70 @@
 ---
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01kyn8zn6qde34ajz8tmgr257z
+  text: |-
+    Research complete. Read LanguageModelProfile.swift, Router.swift (full), ModelLoader.swift, ModelRef.swift, ModelSlot.swift, JointFit.swift, SlotResolution.swift, ProfileDefinition.swift, HostProfile.swift, Footprint.swift, and the existing test suites (ProfileLifecycleTests, ResolveTests, ExamplesTests, ToolIntegrationTests).
+
+    Key findings:
+    - Router is an `actor` already owning hostBudget(), sizeCandidates(), runJointFit(), download/finalize, and profile assembly. `residencyState` is currently `idle | resolving | resident(ULID)` — exactly one profile at a time, enforced by throwing `RouterError.profileAlreadyResident` on a second resolve while one is resident.
+    - `slotMembership(profile:)` is NOT actual container-level dedup today — it only widens footprint *sizing* conservatively (max across roles) when one ModelRef is a candidate for two slots in the same profile. Standard/flash containers are always downloaded+loaded independently today even when they resolve to the identical ModelRef — i.e. intra-profile container sharing doesn't exist yet either. The task's framing of slotMembership as "existing precedent" is conceptual (accounting), not literal container reuse.
+    - `generationGate`/`forkAdmissionGate` already live on `RoutedModel` (per loaded container), so sharing a container automatically shares serialization — nothing to change there.
+    - `Footprint.embedder(weightBytes:)` has zero KV term, so embedding footprint is context-independent; generation footprint depends on `context` (KV cache).
+    - 4 existing tests hard-code the single-residency behavior and must change since it's exactly what this task removes: `ProfileLifecycleTests.oneActiveProfileEnforced`, `ProfileLifecycleTests.staleReleaseDoesNotClobberResident` (its tail assertion), `ExamplesTests.residencyOneActiveProfileAndRelease`, `ToolIntegrationTests.constructingToolsDoesNotChangeResidency` (its tail assertion). All currently assert `RouterError` is thrown on a second resolve while one profile is resident — under pooled residency that resolve must now succeed (dedup instead of reject).
+
+    Design decision: **One Router, several resident profiles** (not several Routers sharing a pool) — Router already owns the loader/probe/budget machinery, so this avoids introducing a third participant to memory decisions. Implementing:
+    - `ResidencyKey { ref: ModelRef, role: .llm(context: Int) | .embedding }` — the exact artifact identity (ref+revision already in ModelRef; role+context is the load-time parameter that changes resident bytes; embedding has no context axis since its footprint is weights-only).
+    - Router holds `pool: [ResidencyKey: PoolEntry(refcount, footprintBytes, container)]` and `residentProfiles: [ULID: [ResidencyKey]]` (replacing the single `residencyState` enum).
+    - Whole `resolve()` pipeline serialized via one `AsyncSemaphore(value: 1)` (single authority over the budget decision) — this is a deliberate simplification: resolutions are single-flight even though resident profiles run fully concurrently once resolved (generation is unaffected, only the resolve-time decision is serialized). Matches the correctness requirement without a fine-grained reservation protocol.
+    - Effective budget per resolve = machine budget − Σ(footprintBytes of all currently-pooled keys). The footprint closure fed to `JointFit.resolve` returns 0 marginal cost for a candidate whose (ref, role, context) key is already pool-resident, so an already-loaded model is "free" to reuse but a genuinely new one is charged its real cost against what's left — this makes the existing `ResolutionFailure` (JointFit's own failure path) naturally serve the "nothing fits, nothing evictable, fail cleanly" acceptance criterion with zero new error-handling code.
+    - Eviction policy: refcount-based, immediate eviction at zero. No lingering/LRU cache — not required by any acceptance test and adds complexity the task doesn't ask for.
+    - The pool mechanism is applied uniformly to all 3 slot acquisitions (standard/flash/embedding) per resolve, so as a side effect this also fixes the latent intra-profile gap (standard==flash ModelRef+context now shares one container) — same mechanism, no extra code path.
+
+    Proceeding with TDD: writing failing tests first for each acceptance criterion, updating the 4 existing tests whose assertions are the exact old behavior being replaced.
+  timestamp: 2026-07-28T21:09:40.695060+00:00
+- actor: claude-code
+  id: 01kyna3q8p2wg707dcnxq9fv43
+  text: |-
+    Implementation complete, TDD followed throughout.
+
+    Files changed:
+    - Sources/FoundationModelsRouter/Router.swift — full rewrite of the residency model. Replaced the single `residencyState` enum (idle/resolving/resident(token)) with a refcounted pool (`pool: [ResidencyKey: PoolEntry]`) and per-profile key tracking (`residentProfiles: [ULID: [ResidencyKey]]`). Added `ResidencyKey` (ModelRef + role, where role is `.llm(context:)` or `.embedding` — the exact load-time identity that determines resident bytes) and `PoolEntry` (refcount, footprintBytes, container, shared generationGate/forkAdmissionGate) as file-scope private types. `resolve()` now: serializes end-to-end via a private `AsyncSemaphore(value:1)` (`resolutionLock`) — single authority over the budget decision; computes an effective budget = machine budget − Σ(already-pooled footprints); feeds JointFit a footprint closure that prices an already-pool-resident candidate at 0 marginal cost; acquires each of the 3 slots (reuse+refcount++ or download+insert); rolls back everything this attempt acquired on any failure. `release(token:)` replaces `release(token:containers:)` — looks up and removes the profile's own key list, decrementing each, evicting at zero. Removed `RouterError` (its only case, `.profileAlreadyResident`, is no longer thrown by anything).
+    - Sources/FoundationModelsRouter/LanguageModelProfile.swift — `RoutedModel.init` gained optional `generationGate`/`forkAdmissionGate` params (default nil → fresh semaphore, preserving old behavior for direct construction); Router now threads a REUSED pool entry's own gates into every handle built over it, so two profiles sharing a model share its generation serialization, not just its container. `release()`/`deinit` updated to the new `release(token:)` signature.
+    - Tests/FoundationModelsRouterTests/PooledResidencyTests.swift (new) — 7 tests covering every acceptance criterion and required test case from the task description.
+    - ProfileLifecycleTests.swift, ExamplesTests.swift, ToolIntegrationTests.swift — 4 pre-existing tests that hard-coded the OLD one-active-profile-throws behavior rewritten to assert the NEW dedup/pooling behavior (this is exactly the behavior the task replaces, not scope creep).
+
+    Notable debugging detour: while writing PooledResidencyTests, discovered that discarding a resolved `LanguageModelProfile` with `_ = try await router.resolve(...)` lets ARC deallocate it immediately, firing `deinit`'s unstructured `Task { await router.release(...) }` before the next line runs — this raced and silently released residency between two "back-to-back" resolve calls in a test, making a test pass for the wrong reason (looked like dedup working; was actually release-then-reload). Fixed by holding named references to every resolved profile for the test's duration. Documented as a comment in the fixed test. This is a sharp edge worth remembering for anyone else writing tests against this profile-lifetime-tied-residency design.
+
+    Verification: `swift build` exit 0, zero warnings on touched files. `swift test` (full suite, all three non-gated targets): 593/593 + 18/18 + 12/12 passing, zero failures. Adversarial double-check via the `double-check` agent is in flight; will report its verdict and any resulting changes in a follow-up comment.
+
+    Task intentionally left in `doing` per the implement workflow — review is a separate step.
+  timestamp: 2026-07-28T21:29:22.454270+00:00
+- actor: claude-code
+  id: 01kynav85mkd1w6b94vyx55qx6
+  text: |-
+    First double-check pass returned REVISE with a real finding: a TOCTOU race between `resolve()`'s pool-pricing decision (which prices an already-resident candidate at 0 marginal cost) and an unlocked `release(token:)` that could evict that exact key mid-flight, causing a silent double-load recorded at the stale zero footprint — permanently under-counting that model's real cost in every future budget computation. This is exactly the "single authority over the budget" correctness bar the task calls out.
+
+    Fixed via TDD: wrote `PooledResidencyTests.releaseCannotRaceAnInFlightResolveAndCorruptAccounting`, which forces the race deterministically (a gated loader ref suspends one profile's resolve mid-acquisition while a concurrent release of a shared model's other owner is issued). Confirmed RED against the pre-fix code, reproducibly across 5 runs (the shared model was silently double-loaded). Fix: the `resolutionLock` (renamed `poolLock` to reflect its now-broader scope) is now also acquired by `release(token:)`, not just `resolve()` — since `release()`'s own mutation path (`releaseKey`) never itself re-acquires the lock, no deadlock: `resolve()`'s own rollback path calls `releaseKey` directly while already holding the lock. Confirmed GREEN reproducibly across 8 runs, and the full suite (594/594 + 18/18 + 12/12) stable across 3 consecutive full runs post-fix.
+
+    Second (bounded, final per really-done's "at most once" re-check rule) adversarial double-check is in flight now, focused specifically on verifying the fix closes the race without introducing deadlock/regression. Will report its verdict next.
+  timestamp: 2026-07-28T21:42:13.428331+00:00
+- actor: claude-code
+  id: 01kynb2hq448efd9prqt1ghsqd
+  text: |-
+    Second (bounded, final) adversarial double-check: PASS. It independently re-derived the race-fix's correctness (traced every `pool`/`residentProfiles` mutation site to confirm all are lock-guarded, confirmed `releaseKey` doesn't re-acquire the lock so no deadlock, traced the acquire-loop's awaits to rule out any new deadlock/starvation from locking `release()`, independently re-derived the regression test's eviction-count arithmetic and confirmed it would genuinely have failed pre-fix, and ran `swift build`/`swift test` itself rather than trusting my report — got the same 594/18/12 green). One cosmetic nit flagged (a stale `resolutionLock` name reference in a doc comment, left over from the `poolLock` rename) — fixed immediately.
+
+    Final verification, fresh: `swift build` exit 0. `swift test`: 594/594 + 18/18 + 12/12 passing, zero failures, zero warnings on touched files.
+
+    Task is done and green. Leaving in `doing` per the implement workflow — `/review` is a separate step.
+
+    Summary of the shape decision and design for anyone picking this up next: chose "one Router, several resident profiles" (not several Routers sharing a pool) since Router already owns the loader/probe/budget machinery — adding a pool as Router-internal state avoids introducing a third participant to memory decisions. Residency is refcounted per `ResidencyKey` (ModelRef + role, where role is `.llm(context:)` or `.embedding`) — the exact load-time identity that determines resident bytes. A single `poolLock` (`AsyncSemaphore(value: 1)`) serializes every mutation to the pool, both `resolve()`'s acquisition path and `release(token:)`'s decrement path — this was tightened mid-task after the first adversarial review caught a real race in the release-side gap. Eviction policy is immediate-at-zero-refcount (no lingering/LRU cache) — sufficient for every acceptance criterion and simpler than the alternative.
+  timestamp: 2026-07-28T21:46:12.580436+00:00
+- actor: claude-code
+  id: 01kynb3hbqm3r01g87s0sjrxwv
+  text: 'Implementation landed via implementer subagent (TDD). Chose shape: one Router with several resident profiles (Router already owns loader/probe/budget machinery). New ResidencyKey (ModelRef + role) identifies resident artifacts; refcounted pool[ResidencyKey: PoolEntry] + residentProfiles[ULID: [ResidencyKey]] replaces old single residencyState enum. resolve() prices already-resident candidates at zero marginal cost so the union of resident models is priced against one budget. Adversarial review caught a real TOCTOU race in release() (unlocked decrement could evict a key resolve() had already priced as free, corrupting budget accounting toward OOM) — fixed by serializing all pool mutations through one poolLock semaphore; regression test added and confirmed RED then GREEN across repeated runs. Reused pool entries share generationGate/forkAdmissionGate across profiles so shared-model generation actually serializes. RouterError.profileAlreadyResident removed (nothing throws it now). New PooledResidencyTests.swift (8 tests) covers all acceptance criteria + required test cases + the race regression; 4 pre-existing tests updated from old one-active-profile-throws behavior to new pooled-sharing behavior (that old behavior is exactly what this task replaces). swift build clean, swift test green (594+18+12 = 624 tests, 0 failures). Two double-check rounds: first REVISE (the race bug), fixed, second PASS. Task left in doing for checkpoint + review.'
+  timestamp: 2026-07-28T21:46:44.983877+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'Pooled model residency: per-project profiles sharing one budget'
 ---
 ## What

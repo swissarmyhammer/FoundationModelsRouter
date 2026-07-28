@@ -169,25 +169,29 @@ struct ProfileLifecycleTests {
         _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
     }
 
-    @Test("a second resolve while a profile is resident throws, then succeeds after release")
+    @Test("resolving the same profile a second time while the first is resident shares its models, not rejected")
     @MainActor
-    func oneActiveProfileEnforced() async throws {
+    func secondResolveOfSameProfileSharesResidentModels() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let spy = EvictionSpy()
         let router = Self.makeRouter(spy: spy, recorder: InMemoryRecorder(), cacheDir: dir)
 
+        // Pooled residency: a second resolve of the identical profile while
+        // the first is still resident now succeeds and reuses the already
+        // loaded models (dedup), rather than being rejected — this is
+        // exactly what task kh01tv2 replaces the old one-active-profile rule
+        // with.
         let first = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let second = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        }
-
+        // Releasing the first leaves the second's models loaded (still
+        // referenced); only releasing both evicts everything.
         await first.release()
-
-        // After release the slot is free again.
-        _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        #expect(await spy.count == 0)
+        await second.release()
+        #expect(await spy.count == 3)
     }
 
     @Test("a release carrying a stale token does not clobber a newer resident profile")
@@ -201,28 +205,23 @@ struct ProfileLifecycleTests {
 
         let first = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let staleToken = first.residencyToken
-        let staleContainers: [any LoadedModelContainer] = [
-            first.standard.container, first.flash.container, first.embedding.container,
-        ]
         await first.release()
+        #expect(await spy.count == 3)
 
-        // A second profile is now resident under a fresh, never-reused token.
+        // A second, unrelated profile is now resident under a fresh,
+        // never-reused token — `first`'s models were fully evicted above, so
+        // this reloads from scratch.
         let second = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // A release carrying the first profile's defunct token must be a no-op:
-        // it must neither clear `second`'s residency nor evict any container.
-        let evictionsBefore = await spy.count
-        await router.release(token: staleToken, containers: staleContainers)
-        #expect(await spy.count == evictionsBefore)
+        // A release carrying the first profile's defunct token must be a
+        // no-op: `first`'s pool entry is already gone, so this must neither
+        // evict anything further nor touch `second`'s residency.
+        await router.release(token: staleToken)
+        #expect(await spy.count == 3)
 
-        // `second` is still resident, so a fresh resolve is rejected.
-        await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        }
-
-        // And `second` still releases cleanly, freeing the slot.
+        // `second` still releases cleanly, evicting its own three models.
         await second.release()
-        _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        #expect(await spy.count == 6)
     }
 
     // MARK: - Recorded embedding access

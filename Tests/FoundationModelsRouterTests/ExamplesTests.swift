@@ -439,9 +439,9 @@ struct ExamplesTests {
 
     // MARK: - Residency lifecycle
 
-    @Test("Residency: one active profile at a time; release() frees the slot")
+    @Test("Residency: pooled — a second resolve of the same profile shares its models; release() frees them once unreferenced")
     @MainActor
-    func residencyOneActiveProfileAndRelease() async throws {
+    func residencyPooledSharingAndRelease() async throws {
         let router = ExampleHarness.makeRouter()
         let coding = ProfileDefinition(
             name: "coding",
@@ -453,16 +453,18 @@ struct ExamplesTests {
 
         let profile = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
-        // The router holds one active profile at a time so it never over-commits
-        // RAM: a second resolve is rejected while the first is resident.
-        await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(profile: coding, reporting: ResolutionProgress())
-        }
+        // Pooled residency: the router now admits several resident profiles
+        // sharing one machine budget, so a second resolve of the identical
+        // profile succeeds and reuses the already-loaded models rather than
+        // being rejected.
+        let second = try await router.resolve(profile: coding, reporting: ResolutionProgress())
 
-        // Releasing evicts the resident models and frees the residency slot.
+        // Releasing one leaves the models loaded for the other; only once
+        // both release does the router's residency fully clear.
         await profile.release()
+        await second.release()
 
-        // Now another profile can be resolved on the same router.
+        // Now the slot is genuinely empty; another profile resolves cleanly.
         _ = try await router.resolve(profile: coding, reporting: ResolutionProgress())
     }
 

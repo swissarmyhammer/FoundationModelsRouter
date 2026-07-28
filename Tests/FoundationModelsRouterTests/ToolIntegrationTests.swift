@@ -253,7 +253,7 @@ struct ToolIntegrationTests {
 
     // MARK: - Residency unchanged
 
-    @Test("constructing tools does not change the active-profile residency")
+    @Test("constructing tools does not change residency; a second resolve pools rather than rejects")
     @MainActor
     func constructingToolsDoesNotChangeResidency() async throws {
         let dir = Self.makeTempDir()
@@ -268,14 +268,15 @@ struct ToolIntegrationTests {
         _ = SummarizeTool(model: profile.flash)
         _ = EmbedTool(model: profile.embedding)
 
-        // Residency is unchanged: one profile is still resident, so a second
-        // resolve is rejected.
-        await #expect(throws: RouterError.self) {
-            _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        }
+        // Pooled residency: a second resolve of the identical profile now
+        // succeeds, reusing the already-resident models rather than being
+        // rejected.
+        let second = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // And after releasing the one resident profile the slot frees again.
+        // Releasing the first leaves the second's models resident; only
+        // once both release does the slot free again.
         await profile.release()
+        await second.release()
         _ = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
     }
 }

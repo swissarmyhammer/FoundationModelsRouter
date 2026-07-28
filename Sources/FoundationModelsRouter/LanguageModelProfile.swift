@@ -127,7 +127,15 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// two apart is what lets a turn hand this gate back mid-turn while it waits
     /// on a person (``RoutedSession/awaitingUser(_:)``), so one slow human
     /// answer no longer blocks every other session on the model.
-    let generationGate = AsyncSemaphore(value: 1)
+    ///
+    /// Set from the initializer's `generationGate` parameter when supplied —
+    /// pooled residency (``Router``) passes the *same* gate instance into every
+    /// ``RoutedModel`` that wraps an already-resident container, so two
+    /// profiles sharing one loaded model still serialize generation against
+    /// each other, not just within one profile's own handle. Defaults to a
+    /// fresh gate when `nil`, matching the pre-pooling behavior for a handle
+    /// constructed directly (e.g. in tests).
+    let generationGate: AsyncSemaphore
 
     /// The fork-admission gate (a fair FIFO ``AsyncSemaphore`` at value
     /// `maxConcurrentForks`).
@@ -157,7 +165,16 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - maxConcurrentForks: The in-flight fork ceiling this model's
     ///     ``forkAdmissionGate`` admits (the router's `maxConcurrentForks`).
     ///     Consumed only by the generation-session fork surface; the embedding
-    ///     handle never forks. Defaults to ``defaultMaxConcurrentForks``.
+    ///     handle never forks. Ignored when `forkAdmissionGate` is supplied.
+    ///     Defaults to ``defaultMaxConcurrentForks``.
+    ///   - generationGate: The shared generation gate to reuse, or `nil` to
+    ///     mint a fresh one. Pooled residency (``Router``) passes the
+    ///     already-resident container's own gate here when a second profile
+    ///     reuses it, so generation across both profiles' handles still
+    ///     serializes against the one underlying model. Defaults to `nil`.
+    ///   - forkAdmissionGate: The shared fork-admission gate to reuse, or
+    ///     `nil` to mint a fresh one sized by `maxConcurrentForks`. Same
+    ///     pooled-reuse rationale as `generationGate`. Defaults to `nil`.
     public init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -167,7 +184,9 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         routerId: ULID,
         recorder: any TranscriptRecorder,
         durableRecording: DurableRecording? = nil,
-        maxConcurrentForks: Int = defaultMaxConcurrentForks
+        maxConcurrentForks: Int = defaultMaxConcurrentForks,
+        generationGate: AsyncSemaphore? = nil,
+        forkAdmissionGate: AsyncSemaphore? = nil
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -177,7 +196,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.routerId = routerId
         self.recorder = recorder
         self.durableRecording = durableRecording
-        self.forkAdmissionGate = AsyncSemaphore(value: maxConcurrentForks)
+        self.generationGate = generationGate ?? AsyncSemaphore(value: 1)
+        self.forkAdmissionGate = forkAdmissionGate ?? AsyncSemaphore(value: maxConcurrentForks)
     }
 }
 
@@ -205,12 +225,13 @@ public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
 /// models and an ``embedding`` model — each a handle to a loaded container with
 /// its resolution reasoning.
 ///
-/// Residency is bounded: the resolving ``Router`` allows only one active profile
-/// at a time, so a profile must be released before another can be resolved.
-/// ``release()`` evicts all three models through the router's loader and frees
-/// the router's residency slot; `deinit` runs the same release best-effort, so a
-/// dropped profile cannot strand resident memory. The session surface lands in
-/// milestone 5b.
+/// Residency is pooled, not exclusive: the resolving ``Router`` may hold
+/// several profiles resident at once, sharing one machine budget and
+/// reference-counting each distinct resident model (keyed on ref, revision,
+/// and load-time role/context) across every profile that references it.
+/// ``release()`` decrements this profile's references and evicts through the
+/// router's loader only the models that drop to zero; `deinit` runs the same
+/// release best-effort, so a dropped profile cannot strand resident memory.
 public final class LanguageModelProfile: Sendable {
     /// The name of the ``ProfileDefinition`` this was resolved from.
     public let definitionName: String
@@ -232,10 +253,10 @@ public final class LanguageModelProfile: Sendable {
     ///
     /// A unique, never-reused id (unlike an `ObjectIdentifier`, which a freed
     /// profile's address — and therefore identity — could hand to a later
-    /// profile). The router matches on it in ``Router/release(token:containers:)``
-    /// so a stale `deinit` firing after this profile has been released and a
-    /// *different* profile resolved cannot match, and so cannot evict the wrong
-    /// models or clear the newer profile's residency.
+    /// profile). The router looks up this profile's own resident keys by
+    /// this token in ``Router/release(token:)`` so a stale `deinit` firing
+    /// after this profile has already been released cannot double-decrement
+    /// pool refcounts or clobber a newer profile's residency.
     let residencyToken: ULID
 
     /// Creates a resolved profile.
@@ -271,35 +292,30 @@ public final class LanguageModelProfile: Sendable {
         embedding.owningProfileBox.register(self)
     }
 
-    /// The three resident containers, in slot order, for eviction.
-    private var containers: [any LoadedModelContainer] {
-        [standard.container, flash.container, embedding.container]
-    }
-
-    /// Evicts all three resident models and frees the router's residency slot,
-    /// so the next ``Router/resolve(_:reporting:)`` can proceed.
+    /// Decrements this profile's reference on each of its resident models
+    /// (standard, flash, embedding) and evicts through the router's loader
+    /// only whichever ones drop to zero references — a model another still-
+    /// live profile also references stays resident.
     ///
-    /// Idempotent: the router only evicts and clears while this profile is the
-    /// resident one, so calling ``release()`` more than once — or after `deinit`
-    /// has already run it — is a safe no-op. The eviction runs through the
-    /// injected loader, so it carries no MLX dependency of its own.
+    /// Idempotent: the router only decrements while this token still owns a
+    /// tracked reservation, so calling ``release()`` more than once — or
+    /// after `deinit` has already run it — is a safe no-op.
     public func release() async {
-        await router.release(token: residencyToken, containers: containers)
+        await router.release(token: residencyToken)
     }
 
     /// Runs ``release()`` best-effort when the profile is dropped, so a profile
     /// that goes out of scope without an explicit release still frees its
-    /// resident models and the router's residency slot.
+    /// resident-model references.
     ///
     /// The eviction is dispatched onto an unstructured task because it is async;
-    /// the task captures only the router, the residency token, and the containers
-    /// as values — never `self` — so it cannot resurrect the deallocating
-    /// profile. The token (not the profile's address) is what the router matches,
-    /// so a `deinit` racing a newer profile's residency is a safe no-op.
+    /// the task captures only the router and the residency token as values —
+    /// never `self` — so it cannot resurrect the deallocating profile. The
+    /// token (not the profile's address) is what the router matches, so a
+    /// `deinit` racing a newer profile's residency is a safe no-op.
     deinit {
         let router = self.router
         let residencyToken = self.residencyToken
-        let containers = self.containers
-        Task { await router.release(token: residencyToken, containers: containers) }
+        Task { await router.release(token: residencyToken) }
     }
 }
