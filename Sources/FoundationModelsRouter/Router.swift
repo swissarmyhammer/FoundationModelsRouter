@@ -13,6 +13,14 @@ import Foundation
 /// declaration it defaults on, since it is evaluated at every call site.
 public let defaultMaxConcurrentForks = 4
 
+/// The default headroom reserved out of the machine budget for OS/app use.
+///
+/// `public` for the same reason as ``defaultMaxConcurrentForks``: it is the
+/// default argument for ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``,
+/// a `public` initializer, and a default argument expression must be at
+/// least as visible as the declaration it defaults on.
+public let defaultHeadroomReserveBytes: Int64 = 4 << 30
+
 /// How much of a session's activity is recorded.
 ///
 /// The level (and the ``Router``'s `redact` hook) are enforced by a
@@ -125,7 +133,8 @@ public actor Router {
     /// - Parameters:
     ///   - id: The recording root id; pass one in to continue a prior recording
     ///     root. Defaults to a fresh ULID.
-    ///   - headroomReserve: Bytes held out of the budget. Defaults to 4 GB.
+    ///   - headroomReserve: Bytes held out of the budget. Defaults to
+    ///     ``defaultHeadroomReserveBytes`` (4 GB).
     ///   - maxConcurrentForks: In-flight fork sessions per profile. Defaults to
     ///     ``defaultMaxConcurrentForks``.
     ///   - cacheDir: The disposable cache directory. Defaults to the user caches
@@ -145,7 +154,7 @@ public actor Router {
     ///     requires an injected `Downloader`/`TokenizerLoader`.
     public init(
         id: ULID = .generate(),
-        headroomReserve: Int64 = 4 << 30,
+        headroomReserve: Int64 = defaultHeadroomReserveBytes,
         maxConcurrentForks: Int = defaultMaxConcurrentForks,
         cacheDir: URL? = nil,
         recordingsDir: URL? = nil,

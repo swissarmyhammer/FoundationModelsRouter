@@ -62,61 +62,31 @@ comments:
   id: 01kyn5zccgv3derg7w37sk3dh3
   text: 'Implementation landed via implementer subagent (TDD). Added recordingRoot: URL? param to makeSession and restoreSessionTree; flat layout when supplied, existing nested layout byte-for-byte when omitted. routerId now stored as optional metadata in SessionSidecar rather than a required path segment. New test file PerSessionRecordingRootTests.swift (6 tests) covers all 4 acceptance scenarios plus a fork-of-flat-layout regression case found during adversarial review. swift build clean; swift test green (616 tests, 0 failures). Two rounds of double-check review — first REVISE (missing fork test, stale DocC refs, weak round-trip test), fixed, second PASS. Task left in doing for /finish to checkpoint and route to review.'
   timestamp: 2026-07-28T20:17:05.936601+00:00
+- actor: claude-code
+  id: 01kyn7vhdj3kg41fz43he57nrb
+  text: 'Checkpoint committed (b8dfd62). Review pass 1 scoped to HEAD~1..HEAD: 19 engine findings, 17 dropped per the never-refactor-existing-tests exception (all targeted pre-existing test lines this commit didn''t touch — one-line routerId arg additions). 2 kept and appended: Router.swift:133 magic number `4` in `4 << 30` GB headroom reserve, and PerSessionRecordingRootTests.swift:123 magic number `4` in maxConcurrentForks default. Task remains in review; looping back to implement to address these two.'
+  timestamp: 2026-07-28T20:49:57.170083+00:00
+- actor: claude-code
+  id: 01kyn846atq30za182hafh43cy
+  text: |-
+    Both re-review findings fixed:
+
+    1. Sources/FoundationModelsRouter/Router.swift — added `public let defaultHeadroomReserveBytes: Int64 = 4 << 30` at file scope, right after the existing `defaultMaxConcurrentForks` constant, with a matching doc comment explaining why it must be `public` (default-argument expressions must be at least as visible as the public initializer that evaluates them — same rule already documented for `defaultMaxConcurrentForks`). `Router.init`'s `headroomReserve: Int64 = 4 << 30` now reads `headroomReserve: Int64 = defaultHeadroomReserveBytes`; updated the parameter's doc comment to reference the constant.
+
+    2. Tests/FoundationModelsRouterTests/PerSessionRecordingRootTests.swift — `makeRouter(...)`'s `maxConcurrentForks: Int = 4` now reads `maxConcurrentForks: Int = defaultMaxConcurrentForks`, reusing Router's own public constant (visible via `@testable import`) rather than inventing a parallel test-local constant, since it is the exact same semantic default.
+
+    Sweep for other magic-number `4`s introduced by this task's diff in these two files: none found — grepped both files for `\b4\b` and `<< 30` before and after; only the two flagged occurrences existed, both now named.
+
+    No pre-existing test code was restructured — only the single flagged default-parameter line in the test file changed, per the review skill's never-refactor-existing-tests exception.
+
+    Verification (fresh, this session): `swift build` exit 0 (only the pre-existing unrelated mlx-swift-bundle warning). `swift test`: 586 + 18 + 12 = 616 tests across 3 targets, 0 failures, 0 warnings. Did not run swift format per repo convention.
+
+    Adversarial double-check agent: PASS. Confirmed the diff touched only the 4 expected hunks, `public` visibility is genuinely required (not gratuitous), the constant's value/type exactly preserves the original `4 << 30` : Int64 semantics, reusing `defaultMaxConcurrentForks` in the test is the right call per the finding's own "or similar" allowance, and no other magic numbers were left behind.
+
+    Leaving task in `doing` for `/review` to pick back up.
+  timestamp: 2026-07-28T20:54:40.730628+00:00
 position_column: doing
 position_ordinal: '80'
 title: Per-session recording root + omittable routerId segment
 ---
-## What
-
-**Upstream ask from `FoundationModelsACPAgent`** (its `plan.md` §5, revised 2026-07-28).
-
-That package has moved transcript storage from a shared home root to **project-local**: `<cwd>/.<name>/transcripts/<sessionId>/`. A transcript is project context — what the agent did to a repo belongs with that repo. Two things in Router's recording layout block it.
-
-## 1. The recording root is per-Router, but sessions span projects (blocking)
-
-`Router.recordingsDir` is a stored property set once at `init` (`Sources/FoundationModelsRouter/Router.swift:67`, `:151`, `:164`), and `recordingDirectory(forSessionId:)` derives every session's directory from it (`Sources/FoundationModelsRouter/RoutedLLM.swift:260-266`):
-
-```swift
-recordingsBase
-    .appendingPathComponent(routerId.description, isDirectory: true)
-    .appendingPathComponent(sessionId.description, isDirectory: true)
-```
-
-So **one Router writes every session under one root**. But a single ACP agent process serves many concurrent sessions in *different repos* (ACP `session/new(cwd)`), and one resident profile means one Router holding one loaded model — a Router per project is not an option, since the whole point is that the model stays loaded once.
-
-**Ask: let the caller supply a recording root per session** — e.g. `makeSession(recordingRoot:)`, falling back to the Router-level `recordingsDir` when omitted, so existing callers are unaffected.
-
-Note `makeSession` **already takes `workingDirectory:`** (`RoutedLLM.swift:162-170`), so Router could in principle derive the path itself. That is the wrong split: the consuming package owns the *location policy* (its §5 — dotfolder name, project-local vs home vs absolute, the `.gitignore`), and Router owns the *writing*. Handing Router a root keeps that boundary; handing Router a policy does not.
-
-## 2. The `routerId` path segment (wanted, not blocking)
-
-`routerId` is a fresh ULID per process run, so the segment groups recordings by **process lifetime** — an implementation detail nobody browses by. The meaningful noun for the consumer is the root ACP session: `sessionId` is stable across `session/resume` and is what `session/list` enumerates.
-
-With a per-session root, the segment also becomes actively harmful — the layout would read `<cwd>/.<name>/transcripts/<routerId>/<sessionId>/`, reintroducing exactly the "pile of opaque ULID directories in every repo" that the consumer's earlier design was trying to avoid.
-
-**Ask: make the `routerId` segment omittable**, and record the routerId as **metadata inside the session directory** instead — it is provenance, worth keeping, but it is not structure. Appears in three places: `RoutedLLM.swift:266`, `RoutedLLM.swift:418`, `SessionTreeRestoration.swift:215`.
-
-A routerId may correspond 1-1 with a run of the agent; that is fine and does not make it a good directory level.
-
-## Constraint
-
-Restoration must keep working. `SessionTreeRestoration` reconstructs from the same nesting, so whatever shape is chosen has to round-trip: write with a per-session root and no routerId segment, then restore from it. Existing recordings in the old layout should keep restoring — either by detecting the layout or by leaving the old default in place for callers that do not opt in.
-
-## Acceptance Criteria
-
-- [ ] A caller can specify a recording root per session; omitting it preserves today's behavior exactly.
-- [ ] Two sessions from the **same** Router can write to two **different** roots.
-- [ ] The `routerId` path segment can be omitted, with the routerId preserved as metadata in the session directory.
-- [ ] `SessionTreeRestoration` round-trips both the new flat layout and the existing nested one.
-- [ ] No change required of callers that do not opt in.
-
-## Tests
-
-- [ ] Two concurrent sessions on one Router, given different roots, write to those roots and neither leaks into the other.
-- [ ] A session written with no routerId segment restores correctly, and its routerId is still readable from metadata.
-- [ ] An existing nested-layout recording still restores after the change.
-- [ ] Omitting the new parameter reproduces the current directory layout byte-for-byte.
-
-## Workflow
-
-- Use `/tdd` — write failing tests first, then implement to make them pass.
+## What\n\n**Upstream ask from `FoundationModelsACPAgent`** (its `plan.md` §5, revised 2026-07-28).\n\nThat package has moved transcript storage from a shared home root to **project-local**: `<cwd>/.<name>/transcripts/<sessionId>/`. A transcript is project context — what the agent did to a repo belongs with that repo. Two things in Router's recording layout block it.\n\n## 1. The recording root is per-Router, but sessions span projects (blocking)\n\n`Router.recordingsDir` is a stored property set once at `init` (`Sources/FoundationModelsRouter/Router.swift:67`, `:151`, `:164`), and `recordingDirectory(forSessionId:)` derives every session's directory from it (`Sources/FoundationModelsRouter/RoutedLLM.swift:260-266`):\n\n```swift\nrecordingsBase\n    .appendingPathComponent(routerId.description, isDirectory: true)\n    .appendingPathComponent(sessionId.description, isDirectory: true)\n```\n\nSo **one Router writes every session under one root**. But a single ACP agent process serves many concurrent sessions in *different repos* (ACP `session/new(cwd)`), and one resident profile means one Router holding one loaded model — a Router per project is not an option, since the whole point is that the model stays loaded once.\n\n**Ask: let the caller supply a recording root per session** — e.g. `makeSession(recordingRoot:)`, falling back to the Router-level `recordingsDir` when omitted, so existing callers are unaffected.\n\nNote `makeSession` **already takes `workingDirectory:`** (`RoutedLLM.swift:162-170`), so Router could in principle derive the path itself. That is the wrong split: the consuming package owns the *location policy* (its §5 — dotfolder name, project-local vs home vs absolute, the `.gitignore`), and Router owns the *writing*. Handing Router a root keeps that boundary; handing Router a policy does not.\n\n## 2. The `routerId` path segment (wanted, not blocking)\n\n`routerId` is a fresh ULID per process run, so the segment groups recordings by **process lifetime** — an implementation detail nobody browses by. The meaningful noun for the consumer is the root ACP session: `sessionId` is stable across `session/resume` and is what `session/list` enumerates.\n\nWith a per-session root, the segment also becomes actively harmful — the layout would read `<cwd>/.<name>/transcripts/<routerId>/<sessionId>/`, reintroducing exactly the \"pile of opaque ULID directories in every repo\" that the consumer's earlier design was trying to avoid.\n\n**Ask: make the `routerId` segment omittable**, and record the routerId as **metadata inside the session directory** instead — it is provenance, worth keeping, but it is not structure. Appears in three places: `RoutedLLM.swift:266`, `RoutedLLM.swift:418`, `SessionTreeRestoration.swift:215`.\n\nA routerId may correspond 1-1 with a run of the agent; that is fine and does not make it a good directory level.\n\n## Constraint\n\nRestoration must keep working. `SessionTreeRestoration` reconstructs from the same nesting, so whatever shape is chosen has to round-trip: write with a per-session root and no routerId segment, then restore from it. Existing recordings in the old layout should keep restoring — either by detecting the layout or by leaving the old default in place for callers that do not opt in.\n\n## Acceptance Criteria\n\n- [ ] A caller can specify a recording root per session; omitting it preserves today's behavior exactly.\n- [ ] Two sessions from the **same** Router can write to two **different** roots.\n- [ ] The `routerId` path segment can be omitted, with the routerId preserved as metadata in the session directory.\n- [ ] `SessionTreeRestoration` round-trips both the new flat layout and the existing nested one.\n- [ ] No change required of callers that do not opt in.\n\n## Tests\n\n- [ ] Two concurrent sessions on one Router, given different roots, write to those roots and neither leaks into the other.\n- [ ] A session written with no routerId segment restores correctly, and its routerId is still readable from metadata.\n- [ ] An existing nested-layout recording still restores after the change.\n- [ ] Omitting the new parameter reproduces the current directory layout byte-for-byte.\n\n## Workflow\n\n- Use `/tdd` — write failing tests first, then implement to make them pass.\n\n## Review Findings (2026-07-28 15:20)\n\nScope: `HEAD~1..HEAD`. The engine returned 19 confirmed findings; 17 concerned duplication/magic-numbers/naming/coverage in test files this commit did not touch beyond a one-line `routerId:` argument addition (pre-existing test code) and are dropped per the review skill's blanket exception on refactoring existing tests. The 2 findings below are on production code and a brand-new test file, and are relayed as-is.\n\n- [x] `Sources/FoundationModelsRouter/Router.swift:133` — Hardcoded value `4` in `4 << 30` represents 4GB of headroom reserve and should be a named constant, not a magic number. Extract as `private let defaultHeadroomReserveBytes = 4 << 30` or similar at file scope.\n- [x] `Tests/FoundationModelsRouterTests/PerSessionRecordingRootTests.swift:123` — Hardcoded `4` in `maxConcurrentForks: Int = 4` default parameter is a magic number that should reference a named constant. Change default to `maxConcurrentForks: Int = defaultMaxConcurrentForks` or similar, or define as a test-scope constant.\n

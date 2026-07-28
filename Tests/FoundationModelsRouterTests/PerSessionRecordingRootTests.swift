@@ -139,7 +139,7 @@ struct PerSessionRecordingRootTests {
         id: ULID = .generate(),
         cacheDir: URL,
         recordingsDir: URL,
-        maxConcurrentForks: Int = 4
+        maxConcurrentForks: Int = defaultMaxConcurrentForks
     ) -> Router {
         Router(
             id: id,
