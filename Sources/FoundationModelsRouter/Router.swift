@@ -682,7 +682,8 @@ public actor Router {
                 model: chosen,
                 context: resolution.contextTokens,
                 recordingLevel: recordingLevel,
-                profile: resolvedProfile
+                profile: resolvedProfile,
+                routerId: id
             )
         )
     }

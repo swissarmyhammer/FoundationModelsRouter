@@ -148,6 +148,12 @@ struct SessionSidecarTests {
     /// survivor against a freshly-built expectation).
     private static let sampleAgentSpawnParentId = ULID.generate()
 
+    /// A fixed id for ``sampleSidecar(forkedAtEntryCount:)``'s ``SessionSidecar/routerId``
+    /// (task ke41yth), for the same reason as ``sampleAgentSpawnParentId``: a
+    /// freshly generated id on every call would make two separately-built
+    /// samples compare unequal.
+    private static let sampleRouterId = ULID.generate()
+
     /// A sample sidecar with every field populated, for round-trip coverage.
     private static func sampleSidecar(forkedAtEntryCount: Int?) -> SessionSidecar {
         SessionSidecar(
@@ -169,7 +175,8 @@ struct SessionSidecarTests {
             agentSpawn: SessionSidecar.AgentSpawn(
                 parentSessionId: sampleAgentSpawnParentId,
                 parentToolCallId: "tool-call-42"
-            )
+            ),
+            routerId: sampleRouterId
         )
     }
 
@@ -731,7 +738,8 @@ struct SessionSidecarTests {
             model: "org/std-a",
             context: 4_096,
             recordingLevel: .off,
-            profile: nil
+            profile: nil,
+            routerId: .generate()
         )
         writer.write(
             instructions: nil, grammar: nil, forkedAtEntryCount: nil, workingDirectory: dir, to: dir)

@@ -92,7 +92,8 @@ actor CompactionContinuityEvalRealSubjectRunner {
                     model: CompactionEvalRealModel.ref,
                     context: noopResolution(slot).contextTokens,
                     recordingLevel: .full,
-                    profile: nil
+                    profile: nil,
+                    routerId: router.id
                 )
             )
         }

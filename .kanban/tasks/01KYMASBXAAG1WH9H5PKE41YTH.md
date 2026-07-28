@@ -1,5 +1,68 @@
 ---
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01kyn5bxw6xw75tj302z3tmr1z
+  text: |-
+    Implementation landed (TDD, red-green verified manually: watched the new test file fail to compile with "extra argument 'recordingRoot'"/"extra argument 'routerId'" before adding the params, then pass).
+
+    Design decisions:
+    - Single new parameter `recordingRoot: URL? = nil` on `RoutedModel.makeSession(...)` (both public and internal `grammar:` builder). Supplied -> flat layout `<recordingRoot>/<sessionId>/`, no routerId segment. Omitted -> byte-for-byte identical to today's `<recordingsDir>/<routerId>/<sessionId>/` nesting. Threaded through `RoutedModel.recordingDirectory(forSessionId:recordingRoot:)`.
+    - `SessionSidecar` gained an optional `routerId: ULID?` field (decodeIfPresent, nil for pre-existing recordings) so the routerId stays discoverable as metadata when the path segment is omitted.
+    - `SessionSidecarWriter` gained a *required* `routerId: ULID` field (populated from `Router.id` in `Router.makeDurableRecording`), stamped onto every sidecar it writes going forward — nested or flat layout alike, so this is not conditional on which layout a session uses.
+    - `RoutedModel.restoreSessionTree(root:recordingRoot:registry:tools:)` gained a matching `recordingRoot: URL? = nil`: supplied, loads `TranscriptTree` directly under that directory (flat); omitted, reproduces the exact old `<recordingsRoot>/<routerId>/` lookup including the `noDurableRecordingsRoot` guard.
+    - Deliberately did NOT touch `makeLanguageModel()` / `makeLanguageModel(resuming:)` / `makeGuidedSession` — out of scope per the task's acceptance criteria and tests, which only cover `makeSession`/`restoreSessionTree`. They keep today's nested-only layout; a future task could extend them the same way if needed.
+    - `TranscriptTree.load(under:)` needed zero changes — it already treats "directly inside the given directory" as roots, so it transparently supports both nested and flat layouts depending on what directory it's pointed at.
+
+    Collateral changes: `SessionSidecarWriter(...)` gained a required `routerId:` param, so 6 integration-test/eval-support call sites and 1 unit-test call site were updated to pass `routerId: router.id` (or `.generate()` where no router variable exists) — no behavior change there, just satisfying the new required parameter.
+
+    New test file: Tests/FoundationModelsRouterTests/PerSessionRecordingRootTests.swift — covers all 4 scenarios from the task: two sessions/two roots don't leak; flat-layout session restores with routerId readable from sidecar metadata; existing nested-layout still restores; omitting recordingRoot reproduces today's layout byte-for-byte.
+
+    Verification (fresh, this session): `swift build` exit 0 (only a pre-existing unrelated warning about an mlx-swift bundle). `swift test` (all 3 targets): 585 + 18 + 12 = 615 tests, 0 failures. Did NOT run swift format per repo convention.
+
+    Diagnostics tool (code_context LSP) reported stale "extra argument" errors on several test files after edits — confirmed these are stale SourceKit cache artifacts, not real: `swift build --build-tests` and `swift test` both succeeded cleanly on the same files moments later.
+
+    Adversarial double-check agent dispatched for a second opinion; will report its verdict once it returns.
+  timestamp: 2026-07-28T20:06:28.486769+00:00
+- actor: claude-code
+  id: 01kyn5vn8gsmm73w9fyxvmxccs
+  text: |-
+    First adversarial double-check pass returned REVISE with 3 findings, all fixed:
+
+    1. Missing test for a fork of a flat-layout root session (would have missed a regression where fork() re-derived routerId/recordingsRoot instead of nesting under the parent's own directory). Added `forkOfFlatLayoutRootNestsWithNoRouterIdSegment` to PerSessionRecordingRootTests.swift: creates a session via makeSession(recordingRoot:), forks it, asserts the fork's recordingDirectory is <customRoot>/<rootId>/<forkId>/ with no routerId segment, its session.json exists, and TranscriptTree.load(under: customRoot) reports it as the root's child.
+
+    2. Stale DocC cross-references in files this diff touches — several doc comments referenced makeSession(...)/restoreSessionTree(...) parameter-label lists that predated the new recordingRoot: parameter. Fixed in RoutedLLM.swift, GuidedGeneration.swift, and PerSessionRecordingRootTests.swift's own header comment.
+
+    3. SessionSidecarTests.swift's sampleSidecar(forkedAtEntryCount:) helper never set routerId, so the "every field survives a round-trip" test never actually exercised a non-nil routerId round-trip (it was covered elsewhere via the production SessionSidecarWriter path, but this test's own name overclaimed). Fixed: added a sampleRouterId constant and threaded it through.
+
+    Re-verified fresh after fixes: swift build exit 0, swift build --build-tests exit 0, swift test across all 3 targets: 586 + 18 + 12 = 616 tests, 0 failures (585->586 for the new fork test).
+
+    Re-spawned double-check once more (the one permitted re-check per really-done's bounded-loop policy) to confirm the fixes landed correctly; awaiting its verdict.
+  timestamp: 2026-07-28T20:15:03.952564+00:00
+- actor: claude-code
+  id: 01kyn5ymjmbchyaftrw7v6z5kk
+  text: |-
+    Re-check double-check verdict: PASS. All three prior findings confirmed genuinely resolved against the actual diff (not just claimed) — fork test exercises real assertions, DocC label fixes match the real post-diff parameter order, SessionSidecarTests round-trip now covers a non-nil routerId.
+
+    Final fresh verification (this session): `swift build` exit 0 (only the pre-existing unrelated mlx-swift-bundle warning, unrelated to this change). `swift test` across all 3 targets: 586 + 18 + 12 = 616 tests, 0 failures.
+
+    Implementation is complete and green. Leaving the task in `doing` for `/review` per the implement skill's process — not moving it myself.
+
+    Summary of what shipped:
+    - `RoutedModel.makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)` — new `recordingRoot: URL? = nil` parameter (Sources/FoundationModelsRouter/RoutedLLM.swift). Supplied: flat `<recordingRoot>/<sessionId>/` layout, no routerId path segment. Omitted: today's `<recordingsDir>/<routerId>/<sessionId>/` layout, byte-for-byte.
+    - `RoutedModel.restoreSessionTree(root:recordingRoot:registry:tools:)` — matching `recordingRoot: URL? = nil` (Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift), loading the flat layout directly when supplied, or the exact old nested lookup (with its noDurableRecordingsRoot guard) when omitted.
+    - `SessionSidecar.routerId: ULID?` — new optional metadata field, `nil` for old recordings, populated for every session written from here on regardless of layout (Sources/FoundationModelsRouter/Recording/SessionSidecar.swift).
+    - `SessionSidecarWriter.routerId: ULID` — new required field, threaded from `Router.id` in `Router.makeDurableRecording` (Sources/FoundationModelsRouter/Router.swift).
+    - Forks of a flat-layout root automatically land correctly with no code change (RoutedSessionActor.fork nests relative to the parent's own directory) — now covered by a dedicated test.
+    - New test file Tests/FoundationModelsRouterTests/PerSessionRecordingRootTests.swift (6 tests) plus a fix to SessionSidecarTests.swift's round-trip coverage.
+    - Mechanical `routerId:` argument additions to 6 pre-existing test/eval `SessionSidecarWriter(...)` call sites (no behavior change).
+
+    Out of scope (documented, not done): `makeLanguageModel()`, `makeLanguageModel(resuming:)`, and `makeGuidedSession` were not extended with `recordingRoot:` — the task's acceptance criteria and test list only cover `makeSession`/`restoreSessionTree`. They keep today's nested-only layout.
+  timestamp: 2026-07-28T20:16:41.556168+00:00
+- actor: claude-code
+  id: 01kyn5zccgv3derg7w37sk3dh3
+  text: 'Implementation landed via implementer subagent (TDD). Added recordingRoot: URL? param to makeSession and restoreSessionTree; flat layout when supplied, existing nested layout byte-for-byte when omitted. routerId now stored as optional metadata in SessionSidecar rather than a required path segment. New test file PerSessionRecordingRootTests.swift (6 tests) covers all 4 acceptance scenarios plus a fork-of-flat-layout regression case found during adversarial review. swift build clean; swift test green (616 tests, 0 failures). Two rounds of double-check review — first REVISE (missing fork test, stale DocC refs, weak round-trip test), fixed, second PASS. Task left in doing for /finish to checkpoint and route to review.'
+  timestamp: 2026-07-28T20:17:05.936601+00:00
+position_column: doing
 position_ordinal: '80'
 title: Per-session recording root + omittable routerId segment
 ---

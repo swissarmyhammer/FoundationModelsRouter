@@ -88,6 +88,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
+    ///   - recordingRoot: A per-session recording root override, or `nil` to
+    ///     default to this handle's router-level ``Router/recordingsDir`` —
+    ///     see ``recordingDirectory(forSessionId:recordingRoot:)`` for the
+    ///     layout each choice produces (task ke41yth). Defaults to `nil`, so
+    ///     an existing caller that never opts in gets today's directory
+    ///     layout byte-for-byte.
     ///   - tools: The tools the model can call during this session. Before
     ///     being threaded to the underlying `LanguageModelSession` (mirroring
     ///     Apple's `LanguageModelSession(tools:)`), every tool conforming to
@@ -121,13 +127,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     public func makeSession(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
+        recordingRoot: URL? = nil,
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
         agentSpawn: SessionSidecar.AgentSpawn? = nil
     ) -> RoutedSession {
         makeSession(
-            grammar: nil, instructions: instructions, workingDirectory: workingDirectory, tools: tools,
+            grammar: nil, instructions: instructions, workingDirectory: workingDirectory,
+            recordingRoot: recordingRoot, tools: tools,
             budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn)
     }
 
@@ -146,23 +154,27 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
+    ///   - recordingRoot: A per-session recording root override — see
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``.
+    ///     Defaults to `nil`.
     ///   - tools: The tools the model can call during this session. See
     ///     ``makeSession(instructions:workingDirectory:tools:)`` for the
     ///     auto-connect contract. Defaults to no tools.
     ///   - budget: The auto-compaction opt-in — see
-    ///     ``makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``.
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``.
     ///     Defaults to `nil`.
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Defaults to
     ///     ``CompactionPrompt/default``.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from — see ``makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:)``.
+    ///     from — see ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``.
     ///     Defaults to `nil`.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
         instructions: String?,
         workingDirectory: URL?,
+        recordingRoot: URL? = nil,
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
@@ -171,7 +183,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
         let sessionId = ULID.generate()
-        let recordingDirectory = self.recordingDirectory(forSessionId: sessionId)
+        let recordingDirectory = self.recordingDirectory(forSessionId: sessionId, recordingRoot: recordingRoot)
 
         // Pure per-session instancing, before the backend is ever built:
         // every `EventEmittingTool` among `tools` is replaced by a
@@ -250,14 +262,37 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     }
 
     /// The recording directory a fresh session/handle with `sessionId` nests
-    /// under: the router's durable transcripts root (or a per-process
-    /// temporary fallback when recording to memory/none), by router id and
-    /// session id — shared by ``makeSession(grammar:instructions:workingDirectory:)``
-    /// and ``makeLanguageModel()`` so the two factories nest identically.
+    /// under.
     ///
-    /// - Parameter sessionId: The fresh session/handle's own span id.
+    /// Two layouts, chosen by whether `recordingRoot` is supplied (task
+    /// ke41yth):
+    ///
+    /// - **`recordingRoot` supplied** — a flat `<recordingRoot>/<sessionId>/`,
+    ///   with no ``RoutedModel/routerId`` segment. This is what a caller
+    ///   opting into ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``'s
+    ///   per-session root gets: the routerId groups recordings by *process
+    ///   run*, a detail nobody browses by, and reintroducing it under a
+    ///   caller-chosen project-local root would just be a pile of opaque
+    ///   ULID directories again. The routerId is not lost — it travels as
+    ///   ``SessionSidecar/routerId`` metadata inside the session directory
+    ///   instead of as a path segment.
+    /// - **`recordingRoot` omitted (`nil`)** — today's nested
+    ///   `<recordingsBase>/<routerId>/<sessionId>/`, where `recordingsBase`
+    ///   is the router's durable transcripts root, or a per-process temporary
+    ///   fallback when recording to memory/none. Reproduces every existing
+    ///   caller's layout byte-for-byte — shared by
+    ///   ``makeSession(grammar:instructions:workingDirectory:)`` and
+    ///   ``makeLanguageModel()`` so the two factories nest identically.
+    ///
+    /// - Parameters:
+    ///   - sessionId: The fresh session/handle's own span id.
+    ///   - recordingRoot: A per-session recording root override, or `nil` for
+    ///     the router-level default. Defaults to `nil`.
     /// - Returns: The directory its transcript is recorded under.
-    func recordingDirectory(forSessionId sessionId: ULID) -> URL {
+    func recordingDirectory(forSessionId sessionId: ULID, recordingRoot: URL? = nil) -> URL {
+        if let recordingRoot {
+            return recordingRoot.appendingPathComponent(sessionId.description, isDirectory: true)
+        }
         let recordingsBase = recordingsRoot
             ?? FileManager.default.temporaryDirectory
                 .appendingPathComponent(moduleName, isDirectory: true)
@@ -378,7 +413,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// supplies real tools straight to `LanguageModelSession`'s own
     /// initializer, with no per-session instancing of its own. For restoring
     /// a whole fork tree at once, prefer
-    /// ``restoreSessionTree(root:registry:tools:)`` instead, which threads
+    /// ``restoreSessionTree(root:recordingRoot:registry:tools:)`` instead, which threads
     /// its own `tools:` parameter to every restored node — each with its own
     /// fresh outbox and instanced tool copies — via
     /// ``LoadedLLMContainer/makeSession(transcript:tools:)``.

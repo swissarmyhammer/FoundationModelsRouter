@@ -200,6 +200,20 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// recording tree, which only an explicit fact like this can bridge.
     public let agentSpawn: AgentSpawn?
 
+    /// The recording root id of the router that created this session — the
+    /// same fact a nested layout's `<routerId>/<sessionId>/` path segment
+    /// already states structurally (task ke41yth, "per-session recording
+    /// root + omittable routerId segment").
+    ///
+    /// Recorded so the routerId stays discoverable even when a session's
+    /// directory omits that path segment — a caller-supplied per-session
+    /// recording root (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``)
+    /// nests a session directly as `<recordingRoot>/<sessionId>/`, with
+    /// nothing above it to name the router that wrote it. `nil` only for a
+    /// recording made before this field existed — every sidecar written from
+    /// here on carries it, nested layout or flat.
+    public let routerId: ULID?
+
     /// Creates a session sidecar.
     ///
     /// - Parameters:
@@ -219,6 +233,9 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///   - compactionCount: This session's own recorded compaction count, or
     ///     `nil` when not yet computed. Always `nil` for a freshly-written
     ///     sidecar — see ``compactionCount``'s own doc comment.
+    ///   - routerId: The recording root id of the router that created this
+    ///     session, or `nil` for a recording made before this field existed.
+    ///     Defaults to `nil`.
     public init(
         slot: ModelSlot,
         model: ModelRef,
@@ -230,7 +247,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         profile: ResolvedProfile?,
         workingDirectory: URL,
         agentSpawn: AgentSpawn? = nil,
-        compactionCount: Int? = nil
+        compactionCount: Int? = nil,
+        routerId: ULID? = nil
     ) {
         self.slot = slot
         self.model = model
@@ -243,6 +261,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.workingDirectory = workingDirectory
         self.agentSpawn = agentSpawn
         self.compactionCount = compactionCount
+        self.routerId = routerId
     }
 
     /// The key ``read(in:)`` sets on its `JSONDecoder.userInfo` to the
@@ -255,7 +274,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case slot, model, context, instructions, grammar, recordingLevel, forkedAtEntryCount,
-            profile, compactionCount, workingDirectory, agentSpawn
+            profile, compactionCount, workingDirectory, agentSpawn, routerId
     }
 
     /// Decodes a sidecar, defaulting an absent ``workingDirectory`` key to
@@ -283,6 +302,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         profile = try container.decodeIfPresent(ResolvedProfile.self, forKey: .profile)
         compactionCount = try container.decodeIfPresent(Int.self, forKey: .compactionCount)
         agentSpawn = try container.decodeIfPresent(AgentSpawn.self, forKey: .agentSpawn)
+        routerId = try container.decodeIfPresent(ULID.self, forKey: .routerId)
         if let recorded = try container.decodeIfPresent(URL.self, forKey: .workingDirectory) {
             workingDirectory = recorded
         } else if let fallback = decoder.userInfo[Self.sidecarDirectoryUserInfoKey] as? URL {
@@ -322,7 +342,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
             profile: profile,
             workingDirectory: workingDirectory,
             agentSpawn: agentSpawn,
-            compactionCount: count
+            compactionCount: count,
+            routerId: routerId
         )
     }
 
@@ -450,6 +471,12 @@ public struct SessionSidecarWriter: Sendable {
     let recordingLevel: RecordingLevel
     /// The run's resolved-profile facts, recorded onto root sessions only.
     let profile: SessionSidecar.ResolvedProfile?
+    /// The recording root id of the router this writer belongs to, stamped
+    /// onto every sidecar it writes (task ke41yth) — the same fact a nested
+    /// layout's `<routerId>/<sessionId>/` path segment states structurally,
+    /// kept discoverable even when a session's own directory omits it (see
+    /// ``SessionSidecar/routerId``).
+    let routerId: ULID
 
     /// Creates a sidecar writer for one resolved model handle.
     ///
@@ -459,18 +486,22 @@ public struct SessionSidecarWriter: Sendable {
     ///   - context: The working context, in tokens, `model` was resolved at.
     ///   - recordingLevel: How much of each session's activity is recorded.
     ///   - profile: The run's resolved-profile facts, recorded onto roots.
+    ///   - routerId: The recording root id of the router this writer belongs
+    ///     to, stamped onto every sidecar it writes.
     public init(
         slot: ModelSlot,
         model: ModelRef,
         context: Int,
         recordingLevel: RecordingLevel,
-        profile: SessionSidecar.ResolvedProfile?
+        profile: SessionSidecar.ResolvedProfile?,
+        routerId: ULID
     ) {
         self.slot = slot
         self.model = model
         self.context = context
         self.recordingLevel = recordingLevel
         self.profile = profile
+        self.routerId = routerId
     }
 
     /// Writes one session's sidecar into its own directory, creating that
@@ -517,7 +548,8 @@ public struct SessionSidecarWriter: Sendable {
             forkedAtEntryCount: forkedAtEntryCount,
             profile: forkedAtEntryCount == nil ? profile : nil,
             workingDirectory: workingDirectory,
-            agentSpawn: forkedAtEntryCount == nil ? agentSpawn : nil
+            agentSpawn: forkedAtEntryCount == nil ? agentSpawn : nil,
+            routerId: routerId
         )
         do {
             try SessionSidecar.write(sidecar, to: directory)

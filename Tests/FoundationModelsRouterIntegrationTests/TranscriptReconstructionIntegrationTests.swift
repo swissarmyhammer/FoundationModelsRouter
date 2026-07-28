@@ -117,7 +117,8 @@ struct TranscriptReconstructionIntegrationTests {
                     model: transcriptReconstructionTinyModel,
                     context: noopResolution(slot).contextTokens,
                     recordingLevel: .full,
-                    profile: nil
+                    profile: nil,
+                    routerId: router.id
                 )
             )
         }
