@@ -480,4 +480,72 @@ struct SessionTreeRestorationLostRunTests {
         #expect(manufactured.detail.count == SessionMailbox.terminalDetailTailLimit)
         #expect(manufactured.detail.hasSuffix("TAIL-MARKER"))
     }
+
+    // MARK: - Round trip: a manufactured .lost survives journaling into a second restore
+
+    /// Decodes every ``OperationEvent`` journaled as an
+    /// ``OperationEventSegment`` on `events`' entries (pattern from
+    /// ``PendingEventInjectionTests``).
+    private static func journaledOperationEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
+        events.flatMap { event in
+            (event.entry?.segments ?? []).compactMap { segment in
+                guard case .custom(_, let discriminator, let contentJSON, _) = segment,
+                    discriminator == OperationEventSegment.typeDiscriminator
+                else { return nil }
+                return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
+            }
+        }
+    }
+
+    @Test("a manufactured .lost drained by respond() is journaled and persisted for a second restore")
+    @MainActor
+    func manufacturedLostSurvivesJournalingIntoSecondRestore() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        // (1) Record a session whose only journaled event is a dangling
+        // .progress — the orphaned run.
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        await root.outbox.post(Self.event(correlationID: "run-1", kind: .progress, detail: "812 lines so far"))
+        _ = try await root.respond(to: "hello")
+
+        // (2) The first restore manufactures the .lost onto the restored
+        // node's fresh outbox.
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let firstRestore = try await profile2.standard.restoreSessionTree(root: root.id)
+        let firstPending = await firstRestore.root.outbox.pending()
+        #expect(firstPending.events.map(\.event.outcome) == [.lost])
+
+        // (3) A live turn on the restored session drains the pending .lost
+        // and journals it as an OperationEventSegment on the recorded
+        // .prompt entry — the durable half of the manufacture.
+        _ = try await firstRestore.root.respond(to: "continue")
+
+        // (4) A second restore under a third fresh process: the .lost is
+        // now *persisted* in the effective transcript...
+        let router3 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile3 = try await router3.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let secondRestore = try await profile3.standard.restoreSessionTree(root: root.id)
+
+        let tree = try TranscriptTree.load(
+            under: recordingsDir.appendingPathComponent(router1.id.description, isDirectory: true))
+        let journaled = Self.journaledOperationEvents(in: try tree.effectiveEntryEvents(forSession: root.id))
+        let persistedLost = journaled.filter { $0.outcome == .lost }
+        #expect(persistedLost.count == 1)
+        #expect(persistedLost.first?.kind == .completed)
+        #expect(persistedLost.first?.correlationID == "run-1")
+        #expect(persistedLost.first?.tool == "shell")
+
+        // ...and the run now has its journaled terminal, so the second
+        // restore manufactures nothing — the hole stays closed for good.
+        let secondPending = await secondRestore.root.outbox.pending()
+        #expect(secondPending.events.isEmpty)
+    }
 }

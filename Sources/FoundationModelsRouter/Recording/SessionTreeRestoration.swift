@@ -417,6 +417,34 @@ extension TranscriptTree {
         let correlationID: String
     }
 
+    /// One pass of orphan-detection state over a recorded stream: which
+    /// runs completed, each run's newest non-terminal event, and the
+    /// first-non-terminal-appearance order manufactured terminals report
+    /// in. Extracted so ``lostRunTerminalEvents(in:)``'s scan loop stays
+    /// flat — folding one event into the state is this type's job, not an
+    /// arm of a switch nested inside that loop.
+    private struct OrphanRunScan {
+        var completedRuns: Set<RunKey> = []
+        var newestNonTerminalByRun: [RunKey: OperationEvent] = [:]
+        var orphanCandidateOrder: [RunKey] = []
+
+        /// Folds one journaled event into the scan: a `.completed` marks
+        /// its run terminated; a `.progress`/`.elicitation` becomes the
+        /// run's newest non-terminal event, entering the candidate order
+        /// on the run's first non-terminal sighting.
+        mutating func observe(_ event: OperationEvent) {
+            let run = RunKey(tool: event.tool, correlationID: event.correlationID)
+            switch event.kind {
+            case .completed:
+                completedRuns.insert(run)
+            case .progress, .elicitation:
+                if newestNonTerminalByRun.updateValue(event, forKey: run) == nil {
+                    orphanCandidateOrder.append(run)
+                }
+            }
+        }
+    }
+
     /// The terminal `.completed`/``OperationOutcome/lost`` events a restore
     /// must manufacture for `events`' orphaned journaled runs — the crash
     /// edge of run-outcome durability (the orderly-shutdown edge is
@@ -451,25 +479,14 @@ extension TranscriptTree {
     /// - Returns: The manufactured terminal events, or empty when every
     ///   journaled run completed.
     static func lostRunTerminalEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
-        var completedRuns: Set<RunKey> = []
-        var newestNonTerminalByRun: [RunKey: OperationEvent] = [:]
-        var orphanCandidateOrder: [RunKey] = []
+        var scan = OrphanRunScan()
         for event in events {
             for operationEvent in operationEvents(in: event) {
-                let run = RunKey(tool: operationEvent.tool, correlationID: operationEvent.correlationID)
-                switch operationEvent.kind {
-                case .completed:
-                    completedRuns.insert(run)
-                case .progress, .elicitation:
-                    if newestNonTerminalByRun[run] == nil {
-                        orphanCandidateOrder.append(run)
-                    }
-                    newestNonTerminalByRun[run] = operationEvent
-                }
+                scan.observe(operationEvent)
             }
         }
-        return orphanCandidateOrder.compactMap { run in
-            guard !completedRuns.contains(run), let newest = newestNonTerminalByRun[run] else {
+        return scan.orphanCandidateOrder.compactMap { run in
+            guard !scan.completedRuns.contains(run), let newest = scan.newestNonTerminalByRun[run] else {
                 return nil
             }
             let detail = newest.elicitation?.message ?? newest.detail
