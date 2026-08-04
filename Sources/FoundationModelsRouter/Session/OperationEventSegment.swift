@@ -1,6 +1,5 @@
 import Foundation
 import FoundationModels
-import Operations
 
 /// A ``PersistableCustomSegment`` durably recording one drained
 /// ``OperationEvent`` on the `.prompt` entry it rode into a turn.

@@ -31,11 +31,12 @@ handed.
 This is checkable, not aspirational: `Package.swift`'s only dependencies
 are MLX/HuggingFace plumbing (weights, tokenizers, via the pinned
 `mlx-swift-lm` fork plus `swift-huggingface`/`swift-transformers` for the
-gated integration suite), `ULID.swift` (session/router identifiers), and
-`FoundationModelsOperationTool`'s lightweight `Operations` product — a
-host-neutral tool-*events* vocabulary (`OperationEvent`/
-`OperationEventSink`/`EventEmittingTool`) with no dependency back on this
-package, not a tool catalog. No YAML/dotfolder reader and no wire-protocol
+gated integration suite) and `ULID.swift` (session/router identifiers).
+The host-neutral tool-*events* vocabulary (`OperationEvent`/
+`OperationOutcome`/`OperationEventSink`/`EventEmittingTool`/
+`ForkableTool`) lives in `Sources/FoundationModelsRouter/Hosting/` with no
+dependency on any tool package — it is a vocabulary, not a tool catalog.
+No YAML/dotfolder reader and no wire-protocol
 type appears anywhere in `Sources/FoundationModelsRouter`. The guardrail is
 what lets one package sit underneath radically different callers — a CLI,
 a Mac app, an ACP bridge, a sub-agent spawner — with zero coupling between

@@ -1,6 +1,5 @@
 import Foundation
 import FoundationModels
-import Operations
 
 /// A failure restoring a session tree from disk via
 /// ``RoutedModel/restoreSessionTree(root:registry:)``.

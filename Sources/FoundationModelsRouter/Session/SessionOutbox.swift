@@ -1,5 +1,4 @@
 import FoundationModels
-import Operations
 
 /// A staging area, owned per ``RoutedSession``, for everything that wants to
 /// enter the conversation at a future turn boundary — tool events posted by

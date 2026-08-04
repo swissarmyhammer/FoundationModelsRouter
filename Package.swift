@@ -9,15 +9,6 @@ let mlxPackage = "mlx-swift-lm"
 let ulidPackage = "ULID.swift"
 let packageName = "FoundationModelsRouter"
 
-// The tool-events substrate (`OperationEvent`/`OperationEventSink`/
-// `EventEmittingTool`): host-neutral vocabulary a `SessionOutbox` stores and a
-// long-running `OperationTool` posts through, with no dependency back on this
-// package (host -> substrate direction only). Lightweight — only the
-// `Operations` product (protocols and plain value types) is needed, never
-// `OperationsCLI`.
-let operationToolPackage = "FoundationModelsOperationTool"
-let operationsProduct: Target.Dependency = .product(name: "Operations", package: operationToolPackage)
-
 // Hugging Face Hub client and tokenizer packages. The `mlx-foundationmodels`
 // fork bundles no default Hub client: its `MLXHuggingFace` macros
 // (`#hubDownloader()` / `#huggingFaceTokenizerLoader()`) expand to code that
@@ -73,10 +64,6 @@ let package = Package(
             branch: "foundationmodels-fixes"
         ),
         .package(
-            url: "git@github.com:swissarmyhammer/\(operationToolPackage).git",
-            branch: "main"
-        ),
-        .package(
             url: "https://github.com/yaslab/\(ulidPackage).git",
             from: "1.3.1"
         ),
@@ -92,12 +79,12 @@ let package = Package(
     targets: [
         .target(
             name: packageName,
-            dependencies: mlxProducts + [ulidProduct, operationsProduct],
+            dependencies: mlxProducts + [ulidProduct],
             path: "Sources/\(packageName)"
         ),
         .testTarget(
             name: "\(packageName)Tests",
-            dependencies: [.target(name: packageName)] + mlxProducts + [operationsProduct],
+            dependencies: [.target(name: packageName)] + mlxProducts,
             path: "Tests/\(packageName)Tests"
         ),
         // Gated, real-model suite (milestone 7): downloads deliberately tiny

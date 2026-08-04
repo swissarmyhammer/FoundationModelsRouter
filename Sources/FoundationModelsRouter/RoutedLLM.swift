@@ -1,6 +1,5 @@
 import Foundation
 import FoundationModels
-import Operations
 
 /// A failure producing text from a resident generation model.
 public enum GenerationError: Error, Equatable {
