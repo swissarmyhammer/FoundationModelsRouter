@@ -243,7 +243,7 @@ public actor SessionMailbox {
 
     /// One pending elicitation's state.
     private enum PendingElicitation {
-        /// The run is suspended on ``awaitAnswer(to:)``, waiting for
+        /// The run is suspended on ``awaitAnswer(to:posting:)``, waiting for
         /// ``respond(elicitationId:_:)``.
         case awaitingAnswer(mode: ElicitationMode, continuation: CheckedContinuation<ElicitationResponse, Never>)
 
@@ -416,16 +416,31 @@ public actor SessionMailbox {
     /// ``complete(elicitationId:)`` arrives (URL-mode entries stay open past
     /// accept).
     ///
+    /// Registration happens-before `posting` runs: the pending entry is
+    /// installed synchronously on this actor first, and only then is
+    /// `posting` started (as a separate task), so an answer delivered the
+    /// instant a host observes the posted request — even from inside the
+    /// sink's own `post(_:)` — always finds the pending entry instead of
+    /// no-oping against an unregistered id.
+    ///
     /// Registering an `elicitationId` that is already pending is a caller
     /// error; the duplicate registration is rejected immediately with
     /// ``ElicitationResponse/cancel`` rather than disturbing the entry
-    /// already pending under that id.
+    /// already pending under that id — and `posting` is never run for the
+    /// rejected duplicate.
     ///
-    /// - Parameter request: The typed request whose `elicitationId` keys the
-    ///   registry entry.
+    /// - Parameters:
+    ///   - request: The typed request whose `elicitationId` keys the
+    ///     registry entry.
+    ///   - posting: The upstream delivery of the request — run only after
+    ///     the pending entry is registered. Defaults to doing nothing, for a
+    ///     caller that delivers the request through its own channel.
     /// - Returns: The user's answer — for an accepted URL-mode request,
     ///   delivered only once the flow completed.
-    public func awaitAnswer(to request: ElicitationRequest) async -> ElicitationResponse {
+    public func awaitAnswer(
+        to request: ElicitationRequest,
+        posting: @escaping @Sendable () async -> Void = {}
+    ) async -> ElicitationResponse {
         await withCheckedContinuation { continuation in
             guard pendingElicitations[request.elicitationId] == nil else {
                 continuation.resume(returning: .cancel)
@@ -433,6 +448,9 @@ public actor SessionMailbox {
             }
             pendingElicitations[request.elicitationId] = .awaitingAnswer(mode: request.mode, continuation: continuation)
             elicitationOrder.append(request.elicitationId)
+            Task {
+                await posting()
+            }
         }
     }
 

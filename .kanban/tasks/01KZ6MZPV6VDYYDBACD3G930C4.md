@@ -41,11 +41,27 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift (new), Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, Sources/FoundationModelsRouter/Recording/CustomSegmentRegistry.swift, Tests/FoundationModelsRouterTests/SessionMailboxTests.swift (new); swift test 682/682 green
     - next: /review
   timestamp: 2026-08-04T18:34:58.539521+00:00
+- actor: claude-code
+  id: 01kz71fm6qdszn5965xm5rz58g
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 8e9566f) — 0 findings, 18 validators attempted, 0 failed
+    - next: task moved review → done
+  timestamp: 2026-08-04T18:44:55.127167+00:00
+- actor: claude-code
+  id: 01kz71jxfcy4hfb8a9jp5k4bb9
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files (Hosting/SessionMailbox.swift new actor, RoutedSession close() + mailbox wiring, RoutedLLM, SessionTreeRestoration, CustomSegmentRegistry, SessionMailboxTests new 20 tests)
+    - test: green — swift test, 682 passed (652+18+12), 0 failures, 29 expected gated skips
+    - commit: 8e9566f
+    - review: clean — 0 new findings on HEAD~1..HEAD, 18 validators, 0 failed
+  timestamp: 2026-08-04T18:46:42.924613+00:00
 depends_on:
 - 01KZ6MY4E1H1RG9SCY8YR4A48H
 - 01KZ6N038H8VC4C5CXQXYKSGNS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: e780
 title: '[Router] SessionMailbox actor in Hosting/'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"Elevation: waitSeconds and the completion token" (mailbox paragraphs) and §"Consolidation of the siblings" ("Processes and tasks stay different kinds"; "The run plane and the content plane are different surfaces").
