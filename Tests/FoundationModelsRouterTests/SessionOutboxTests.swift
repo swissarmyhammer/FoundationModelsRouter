@@ -85,6 +85,42 @@ struct SessionOutboxTests {
         #expect(pending.events.map(\.event.kind) == [.progress, .completed])
     }
 
+    @Test("two .elicitation events for the same (tool, correlationID) both survive a drain")
+    func elicitationEventsNeverCoalesce() async {
+        let outbox = SessionOutbox()
+        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "first question"))
+        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "second question"))
+
+        let drained = await outbox.drainForDispatch()
+        #expect(drained.events.map(\.event.detail) == ["first question", "second question"])
+    }
+
+    @Test("interleaved .progress still coalesces while .elicitation events are all kept, in post order")
+    func progressCoalescesAroundElicitationEvents() async {
+        let outbox = SessionOutbox()
+        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
+        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "question A"))
+        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
+        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "question B"))
+
+        let pending = await outbox.pending()
+        // The two .progress posts coalesce into the first one's slot; both
+        // elicitations are kept in post order, never replaced.
+        #expect(pending.events.map(\.event.detail) == ["50%", "question A", "question B"])
+        #expect(pending.events.map(\.event.kind) == [.progress, .elicitation, .elicitation])
+    }
+
+    @Test("an .elicitation never replaces a pending .progress for the same (tool, correlationID)")
+    func elicitationDoesNotCoalesceWithPriorProgress() async {
+        let outbox = SessionOutbox()
+        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "in flight"))
+        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "question"))
+
+        let pending = await outbox.pending()
+        #expect(pending.events.count == 2)
+        #expect(pending.events.map(\.event.kind) == [.progress, .elicitation])
+    }
+
     // MARK: - Stable ids
 
     @Test("pending() reports items with stable ids and kinds")

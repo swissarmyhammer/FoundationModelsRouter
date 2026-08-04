@@ -15,11 +15,14 @@ import FoundationModels
 ///   dispatches next: ``RoutedSessionActor``'s turn chokepoint drains them
 ///   into a plain-text preamble the model reads and persists each as an
 ///   ``OperationEventSegment`` on the turn's recorded `.prompt` entry (see
-///   ``OperationEventSegment/renderedLine(for:)``). Coalescing policy: every
-///   ``OperationEventKind/completed`` event is kept, in post order;
-///   ``OperationEventKind/progress`` events coalesce to the single latest
+///   ``OperationEventSegment/renderedLine(for:)``). Coalescing policy: only
+///   ``OperationEventKind/progress`` coalesces — to the single latest
 ///   pending one per `(tool, correlationID)`, replacing in place so the
-///   coalesced item keeps the stable id it was first assigned.
+///   coalesced item keeps the stable id it was first assigned. Every
+///   ``OperationEventKind/completed`` and every
+///   ``OperationEventKind/elicitation`` event is kept, in post order — each
+///   elicitation is its own question, never a newer revision of an older
+///   one.
 /// - **Turn-starting prompts** (``PendingPrompt``) — full `Transcript.Prompt`s
 ///   (queued user messages), never coalesced, dispatched strictly in enqueue
 ///   order, one turn each. This actor owns the storage, kinds, ids, and the
@@ -132,16 +135,18 @@ public actor SessionOutbox: OperationEventSink {
     /// Posts one ``OperationEvent`` — the ``OperationEventSink`` conformance a
     /// connected ``EventEmittingTool`` posts through.
     ///
-    /// A `.completed` event is always appended, never coalesced. A `.progress`
-    /// event replaces the latest still-pending `.progress` event for the same
-    /// `(tool, correlationID)` in place (keeping that pending item's original
-    /// id and position), or is appended as a new pending item when none is
-    /// pending yet for that pair.
+    /// A `.completed` or `.elicitation` event is always appended, never
+    /// coalesced — each elicitation is its own question, so a newer one never
+    /// replaces an older still-pending one. Only `.progress` coalesces: a
+    /// `.progress` event replaces the latest still-pending `.progress` event
+    /// for the same `(tool, correlationID)` in place (keeping that pending
+    /// item's original id and position), or is appended as a new pending item
+    /// when none is pending yet for that pair.
     ///
     /// - Parameter event: The event to post.
     public func post(_ event: OperationEvent) async {
         switch event.kind {
-        case .completed:
+        case .completed, .elicitation:
             appendNewPendingEvent(event)
         case .progress:
             if let index = events.firstIndex(where: {
@@ -157,10 +162,11 @@ public actor SessionOutbox: OperationEventSink {
     }
 
     /// Appends `event` onto ``events`` as a brand-new pending item with a
-    /// fresh ``ItemID`` — shared by both ``post(_:)`` branches that add a
+    /// fresh ``ItemID`` — shared by every ``post(_:)`` branch that adds a
     /// pending event rather than coalescing into an existing one (a
-    /// `.completed` event, always appended; a `.progress` event with no
-    /// still-pending entry for its `(tool, correlationID)` yet).
+    /// `.completed` or `.elicitation` event, always appended; a `.progress`
+    /// event with no still-pending entry for its `(tool, correlationID)`
+    /// yet).
     ///
     /// - Parameter event: The event to append as a new pending item.
     private func appendNewPendingEvent(_ event: OperationEvent) {

@@ -49,8 +49,12 @@ public struct OperationEventSegment: PersistableCustomSegment, Equatable, Custom
 
     /// Renders one ``OperationEvent`` as a single model-legible text line,
     /// e.g. `"[shell] run command (3) completed: exit 0, 2481 lines"` for a
-    /// `.completed` event, or `"[shell] run command (3) running: 812 lines so
-    /// far"` for a `.progress` one.
+    /// `.completed` event, `"[shell] run command (3) running: 812 lines so
+    /// far"` for a `.progress` one, or `"[snippet] elicit form (3)
+    /// eliciting: Which account?"` for an `.elicitation` one — an
+    /// elicitation's body is its typed request's `message` (the question the
+    /// user is being asked), falling back to `detail` when the typed request
+    /// is absent.
     ///
     /// Shared by every drained event's preamble line
     /// (``RoutedSessionActor``'s turn chokepoint) and this segment's own
@@ -59,7 +63,16 @@ public struct OperationEventSegment: PersistableCustomSegment, Equatable, Custom
     /// - Parameter event: The event to render.
     /// - Returns: The one-line rendering.
     static func renderedLine(for event: OperationEvent) -> String {
-        let state = event.kind == .completed ? "completed" : "running"
-        return "[\(event.tool)] \(event.op) (\(event.correlationID)) \(state): \(event.detail)"
+        let state: String
+        let body: String
+        switch event.kind {
+        case .progress:
+            (state, body) = ("running", event.detail)
+        case .completed:
+            (state, body) = ("completed", event.detail)
+        case .elicitation:
+            (state, body) = ("eliciting", event.elicitation?.message ?? event.detail)
+        }
+        return "[\(event.tool)] \(event.op) (\(event.correlationID)) \(state): \(body)"
     }
 }
