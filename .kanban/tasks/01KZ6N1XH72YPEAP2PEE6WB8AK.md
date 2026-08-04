@@ -29,6 +29,40 @@ comments:
     - evidence: `swift test` — 710 tests passed (680+18+12 across 3 suites), 0 failed, 29 gated skips (expected, FM_ROUTER_INTEGRATION_TESTS/compaction integration gates); only warning is the known pre-existing llbuild "missing creator for mutated node" from mlx-swift Cmlx bundle
     - next: proceed to review
   timestamp: 2026-08-04T21:39:40.296742+00:00
+- actor: claude-code
+  id: 01kz7bv5c8mps547959kdjdezs
+  text: |-
+    ### review — findings
+    - evidence: 1 finding — Tests/FoundationModelsRouterTests/ElicitationRoutingTests.swift:275 (ULID case-insensitivity assertion for respond/complete); scope: review sha HEAD~1..HEAD (commit a39221e)
+    - next: implement the checklist item in ## Review Findings (2026-08-04 16:42), then re-review
+  timestamp: 2026-08-04T21:45:58.920116+00:00
+- actor: claude-code
+  id: 01kz7bz1wywxk7np019v92fzys
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 3 files (RoutedSession respond/complete, plan.md ownership updates, ElicitationRoutingTests new 6 tests)
+    - test: green — swift test, 710 passed, 0 failures, 29 expected gated skips
+    - commit: a39221e
+    - review: findings — Tests/FoundationModelsRouterTests/ElicitationRoutingTests.swift:275 (ULID case-insensitive id acceptance in respond/complete)
+  timestamp: 2026-08-04T21:48:06.430494+00:00
+- actor: claude-code
+  id: 01kz7c6acfyv2r9axjfceqfmmj
+  text: |-
+    Review-finding pass (ULID case-insensitivity, ElicitationRoutingTests.swift:275):
+    - Verified the parsing chain: RoutedSession.respond/complete → ULID(_:) shim (Sources/FoundationModelsRouter/Core/ULID.swift) → yaslab init(ulidString:) → Base32.crockfordsDecodingTable, which maps uppercase 0x41-0x5A and lowercase 0x61-0x7A byte rows to identical values — ULID string parsing is already case-insensitive per the spec, no normalization call needed before ULID.init. Canonical .description is UPPERCASE here (yaslab encodes with the uppercase Crockford table; ULIDTests.roundTrip pins this and the lowercase-decode contract), so the finding's "canonical lowercase .description" premise is inverted — the meaningful non-canonical variant is .lowercased().
+    - Implemented the finding's required assertion, extended to full 2x2 coverage in unknownAndMalformedIdsAreNoOps: two parked URL-mode elicitations; respond() with an uppercased id and with a lowercased id (both .acceptedAwaitingCompletion — routed, not malformed), complete() with a lowercased id and with an uppercased id (both .completed), each run resuming with the accepted answer.
+    - TDD note: assertions were added first and run — they passed immediately, confirming existing behavior already satisfies the case-insensitivity requirement; per TDD's iron law no production change was made (no failing test to drive one), so the finding is discharged by the regression coverage it asked for.
+    - Whole-cause sweep: the only other ULID(...) parse sites in Sources are TranscriptTree.swift (session directory names) — same case-insensitive initializer, no un-normalized parsing pattern exists anywhere.
+  timestamp: 2026-08-04T21:52:04.495722+00:00
+- actor: claude-code
+  id: 01kz7cck4gjn5j2609xtssc5be
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/ElicitationRoutingTests.swift: new focused test `idCaseDoesNotAffectRouting` ("respond()/complete() accept a pending id in either case — Crockford base32 is case-insensitive"), the placement the finding sanctions via "or create a focused test". Full 2x2 coverage: two parked URL-mode elicitations; respond() with an uppercased and a lowercased id (both `.acceptedAwaitingCompletion` — routed to the pending elicitation, not treated as malformed), complete() with a lowercased and an uppercased id (both `.completed`), each run resuming with the accepted answer. No production change: the ULID(_:) shim delegates to yaslab init(ulidString:), whose Crockford decoding table maps uppercase and lowercase byte rows identically, so respond()/complete() already accept both cases (assertions passed on first run — regression coverage, per TDD no failing test existed to drive a normalization call). Double-check verdict: REVISE (assertions belonged in a focused test, not inside the "safe no-ops" test) — implemented; second pass confirmed everything else (non-vacuous assertions, clean mailbox, no missed ULID parse site, `.description` is uppercase so `.lowercased()` is the load-bearing variant).
+    - Finding `ElicitationRoutingTests.swift:275` checked `- [x]` in ## Review Findings (2026-08-04 16:42); 0 findings open.
+    - swift build + swift test green: 681 + 18 + 12 passed, 0 failures; only warning is the pre-existing llbuild "missing creator for mutated node" on the vendored mlx Cmlx bundle.
+    - next: /review
+  timestamp: 2026-08-04T21:55:30.064653+00:00
 depends_on:
 - 01KZ6MZPV6VDYYDBACD3G930C4
 - 01KZ6N038H8VC4C5CXQXYKSGNS
@@ -60,4 +94,8 @@ The inbound answer route: app host → Router → mailbox → resume parked cont
 - [ ] `swift test` green
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #phase-1 #router-first
+- Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-08-04 16:42)
+
+- [x] `Tests/FoundationModelsRouterTests/ElicitationRoutingTests.swift:275` — The new ULID parsing code in RoutedSession.respond() and complete() (lines 719-720, 740-741) accepts ULID strings without case normalization. ULID uses Crockford base32 encoding, which is specified as case-insensitive per the standard. The test 'unknownAndMalformedIdsAreNoOps' verifies malformed strings are rejected (line 286: 'not-a-ulid') but does not verify that uppercase or mixed-case versions of valid ULIDs are accepted alongside the canonical lowercase form produced by .description. Add one assertion to the 'unknownAndMalformedIdsAreNoOps' test (or create a focused test) that verifies both respond() and complete() accept the same ULID in uppercase: e.g., `let uppercase = ULID.generate().description.uppercased(); #expect(await session.respond(elicitationId: uppercase, ...) == .delivered)`. #phase-1 #router-first

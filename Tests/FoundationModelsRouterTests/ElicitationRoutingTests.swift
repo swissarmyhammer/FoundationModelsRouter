@@ -287,6 +287,39 @@ struct ElicitationRoutingTests {
         #expect(await session.complete(elicitationId: "not-a-ulid") == .noPendingElicitation)
     }
 
+    @Test("respond()/complete() accept a pending id in either case — Crockford base32 is case-insensitive")
+    @MainActor
+    func idCaseDoesNotAffectRouting() async throws {
+        let (session, dir) = try await Self.makeSession()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Case is never what makes an id malformed: Crockford base32 is
+        // case-insensitive per the ULID spec, so uppercase and lowercase forms
+        // of a pending id route to its elicitation instead of falling into the
+        // malformed no-op path. Cover both functions with both cases.
+        let upperRespondId = ULID.generate()
+        let upperAnswering = await Self.parkElicitation(try Self.urlRequest(elicitationId: upperRespondId), on: session)
+        #expect(
+            await session.respond(
+                elicitationId: upperRespondId.description.uppercased(),
+                response: .accept(content: nil)
+            ) == .acceptedAwaitingCompletion
+        )
+        #expect(await session.complete(elicitationId: upperRespondId.description.lowercased()) == .completed)
+        #expect(try await upperAnswering.value == .accept(content: nil))
+
+        let lowerRespondId = ULID.generate()
+        let lowerAnswering = await Self.parkElicitation(try Self.urlRequest(elicitationId: lowerRespondId), on: session)
+        #expect(
+            await session.respond(
+                elicitationId: lowerRespondId.description.lowercased(),
+                response: .accept(content: nil)
+            ) == .acceptedAwaitingCompletion
+        )
+        #expect(await session.complete(elicitationId: lowerRespondId.description.uppercased()) == .completed)
+        #expect(try await lowerAnswering.value == .accept(content: nil))
+    }
+
     @Test("cross-session isolation: respond on session A never resumes session B's elicitation")
     @MainActor
     func respondNeverCrossesSessions() async throws {
