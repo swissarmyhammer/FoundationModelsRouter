@@ -114,6 +114,15 @@ public protocol RoutedSession: Actor {
     /// instances to it, so event delivery never migrates between sessions).
     nonisolated var outbox: SessionOutbox { get }
 
+    /// This session's mailbox: the registry of parked detached runs and
+    /// pending elicitations. See ``SessionMailbox``.
+    ///
+    /// Fresh per session, exactly like ``outbox`` — a fork is given its own
+    /// mailbox rather than sharing its parent's, and a restored session gets
+    /// a brand-new one — so a run parked on one session can never be waited
+    /// on, cancelled, or swept through another.
+    nonisolated var mailbox: SessionMailbox { get }
+
     /// Context fill, 0...1 — measured token usage against the profile's
     /// resolved working context (compaction_plan.md §1.5).
     ///
@@ -488,6 +497,23 @@ public protocol RoutedSession: Actor {
     ///   backend whose fork can fail.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 
+    /// Tears the session down explicitly: runs ``mailbox``'s
+    /// ``SessionMailbox/sweep()`` — cancelling every parked run per its
+    /// kind's semantics and rejecting every pending elicitation — and drains
+    /// the resulting terminal events into the journal (exactly one per
+    /// parked run, no orphans, no holes) before returning.
+    ///
+    /// Call it wherever a session's life actually ends: a host app ending a
+    /// conversation, `multitool-cli` teardown, and fork/restore paths that
+    /// discard a session. `deinit` cannot and does not run this sweep — it
+    /// can neither await an actor nor journal events — so an unclosed
+    /// crashed session's runs are the `.lost` restoration path's territory,
+    /// never silently reconciled here.
+    ///
+    /// Idempotent: a second call finds the mailbox already empty and
+    /// journals nothing.
+    func close() async
+
     /// Runs the earliest still-pending prompt in ``outbox``'s queue as one
     /// normal recorded turn: dequeues it together with any pending
     /// turn-riding events (both drained atomically — see
@@ -677,7 +703,7 @@ extension RoutedSession {
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -696,6 +722,7 @@ func makeRoutedSessionActor(
     tools: [any Tool],
     originalTools: [any Tool] = [],
     outbox: SessionOutbox = SessionOutbox(),
+    mailbox: SessionMailbox = SessionMailbox(),
     generationGate: AsyncSemaphore,
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
@@ -723,6 +750,7 @@ func makeRoutedSessionActor(
         tools: tools,
         originalTools: originalTools,
         outbox: outbox,
+        mailbox: mailbox,
         generationGate: generationGate,
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
@@ -912,6 +940,15 @@ actor RoutedSessionActor: RoutedSession {
     /// forever, regardless of how many further forks are taken: event
     /// delivery never migrates between sessions.
     nonisolated let outbox: SessionOutbox
+
+    /// This session's own mailbox — see ``RoutedSession/mailbox``.
+    ///
+    /// Fresh per session, with the same scope rule as ``outbox``: a root
+    /// session is constructed already holding a brand-new, empty mailbox,
+    /// ``fork(workingDirectory:)`` builds another fresh one for the child,
+    /// and a restored session gets a brand-new one — so parked runs and
+    /// pending elicitations never migrate between sessions.
+    nonisolated let mailbox: SessionMailbox
 
     /// This session's own turn lock (a fair FIFO ``AsyncSemaphore`` at value 1)
     /// — the correctness half of the split gate.
@@ -1118,6 +1155,7 @@ actor RoutedSessionActor: RoutedSession {
         tools: [any Tool] = [],
         originalTools: [any Tool] = [],
         outbox: SessionOutbox = SessionOutbox(),
+        mailbox: SessionMailbox = SessionMailbox(),
         generationGate: AsyncSemaphore,
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
@@ -1144,6 +1182,7 @@ actor RoutedSessionActor: RoutedSession {
         self.tools = tools
         self.originalTools = originalTools
         self.outbox = outbox
+        self.mailbox = mailbox
         self.generationGate = generationGate
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
@@ -1176,6 +1215,12 @@ actor RoutedSessionActor: RoutedSession {
     /// Only a fork holds a permit; a root session's `deinit` is a no-op here. The
     /// session's backend is freed by ARC as the actor is torn down — releasing a
     /// fork frees whatever conversation state it holds.
+    ///
+    /// Deliberately does **not** run ``close()``'s mailbox sweep — it cannot:
+    /// a `deinit` can neither await an actor nor journal events. A session
+    /// must be closed explicitly where its life ends; an unclosed crashed
+    /// session's parked runs are the `.lost` restoration path's territory,
+    /// never silently reconciled here.
     deinit {
         if holdsAdmissionPermit {
             forkAdmissionGate.signal()
@@ -1901,6 +1946,10 @@ actor RoutedSessionActor: RoutedSession {
         // that inherits ``autoCompactionBudget`` also inherits its
         // ``TokenBudget/toolOutputLimit``, if any.
         let childOutbox = SessionOutbox()
+        // The child's mailbox is fresh for the same reason its outbox is:
+        // parked runs and pending elicitations never migrate between
+        // sessions (see ``RoutedSession/mailbox``).
+        let childMailbox = SessionMailbox()
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
             let connected = (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
@@ -1963,6 +2012,7 @@ actor RoutedSessionActor: RoutedSession {
             tools: childTools,
             originalTools: originalTools,
             outbox: childOutbox,
+            mailbox: childMailbox,
             generationGate: generationGate,
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true,
@@ -1984,6 +2034,52 @@ actor RoutedSessionActor: RoutedSession {
             autoCompactionBudget: autoCompactionBudget,
             autoCompactionPrompt: autoCompactionPrompt
         )
+    }
+
+    /// See ``RoutedSession/close()``.
+    ///
+    /// Runs ``mailbox``'s ``SessionMailbox/sweep()``, then journals each
+    /// terminal event it produced as a `.toolOutput`-kind recorded event
+    /// whose entry is a real `Transcript.Entry.toolOutput` carrying the
+    /// event as a typed ``OperationEventSegment`` — the same durable shape a
+    /// turn-drained event takes on a recorded `.prompt` entry (see
+    /// ``appendingOperationEventSegments(_:to:)``). The journal is complete
+    /// before this method returns: exactly one terminal event per parked
+    /// run, no orphans, no holes.
+    ///
+    /// **Restore-time decision, stated deliberately:** these `.toolOutput`
+    /// events are entry-kind, so ``TranscriptTree/effectiveTranscript(forSession:registry:)``
+    /// rebuilds each one into the restored transcript as a
+    /// `Transcript.Entry.toolOutput` (with no paired `.toolCalls` — the run
+    /// was detached, not model-invoked). That is intended: a restored
+    /// session's model sees how the detached runs it left behind actually
+    /// ended. ``OperationEventSegment`` is registered in
+    /// ``CustomSegmentRegistry/routerDefault``, so a default-registry
+    /// restore of a closed session succeeds with no caller setup.
+    ///
+    /// Journaling brings the session meta line with it: a close that
+    /// journals anything first records the `.session` meta event (exactly as
+    /// every turn path does via `recordSessionMetaIfNeeded()`), so the
+    /// journal never opens with a bare `.toolOutput` line. A close with
+    /// nothing swept journals nothing at all — a session that never
+    /// generated and never parked a run still writes no file, preserving
+    /// `generate(grammar:prompt:_:)`'s "writes no file at all until it
+    /// generates" invariant.
+    func close() async {
+        let terminalEvents = await mailbox.sweep()
+        guard !terminalEvents.isEmpty else { return }
+        await recordSessionMetaIfNeeded()
+        for event in terminalEvents {
+            let entry = Transcript.Entry.toolOutput(
+                Transcript.ToolOutput(
+                    id: event.correlationID,
+                    toolName: event.tool,
+                    segments: [.custom(OperationEventSegment(content: event))]
+                )
+            )
+            let (kind, payload, text) = TranscriptEntryMapper.event(from: entry)
+            await append(partial: makePartialEvent(kind: kind, text: text, entry: payload))
+        }
     }
 
     /// Builds the closure that submits a turn's composed prompt to `backend`,

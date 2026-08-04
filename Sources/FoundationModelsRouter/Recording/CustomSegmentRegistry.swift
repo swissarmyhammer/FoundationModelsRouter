@@ -168,6 +168,13 @@ extension CustomSegmentRegistry {
     public static var routerDefault: CustomSegmentRegistry {
         var registry = CustomSegmentRegistry()
         registry.register(CompactionSegment.self)
+        // ``OperationEventSegment`` is a router-written segment exactly like
+        // ``CompactionSegment``: turn-drained events land on `.prompt`
+        // entries and ``RoutedSessionActor/close()`` journals swept terminal
+        // events on `.toolOutput` entries, so a default-argument restore of
+        // any session that carried either must succeed with no caller
+        // setup.
+        registry.register(OperationEventSegment.self)
         return registry
     }
 }

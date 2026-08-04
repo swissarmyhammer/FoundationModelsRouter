@@ -276,6 +276,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // own outbox rather than a sibling or ancestor's; a non-conforming
             // tool passes through unchanged.
             let outbox = SessionOutbox()
+            // The mailbox shares the outbox's scope rule: every restored
+            // node gets a brand-new one — parked runs and pending
+            // elicitations never survive a restore or migrate between
+            // sessions (see ``RoutedSession/mailbox``).
+            let mailbox = SessionMailbox()
             let instancedTools = tools.map { ($0 as? any EventEmittingTool)?.connecting(outbox) ?? $0 }
             let backend = routedLLM.container.makeSession(transcript: transcript, tools: instancedTools)
             // ``RoutedSession/contextFill``'s restored numerator
@@ -337,6 +342,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 tools: instancedTools,
                 originalTools: tools,
                 outbox: outbox,
+                mailbox: mailbox,
                 generationGate: routedLLM.generationGate,
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,

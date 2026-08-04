@@ -201,6 +201,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // generation and the recorded `.toolOutput` entry see the capped
         // text, never the oversized original.
         let outbox = SessionOutbox()
+        // The mailbox shares the outbox's scope rule: fresh per session,
+        // never shared, so parked runs and pending elicitations never
+        // migrate between sessions (see ``RoutedSession/mailbox``).
+        let mailbox = SessionMailbox()
         let instancedTools = tools.map { tool -> any Tool in
             let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
             return ToolOutputCapping.optionallyCapped(connected, toTokenLimit: budget?.toolOutputLimit)
@@ -233,6 +237,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
             originalTools: tools,
             outbox: outbox,
+            mailbox: mailbox,
             // The generation and fork-admission gates are the model handle's,
             // shared across all its sessions and forks — the session mints its
             // own per-session turn lock. A root session holds no fork-admission

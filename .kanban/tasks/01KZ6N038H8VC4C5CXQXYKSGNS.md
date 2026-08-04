@@ -36,10 +36,26 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Hosting/Elicitation.swift (new), Sources/FoundationModelsRouter/Hosting/OperationEvent.swift, Sources/FoundationModelsRouter/Session/SessionOutbox.swift, Sources/FoundationModelsRouter/Session/OperationEventSegment.swift, Tests/FoundationModelsRouterTests/ElicitationEnvelopeTests.swift (new), Tests/FoundationModelsRouterTests/SessionOutboxTests.swift; swift test green: 632 + 18 + 12 tests, 0 failures, 0 compiler warnings
     - next: /review (task stays in doing; do not commit — orchestrator handles it)
   timestamp: 2026-08-04T17:47:05.443679+00:00
+- actor: claude-code
+  id: 01kz6z2jgrtkz7cyp3jxwjwd1f
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (backend: local) — 0 findings, 9 validators attempted, 0 failed
+    - next: task moved review → done
+  timestamp: 2026-08-04T18:02:50.264012+00:00
+- actor: claude-code
+  id: 01kz6z64yqerx3606yaeyy2ydz
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 6 files (Hosting/Elicitation.swift new, OperationEvent.swift third kind, SessionOutbox never-coalesce, OperationEventSegment rendering, ElicitationEnvelopeTests new 20 tests, SessionOutboxTests +3)
+    - test: green — swift test, 632+18+12 = 662 passed, 0 failures, 20 expected FM_ROUTER_INTEGRATION_TESTS skips
+    - commit: 83807b2
+    - review: clean — 0 new findings on HEAD~1..HEAD, 9 validators, 0 failed
+  timestamp: 2026-08-04T18:04:47.447822+00:00
 depends_on:
 - 01KZ6MY4E1H1RG9SCY8YR4A48H
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: e680
 title: '[Router] Elicitation envelope, third event kind, outbox coalescing'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"The elicitation envelope, fixed to the MCP spec".
