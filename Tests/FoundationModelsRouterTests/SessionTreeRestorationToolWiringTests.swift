@@ -73,6 +73,13 @@ struct SessionTreeRestorationToolWiringTests {
         OperationEvent(tool: "fake-emitter", op: "run thing", correlationID: correlationID, kind: .completed, detail: detail)
     }
 
+    /// Peels the elevation layer restoration wraps around a String-output
+    /// tool, returning the inner (connected) tool — or `nil` when `tool` is
+    /// not the expected ``ElevatingTool``.
+    private static func elevationWrapped(_ tool: (any Tool)?) -> (any Tool)? {
+        (tool as? ElevatingTool<FakeToolArguments>)?.wrapped
+    }
+
     // MARK: - Stub container capturing the threaded tool list per restored node
 
     /// A ``LoadedLLMContainer`` that records the `tools` most recently passed
@@ -239,8 +246,11 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(container2.threadedToolsByCall.count == 1)
         let threaded = try #require(container2.threadedToolsByCall.first)
         #expect(threaded.count == 2)
-        #expect(threaded.contains { $0 is FakeEmittingTool })
-        #expect(threaded.contains { $0 is PlainTool })
+        // Every String-output tool arrives wrapped in the elevation layer;
+        // the shape assertion peels it to reach the threaded originals.
+        let innerTools = threaded.compactMap(Self.elevationWrapped)
+        #expect(innerTools.contains { $0 is FakeEmittingTool })
+        #expect(innerTools.contains { $0 is PlainTool })
     }
 
     @Test("the container receives a distinct, sink-bound copy of an emitting tool for a restored root — not the original")
@@ -267,7 +277,7 @@ struct SessionTreeRestorationToolWiringTests {
         let emitter = FakeEmittingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
 
-        guard let instancedEmitter = container2.threadedToolsByCall.first?.first as? FakeEmittingTool else {
+        guard let instancedEmitter = Self.elevationWrapped(container2.threadedToolsByCall.first?.first) as? FakeEmittingTool else {
             Issue.record("expected the container to receive a FakeEmittingTool")
             return
         }
@@ -315,8 +325,8 @@ struct SessionTreeRestorationToolWiringTests {
 
         #expect(restored.root.outbox !== restoredFork.outbox)
 
-        guard let rootInstancedEmitter = container2.threadedToolsByCall[0].first as? FakeEmittingTool,
-            let forkInstancedEmitter = container2.threadedToolsByCall[1].first as? FakeEmittingTool
+        guard let rootInstancedEmitter = Self.elevationWrapped(container2.threadedToolsByCall[0].first) as? FakeEmittingTool,
+            let forkInstancedEmitter = Self.elevationWrapped(container2.threadedToolsByCall[1].first) as? FakeEmittingTool
         else {
             Issue.record("expected both restored nodes to receive an instanced FakeEmittingTool")
             return
@@ -389,7 +399,7 @@ struct SessionTreeRestorationToolWiringTests {
         let child = try await restored.root.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childInstance = childActor.tools.first as? FakeEmittingTool
+            let childInstance = Self.elevationWrapped(childActor.tools.first) as? FakeEmittingTool
         else {
             Issue.record("expected the fork of a restored session to expose its own instanced FakeEmittingTool")
             return
@@ -402,5 +412,49 @@ struct SessionTreeRestorationToolWiringTests {
         // The restored root's own outbox is untouched by the fork's event.
         let rootPending = await restored.root.outbox.pending()
         #expect(rootPending.events.isEmpty)
+    }
+
+    // MARK: - Elevation layer: restore's own chain order (task ^k4nygqa)
+
+    @Test("restore composes connect → elevate: elevation outermost, no fork, no capping; the sink-bound instance innermost")
+    @MainActor
+    func restoreComposesConnectElevateOnly() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container1 = ToolCapturingRestoreContainer()
+        let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: router1.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = FakeEmittingTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+
+        let threaded = try #require(container2.threadedToolsByCall.first?.first)
+        // Restore applies no capping — deliberately: no budget travels
+        // through restoration, and the pending envelope is tiny.
+        #expect(!(threaded is TokenCappingTool<FakeToolArguments>))
+        guard let elevating = threaded as? ElevatingTool<FakeToolArguments>,
+            let connected = elevating.wrapped as? FakeEmittingTool
+        else {
+            Issue.record("expected elevate(connect(tool)) at the restore container boundary")
+            return
+        }
+        #expect(connected !== emitter)
+
+        // The innermost instance is the restored root's own connected copy.
+        await connected.postEvent(Self.event(detail: "restore-chain-inner"))
+        let pending = await restored.root.outbox.pending()
+        #expect(pending.events.map(\.event.detail) == ["restore-chain-inner"])
     }
 }

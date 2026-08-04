@@ -371,7 +371,7 @@ struct ToolOutputCappingTests {
         #expect(result == "\(String(repeating: "e", count: 20))… [truncated: 5 of 10 tokens]")
     }
 
-    @Test("makeSession(tools:budget:) with no toolOutputLimit set leaves the tool unwrapped")
+    @Test("makeSession(tools:budget:) with no toolOutputLimit set applies no capping layer — only the elevation layer wraps the tool")
     @MainActor
     func makeSessionWithNoToolOutputLimitLeavesToolUnwrapped() async throws {
         let dir = Self.makeTempDir()
@@ -387,10 +387,11 @@ struct ToolOutputCappingTests {
             budget: TokenBudget(limit: 4096)
         )
 
-        #expect(container.lastTools.first is StringOutputTool)
+        #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
+        #expect((container.lastTools.first as? ElevatingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
-    @Test("makeSession(tools:budget:) with no budget at all leaves the tool unwrapped")
+    @Test("makeSession(tools:budget:) with no budget at all applies no capping layer — only the elevation layer wraps the tool")
     @MainActor
     func makeSessionWithNoBudgetLeavesToolUnwrapped() async throws {
         let dir = Self.makeTempDir()
@@ -403,7 +404,8 @@ struct ToolOutputCappingTests {
         let tool = StringOutputTool(output: "unchanged")
         _ = profile.standard.makeSession(tools: [tool])
 
-        #expect(container.lastTools.first is StringOutputTool)
+        #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
+        #expect((container.lastTools.first as? ElevatingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
     @Test("makeSession(tools:budget:) caps outermost: an EventEmittingTool still delivers events through the capped wrapper's wrapped instance")
@@ -424,9 +426,10 @@ struct ToolOutputCappingTests {
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments>,
-            let emitting = capping.wrapped as? EmittingStringTool
+            let elevating = capping.wrapped as? ElevatingTool<FakeToolArguments>,
+            let emitting = elevating.wrapped as? EmittingStringTool
         else {
-            Issue.record("expected a TokenCappingTool wrapping the connected EmittingStringTool")
+            Issue.record("expected a TokenCappingTool wrapping the elevated, connected EmittingStringTool")
             return
         }
 
@@ -471,7 +474,7 @@ struct ToolOutputCappingTests {
         #expect(result == "\(String(repeating: "g", count: 20))… [truncated: 5 of 10 tokens]")
     }
 
-    @Test("fork() with no toolOutputLimit leaves the child's tool list unwrapped")
+    @Test("fork() with no toolOutputLimit applies no capping layer to the child's tool list — only the elevation layer wraps it")
     @MainActor
     func forkWithNoToolOutputLimitLeavesChildToolsUnwrapped() async throws {
         let dir = Self.makeTempDir()
@@ -489,6 +492,7 @@ struct ToolOutputCappingTests {
             Issue.record("expected the fork to be a RoutedSessionActor")
             return
         }
-        #expect(childActor.tools.first is StringOutputTool)
+        #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
+        #expect((childActor.tools.first as? ElevatingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 }

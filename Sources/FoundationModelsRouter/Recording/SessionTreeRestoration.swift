@@ -290,19 +290,34 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
 
-            // Fresh per-node outbox plus per-session tool instancing — the
-            // identical pure map ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
-            // performs for a from-scratch session, applied here to every
-            // restored node so an `EventEmittingTool` posts to *this* node's
-            // own outbox rather than a sibling or ancestor's; a non-conforming
-            // tool passes through unchanged.
+            // Fresh per-node outbox plus per-session tool instancing —
+            // applied here to every restored node so an `EventEmittingTool`
+            // posts to *this* node's own outbox rather than a sibling or
+            // ancestor's; a non-conforming tool passes through unchanged.
+            // This site's chain is connect → elevate — deliberately no fork
+            // (restoration re-instances from the caller's originals, it
+            // never derives one live session from another) and no capping
+            // (no budget travels through restoration) — distinct from the
+            // root site's connect → elevate → cap and the fork site's
+            // fork → connect → elevate → cap (task ^k4nygqa; see
+            // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``
+            // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let outbox = SessionOutbox()
             // The mailbox shares the outbox's scope rule: every restored
             // node gets a brand-new one — parked runs and pending
             // elicitations never survive a restore or migrate between
             // sessions (see ``RoutedSession/mailbox``).
             let mailbox = SessionMailbox()
-            let instancedTools = tools.map { ($0 as? any EventEmittingTool)?.connecting(outbox) ?? $0 }
+            let instancedTools = tools.map { tool -> any Tool in
+                let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
+                return ToolElevation.wrapping(
+                    connected,
+                    sessionID: node.id,
+                    mailbox: mailbox,
+                    sink: outbox,
+                    configuration: .nativeSessionMount
+                )
+            }
             let backend = routedLLM.container.makeSession(transcript: transcript, tools: instancedTools)
             // ``RoutedSession/contextFill``'s restored numerator
             // (compaction_plan.md §1.5, checkpoint-aware restore

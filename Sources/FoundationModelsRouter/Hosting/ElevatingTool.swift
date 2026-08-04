@@ -64,6 +64,15 @@ public struct ElevationConfiguration: Sendable, Equatable {
     /// could cancel it, leaving real timeout headroom for follow-up.
     public static let defaultTimeoutSeconds: TimeInterval = 120
 
+    /// Router's native-session mount: elevation on, stock clocks
+    /// (``defaultWaitSeconds``/``defaultTimeoutSeconds``). The one
+    /// configuration all three tool-composition sites apply —
+    /// `RoutedModel.makeSession`, `RoutedSessionActor.fork`, and
+    /// `restoreSessionTree` — so the mount policy has exactly one
+    /// definition (eventplan.md § "Elevation": two mounts, one engine, two
+    /// policies; this is the native mount).
+    public static let nativeSessionMount = ElevationConfiguration(mode: .elevating)
+
     /// Whether a call detaches at ``waitSeconds`` or runs to completion.
     public var mode: Mode
 
@@ -126,11 +135,41 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
         self.completionToken = completionToken
     }
 
+    /// The frame around the `completionToken` in ``rendered``'s wire form —
+    /// shared with ``isRendered(_:)`` so recognition can never drift from
+    /// rendering.
+    private static let renderedPrefix = "{\"pending\":true,\"completionToken\":\""
+
+    /// ``renderedPrefix``'s closing counterpart.
+    private static let renderedSuffix = "\"}"
+
     /// The envelope rendered as its JSON wire form. Built literally — the
     /// token is a 26-character Crockford base32 ULID, so no escaping can
     /// ever be needed — keeping the rendering total and deterministic.
     public var rendered: String {
-        "{\"pending\":true,\"completionToken\":\"\(completionToken)\"}"
+        Self.renderedPrefix + completionToken + Self.renderedSuffix
+    }
+
+    /// Whether `text` is exactly a rendered pending envelope: the fixed
+    /// ``rendered`` frame around one valid ULID `completionToken`.
+    ///
+    /// This is what lets a decorator outside the elevation layer — today
+    /// ``TokenCappingTool`` — recognize control-plane wire data and pass it
+    /// through untouched, without JSON-parsing arbitrary tool output: the
+    /// wire form is deterministic, so a byte-shape check is exact.
+    ///
+    /// - Parameter text: The rendered tool output to test.
+    /// - Returns: `true` iff `text` is a rendered pending envelope.
+    public static func isRendered(_ text: String) -> Bool {
+        guard
+            text.count == renderedPrefix.count + ULID.stringLength + renderedSuffix.count,
+            text.hasPrefix(renderedPrefix),
+            text.hasSuffix(renderedSuffix)
+        else {
+            return false
+        }
+        let completionToken = String(text.dropFirst(renderedPrefix.count).dropLast(renderedSuffix.count))
+        return ULID(completionToken) != nil
     }
 }
 
@@ -176,7 +215,10 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 /// detached run body that may outlive the call that received them.
 public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
     /// The wrapped tool, called through untouched save for elevation.
-    private let wrapped: any Tool<Arguments, String>
+    /// Internal rather than private, mirroring ``TokenCappingTool``'s own
+    /// `wrapped`, so composition-site wiring tests can assert the per-site
+    /// decorator chain order.
+    let wrapped: any Tool<Arguments, String>
 
     /// The owning session's identity, stamped into each run's
     /// ``ToolContext``.

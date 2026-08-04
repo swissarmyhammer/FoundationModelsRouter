@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Synchronization
 import os
 
 /// The logger ``RoutedSessionActor`` reports a defensively-clamped transcript
@@ -972,7 +973,12 @@ actor RoutedSessionActor: RoutedSession {
     /// among ``originalTools`` bound to ``outbox`` via a pure
     /// ``EventEmittingTool/connecting(_:)`` copy (a root session), or the
     /// fork-then-connect composition ``fork(workingDirectory:)`` builds (a
-    /// fork) — a non-conforming tool passes through unchanged. This is the
+    /// fork) — a non-conforming tool passes through unchanged — with the
+    /// ``ElevatingTool`` layer (and, when a budget carries a
+    /// `toolOutputLimit`, the capping layer) applied per the owning
+    /// composition site's own chain: connect → elevate → cap at a root,
+    /// fork → connect → elevate → cap at a fork, connect → elevate at
+    /// restore (task ^k4nygqa). This is the
     /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
     /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
     /// computes it before the backend exists), or via
@@ -1954,7 +1960,9 @@ actor RoutedSessionActor: RoutedSession {
     /// Waits on ``forkAdmissionGate`` for a free slot, then builds the child's
     /// tools from ``originalTools`` (never this session's own already-instanced
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
-    /// pristine state before being wired to the child's fresh outbox. Acquires
+    /// pristine state before being wired to the child's fresh outbox — this
+    /// site's full chain is fork → connect → elevate → cap (task ^k4nygqa),
+    /// so the child's elevated runs park in the child's own mailbox. Acquires
     /// ``turnLock`` just long enough to read `backend`'s conversation state
     /// and entry count together, closing the race against a concurrent
     /// in-flight turn mutating that same state. The child's
@@ -1979,36 +1987,60 @@ actor RoutedSessionActor: RoutedSession {
         // true originals, never this session's own already-instanced
         // ``tools`` — so a ``ForkableTool`` conformer is forked exactly once,
         // from its pristine state, rather than from a copy already wired to
-        // this session's outbox. Composition order matters: a tool is forked
-        // first via its own `forked()` (falling back to sharing the original
-        // unchanged when it doesn't conform to `ForkableTool`), *then* the
-        // forked result is wired to `childOutbox` via `connecting(_:)` if it
-        // also emits. Since `connecting(_:)` is pure rather than mutating,
-        // this session's own already-instanced `tools` are entirely
-        // untouched by this and keep posting to this session's own `outbox`
-        // — including any detached work that captured this session's sink
-        // before the fork — so event delivery never migrates to the child.
-        // Computed before the turn-lock window below purely because it has
-        // no dependency on `backend`'s state; `childTools` is then threaded
-        // into `backend.makeFork(tools:)` itself, so the live model backing
-        // the fork actually calls these child-instanced tools rather than
-        // silently carrying forward whatever this session's backend was
-        // built with (see ``LanguageModelSessionBackend/makeFork(tools:)``).
+        // this session's outbox. This site's chain is fork → connect →
+        // elevate → cap (task ^k4nygqa; the root and restore sites each
+        // have their own deliberately distinct chain — see
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``
+        // and `restoreSessionTree`). Composition order matters: a tool is
+        // forked first via its own `forked()` (falling back to sharing the
+        // original unchanged when it doesn't conform to `ForkableTool`),
+        // *then* the forked result is wired to `childOutbox` via
+        // `connecting(_:)` if it also emits. Since `connecting(_:)` is pure
+        // rather than mutating, this session's own already-instanced
+        // `tools` are entirely untouched by this and keep posting to this
+        // session's own `outbox` — including any detached work that
+        // captured this session's sink before the fork — so event delivery
+        // never migrates to the child. Computed before the turn-lock window
+        // below purely because it has no dependency on `backend`'s state;
+        // `childTools` is then threaded into `backend.makeFork(tools:)`
+        // itself, so the live model backing the fork actually calls these
+        // child-instanced tools rather than silently carrying forward
+        // whatever this session's backend was built with (see
+        // ``LanguageModelSessionBackend/makeFork(tools:)``).
+        // Elevation (task ^k4nygqa) wraps the connected copy with the
+        // child's own identity, mailbox, and outbox — see
+        // ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
+        // and ``ElevationConfiguration/nativeSessionMount`` — so the fork's
+        // parked runs live in the fork's own mailbox, never the parent's.
         // Capping (task 1334fk3) is applied outermost here too, exactly as
         // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:)``
         // applies it to a root session's tools — see
         // ``ToolOutputCapping/optionallyCapped(_:toTokenLimit:)`` — so a fork
         // that inherits ``autoCompactionBudget`` also inherits its
-        // ``TokenBudget/toolOutputLimit``, if any.
+        // ``TokenBudget/toolOutputLimit``, if any. Capping outside
+        // elevation is safe: a rendered pending envelope is exempt from
+        // capping (see ``TokenCappingTool/call(arguments:)``), so the
+        // `completionToken` survives any configured limit.
         let childOutbox = SessionOutbox()
         // The child's mailbox is fresh for the same reason its outbox is:
         // parked runs and pending elicitations never migrate between
         // sessions (see ``RoutedSession/mailbox``).
         let childMailbox = SessionMailbox()
+        // Minted before the tool composition below, deliberately: the
+        // child's ElevatingTool layer stamps this id — the fork's own
+        // session identity — into every elevated run's ``ToolContext``.
+        let childId = ULID.generate()
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
             let connected = (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
-            return ToolOutputCapping.optionallyCapped(connected, toTokenLimit: autoCompactionBudget?.toolOutputLimit)
+            let elevated = ToolElevation.wrapping(
+                connected,
+                sessionID: childId,
+                mailbox: childMailbox,
+                sink: childOutbox,
+                configuration: .nativeSessionMount
+            )
+            return ToolOutputCapping.optionallyCapped(elevated, toTokenLimit: autoCompactionBudget?.toolOutputLimit)
         }
 
         // Acquire this session's turn lock before reading `backend`'s
@@ -2037,7 +2069,6 @@ actor RoutedSessionActor: RoutedSession {
         let forkedBackend = backend.makeFork(tools: childTools)
         turnLock.signal()
 
-        let childId = ULID.generate()
         // The child's transcript nests directly *under this session's* directory,
         // so the on-disk tree mirrors the fork lineage: a root session lives at
         // `<base>/<routerId>/<rootId>/`, its fork at `.../<rootId>/<childId>/`, a
@@ -2462,15 +2493,59 @@ actor RoutedSessionActor: RoutedSession {
         )
     }
 
+    /// The `tool` identity stamped on the turn-scope ambient ``ToolContext``
+    /// binding — a host-level stamp, since the binding covers a whole model
+    /// call rather than one wrapped tool (per-tool stamps live in
+    /// ``ElevatingTool``'s own per-call binding).
+    private static let turnBindingToolStamp = "session"
+
+    /// The `op` stamped on the turn-scope ambient binding, alongside
+    /// ``turnBindingToolStamp``.
+    private static let turnBindingOpStamp = "respond"
+
+    /// Mirrors one model-call task's cancellation into a synchronous probe
+    /// the turn's ambient ``ToolContext`` binding reports verbatim —
+    /// ``ToolContext/isCancelled`` must report the probe the invoker bound,
+    /// never `Task.isCancelled` of whichever task happens to read it. The
+    /// holder exists because the context must be constructed before the
+    /// model-call task it probes: ``bind(to:)`` closes the loop right after
+    /// the task is created, and the unbound window reads `false` — correct,
+    /// since ``RoutedSession/cancelCurrentTurn()`` can only cancel a model
+    /// call that exists.
+    private final class ModelCallCancellationProbe: Sendable {
+        /// The model-call task being probed, bound once it exists.
+        private let modelCall = Mutex<Task<String, any Error>?>(nil)
+
+        /// Binds the created model-call task as the probe's subject.
+        func bind(to task: Task<String, any Error>) {
+            modelCall.withLock { $0 = task }
+        }
+
+        /// Whether the bound model call has been cancelled.
+        var isCancelled: Bool {
+            modelCall.withLock { $0?.isCancelled ?? false }
+        }
+    }
+
     /// Runs one attempt's model call in a task this session can cancel from
     /// outside the turn, and awaits its result.
     ///
     /// The whole cancellation boundary in-flight cancellation needs — and
     /// deliberately the *only* part of a turn inside it. Cancelling
-    /// ``inFlightModelCall`` unwinds `body` and, because the SDK invokes tools
-    /// from inside the model call, every tool call running under it; the turn's
-    /// recording runs after this returns or throws and is never cancelled with
-    /// it (see ``RoutedSession/cancelCurrentTurn()``).
+    /// ``inFlightModelCall`` unwinds `body` and every un-elevated tool call
+    /// the SDK is running under it. A tool from the session's composed list
+    /// is wrapped in ``ElevatingTool`` (task ^k4nygqa), and an *elevated*
+    /// in-flight call answers the cancellation by detaching instead of
+    /// dying with the turn: it parks in the session's ``mailbox`` and
+    /// returns the pending envelope (see
+    /// `ElevatingTool.raceSettlement(of:deadlineNanoseconds:)` — a caller
+    /// whose wait ends, by deadline or by cancellation, has already
+    /// accepted that the work may outlive the call). The parked run stays
+    /// individually addressable — ``SessionMailbox/cancel(completionToken:)``
+    /// — and ``close()``'s sweep settles whatever remains; its `.completed`
+    /// rides a later turn through the outbox as usual. The turn's
+    /// recording runs after this returns or throws and is never cancelled
+    /// with it (see ``RoutedSession/cancelCurrentTurn()``).
     ///
     /// `fileprivate` rather than `private` for one caller:
     /// ``CancellableCompactionSummarizer``, which routes a fold's own summarizer
@@ -2503,7 +2578,37 @@ actor RoutedSessionActor: RoutedSession {
         if isTurnCancelled {
             throw CancellationError()
         }
-        let modelCall = Task { try await body(composedPrompt) }
+        // The host-side ambient binding (task ^k4nygqa; eventplan.md § "The
+        // vocabulary and the host substrate": "Router binds the task local
+        // around native `respond()` also"): every backend respond()/stream
+        // call runs under a ``ToolContext`` carrying this session's
+        // identity, its mailbox, and its own ``SessionOutbox`` as the
+        // upstream sink — so a tool Apple's runtime invokes from inside the
+        // model call sees the same ambient capabilities the elevation
+        // engine binds per call. Whether the runtime actually propagates
+        // task locals into `Tool.call` is the propagation probe's question;
+        // this binding is correct either way, and ``ElevatingTool`` also
+        // binds per call regardless. The `completionToken` is minted fresh
+        // per model call — run scope, never session scope — and the
+        // cancellation probe mirrors this very model-call task's
+        // cancellation (bound just after creation, because the context must
+        // exist before the task it probes).
+        let cancellationProbe = ModelCallCancellationProbe()
+        let turnContext = ToolContext(
+            sessionID: id,
+            mailbox: mailbox,
+            sink: outbox,
+            tool: Self.turnBindingToolStamp,
+            op: Self.turnBindingOpStamp,
+            completionToken: SessionMailbox.makeCompletionToken(),
+            isCancelled: { cancellationProbe.isCancelled }
+        )
+        let modelCall = Task {
+            try await ToolContext.$current.withValue(turnContext) {
+                try await body(composedPrompt)
+            }
+        }
+        cancellationProbe.bind(to: modelCall)
         inFlightModelCall = modelCall
         // Identity-matched rather than unconditional, so a later attempt's own
         // model call is never cleared by an earlier one's unwind.

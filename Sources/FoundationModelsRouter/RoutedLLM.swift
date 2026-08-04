@@ -195,11 +195,24 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // below — the model-facing tool list the backend actually receives
         // is these sink-bound copies, not the originals.
         //
-        // When `budget.toolOutputLimit` is set, ``ToolOutputCapping/optionallyCapped(_:toTokenLimit:)``
-        // wraps the connected tool outermost (task 1334fk3): the SDK's own
-        // call reaches the capped decorator last, so both continued
-        // generation and the recorded `.toolOutput` entry see the capped
-        // text, never the oversized original.
+        // This site's chain is connect → elevate → cap (task ^k4nygqa; the
+        // fork and restore sites each have their own deliberately distinct
+        // chain — see ``RoutedSessionActor/fork(workingDirectory:)`` and
+        // `restoreSessionTree`):
+        //
+        // - ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
+        //   mounts the elevation engine around the connected copy
+        //   (eventplan.md § "Elevation": the native mount, elevation on,
+        //   `waitSeconds` default 5 s), parking a slow call in this
+        //   session's own `mailbox` and posting its events to `outbox`.
+        // - When `budget.toolOutputLimit` is set, ``ToolOutputCapping/optionallyCapped(_:toTokenLimit:)``
+        //   wraps the elevated tool outermost (task 1334fk3): the SDK's own
+        //   call reaches the capped decorator last, so both continued
+        //   generation and the recorded `.toolOutput` entry see the capped
+        //   text, never the oversized original. Capping outside elevation
+        //   is safe: a rendered pending envelope is exempt from capping
+        //   (see ``TokenCappingTool/call(arguments:)``), so the
+        //   `completionToken` survives any configured limit.
         let outbox = SessionOutbox()
         // The mailbox shares the outbox's scope rule: fresh per session,
         // never shared, so parked runs and pending elicitations never
@@ -207,7 +220,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let mailbox = SessionMailbox()
         let instancedTools = tools.map { tool -> any Tool in
             let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
-            return ToolOutputCapping.optionallyCapped(connected, toTokenLimit: budget?.toolOutputLimit)
+            let elevated = ToolElevation.wrapping(
+                connected,
+                sessionID: sessionId,
+                mailbox: mailbox,
+                sink: outbox,
+                configuration: .nativeSessionMount
+            )
+            return ToolOutputCapping.optionallyCapped(elevated, toTokenLimit: budget?.toolOutputLimit)
         }
 
         // The container is only a factory: it manufactures the backend the

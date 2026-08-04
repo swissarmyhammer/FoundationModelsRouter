@@ -746,8 +746,11 @@ struct AutoCompactionTests {
             Issue.record("expected a RoutedSessionActor")
             return
         }
-        #expect(actor.tools.contains { $0 is EchoTool })
-        #expect(actor.tools.contains { $0 is FailingTool })
+        // Every String-output tool arrives wrapped in the elevation layer;
+        // peel it to reach the threaded originals.
+        let innerTools = actor.tools.compactMap { ($0 as? ElevatingTool<SampleToolArguments>)?.wrapped }
+        #expect(innerTools.contains { $0 is EchoTool })
+        #expect(innerTools.contains { $0 is FailingTool })
 
         // contextFill is 0.9 (>= the 0.8 trigger) after the warm-up turns —
         // identical to the no-tools case above; the presence of tools must

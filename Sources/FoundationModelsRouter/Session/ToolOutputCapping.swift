@@ -146,12 +146,27 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// Calls `wrapped`, then caps its result to ``limit`` tokens via
     /// ``ToolOutputCapping/capped(_:toTokenLimit:)``.
     ///
+    /// One exemption: a rendered ``PendingRunEnvelope`` — the wire form an
+    /// elevated call returns in place of its output (task ^k4nygqa;
+    /// capping wraps outside the elevation layer at every composition
+    /// site) — passes through untouched. The envelope is control-plane
+    /// data, not tool output: truncating it would destroy the
+    /// `completionToken` the model needs to ever hear the parked run's
+    /// completion again, so the exemption holds under any `limit`, however
+    /// small. Recognition is the exact byte-shape check
+    /// ``PendingRunEnvelope/isRendered(_:)``, so ordinary tool output can
+    /// never ride through it.
+    ///
     /// - Parameter arguments: The call's arguments, forwarded to `wrapped`
     ///   untouched.
-    /// - Returns: `wrapped`'s own output, capped to ``limit`` tokens.
+    /// - Returns: `wrapped`'s own output, capped to ``limit`` tokens — or
+    ///   a rendered pending envelope, uncapped.
     /// - Throws: Whatever `wrapped.call(arguments:)` throws, unmodified.
     func call(arguments: Arguments) async throws -> String {
         let output = try await wrapped.call(arguments: arguments)
+        if PendingRunEnvelope.isRendered(output) {
+            return output
+        }
         return ToolOutputCapping.capped(output, toTokenLimit: limit)
     }
 }

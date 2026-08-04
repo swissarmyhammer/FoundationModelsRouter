@@ -57,11 +57,27 @@ comments:
     - evidence: 1 file — Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift: added `///` doc comments to the four public forwarded properties (`name`, `description`, `parameters`, `includesSchemaInInstructions`) using the exact text the findings prescribed. Swept the whole file: every other public declaration (ElevationParameterProviding + requirement, ElevationConfiguration + members, ElevatingToolError + case, PendingRunEnvelope + members, ElevatingTool init/call, ToolElevation.wrapping) already carried a doc comment — no other undocumented public declarations. Note: TokenCappingTool's forwarded properties are internal, so its style (undocumented) does not apply to public API; used the findings' prescribed text. swift build --build-tests clean; swift test: 703 + 18 + 12 passed, zero failures. All 4 review findings flipped to [x].
     - next: /review (task left in doing)
   timestamp: 2026-08-04T22:47:10.908578+00:00
+- actor: claude-code
+  id: 01kz7fq6b7p97be48dwhwzmmk7
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (a7934cb) — 0 new findings, 9 validators attempted; all 4 prior 2026-08-04 17:37 findings checked
+    - next: task moved to done
+  timestamp: 2026-08-04T22:53:43.143405+00:00
+- actor: claude-code
+  id: 01kz7fr724hwybcyfwhe0bpah6
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (doc comments on the 4 public forwarded properties in Hosting/ElevatingTool.swift; whole-file sweep found no other undocumented public decls)
+    - test: green — swift test, 733 passed, 0 failures, 29 expected gated skips
+    - commit: a7934cb
+    - review: clean — 0 new findings on HEAD~1..HEAD, all 4 prior findings checked; task → done
+  timestamp: 2026-08-04T22:54:16.644943+00:00
 depends_on:
 - 01KZ6MZPV6VDYYDBACD3G930C4
 - 01KZ6N1146TF1T334TRB3ARJR3
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: eb80
 title: '[Router] ElevatingTool engine with the two-clocks model'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"Elevation: waitSeconds and the completion token", §"MultiTool is a host and an emitter" (synthesized events), §"Consolidation of the siblings" (two clocks; promotion of MCP's `CallWait` and Shelltool's `RunSupervisor` race — reference designs at ../FoundationModelsMCP/Sources/FoundationModelsMCP/{CallWait,CallDeadline,MCPServer}.swift and ../FoundationModelsShelltool/Sources/ShellTool/ShellRunner.swift).
