@@ -21,8 +21,10 @@ import FoundationModels
 /// `Codable & Sendable & Equatable`, exactly what
 /// `Transcript.CustomSegment.Content` requires, so no intermediate wrapper is
 /// needed. Round-trips through ``TranscriptEntryMapper/entry(from:kind:registry:)``
-/// once an integrator registers it: `var registry = CustomSegmentRegistry();
-/// registry.register(OperationEventSegment.self)`.
+/// with zero caller setup: Router pre-registers this type in
+/// ``CustomSegmentRegistry/routerDefault`` (exactly as it does
+/// ``CompactionSegment``), so every default-argument reconstruction entry
+/// point rebuilds it out of the box.
 public struct OperationEventSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
     public let id: String
     public let content: OperationEvent

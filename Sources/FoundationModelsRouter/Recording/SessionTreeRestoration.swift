@@ -162,6 +162,27 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// and a restored session is a reconstruction of one that was already
     /// admitted (and, for a root, never needed admission at all).
     ///
+    /// **Orphaned journaled runs come back `.lost`.** For each restored
+    /// node, the effective recorded stream is scanned for journaled runs
+    /// that carry a non-terminal ``OperationEventSegment`` (`.progress` or
+    /// `.elicitation`) with no `.completed` for the same
+    /// `(tool, correlationID)` pair anywhere in that stream: those runs died
+    /// with the crashed process (their memory-only ``SessionMailbox`` gone
+    /// before ``RoutedSessionActor/close()``'s sweep could journal a
+    /// terminal), so exactly one terminal `.completed` event with outcome
+    /// ``OperationOutcome/lost`` per orphaned run is manufactured and posted
+    /// to that node's fresh outbox — the next turn's drain journals it
+    /// durably, so the record has no holes and the model learns the run's
+    /// outcome is unknowable. The scan is deliberately *per node*, over that
+    /// node's own effective view (the same span its model sees): an
+    /// ancestor's orphaned run therefore manufactures one `.lost` on every
+    /// restored node whose inherited prefix carries the dangling
+    /// non-terminal — each node's model needs its own closure — and a run
+    /// whose `.completed` the parent journaled only after this node's fork
+    /// cut point is `.lost` from this node's view, because the completion
+    /// never entered its conversation. See
+    /// ``TranscriptTree/lostRunTerminalEvents(in:)``.
+    ///
     /// - Parameters:
     ///   - rootId: The root session's span id to restore the whole tree from.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
@@ -246,7 +267,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         }
 
         var sessionsById: [ULID: RoutedSession] = [:]
-        func restore(_ node: SessionNode) throws -> RoutedSession {
+        func restore(_ node: SessionNode) async throws -> RoutedSession {
             let slot = node.sidecar.slot
             let model = node.sidecar.model
             let routedLLM: RoutedLLM
@@ -303,8 +324,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // report unknown, mirroring live `fork()`'s own choice to
             // inherit `usageState` from the session it forked from (see
             // ``RoutedSessionActor/fork(workingDirectory:)``).
-            let usageState = TranscriptTree.restoredUsageState(
-                in: try tree.effectiveEntryEvents(forSession: node.id))
+            let effectiveEvents = try tree.effectiveEntryEvents(forSession: node.id)
+            let usageState = TranscriptTree.restoredUsageState(in: effectiveEvents)
             // `SessionSidecar.grammar` is only the grammar's `source`
             // string — it does not distinguish `.jsonSchema(_:)` from
             // `.ebnf(_:)`, which share that representation — so a session
@@ -312,6 +333,24 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // `.jsonSchema` case instead (see this function's doc comment,
             // "Known limitation: `.ebnf` grammar case").
             let grammar = node.sidecar.grammar.map(Grammar.jsonSchema)
+
+            // Crash-edge run-outcome durability (eventplan.md §"Elevation"):
+            // a journaled run with a non-terminal recorded event (`.progress`
+            // or `.elicitation`) and no `.completed` for the same
+            // `(tool, correlationID)` pair anywhere in this node's effective
+            // stream died with the crashed process — its memory-only mailbox
+            // is gone, so no teardown sweep ever journaled a terminal event
+            // for it (the orderly-shutdown case is
+            // ``RoutedSessionActor/close()``'s ``SessionMailbox/sweep()``).
+            // Manufacture exactly one terminal `.completed` with outcome
+            // ``OperationOutcome/lost`` per orphaned run and post it to this
+            // node's fresh outbox: the next turn's drain journals it durably,
+            // so the record has no holes and the model learns the run died.
+            // This is the only place `.lost` is manufactured outside an MCP
+            // transport drop.
+            for lostEvent in TranscriptTree.lostRunTerminalEvents(in: effectiveEvents) {
+                await outbox.post(lostEvent)
+            }
 
             let session = makeRoutedSessionActor(
                 profile: owningProfile,
@@ -356,12 +395,107 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             )
             sessionsById[node.id] = session
             for child in node.children {
-                _ = try restore(child)
+                _ = try await restore(child)
             }
             return session
         }
 
-        let root = try restore(rootNode)
+        let root = try await restore(rootNode)
         return RestoredSessionTree(root: root, sessionsById: sessionsById, tree: tree)
+    }
+}
+
+extension TranscriptTree {
+    /// The identity of one journaled operation run: the emitting tool's name
+    /// plus its tool-assigned `correlationID`. Correlation ids are opaque
+    /// and tool-assigned, so they are only unique *within* one tool — this
+    /// is the same pair identity ``SessionOutbox/post(_:)`` coalesces
+    /// `.progress` events on, and keying orphan detection on anything less
+    /// would let one tool's `.completed` suppress another tool's orphan.
+    private struct RunKey: Hashable {
+        let tool: String
+        let correlationID: String
+    }
+
+    /// The terminal `.completed`/``OperationOutcome/lost`` events a restore
+    /// must manufacture for `events`' orphaned journaled runs — the crash
+    /// edge of run-outcome durability (the orderly-shutdown edge is
+    /// ``RoutedSessionActor/close()``'s ``SessionMailbox/sweep()``).
+    ///
+    /// A run is *orphaned* when the effective recorded stream carries a
+    /// non-terminal journaled event for its `(tool, correlationID)` pair (an
+    /// ``OperationEventKind/progress`` or ``OperationEventKind/elicitation``
+    /// ``OperationEventSegment``) but no ``OperationEventKind/completed``
+    /// one for that same pair anywhere in the stream, regardless of order:
+    /// the run was still in flight when the recording process died, its
+    /// memory-only ``SessionMailbox`` died with it, and nothing will ever
+    /// journal its true ending. `.lost` is the honest outcome — "we do not
+    /// know how this ended" — exactly the authority distinction
+    /// ``OperationOutcome`` documents.
+    ///
+    /// Exactly one event is manufactured per orphaned run, in
+    /// first-orphaned-appearance order, carrying the newest non-terminal
+    /// event's own `tool`/`op`; its `detail` is the elicitation's `message`
+    /// for an orphaned elicitation (the question lives there, never in
+    /// `detail` — see `ToolContext.elicit(_:)`), else the newest event's own
+    /// `detail`, and is bounded to its trailing
+    /// ``SessionMailbox/terminalDetailTailLimit`` characters — the same cap
+    /// ``SessionMailbox/sweep()`` applies to its synthesized terminal, so a
+    /// manufactured terminal never exceeds what any other journaled terminal
+    /// may carry. A stripped or undecodable segment
+    /// (``RecordingLevel/metadataOnly``) is skipped rather than guessed at —
+    /// the same nil-not-throw stance `compactionSegmentContent(in:)` takes.
+    ///
+    /// - Parameter events: A session's effective recorded events, in order
+    ///   (as ``effectiveEntryEvents(forSession:)`` returns them).
+    /// - Returns: The manufactured terminal events, or empty when every
+    ///   journaled run completed.
+    static func lostRunTerminalEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
+        var completedRuns: Set<RunKey> = []
+        var newestNonTerminalByRun: [RunKey: OperationEvent] = [:]
+        var orphanCandidateOrder: [RunKey] = []
+        for event in events {
+            for operationEvent in operationEvents(in: event) {
+                let run = RunKey(tool: operationEvent.tool, correlationID: operationEvent.correlationID)
+                switch operationEvent.kind {
+                case .completed:
+                    completedRuns.insert(run)
+                case .progress, .elicitation:
+                    if newestNonTerminalByRun[run] == nil {
+                        orphanCandidateOrder.append(run)
+                    }
+                    newestNonTerminalByRun[run] = operationEvent
+                }
+            }
+        }
+        return orphanCandidateOrder.compactMap { run in
+            guard !completedRuns.contains(run), let newest = newestNonTerminalByRun[run] else {
+                return nil
+            }
+            let detail = newest.elicitation?.message ?? newest.detail
+            return OperationEvent(
+                tool: run.tool,
+                op: newest.op,
+                correlationID: run.correlationID,
+                kind: .completed,
+                detail: String(detail.suffix(SessionMailbox.terminalDetailTailLimit)),
+                outcome: .lost
+            )
+        }
+    }
+
+    /// Decodes every journaled ``OperationEvent`` `event` carries as an
+    /// ``OperationEventSegment`` — turn-drained events ride recorded
+    /// `.prompt` entries, close-journaled terminals ride `.toolOutput` ones,
+    /// so no entry-kind filter is applied; the segment discriminator alone
+    /// identifies them. A stripped or undecodable segment yields nothing
+    /// rather than throwing, mirroring `compactionSegmentContent(in:)`.
+    private static func operationEvents(in event: TranscriptEvent) -> [OperationEvent] {
+        (event.entry?.segments ?? []).compactMap { segment in
+            guard case .custom(_, let discriminator, let contentJSON, _) = segment,
+                discriminator == OperationEventSegment.typeDiscriminator
+            else { return nil }
+            return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
+        }
     }
 }
