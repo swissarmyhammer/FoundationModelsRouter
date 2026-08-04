@@ -455,11 +455,12 @@ public protocol RoutedSession: Actor {
     /// to blocking the model for the length of its human wait. Accounting survives
     /// misuse; the optimization does not.
     ///
-    /// Router deliberately does **not** implement elicitation itself: it owns
-    /// no channel to a user, and ``outbox`` is a one-way outbound projection
-    /// rather than a request/response with a person. This method is the whole
-    /// of Router's contribution — making the wait cheap for whichever
-    /// coordinator upstairs actually owns the user channel.
+    /// Router carries elicitation's typed envelope and resume plumbing —
+    /// ``ToolContext/elicit(_:)`` parks the run in this session's ``mailbox``
+    /// and ``respond(elicitationId:response:)``/``complete(elicitationId:)``
+    /// deliver the answer — while the presenting UI stays the host app's.
+    /// This method's contribution is orthogonal: making the wait on the
+    /// person cheap by releasing the generation gate for its duration.
     ///
     /// - Precondition: Call this from inside a tool the SDK invoked for *this*
     ///   session's own in-flight turn, and do not let the wait outlive that tool
@@ -686,6 +687,60 @@ extension RoutedSession {
     @discardableResult
     public func replace(_ id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult {
         await outbox.replace(id: id, prompt: prompt)
+    }
+
+    /// Delivers the user's answer to a pending elicitation raised by a run on
+    /// **this** session — the inbound answer route: app host → session → this
+    /// session's own ``mailbox`` → the parked ``ToolContext/elicit(_:)``
+    /// continuation.
+    ///
+    /// The answer addresses the elicitation, never the run: one run can hold
+    /// several pending elicitations at once, each resolved by its own id. A
+    /// form-mode `accept` resumes the run with its `content`; `decline` and
+    /// `cancel` resume with those actions — a declined elicitation is not a
+    /// cancelled run, the tool decides what to do with the answer. A URL-mode
+    /// `accept` only records that the user agreed to open the URL: the entry
+    /// stays open, and the run stays parked, until
+    /// ``complete(elicitationId:)`` arrives.
+    ///
+    /// The route uses no task locals: this call reaches exactly this
+    /// session's ``mailbox`` by reference, so two sessions sharing a registry
+    /// can never cross-route — an id pending on another session is simply
+    /// unknown here. Unknown, malformed, and already-answered ids are safe
+    /// no-ops per the MCP spec.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The pending elicitation's id — the string form of
+    ///     the ``ElicitationRequest/elicitationId`` the request carried.
+    ///   - response: The user's answer.
+    /// - Returns: The ``SessionMailbox/ElicitationAnswerDelivery``.
+    @discardableResult
+    public func respond(elicitationId: String, response: ElicitationResponse) async -> SessionMailbox.ElicitationAnswerDelivery {
+        guard let id = ULID(elicitationId) else {
+            return .noPendingElicitation
+        }
+        return await mailbox.respond(elicitationId: id, response)
+    }
+
+    /// Signals that an accepted URL-mode elicitation's out-of-band flow
+    /// finished — the second step of the URL-mode two-step: the accept
+    /// delivered through ``respond(elicitationId:response:)`` only meant the
+    /// user agreed to open the URL, and this completion is what resumes the
+    /// run that stayed parked past it.
+    ///
+    /// Routes by reference to this session's own ``mailbox`` exactly as
+    /// ``respond(elicitationId:response:)`` does. Unknown, malformed,
+    /// not-yet-accepted, and already-completed (duplicate) ids are safe
+    /// no-ops per the MCP spec.
+    ///
+    /// - Parameter elicitationId: The accepted URL-mode elicitation's id.
+    /// - Returns: The ``SessionMailbox/ElicitationCompletionDelivery``.
+    @discardableResult
+    public func complete(elicitationId: String) async -> SessionMailbox.ElicitationCompletionDelivery {
+        guard let id = ULID(elicitationId) else {
+            return .noPendingElicitation
+        }
+        return await mailbox.complete(elicitationId: id)
     }
 }
 

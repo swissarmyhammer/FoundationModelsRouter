@@ -75,11 +75,27 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift (OrphanRunScan extraction, finding 1), Tests/FoundationModelsRouterTests/SessionTreeRestorationLostRunTests.swift (round-trip regression test + journaledOperationEvents helper, finding 3); finding 2 resolved by verifying the existing registration in Recording/CustomSegmentRegistry.swift (8e9566f). All 3 findings checked [x]. swift test green: 674+18+12, 0 failures.
     - next: /review
   timestamp: 2026-08-04T21:15:50.970850+00:00
+- actor: claude-code
+  id: 01kz7ajf1b2ajn77jqjt7js53b
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 83819b7) — 0 new findings (9 validators attempted, 0 failed); all 3 prior Review Findings items checked
+    - next: task moved to done
+  timestamp: 2026-08-04T21:23:45.323569+00:00
+- actor: claude-code
+  id: 01kz7an17qrzwyas18s7stxznf
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files (OrphanRunScan extraction in SessionTreeRestoration.swift, round-trip regression test in SessionTreeRestorationLostRunTests.swift); finding 2 resolved by verifying registration already in routerDefault (8e9566f)
+    - test: green — swift test, 704 passed, 0 failures, 29 expected gated skips
+    - commit: 83819b7
+    - review: clean — 0 new findings on HEAD~1..HEAD, all 3 prior findings checked; task → done
+  timestamp: 2026-08-04T21:25:09.495887+00:00
 depends_on:
 - 01KZ6MY4E1H1RG9SCY8YR4A48H
 - 01KZ6N038H8VC4C5CXQXYKSGNS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: e980
 title: '[Router] Register OperationEventSegment; manufacture .lost on restore'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"Elevation" crash-edge paragraph: "Restoration marks journaled runs that have no terminal event as `.lost`." Research found the prerequisite gap this task closes.

@@ -848,11 +848,17 @@ still blocks a concurrent fork's transcript read. Overlapping waits inside one
 turn release once and re-acquire once, and a call made with no turn in flight
 releases nothing rather than minting a permit the session never held.
 
-**Router does not implement elicitation** — it has no user channel, and
-`SessionOutbox`/`SessionEvent` is a one-way outbound projection, not a
-request/response with a human. Elicitation lives in **FoundationModelsACPAgent**,
-which depends on both Router and `FoundationModelsMCP` and is therefore the right
-caller for `awaitingUser`. Router's whole contribution is making the wait cheap.
+**Router carries elicitation** — a reversal of the earlier "Router does not
+implement elicitation" decision, per `../FoundationModelsMultitool/eventplan.md`:
+the typed envelope (`ElicitationRequest`/`ElicitationResponse`) and the resume
+plumbing live here. `ToolContext.elicit(_:)` parks the run as a pending entry in
+the session's `SessionMailbox` and posts the request upstream as an
+elicitation-kind event; the host app's answer comes back down through
+`RoutedSession.respond(elicitationId:response:)` — and, for URL mode's two-step,
+`RoutedSession.complete(elicitationId:)` — resuming the parked continuation by
+reference through that session's own mailbox, never a task local. The
+*presenting UI* stays the host app's: Router still owns no screen, and
+`awaitingUser` is what makes the wait on the person cheap.
 
 Note the re-acquire is itself a wait: a tool resuming after a long human pause may
 queue behind other sessions' turns. That is correct — it is now an ordinary
@@ -1178,10 +1184,13 @@ responses, and tool traffic round-trip losslessly.
   **per-model generation gate** (throughput), and `RoutedSession.awaitingUser { }`
   releases only the latter for the duration of a wait on a person. Without this, a
   tool call that awaits a user holds a per-model lock across the whole turn and
-  blocks every other session and fork on that model. Router **does not** implement
-  elicitation itself — it owns no user channel; the coordinator lives in
-  FoundationModelsACPAgent, which calls `awaitingUser`. See **Human waits must not
-  stall the model**.
+  blocks every other session and fork on that model. Router **carries**
+  elicitation's typed envelope and resume plumbing — `ToolContext.elicit` parks
+  the run in the session's `SessionMailbox`, and the host's answer returns
+  through `RoutedSession.respond(elicitationId:response:)`/`complete(elicitationId:)`
+  — a reversal of the earlier "no elicitation in Router" decision; only the
+  presenting UI stays the host app's, which wraps the wait in `awaitingUser`.
+  See **Human waits must not stall the model**.
 
 - **Collapse: `FoundationModelsAgentHarness` folds into Router (2026-07-23)**
   — the harness's turn loop, token accounting, and compaction policy had
