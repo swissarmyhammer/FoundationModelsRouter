@@ -192,9 +192,16 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// ``ElevationParameterProviding`` override the clocks.
     private let configuration: ElevationConfiguration
 
+    /// The wrapped tool's name.
     public var name: String { wrapped.name }
+
+    /// The wrapped tool's description.
     public var description: String { wrapped.description }
+
+    /// The wrapped tool's parameter schema.
     public var parameters: GenerationSchema { wrapped.parameters }
+
+    /// Whether the schema is included in the tool's instructions.
     public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
     /// Wraps `wrapped` in the elevation engine.

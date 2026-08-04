@@ -34,6 +34,29 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift (new: ElevationParameterProviding, ElevationConfiguration, ElevatingToolError, PendingRunEnvelope, ElevatingTool, ToolElevation, RunEventFunnel, RaceGate, CancellationRequestFlag), Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift (private boundedWaitNanoseconds → shared internal boundedNanoseconds(clamping:)), Tests/FoundationModelsRouterTests/ElevatingToolTests.swift (new: 22 tests covering the card's full matrix). swift test: 703 + 18 + 12 green, zero warnings, zero failures; ElevatingTool suite green 3 consecutive runs.
     - next: /review (task left in doing per the implement skill)
   timestamp: 2026-08-04T22:33:57.752461+00:00
+- actor: claude-code
+  id: 01kz7f4dwc5kh41ban4zhk9jzr
+  text: |-
+    ### review — findings
+    - evidence: 4 findings — Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift:195, :196, :197, :198 (scope: review sha HEAD~1..HEAD, commit 6cffe80)
+    - next: add documentation comments to the four public forwarded properties (`name`, `description`, `parameters`, `includesSchemaInInstructions`), then re-review
+  timestamp: 2026-08-04T22:43:28.268554+00:00
+- actor: claude-code
+  id: 01kz7f7r9dcgxrdzazzg8acvje
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 3 files (Hosting/ElevatingTool.swift new engine, SessionMailbox shared clamp, ElevatingToolTests new 22 tests)
+    - test: green — swift test, 733 passed, 0 failures, 29 expected gated skips; ElevatingTool suite 5x re-run stable
+    - commit: 6cffe80
+    - review: findings — Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift:195,196,197,198 (missing doc comments on forwarded public properties)
+  timestamp: 2026-08-04T22:45:17.229162+00:00
+- actor: claude-code
+  id: 01kz7fb79wngdb858ayazzy1b1
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift: added `///` doc comments to the four public forwarded properties (`name`, `description`, `parameters`, `includesSchemaInInstructions`) using the exact text the findings prescribed. Swept the whole file: every other public declaration (ElevationParameterProviding + requirement, ElevationConfiguration + members, ElevatingToolError + case, PendingRunEnvelope + members, ElevatingTool init/call, ToolElevation.wrapping) already carried a doc comment — no other undocumented public declarations. Note: TokenCappingTool's forwarded properties are internal, so its style (undocumented) does not apply to public API; used the findings' prescribed text. swift build --build-tests clean; swift test: 703 + 18 + 12 passed, zero failures. All 4 review findings flipped to [x].
+    - next: /review (task left in doing)
+  timestamp: 2026-08-04T22:47:10.908578+00:00
 depends_on:
 - 01KZ6MZPV6VDYYDBACD3G930C4
 - 01KZ6N1146TF1T334TRB3ARJR3
@@ -71,4 +94,11 @@ Per-call clock sourcing — the mechanism is defined HERE, in this task (the Mul
 - [ ] `swift test --filter ElevatingTool` green; full suite green
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #phase-1 #router-first
+- Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-08-04 17:37)
+
+- [x] `Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift:195` — Public computed property `name` lacks documentation comment. Public API items must have documentation. Add a documentation comment above the property: `/// The wrapped tool's name.`.
+- [x] `Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift:196` — Public computed property `description` lacks documentation comment. Public API items must have documentation. Add a documentation comment above the property: `/// The wrapped tool's description.`.
+- [x] `Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift:197` — Public computed property `parameters` lacks documentation comment. Public API items must have documentation. Add a documentation comment above the property: `/// The wrapped tool's parameter schema.`.
+- [x] `Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift:198` — Public computed property `includesSchemaInInstructions` lacks documentation comment. Public API items must have documentation. Add a documentation comment above the property: `/// Whether the schema is included in the tool's instructions.`. #phase-1 #router-first
