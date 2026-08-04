@@ -1,0 +1,981 @@
+import Foundation
+import FoundationModels
+import Testing
+
+@testable import FoundationModelsRouter
+
+/// Exercises the ``ElevatingTool`` engine (task ^vvg7ztt): the inline fast
+/// path, the elevation slow path (pending envelope, mailbox entry, event
+/// sequence), zero-wait detach, per-call clocks through
+/// ``ElevationParameterProviding``, the two-clocks matrix (progress resets
+/// `timeout`, never `waitSeconds`), the terminal-scoped synthesis matrix
+/// (no events / progress-only / own-terminal), exactly-one-`.completed`
+/// across the throw, cancel, and timeout paths, and elevation-off mode.
+@Suite("ElevatingTool: the two-clocks elevation engine")
+struct ElevatingToolTests {
+    // MARK: - Interval fixtures
+
+    /// A wait/timeout interval short enough to keep the suite fast but long
+    /// enough that an in-window fixture never spuriously elapses it.
+    private static let shortInterval: TimeInterval = 0.2
+
+    /// A deadline a test treats as "never elapses within this test".
+    private static let generousInterval: TimeInterval = 30
+
+    /// The ceiling on any await a test performs against the mailbox.
+    private static let settlementDeadline: TimeInterval = 30
+
+    // MARK: - Argument fixtures
+
+    @Generable
+    struct ElevatingArguments {
+        let value: String
+    }
+
+    @Generable
+    struct ClockedArguments {
+        let value: String
+        let waitSeconds: Double
+    }
+
+    // MARK: - Sink and gate fixtures
+
+    /// A sink that records every posted event, in order.
+    private actor RecordingSink: OperationEventSink {
+        private(set) var events: [OperationEvent] = []
+
+        func post(_ event: OperationEvent) {
+            events.append(event)
+        }
+    }
+
+    /// A manually opened gate a fixture tool blocks on until the test lets
+    /// it finish.
+    private actor ToolGate {
+        private var isOpen = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func open() {
+            isOpen = true
+            for waiter in waiters {
+                waiter.resume()
+            }
+            waiters.removeAll()
+        }
+
+        func waitUntilOpened() async {
+            guard !isOpen else { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+    }
+
+    // MARK: - Tool fixtures
+
+    /// Returns immediately — the inline fast path's subject.
+    private struct FastTool: Tool {
+        let name = "fast_tool"
+        let description = "returns immediately"
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            "fast: \(arguments.value)"
+        }
+    }
+
+    /// Blocks on a ``ToolGate`` until the test opens it — the elevation slow
+    /// path's subject.
+    private struct GatedTool: Tool {
+        let name = "gated_tool"
+        let description = "blocks until its gate opens"
+        let gate: ToolGate
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            await gate.waitUntilOpened()
+            return "gated: \(arguments.value)"
+        }
+    }
+
+    /// The error ``ThrowingTool`` throws.
+    private struct FixtureError: Error, Equatable {}
+
+    /// Throws immediately — the tool-throws path's subject.
+    private struct ThrowingTool: Tool {
+        let name = "throwing_tool"
+        let description = "throws immediately"
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            throw FixtureError()
+        }
+    }
+
+    /// Sleeps cooperatively until cancelled — the cancel and timeout paths'
+    /// subject: `Task.sleep` throws `CancellationError` the moment the run's
+    /// cancellation lands.
+    private struct SleepingTool: Tool {
+        let name = "sleeping_tool"
+        let description = "sleeps until cancelled"
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            try await Task.sleep(nanoseconds: 3_600_000_000_000)
+            return "never returned"
+        }
+    }
+
+    /// Posts one progress event of its own, then returns in-window — the
+    /// progress-only row of the terminal-scoped synthesis matrix.
+    private struct ProgressOnceTool: Tool {
+        let name = "progress_once_tool"
+        let description = "posts one progress event then returns"
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            await ToolContext.current?.progress("halfway")
+            return "progressed: \(arguments.value)"
+        }
+    }
+
+    /// Posts its own terminal `.completed` event, then returns — the
+    /// own-terminal row of the terminal-scoped synthesis matrix.
+    private struct OwnTerminalTool: Tool {
+        let name = "own_terminal_tool"
+        let description = "posts its own terminal event then returns"
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            await ToolContext.current?.post(
+                OperationEvent(
+                    tool: "", op: "", correlationID: "", kind: .completed,
+                    detail: "my own terminal", outcome: .succeeded
+                )
+            )
+            return "own-terminal: \(arguments.value)"
+        }
+    }
+
+    /// Posts progress every `interval` seconds for `beats` beats, then
+    /// returns — the two-clocks matrix's subject: each beat resets the
+    /// per-call `timeout`, and none of them extends `waitSeconds`.
+    private struct HeartbeatTool: Tool {
+        let name = "heartbeat_tool"
+        let description = "posts periodic progress then returns"
+        let beats: Int
+        let interval: TimeInterval
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            for beat in 0..<beats {
+                try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                await ToolContext.current?.progress("beat \(beat)")
+            }
+            return "heartbeat done"
+        }
+    }
+
+    /// Blocks on a gate and conforms to ``ElevationParameterProviding``,
+    /// reading its per-call `waitSeconds` out of the opaque
+    /// `GeneratedContent` — the per-call clock sourcing hook's subject.
+    private struct PerCallClockTool: Tool, ElevationParameterProviding {
+        let name = "per_call_clock_tool"
+        let description = "supplies waitSeconds from its own arguments"
+        let gate: ToolGate
+
+        func call(arguments: ClockedArguments) async throws -> String {
+            await gate.waitUntilOpened()
+            return "clocked: \(arguments.value)"
+        }
+
+        func elevationClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (try? arguments.value(Double.self, forProperty: "waitSeconds"), nil)
+        }
+    }
+
+    /// Sleeps forever and conforms to ``ElevationParameterProviding`` with a
+    /// per-call `timeout` — the timeout half of the per-call hook.
+    private struct PerCallTimeoutTool: Tool, ElevationParameterProviding {
+        let name = "per_call_timeout_tool"
+        let description = "supplies a short per-call timeout"
+        let timeoutSeconds: TimeInterval
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            try await Task.sleep(nanoseconds: 3_600_000_000_000)
+            return "never returned"
+        }
+
+        func elevationClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (nil, timeoutSeconds)
+        }
+    }
+
+    /// Blocks on a gate and conforms to ``ElevationParameterProviding``
+    /// returning all-nil clocks — the nil-falls-back-to-configuration case.
+    private struct NilClockTool: Tool, ElevationParameterProviding {
+        let name = "nil_clock_tool"
+        let description = "supplies no per-call clocks at all"
+        let gate: ToolGate
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            await gate.waitUntilOpened()
+            return "nil-clock: \(arguments.value)"
+        }
+
+        func elevationClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (nil, nil)
+        }
+    }
+
+    /// Asks one question through `ToolContext.elicit` and returns the
+    /// action it was answered with — the elicitation-suspends-timeout
+    /// subject.
+    private struct ElicitOnceTool: Tool {
+        let name = "elicit_once_tool"
+        let description = "asks one question then returns"
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            guard let context = ToolContext.current else { return "no context" }
+            let request = ElicitationRequest(
+                message: "Proceed?",
+                elicitationId: ULID.generate(),
+                requestedSchema: ElicitationRequestedSchema(
+                    properties: ["ok": .boolean(ElicitationBooleanSchema())]
+                )
+            )
+            let response = try await context.elicit(request)
+            return "answered: \(response.action.rawValue)"
+        }
+    }
+
+    /// Elicits, then stalls forever — proves the answered elicitation
+    /// restores the timeout with a fresh window rather than disabling it.
+    private struct ElicitThenStallTool: Tool {
+        let name = "elicit_then_stall_tool"
+        let description = "asks one question then stalls forever"
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            guard let context = ToolContext.current else { return "no context" }
+            let request = ElicitationRequest(
+                message: "Proceed?",
+                elicitationId: ULID.generate(),
+                requestedSchema: ElicitationRequestedSchema(
+                    properties: ["ok": .boolean(ElicitationBooleanSchema())]
+                )
+            )
+            _ = try await context.elicit(request)
+            try await Task.sleep(nanoseconds: 3_600_000_000_000)
+            return "never returned"
+        }
+    }
+
+    /// Records that a tool observed the run's cooperative cancellation
+    /// flag.
+    private actor CancellationWitness {
+        private(set) var observed = false
+
+        func mark() {
+            observed = true
+        }
+    }
+
+    /// Polls `ToolContext.isCancelled` — never structured task cancellation
+    /// — and returns normally the moment the flag flips, marking the
+    /// witness: the flag-reaches-the-tool subject for both the mailbox
+    /// canceler and the timeout path.
+    private struct CancellationFlagPollingTool: Tool {
+        let name = "flag_polling_tool"
+        let description = "returns when the ambient cancellation flag flips"
+        let witness: CancellationWitness
+
+        func call(arguments: ElevatingArguments) async throws -> String {
+            guard let context = ToolContext.current else { return "no context" }
+            for _ in 0..<6_000 {
+                if context.isCancelled {
+                    await witness.mark()
+                    return "observed cancellation"
+                }
+                // Deliberately swallow the cancellation error: this tool
+                // cooperates through the flag alone.
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            return "never cancelled"
+        }
+    }
+
+    /// A non-`String`-output `Tool` — proves ``ToolElevation/wrapping``
+    /// passes a tool through unchanged when the pending envelope could not
+    /// replace its rendered output.
+    private struct NonStringOutput: PromptRepresentable, Sendable {
+        let text: String
+        var promptRepresentation: Prompt { Prompt(text) }
+    }
+
+    private struct NonStringOutputTool: Tool {
+        let name = "non_string_output_tool"
+        let description = "returns a non-String PromptRepresentable"
+
+        func call(arguments: ElevatingArguments) async throws -> NonStringOutput {
+            NonStringOutput(text: "ignored")
+        }
+    }
+
+    // Note: there is deliberately no non-Sendable-Arguments fixture — a
+    // `Tool` conformance with non-Sendable `Arguments` does not compile
+    // (`Tool.call` is `@concurrent`), so the case ``ToolElevation/wrapping``
+    // would have to pass through is unrepresentable.
+
+    // MARK: - Harness
+
+    /// One test's wiring: the mailbox, sink, and wrapped engine.
+    private struct Harness<Arguments: ConvertibleFromGeneratedContent & Sendable> {
+        let mailbox: SessionMailbox
+        let sink: RecordingSink
+        let elevating: ElevatingTool<Arguments>
+    }
+
+    /// Wraps `tool` in an ``ElevatingTool`` over a fresh mailbox and
+    /// recording sink.
+    private static func makeHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
+        wrapping tool: any Tool<Arguments, String>,
+        configuration: ElevationConfiguration
+    ) -> Harness<Arguments> {
+        let mailbox = SessionMailbox()
+        let sink = RecordingSink()
+        let elevating = ElevatingTool(
+            wrapping: tool,
+            sessionID: ULID.generate(),
+            mailbox: mailbox,
+            sink: sink,
+            configuration: configuration
+        )
+        return Harness(mailbox: mailbox, sink: sink, elevating: elevating)
+    }
+
+    /// The pending envelope's decoded shape.
+    private struct DecodedEnvelope: Decodable {
+        let pending: Bool
+        let completionToken: String
+    }
+
+    /// Decodes the pending envelope out of a returned rendered output.
+    private static func decodeEnvelope(_ rendered: String) throws -> DecodedEnvelope {
+        try JSONDecoder().decode(DecodedEnvelope.self, from: Data(rendered.utf8))
+    }
+
+    /// Awaits the run's settlement through the mailbox and returns its
+    /// terminal event.
+    private static func settledTerminal(
+        of completionToken: String, in mailbox: SessionMailbox
+    ) async throws -> OperationEvent {
+        let result = await mailbox.wait(
+            completionToken: completionToken, seconds: settlementDeadline
+        )
+        guard case .settled(let terminal) = result else {
+            Issue.record("run \(completionToken) did not settle: \(result)")
+            throw FixtureError()
+        }
+        return terminal
+    }
+
+    // MARK: - Inline fast path
+
+    @Test("a fast tool returns its rendered output inline and posts no events at all")
+    func inlineFastPathIsSilent() async throws {
+        let harness = Self.makeHarness(
+            wrapping: FastTool(),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: Self.generousInterval
+            )
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+
+        #expect(rendered == "fast: x")
+        #expect(await harness.sink.events.isEmpty)
+        #expect(await harness.mailbox.status().isEmpty)
+    }
+
+    // MARK: - Elevation slow path
+
+    @Test("a slow tool elevates: pending envelope, mailbox entry, synthesized progress, one terminal upstream")
+    func elevationSlowPath() async throws {
+        let gate = ToolGate()
+        let harness = Self.makeHarness(
+            wrapping: GatedTool(gate: gate),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: Self.shortInterval
+            )
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "slow")
+        )
+
+        // The pending envelope: pending flag plus a ULID completion token.
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+        #expect(ULID(ulidString: envelope.completionToken) != nil)
+
+        // The mailbox holds the parked run under that token, kind swiftTask.
+        let status = await harness.mailbox.status()
+        #expect(status.count == 1)
+        #expect(status.first?.completionToken == envelope.completionToken)
+        #expect(status.first?.kind == .swiftTask)
+        #expect(status.first?.tool == "gated_tool")
+
+        // One synthesized progress at elevation, on the run's correlation.
+        let eventsAtElevation = await harness.sink.events
+        #expect(eventsAtElevation.count == 1)
+        #expect(eventsAtElevation.first?.kind == .progress)
+        #expect(eventsAtElevation.first?.correlationID == envelope.completionToken)
+        #expect(eventsAtElevation.first?.tool == "gated_tool")
+
+        // Settle the run; the terminal event carries the rendered output in
+        // detail, the token as correlationID, and outcome succeeded — and it
+        // went upstream even though wait() collected it here.
+        await gate.open()
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.kind == .completed)
+        #expect(terminal.detail == "gated: slow")
+        #expect(terminal.correlationID == envelope.completionToken)
+        #expect(terminal.outcome == .succeeded)
+
+        let events = await harness.sink.events
+        #expect(events.map(\.kind) == [.progress, .completed])
+        #expect(events.last?.detail == "gated: slow")
+        #expect(events.last?.outcome == .succeeded)
+        #expect(events.last?.correlationID == envelope.completionToken)
+    }
+
+    @Test("waitSeconds 0 detaches immediately")
+    func zeroWaitDetachesImmediately() async throws {
+        let gate = ToolGate()
+        let harness = Self.makeHarness(
+            wrapping: GatedTool(gate: gate),
+            configuration: ElevationConfiguration(mode: .elevating, waitSeconds: 0)
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "detached")
+        )
+
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+        #expect(await harness.mailbox.status().count == 1)
+
+        await gate.open()
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.outcome == .succeeded)
+        #expect(terminal.detail == "gated: detached")
+    }
+
+    // MARK: - Per-call clocks (ElevationParameterProviding)
+
+    @Test("a per-call waitSeconds extracted from the arguments overrides the wrap-time default")
+    func perCallWaitSecondsOverridesConfiguration() async throws {
+        let gate = ToolGate()
+        // Wrap-time wait is generous — only the per-call value can be what
+        // detaches this call within the test's lifetime.
+        let harness = Self.makeHarness(
+            wrapping: PerCallClockTool(gate: gate),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: Self.generousInterval
+            )
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ClockedArguments(value: "x", waitSeconds: Self.shortInterval)
+        )
+
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+
+        await gate.open()
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.outcome == .succeeded)
+    }
+
+    @Test("a per-call timeout overrides the wrap-time default")
+    func perCallTimeoutOverridesConfiguration() async throws {
+        let harness = Self.makeHarness(
+            wrapping: PerCallTimeoutTool(timeoutSeconds: Self.shortInterval),
+            configuration: ElevationConfiguration(
+                mode: .runToCompletion, timeout: Self.generousInterval
+            )
+        )
+
+        await #expect(throws: ElevatingToolError.self) {
+            _ = try await harness.elevating.call(
+                arguments: ElevatingArguments(value: "x")
+            )
+        }
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .timedOut)
+    }
+
+    @Test("nil per-call clocks fall back to the wrap-time configuration")
+    func nilPerCallClocksFallBackToConfiguration() async throws {
+        let gate = ToolGate()
+        let harness = Self.makeHarness(
+            wrapping: NilClockTool(gate: gate),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: Self.shortInterval
+            )
+        )
+
+        // The provider returns (nil, nil), so the configured short wait is
+        // what detaches this call.
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+
+        await gate.open()
+        _ = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+    }
+
+    // MARK: - Two clocks
+
+    @Test("progress resets the per-call timeout: a tool that beats faster than the timeout survives past it")
+    func progressResetsTimeout() async throws {
+        // Total runtime (8 × 0.1 s) is well past the 0.5 s timeout, but each
+        // beat arrives well inside a timeout window, so the run never times
+        // out.
+        let harness = Self.makeHarness(
+            wrapping: HeartbeatTool(beats: 8, interval: 0.1),
+            configuration: ElevationConfiguration(mode: .runToCompletion, timeout: 0.5)
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+
+        #expect(rendered == "heartbeat done")
+        let events = await harness.sink.events
+        #expect(events.last?.kind == .completed)
+        #expect(events.last?.outcome == .succeeded)
+    }
+
+    @Test("progress never extends waitSeconds: a beating tool still detaches, and later yields exactly one synthesized terminal")
+    func progressDoesNotExtendWaitSeconds() async throws {
+        // The tool beats every 0.05 s — far faster than the 0.3 s wait — so
+        // if progress reset the wait clock the call would run to completion
+        // (~1 s) and return its output inline. It must detach instead.
+        let harness = Self.makeHarness(
+            wrapping: HeartbeatTool(beats: 20, interval: 0.05),
+            configuration: ElevationConfiguration(mode: .elevating, waitSeconds: 0.3)
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+
+        // The run posted its own progress, so no synthesized progress was
+        // added at elevation — and it still gets exactly one synthesized
+        // terminal at settlement.
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.outcome == .succeeded)
+        #expect(terminal.detail == "heartbeat done")
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.filter { $0.kind == .progress }.allSatisfy { $0.detail.hasPrefix("beat ") })
+    }
+
+    @Test("timeout expiry cancels the work and yields outcome timedOut, inline")
+    func timeoutExpiryCancelsInline() async throws {
+        let harness = Self.makeHarness(
+            wrapping: SleepingTool(),
+            configuration: ElevationConfiguration(
+                mode: .runToCompletion, timeout: Self.shortInterval
+            )
+        )
+
+        await #expect(throws: ElevatingToolError.self) {
+            _ = try await harness.elevating.call(
+                arguments: ElevatingArguments(value: "x")
+            )
+        }
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .timedOut)
+    }
+
+    @Test("timeout expiry on an elevated run settles it with outcome timedOut and exactly one terminal")
+    func timeoutExpiryOnElevatedRun() async throws {
+        let harness = Self.makeHarness(
+            wrapping: SleepingTool(),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: 0, timeout: Self.shortInterval
+            )
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+        let envelope = try Self.decodeEnvelope(rendered)
+
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.outcome == .timedOut)
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+    }
+
+    // MARK: - Terminal-scoped synthesis matrix
+
+    @Test("progress-only inline run still yields exactly one synthesized terminal")
+    func progressOnlyInlineRunGetsSynthesizedTerminal() async throws {
+        let harness = Self.makeHarness(
+            wrapping: ProgressOnceTool(),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: Self.generousInterval
+            )
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+
+        #expect(rendered == "progressed: x")
+        let events = await harness.sink.events
+        #expect(events.map(\.kind) == [.progress, .completed])
+        #expect(events.last?.outcome == .succeeded)
+        #expect(events.last?.detail == "progressed: x")
+    }
+
+    @Test("a tool that posts its own terminal event gets no duplicate")
+    func ownTerminalToolGetsNoDuplicate() async throws {
+        let harness = Self.makeHarness(
+            wrapping: OwnTerminalTool(),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: Self.generousInterval
+            )
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+
+        #expect(rendered == "own-terminal: x")
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.detail == "my own terminal")
+    }
+
+    // MARK: - Exactly one .completed on the abnormal paths
+
+    @Test("a tool that throws rethrows inline and yields exactly one terminal with outcome failed")
+    func throwingToolYieldsOneFailedTerminal() async throws {
+        let harness = Self.makeHarness(
+            wrapping: ThrowingTool(),
+            configuration: ElevationConfiguration(
+                mode: .elevating, waitSeconds: Self.generousInterval
+            )
+        )
+
+        await #expect(throws: FixtureError.self) {
+            _ = try await harness.elevating.call(
+                arguments: ElevatingArguments(value: "x")
+            )
+        }
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .failed)
+    }
+
+    @Test("cancelling a parked run settles it with outcome cancelled and exactly one terminal")
+    func cancellingParkedRunYieldsOneCancelledTerminal() async throws {
+        let harness = Self.makeHarness(
+            wrapping: SleepingTool(),
+            configuration: ElevationConfiguration(mode: .elevating, waitSeconds: 0)
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+        let envelope = try Self.decodeEnvelope(rendered)
+
+        let cancelResult = await harness.mailbox.cancel(
+            completionToken: envelope.completionToken
+        )
+        #expect(cancelResult == .reported(.cancelled))
+
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.outcome == .cancelled)
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .cancelled)
+    }
+
+    // MARK: - Elevation off
+
+    @Test("elevation-off mode runs to completion, never parks, and never returns a pending envelope")
+    func elevationOffRunsToCompletion() async throws {
+        let gate = ToolGate()
+        // waitSeconds is deliberately tiny: in run-to-completion mode it must
+        // play no part at all.
+        let harness = Self.makeHarness(
+            wrapping: GatedTool(gate: gate),
+            configuration: ElevationConfiguration(
+                mode: .runToCompletion, waitSeconds: 0.001
+            )
+        )
+
+        let calling = Task {
+            try await harness.elevating.call(
+                arguments: ElevatingArguments(value: "complete")
+            )
+        }
+        // Give the call ample room to (wrongly) act on the tiny waitSeconds
+        // before letting the tool finish.
+        try await Task.sleep(nanoseconds: UInt64(Self.shortInterval * 1_000_000_000))
+        #expect(await harness.mailbox.status().isEmpty)
+        await gate.open()
+
+        let rendered = try await calling.value
+        #expect(rendered == "gated: complete")
+        #expect(await harness.mailbox.status().isEmpty)
+        // In-band silent success: no events at all.
+        #expect(await harness.sink.events.isEmpty)
+    }
+
+    @Test("parked-run progress feeds the mailbox's run-plane snapshot")
+    func parkedRunProgressFeedsStatus() async throws {
+        let harness = Self.makeHarness(
+            wrapping: HeartbeatTool(beats: 40, interval: 0.05),
+            configuration: ElevationConfiguration(mode: .elevating, waitSeconds: 0.2)
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+        let envelope = try Self.decodeEnvelope(rendered)
+
+        // Poll (bounded) until a beat lands in the parked run's status row.
+        var observedDetail: String?
+        for _ in 0..<1_000 {
+            let status = await harness.mailbox.status()
+            if let detail = status.first?.latestProgressDetail {
+                observedDetail = detail
+                break
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        #expect(observedDetail?.hasPrefix("beat ") == true)
+
+        _ = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+    }
+
+    // MARK: - Elicitation suspends the timeout
+
+    /// Polls the mailbox (bounded) until an elicitation is pending and
+    /// returns its id.
+    private static func firstPendingElicitationId(
+        in mailbox: SessionMailbox
+    ) async throws -> ULID {
+        for _ in 0..<1_000 {
+            if let elicitationId = await mailbox.pendingElicitationIds().first {
+                return elicitationId
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        Issue.record("no elicitation ever became pending")
+        throw FixtureError()
+    }
+
+    @Test("a pending elicitation suspends the per-call timeout for as long as it is unanswered")
+    func pendingElicitationSuspendsTimeout() async throws {
+        let harness = Self.makeHarness(
+            wrapping: ElicitOnceTool(),
+            configuration: ElevationConfiguration(
+                mode: .runToCompletion, timeout: Self.shortInterval
+            )
+        )
+
+        let calling = Task {
+            try await harness.elevating.call(
+                arguments: ElevatingArguments(value: "x")
+            )
+        }
+        let elicitationId = try await Self.firstPendingElicitationId(in: harness.mailbox)
+
+        // Hold the answer across several full timeout windows: the pending
+        // elicitation must suspend the timeout the whole time, so the run
+        // still resolves to the answer instead of timing out.
+        try await Task.sleep(
+            nanoseconds: UInt64(Self.shortInterval * 3 * 1_000_000_000)
+        )
+        await harness.mailbox.respond(
+            elicitationId: elicitationId, .accept(content: ["ok": .boolean(true)])
+        )
+
+        let rendered = try await calling.value
+        #expect(rendered == "answered: accept")
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .succeeded)
+    }
+
+    @Test("an answered elicitation restores the timeout with a fresh window: a run that then stalls still times out")
+    func elicitationResolutionRestoresTimeout() async throws {
+        let harness = Self.makeHarness(
+            wrapping: ElicitThenStallTool(),
+            configuration: ElevationConfiguration(
+                mode: .runToCompletion, timeout: Self.shortInterval
+            )
+        )
+
+        let calling = Task {
+            try await harness.elevating.call(
+                arguments: ElevatingArguments(value: "x")
+            )
+        }
+        let elicitationId = try await Self.firstPendingElicitationId(in: harness.mailbox)
+        await harness.mailbox.respond(elicitationId: elicitationId, .decline)
+
+        await #expect(throws: ElevatingToolError.self) {
+            _ = try await calling.value
+        }
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .timedOut)
+    }
+
+    // MARK: - The cooperative cancellation flag
+
+    @Test("a cancelled run's cooperative flag reaches the tool through ToolContext.isCancelled")
+    func cancellationFlagReachesTool() async throws {
+        let witness = CancellationWitness()
+        let harness = Self.makeHarness(
+            wrapping: CancellationFlagPollingTool(witness: witness),
+            configuration: ElevationConfiguration(mode: .elevating, waitSeconds: 0)
+        )
+
+        let rendered = try await harness.elevating.call(
+            arguments: ElevatingArguments(value: "x")
+        )
+        let envelope = try Self.decodeEnvelope(rendered)
+
+        let cancelResult = await harness.mailbox.cancel(
+            completionToken: envelope.completionToken
+        )
+        #expect(cancelResult == .reported(.cancelled))
+
+        // The tool never observes structured cancellation — only the flag —
+        // and chooses to return normally once it flips: an honest success.
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.detail == "observed cancellation")
+        #expect(terminal.outcome == .succeeded)
+        #expect(await witness.observed)
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+    }
+
+    @Test("timeout expiry also raises the cooperative flag the tool observes")
+    func timeoutSetsCancellationFlag() async throws {
+        let witness = CancellationWitness()
+        let harness = Self.makeHarness(
+            wrapping: CancellationFlagPollingTool(witness: witness),
+            configuration: ElevationConfiguration(
+                mode: .runToCompletion, timeout: Self.shortInterval
+            )
+        )
+
+        await #expect(throws: ElevatingToolError.self) {
+            _ = try await harness.elevating.call(
+                arguments: ElevatingArguments(value: "x")
+            )
+        }
+
+        // The race resolved as timedOut; the tool keeps polling until the
+        // flag the timeout raised reaches it. Wait (bounded) for the mark.
+        var observed = false
+        for _ in 0..<1_000 {
+            if await witness.observed {
+                observed = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        #expect(observed)
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .timedOut)
+    }
+
+    // MARK: - The untyped ToolElevation entry point
+
+    @Test("ToolElevation.wrapping discovers a String-output tool from any Tool and elevates it")
+    func factoryWrapsStringOutputTool() async throws {
+        let gate = ToolGate()
+        let mailbox = SessionMailbox()
+        let sink = RecordingSink()
+        let wrapped = ToolElevation.wrapping(
+            GatedTool(gate: gate),
+            sessionID: ULID.generate(),
+            mailbox: mailbox,
+            sink: sink,
+            configuration: ElevationConfiguration(mode: .elevating, waitSeconds: 0)
+        )
+
+        let elevating = try #require(wrapped as? ElevatingTool<ElevatingArguments>)
+        let rendered = try await elevating.call(
+            arguments: ElevatingArguments(value: "factory")
+        )
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+
+        await gate.open()
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: mailbox
+        )
+        #expect(terminal.detail == "gated: factory")
+    }
+
+    @Test("ToolElevation.wrapping passes a non-String-Output tool through unchanged")
+    func factoryPassesThroughNonStringOutput() {
+        let wrapped = ToolElevation.wrapping(
+            NonStringOutputTool(),
+            sessionID: ULID.generate(),
+            mailbox: SessionMailbox(),
+            sink: RecordingSink(),
+            configuration: ElevationConfiguration(mode: .elevating)
+        )
+
+        #expect(wrapped is NonStringOutputTool)
+    }
+}

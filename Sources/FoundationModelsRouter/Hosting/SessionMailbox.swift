@@ -374,7 +374,7 @@ public actor SessionMailbox {
         guard parkedRuns[completionToken] != nil else {
             return .unknownToken
         }
-        let deadline = Self.boundedWaitNanoseconds(seconds)
+        let deadline = Self.boundedNanoseconds(clamping: seconds)
         let waiterID = UUID()
         return await withCheckedContinuation { continuation in
             waiters[completionToken, default: [:]][waiterID] = continuation
@@ -615,11 +615,16 @@ public actor SessionMailbox {
         }
     }
 
-    /// Clamps a caller-supplied wait deadline to a representable, safe
+    /// Clamps a caller-supplied seconds value to a representable, safe
     /// nanosecond count: NaN and negative values floor to zero and anything
     /// above ``waitSecondsCeiling`` (including infinity) caps there, so no
     /// outside-supplied value can trap the `UInt64` conversion.
-    private static func boundedWaitNanoseconds(_ seconds: Double) -> UInt64 {
+    ///
+    /// Owned here, next to ``waitSecondsCeiling`` — the constant it clamps
+    /// against — and shared by ``wait(completionToken:seconds:)`` and
+    /// `ElevatingTool`'s two clocks, so the one clamping rule has exactly
+    /// one implementation.
+    static func boundedNanoseconds(clamping seconds: Double) -> UInt64 {
         guard !seconds.isNaN else { return 0 }
         let clamped = min(max(seconds, 0), waitSecondsCeiling)
         return UInt64(clamped * 1_000_000_000)

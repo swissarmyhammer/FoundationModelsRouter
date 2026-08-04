@@ -63,12 +63,28 @@ comments:
     - swift build + swift test green: 681 + 18 + 12 passed, 0 failures; only warning is the pre-existing llbuild "missing creator for mutated node" on the vendored mlx Cmlx bundle.
     - next: /review
   timestamp: 2026-08-04T21:55:30.064653+00:00
+- actor: claude-code
+  id: 01kz7cnvew0m3w4h8qcgyy08mw
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 2810ac1) — 0 new findings, 9 validators attempted, 0 failed; prior "## Review Findings (2026-08-04 16:42)" checklist 1/1 checked
+    - next: none — task moved to done
+  timestamp: 2026-08-04T22:00:33.500414+00:00
+- actor: claude-code
+  id: 01kz7cpmfxtyr0pyt30250br07
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (idCaseDoesNotAffectRouting focused test in ElicitationRoutingTests.swift; ULID parsing verified already case-insensitive via yaslab initializer)
+    - test: green — swift test, 711 passed, 0 failures, 29 expected gated skips
+    - commit: 2810ac1
+    - review: clean — 0 new findings on HEAD~1..HEAD, prior checklist 1/1 checked; task → done
+  timestamp: 2026-08-04T22:00:59.133342+00:00
 depends_on:
 - 01KZ6MZPV6VDYYDBACD3G930C4
 - 01KZ6N038H8VC4C5CXQXYKSGNS
 - 01KZ6N1146TF1T334TRB3ARJR3
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ea80
 title: '[Router] RoutedSession elicitation replies: respond and complete'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"The ambient context" (host verb paragraph) and §"The elicitation envelope" (URL-mode two-step).

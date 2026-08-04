@@ -1,11 +1,44 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kz7d7b18f6z46xjbnswn5av7
+  text: |-
+    Picked up; research done. Discoveries:
+    - Precedents in place: ToolContext (task-local, stamping rule, sink funneling), SessionMailbox (park/wait/cancel/sweep, makeCompletionToken), OperationEvent/Outcome vocabulary — all in Hosting/. TokenCappingTool (Session/ToolOutputCapping.swift) is the forwarding precedent: generic over Arguments, wraps `any Tool<Arguments, String>`, Output String.
+    - MCP reference: raceThroughGate + CancellationGate (Mutex-based resume-once gate, register/cancel-before-registration states) is the continuation race primitive; CallDeadline is a pure resetCount + isElicitationPending struct compared before/after each full-timeout sleep; ambient cancellation of a bounded wait folds into deadlineElapsed (detach), per SoftDeadlineRace doc.
+    - Design decisions: per-run RunEventFunnel actor is the single posting funnel — phase machine (running → elevated → settled) closes the race between deadline-elapse and natural settlement (elevate() returns false if already settled → caller returns the inline result instead of parking); upstream posts are FIFO-chained inside the funnel so synthesized progress can never arrive after the terminal; funnel drops a second .completed for the run (exactly-one enforcement point). Terminal synthesis rule: post .completed iff no terminal passed yet AND (elevated || run posted any event || outcome != succeeded) — silent in-window success posts nothing (OperationEventKind contract), abnormal endings always journal.
+    - Elicitation suspension: funnel records posted elicitationIds and reconciles against mailbox.pendingElicitationIds() at each timeout checkpoint; a resolution bumps resetCount (endElicitation semantics).
+    - ElevationParameterProviding takes opaque GeneratedContent; typed Arguments reach it via a runtime `as? any ConvertibleToGeneratedContent` cast (`.generatedContent`).
+    - Platform: macOS 27, Synchronization.Mutex already used (AsyncSemaphore). @Generable test args keep memberwise inits (ToolOutputCappingTests precedent). Plan: sleep-based short-interval fixtures with generous ratios, no fake clock injection.
+  timestamp: 2026-08-04T22:10:06.504541+00:00
+- actor: claude-code
+  id: 01kz7ejt9erm0yk1mqbs1jd845
+  text: |-
+    Implementation landed, then /double-check returned REVISE with 6 findings; all 6 are resolved:
+
+    1. Elicitation-suspends-timeout coverage — added ElicitOnceTool/ElicitThenStallTool fixtures and two tests: an unanswered elicitation held across 3 full timeout windows never times out (call resolves to the answer), and an answered elicitation restores a fresh window so a run that then stalls still times out with exactly one .completed(timedOut).
+    2. No `any Tool` entry point — added public `ToolElevation.wrapping(_:sessionID:mailbox:sink:configuration:)` mirroring ToolOutputCapping.wrapping's existential open. Documented + tested: a String-output tool is discovered and elevates; a non-String-Output tool passes through unchanged (un-elevated, in-band). Discovery during this fix: the Sendable half CANNOT be a runtime check — Sendable is a marker protocol with no runtime representation ("cast always succeeds" compiler warning), AND a Tool conformance with non-Sendable Arguments does not compile at all (Tool.call is @concurrent), so the pass-through case is unrepresentable; the factory bridges the metatype through Any with a documented always-succeeding cast, and the planned non-Sendable pass-through test was replaced by a source note explaining the unrepresentability.
+    3. Cooperative-flag coverage — added CancellationFlagPollingTool + CancellationWitness: a mailbox cancel's flag reaches the tool through ToolContext.isCancelled (tool returns normally, honest .succeeded terminal, witness marked), and timeout expiry also raises the flag (witness marked after the timedOut throw).
+    4. Clamp duplication — hoisted the one clamping rule to `SessionMailbox.boundedNanoseconds(clamping:)` (was private boundedWaitNanoseconds), now shared by wait() and both ElevatingTool clocks.
+    5. Acceptance-criterion interpretation, recorded per the finding: criterion 6 ("exactly one .completed in every path (inline, elevated, tool-throws, cancel, timeout)") is scoped by criterion 1 and the OperationEventKind contract — a silent, successful, in-window run posts nothing at all ("may post nothing"); every run that posts any event, elevates, or ends abnormally gets exactly one .completed. This is What §5's own scope ("per elevated run") and is what RunEventFunnel.settleRun enforces and the terminal-scoped synthesis matrix tests pin.
+    6. TDD evidence: Tests/FoundationModelsRouterTests/ElevatingToolTests.swift was authored first and observed failing (RED = compile failure "cannot find type 'ElevatingTool' in scope" et al., shell command 411 this session) before any of Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift existed; GREEN followed (16 tests, then 22 after the review-driven additions). No commit exists because this step's instructions forbid committing — commit belongs to the pipeline's commit step.
+
+    Final verification: swift build --build-tests clean, zero warnings; full suite 703 + 18 + 12 tests green; ElevatingTool suite green 3 consecutive re-runs (~2.2 s each).
+  timestamp: 2026-08-04T22:33:51.150300+00:00
+- actor: claude-code
+  id: 01kz7ek0qrpxf2xg4qast3yhya
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift (new: ElevationParameterProviding, ElevationConfiguration, ElevatingToolError, PendingRunEnvelope, ElevatingTool, ToolElevation, RunEventFunnel, RaceGate, CancellationRequestFlag), Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift (private boundedWaitNanoseconds → shared internal boundedNanoseconds(clamping:)), Tests/FoundationModelsRouterTests/ElevatingToolTests.swift (new: 22 tests covering the card's full matrix). swift test: 703 + 18 + 12 green, zero warnings, zero failures; ElevatingTool suite green 3 consecutive runs.
+    - next: /review (task left in doing per the implement skill)
+  timestamp: 2026-08-04T22:33:57.752461+00:00
 depends_on:
 - 01KZ6MZPV6VDYYDBACD3G930C4
 - 01KZ6N1146TF1T334TRB3ARJR3
-position_column: todo
-position_ordinal: '8980'
+position_column: doing
+position_ordinal: '80'
 title: '[Router] ElevatingTool engine with the two-clocks model'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"Elevation: waitSeconds and the completion token", §"MultiTool is a host and an emitter" (synthesized events), §"Consolidation of the siblings" (two clocks; promotion of MCP's `CallWait` and Shelltool's `RunSupervisor` race — reference designs at ../FoundationModelsMCP/Sources/FoundationModelsMCP/{CallWait,CallDeadline,MCPServer}.swift and ../FoundationModelsShelltool/Sources/ShellTool/ShellRunner.swift).
