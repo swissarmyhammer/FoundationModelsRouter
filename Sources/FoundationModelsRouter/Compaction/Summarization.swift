@@ -17,7 +17,7 @@ import FoundationModels
 public protocol CompactionSummarizer: Sendable {
     /// Produces a complete text response to `prompt` — here, always the
     /// compaction instructions plus the span (or batch of chunk summaries)
-    /// being condensed (see ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:)``).
+    /// being condensed (see ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:)``).
     ///
     /// - Parameter prompt: The assembled compaction instructions plus content
     ///   to condense.
@@ -36,7 +36,7 @@ public protocol CompactionSummarizer: Sendable {
 /// to ``CompactionStage``: it is async (it calls a model) and needs a prompt
 /// and a summarizer, neither of which that synchronous, dependency-free
 /// protocol accepts (see ``CompactionStage``'s own doc comment). Instead,
-/// ``Compactor/compact(_:prompt:budget:summarizer:)`` invokes it directly as
+/// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` invokes it directly as
 /// the pipeline's last resort, once the deterministic stages alone don't land
 /// the transcript under target.
 ///
@@ -102,7 +102,7 @@ public struct Summarization: Sendable {
     ///
     /// - Parameters:
     ///   - transcript: The transcript to fold. Always the *original*
-    ///     transcript given to ``Compactor/compact(_:prompt:budget:summarizer:)``,
+    ///     transcript given to ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``,
     ///     never an already-truncated intermediate (see this type's own doc
     ///     comment).
     ///   - prompt: The compaction prompt sent to `summarizer` verbatim, ahead
@@ -113,12 +113,20 @@ public struct Summarization: Sendable {
     ///     any stage ran — carried into the resulting ``CompactionSegment``
     ///     unchanged, matching ``CompactionResult/tokensBefore``.
     ///   - priorStagesApplied: The deterministic stages
-    ///     ``Compactor/compact(_:prompt:budget:summarizer:)`` already
+    ///     ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` already
     ///     attempted before falling back to this stage (e.g.
     ///     `["ToolOutputElision", "TurnTruncation"]`) — this stage's own
     ///     ``stageName`` is appended to produce the resulting
     ///     ``CompactionSegment/Content/stagesApplied``.
     ///   - summarizer: The model called to condense text.
+    ///   - pendingRuns: The run-plane summaries of the runs still parked in
+    ///     the session's `SessionMailbox` at the moment this boundary is
+    ///     written, in park order. When non-empty they land in the resulting
+    ///     ``CompactionSegment/Content/pendingRuns`` and as an additional
+    ///     model-visible text segment on the summary entry
+    ///     (``CompactionSegment/renderedPendingRuns(_:)``); when empty —
+    ///     the default, and always the case for the bare-session recipe,
+    ///     which has no mailbox — the boundary is exactly as before.
     /// - Returns: The folded transcript and summary text, or `nil` when there
     ///   is no old span to fold (every turn is inside the recency window) —
     ///   the same "oversized tail" case the deterministic stages report as a
@@ -131,7 +139,8 @@ public struct Summarization: Sendable {
         prompt: CompactionPrompt,
         tokensBefore: Int,
         priorStagesApplied: [String],
-        summarizer: any CompactionSummarizer
+        summarizer: any CompactionSummarizer,
+        pendingRuns: [CompactionSegment.PendingRunSummary] = []
     ) async throws -> Folded? {
         let (header, turns) = TranscriptTurns.split(Array(transcript))
         let (old, recent) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
@@ -141,6 +150,7 @@ public struct Summarization: Sendable {
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
         let textSegmentId = "\(entryId)-text"
+        let pendingRunsSegmentId = "\(entryId)-pending-runs"
         let foldedEntryIds = old.flatMap(\.entries).map(\.id)
         let recentEntries = recent.flatMap(\.entries)
         let stagesApplied = priorStagesApplied + [Self.stageName]
@@ -153,16 +163,33 @@ public struct Summarization: Sendable {
                 tokensBefore: tokensBefore,
                 tokensAfter: tokensAfter,
                 stagesApplied: stagesApplied,
-                promptName: prompt.name
+                promptName: prompt.name,
+                pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns
             )
+            var segments: [Transcript.Segment] = [
+                .text(Transcript.TextSegment(id: textSegmentId, content: summaryText))
+            ]
+            // A session with no parked runs adds nothing; one with parked
+            // runs carries their rendering as a second text segment — the
+            // only segment kind the model-facing transcript rendering reads —
+            // so a post-compaction model knows its tokens and can call
+            // status() (see ``CompactionSegment/renderedPendingRuns(_:)``).
+            if !pendingRuns.isEmpty {
+                segments.append(
+                    .text(
+                        Transcript.TextSegment(
+                            id: pendingRunsSegmentId,
+                            content: CompactionSegment.renderedPendingRuns(pendingRuns)
+                        )
+                    )
+                )
+            }
+            segments.append(.custom(CompactionSegment(content: content)))
             return .response(
                 Transcript.Response(
                     id: entryId,
                     assetIDs: [],
-                    segments: [
-                        .text(Transcript.TextSegment(id: textSegmentId, content: summaryText)),
-                        .custom(CompactionSegment(content: content)),
-                    ]
+                    segments: segments
                 )
             )
         }
@@ -276,7 +303,7 @@ public struct Summarization: Sendable {
     ///
     /// The calls one fold makes through here must stay **serial**, and the reason
     /// lives outside this file: a session folding its own transcript hands
-    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` a `summarizer` that
+    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` a `summarizer` that
     /// registers each call as that turn's one in-flight model call, which is what
     /// lets a client stop interrupt a fold already under way rather than wait it out (see
     /// Sources/FoundationModelsRouter/Session/RoutedSession.swift). Only one call can be

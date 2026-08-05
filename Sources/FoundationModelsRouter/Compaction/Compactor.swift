@@ -14,7 +14,7 @@ import FoundationModels
 public struct CompactionResult: Sendable, Equatable {
     /// The synthesized fold summary, or `nil` when no ``Summarization``
     /// ran — either no `summarizer` was supplied to
-    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` (the model-free
+    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` (the model-free
     /// fallback), the deterministic stages alone already landed the
     /// transcript under target, or there was no old span left to summarize
     /// (the oversized-tail case).
@@ -61,7 +61,7 @@ public struct CompactionResult: Sendable, Equatable {
 /// is only ever used by ``Summarization``, so it is ignored entirely on that
 /// model-free path.
 ///
-/// `compact(_:prompt:budget:summarizer:)` returns both the folded transcript
+/// `compact(_:prompt:budget:summarizer:pendingRuns:)` returns both the folded transcript
 /// and the report: compaction_plan.md §1.1 describes compaction itself as a
 /// pure `Transcript -> Transcript` function (model-assisted summarization
 /// aside, which needs to call out to `summarizer`), and both entry points
@@ -113,6 +113,13 @@ public enum Compactor {
     ///     folded span, or `nil` to degrade to the model-free pipeline
     ///     (``ToolOutputElision``/``TurnTruncation`` only —
     ///     ``CompactionResult/summary`` stays `nil`). Defaults to `nil`.
+    ///   - pendingRuns: The run-plane summaries of the runs still parked in
+    ///     the calling session's `SessionMailbox` at the moment this fold
+    ///     runs, in park order — carried into the synthesized boundary when
+    ///     ``Summarization`` runs (see
+    ///     ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:)``).
+    ///     Defaults to empty — the bare-transcript callers with no mailbox —
+    ///     which leaves the boundary exactly as before.
     /// - Returns: The folded transcript (unchanged from `transcript` when no
     ///   stage helped enough) and a report of what happened.
     /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified, when
@@ -121,7 +128,8 @@ public enum Compactor {
         _ transcript: Transcript,
         prompt: CompactionPrompt = .default,
         budget: TokenBudget,
-        summarizer: (any CompactionSummarizer)? = nil
+        summarizer: (any CompactionSummarizer)? = nil,
+        pendingRuns: [CompactionSegment.PendingRunSummary] = []
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let tokensBefore = estimatedTokenCount(of: transcript)
         let targetTokens = Int((Double(budget.limit) * budget.target).rounded())
@@ -161,7 +169,8 @@ public enum Compactor {
                 prompt: prompt,
                 tokensBefore: tokensBefore,
                 priorStagesApplied: stagesApplied,
-                summarizer: summarizer
+                summarizer: summarizer,
+                pendingRuns: pendingRuns
             )
         {
             let tokensAfter = estimatedTokenCount(of: folded.transcript)

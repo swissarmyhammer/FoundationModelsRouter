@@ -149,14 +149,14 @@ public protocol RoutedSession: Actor {
     /// ``recordingDirectory``/``recorder`` identity, shorter live window
     /// (compaction_plan.md §1.4).
     ///
-    /// Runs the ``Compactor/compact(_:prompt:budget:summarizer:)`` pipeline
+    /// Runs the ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` pipeline
     /// over this session's current transcript — the deterministic stages
     /// first, then, only if they alone don't land it under `budget`'s
     /// target, the model-assisted ``Summarization`` stage, summarizing with
     /// this session's own resident model by default (a consumer wanting a
     /// different summarizer — e.g. the profile's `flash` slot — drives the
     /// lower-level bare-session recipe directly:
-    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` +
+    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` +
     /// ``RecordingLanguageModel/noteCompaction(_:)``). When folding changes
     /// anything, the synthesized summary entry (with its
     /// ``CompactionSegment``) is appended to the same `transcript.jsonl` this
@@ -830,7 +830,7 @@ func makeRoutedSessionActor(
 ///
 /// Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``, so
 /// ``RoutedSessionActor/compact(prompt:budget:)`` can hand
-/// ``Compactor/compact(_:prompt:budget:summarizer:)`` a summarizer without
+/// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` a summarizer without
 /// spinning up a separate model handle — "summarizer defaults to the
 /// session's own model" (compaction_plan.md §1.4).
 ///
@@ -1365,7 +1365,7 @@ actor RoutedSessionActor: RoutedSession {
     ///   `CancellationError` out of its own internals with nothing cancelled here
     ///   is an ordinary failure and degrades like any other. So the guarantee above
     ///   still holds unqualified — a broken summarizer model cannot block an
-    ///   automatic fold — and only ``Compactor/compact(_:prompt:budget:summarizer:)``'s
+    ///   automatic fold — and only ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``'s
     ///   own non-summarizer failure modes (none today) would otherwise propagate.
     ///   Whatever the abandoned tier threw, unless it is itself a `CancellationError`,
     ///   is reported to the log on the way out
@@ -1489,7 +1489,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The fold mechanics ``compact(prompt:budget:)`` and
     /// ``performAutoCompaction(prompt:budget:)`` share: runs
-    /// ``Compactor/compact(_:prompt:budget:summarizer:)`` over ``backend``'s
+    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` over ``backend``'s
     /// current transcript with `summarizer`. When folding actually changed
     /// anything (`result.stagesApplied` non-empty), the fold's
     /// never-before-recorded entries are persisted — identified by id,
@@ -1535,6 +1535,19 @@ actor RoutedSessionActor: RoutedSession {
         let entries = backend.transcriptEntries()
         let resolvedBudget = budget ?? TokenBudget(limit: contextTokens)
 
+        // Read at the moment the compaction boundary is written: the runs
+        // still parked in this session's mailbox, as run-plane summaries
+        // (token, op, latest progress — never output content), so a
+        // post-compaction model can rediscover its in-flight work from the
+        // boundary and call status() for the live view.
+        let pendingRuns = await mailbox.status().map { run in
+            CompactionSegment.PendingRunSummary(
+                completionToken: run.completionToken,
+                op: run.op,
+                latestProgressDetail: run.latestProgressDetail
+            )
+        }
+
         let (folded, result) = try await Compactor.compact(
             Transcript(entries: entries),
             prompt: prompt,
@@ -1543,7 +1556,8 @@ actor RoutedSessionActor: RoutedSession {
             // call this session's turn owns, and must be cancellable as one (see
             // ``CancellableCompactionSummarizer``). A `nil` summarizer stays `nil`,
             // so a deterministic-only fold is untouched.
-            summarizer: summarizer.map { CancellableCompactionSummarizer(base: $0, session: self) }
+            summarizer: summarizer.map { CancellableCompactionSummarizer(base: $0, session: self) },
+            pendingRuns: pendingRuns
         )
 
         // Nothing to fold (already under target) or every stage ran and

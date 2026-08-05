@@ -29,7 +29,8 @@ struct CompactionSegmentTests {
         tokensBefore: Int = 12_000,
         tokensAfter: Int = 3_000,
         stagesApplied: [String] = ["ToolOutputElision", "TurnTruncation", "Summarization"],
-        promptName: String = "default"
+        promptName: String = "default",
+        pendingRuns: [CompactionSegment.PendingRunSummary]? = nil
     ) -> CompactionSegment.Content {
         CompactionSegment.Content(
             liveWindowEntryIds: liveWindowEntryIds,
@@ -37,7 +38,8 @@ struct CompactionSegmentTests {
             tokensBefore: tokensBefore,
             tokensAfter: tokensAfter,
             stagesApplied: stagesApplied,
-            promptName: promptName
+            promptName: promptName,
+            pendingRuns: pendingRuns
         )
     }
 
@@ -55,6 +57,57 @@ struct CompactionSegmentTests {
         #expect(decoded.tokensAfter == original.tokensAfter)
         #expect(decoded.stagesApplied == original.stagesApplied)
         #expect(decoded.promptName == original.promptName)
+    }
+
+    @Test(
+        "CompactionSegment.Content with pendingRuns encodes and decodes losslessly, preserving each run's token, op, and latest progress"
+    )
+    func contentWithPendingRunsRoundTripsThroughCodable() throws {
+        let original = Self.makeContent(pendingRuns: [
+            CompactionSegment.PendingRunSummary(
+                completionToken: "01AN4Z07BY79KA1307SR9X4MV3",
+                op: "run task",
+                latestProgressDetail: "halfway through"
+            ),
+            CompactionSegment.PendingRunSummary(
+                completionToken: "01AN4Z07BY79KA1307SR9X4MV4",
+                op: "fetch url",
+                latestProgressDetail: nil
+            ),
+        ])
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(CompactionSegment.Content.self, from: data)
+        #expect(decoded == original)
+        #expect(decoded.pendingRuns?.count == 2)
+        #expect(decoded.pendingRuns?.first?.completionToken == "01AN4Z07BY79KA1307SR9X4MV3")
+        #expect(decoded.pendingRuns?.first?.op == "run task")
+        #expect(decoded.pendingRuns?.first?.latestProgressDetail == "halfway through")
+        #expect(decoded.pendingRuns?.last?.latestProgressDetail == nil)
+    }
+
+    @Test("previously recorded CompactionSegment.Content JSON without the pendingRuns field still decodes, with pendingRuns nil")
+    func contentWithoutPendingRunsFieldStillDecodes() throws {
+        // Exactly the JSON shape every CompactionSegment recorded before the
+        // pendingRuns field existed carries — no `pendingRuns` key at all.
+        let legacyJSON = Data(
+            """
+            {
+                "liveWindowEntryIds": ["summary-1", "tail-prompt-1"],
+                "foldedEntryIds": ["old-prompt-1", "old-response-1"],
+                "tokensBefore": 12000,
+                "tokensAfter": 3000,
+                "stagesApplied": ["ToolOutputElision", "TurnTruncation", "Summarization"],
+                "promptName": "default"
+            }
+            """.utf8)
+        let decoded = try JSONDecoder().decode(CompactionSegment.Content.self, from: legacyJSON)
+        #expect(decoded.pendingRuns == nil)
+        #expect(decoded.liveWindowEntryIds == ["summary-1", "tail-prompt-1"])
+        #expect(decoded.foldedEntryIds == ["old-prompt-1", "old-response-1"])
+        #expect(decoded.tokensBefore == 12_000)
+        #expect(decoded.tokensAfter == 3_000)
+        #expect(decoded.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
+        #expect(decoded.promptName == "default")
     }
 
     @Test("CompactionSegment's default typeDiscriminator is the type's fully-qualified name")

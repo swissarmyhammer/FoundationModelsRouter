@@ -10,7 +10,7 @@ import Testing
 /// transcript in place — the actor counterpart to
 /// ``RecordingLanguageModel/noteCompaction(_:)`` for a bare session over the
 /// recording handle. Both are implemented on the same bare primitives
-/// (``Compactor/compact(_:prompt:budget:summarizer:)`` +
+/// (``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` +
 /// ``LanguageModelSessionBackend/replacingTranscript(_:)``) — one mechanism,
 /// two entry points (compaction_plan.md §7).
 ///
@@ -506,5 +506,182 @@ struct RoutedSessionCompactTests {
         // A follow-up turn still works normally.
         let response = try await session.respond(to: "still working")
         #expect(response == Self.cannedText)
+    }
+
+    // MARK: - Live completionTokens cross the compaction boundary (task ^6e7h2q6)
+
+    /// A latch a fake run body suspends on until the test (or cooperative
+    /// cancellation) opens it — the same controllable stand-in for a detached
+    /// run's real work ``SessionMailboxTests`` uses.
+    private actor RunLatch {
+        private var isOpen = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func open() {
+            guard !isOpen else { return }
+            isOpen = true
+            let parked = waiters
+            waiters = []
+            for waiter in parked {
+                waiter.resume()
+            }
+        }
+
+        func waitUntilOpen() async {
+            guard !isOpen else { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+    }
+
+    /// The op string the parked fake run below carries — asserted verbatim in
+    /// the boundary's recorded pending-run summary.
+    private static let parkedRunOp = "run task"
+
+    /// Parks a fake swift-task run on `mailbox` and returns its completion
+    /// token; the run stays parked until `latch` opens.
+    private static func parkFakeRun(on mailbox: SessionMailbox, latch: RunLatch) async -> String {
+        let token = SessionMailbox.makeCompletionToken()
+        let settling = Task<OperationEvent, Never> {
+            await withTaskCancellationHandler {
+                await latch.waitUntilOpen()
+            } onCancel: {
+                Task { await latch.open() }
+            }
+            return OperationEvent(
+                tool: "fake",
+                op: parkedRunOp,
+                correlationID: token,
+                kind: .completed,
+                detail: "done",
+                outcome: Task.isCancelled ? .cancelled : .succeeded
+            )
+        }
+        await mailbox.park(
+            tool: "fake",
+            op: parkedRunOp,
+            kind: .swiftTask,
+            completionToken: token,
+            settling: settling,
+            canceler: {
+                settling.cancel()
+                return .cancelled
+            }
+        )
+        return token
+    }
+
+    /// The last recorded event's rebuilt summary `.response` — the boundary
+    /// entry a Summarization fold appends — or records an issue.
+    private static func lastRecordedBoundary(
+        in recorder: InMemoryRecorder
+    ) async throws -> (response: Transcript.Response, segment: CompactionSegment) {
+        let events = await recorder.events
+        let appended = try #require(events.last)
+        let entryPayload = try #require(appended.entry)
+        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind, registry: .routerDefault)
+        guard case .response(let response) = rebuilt, case .custom(let segment)? = response.segments.last,
+            let compactionSegment = segment as? CompactionSegment
+        else {
+            Issue.record("expected the appended entry to carry a .custom CompactionSegment")
+            throw StubSessionBackend.StubError.boom
+        }
+        return (response, compactionSegment)
+    }
+
+    /// The contents of every `.text` segment in `response`, in order.
+    private static func textContents(of response: Transcript.Response) -> [String] {
+        response.segments.compactMap { segment -> String? in
+            guard case .text(let text) = segment else { return nil }
+            return text.content
+        }
+    }
+
+    @Test(
+        "compact() with a parked run records its completionToken, op, and latest progress in the boundary CompactionSegment and renders them into a model-visible text segment"
+    )
+    @MainActor
+    func compactCarriesParkedRunAcrossBoundary() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let container = ConfiguredLLMContainer(responseText: Self.cannedText)
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+        try await Self.driveTurns(6, on: session)
+
+        let latch = RunLatch()
+        let token = await Self.parkFakeRun(on: session.mailbox, latch: latch)
+        await session.mailbox.updateProgress(completionToken: token, detail: "halfway through")
+
+        let backend = try #require(container.lastBackend)
+        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        // Strictly under the recency-window floor: forces the model-assisted
+        // Summarization stage — the only stage that synthesizes a boundary
+        // entry — to run (see compactIsAppendOnlyAndPreservesIdentity).
+        let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
+
+        let result = try await session.compact(budget: budget)
+        #expect(result.stagesApplied.contains("Summarization"))
+
+        let (response, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
+
+        // Run plane only — token, op, latest progress — recorded in the
+        // boundary segment at the moment the boundary was written.
+        #expect(
+            compactionSegment.content.pendingRuns == [
+                CompactionSegment.PendingRunSummary(
+                    completionToken: token,
+                    op: Self.parkedRunOp,
+                    latestProgressDetail: "halfway through"
+                )
+            ])
+
+        // The rendered boundary the post-compaction model reads: the summary
+        // text plus one additional text segment carrying the pending-run
+        // summary, so the model knows its tokens and can call status().
+        let texts = Self.textContents(of: response)
+        #expect(texts.count == 2)
+        let rendering = try #require(texts.last)
+        #expect(rendering.contains(token))
+        #expect(rendering.contains(Self.parkedRunOp))
+        #expect(rendering.contains("halfway through"))
+        #expect(rendering.contains("status()"))
+
+        await latch.open()
+    }
+
+    @Test(
+        "compact() with an empty mailbox adds nothing: pendingRuns stays nil and the boundary carries only the summary text and the CompactionSegment"
+    )
+    @MainActor
+    func compactWithEmptyMailboxAddsNoPendingRunCarrier() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let container = ConfiguredLLMContainer(responseText: Self.cannedText)
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+        try await Self.driveTurns(6, on: session)
+
+        let backend = try #require(container.lastBackend)
+        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
+
+        let result = try await session.compact(budget: budget)
+        #expect(result.stagesApplied.contains("Summarization"))
+
+        let (response, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
+
+        #expect(compactionSegment.content.pendingRuns == nil)
+        // Exactly the pre-existing boundary shape: one summary text segment
+        // and the CompactionSegment — no pending-run carrier of any kind.
+        #expect(Self.textContents(of: response).count == 1)
+        #expect(response.segments.count == 2)
     }
 }

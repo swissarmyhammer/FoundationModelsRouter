@@ -90,7 +90,7 @@ enum CompactionEvaluationError: Error {
 ///   (``CompactionEvaluationTests``).
 /// - The gated `@Test` wires in a closure that drives a real resident MLX
 ///   model through the exact bare-session recipe compaction_plan.md §1.5
-///   describes: ``Compactor/compact(_:prompt:budget:summarizer:)`` over the
+///   describes: ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` over the
 ///   seed's entries, then a live session resumed over the folded transcript.
 struct CompactionEvaluation: Evaluation {
     /// The expected/ground-truth sample type the `Evaluation` protocol

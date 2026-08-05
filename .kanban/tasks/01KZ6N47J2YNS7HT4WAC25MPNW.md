@@ -62,10 +62,26 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift (doc comment on DiscardingSink documenting the file-local reason). swift build: Build complete. swift test (ungated): 718 + 20 + 12 tests passed, zero failures. Finding checked: 0 open of 1.
     - next: /review
   timestamp: 2026-08-05T01:29:41.397663+00:00
+- actor: claude-code
+  id: 01kz7s044h4zz0fsnq6ft5b9zc
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit fbe993b) — 0 new findings, 9 validators attempted, 0 failed; prior 2026-08-04 20:21 finding (DiscardingSink file-local doc comment) checked
+    - next: none — task moved to done
+  timestamp: 2026-08-05T01:35:52.977074+00:00
+- actor: claude-code
+  id: 01kz7s11h0x6ssmf14azn8ctbk
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (doc comment on DiscardingSink documenting the file-local decision; cross-target share ruled out per SwiftPM constraints)
+    - test: green — swift test (ungated), 750 passed, 0 failures, 32 expected gated skips
+    - commit: fbe993b
+    - review: clean — 0 new findings on HEAD~1..HEAD, prior checklist 1/1 checked; task → done
+  timestamp: 2026-08-05T01:36:23.072552+00:00
 depends_on:
 - 01KZ6N3B3YC884JDVKEK4NYGQA
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ed80
 title: '[Router] Propagation probe (gated): does the task local survive respond()?'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"Phases" phase 1 (propagation probe) and §"The ambient context" effect 3.

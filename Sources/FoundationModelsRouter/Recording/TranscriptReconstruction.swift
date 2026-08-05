@@ -51,7 +51,7 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     ///
     /// A checkpoint's own ``CompactionSegment/Content/liveWindowEntryIds``
     /// are always drawn from entries already present when the fold ran (see
-    /// ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:)``),
+    /// ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:)``),
     /// so this is evidence of a truncated or hand-corrupted recording rather
     /// than something the compaction pipeline itself can produce.
     case checkpointEntryMissing(session: ULID, seq: Int, entryId: String)
