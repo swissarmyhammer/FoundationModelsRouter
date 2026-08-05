@@ -10,7 +10,7 @@ import Testing
 /// ``RoutedSessionActor/fork(workingDirectory:)``) — ``ToolOutputCapping``'s
 /// truncation rule and dynamic wrapping, plus the wiring that threads a
 /// capped tool to the model-facing container/backend boundary exactly the
-/// way `SessionOutboxToolWiringTests` proves for `EventEmittingTool`/
+/// way `SessionOutboxToolWiringTests` proves for the elevation layer and
 /// `ForkableTool`.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU.
@@ -51,42 +51,6 @@ struct ToolOutputCappingTests {
         func call(arguments: FakeToolArguments) async throws -> NonStringOutput {
             NonStringOutput(text: "ignored")
         }
-    }
-
-    /// A `String`-output `Tool` that also conforms to `EventEmittingTool`,
-    /// mirroring `SessionOutboxToolWiringTests.FakeEmittingTool` — proves
-    /// capping composes with the connect step rather than replacing it.
-    ///
-    /// `@unchecked Sendable` invariant: `name`, `description`, `output`, and
-    /// `sink` are all immutable `let` properties assigned once at `init` and
-    /// never mutated afterward, so concurrent access is safe without further
-    /// synchronization.
-    private final class EmittingStringTool: Tool, EventEmittingTool, @unchecked Sendable {
-        let name = "emitting-string-tool"
-        let description = "emits and returns a fixed string"
-        let output: String
-        private let sink: (any OperationEventSink)?
-
-        init(output: String, sink: (any OperationEventSink)? = nil) {
-            self.output = output
-            self.sink = sink
-        }
-
-        func connecting(_ sink: any OperationEventSink) -> any Tool {
-            EmittingStringTool(output: output, sink: sink)
-        }
-
-        func call(arguments: FakeToolArguments) async throws -> String {
-            output
-        }
-
-        func postEvent(_ event: OperationEvent) async {
-            await sink?.post(event)
-        }
-    }
-
-    private static func event(correlationID: String = "c1", detail: String = "done") -> OperationEvent {
-        OperationEvent(tool: "emitting-string-tool", op: "run thing", correlationID: correlationID, kind: .completed, detail: detail)
     }
 
     // MARK: - ToolOutputCapping.capped(_:toTokenLimit:)
@@ -410,9 +374,9 @@ struct ToolOutputCappingTests {
         #expect((container.lastTools.first as? ElevatingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
-    @Test("makeSession(tools:budget:) caps outermost: an EventEmittingTool still delivers events through the capped wrapper's wrapped instance")
+    @Test("makeSession(tools:budget:) caps outermost: the elevation layer's ambient event route still reaches the session's outbox through the capped wrapper")
     @MainActor
-    func cappingComposesWithEventEmittingTool() async throws {
+    func cappingComposesWithAmbientEventRoute() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -421,27 +385,28 @@ struct ToolOutputCappingTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let longText = String(repeating: "f", count: 40)
-        let tool = EmittingStringTool(output: longText)
+        let tool = AmbientEventPostingTool(output: longText)
         let session = profile.standard.makeSession(
             tools: [tool],
             budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
         )
 
-        guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments>,
-            let elevating = capping.wrapped as? ElevatingTool<FakeToolArguments>,
-            let emitting = elevating.wrapped as? EmittingStringTool
+        guard let capping = container.lastTools.first as? TokenCappingTool<AmbientToolArguments>,
+            let elevating = capping.wrapped as? ElevatingTool<AmbientToolArguments>,
+            let inner = elevating.wrapped as? AmbientEventPostingTool
         else {
-            Issue.record("expected a TokenCappingTool wrapping the elevated, connected EmittingStringTool")
+            Issue.record("expected a TokenCappingTool wrapping the elevated AmbientEventPostingTool")
             return
         }
+        #expect(inner === tool)
 
         // The call result is capped...
-        let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
+        let result = try await capping.call(arguments: AmbientToolArguments(value: "through-capped-wrapper"))
         #expect(result == "\(String(repeating: "f", count: 20))… [truncated: 5 of 10 tokens]")
 
-        // ...and the wrapped instance is still the session-connected one,
-        // posting to this session's own outbox.
-        await emitting.postEvent(Self.event(detail: "through-capped-wrapper"))
+        // ...and the tool's ambient-context post still reached this
+        // session's own outbox through the capped wrapper's inner
+        // elevation layer.
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["through-capped-wrapper"])
     }

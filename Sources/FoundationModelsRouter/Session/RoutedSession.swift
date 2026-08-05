@@ -111,8 +111,8 @@ public protocol RoutedSession: Actor {
     ///
     /// Fresh per session — a fork is given its own outbox rather than sharing
     /// its parent's (see ``fork(workingDirectory:)``'s doc comment for the
-    /// fork-then-connect composition that wires each session's own tool
-    /// instances to it, so event delivery never migrates between sessions).
+    /// fork-then-elevate composition that binds each session's own event
+    /// route to it, so event delivery never migrates between sessions).
     nonisolated var outbox: SessionOutbox { get }
 
     /// This session's mailbox: the registry of parked detached runs and
@@ -964,21 +964,21 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The tools this session was constructed with, before any per-session
     /// instancing — retained purely so ``fork(workingDirectory:)`` can build
-    /// the child's own tool list via fork-then-connect composition, sourced
+    /// the child's own tool list via fork-then-elevate composition, sourced
     /// from these true originals rather than from ``tools``' already-instanced
     /// copies (see ``fork(workingDirectory:)``'s doc comment).
     private nonisolated let originalTools: [any Tool]
 
-    /// This session's own per-session tool list: every ``EventEmittingTool``
-    /// among ``originalTools`` bound to ``outbox`` via a pure
-    /// ``EventEmittingTool/connecting(_:)`` copy (a root session), or the
-    /// fork-then-connect composition ``fork(workingDirectory:)`` builds (a
-    /// fork) — a non-conforming tool passes through unchanged — with the
-    /// ``ElevatingTool`` layer (and, when a budget carries a
-    /// `toolOutputLimit`, the capping layer) applied per the owning
-    /// composition site's own chain: connect → elevate → cap at a root,
-    /// fork → connect → elevate → cap at a fork, connect → elevate at
-    /// restore (task ^k4nygqa). This is the
+    /// This session's own per-session tool list: every String-output tool
+    /// among ``originalTools`` wrapped in the ``ElevatingTool`` layer — whose
+    /// ambient ``ToolContext`` posts the tool's events to ``outbox`` — and,
+    /// when a budget carries a `toolOutputLimit`, the capping layer, applied
+    /// per the owning composition site's own chain: elevate → cap at a root,
+    /// fork → elevate → cap at a fork, elevate at
+    /// restore (task ^k4nygqa); a non-String-output tool passes through both
+    /// layers unwrapped (see
+    /// ``RoutedModel/instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``).
+    /// This is the
     /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
     /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
     /// computes it before the backend exists), or via
@@ -994,10 +994,10 @@ actor RoutedSessionActor: RoutedSession {
     /// map, computed by the caller before this session exists — see
     /// ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``);
     /// ``fork(workingDirectory:)`` builds another fresh outbox for the child
-    /// and its own fork-then-connect composed tool list instead — deliberately
-    /// not sharing this session's outbox with the fork. Because
-    /// ``EventEmittingTool/connecting(_:)`` is pure rather than mutating, this
-    /// session's own already-instanced ``tools`` keep posting to this outbox
+    /// and its own fork-then-elevate composed tool list instead — deliberately
+    /// not sharing this session's outbox with the fork. Because this
+    /// session's own already-instanced ``tools`` carry their own elevation
+    /// layer bound to this outbox, they keep posting to this outbox
     /// forever, regardless of how many further forks are taken: event
     /// delivery never migrates between sessions.
     nonisolated let outbox: SessionOutbox
@@ -1974,8 +1974,8 @@ actor RoutedSessionActor: RoutedSession {
     /// Waits on ``forkAdmissionGate`` for a free slot, then builds the child's
     /// tools from ``originalTools`` (never this session's own already-instanced
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
-    /// pristine state before being wired to the child's fresh outbox — this
-    /// site's full chain is fork → connect → elevate → cap (task ^k4nygqa),
+    /// pristine state before being wrapped in the child's own elevation
+    /// layer — this site's full chain is fork → elevate → cap (task ^k4nygqa),
     /// so the child's elevated runs park in the child's own mailbox. Acquires
     /// ``turnLock`` just long enough to read `backend`'s conversation state
     /// and entry count together, closing the race against a concurrent
@@ -1996,21 +1996,21 @@ actor RoutedSessionActor: RoutedSession {
         // permit is held for the child's lifetime and released in its `deinit`.
         await forkAdmissionGate.wait()
 
-        // Fresh-per-session outbox plus fork-then-connect tool composition
+        // Fresh-per-session outbox plus fork-then-elevate tool composition
         // (see ``outbox``'s doc comment): built from ``originalTools`` — the
         // true originals, never this session's own already-instanced
         // ``tools`` — so a ``ForkableTool`` conformer is forked exactly once,
-        // from its pristine state, rather than from a copy already wired to
-        // this session's outbox. This site's chain is fork → connect →
+        // from its pristine state, rather than from a copy already wrapped
+        // for this session. This site's chain is fork →
         // elevate → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
         // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
-        // *then* the forked result is wired to `childOutbox` via
-        // `connecting(_:)` if it also emits. Since `connecting(_:)` is pure
-        // rather than mutating, this session's own already-instanced
+        // *then* the forked result is wrapped in the child's own elevation
+        // layer, whose ambient `ToolContext` posts to `childOutbox`. This
+        // session's own already-instanced
         // `tools` are entirely untouched by this and keep posting to this
         // session's own `outbox` — including any detached work that
         // captured this session's sink before the fork — so event delivery
@@ -2046,9 +2046,8 @@ actor RoutedSessionActor: RoutedSession {
         let childId = ULID.generate()
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
-            let connected = (forked as? any EventEmittingTool)?.connecting(childOutbox) ?? forked
             let elevated = ToolElevation.wrapping(
-                connected,
+                forked,
                 sessionID: childId,
                 mailbox: childMailbox,
                 sink: childOutbox,

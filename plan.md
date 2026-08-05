@@ -33,7 +33,7 @@ are MLX/HuggingFace plumbing (weights, tokenizers, via the pinned
 `mlx-swift-lm` fork plus `swift-huggingface`/`swift-transformers` for the
 gated integration suite) and `ULID.swift` (session/router identifiers).
 The host-neutral tool-*events* vocabulary (`OperationEvent`/
-`OperationOutcome`/`OperationEventSink`/`EventEmittingTool`/
+`OperationOutcome`/`OperationEventSink`/
 `ForkableTool`) lives in `Sources/FoundationModelsRouter/Hosting/` with no
 dependency on any tool package — it is a vocabulary, not a tool catalog.
 No YAML/dotfolder reader and no wire-protocol

@@ -95,12 +95,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     layout byte-for-byte.
     ///   - tools: The tools the model can call during this session. Before
     ///     being threaded to the underlying `LanguageModelSession` (mirroring
-    ///     Apple's `LanguageModelSession(tools:)`), every tool conforming to
-    ///     `EventEmittingTool` is replaced by a pure `connecting(_:)` copy
-    ///     wired to the vended session's own fresh ``RoutedSession/outbox`` —
-    ///     no explicit wiring call is ever needed: implementing the protocol
-    ///     IS the subscription. A tool that does not conform passes through
-    ///     untouched. Defaults to no tools.
+    ///     Apple's `LanguageModelSession(tools:)`), every String-output tool
+    ///     is wrapped in the elevation engine, which binds the ambient
+    ///     ``ToolContext`` — posting events to the vended session's own fresh
+    ///     ``RoutedSession/outbox`` — around each call; the tool instance
+    ///     itself passes through untouched, and a non-String-output tool
+    ///     passes through unwrapped (see
+    ///     ``instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``).
+    ///     Defaults to no tools.
     ///   - budget: The auto-compaction opt-in (the "session
     ///     that manages its own window" opt-in, task 8213x39), or `nil` (the
     ///     default) for manual-only compaction via
@@ -158,7 +160,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     Defaults to `nil`.
     ///   - tools: The tools the model can call during this session. See
     ///     ``makeSession(instructions:workingDirectory:tools:)`` for the
-    ///     auto-connect contract. Defaults to no tools.
+    ///     elevation wrapping applied before threading. Defaults to no tools.
     ///   - budget: The auto-compaction opt-in — see
     ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``.
     ///     Defaults to `nil`.
@@ -186,16 +188,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
         // Pure per-session instancing, before the backend is ever built —
         // see ``instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``
-        // for the connect → elevate → cap chain this site applies (task
+        // for the elevate → cap chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
         // deliberately distinct chain — see
         // ``RoutedSessionActor/fork(workingDirectory:)`` and
-        // `restoreSessionTree`). This is what makes "implementing
-        // `EventEmittingTool` IS the subscription" hold with no explicit
-        // wiring call anywhere: nobody has to remember to connect a tool
-        // separately, and — because this runs before `container.makeSession`
-        // below — the model-facing tool list the backend actually receives
-        // is these sink-bound copies, not the originals.
+        // `restoreSessionTree`). Because this runs before
+        // `container.makeSession` below, the model-facing tool list the
+        // backend actually receives is these composed wrappers — each
+        // String-output tool's elevation layer binding the ambient
+        // `ToolContext` that posts the tool's events to this session's own
+        // `outbox` — not the bare originals.
         let outbox = SessionOutbox()
         // The mailbox shares the outbox's scope rule: fresh per session,
         // never shared, so parked runs and pending elicitations never
@@ -231,7 +233,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             grammar: grammar,
             tools: instancedTools,
             // The true originals, retained only so a fork can later build its
-            // own tool list via fork-then-connect composition, sourced from
+            // own tool list via fork-then-elevate composition, sourced from
             // these rather than from `instancedTools` (see
             // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
             originalTools: tools,
@@ -264,26 +266,30 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         )
     }
 
-    /// Instances `tools` for one session: each tool is connected to the
-    /// session's own outbox, wrapped in the elevation engine, and — only when
-    /// `tokenLimit` is set — capped outermost.
+    /// Instances `tools` for one session: each String-output tool is wrapped
+    /// in the elevation engine — whose ambient ``ToolContext`` posts the
+    /// tool's events to the session's own outbox — and, only when
+    /// `tokenLimit` is set, capped outermost. A non-String-output tool
+    /// passes through both layers unwrapped (see
+    /// ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
+    /// and ``ToolOutputCapping/wrapping(_:toTokenLimit:)``); its ambient
+    /// posts fall back to the session's turn-scope ``ToolContext`` binding,
+    /// which stamps the turn's own `"session"`/`"respond"` identity rather
+    /// than the tool's.
     ///
-    /// The shared connect → elevate → optional-cap pipeline behind two of
+    /// The shared elevate → optional-cap pipeline behind two of
     /// task ^k4nygqa's three composition sites: the root site
     /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``,
-    /// connect → elevate → cap) and the restore site (`restoreSessionTree`,
-    /// connect → elevate — it passes a `nil` `tokenLimit`, so no capping
+    /// elevate → cap) and the restore site (`restoreSessionTree`,
+    /// elevate — it passes a `nil` `tokenLimit`, so no capping
     /// layer is ever added). The fork site composes its own chain because it
-    /// forks each tool before connecting it (see
+    /// forks each tool before elevating it (see
     /// ``RoutedSessionActor/fork(workingDirectory:)``).
     ///
     /// Per tool, in order:
     ///
-    /// - An `EventEmittingTool` is replaced by a pure `connecting(_:)` copy
-    ///   wired to `outbox`, never mutating the original — a non-conforming
-    ///   tool simply fails the cast and passes through unchanged.
     /// - ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
-    ///   mounts the elevation engine around the connected copy
+    ///   mounts the elevation engine around the tool, never mutating it
     ///   (eventplan.md § "Elevation": the native mount, elevation on,
     ///   `waitSeconds` default 5 s), parking a slow call in the session's
     ///   own `mailbox` and posting its events to `outbox`.
@@ -300,8 +306,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The caller's original tools, never mutated.
     ///   - sessionID: The owning session's identity, stamped into each
     ///     elevated run's ``ToolContext``.
-    ///   - outbox: The session's own outbox — both the `connecting(_:)` sink
-    ///     and the elevation engine's upstream sink.
+    ///   - outbox: The session's own outbox — the elevation engine's
+    ///     upstream sink.
     ///   - mailbox: The session's own mailbox, where elevated runs park.
     ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap rendered
     ///     output to, or `nil` for no capping layer.
@@ -314,9 +320,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         cappedToTokenLimit tokenLimit: Int?
     ) -> [any Tool] {
         tools.map { tool -> any Tool in
-            let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
             let elevated = ToolElevation.wrapping(
-                connected,
+                tool,
                 sessionID: sessionID,
                 mailbox: mailbox,
                 sink: outbox,

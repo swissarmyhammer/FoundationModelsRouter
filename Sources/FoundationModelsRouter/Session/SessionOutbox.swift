@@ -9,9 +9,9 @@ import FoundationModels
 /// *prompt-side material* that becomes an entry by being sent, at the next
 /// turn boundary. Two independent kinds are staged here, never mixed:
 ///
-/// - **Turn-riding events** (``PendingEvent``) — ``OperationEvent``s posted by
-///   a connected ``EventEmittingTool`` through this actor's
-///   ``OperationEventSink`` conformance. They fold into whichever prompt
+/// - **Turn-riding events** (``PendingEvent``) — ``OperationEvent``s posted
+///   through this actor's ``OperationEventSink`` conformance (the elevation
+///   layer's ambient ``ToolContext`` route). They fold into whichever prompt
 ///   dispatches next: ``RoutedSessionActor``'s turn chokepoint drains them
 ///   into a plain-text preamble the model reads and persists each as an
 ///   ``OperationEventSegment`` on the turn's recorded `.prompt` entry (see
@@ -132,8 +132,8 @@ public actor SessionOutbox: OperationEventSink {
     /// Creates an empty outbox.
     public init() {}
 
-    /// Posts one ``OperationEvent`` — the ``OperationEventSink`` conformance a
-    /// connected ``EventEmittingTool`` posts through.
+    /// Posts one ``OperationEvent`` — the ``OperationEventSink`` conformance
+    /// the session's tool-side event route posts through.
     ///
     /// A `.completed` or `.elicitation` event is always appended, never
     /// coalesced — each elicitation is its own question, so a newer one never

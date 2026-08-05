@@ -55,8 +55,8 @@ private let propagationProbeModel: ModelRef = RealModels.standard
 /// dispatching tools on a detached task breaks them loudly.
 ///
 /// Branch decision executed per the observed answer: native tools get the
-/// ambient context free, so `EventEmittingTool`/`connecting(_:)` and the
-/// conformance-cast wiring are to be deleted (follow-up task on this board).
+/// ambient context free, so the tool-side event-subscription protocol and
+/// its conformance-cast wiring were deleted (task ^ew49xjj on this board).
 /// Code mode was unaffected either way — `ToolInvoker` binds the context
 /// itself with no Apple code in the path.
 @Suite(

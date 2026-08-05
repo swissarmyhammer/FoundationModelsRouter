@@ -9,7 +9,7 @@ import FoundationModels
 /// (``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``/
 /// ``RoutedSessionActor/fork(workingDirectory:)``) is the one seam that sees
 /// every tool call's result before the model does — the same seam
-/// ``EventEmittingTool``/``ForkableTool`` already hook into. This absorbs the
+/// ``ForkableTool`` already hooks into. This absorbs the
 /// external per-tool capping wrapper job into that seam instead
 /// of a wrapper consumers would otherwise have to maintain on their own.
 enum ToolOutputCapping {
@@ -74,7 +74,7 @@ enum ToolOutputCapping {
 
     /// Wraps `tool` in a ``TokenCappingTool`` that caps its output to
     /// `limit` tokens, discovered dynamically rather than requiring the tool
-    /// to opt in — mirroring ``EventEmittingTool``/``ForkableTool``'s own
+    /// to opt in — mirroring ``ForkableTool``'s own
     /// "no cooperation needed" contract.
     ///
     /// The check is a runtime existential cast against `Tool`'s own primary
@@ -125,7 +125,7 @@ enum ToolOutputCapping {
 /// Forwards `name`/`description`/`parameters`/`includesSchemaInInstructions`
 /// to `wrapped` untouched; only `call(arguments:)`'s return value is capped.
 /// `wrapped` is whatever the tool-instancing pipeline already produced (e.g.
-/// an ``EventEmittingTool/connecting(_:)`` copy) — this decorator is applied
+/// an ``ElevatingTool`` wrapper) — this decorator is applied
 /// outermost, so the model-facing tool the SDK actually calls is the capped
 /// one: both continued generation and the transcript's own recorded
 /// `.toolOutput` entry (and therefore

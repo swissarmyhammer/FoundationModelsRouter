@@ -82,10 +82,33 @@ comments:
     - evidence: `swift test` (iteration 2, post-findings-fix) — 723 + 20 + 12 = 755 tests passed across 3 test runs, 0 failed; 32 gated skips (expected, `FM_ROUTER_INTEGRATION_TESTS` not set); only the known pre-existing llbuild warning "missing creator for mutated node" from the mlx-swift `Cmlx.bundle` — no new warnings
     - next: hand off to review
   timestamp: 2026-08-05T03:14:34.861703+00:00
+- actor: claude-code
+  id: 01kz7yqpng9pjabwf36btm35re
+  text: |-
+    ### commit — changed
+    - evidence: 34577ca fix(compaction): explicit Sendable on CompactionSegment, internal renderedPendingRuns
+    - next: none
+  timestamp: 2026-08-05T03:16:08.496021+00:00
+- actor: claude-code
+  id: 01kz7ywwkm7087qenh908t1mct
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 34577ca) — 0 new findings (9 validators attempted, 0 failed); prior 2026-08-04 20:59 checklist fully checked (1/1)
+    - next: none — task moved to done
+  timestamp: 2026-08-05T03:18:58.420008+00:00
+- actor: claude-code
+  id: 01kz7z0bsghkj9wgavtz3c7de4
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files (explicit Sendable on CompactionSegment + internal renderedPendingRuns; Sendable guard test + pendingRuns round-trip coverage); discovered work filed as ^syfeavd
+    - test: green — swift test, 755 passed, 0 failures, 32 expected gated skips
+    - commit: 34577ca
+    - review: clean — 0 new findings on HEAD~1..HEAD, prior checklist 1/1 checked; task → done
+  timestamp: 2026-08-05T03:20:52.272940+00:00
 depends_on:
 - 01KZ6MZPV6VDYYDBACD3G930C4
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ee80
 title: '[Router] Carry live completionTokens across the compaction boundary'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"The sandbox globals": "Rediscovery of in-flight work after compaction belongs to the run plane. … Router's compaction boundary carries the live `completionTokens` … A post-compaction model reads its pending work from the boundary. Then it calls `status()`." Added by the plan double-check: this behavior was owned by no task in any phase, and phases 2–5 would never pick it up.

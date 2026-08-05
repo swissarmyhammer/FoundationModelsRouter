@@ -3,17 +3,18 @@ import FoundationModels
 /// A `Tool` that can produce a per-session instance of itself, derived at
 /// fork time.
 ///
-/// **Usage contract**, mirroring `EventEmittingTool`'s: a host discovers
+/// **Usage contract**: a host discovers
 /// forkable tools in its `[any Tool]` list by conformance cast (`tool as?
 /// any ForkableTool`) and derives each child session's tool instance itself
 /// at fork time — `ForkableTool` declares no associated types precisely so
 /// that cast succeeds against an `any Tool` existential.
 ///
-/// **Composition order.** At fork, a host applies `forked()` first, then
-/// wires events with `connecting(_:)` if the forked tool also emits:
-/// `((tool as? any ForkableTool)?.forked() ?? tool)`, then
-/// `(forked as? any EventEmittingTool)?.connecting(sink) ?? forked`. A tool
-/// conforming to neither protocol passes through shared, unchanged.
+/// **Composition order.** At fork, a host applies `forked()` first —
+/// `((tool as? any ForkableTool)?.forked() ?? tool)` — then wraps the
+/// forked result in the child session's own layers (elevation for a
+/// String-output tool, and capping when configured; a non-String-output
+/// tool passes through both unwrapped). A tool that does not conform
+/// passes through shared, unchanged, into those same layers.
 public protocol ForkableTool: Tool {
     /// Returns a child session's instance of this tool, derived at fork
     /// time.

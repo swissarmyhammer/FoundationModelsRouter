@@ -223,7 +223,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// The tools ``liveSession`` was created with.
     ///
     /// Stored (rather than only baked into `liveSession`) so ``makeFork()``
-    /// (called with no fork-then-connect tool list of its own to supply) can
+    /// (called with no fork-composed tool list of its own to supply) can
     /// hand these identical instances to the forked session, mirroring how
     /// ``instructions`` is retained here for the same reason — there is no
     /// way to read a `LanguageModelSession`'s tools back off it.
@@ -401,7 +401,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// the forked session's model can still call whatever tools the parent
     /// could — the only behavior a direct `makeFork()` call (bypassing
     /// ``RoutedSessionActor/fork(workingDirectory:)``) can ask for, since it
-    /// has no fork-then-connect tool list of its own to supply.
+    /// has no fork-composed tool list of its own to supply.
     func makeFork() -> any LanguageModelSessionBackend {
         makeFork(tools: tools)
     }
@@ -411,14 +411,14 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// instead of this backend's own.
     ///
     /// This is the overload ``RoutedSessionActor/fork(workingDirectory:)``
-    /// actually calls, with its own fork-then-connect composed child tool
+    /// actually calls, with its own fork-then-elevate composed child tool
     /// list (each of the parent's true originals forked via
-    /// ``ForkableTool/forked()`` where applicable, then reconnected to the
-    /// child's own outbox via ``EventEmittingTool/connecting(_:)``) — so the
+    /// ``ForkableTool/forked()`` where applicable, then wrapped in the
+    /// child's own elevation layer posting to its own outbox) — so the
     /// live model backing the fork calls the child's own tool instances,
     /// wired to the child's own outbox, rather than silently carrying
     /// forward whatever instances this backend was built with (which would
-    /// still be wired to an ancestor's outbox, defeating the fork-then-connect
+    /// still be wired to an ancestor's outbox, defeating the fork-then-elevate
     /// composition's whole point for any tool the model actually invokes).
     ///
     /// Delegates to ``makeSessionBackend(model:transcript:tools:instructions:)``,

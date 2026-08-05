@@ -196,9 +196,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     grammar, never tool definitions), so this is the caller's chance to
     ///     hand the restored tree the same live tool package the original
     ///     conversation ran with. Each restored node gets its own fresh
-    ///     ``RoutedSession/outbox``, with every ``EventEmittingTool`` among
-    ///     `tools` replaced by its own per-node ``EventEmittingTool/connecting(_:)``
-    ///     copy — exactly the per-session instancing
+    ///     ``RoutedSession/outbox``, with every String-output tool wrapped
+    ///     in its own per-node elevation layer posting there (a
+    ///     non-String-output tool passes through unwrapped) — exactly the
+    ///     per-session instancing
     ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
     ///     performs for a fresh session — so a node's tool never posts to a
     ///     sibling or ancestor's outbox. Defaults to no tools.
@@ -291,16 +292,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
 
             // Fresh per-node outbox plus per-session tool instancing —
-            // applied here to every restored node so an `EventEmittingTool`
-            // posts to *this* node's own outbox rather than a sibling or
-            // ancestor's; a non-conforming tool passes through unchanged.
-            // This site's chain is connect → elevate — deliberately no fork
+            // applied here to every restored node so a tool's events post
+            // to *this* node's own outbox rather than a sibling or
+            // ancestor's.
+            // This site's chain is elevate only — deliberately no fork
             // (restoration re-instances from the caller's originals, it
             // never derives one live session from another) and no capping
             // (no budget travels through restoration, so the shared helper
             // gets a `nil` token limit) — distinct from the root site's
-            // connect → elevate → cap and the fork site's
-            // fork → connect → elevate → cap (task ^k4nygqa; see
+            // elevate → cap and the fork site's
+            // fork → elevate → cap (task ^k4nygqa; see
             // ``RoutedModel/instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let outbox = SessionOutbox()
@@ -389,7 +390,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // above; `originalTools` retains the true, un-instanced
                 // originals (this call's own `tools` parameter) so a later
                 // `fork(workingDirectory:)` off this restored node can still
-                // build its own fork-then-connect composed tool list, exactly
+                // build its own fork-then-elevate composed tool list, exactly
                 // as it would from a freshly vended root session.
                 tools: instancedTools,
                 originalTools: tools,

@@ -70,9 +70,9 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// Produces a new backend seeded from this session's accumulated transcript,
     /// with `tools` threaded to whatever model-facing session the fork
     /// constructs — the overload ``RoutedSession/fork(workingDirectory:)`` calls
-    /// with its own fork-then-connect composed tool list (the child's originals,
-    /// each forked via ``ForkableTool/forked()`` where applicable and reconnected
-    /// to the child's own outbox via ``EventEmittingTool/connecting(_:)``), so a
+    /// with its own fork-then-elevate composed tool list (the child's originals,
+    /// each forked via ``ForkableTool/forked()`` where applicable, then wrapped
+    /// in the child's own elevation layer posting to its own outbox), so a
     /// conformer whose model can actually call tools (``MLXFoundationModelsSessionBackend``)
     /// hands the live model the child's own instances rather than silently
     /// carrying the parent's forward — the same principle that motivates
