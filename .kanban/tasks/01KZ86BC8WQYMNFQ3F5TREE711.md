@@ -49,8 +49,16 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/HumanWaitGateTests.swift (test-only; no product code touched). Root cause: test-side race — bounded yield spin (`spin(until:)`, 100k MainActor yields) used as a proxy for B's turn completion could exhaust under full-suite parallel scheduler load; product gate release order verified correct. Fix: event-based sync (`gateFreed` semaphore signalled inside the `awaitingUser` body) plus a direct guarded `taskB.value` await before asserting `observer.exited`. Proof: `swift test --filter HumanWaitGateTests` green 15/15 loop iterations (+5 independent full parallel runs by the verifier); full `swift build` clean; full `swift test` 735/69 + 20/8 + 12/4 all passed, exit 0; `review working` 0 findings; double-check REVISE findings both fixed.
     - next: ready for /review
   timestamp: 2026-08-05T09:41:52.670777+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kz8shp6pywvq8nykzs5m9p18
+  text: |-
+    ### review — clean
+    - evidence: 0 new findings — review sha HEAD~1..HEAD at the time (commit a72f03e, event-based sync in HumanWaitGateTests), local backend, 9 validators attempted, 0 failed; no prior findings sections existed and all acceptance criteria were checked.
+    - note: the review agent reported this result and the move to done, but its board writes did not persist; the orchestrator is recording the step and completing the review → done move on its behalf.
+    - next: done
+  timestamp: 2026-08-05T11:04:42.966278+00:00
+position_column: done
+position_ordinal: f280
 title: '[Router] Flaky test: HumanWaitGateTests "a turn parked in awaitingUser frees the per-model gate, so another session over the same model still generates"'
 ---
 Observed 2026-08-05 during full `swift test` runs while working ^ew49xjj (no code under test changed between runs — only a test rename in ToolOutputCappingTests.swift):
