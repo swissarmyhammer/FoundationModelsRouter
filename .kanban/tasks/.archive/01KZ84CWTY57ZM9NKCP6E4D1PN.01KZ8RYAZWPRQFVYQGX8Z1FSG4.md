@@ -40,6 +40,15 @@ comments:
     - Orchestrator action: the green doc-only sweep will be committed locally as a labeled pending-decision checkpoint so subsequent tasks' diffs stay clean; the human decision (amend the validator rule direction, then re-open) governs whether it stands or is reverted.
     - Task left in doing+stuck — NOT forced to done.
   timestamp: 2026-08-05T09:22:29.037786+00:00
+- actor: claude-code
+  id: 01kz8ry3703t9ggffhn0x07dmp
+  text: |-
+    ### resolved — card obsolete (validator direction fixed by human decision)
+    - The conflict is settled: the swift documentation rule now explicitly requires INTERNAL (local) parameter names in `- Parameter` entries — the names Swift-DocC and Xcode resolve against. Changes: new builtin rule `swissarmyhammer/builtin/validators/swift/rules/doc-parameter-naming.md` (uncommitted, in the sah source repo) and a disambiguated parameter bullet in the live `~/.validators/swift/rules/documentation.md`.
+    - Under the fixed rule, this card's acceptance criteria (converge on EXTERNAL labels) pointed the wrong way; the 104 pre-sweep sites already documented internal names correctly. The sweep commit 6df1105 was reverted as fa04931 (code files only, build clean).
+    - Residual: a handful of sites that documented external labels BEFORE the sweep (e.g. the ToolOutputCapping label alignments from ^ew49xjj iteration 2, commit ca654aa) now violate the fixed rule; future reviews will flag them toward internal names file-by-file as code changes touch them.
+    - Card archived as obsolete — no remaining work.
+  timestamp: 2026-08-05T10:54:00.928839+00:00
 position_column: doing
 position_ordinal: '80'
 title: '[Repo] Converge doc-comment parameter naming on external argument labels repo-wide (91 sites)'
@@ -56,4 +65,4 @@ One mechanical, doc-only sweep: for every function whose external label differs 
 ## Acceptance Criteria
 - [ ] Zero doc-parameter entries in Sources/ or Tests/ name the internal parameter where an external label exists
 - [ ] Prose inside each touched doc comment agrees with its renamed entries
-- [ ] `swift build` and `swift test` green; zero warnings #router-first #stuck
+- [ ] `swift build` and `swift test` green; zero warnings #router-first
