@@ -90,6 +90,40 @@ comments:
     - evidence: 9 files — Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift (new), Tests/FoundationModelsRouterTests/Helpers/ElevationTestHelpers.swift (new), Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift, Tests/FoundationModelsRouterTests/AutoCompactionTests.swift, Tests/FoundationModelsRouterTests/SessionOutboxToolWiringTests.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationToolWiringTests.swift, Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift; all 22 review findings checked (22/22, 3 new tests); swift test 718 + 18 + 12, 0 failures
     - next: /review
   timestamp: 2026-08-05T00:25:13.437502+00:00
+- actor: claude-code
+  id: 01kz7nz10xr8n8j57rtwd67gra
+  text: |-
+    ### review — findings
+    - evidence: 1 finding — Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift:205 (scope: review sha HEAD~1..HEAD, commit 3b0f756; engine counts: 7 findings, 6 dropped under the written pre-existing-test-code exception — SessionTreeRestorationToolWiringTests.swift:26/35/63/72, ToolOutputCappingTests.swift:21/230 untouched by this commit). All 22 prior items (2026-08-04 18:26) verified checked.
+    - next: flatten the nesting in CancellationObservingBackend.streamResponse (new code in 3b0f756), then re-review
+  timestamp: 2026-08-05T00:42:51.293604+00:00
+- actor: claude-code
+  id: 01kz7p0v2a4vrvbnxqre5nb6fk
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 9 files (shared instanceToolsWithElevation helper, Helpers/{RouterTestFixtures,ElevationTestHelpers}.swift new, context-binding coverage, Mutex-guarded flags); 22/22 prior findings checked
+    - test: green — swift test, 748 passed, 0 failures, 29 expected gated skips
+    - commit: 3b0f756
+    - review: findings — 1 new: Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift:205 (5-level nesting in streamResponse polling closure); engine 7 confirmed, 6 dropped per existing-tests rule
+  timestamp: 2026-08-05T00:43:50.730704+00:00
+- actor: claude-code
+  id: 01kz7p6pd8f6pafcm4yz4dkmpx
+  text: |-
+    Worked the single 2026-08-04 19:30 review finding (RoutedSessionToolContextBindingTests.swift:205, 5-level nesting in CancellationObservingBackend.streamResponse's polling closure).
+
+    Fix: extracted the polling loop into one helper on CancellationObservingBackend — `private static func pollForCancellation(_ context: ToolContext?) async -> Bool` (guard-let early return on nil context, `return true` the moment the ambient flag flips, `false` when the iteration budget runs out) — and both entry points now call it: `respond` does `if await Self.pollForCancellation(ToolContext.current) { observedCancellationFlag.withLock { $0 = true } }`, and the stream's production Task does the same with the context captured at call time and the stream flag. The finding's 5-level chain (AsyncThrowingStream closure → Task closure → if-let → for → nested if) is gone; per the same-cause sweep, `respond`'s identical inline polling loop (the file's only other instance of the pattern) was flattened by the same helper. The helper returns Bool rather than taking a Mutex parameter because `Synchronization.Mutex` is ~Copyable — callers own their flag writes, keeping the Mutex-guarded-flag invariant from the double-check fix untouched.
+
+    Pure structural refactor, no behavior change: flag-set-then-break becomes flag-set-on-true-return, and the inner delegate call still runs afterward in both paths. Existing tests were the safety net.
+
+    Verification: swift build clean; swift test --filter RoutedSessionToolContextBindingTests 6/6; full swift test 718 + 18 + 12, 0 failures (only the pre-existing Cmlx.bundle build-system artifact warning, not a compiler diagnostic). Finding flipped to [x]; card description and tags re-verified intact after update task (per the known corruption issue).
+  timestamp: 2026-08-05T00:47:02.568772+00:00
+- actor: claude-code
+  id: 01kz7p6t9qgh50bme3pvywzqfw
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift (extracted pollForCancellation helper; flattened streamResponse and respond polling); finding RoutedSessionToolContextBindingTests.swift:205 checked (2026-08-04 19:30 section now 1/1); swift test 718 + 18 + 12, 0 failures
+    - next: /review
+  timestamp: 2026-08-05T00:47:06.551752+00:00
 depends_on:
 - 01KZ6N2KTSXX3VTHEJEVVG7ZTT
 position_column: doing
@@ -149,4 +183,10 @@ Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/ev
 - [x] `Tests/FoundationModelsRouterTests/SessionOutboxToolWiringTests.swift:851` — The 30-second timeout value is hardcoded in three separate test functions. Timeouts are explicitly cited in the rule as configuration that should be named constants when repeated, to avoid maintenance issues if the value needs to change. Extract to a private static constant (e.g., `private static let mailboxWaitTimeoutSeconds: TimeInterval = 30`) and reuse it in all three test functions.
 - [x] `Tests/FoundationModelsRouterTests/SessionTreeRestorationToolWiringTests.swift:79` — The `elevationWrapped` helper function is defined identically in both SessionOutboxToolWiringTests.swift and SessionTreeRestorationToolWiringTests.swift as part of this same change. Both cast a tool to `ElevatingTool<FakeToolArguments>` and return its wrapped property with identical logic. This shared test utility should be extracted to a common location rather than duplicated across test files. Extract `elevationWrapped` to a shared test utilities module or base test case that both test files import, rather than defining it separately in each file.
 - [x] `Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:351` — The change adds verification that ElevatingTool wraps tools in composition chains (line 429-432: `let elevating = capping.wrapped as? ElevatingTool`), but this test of TokenCappingTool composition only verifies the capping layer, not the elevation layer inside it, even though the change purpose states ElevatingTool is mounted at all composition sites. Update line 366's guard to also verify that `capping.wrapped as? ElevatingTool<FakeToolArguments>` is non-nil, mirroring the composition check at line 429-432, to ensure ElevatingTool wraps the original tool in all capping scenarios.
-- [x] `Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:468` — The change adds verification that ElevatingTool wraps tools in the fork composition chain (line 495-496: `(childActor.tools.first as? ElevatingTool<FakeToolArguments>)`), but this fork-with-capping test only verifies TokenCappingTool at the top level, not the elevation layer inside it. The change description states ElevatingTool is mounted at all composition sites, including fork with capping. Update the guard at line 468 to also verify that `capping.wrapped as? ElevatingTool<FakeToolArguments>` is non-nil after confirming TokenCappingTool, ensuring ElevatingTool wraps the child's tools in the fork-with-capping scenario. #phase-1 #router-first
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:468` — The change adds verification that ElevatingTool wraps tools in the fork composition chain (line 495-496: `(childActor.tools.first as? ElevatingTool<FakeToolArguments>)`), but this fork-with-capping test only verifies TokenCappingTool at the top level, not the elevation layer inside it. The change description states ElevatingTool is mounted at all composition sites, including fork with capping. Update the guard at line 468 to also verify that `capping.wrapped as? ElevatingTool<FakeToolArguments>` is non-nil after confirming TokenCappingTool, ensuring ElevatingTool wraps the child's tools in the fork-with-capping scenario.
+
+## Review Findings (2026-08-04 19:30)
+
+> Note: 6 engine findings were dropped under the review skill's written exception (their subject was refactoring/deduplicating pre-existing test code untouched by this commit): SessionTreeRestorationToolWiringTests.swift:26/35/63/72 and ToolOutputCappingTests.swift:21/230.
+
+- [x] `Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift:205` — Function has excessive nesting depth (5 levels), making control flow hard to follow: AsyncThrowingStream closure → Task closure → if-let guard → for loop → nested if condition creates a convoluted path. Extract the polling loop logic into a separate helper method, e.g. `private func pollForCancellation(_ context: ToolContext) async`, to reduce nesting. Or use early return patterns and guard statements to flatten the control flow at the top level of the Task closure. #phase-1 #router-first

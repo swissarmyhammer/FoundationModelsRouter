@@ -186,18 +186,24 @@ struct RoutedSessionToolContextBindingTests {
         /// reported `true`.
         var observedStreamCancellation: Bool { observedStreamCancellationFlag.withLock { $0 } }
 
+        /// Polls the ambient probe until it reports cancellation or the
+        /// iteration budget runs out, returning whether cancellation was
+        /// ever observed. `nil` context — no binding — observes nothing.
+        private static func pollForCancellation(_ context: ToolContext?) async -> Bool {
+            guard let context else { return false }
+            for _ in 0..<pollIterations {
+                if context.isCancelled { return true }
+                // Deliberately swallow the cancellation error: this
+                // backend cooperates through the ambient flag alone.
+                try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+            }
+            return false
+        }
+
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             respondStartedFlag.withLock { $0 = true }
-            if let context = ToolContext.current {
-                for _ in 0..<Self.pollIterations {
-                    if context.isCancelled {
-                        observedCancellationFlag.withLock { $0 = true }
-                        break
-                    }
-                    // Deliberately swallow the cancellation error: this
-                    // backend cooperates through the ambient flag alone.
-                    try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
-                }
+            if await Self.pollForCancellation(ToolContext.current) {
+                observedCancellationFlag.withLock { $0 = true }
             }
             return try await inner.respond(to: prompt, maxTokens: maxTokens)
         }
@@ -213,16 +219,8 @@ struct RoutedSessionToolContextBindingTests {
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     self.streamStartedFlag.withLock { $0 = true }
-                    if let context {
-                        for _ in 0..<Self.pollIterations {
-                            if context.isCancelled {
-                                self.observedStreamCancellationFlag.withLock { $0 = true }
-                                break
-                            }
-                            // Deliberately swallow the cancellation error,
-                            // as in `respond` above.
-                            try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
-                        }
+                    if await Self.pollForCancellation(context) {
+                        self.observedStreamCancellationFlag.withLock { $0 = true }
                     }
                     do {
                         for try await chunk in inner.streamResponse(to: prompt, maxTokens: maxTokens) {
