@@ -146,8 +146,31 @@ comments:
     - HumanWaitGateTests (flaky gate-release test, ^tree711): all 3 tests in "Human waits release the per-model generation gate, never the per-session turn lock" passed this run — no flake observed, nothing to re-run.
     - next: hand off to review/commit steps as appropriate.
   timestamp: 2026-08-05T05:42:08.778216+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kz875v0mdcwqdk7n78h9r12d
+  text: |-
+    ### commit — changed
+    - evidence: f3bd00c test(router): cover fork() with budget but no toolOutputLimit
+    - next: continue pipeline
+  timestamp: 2026-08-05T05:43:40.308354+00:00
+- actor: claude-code
+  id: 01kz87bxc70c69a2herbqsks8x
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (f3bd00c) — 0 new findings; prior sections 2026-08-04 23:08 and 2026-08-05 00:12 all checked
+    - next: none — task moved to done
+  timestamp: 2026-08-05T05:46:59.335316+00:00
+- actor: claude-code
+  id: 01kz87efrnma182wqwd5snykm1
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — 1 file (forkWithNoToolOutputLimitLeavesChildToolsUnwrapped test + no-budget fork test rename); flake filed as ^tree711
+    - test: green — swift test, 753 passed, 0 failures, 32 gated skips
+    - commit: f3bd00c
+    - review: clean — 0 new findings on HEAD~1..HEAD, both prior checklists fully checked; task → done
+  timestamp: 2026-08-05T05:48:23.701613+00:00
+position_column: done
+position_ordinal: ef80
 title: '[Router] Delete EventEmittingTool/connecting(_:) and the conformance-cast wiring (propagation probe verdict: context propagates)'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: task ^c25mpnw's propagation probe verdict (PropagationProbeIntegrationTests, real run 2026-08-04): the @TaskLocal ToolContext bound around respond() DOES arrive inside call(arguments:) on both the MLX path and the system model, carrying the exact bound completionToken. Per eventplan.md §"Phases" phase 1 and §"The ambient context" effect 3, the propagates-branch deletes the protocol: native tools get the ambient context free, so composition-time event wiring is redundant.
