@@ -101,7 +101,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     ``RoutedSession/outbox`` — around each call; the tool instance
     ///     itself passes through untouched, and a non-String-output tool
     ///     passes through unwrapped (see
-    ///     ``instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``).
+    ///     ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     ///     Defaults to no tools.
     ///   - budget: The auto-compaction opt-in (the "session
     ///     that manages its own window" opt-in, task 8213x39), or `nil` (the
@@ -186,9 +186,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let sessionId = ULID.generate()
         let recordingDirectory = self.recordingDirectory(forSessionId: sessionId, recordingRoot: recordingRoot)
 
-        // Pure per-session instancing, before the backend is ever built —
-        // see ``instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``
-        // for the elevate → cap chain this site applies (task
+        // Per-session event wiring plus pure per-session instancing, before
+        // the backend is ever built — see
+        // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
+        // for the fresh outbox/mailbox scope rule and the elevate → cap
+        // chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
         // deliberately distinct chain — see
         // ``RoutedSessionActor/fork(workingDirectory:)`` and
@@ -198,16 +200,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // String-output tool's elevation layer binding the ambient
         // `ToolContext` that posts the tool's events to this session's own
         // `outbox` — not the bare originals.
-        let outbox = SessionOutbox()
-        // The mailbox shares the outbox's scope rule: fresh per session,
-        // never shared, so parked runs and pending elicitations never
-        // migrate between sessions (see ``RoutedSession/mailbox``).
-        let mailbox = SessionMailbox()
-        let instancedTools = instanceToolsWithElevation(
+        let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
             tools,
             sessionID: sessionId,
-            outbox: outbox,
-            mailbox: mailbox,
             cappedToTokenLimit: budget?.toolOutputLimit
         )
 
@@ -266,73 +261,70 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         )
     }
 
-    /// Instances `tools` for one session: each String-output tool is wrapped
+    /// Mints one session's event wiring — a fresh outbox and mailbox — and
+    /// instances `tools` against it: each String-output tool is wrapped
     /// in the elevation engine — whose ambient ``ToolContext`` posts the
     /// tool's events to the session's own outbox — and, only when
-    /// `tokenLimit` is set, capped outermost. A non-String-output tool
+    /// `cappedToTokenLimit` is set, capped outermost. A non-String-output tool
     /// passes through both layers unwrapped (see
     /// ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
-    /// and ``ToolOutputCapping/wrapping(_:toTokenLimit:)``); its ambient
+    /// and ``ToolOutputCapping/wrapping(tool:toTokenLimit:)``); its ambient
     /// posts fall back to the session's turn-scope ``ToolContext`` binding,
     /// which stamps the turn's own `"session"`/`"respond"` identity rather
     /// than the tool's.
+    ///
+    /// The outbox and mailbox are minted here, never accepted from the
+    /// caller, because both share one scope rule: fresh per session, never
+    /// shared, so a tool's events post to *this* session's own outbox
+    /// rather than a sibling or ancestor's, and parked runs and pending
+    /// elicitations never migrate between sessions or survive a restore
+    /// (see ``RoutedSession/mailbox``).
     ///
     /// The shared elevate → optional-cap pipeline behind two of
     /// task ^k4nygqa's three composition sites: the root site
     /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``,
     /// elevate → cap) and the restore site (`restoreSessionTree`,
-    /// elevate — it passes a `nil` `tokenLimit`, so no capping
-    /// layer is ever added). The fork site composes its own chain because it
-    /// forks each tool before elevating it (see
+    /// elevate — it passes a `nil` `cappedToTokenLimit`, so no capping
+    /// layer is ever added). The fork site mints its own wiring because it
+    /// forks each tool first, then hands the forked copy to the same
+    /// per-tool composition (see
     /// ``RoutedSessionActor/fork(workingDirectory:)``).
     ///
-    /// Per tool, in order:
-    ///
-    /// - ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
-    ///   mounts the elevation engine around the tool, never mutating it
-    ///   (eventplan.md § "Elevation": the native mount, elevation on,
-    ///   `waitSeconds` default 5 s), parking a slow call in the session's
-    ///   own `mailbox` and posting its events to `outbox`.
-    /// - When `tokenLimit` is set, ``ToolOutputCapping/optionallyCapped(_:toTokenLimit:)``
-    ///   wraps the elevated tool outermost (task 1334fk3): the SDK's own
-    ///   call reaches the capped decorator last, so both continued
-    ///   generation and the recorded `.toolOutput` entry see the capped
-    ///   text, never the oversized original. Capping outside elevation is
-    ///   safe: a rendered pending envelope is exempt from capping (see
-    ///   ``TokenCappingTool/call(arguments:)``), so the `completionToken`
-    ///   survives any configured limit.
+    /// Each tool is composed by the shared per-tool chain
+    /// ``ToolElevation/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
+    /// — elevation with the native session mount (eventplan.md
+    /// § "Elevation"), then, only when `cappedToTokenLimit` is set, capping
+    /// outermost — see that helper's doc for the full layering rationale.
     ///
     /// - Parameters:
     ///   - tools: The caller's original tools, never mutated.
     ///   - sessionID: The owning session's identity, stamped into each
     ///     elevated run's ``ToolContext``.
-    ///   - outbox: The session's own outbox — the elevation engine's
-    ///     upstream sink.
-    ///   - mailbox: The session's own mailbox, where elevated runs park.
-    ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap rendered
-    ///     output to, or `nil` for no capping layer.
-    /// - Returns: The instanced, model-facing tool list.
-    func instanceToolsWithElevation(
+    ///   - cappedToTokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
+    ///     rendered output to, or `nil` for no capping layer.
+    /// - Returns: The session's fresh outbox and mailbox alongside the
+    ///   instanced, model-facing tool list wired to them.
+    func makeSessionToolWiring(
         _ tools: [any Tool],
         sessionID: ULID,
-        outbox: SessionOutbox,
-        mailbox: SessionMailbox,
         cappedToTokenLimit tokenLimit: Int?
-    ) -> [any Tool] {
-        tools.map { tool -> any Tool in
-            let elevated = ToolElevation.wrapping(
-                tool,
+    ) -> (outbox: SessionOutbox, mailbox: SessionMailbox, tools: [any Tool]) {
+        let outbox = SessionOutbox()
+        let mailbox = SessionMailbox()
+        let instancedTools = tools.map { tool in
+            ToolElevation.sessionMounted(
+                tool: tool,
                 sessionID: sessionID,
                 mailbox: mailbox,
                 sink: outbox,
-                configuration: .nativeSessionMount
+                cappedToTokenLimit: tokenLimit
             )
-            return ToolOutputCapping.optionallyCapped(elevated, toTokenLimit: tokenLimit)
         }
+        return (outbox, mailbox, instancedTools)
     }
 
-    /// The recording directory a fresh session/handle with `sessionId` nests
-    /// under.
+    /// The recording directory a fresh session/handle with the given
+    /// `forSessionId` nests under.
     ///
     /// Two layouts, chosen by whether `recordingRoot` is supplied (task
     /// ke41yth):
@@ -355,7 +347,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   ``makeLanguageModel()`` so the two factories nest identically.
     ///
     /// - Parameters:
-    ///   - sessionId: The fresh session/handle's own span id.
+    ///   - forSessionId: The fresh session/handle's own span id.
     ///   - recordingRoot: A per-session recording root override, or `nil` for
     ///     the router-level default. Defaults to `nil`.
     /// - Returns: The directory its transcript is recorded under.
@@ -464,11 +456,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// to pair it with.
     ///
     /// Unlike ``makeLanguageModel()``, whose last-seen transcript starts
-    /// empty, this primes the handle's last-seen transcript with `sessionId`'s
-    /// own reconstructed ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
+    /// empty, this primes the handle's last-seen transcript with the resumed
+    /// session's own reconstructed ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
     /// so the handle's *first* diff records only genuinely new entries —
     /// never the whole resumed history re-recorded into a fresh directory.
-    /// The vended handle nests under `sessionId`'s own directory and records
+    /// The vended handle nests under the resumed session's own directory and records
     /// the resumed transcript's entry count as its
     /// ``SessionSidecar/forkedAtEntryCount``, the same lineage semantics
     /// ``RoutedSessionActor/fork(workingDirectory:)`` establishes for
@@ -492,7 +484,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   alive when this is called — mirrors ``makeLanguageModel()``'s own
     ///   precondition.
     /// - Parameters:
-    ///   - sessionId: The previously recorded session's span id to resume
+    ///   - resuming: The previously recorded session's span id to resume
     ///     from — any session already recorded under this router's root (a
     ///     root, a fork, or another recording-handle session).
     ///   - registry: The registered ``PersistableCustomSegment`` types a

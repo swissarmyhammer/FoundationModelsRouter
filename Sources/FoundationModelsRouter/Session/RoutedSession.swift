@@ -977,7 +977,7 @@ actor RoutedSessionActor: RoutedSession {
     /// fork → elevate → cap at a fork, elevate at
     /// restore (task ^k4nygqa); a non-String-output tool passes through both
     /// layers unwrapped (see
-    /// ``RoutedModel/instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``).
+    /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     /// This is the
     /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
     /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
@@ -2021,20 +2021,16 @@ actor RoutedSessionActor: RoutedSession {
         // child-instanced tools rather than silently carrying forward
         // whatever this session's backend was built with (see
         // ``LanguageModelSessionBackend/makeFork(tools:)``).
-        // Elevation (task ^k4nygqa) wraps the connected copy with the
-        // child's own identity, mailbox, and outbox — see
-        // ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
-        // and ``ElevationConfiguration/nativeSessionMount`` — so the fork's
-        // parked runs live in the fork's own mailbox, never the parent's.
-        // Capping (task 1334fk3) is applied outermost here too, exactly as
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:)``
-        // applies it to a root session's tools — see
-        // ``ToolOutputCapping/optionallyCapped(_:toTokenLimit:)`` — so a fork
-        // that inherits ``autoCompactionBudget`` also inherits its
-        // ``TokenBudget/toolOutputLimit``, if any. Capping outside
-        // elevation is safe: a rendered pending envelope is exempt from
-        // capping (see ``TokenCappingTool/call(arguments:)``), so the
-        // `completionToken` survives any configured limit.
+        // Elevation and capping arrive through the shared per-tool
+        // composition
+        // ``ToolElevation/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
+        // (tasks ^k4nygqa, 1334fk3): the forked copy is elevated with the
+        // child's own identity, mailbox, and outbox — so the fork's parked
+        // runs live in the fork's own mailbox, never the parent's — and,
+        // when the fork inherits ``autoCompactionBudget``, capped outermost
+        // to its ``TokenBudget/toolOutputLimit``, exactly as
+        // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
+        // caps a root session's tools.
         let childOutbox = SessionOutbox()
         // The child's mailbox is fresh for the same reason its outbox is:
         // parked runs and pending elicitations never migrate between
@@ -2046,14 +2042,13 @@ actor RoutedSessionActor: RoutedSession {
         let childId = ULID.generate()
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
-            let elevated = ToolElevation.wrapping(
-                forked,
+            return ToolElevation.sessionMounted(
+                tool: forked,
                 sessionID: childId,
                 mailbox: childMailbox,
                 sink: childOutbox,
-                configuration: .nativeSessionMount
+                cappedToTokenLimit: autoCompactionBudget?.toolOutputLimit
             )
-            return ToolOutputCapping.optionallyCapped(elevated, toTokenLimit: autoCompactionBudget?.toolOutputLimit)
         }
 
         // Acquire this session's turn lock before reading `backend`'s

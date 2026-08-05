@@ -13,7 +13,7 @@ import FoundationModels
 /// external per-tool capping wrapper job into that seam instead
 /// of a wrapper consumers would otherwise have to maintain on their own.
 enum ToolOutputCapping {
-    /// Truncates `text` to at most `limit` estimated tokens
+    /// Truncates `text` to at most `toTokenLimit` estimated tokens
     /// (``Compactor``'s own character-ratio estimate — compaction_plan.md
     /// §1.5 — since there is no live model to measure exactly against at
     /// this layer), appending an explicit truncation marker.
@@ -25,13 +25,14 @@ enum ToolOutputCapping {
     ///
     /// - Parameters:
     ///   - text: The tool's raw output.
-    ///   - limit: The maximum number of tokens to keep.
+    ///   - toTokenLimit: The maximum number of tokens to keep.
     /// - Returns: `text` unchanged when its estimated size is already at or
-    ///   under `limit` tokens; otherwise a truncated prefix (approximately
-    ///   `limit` tokens) followed by a `"… [truncated: N of M tokens]"`
+    ///   under `toTokenLimit` tokens; otherwise a truncated prefix
+    ///   (approximately `toTokenLimit` tokens) followed by a
+    ///   `"… [truncated: N of M tokens]"`
     ///   marker naming the kept limit (`N`) and the original estimated size
     ///   (`M`).
-    static func capped(_ text: String, toTokenLimit limit: Int) -> String {
+    static func capped(text: String, toTokenLimit limit: Int) -> String {
         let totalTokens = Compactor.estimatedTokenCount(of: text)
         guard totalTokens > limit else { return text }
 
@@ -40,24 +41,25 @@ enum ToolOutputCapping {
         return "\(kept)… [truncated: \(limit) of \(totalTokens) tokens]"
     }
 
-    /// Returns the longest prefix of `text` whose UTF-8 encoding is at most
-    /// `maxBytes` bytes — the same unit ``Compactor/estimatedTokenCount(of:)``
-    /// measures `text`'s own total size in, so the kept prefix and the
-    /// reported totals in ``capped(_:toTokenLimit:)``'s marker stay
-    /// consistent with each other regardless of `text`'s script (ASCII,
+    /// Returns the longest prefix of the given text whose UTF-8 encoding is
+    /// at most `keepingAtMostUTF8Bytes` bytes — the same unit
+    /// ``Compactor/estimatedTokenCount(of:)``
+    /// measures the text's own total size in, so the kept prefix and the
+    /// reported totals in ``capped(text:toTokenLimit:)``'s marker stay
+    /// consistent with each other regardless of the text's script (ASCII,
     /// multi-byte UTF-8, or a mix).
     ///
     /// Always cuts on a `Character` (extended grapheme cluster) boundary —
     /// never mid-scalar or mid-emoji — by walking whole characters and
-    /// stopping before the one that would exceed `maxBytes`.
+    /// stopping before the one that would exceed `keepingAtMostUTF8Bytes`.
     ///
     /// - Parameters:
-    ///   - text: The text to take a prefix of.
-    ///   - maxBytes: The maximum UTF-8 byte count the returned prefix may
-    ///     have.
-    /// - Returns: The longest valid `Character`-boundary prefix of `text`
-    ///   whose UTF-8 encoding is at most `maxBytes` bytes; empty when
-    ///   `maxBytes` is `0` or negative.
+    ///   - of: The text to take a prefix of.
+    ///   - keepingAtMostUTF8Bytes: The maximum UTF-8 byte count the
+    ///     returned prefix may have.
+    /// - Returns: The longest valid `Character`-boundary prefix of the given
+    ///   text whose UTF-8 encoding is at most `keepingAtMostUTF8Bytes`
+    ///   bytes; empty when `keepingAtMostUTF8Bytes` is `0` or negative.
     private static func prefix(of text: String, keepingAtMostUTF8Bytes maxBytes: Int) -> String {
         guard maxBytes > 0 else { return "" }
 
@@ -73,8 +75,8 @@ enum ToolOutputCapping {
     }
 
     /// Wraps `tool` in a ``TokenCappingTool`` that caps its output to
-    /// `limit` tokens, discovered dynamically rather than requiring the tool
-    /// to opt in — mirroring ``ForkableTool``'s own
+    /// `toTokenLimit` tokens, discovered dynamically rather than requiring
+    /// the tool to opt in — mirroring ``ForkableTool``'s own
     /// "no cooperation needed" contract.
     ///
     /// The check is a runtime existential cast against `Tool`'s own primary
@@ -87,10 +89,10 @@ enum ToolOutputCapping {
     ///
     /// - Parameters:
     ///   - tool: The tool to consider for capping.
-    ///   - limit: The token limit each call's output is capped to.
+    ///   - toTokenLimit: The token limit each call's output is capped to.
     /// - Returns: A capping decorator around `tool` when its `Output` is
     ///   `String`; `tool` itself otherwise.
-    static func wrapping(_ tool: any Tool, toTokenLimit limit: Int) -> any Tool {
+    static func wrapping(tool: any Tool, toTokenLimit limit: Int) -> any Tool {
         func open<T: Tool>(_ tool: T) -> any Tool {
             guard let stringTool = tool as? any Tool<T.Arguments, String> else { return tool }
             return TokenCappingTool(wrapped: stringTool, limit: limit)
@@ -98,23 +100,23 @@ enum ToolOutputCapping {
         return open(tool)
     }
 
-    /// Applies ``wrapping(_:toTokenLimit:)`` only when a limit is actually
+    /// Applies ``wrapping(tool:toTokenLimit:)`` only when a limit is actually
     /// configured — the shared guard-and-wrap both of Router's tool-instancing
     /// seams need (``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:)``
     /// for a root session, ``RoutedSessionActor/fork(workingDirectory:)`` for
-    /// a forked one), so neither has to restate the `guard let limit else`
+    /// a forked one), so neither has to restate the nil-guard-and-wrap
     /// pattern itself.
     ///
     /// - Parameters:
     ///   - tool: The tool to consider for capping.
-    ///   - limit: The token limit to cap to, or `nil` (e.g. no
+    ///   - toTokenLimit: The token limit to cap to, or `nil` (e.g. no
     ///     ``TokenBudget`` configured, or a `TokenBudget` with no
     ///     ``TokenBudget/toolOutputLimit``) to leave `tool` uncapped.
-    /// - Returns: `tool` unchanged when `limit` is `nil`; otherwise the
-    ///   result of ``wrapping(_:toTokenLimit:)``.
-    static func optionallyCapped(_ tool: any Tool, toTokenLimit limit: Int?) -> any Tool {
+    /// - Returns: `tool` unchanged when `toTokenLimit` is `nil`; otherwise
+    ///   the result of ``wrapping(tool:toTokenLimit:)``.
+    static func optionallyCapped(tool: any Tool, toTokenLimit limit: Int?) -> any Tool {
         guard let limit else { return tool }
-        return wrapping(tool, toTokenLimit: limit)
+        return wrapping(tool: tool, toTokenLimit: limit)
     }
 }
 
@@ -144,7 +146,7 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
     /// Calls `wrapped`, then caps its result to ``limit`` tokens via
-    /// ``ToolOutputCapping/capped(_:toTokenLimit:)``.
+    /// ``ToolOutputCapping/capped(text:toTokenLimit:)``.
     ///
     /// One exemption: a rendered ``PendingRunEnvelope`` — the wire form an
     /// elevated call returns in place of its output (task ^k4nygqa;
@@ -167,6 +169,54 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
         if PendingRunEnvelope.isRendered(output) {
             return output
         }
-        return ToolOutputCapping.capped(output, toTokenLimit: limit)
+        return ToolOutputCapping.capped(text: output, toTokenLimit: limit)
+    }
+}
+
+extension ToolElevation {
+    /// The per-tool session-mount composition every session tool-instancing
+    /// site shares (task ^k4nygqa): elevates `tool` under the session's own
+    /// identity, mailbox, and sink with
+    /// ``ElevationConfiguration/nativeSessionMount``, then — only when
+    /// `cappedToTokenLimit` is set — caps the elevated tool outermost via
+    /// ``ToolOutputCapping/optionallyCapped(tool:toTokenLimit:)`` (task
+    /// 1334fk3), so the SDK's own call reaches the capped decorator last
+    /// and both continued generation and the recorded `.toolOutput` entry
+    /// see the capped text. Capping outside elevation is safe: a rendered
+    /// pending envelope is exempt from capping (see
+    /// ``TokenCappingTool/call(arguments:)``), so the `completionToken`
+    /// survives any configured limit.
+    ///
+    /// Shared by ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
+    /// (the root and restore sites) and
+    /// ``RoutedSessionActor/fork(workingDirectory:)`` (which forks each
+    /// tool first, then hands the forked copy here), so the elevate → cap
+    /// layering is stated exactly once.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to mount for one session.
+    ///   - sessionID: The owning session's identity, stamped into each
+    ///     elevated run's ``ToolContext``.
+    ///   - mailbox: The owning session's mailbox, where elevated runs park.
+    ///   - sink: The upstream sink the run's events are posted to — the
+    ///     session's own outbox.
+    ///   - cappedToTokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
+    ///     rendered output to, or `nil` for no capping layer.
+    /// - Returns: The composed, model-facing tool.
+    static func sessionMounted(
+        tool: any Tool,
+        sessionID: ULID,
+        mailbox: SessionMailbox,
+        sink: any OperationEventSink,
+        cappedToTokenLimit tokenLimit: Int?
+    ) -> any Tool {
+        let elevated = wrapping(
+            tool,
+            sessionID: sessionID,
+            mailbox: mailbox,
+            sink: sink,
+            configuration: .nativeSessionMount
+        )
+        return ToolOutputCapping.optionallyCapped(tool: elevated, toTokenLimit: tokenLimit)
     }
 }

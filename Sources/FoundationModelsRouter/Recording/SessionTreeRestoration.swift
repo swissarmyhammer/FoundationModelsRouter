@@ -291,10 +291,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
 
-            // Fresh per-node outbox plus per-session tool instancing —
-            // applied here to every restored node so a tool's events post
-            // to *this* node's own outbox rather than a sibling or
-            // ancestor's.
+            // Per-node event wiring plus per-session tool instancing —
+            // the shared helper mints every restored node its own fresh
+            // outbox and mailbox, so a tool's events post to *this* node's
+            // own outbox rather than a sibling or ancestor's, and parked
+            // runs and pending elicitations never survive a restore (see
+            // ``RoutedSession/mailbox``).
             // This site's chain is elevate only — deliberately no fork
             // (restoration re-instances from the caller's originals, it
             // never derives one live session from another) and no capping
@@ -302,19 +304,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // gets a `nil` token limit) — distinct from the root site's
             // elevate → cap and the fork site's
             // fork → elevate → cap (task ^k4nygqa; see
-            // ``RoutedModel/instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``
+            // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
-            let outbox = SessionOutbox()
-            // The mailbox shares the outbox's scope rule: every restored
-            // node gets a brand-new one — parked runs and pending
-            // elicitations never survive a restore or migrate between
-            // sessions (see ``RoutedSession/mailbox``).
-            let mailbox = SessionMailbox()
-            let instancedTools = instanceToolsWithElevation(
+            let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
-                outbox: outbox,
-                mailbox: mailbox,
                 cappedToTokenLimit: nil
             )
             let backend = routedLLM.container.makeSession(transcript: transcript, tools: instancedTools)

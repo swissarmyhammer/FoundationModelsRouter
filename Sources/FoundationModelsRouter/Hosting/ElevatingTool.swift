@@ -566,9 +566,16 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 
 /// The untyped entry point over the ``ElevatingTool`` decorator — the
 /// discovery half of the pair, mirroring `ToolOutputCapping`'s
-/// `wrapping(_:toTokenLimit:)`: Router's tool-instancing seams hold plain
+/// `wrapping(tool:toTokenLimit:)`: Router's tool-instancing seams hold plain
 /// `[any Tool]` lists, so this is where the existential is opened and the
 /// decorator applied.
+///
+/// The shared per-tool session-mount composition,
+/// ``sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``,
+/// extends this namespace from `Session/ToolOutputCapping.swift` — it
+/// layers `ToolOutputCapping` over ``wrapping(_:sessionID:mailbox:sink:configuration:)``,
+/// and lives beside the capping layer so this file carries no dependency
+/// on it.
 public enum ToolElevation {
     /// Wraps `tool` in an ``ElevatingTool`` when it can be elevated,
     /// discovered dynamically rather than requiring the tool to opt in.

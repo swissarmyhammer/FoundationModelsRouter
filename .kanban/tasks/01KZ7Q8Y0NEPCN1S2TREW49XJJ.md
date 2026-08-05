@@ -36,6 +36,63 @@ comments:
     - evidence: deleted Sources/FoundationModelsRouter/Hosting/EventEmittingTool.swift + Tests/FoundationModelsRouterTests/EventEmittingToolTests.swift; edited Sources/FoundationModelsRouter/RoutedLLM.swift, Session/RoutedSession.swift, Session/SessionOutbox.swift, Session/ToolOutputCapping.swift, Session/LanguageModelSessionBackend.swift, Recording/SessionTreeRestoration.swift, Hosting/ForkableTool.swift, Hosting/OperationEventSink.swift, Resolution/LiveModelLoader.swift, Tests/FoundationModelsRouterTests/SessionOutboxToolWiringTests.swift, SessionTreeRestorationToolWiringTests.swift, ToolOutputCappingTests.swift, Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift, plan.md; added Tests/FoundationModelsRouterTests/OperationEventTests.swift + Helpers/AmbientEventToolFixtures.swift. Verified: grep `EventEmittingTool|connecting(` over Sources/+Tests/ → 0 hits; `swift test` → 720+20+12 tests passed, 0 failures; `review working` → 0 findings (twice); double-check findings implemented (String-output prose correction, follow-up task ^6htgvw2 filed, grep-scope comment corrected).
     - next: ready for /review
   timestamp: 2026-08-05T04:04:23.819167+00:00
+- actor: claude-code
+  id: 01kz82bjjsdhepj3hxejy53yyk
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit e1b62fa) — 1 confirmed finding: Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:307 (outbox/mailbox + tool-instancing block duplicated with RoutedLLM.swift:201; extract shared helper parameterized by sessionID and tokenLimit)
+    - next: /implement ^ew49xjj to resolve the checklist item, then re-review
+  timestamp: 2026-08-05T04:19:25.401106+00:00
+- actor: claude-code
+  id: 01kz82fbh91zbbey50j40redwe
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 2 deleted (EventEmittingTool.swift, EventEmittingToolTests.swift), 2 added (OperationEventTests.swift, AmbientEventToolFixtures.swift), 14 edited; grep clean; follow-up ^6htgvw2 filed
+    - test: green — swift test, 752 passed, 0 failures, 32 expected gated skips
+    - commit: e1b62fa
+    - review: findings — 1: Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:307 duplicated with Sources/FoundationModelsRouter/RoutedLLM.swift:201 (extract shared helper parameterized by sessionID and tokenLimit)
+  timestamp: 2026-08-05T04:21:29.257891+00:00
+- actor: claude-code
+  id: 01kz83q1wgmsft3eyy2s461168
+  text: |-
+    Picked the card back up from review to work the single review finding (SessionTreeRestoration.swift:307 duplicated with RoutedLLM.swift:201).
+
+    Fix: folded the outbox/mailbox minting into the existing shared helper — `instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)` became `RoutedModel.makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)`, which now mints the fresh SessionOutbox/SessionMailbox itself and returns `(outbox, mailbox, tools)`. Both former duplication sites (makeSession root site, restoreSessionTree restore site) now make one call; grep confirms `instanceToolsWithElevation` is gone repo-wide. Doc references updated in RoutedLLM.swift, RoutedSession.swift, SessionTreeRestoration.swift.
+
+    Self-review surfaced two more findings, both fixed:
+    1. The per-tool elevate+cap chain was still duplicated between makeSessionToolWiring and RoutedSessionActor.fork's childTools map — extracted `ToolElevation.sessionMounted(_:sessionID:mailbox:sink:cappedToTokenLimit:)` (in Session/ToolOutputCapping.swift, keeping the public Hosting file free of the Session-side capping dependency); both sites use it, fork still forks first and mints its own child wiring (fork → elevate → cap unchanged). Also removed stale "connected copy" wording in fork's comment.
+    2. Doc-parameter names not matching external argument labels — swept both flagged files (RoutedLLM.swift: cappedToTokenLimit, forSessionId, resuming; ToolOutputCapping.swift: toTokenLimit x3, of/keepingAtMostUTF8Bytes, cappedToTokenLimit).
+
+    Behavior unchanged by construction (same instances, same order, same cap limits per site: root budget?.toolOutputLimit, restore nil, fork autoCompactionBudget?.toolOutputLimit). swift build clean; swift test green (720+20+12, 0 failures); `review working` now returns 0 findings. TDD note: pure extract-refactor with identical behavior — existing wiring tests are the safety net per the dispatch instruction; no test can be written that fails before and passes after.
+  timestamp: 2026-08-05T04:43:10.096041+00:00
+- actor: claude-code
+  id: 01kz852j1t5fq5abwbsjq5cxd8
+  text: |-
+    Double-check returned REVISE with 4 findings; all implemented:
+
+    1. Doc prose now agrees with the renamed `- Parameters:` entries in RoutedLLM.swift and Session/ToolOutputCapping.swift — every backticked internal-name reference in those doc comments was renamed to the external label (`toTokenLimit`, `cappedToTokenLimit`, `keepingAtMostUTF8Bytes`, `forSessionId`) or rephrased to plain English where the label reads badly (`makeLanguageModel(resuming:)` prose says "the resumed session's"; `prefix` prose says "the given text").
+    2. Label-vs-internal doc-naming convention split: measured repo-wide — 91 doc-parameter entries across ~20 files still use the internal name where an external label exists. The engine's swift validator enforces the label form on changed files (three concrete findings this session), so the label direction is the enforced one; the sweep is a mechanical repo-wide doc refactor out of this card's scope and is filed as task ^6e4d1pn (records the measurement, the pattern to apply, and acceptance criteria). Not resolved silently: recorded here and on that card.
+    3. Open task ^6htgvw2's acceptance criterion no longer names the deleted `instanceToolsWithElevation` — it now names `RoutedModel.makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)` and `ToolElevation.sessionMounted(...)`, with a note about the rename.
+    4. `ToolElevation`'s enum doc in Hosting/ElevatingTool.swift now cross-references `sessionMounted(...)` and states why it lives in Session/ToolOutputCapping.swift (keeps the Hosting file free of the capping dependency).
+
+    The follow-up `review working` was incomplete once (9/18 tasks failed) and produced 2 new findings on ToolOutputCapping.swift: first parameter label omitted on `wrapping` and `optionallyCapped` (rule permits omission only for value-preserving conversions). Implemented file-wide per the same cause: `capped(text:toTokenLimit:)`, `wrapping(tool:toTokenLimit:)`, `optionallyCapped(tool:toTokenLimit:)`, `sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)` — all call sites (incl. RoutedLLM/RoutedSession composition sites and ToolOutputCappingTests) and every doc/signature reference updated. `ToolElevation.wrapping(_:sessionID:...)` in Hosting/ElevatingTool.swift was left as is: different file, public API, not flagged.
+
+    Verification: swift build clean; swift test 720+20+12, 0 failures; `review working` now 18/18 attempted, 0 failed, 0 findings.
+  timestamp: 2026-08-05T05:06:55.674928+00:00
+- actor: claude-code
+  id: 01kz852t0rcmtc1m8k3gfgfqg0
+  text: |-
+    ### implement — changed
+    - evidence: 6 files — Sources/FoundationModelsRouter/RoutedLLM.swift (instanceToolsWithElevation folded into makeSessionToolWiring minting outbox/mailbox; doc-label + prose fixes), Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift (restore site uses the shared helper), Sources/FoundationModelsRouter/Session/RoutedSession.swift (fork uses shared per-tool ToolElevation.sessionMounted), Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift (sessionMounted added; first-parameter labels capped(text:)/wrapping(tool:)/optionallyCapped(tool:)/sessionMounted(tool:); doc fixes), Sources/FoundationModelsRouter/Hosting/ElevatingTool.swift (ToolElevation doc cross-reference), Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift (renamed call sites/signature strings). Review-finding checklist item flipped to [x]; follow-up tasks ^6e4d1pn filed and ^6htgvw2 updated. swift build clean; swift test 720+20+12 passed, 0 failures; review working 18/18, 0 findings; double-check REVISE feedback fully implemented.
+    - next: ready for /review
+  timestamp: 2026-08-05T05:07:03.832337+00:00
+- actor: claude-code
+  id: 01kz858kckrskwswe3xr3r2c46
+  text: |-
+    ### test — green
+    - evidence: `swift test` (full ungated run, no FM_ROUTER_INTEGRATION_TESTS) — exit 0; 720 tests/69 suites passed, 20 tests/8 suites (24 gated skips), 12 tests/4 suites (4 gated skips); 0 failures, 0 unexpected warnings (only the known pre-existing "missing creator for mutated node" llbuild warning from the mlx-swift Cmlx bundle)
+    - next: proceed to review
+  timestamp: 2026-08-05T05:10:13.651687+00:00
 position_column: doing
 position_ordinal: '80'
 title: '[Router] Delete EventEmittingTool/connecting(_:) and the conformance-cast wiring (propagation probe verdict: context propagates)'
@@ -74,4 +131,8 @@ Keep `OperationEventSink` and `SessionOutbox`'s sink conformance — the ambient
 - [ ] `swift test` (ungated) green; gated suites still compile
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #phase-1 #router-first
+- Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-08-04 23:08)
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:307` — The outbox/mailbox creation and tool instancing pattern is duplicated in RoutedLLM.swift:201. Two nearly-identical blocks differ only by sessionID parameter and cappedToTokenLimit value — extract into a shared helper function. Extract a new helper function in RoutedLLM (or RoutedModel if accessible from both) to consolidate the outbox/mailbox/tool-instancing setup, parameterized by sessionID and tokenLimit. #phase-1 #router-first

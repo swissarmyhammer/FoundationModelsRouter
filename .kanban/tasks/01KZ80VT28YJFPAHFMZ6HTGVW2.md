@@ -16,5 +16,4 @@ Decide and implement the intended contract for non-String-output tools' ambient 
 
 ## Acceptance Criteria
 - [ ] A test covers the ambient event route of a non-String-output tool composed through `makeSession(tools:)`
-- [ ] The doc comments on `instanceToolsWithElevation` and `makeSession(tools:)` match the decided behavior
-#phase-1 #router-first
+- [ ] The doc comments on `RoutedModel.makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)`, `ToolElevation.sessionMounted(_:sessionID:mailbox:sink:cappedToTokenLimit:)`, and `makeSession(tools:)` match the decided behavior (note: ^ew49xjj's review pass renamed `instanceToolsWithElevation` into these two helpers) #phase-1 #router-first
