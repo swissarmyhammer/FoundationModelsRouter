@@ -393,26 +393,42 @@ struct HumanWaitGateTests {
         let sessionB = fixture.model.makeSession()
 
         // A's turn parks on `humanGate` from inside `awaitingUser`, standing in
-        // for a tool waiting on a person.
+        // for a tool waiting on a person. `gateFreed` is signalled from inside
+        // the wait body — ``RoutedSessionActor/awaitingUser(_:)`` releases the
+        // generation permit before running its body — so awaiting it resumes the
+        // test at a point where the gate release has provably happened, rather
+        // than after a bounded number of scheduler hops.
         let humanGate = AsyncSemaphore(value: 0)
+        let gateFreed = AsyncSemaphore(value: 0)
         fixture.hook.midTurn = { prompt in
             guard prompt == "a-wait" else { return }
-            await sessionA.awaitingUser { await humanGate.wait() }
+            await sessionA.awaitingUser {
+                gateFreed.signal()
+                await humanGate.wait()
+            }
         }
 
         let taskA = Task { try await sessionA.respond(to: "a-wait") }
-        await Self.spin(until: { humanGate.waiterCount == 1 })
+        await gateFreed.wait()
 
         // The gate is free while a person is being waited on — no model work is
         // in flight, so nothing is being protected by holding it.
-        #expect(generationGate.availablePermits == 1)
+        let gateFreeDuringWait = generationGate.availablePermits == 1
+        #expect(gateFreeDuringWait)
 
         // …and that freedom is real: B runs a whole turn, start to finish, while
-        // A is still parked. Deliberately observed through `exited` rather than
-        // by awaiting `taskB` here: were the gate still held, awaiting B's turn
-        // before releasing A's wait would deadlock the test rather than fail it.
+        // A is still parked. B is awaited outright — deadlock-free because the
+        // gate was just proven free and A's own re-acquire is parked on
+        // `humanGate` — so `exited` is read after a finished turn instead of
+        // racing the scheduler. Were the gate still held, awaiting B before
+        // releasing A's wait would hang the suite rather than fail it, so that
+        // (already-failed) world skips the await: the guard keeps this await
+        // from adding a hang path, and the tail's own awaits behave exactly as
+        // they always did.
         let taskB = Task { try await sessionB.respond(to: "b") }
-        await Self.spin(until: { await fixture.observer.exited.contains("b") })
+        if gateFreeDuringWait {
+            _ = try await taskB.value
+        }
         #expect(await fixture.observer.exited == ["b"])
 
         // A then finishes its own turn normally, having re-acquired the gate.
