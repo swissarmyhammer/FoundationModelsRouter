@@ -442,9 +442,34 @@ struct ToolOutputCappingTests {
         #expect(result == "\(String(repeating: "g", count: 20))… [truncated: 5 of 10 tokens]")
     }
 
-    @Test("fork() with no toolOutputLimit applies no capping layer to the child's tool list — only the elevation layer wraps it")
+    @Test("fork() with an inherited budget but no toolOutputLimit set applies no capping layer to the child's tool list — only the elevation layer wraps it")
     @MainActor
     func forkWithNoToolOutputLimitLeavesChildToolsUnwrapped() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let tool = StringOutputTool(output: "unchanged")
+        let session = profile.standard.makeSession(
+            tools: [tool],
+            budget: TokenBudget(limit: 4096)
+        )
+        let child = try await session.fork(workingDirectory: nil)
+
+        guard let childActor = child as? RoutedSessionActor else {
+            Issue.record("expected the fork to be a RoutedSessionActor")
+            return
+        }
+        #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
+        #expect((childActor.tools.first as? ElevatingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+    }
+
+    @Test("fork() with no budget at all applies no capping layer to the child's tool list — only the elevation layer wraps it")
+    @MainActor
+    func forkWithNoBudgetLeavesChildToolsUnwrapped() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 

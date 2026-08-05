@@ -93,6 +93,59 @@ comments:
     - evidence: `swift test` (full ungated run, no FM_ROUTER_INTEGRATION_TESTS) — exit 0; 720 tests/69 suites passed, 20 tests/8 suites (24 gated skips), 12 tests/4 suites (4 gated skips); 0 failures, 0 unexpected warnings (only the known pre-existing "missing creator for mutated node" llbuild warning from the mlx-swift Cmlx bundle)
     - next: proceed to review
   timestamp: 2026-08-05T05:10:13.651687+00:00
+- actor: claude-code
+  id: 01kz85s8r8m3cfjw2wb4djf1ac
+  text: |-
+    ### review — findings
+    - evidence: 1 finding — Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:465 (scope: review sha HEAD~1..HEAD, commit ca654aa; prior 2026-08-04 23:08 item verified checked)
+    - next: add the fork test (budget, no toolOutputLimit → elevated-but-uncapped child tools), then re-review
+  timestamp: 2026-08-05T05:19:19.816412+00:00
+- actor: claude-code
+  id: 01kz85tqymz29v5yervx6ge7rs
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 6 files (makeSessionToolWiring consolidation, ToolElevation.sessionMounted shared chain, ToolOutputCapping labels, doc alignment); prior finding checked; follow-up ^6e4d1pn filed
+    - test: green — swift test, 752 passed, 0 failures, 28 gated skips
+    - commit: ca654aa
+    - review: findings — 1 new: Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:465 (fork untested in budget-without-toolOutputLimit config; add fork test asserting child tools elevated but not capped)
+  timestamp: 2026-08-05T05:20:08.148448+00:00
+- actor: claude-code
+  id: 01kz8633928mgbtaayygrj5h8g
+  text: |-
+    Picked the card back from review to work the 2026-08-05 00:12 finding (fork untested in budget-without-toolOutputLimit config).
+
+    Added `forkWithBudgetButNoToolOutputLimitLeavesChildToolsUncapped` to ToolOutputCappingTests.swift, inserted between the fork-caps test and the no-budget fork test so the fork section mirrors the root-path ordering (limit set / budget-no-limit / no budget). Test: makeSession with `TokenBudget(limit: 4096)` (no toolOutputLimit), fork, assert the child's first tool is not a `TokenCappingTool` and is an `ElevatingTool` wrapping the original `StringOutputTool`.
+
+    TDD scratch check per the dispatch instruction (the test passes immediately if the consolidation is correct, so red was forced by a scratch break): temporarily changed fork's childTools map in RoutedSession.swift to `cappedToTokenLimit: autoCompactionBudget.map { $0.toolOutputLimit ?? 5 }` (caps whenever a budget exists) — the new test failed with 2 issues; reverted via git checkout — test passes. Confirms the assertions catch wrongly-applied capping on exactly the fork path the finding names. Production code untouched in the final diff.
+
+    Verification: swift build clean; full swift test green — 721 tests/69 suites (was 720; +1 is the new test) + 20 (gated integration) + 12 (evals), 0 failures, only the known pre-existing llbuild mlx-bundle warning; `review working` 9/9 attempted, 0 findings.
+  timestamp: 2026-08-05T05:24:41.890590+00:00
+- actor: claude-code
+  id: 01kz86xqcv0jk3zcxh43vy97re
+  text: |-
+    Double-check returned REVISE with 1 finding; implemented. It confirmed the new test exercises the intended path (budget forwarded as autoCompactionBudget; fork's cappedToTokenLimit expression nil in this config), that its assertions catch capping applied outermost, capping inside elevation, and missing elevation, and that the fork-inherits-budget premise is separately pinned by forkInheritsAutoCompactionBudget in AutoCompactionTests. The finding: the fork pair's names had become ambiguous — the pre-existing no-budget test's display name ("with no toolOutputLimit") also strictly described the new budget-without-limit case, and the new function name's `…Uncapped` suffix diverged from the file's `…Unwrapped` convention. Fix applied exactly as specified: the new test is now `forkWithNoToolOutputLimitLeavesChildToolsUnwrapped` ("fork() with an inherited budget but no toolOutputLimit set …") and the no-budget test is `forkWithNoBudgetLeavesChildToolsUnwrapped` ("fork() with no budget at all …") — one-to-one with the root trio's naming. Grep confirms no stale references to the old names.
+
+    Flake discovered during verification runs: HumanWaitGateTests "a turn parked in awaitingUser frees the per-model gate…" failed once (`observer.exited == ["b"]` expectation) between two green runs of the identical tree — filed as ^tree711.
+
+    Self-review note: one `review working` run produced a finding on `cappingComposesWithAmbientEventRoute` (extract shared setup helper). That test is pre-existing and unchanged in this diff; the review skill's written rule drops findings that ask to refactor tests that already existed, and extracting the helper would refactor every pre-existing test in the file. Immediate re-run: 9/9 attempted, 0 findings.
+
+    Final state: full swift test green twice on the final tree (721 + 20 + 12, 0 failures); both review-findings checklists on this card now [x].
+  timestamp: 2026-08-05T05:39:14.459769+00:00
+- actor: claude-code
+  id: 01kz86xx6q908j4qw4s24h07s3
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift (added forkWithNoToolOutputLimitLeavesChildToolsUnwrapped covering fork with budget-but-no-toolOutputLimit → child tools elevated, not capped; renamed the pre-existing no-budget fork test to forkWithNoBudgetLeavesChildToolsUnwrapped per double-check to mirror the root trio). Scratch red/green: with fork's cappedToTokenLimit temporarily forced non-nil the test failed with 2 issues; reverted, passes. swift test green (721+20+12, 0 failures); review working 9/9, 0 findings; 2026-08-05 00:12 finding flipped to [x]. Flaky HumanWaitGateTests filed as ^tree711.
+    - next: ready for /review
+  timestamp: 2026-08-05T05:39:20.407191+00:00
+- actor: claude-code
+  id: 01kz8731majpfjhhc9tf2y11re
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 3 test bundles: 721 tests/69 suites passed, 20 tests/8 suites passed, 12 tests/4 suites passed (753 total, 0 failed, 32 known gated skips). Only warning: pre-existing "missing creator for mutated node" llbuild warning from mlx-swift Cmlx bundle.
+    - HumanWaitGateTests (flaky gate-release test, ^tree711): all 3 tests in "Human waits release the per-model generation gate, never the per-session turn lock" passed this run — no flake observed, nothing to re-run.
+    - next: hand off to review/commit steps as appropriate.
+  timestamp: 2026-08-05T05:42:08.778216+00:00
 position_column: doing
 position_ordinal: '80'
 title: '[Router] Delete EventEmittingTool/connecting(_:) and the conformance-cast wiring (propagation probe verdict: context propagates)'
@@ -135,4 +188,8 @@ Keep `OperationEventSink` and `SessionOutbox`'s sink conformance — the ambient
 
 ## Review Findings (2026-08-04 23:08)
 
-- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:307` — The outbox/mailbox creation and tool instancing pattern is duplicated in RoutedLLM.swift:201. Two nearly-identical blocks differ only by sessionID parameter and cappedToTokenLimit value — extract into a shared helper function. Extract a new helper function in RoutedLLM (or RoutedModel if accessible from both) to consolidate the outbox/mailbox/tool-instancing setup, parameterized by sessionID and tokenLimit. #phase-1 #router-first
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:307` — The outbox/mailbox creation and tool instancing pattern is duplicated in RoutedLLM.swift:201. Two nearly-identical blocks differ only by sessionID parameter and cappedToTokenLimit value — extract into a shared helper function. Extract a new helper function in RoutedLLM (or RoutedModel if accessible from both) to consolidate the outbox/mailbox/tool-instancing setup, parameterized by sessionID and tokenLimit.
+
+## Review Findings (2026-08-05 00:12)
+
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputCappingTests.swift:465` — Root sessions are tested with a budget but no toolOutputLimit (line 340–358), producing elevated-but-uncapped tools. However, fork() is not tested in this same configuration (inherited autoCompactionBudget with no toolOutputLimit). The new ToolElevation.sessionMounted consolidation in fork() should preserve this composition, but the test does not verify it. Add a fork test: create a session with `budget: TokenBudget(limit: 4096)` (no toolOutputLimit), fork it, and assert the child's tools are elevated but not capped—matching the root path's behavior in the same configuration. #phase-1 #router-first
