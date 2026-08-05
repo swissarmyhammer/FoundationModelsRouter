@@ -1,8 +1,7 @@
 import Foundation
 import FoundationModels
 
-/// A ``PersistableCustomSegment`` durably recording one drained
-/// ``OperationEvent`` on the `.prompt` entry it rode into a turn.
+/// A ``PersistableCustomSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a turn.
 ///
 /// ``RoutedSessionActor``'s turn chokepoint drains
 /// ``SessionOutbox/drainForDispatch()`` at the start of every turn and
@@ -26,8 +25,7 @@ import FoundationModels
 /// ``CompactionSegment``), so every default-argument reconstruction entry
 /// point rebuilds it out of the box.
 public struct OperationEventSegment: PersistableCustomSegment, Equatable, CustomStringConvertible, Sendable {
-    /// A unique identifier for this segment — a fresh UUID for an event newly
-    /// drained from the outbox, or the persisted id when rebuilding from disk.
+    /// A unique identifier for this segment — a fresh UUID for an event newly drained from the outbox, or the persisted id when rebuilding from disk.
     public let id: String
 
     /// The drained ``OperationEvent`` this segment durably records.
@@ -47,16 +45,18 @@ public struct OperationEventSegment: PersistableCustomSegment, Equatable, Custom
         self.content = content
     }
 
-    /// The flattened GUI/debugging description persisted alongside this
-    /// segment's JSON content — the same rendered line the turn's preamble
-    /// carries for this event (see ``renderedLine(for:)``), so the two
-    /// textual views of one drained event never drift apart.
+    /// The flattened description persisted alongside this segment's JSON.
+    ///
+    /// This is the same rendered line the turn's preamble carries for this
+    /// event (see ``renderedLine(for:)``), so the two textual views of one
+    /// drained event never drift apart.
     public var description: String { Self.renderedLine(for: content) }
 
-    /// Renders one ``OperationEvent`` as a single model-legible text line,
-    /// e.g. `"[shell] run command (3) completed: exit 0, 2481 lines"` for a
-    /// `.completed` event, `"[shell] run command (3) running: 812 lines so
-    /// far"` for a `.progress` one, or `"[snippet] elicit form (3)
+    /// Renders one ``OperationEvent`` as a single model-legible text line.
+    ///
+    /// For example: `"[shell] run command (3) completed: exit 0, 2481 lines"`
+    /// for a `.completed` event, `"[shell] run command (3) running: 812 lines
+    /// so far"` for a `.progress` one, or `"[snippet] elicit form (3)
     /// eliciting: Which account?"` for an `.elicitation` one — an
     /// elicitation's body is its typed request's `message` (the question the
     /// user is being asked), falling back to `detail` when the typed request

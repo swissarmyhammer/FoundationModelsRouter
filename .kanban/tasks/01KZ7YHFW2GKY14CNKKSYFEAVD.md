@@ -22,6 +22,33 @@ comments:
     - evidence: 1 source file — Sources/FoundationModelsRouter/Session/OperationEventSegment.swift (declaration gains explicit `, Sendable` matching CompactionSegment; doc comments added to public `id` and `content` per self-review findings). swift build exit 0; swift test 721+20+12 tests green, exit 0; `review working` clean (0 findings); double-check PASS on the code with both REVISE items resolved on the card.
     - next: formal /review. Commit step: scope to OperationEventSegment.swift + this task's .kanban files only — do not absorb ^w49xjj's stale board state (see prior comment).
   timestamp: 2026-08-05T06:01:11.676861+00:00
+- actor: claude-code
+  id: 01kz88nwk4z5689kc494smym8b
+  text: |-
+    ### review — findings
+    - evidence: 3 findings — Sources/FoundationModelsRouter/Session/OperationEventSegment.swift:4, Sources/FoundationModelsRouter/Session/OperationEventSegment.swift:29, Sources/FoundationModelsRouter/Session/OperationEventSegment.swift:50 (scope: review sha HEAD~2..HEAD)
+    - next: implement fixes for the doc-comment first-line summaries, then re-review
+  timestamp: 2026-08-05T06:09:54.788657+00:00
+- actor: claude-code
+  id: 01kz88r8sw8csjx5ntgr4qggjv
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 1 file (explicit Sendable restatement + doc comments on OperationEventSegment public id/content)
+    - test: green — swift test, 753 passed, 0 failures, 32 gated skips
+    - commit: b75292b (+ b8fc701 board-state chore)
+    - review: findings — 3: Sources/FoundationModelsRouter/Session/OperationEventSegment.swift:4, :29, :50 (doc-comment first line must be a single complete sentence ending with a period)
+  timestamp: 2026-08-05T06:11:12.828881+00:00
+- actor: claude-code
+  id: 01kz88y8evjx5gtc2f82q42ng1
+  text: 'Worked the 3 review findings on Sources/FoundationModelsRouter/Session/OperationEventSegment.swift — each flagged doc comment''s first line is now a single complete sentence ending with a period: the type summary (was lines 4–5) is one line; the `id` property summary (was lines 29–30) is one line; the `description` summary (was lines 50–53) is now the finding''s suggested short sentence with the renderedLine cross-reference elaboration moved after a blank line. Whole-file sweep for the same cause found one more violation the findings didn''t list: `renderedLine(for:)`''s summary sentence spanned 8 lines — rewrote it to a one-line summary ("Renders one ``OperationEvent`` as a single model-legible text line.") with the examples moved to a "For example:" paragraph after a blank line. No other doc comment in the file violates the rule (remaining summaries were already single-line, period-terminated). Verification: swift build exit 0; swift test exit 0 — 721 + 20 + 12 tests green (only the preexisting SwiftPM/mlx .build "missing creator for mutated node" notice, present on unmodified builds too); `review working` clean (0 findings, 9 attempted). All 3 findings flipped to [x] on the card; tags re-supplied and description newlines verified intact per the board-corruption note. Comment-only change — no behavior, no signature, no callers affected. Commit-scoping note from earlier still applies: do not `git add -A`.'
+  timestamp: 2026-08-05T06:14:29.083105+00:00
+- actor: claude-code
+  id: 01kz88yd7eqss47x5a376pwyh1
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Sources/FoundationModelsRouter/Session/OperationEventSegment.swift (4 doc-comment summaries rewritten to single-sentence first lines: type, `id`, `description`, plus sweep-found `renderedLine(for:)`). swift build exit 0; swift test 721+20+12 green, exit 0; `review working` clean (0 findings). All 3 review findings checked on the card.
+    - next: re-run formal /review. Commit step: scope to OperationEventSegment.swift + this task's .kanban files only.
+  timestamp: 2026-08-05T06:14:33.966292+00:00
 position_column: doing
 position_ordinal: '80'
 title: '[Router] Align OperationEventSegment declaration spelling with CompactionSegment (explicit Sendable restatement)'
@@ -36,4 +63,10 @@ Important premise (verified 2026-08-04): the conformance is NOT missing. `Persis
 
 ## Acceptance Criteria
 - [x] `OperationEventSegment` declaration matches `CompactionSegment`'s explicit spelling
-- [x] `swift build` and `swift test` green #router-first
+- [x] `swift build` and `swift test` green
+
+## Review Findings (2026-08-05 01:05)
+
+- [x] `Sources/FoundationModelsRouter/Session/OperationEventSegment.swift:4` — First line of doc comment should be a single-sentence summary ending with a period; this sentence spans lines 4–5. Complete the sentence on the first line: `/// A ``PersistableCustomSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a turn.`.
+- [x] `Sources/FoundationModelsRouter/Session/OperationEventSegment.swift:29` — First line of doc comment should be a single-sentence summary ending with a period; this sentence spans lines 29–30. Complete the sentence on the first line: `/// A unique identifier for this segment — a fresh UUID for an event newly drained from the outbox, or the persisted id when rebuilding from disk.`.
+- [x] `Sources/FoundationModelsRouter/Session/OperationEventSegment.swift:50` — First line of doc comment should be a single-sentence summary ending with a period; this sentence spans lines 50–53. Complete the sentence on the first line or rephrase to a shorter summary. Current sentence is too long; consider: `/// The flattened description persisted alongside this segment's JSON.` with elaboration after a blank line. #router-first
