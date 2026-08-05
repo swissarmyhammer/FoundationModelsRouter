@@ -39,6 +39,49 @@ comments:
     - evidence: 6 files (production: Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift, Compactor.swift, Summarization.swift, Session/RoutedSession.swift; tests: Tests/FoundationModelsRouterTests/CompactionSegmentTests.swift, RoutedSessionCompactTests.swift) plus DocC-selector updates in TranscriptReconstruction.swift, CompactionPrompt.swift, CompactionStage.swift, Helpers/TranscriptTestHelpers.swift, and 3 eval-support files. swift build clean; swift test 722+20+12 tests, 0 failures.
     - next: /review (task left in doing)
   timestamp: 2026-08-05T01:53:34.067118+00:00
+- actor: claude-code
+  id: 01kz7w57gajapz8pssrtyew8fa
+  text: |-
+    ### review — findings
+    - evidence: 1 finding recorded — Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift:42 (add Sendable conformance). Scope: review sha HEAD~1..HEAD (f34ecf2), backend local. Engine counts: 3 findings / 3 confirmed / 1 refuted; 2 dropped per the existing-test exception (RoutedSessionCompactTests.swift:516, :542 — fixes require refactoring pre-existing SessionMailboxTests helpers untouched by this commit).
+    - next: implementer fixes the Sendable finding, checks the box, then re-review
+  timestamp: 2026-08-05T02:31:05.994100+00:00
+- actor: claude-code
+  id: 01kz7w970g2psy501fjcs5eytv
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 6 core files (CompactionSegment PendingRunSummary + pendingRuns, Summarization boundary text segment, RoutedSession.fold mailbox.status() read, CompactionSegmentTests + RoutedSessionCompactTests) + DocC selector updates
+    - test: green — swift test, 754 passed, 0 failures, 32 expected gated skips
+    - commit: f34ecf2
+    - review: findings — 1: Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift:42 (add Sendable conformance); engine 3 confirmed, 2 dropped per existing-tests rule
+  timestamp: 2026-08-05T02:33:16.560640+00:00
+- actor: claude-code
+  id: 01kz7yhz4ykjcg040qmpcjyzj6
+  text: |-
+    Review-finding fix pass (Sendable finding) complete. What happened and what the next agent should know:
+
+    - Finding fix: added explicit `Sendable` to `CompactionSegment`'s declaration (Compaction/CompactionSegment.swift). File sweep per the whole-file rule: `PendingRunSummary` and `Content` already declared Sendable — CompactionSegment was the only type in the file with the flagged shape.
+    - Premise correction (per double-check, recorded so it is not carried forward as fact): the finding's stated risk ("risks concurrency violations") never existed. `PersistableCustomSegment` refines Apple's `Transcript.CustomSegment`, which refines `Sendable` (verified in the SDK swiftinterface: `public protocol CustomSegment : ... Swift::Sendable`), so the conformance was already inherited. The explicit restatement is documentation-only — same pattern as the declaration's existing explicit `Equatable`/`CustomStringConvertible`, which are also protocol-implied. This is also why the TDD RED step could not go red: the guard test compiled immediately.
+    - TDD: added `compactionSegmentIsSendable` (compile-time `requiresSendable` guard) to CompactionSegmentTests; its comment states the inherited-conformance truth explicitly.
+    - Self-review (`review working`) surfaced 3 additional findings — mapper/recording-mirror/resuming round-trip tests did not exercise `pendingRuns`. Fixed via the engine's own suggested route: `makeContent` now defaults `pendingRuns` to a shared `fixturePendingRun`, with explicit survival assertions in all three tests (plus the Codable field-by-field test). The nil/legacy path stays covered by the dedicated legacy-JSON decode test and RoutedSessionCompactTests' empty-mailbox test.
+    - A later self-review pass demanded `public` on `renderedPendingRuns`; double-check refuted its premise (only caller is in-module Summarization; repo precedent keeps DocC-linked statics internal, e.g. Compactor.estimatedTokenCount). Reconciled by making the access level explicit — `internal static func` with a doc note — which removes the engine's flagged cause (implicit spelling) without widening the public API. Final `review working` after that: clean (0 findings).
+    - Discovered work filed as ^syfeavd: OperationEventSegment has the same implicit-spelling declaration shape (different file, out of this finding's file scope), with the corrected premise recorded on that card.
+    - Verification: swift build clean; swift test 723+20+12 = 755 tests, 0 failures (expected gated skips only).
+  timestamp: 2026-08-05T03:13:00.574700+00:00
+- actor: claude-code
+  id: 01kz7yj5d8h3kng1t68bea2rrv
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift (explicit Sendable on CompactionSegment; renderedPendingRuns spelled `internal` with doc note), Tests/FoundationModelsRouterTests/CompactionSegmentTests.swift (Sendable guard test; fixturePendingRun default in makeContent + pendingRuns survival assertions in Codable/mapper/recording-mirror/resuming tests). Review finding checked on the card. swift build clean; swift test 723+20+12 = 755 tests, 0 failures; final `review working` clean (0 findings).
+    - next: /review (task left in doing)
+  timestamp: 2026-08-05T03:13:06.984533+00:00
+- actor: claude-code
+  id: 01kz7ymv7dahkz3gxkvzbrzx72
+  text: |-
+    ### test — green
+    - evidence: `swift test` (iteration 2, post-findings-fix) — 723 + 20 + 12 = 755 tests passed across 3 test runs, 0 failed; 32 gated skips (expected, `FM_ROUTER_INTEGRATION_TESTS` not set); only the known pre-existing llbuild warning "missing creator for mutated node" from the mlx-swift `Cmlx.bundle` — no new warnings
+    - next: hand off to review
+  timestamp: 2026-08-05T03:14:34.861703+00:00
 depends_on:
 - 01KZ6MZPV6VDYYDBACD3G930C4
 position_column: doing
@@ -65,4 +108,10 @@ Research note: eventplan's analogy ("in the same way that boundary metadata keep
 - [ ] `swift test` green
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #phase-1 #router-first
+- Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-08-04 20:59)
+
+- [x] `Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift:42` — CompactionSegment should conform to Sendable. The struct contains only immutable fields (all `let`), its nested types PendingRunSummary and Content both explicitly conform to Sendable, and in a router/session architecture this type likely crosses actor/task boundaries. The absence of explicit Sendable conformance when nested types have it is inconsistent and risks concurrency violations. Add `Sendable` to line 42: `public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStringConvertible, Sendable`.
+
+Note: two engine findings (RoutedSessionCompactTests.swift:516 RunLatch extraction, :542 parkFakeRun reuse) were dropped under the review skill's written exception — each requires refactoring pre-existing test helpers in SessionMailboxTests.swift, untouched by this commit. #phase-1 #router-first

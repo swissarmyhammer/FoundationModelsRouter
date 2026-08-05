@@ -39,7 +39,7 @@ import FoundationModels
 /// `CompactionSegment` with no consumer setup — see the mechanism precedent,
 /// ``OperationEventSegment``, for the same round-trip shape applied to a
 /// different concern.
-public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStringConvertible, Sendable {
     /// One live parked run's run-plane summary, carried across the compaction
     /// boundary so a post-compaction model can rediscover its in-flight work
     /// and call `status()` for the live view.
@@ -190,7 +190,11 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
     ///
     /// - Parameter pendingRuns: The parked runs' summaries, in park order.
     /// - Returns: The rendered pending-run text.
-    static func renderedPendingRuns(_ pendingRuns: [PendingRunSummary]) -> String {
+    ///
+    /// Deliberately `internal`: its only caller is ``Summarization``'s
+    /// boundary-entry synthesis, matching the repo's pattern of internal
+    /// statics on public types (e.g. `Compactor.estimatedTokenCount(of:)`).
+    internal static func renderedPendingRuns(_ pendingRuns: [PendingRunSummary]) -> String {
         let lines = pendingRuns.map { run in
             let progress = run.latestProgressDetail.map { " — latest progress: \($0)" } ?? " — no progress reported yet"
             return "- completionToken \(run.completionToken): \(run.op)\(progress)"

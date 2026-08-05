@@ -23,6 +23,15 @@ import Testing
 struct CompactionSegmentTests {
     // MARK: - Fixture content
 
+    /// The parked-run summary `makeContent` carries by default, so every
+    /// fixture-driven round trip in this suite also proves `pendingRuns`
+    /// survives the path under test.
+    private static let fixturePendingRun = CompactionSegment.PendingRunSummary(
+        completionToken: "01AN4Z07BY79KA1307SR9X4MV5",
+        op: "run task",
+        latestProgressDetail: "step 3 of 5"
+    )
+
     private static func makeContent(
         liveWindowEntryIds: [String] = ["summary-1", "tail-prompt-1", "tail-response-1"],
         foldedEntryIds: [String] = ["old-instr-1", "old-prompt-1", "old-response-1"],
@@ -30,7 +39,7 @@ struct CompactionSegmentTests {
         tokensAfter: Int = 3_000,
         stagesApplied: [String] = ["ToolOutputElision", "TurnTruncation", "Summarization"],
         promptName: String = "default",
-        pendingRuns: [CompactionSegment.PendingRunSummary]? = nil
+        pendingRuns: [CompactionSegment.PendingRunSummary]? = [fixturePendingRun]
     ) -> CompactionSegment.Content {
         CompactionSegment.Content(
             liveWindowEntryIds: liveWindowEntryIds,
@@ -57,6 +66,7 @@ struct CompactionSegmentTests {
         #expect(decoded.tokensAfter == original.tokensAfter)
         #expect(decoded.stagesApplied == original.stagesApplied)
         #expect(decoded.promptName == original.promptName)
+        #expect(decoded.pendingRuns == [Self.fixturePendingRun])
     }
 
     @Test(
@@ -110,6 +120,18 @@ struct CompactionSegmentTests {
         #expect(decoded.promptName == "default")
     }
 
+    @Test("CompactionSegment is Sendable, matching its all-let storage and its already-Sendable nested types")
+    func compactionSegmentIsSendable() {
+        // Locks in the Sendable guarantee a segment relies on to cross
+        // actor/task boundaries. The conformance is inherited through
+        // PersistableCustomSegment -> Transcript.CustomSegment (which refines
+        // Sendable); the explicit restatement on CompactionSegment's
+        // declaration is documentation. This call type-checks as long as the
+        // guarantee holds, from either source.
+        func requiresSendable<T: Sendable>(_: T.Type) {}
+        requiresSendable(CompactionSegment.self)
+    }
+
     @Test("CompactionSegment's default typeDiscriminator is the type's fully-qualified name")
     func defaultTypeDiscriminatorIsFullyQualifiedName() {
         #expect(CompactionSegment.typeDiscriminator == String(reflecting: CompactionSegment.self))
@@ -146,6 +168,7 @@ struct CompactionSegmentTests {
         }
         #expect(rebuiltCompaction.id == "compaction-1")
         #expect(rebuiltCompaction.content == content)
+        #expect(rebuiltCompaction.content.pendingRuns == [Self.fixturePendingRun])
         #expect(rebuilt == original)
     }
 
@@ -383,6 +406,7 @@ struct CompactionSegmentTests {
         }
         #expect(compaction.content.foldedEntryIds == ["old-prompt-1", "old-response-1"])
         #expect(compaction.content.liveWindowEntryIds == ["instr-1", "summary-1"])
+        #expect(compaction.content.pendingRuns == [Self.fixturePendingRun])
     }
 
     // MARK: - restoreSessionTree, all-default arguments
@@ -516,6 +540,7 @@ struct CompactionSegmentTests {
             return
         }
         #expect(compaction.content.promptName == "default")
+        #expect(compaction.content.pendingRuns == [Self.fixturePendingRun])
     }
 
     // MARK: - Duplicate/consumer registration does not trap
