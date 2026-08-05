@@ -1,7 +1,9 @@
 /// A destination `OperationEvent`s are posted to.
 ///
 /// A session host implements this once — its own outbox, log, or UI update
-/// channel — and the session-side elevation layer posts every event a tool
+/// channel — and the session-side per-call binding layers (`ElevatingTool`
+/// for String-output tools, `ContextBindingTool` for non-String-output
+/// ones) post every event a tool
 /// emits through the ambient `ToolContext` to it; tools never wire a sink
 /// themselves. This package makes no assumption about routing,
 /// buffering, or ordering beyond "eventually observed by the host".

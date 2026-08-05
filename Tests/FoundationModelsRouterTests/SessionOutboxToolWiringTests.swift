@@ -6,13 +6,14 @@ import Testing
 
 /// Exercises task s61g2vb's per-session tool composition:
 /// ``RoutedModel/makeSession(instructions:workingDirectory:tools:)`` wrapping
-/// every tool in the session's own ``ElevatingTool`` layer — whose ambient
-/// ``ToolContext`` posts the tool's events to the session's own
-/// ``RoutedSession/outbox``, with **no explicit wiring call anywhere** in
-/// these tests — and ``RoutedSessionActor/fork(workingDirectory:)``'s
-/// fork-then-elevate composition (``ForkableTool/forked()`` then the child's
-/// own elevation layer) building the child's tool list from the parent's
-/// true originals.
+/// every String-output tool in the session's own ``ElevatingTool`` layer and
+/// every non-String-output tool in the binding-only ``ContextBindingTool``
+/// (task ^6htgvw2) — either way the ambient ``ToolContext`` posts the tool's
+/// events to the session's own ``RoutedSession/outbox``, with **no explicit
+/// wiring call anywhere** in these tests — and
+/// ``RoutedSessionActor/fork(workingDirectory:)``'s fork-then-elevate
+/// composition (``ForkableTool/forked()`` then the child's own elevation
+/// layer) building the child's tool list from the parent's true originals.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU. Real
 /// `LanguageModelSession(tools:)` wiring lives in the live
@@ -150,18 +151,41 @@ struct SessionOutboxToolWiringTests {
         /// Every rendered output the invoked tool returned, in call order.
         private(set) var renderedToolOutputs: [String] = []
 
+        /// The turn-scope binding's `completionToken` observed at each
+        /// `respond` entry — what a composed tool's own per-call
+        /// `correlationID` must differ from.
+        private(set) var observedTurnTokens: [String?] = []
+
         init(tools: [any Tool]) {
             self.tools = tools
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            observedTurnTokens.append(ToolContext.current?.completionToken)
             if let elevated = tools.first as? ElevatingTool<FakeToolArguments> {
                 toolCallStarted = true
                 let rendered = try await elevated.call(arguments: FakeToolArguments(value: prompt))
                 renderedToolOutputs.append(rendered)
             }
+            // The non-String counterpart: invokes the binding-only wrapper
+            // from inside the turn — under the turn-scope ambient binding —
+            // recording the output's text (the per-call token the tool
+            // observed) for the shadowing assertions.
+            if let bound = tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+            {
+                toolCallStarted = true
+                let output = try await bound.call(
+                    arguments: AmbientToolArguments(value: Self.nonStringInvocationDetail))
+                renderedToolOutputs.append(output.text)
+            }
             return try await inner.respond(to: prompt, maxTokens: maxTokens)
         }
+
+        /// The event detail the backend's non-String invocation posts — a
+        /// fixed marker, deliberately not the composed prompt, so a test can
+        /// match it exactly without depending on prompt composition.
+        static let nonStringInvocationDetail = "invoked-inside-respond"
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
             inner.streamResponse(to: prompt, maxTokens: maxTokens)
@@ -438,6 +462,81 @@ struct SessionOutboxToolWiringTests {
         #expect(output == "plain: x")
     }
 
+    @Test(
+        "a non-String-output tool composed through makeSession(tools:) posts ambient events under its own identity to the session's own outbox"
+    )
+    @MainActor
+    func nonStringOutputToolAmbientRouteThroughMakeSession() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let session = profile.standard.makeSession(tools: [emitter])
+
+        // The composed, model-facing tool is the binding-only wrapper —
+        // never the bare original: the pending envelope has no String wire
+        // form to ride on this tool, but per-tool identity and per-call
+        // correlation still bind around every call.
+        guard
+            let bound = container.lastTools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+        else {
+            Issue.record("expected the container to receive a ContextBindingTool over the non-String fixture")
+            return
+        }
+        let first = try await bound.call(arguments: AmbientToolArguments(value: "first"))
+        let second = try await bound.call(arguments: AmbientToolArguments(value: "second"))
+
+        let events = await session.outbox.pending().events.map(\.event)
+        #expect(events.map(\.detail) == ["first", "second"])
+        #expect(events.map(\.tool) == [emitter.name, emitter.name])
+        #expect(events.map(\.op) == [emitter.name, emitter.name])
+        // Each call minted its own completionToken — the correlationID the
+        // tool's own ambient posts carried, run scope, never turn scope.
+        #expect(events.map(\.correlationID) == [first.text, second.text])
+        #expect(first.text != second.text)
+    }
+
+    @Test(
+        "inside a real respond turn, a non-String-output tool's per-call binding shadows the turn-scope binding: its posts carry its own identity and token, never session/respond or the turn's token"
+    )
+    @MainActor
+    func nonStringToolPerCallBindingShadowsTurnScopeBindingInsideRespond() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolInvokingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let session = profile.standard.makeSession(tools: [emitter])
+
+        _ = try await session.respond(to: "drive the non-String tool")
+
+        let backend = try #require(container.lastBackend)
+        #expect(backend.toolCallStarted)
+        let perCallToken = try #require(backend.renderedToolOutputs.first)
+        let turnToken = try #require(backend.observedTurnTokens.first ?? nil)
+
+        // The tool ran under a live turn-scope binding, and its own
+        // per-call binding shadowed it: the posted event carries the
+        // tool's identity and its call's own freshly minted token — never
+        // the turn binding's "session"/"respond" stamps or the turn's
+        // completionToken (the exact fallback this task removes).
+        let events = await session.outbox.pending().events.map(\.event)
+        #expect(events.map(\.detail) == [ToolInvokingBackend.nonStringInvocationDetail])
+        #expect(events.map(\.tool) == [emitter.name])
+        #expect(events.map(\.op) == [emitter.name])
+        #expect(events.map(\.correlationID) == [perCallToken])
+        #expect(perCallToken != turnToken)
+        #expect(perCallToken != "unbound")
+    }
+
     @Test("a session with no tools has an empty, unconnected outbox")
     @MainActor
     func sessionWithNoToolsHasEmptyOutbox() async throws {
@@ -512,6 +611,55 @@ struct SessionOutboxToolWiringTests {
         let childPending = await child.outbox.pending()
         #expect(parentPending.events.map(\.event.detail) == ["from-parent"])
         #expect(childPending.events.map(\.event.detail) == ["from-child"])
+    }
+
+    @Test(
+        "a non-String-output tool forked into a child gets the child's own ContextBindingTool, posting to the fork's outbox with its own identity"
+    )
+    @MainActor
+    func forkComposedNonStringOutputToolPostsToForkOutbox() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let session = profile.standard.makeSession(tools: [emitter])
+        let child = try await session.fork(workingDirectory: nil)
+
+        guard let parentActor = session as? RoutedSessionActor,
+            let childActor = child as? RoutedSessionActor,
+            let parentBound = parentActor.tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
+            let childBound = childActor.tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+        else {
+            Issue.record("expected both the parent and the fork to expose their own ContextBindingTool wrapper")
+            return
+        }
+        // Both sessions share the very same underlying tool instance —
+        // per-session isolation lives entirely in each session's own
+        // binding wrapper and the ambient context it binds per call.
+        #expect(elevationWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(elevationWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
+
+        let parentOutput = try await parentBound.call(arguments: AmbientToolArguments(value: "from-parent"))
+        let childOutput = try await childBound.call(arguments: AmbientToolArguments(value: "from-child"))
+
+        // Each session's composed wrapper posts to that session's own
+        // outbox — never the other's — with the tool's own identity and
+        // that call's own freshly minted correlationID.
+        let parentEvents = await session.outbox.pending().events.map(\.event)
+        let childEvents = await child.outbox.pending().events.map(\.event)
+        #expect(parentEvents.map(\.detail) == ["from-parent"])
+        #expect(childEvents.map(\.detail) == ["from-child"])
+        #expect(parentEvents.map(\.tool) == [emitter.name])
+        #expect(childEvents.map(\.tool) == [emitter.name])
+        #expect(parentEvents.map(\.correlationID) == [parentOutput.text])
+        #expect(childEvents.map(\.correlationID) == [childOutput.text])
+        #expect(parentOutput.text != childOutput.text)
     }
 
     @Test("a composed tool captured before the fork keeps posting to the parent after forking")
@@ -780,6 +928,88 @@ struct SessionOutboxToolWiringTests {
         _ = try await elevating.call(arguments: AmbientToolArguments(value: "uncapped-fork-chain-inner"))
         let childPending = await child.outbox.pending()
         #expect(childPending.events.map(\.event.detail) == ["uncapped-fork-chain-inner"])
+    }
+
+    @Test(
+        "makeSession with a budget composes a non-String-output tool as bind only: no cap layer exists for output capping cannot truncate"
+    )
+    @MainActor
+    func makeSessionWithBudgetComposesBindOnlyForNonStringOutput() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let session = profile.standard.makeSession(
+            tools: [emitter],
+            budget: Self.budgetWithSmallToolOutputCap
+        )
+
+        // Capping requires a String output to truncate, so even with a
+        // budget the chain for a non-String-output tool is bind(tool) —
+        // never cap(bind(tool)) (see ``ToolElevation/sessionMounted``).
+        #expect(!(container.lastTools.first is TokenCappingTool<AmbientToolArguments>))
+        guard
+            let bound = container.lastTools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
+            let inner = bound.wrapped as? AmbientNonStringOutputTool
+        else {
+            Issue.record("expected bind(tool) at the container boundary")
+            return
+        }
+        #expect(inner === emitter)
+
+        _ = try await bound.call(arguments: AmbientToolArguments(value: "budgeted-bind-inner"))
+        let pending = await session.outbox.pending()
+        #expect(pending.events.map(\.event.detail) == ["budgeted-bind-inner"])
+    }
+
+    @Test(
+        "fork with a budget composes a non-String-output tool as bind only in the child: shared instance innermost, no cap layer"
+    )
+    @MainActor
+    func forkWithBudgetComposesBindOnlyForNonStringOutput() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let session = profile.standard.makeSession(
+            tools: [emitter],
+            budget: Self.budgetWithSmallToolOutputCap
+        )
+        let child = try await session.fork(workingDirectory: nil)
+
+        guard let childActor = child as? RoutedSessionActor else {
+            Issue.record("expected the fork to be a RoutedSessionActor")
+            return
+        }
+        // The same bind-only chain as the root site under a budget: capping
+        // has no String output to truncate, and the fixture is not
+        // ForkableTool, so the very same instance passes through shared
+        // into the child's own binding layer.
+        #expect(!(childActor.tools.first is TokenCappingTool<AmbientToolArguments>))
+        guard
+            let childBound = childActor.tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
+            let childInner = childBound.wrapped as? AmbientNonStringOutputTool
+        else {
+            Issue.record("expected bind(tool) in the fork's tool list")
+            return
+        }
+        #expect(childInner === emitter)
+
+        _ = try await childBound.call(arguments: AmbientToolArguments(value: "budgeted-fork-bind-inner"))
+        let childPending = await child.outbox.pending()
+        #expect(childPending.events.map(\.event.detail) == ["budgeted-fork-bind-inner"])
+        let parentPending = await session.outbox.pending()
+        #expect(parentPending.events.isEmpty)
     }
 
     // MARK: - Elevation behavior through a session's composed tool list

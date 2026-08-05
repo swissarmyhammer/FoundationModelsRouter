@@ -975,8 +975,10 @@ actor RoutedSessionActor: RoutedSession {
     /// when a budget carries a `toolOutputLimit`, the capping layer, applied
     /// per the owning composition site's own chain: elevate → cap at a root,
     /// fork → elevate → cap at a fork, elevate at
-    /// restore (task ^k4nygqa); a non-String-output tool passes through both
-    /// layers unwrapped (see
+    /// restore (task ^k4nygqa); a non-String-output tool is wrapped in the
+    /// binding-only ``ContextBindingTool`` — same per-call, per-tool-stamped
+    /// ambient ``ToolContext``, no pending-envelope/park machinery — and
+    /// passes through the capping layer unwrapped (see
     /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     /// This is the
     /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
@@ -2008,8 +2010,10 @@ actor RoutedSessionActor: RoutedSession {
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
-        // *then* the forked result is wrapped in the child's own elevation
-        // layer, whose ambient `ToolContext` posts to `childOutbox`. This
+        // *then* the forked result is wrapped in the child's own binding
+        // layer — `ElevatingTool` for a String-output tool,
+        // `ContextBindingTool` for a non-String-output one — whose ambient
+        // `ToolContext` posts to `childOutbox`. This
         // session's own already-instanced
         // `tools` are entirely untouched by this and keep posting to this
         // session's own `outbox` — including any detached work that
@@ -2037,8 +2041,9 @@ actor RoutedSessionActor: RoutedSession {
         // sessions (see ``RoutedSession/mailbox``).
         let childMailbox = SessionMailbox()
         // Minted before the tool composition below, deliberately: the
-        // child's ElevatingTool layer stamps this id — the fork's own
-        // session identity — into every elevated run's ``ToolContext``.
+        // child's binding layers (`ElevatingTool` and `ContextBindingTool`)
+        // stamp this id — the fork's own session identity — into every
+        // composed run's ``ToolContext``.
         let childId = ULID.generate()
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
@@ -2503,8 +2508,8 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The `tool` identity stamped on the turn-scope ambient ``ToolContext``
     /// binding — a host-level stamp, since the binding covers a whole model
-    /// call rather than one wrapped tool (per-tool stamps live in
-    /// ``ElevatingTool``'s own per-call binding).
+    /// call rather than one wrapped tool (per-tool stamps live in the
+    /// per-call bindings of ``ElevatingTool`` and ``ContextBindingTool``).
     private static let turnBindingToolStamp = "session"
 
     /// The `op` stamped on the turn-scope ambient binding, alongside
@@ -2541,11 +2546,15 @@ actor RoutedSessionActor: RoutedSession {
     /// The whole cancellation boundary in-flight cancellation needs — and
     /// deliberately the *only* part of a turn inside it. Cancelling
     /// ``inFlightModelCall`` unwinds `body` and every un-elevated tool call
-    /// the SDK is running under it. A tool from the session's composed list
-    /// is wrapped in ``ElevatingTool`` (task ^k4nygqa), and an *elevated*
-    /// in-flight call answers the cancellation by detaching instead of
-    /// dying with the turn: it parks in the session's ``mailbox`` and
-    /// returns the pending envelope (see
+    /// the SDK is running under it — including a non-String-output tool's
+    /// call through its binding-only ``ContextBindingTool`` wrapper (task
+    /// ^6htgvw2), which runs in-band and dies with the turn: its per-call
+    /// `completionToken` is event-correlation identity only, never a
+    /// mailbox-addressable run. A String-output tool from the session's
+    /// composed list is wrapped in ``ElevatingTool`` (task ^k4nygqa), and
+    /// an *elevated* in-flight call answers the cancellation by detaching
+    /// instead of dying with the turn: it parks in the session's
+    /// ``mailbox`` and returns the pending envelope (see
     /// `ElevatingTool.raceSettlement(of:deadlineNanoseconds:)` — a caller
     /// whose wait ends, by deadline or by cancellation, has already
     /// accepted that the work may outlive the call). The parked run stays

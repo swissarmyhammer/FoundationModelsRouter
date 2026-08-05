@@ -187,6 +187,13 @@ extension ToolElevation {
     /// ``TokenCappingTool/call(arguments:)``), so the `completionToken`
     /// survives any configured limit.
     ///
+    /// A non-String-output tool takes a narrower path through the same
+    /// chain (task ^6htgvw2): ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
+    /// mounts it in the binding-only ``ContextBindingTool`` — its ambient
+    /// posts still carry the tool's own identity and a fresh per-call
+    /// `correlationID` — and the capping layer passes it through unwrapped,
+    /// since there is no `String` output to truncate.
+    ///
     /// Shared by ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
     /// (the root and restore sites) and
     /// ``RoutedSessionActor/fork(workingDirectory:)`` (which forks each

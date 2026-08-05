@@ -58,6 +58,40 @@ final class AmbientEventPostingTool: Tool, Sendable {
     }
 }
 
+/// A non-`String` `PromptRepresentable` tool output — the output type that
+/// keeps a tool outside the pending-envelope machinery (there is no `String`
+/// wire form for the envelope to replace), so the composition sites wrap its
+/// tool in the binding-only ``ContextBindingTool`` instead of
+/// ``ElevatingTool``.
+struct NonStringToolOutput: PromptRepresentable, Sendable {
+    /// The text the output renders as. The ambient fixture below returns the
+    /// bound run's `completionToken` here, so a test can match each call's
+    /// posted `correlationID` against what that very call returned.
+    let text: String
+
+    /// The `PromptRepresentable` requirement: renders ``text`` as a plain
+    /// `Prompt`.
+    var promptRepresentation: Prompt { Prompt(text) }
+}
+
+/// A `Tool` whose `Output` is not `String`: posts one `.completed` event
+/// carrying the call's `value` through the ambient ``ToolContext`` (the
+/// shared ``postAmbientCompletedEvent(detail:)`` body), then returns the
+/// bound run's `completionToken` as its ``NonStringToolOutput/text`` — or
+/// `"unbound"` when no context was bound. The non-String counterpart of
+/// ``AmbientEventPostingTool``, for the suites proving the binding-only
+/// route keeps per-tool identity and per-call correlation.
+final class AmbientNonStringOutputTool: Tool, Sendable {
+    let name = "ambient-non-string"
+    let description =
+        "test-only non-String-output tool that posts through the ambient ToolContext"
+
+    func call(arguments: AmbientToolArguments) async throws -> NonStringToolOutput {
+        await postAmbientCompletedEvent(detail: arguments.value)
+        return NonStringToolOutput(text: ToolContext.current?.completionToken ?? "unbound")
+    }
+}
+
 /// A `Tool` that both forks and posts through the ambient ``ToolContext``,
 /// so the fork suites can prove ``ForkableTool/forked()`` runs before the
 /// child's own elevation layer wraps the result. `generation` proves

@@ -96,12 +96,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The tools the model can call during this session. Before
     ///     being threaded to the underlying `LanguageModelSession` (mirroring
     ///     Apple's `LanguageModelSession(tools:)`), every String-output tool
-    ///     is wrapped in the elevation engine, which binds the ambient
-    ///     ``ToolContext`` — posting events to the vended session's own fresh
-    ///     ``RoutedSession/outbox`` — around each call; the tool instance
-    ///     itself passes through untouched, and a non-String-output tool
-    ///     passes through unwrapped (see
-    ///     ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
+    ///     is wrapped in the elevation engine, and every non-String-output
+    ///     tool in the binding-only ``ContextBindingTool``; both wrappers
+    ///     bind the ambient ``ToolContext`` — stamped with the tool's own
+    ///     identity and a fresh per-call `correlationID`, posting events to
+    ///     the vended session's own fresh ``RoutedSession/outbox`` — around
+    ///     each call, and the tool instance itself passes through untouched
+    ///     (see ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     ///     Defaults to no tools.
     ///   - budget: The auto-compaction opt-in (the "session
     ///     that manages its own window" opt-in, task 8213x39), or `nil` (the
@@ -197,7 +198,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // `restoreSessionTree`). Because this runs before
         // `container.makeSession` below, the model-facing tool list the
         // backend actually receives is these composed wrappers — each
-        // String-output tool's elevation layer binding the ambient
+        // String-output tool's elevation layer, and each non-String-output
+        // tool's binding-only `ContextBindingTool`, binding the ambient
         // `ToolContext` that posts the tool's events to this session's own
         // `outbox` — not the bare originals.
         let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
@@ -265,13 +267,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// instances `tools` against it: each String-output tool is wrapped
     /// in the elevation engine — whose ambient ``ToolContext`` posts the
     /// tool's events to the session's own outbox — and, only when
-    /// `cappedToTokenLimit` is set, capped outermost. A non-String-output tool
-    /// passes through both layers unwrapped (see
-    /// ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
-    /// and ``ToolOutputCapping/wrapping(tool:toTokenLimit:)``); its ambient
-    /// posts fall back to the session's turn-scope ``ToolContext`` binding,
-    /// which stamps the turn's own `"session"`/`"respond"` identity rather
-    /// than the tool's.
+    /// `cappedToTokenLimit` is set, capped outermost. A non-String-output
+    /// tool is wrapped in the binding-only ``ContextBindingTool`` instead
+    /// (task ^6htgvw2; see
+    /// ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``):
+    /// its ambient posts carry the tool's own identity and a fresh per-call
+    /// `correlationID` exactly as an elevated tool's do — never the
+    /// turn-scope binding's `"session"`/`"respond"` stamps — while the call
+    /// itself runs in-band, un-elevated, and the capping layer passes it
+    /// through unwrapped
+    /// (``ToolOutputCapping/wrapping(tool:toTokenLimit:)``).
     ///
     /// The outbox and mailbox are minted here, never accepted from the
     /// caller, because both share one scope rule: fresh per session, never

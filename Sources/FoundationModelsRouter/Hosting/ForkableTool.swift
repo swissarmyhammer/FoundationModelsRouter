@@ -12,9 +12,10 @@ import FoundationModels
 /// **Composition order.** At fork, a host applies `forked()` first —
 /// `((tool as? any ForkableTool)?.forked() ?? tool)` — then wraps the
 /// forked result in the child session's own layers (elevation for a
-/// String-output tool, and capping when configured; a non-String-output
-/// tool passes through both unwrapped). A tool that does not conform
-/// passes through shared, unchanged, into those same layers.
+/// String-output tool, the binding-only `ContextBindingTool` for a
+/// non-String-output one, and capping when configured — a non-String-output
+/// tool passes through the capping layer unwrapped). A tool that does not
+/// conform passes through shared, unchanged, into those same layers.
 public protocol ForkableTool: Tool {
     /// Returns a child session's instance of this tool, derived at fork
     /// time.

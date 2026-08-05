@@ -49,8 +49,24 @@ comments:
     - evidence: 1 file — Sources/FoundationModelsRouter/Session/OperationEventSegment.swift (4 doc-comment summaries rewritten to single-sentence first lines: type, `id`, `description`, plus sweep-found `renderedLine(for:)`). swift build exit 0; swift test 721+20+12 green, exit 0; `review working` clean (0 findings). All 3 review findings checked on the card.
     - next: re-run formal /review. Commit step: scope to OperationEventSegment.swift + this task's .kanban files only.
   timestamp: 2026-08-05T06:14:33.966292+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kz8984x40t0m7smm0t8ed4me
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (56b3d2d) — 0 new findings (9 validators attempted, 0 confirmed); all 3 prior Review Findings items checked
+    - next: none — task moved to done
+  timestamp: 2026-08-05T06:19:53.124101+00:00
+- actor: claude-code
+  id: 01kz899585ntt0r5bhr6ts9sp5
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (4 doc-comment first-line rewrites in OperationEventSegment.swift, incl. sweep-found renderedLine(for:))
+    - test: green — swift test, 753 passed, 0 failures, 32 gated skips
+    - commit: 56b3d2d
+    - review: clean — 0 new findings, all 3 prior items checked; task → done
+  timestamp: 2026-08-05T06:20:26.245723+00:00
+position_column: done
+position_ordinal: f080
 title: '[Router] Align OperationEventSegment declaration spelling with CompactionSegment (explicit Sendable restatement)'
 ---
 Discovered while fixing ^6e7h2q6's review finding (explicit `Sendable` on `CompactionSegment`). `Session/OperationEventSegment.swift` declares `public struct OperationEventSegment: PersistableCustomSegment, Equatable, CustomStringConvertible` with no explicit `Sendable` — the same declaration shape the review engine flagged on `CompactionSegment`.

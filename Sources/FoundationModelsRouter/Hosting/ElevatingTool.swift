@@ -578,7 +578,10 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 /// on it.
 public enum ToolElevation {
     /// Wraps `tool` in an ``ElevatingTool`` when it can be elevated,
-    /// discovered dynamically rather than requiring the tool to opt in.
+    /// discovered dynamically rather than requiring the tool to opt in —
+    /// and in the binding-only ``ContextBindingTool`` otherwise, so every
+    /// tool leaves here with a per-call, per-tool-stamped ambient
+    /// ``ToolContext`` (task ^6htgvw2).
     ///
     /// Elevation requires the wrapped tool's `Output` to be `String` —
     /// checked with a runtime existential cast against `Tool`'s primary
@@ -586,9 +589,12 @@ public enum ToolElevation {
     /// rendered output on the same wire, and `FoundationModels.Prompt`
     /// exposes no generic way to substitute text into any other `Output`
     /// (the exact reasoning behind `ToolOutputCapping.wrapping`'s identical
-    /// restriction). A tool with any other `Output` is returned unchanged:
-    /// it runs un-elevated, in-band, exactly as it does today — never
-    /// broken, just not detachable.
+    /// restriction). A tool with any other `Output` gets the
+    /// ``ContextBindingTool`` decorator instead: it runs un-elevated,
+    /// in-band, exactly as it does today — never detachable — but its
+    /// ambient posts still carry its own tool identity and a fresh
+    /// per-call `correlationID` rather than falling back to the session's
+    /// turn-scope binding.
     ///
     /// ``ElevatingTool``'s other bound — `Arguments: Sendable` — needs no
     /// check here: `Tool`'s own `@concurrent call(arguments:)` requirement
@@ -602,7 +608,7 @@ public enum ToolElevation {
     ///   - sink: The upstream sink the run's events are posted to.
     ///   - configuration: The wrap-time mode and clock defaults.
     /// - Returns: The elevating decorator around `tool` when it qualifies;
-    ///   `tool` itself otherwise.
+    ///   the binding-only ``ContextBindingTool`` around it otherwise.
     public static func wrapping(
         _ tool: any Tool,
         sessionID: ULID,
@@ -624,7 +630,12 @@ public enum ToolElevation {
         }
         func open<T: Tool>(_ tool: T) -> any Tool {
             guard tool is any Tool<T.Arguments, String> else {
-                return tool
+                return ContextBindingTool<T.Arguments, T.Output>(
+                    wrapping: tool,
+                    sessionID: sessionID,
+                    mailbox: mailbox,
+                    sink: sink
+                )
             }
             // A type-system bridge, not a runtime filter: `Sendable` is a
             // marker protocol with no runtime representation, and `Tool`
@@ -644,6 +655,105 @@ public enum ToolElevation {
             return openArguments(argumentsType, of: tool)
         }
         return open(tool)
+    }
+}
+
+/// The binding-only decorator over a non-`String`-output tool: binds a
+/// per-call, per-tool-stamped ``ToolContext`` around the wrapped call —
+/// exactly the ambient identity ``ElevatingTool`` binds — while skipping the
+/// pending-envelope/park machinery entirely, because that machinery requires
+/// a `String` wire form the pending envelope can replace and this tool's
+/// `Output` has none (task ^6htgvw2).
+///
+/// Follows ``TokenCappingTool``'s forwarding precedent — `name`,
+/// `description`, `parameters`, and `includesSchemaInInstructions` pass
+/// through untouched — and returns the wrapped tool's own `Output`
+/// unchanged: the call always runs in-band, in the calling task, bounded by
+/// nothing this decorator adds.
+///
+/// Per call, the decorator mints a fresh `completionToken` (run scope,
+/// never session scope), stamps ``ToolContext/tool``/``ToolContext/op``
+/// with the wrapped tool's `name` (the phase-1 stamping rule — see
+/// ``ToolContext/init(stamping:sessionID:mailbox:sink:completionToken:isCancelled:)``),
+/// and posts the tool's own ambient events straight to the session's sink.
+/// It synthesizes nothing: no progress, no terminal — a silent run posts no
+/// events at all, and the calling task's cancellation is mirrored into the
+/// context's honest ``ToolContext/isCancelled`` probe.
+public struct ContextBindingTool<
+    Arguments: ConvertibleFromGeneratedContent, Output: PromptRepresentable
+>: Tool {
+    /// The wrapped tool, called through untouched save for the ambient
+    /// binding. Internal rather than private, mirroring ``ElevatingTool``'s
+    /// own `wrapped`, so composition-site wiring tests can assert the
+    /// per-site decorator chain.
+    let wrapped: any Tool<Arguments, Output>
+
+    /// The owning session's identity, stamped into each call's
+    /// ``ToolContext``.
+    private let sessionID: ULID
+
+    /// The owning session's mailbox, carried by the bound context for
+    /// ``ToolContext/elicit(_:)``.
+    private let mailbox: SessionMailbox
+
+    /// The upstream sink the bound context posts the tool's events to.
+    private let sink: any OperationEventSink
+
+    /// The wrapped tool's name.
+    public var name: String { wrapped.name }
+
+    /// The wrapped tool's description.
+    public var description: String { wrapped.description }
+
+    /// The wrapped tool's parameter schema.
+    public var parameters: GenerationSchema { wrapped.parameters }
+
+    /// Whether the schema is included in the tool's instructions.
+    public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
+
+    /// Wraps `wrapped` in the binding-only decorator.
+    ///
+    /// - Parameters:
+    ///   - wrapped: The tool to decorate.
+    ///   - sessionID: The owning session's identity.
+    ///   - mailbox: The owning session's mailbox.
+    ///   - sink: The upstream sink the bound context posts events to.
+    public init(
+        wrapping wrapped: any Tool<Arguments, Output>,
+        sessionID: ULID,
+        mailbox: SessionMailbox,
+        sink: any OperationEventSink
+    ) {
+        self.wrapped = wrapped
+        self.sessionID = sessionID
+        self.mailbox = mailbox
+        self.sink = sink
+    }
+
+    /// Runs one call under a fresh per-call ``ToolContext`` binding — see
+    /// the type doc for the full behavior.
+    ///
+    /// - Parameter arguments: The call's arguments, forwarded to the
+    ///   wrapped tool untouched.
+    /// - Returns: The wrapped tool's own output, unchanged.
+    /// - Throws: Whatever the wrapped tool throws, unmodified.
+    public func call(arguments: Arguments) async throws -> Output {
+        let cancellationFlag = CancellationRequestFlag()
+        let context = ToolContext(
+            stamping: wrapped,
+            sessionID: sessionID,
+            mailbox: mailbox,
+            sink: sink,
+            completionToken: SessionMailbox.makeCompletionToken(),
+            isCancelled: { cancellationFlag.isRequested }
+        )
+        return try await withTaskCancellationHandler {
+            try await ToolContext.$current.withValue(context) {
+                try await wrapped.call(arguments: arguments)
+            }
+        } onCancel: {
+            cancellationFlag.request()
+        }
     }
 }
 

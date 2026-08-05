@@ -10,8 +10,10 @@ import FoundationModels
 /// turn boundary. Two independent kinds are staged here, never mixed:
 ///
 /// - **Turn-riding events** (``PendingEvent``) — ``OperationEvent``s posted
-///   through this actor's ``OperationEventSink`` conformance (the elevation
-///   layer's ambient ``ToolContext`` route). They fold into whichever prompt
+///   through this actor's ``OperationEventSink`` conformance (the ambient
+///   ``ToolContext`` route both per-call binding layers — ``ElevatingTool``
+///   and ``ContextBindingTool`` — post through). They fold into whichever
+///   prompt
 ///   dispatches next: ``RoutedSessionActor``'s turn chokepoint drains them
 ///   into a plain-text preamble the model reads and persists each as an
 ///   ``OperationEventSegment`` on the turn's recorded `.prompt` entry (see

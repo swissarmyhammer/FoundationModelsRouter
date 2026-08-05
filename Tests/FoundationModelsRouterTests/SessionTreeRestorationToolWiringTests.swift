@@ -254,6 +254,57 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(pending.events.map(\.event.detail) == ["threaded-to-restored-backend"])
     }
 
+    @Test(
+        "a non-String-output tool threaded to a restored root arrives in the node's own binding-only ContextBindingTool, posting to its outbox with its own identity"
+    )
+    @MainActor
+    func restoredRootWrapsNonStringOutputToolInItsOwnBindingLayer() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container1 = ToolCapturingRestoreContainer()
+        let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: router1.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+
+        // The container receives the caller's original instance inside the
+        // restored root's own binding-only wrapper — the restore-site
+        // counterpart of the root and fork sites' non-String composition —
+        // and calling that wrapper routes the ambient event to the
+        // restored root's own outbox under the tool's own identity and a
+        // fresh per-call correlationID.
+        guard
+            let threadedBound = container2.threadedToolsByCall.first?.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+        else {
+            Issue.record("expected the container to receive a ContextBindingTool over the non-String fixture")
+            return
+        }
+        #expect(elevationWrapped(threadedBound) as? AmbientNonStringOutputTool === emitter)
+
+        let output = try await threadedBound.call(
+            arguments: AmbientToolArguments(value: "threaded-to-restored-backend"))
+        let events = await restored.root.outbox.pending().events.map(\.event)
+        #expect(events.map(\.detail) == ["threaded-to-restored-backend"])
+        #expect(events.map(\.tool) == [emitter.name])
+        #expect(events.map(\.op) == [emitter.name])
+        #expect(events.map(\.correlationID) == [output.text])
+        #expect(output.text != "unbound")
+    }
+
     @Test("each restored node in a tree gets its own fresh outbox with its own elevation wrapper — not shared tree-wide")
     @MainActor
     func eachRestoredNodeGetsItsOwnOutboxAndElevationWrapper() async throws {

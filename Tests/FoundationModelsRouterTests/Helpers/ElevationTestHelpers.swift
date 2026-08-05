@@ -14,9 +14,14 @@ extension ElevatingTool: ElevationLayerPeelable {
     var elevationWrappedTool: any Tool { wrapped }
 }
 
-/// Peels the elevation layer every composition site wraps around a
-/// String-output tool, returning the inner (connected) tool — or `nil`
-/// when `tool` is not an ``ElevatingTool``.
+extension ContextBindingTool: ElevationLayerPeelable {
+    var elevationWrappedTool: any Tool { wrapped }
+}
+
+/// Peels the layer every composition site wraps around a tool — the
+/// ``ElevatingTool`` engine over a String-output tool, or the binding-only
+/// ``ContextBindingTool`` over a non-String-output one — returning the
+/// inner (connected) tool, or `nil` when `tool` is neither wrapper.
 ///
 /// Shared by the composition-site wiring suites
 /// (`SessionOutboxToolWiringTests`, `SessionTreeRestorationToolWiringTests`)

@@ -301,20 +301,16 @@ struct ElevatingToolTests {
         }
     }
 
-    /// A non-`String`-output `Tool` — proves ``ToolElevation/wrapping``
-    /// passes a tool through unchanged when the pending envelope could not
-    /// replace its rendered output.
-    private struct NonStringOutput: PromptRepresentable, Sendable {
-        let text: String
-        var promptRepresentation: Prompt { Prompt(text) }
-    }
-
+    /// A silent non-`String`-output `Tool` — proves ``ToolElevation/wrapping``
+    /// wraps a tool whose rendered output the pending envelope could not
+    /// replace in the binding-only ``ContextBindingTool``, which synthesizes
+    /// no events for a silent run.
     private struct NonStringOutputTool: Tool {
         let name = "non_string_output_tool"
         let description = "returns a non-String PromptRepresentable"
 
-        func call(arguments: ElevatingArguments) async throws -> NonStringOutput {
-            NonStringOutput(text: "ignored")
+        func call(arguments: ElevatingArguments) async throws -> NonStringToolOutput {
+            NonStringToolOutput(text: "ignored")
         }
     }
 
@@ -966,16 +962,53 @@ struct ElevatingToolTests {
         #expect(terminal.detail == "gated: factory")
     }
 
-    @Test("ToolElevation.wrapping passes a non-String-Output tool through unchanged")
-    func factoryPassesThroughNonStringOutput() {
+    @Test("ToolElevation.wrapping wraps a non-String-output tool in the binding-only ContextBindingTool")
+    func factoryBindsNonStringOutputTool() async throws {
+        let sink = RecordingSink()
         let wrapped = ToolElevation.wrapping(
             NonStringOutputTool(),
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
-            sink: RecordingSink(),
+            sink: sink,
             configuration: ElevationConfiguration(mode: .elevating)
         )
 
-        #expect(wrapped is NonStringOutputTool)
+        let binding = try #require(
+            wrapped as? ContextBindingTool<ElevatingArguments, NonStringToolOutput>)
+        let output = try await binding.call(arguments: ElevatingArguments(value: "silent"))
+
+        // The wrapped tool's own output passes through unchanged, and a
+        // silent run posts nothing at all: binding-only, with none of the
+        // pending-envelope/park machinery's synthesized events.
+        #expect(output.text == "ignored")
+        #expect(await sink.events.isEmpty)
+    }
+
+    @Test("a non-String-output tool's ambient posts carry its own tool identity and a fresh per-call correlationID")
+    func nonStringOutputToolAmbientPostsCarryPerCallIdentity() async throws {
+        let sink = RecordingSink()
+        let wrapped = ToolElevation.wrapping(
+            AmbientNonStringOutputTool(),
+            sessionID: ULID.generate(),
+            mailbox: SessionMailbox(),
+            sink: sink,
+            configuration: ElevationConfiguration(mode: .elevating)
+        )
+
+        let binding = try #require(
+            wrapped as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
+        let first = try await binding.call(arguments: AmbientToolArguments(value: "one"))
+        let second = try await binding.call(arguments: AmbientToolArguments(value: "two"))
+
+        let events = await sink.events
+        #expect(events.map(\.detail) == ["one", "two"])
+        #expect(events.map(\.tool) == ["ambient-non-string", "ambient-non-string"])
+        #expect(events.map(\.op) == ["ambient-non-string", "ambient-non-string"])
+        // Run scope, never session scope: each call minted its own token,
+        // and each event's correlationID is exactly the token its own call
+        // observed as the ambient completionToken.
+        #expect(events.map(\.correlationID) == [first.text, second.text])
+        #expect(first.text != second.text)
+        #expect(ULID(first.text) != nil)
     }
 }

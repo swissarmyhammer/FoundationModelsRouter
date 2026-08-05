@@ -198,7 +198,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     conversation ran with. Each restored node gets its own fresh
     ///     ``RoutedSession/outbox``, with every String-output tool wrapped
     ///     in its own per-node elevation layer posting there (a
-    ///     non-String-output tool passes through unwrapped) — exactly the
+    ///     non-String-output tool gets the binding-only
+    ///     ``ContextBindingTool``, posting there too) — exactly the
     ///     per-session instancing
     ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
     ///     performs for a fresh session — so a node's tool never posts to a
