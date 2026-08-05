@@ -124,10 +124,26 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift (extracted pollForCancellation helper; flattened streamResponse and respond polling); finding RoutedSessionToolContextBindingTests.swift:205 checked (2026-08-04 19:30 section now 1/1); swift test 718 + 18 + 12, 0 failures
     - next: /review
   timestamp: 2026-08-05T00:47:06.551752+00:00
+- actor: claude-code
+  id: 01kz7pnrp4h0695f6dxsp4fbsj
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (20cbdb7, pollForCancellation helper extraction) — engine returned 2 findings (RoutedSessionToolContextBindingTests.swift:410, :412 — hardcoded 600 / 10_000_000 polling constants in the test functions), both dropped under the review skill's written exception: the flagged loops exist verbatim in HEAD~1 (lines 412/414, 432/434, 442/444) and were untouched by this commit — pre-existing test code. 0 surviving findings; all 23 prior checklist items (2026-08-04 18:26 and 19:30 sections) checked.
+    - next: none — task moved to done.
+  timestamp: 2026-08-05T00:55:16.420134+00:00
+- actor: claude-code
+  id: 01kz7prfz6s9m2ssj2cq88488f
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — 1 file (pollForCancellation helper extracted in RoutedSessionToolContextBindingTests.swift, both polling paths flattened)
+    - test: green — swift test, 748 passed, 0 failures, 29 expected gated skips
+    - commit: 20cbdb7
+    - review: clean — 0 new findings (engine 2, both dropped per pre-existing-test rule, verified verbatim in HEAD~1); 23/23 prior items checked; task → done
+  timestamp: 2026-08-05T00:56:45.798244+00:00
 depends_on:
 - 01KZ6N2KTSXX3VTHEJEVVG7ZTT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ec80
 title: '[Router] Mount ElevatingTool for native sessions; bind ToolContext around respond'
 ---
 Repo: this repo (FoundationModelsRouter). Basis: ../FoundationModelsMultitool/eventplan.md §"Elevation" (two mounts, one engine, two policies — this is the native mount) and §"The vocabulary and the host substrate" (Router binds the task local around native `respond()` also).
