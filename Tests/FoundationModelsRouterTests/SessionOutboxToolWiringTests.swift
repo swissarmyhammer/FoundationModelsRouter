@@ -662,6 +662,58 @@ struct SessionOutboxToolWiringTests {
         #expect(parentOutput.text != childOutput.text)
     }
 
+    @Test(
+        "after fork, the parent's and the fork's non-String-output binding wrappers post concurrently to their own outboxes, each call under its own fresh token"
+    )
+    @MainActor
+    func parentAndForkNonStringOutputToolsPostToTheirOwnOutboxesConcurrently() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let session = profile.standard.makeSession(tools: [emitter])
+        let child = try await session.fork(workingDirectory: nil)
+
+        guard let parentActor = session as? RoutedSessionActor,
+            let childActor = child as? RoutedSessionActor,
+            let parentBound = parentActor.tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
+            let childBound = childActor.tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+        else {
+            Issue.record("expected both the parent and the fork to expose their own ContextBindingTool wrapper")
+            return
+        }
+        // Both sessions share the very same underlying tool instance —
+        // per-session isolation lives entirely in each session's own
+        // binding wrapper and the ambient context it binds per call.
+        #expect(elevationWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(elevationWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
+
+        // Concurrently call through each session's own binding wrapper —
+        // event delivery must never migrate between the two outboxes, and
+        // each concurrent call must run under its own freshly minted token.
+        async let parentCall = parentBound.call(arguments: AmbientToolArguments(value: "from-parent"))
+        async let childCall = childBound.call(arguments: AmbientToolArguments(value: "from-child"))
+        let (parentOutput, childOutput) = try await (parentCall, childCall)
+
+        let parentEvents = await session.outbox.pending().events.map(\.event)
+        let childEvents = await child.outbox.pending().events.map(\.event)
+        #expect(parentEvents.map(\.detail) == ["from-parent"])
+        #expect(childEvents.map(\.detail) == ["from-child"])
+        #expect(parentEvents.map(\.tool) == [emitter.name])
+        #expect(childEvents.map(\.tool) == [emitter.name])
+        // Each event's correlationID is exactly its own call's token — the
+        // concurrent bindings never bled into each other.
+        #expect(parentEvents.map(\.correlationID) == [parentOutput.text])
+        #expect(childEvents.map(\.correlationID) == [childOutput.text])
+        #expect(parentOutput.text != childOutput.text)
+    }
+
     @Test("a composed tool captured before the fork keeps posting to the parent after forking")
     @MainActor
     func composedToolCapturedBeforeForkKeepsPostingToParentAfterFork() async throws {
@@ -930,11 +982,18 @@ struct SessionOutboxToolWiringTests {
         #expect(childPending.events.map(\.event.detail) == ["uncapped-fork-chain-inner"])
     }
 
-    @Test(
-        "makeSession with a budget composes a non-String-output tool as bind only: no cap layer exists for output capping cannot truncate"
-    )
+    /// Shared body of the with-/without-budget makeSession bind-only pins:
+    /// composes a session over ``AmbientNonStringOutputTool`` under `budget`
+    /// and asserts the container-boundary chain is bind(tool) — never capped
+    /// — with the ambient event routed to the session's own outbox.
+    ///
+    /// - Parameters:
+    ///   - budget: The session budget to compose under, or `nil` for none.
+    ///   - detail: The event detail the asserted post carries.
     @MainActor
-    func makeSessionWithBudgetComposesBindOnlyForNonStringOutput() async throws {
+    private func assertMakeSessionComposesBindOnlyForNonStringOutput(
+        budget: TokenBudget?, detail: String
+    ) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -943,14 +1002,15 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let emitter = AmbientNonStringOutputTool()
-        let session = profile.standard.makeSession(
-            tools: [emitter],
-            budget: Self.budgetWithSmallToolOutputCap
-        )
+        let session = profile.standard.makeSession(tools: [emitter], budget: budget)
 
-        // Capping requires a String output to truncate, so even with a
-        // budget the chain for a non-String-output tool is bind(tool) —
+        // Capping requires a String output to truncate, so at every budget
+        // level the chain for a non-String-output tool is bind(tool) —
         // never cap(bind(tool)) (see ``ToolElevation/sessionMounted``).
+        // The no-cap check below is type-guaranteed for a non-String
+        // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
+        // — it documents the shape; the load-bearing chain proof is
+        // `wrapped` being the original instance directly.
         #expect(!(container.lastTools.first is TokenCappingTool<AmbientToolArguments>))
         guard
             let bound = container.lastTools.first
@@ -962,16 +1022,33 @@ struct SessionOutboxToolWiringTests {
         }
         #expect(inner === emitter)
 
-        _ = try await bound.call(arguments: AmbientToolArguments(value: "budgeted-bind-inner"))
+        _ = try await bound.call(arguments: AmbientToolArguments(value: detail))
         let pending = await session.outbox.pending()
-        #expect(pending.events.map(\.event.detail) == ["budgeted-bind-inner"])
+        #expect(pending.events.map(\.event.detail) == [detail])
     }
 
     @Test(
-        "fork with a budget composes a non-String-output tool as bind only in the child: shared instance innermost, no cap layer"
+        "makeSession with a budget composes a non-String-output tool as bind only: no cap layer exists for output capping cannot truncate"
     )
     @MainActor
-    func forkWithBudgetComposesBindOnlyForNonStringOutput() async throws {
+    func makeSessionWithBudgetComposesBindOnlyForNonStringOutput() async throws {
+        try await assertMakeSessionComposesBindOnlyForNonStringOutput(
+            budget: Self.budgetWithSmallToolOutputCap, detail: "budgeted-bind-inner")
+    }
+
+    /// Shared body of the with-/without-budget fork bind-only pins: forks a
+    /// session over ``AmbientNonStringOutputTool`` composed under `budget`
+    /// and asserts the child's chain is bind(tool) — never capped, the very
+    /// same shared instance innermost — with the ambient event routed to the
+    /// child's own outbox and the parent's left untouched.
+    ///
+    /// - Parameters:
+    ///   - budget: The session budget to compose under, or `nil` for none.
+    ///   - detail: The event detail the asserted post carries.
+    @MainActor
+    private func assertForkComposesBindOnlyForNonStringOutput(
+        budget: TokenBudget?, detail: String
+    ) async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -980,20 +1057,21 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let emitter = AmbientNonStringOutputTool()
-        let session = profile.standard.makeSession(
-            tools: [emitter],
-            budget: Self.budgetWithSmallToolOutputCap
-        )
+        let session = profile.standard.makeSession(tools: [emitter], budget: budget)
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor else {
             Issue.record("expected the fork to be a RoutedSessionActor")
             return
         }
-        // The same bind-only chain as the root site under a budget: capping
-        // has no String output to truncate, and the fixture is not
+        // The same bind-only chain as the root site at every budget level:
+        // capping has no String output to truncate, and the fixture is not
         // ForkableTool, so the very same instance passes through shared
         // into the child's own binding layer.
+        // The no-cap check below is type-guaranteed for a non-String
+        // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
+        // — it documents the shape; the load-bearing chain proof is
+        // `wrapped` being the original instance directly.
         #expect(!(childActor.tools.first is TokenCappingTool<AmbientToolArguments>))
         guard
             let childBound = childActor.tools.first
@@ -1005,11 +1083,38 @@ struct SessionOutboxToolWiringTests {
         }
         #expect(childInner === emitter)
 
-        _ = try await childBound.call(arguments: AmbientToolArguments(value: "budgeted-fork-bind-inner"))
+        _ = try await childBound.call(arguments: AmbientToolArguments(value: detail))
         let childPending = await child.outbox.pending()
-        #expect(childPending.events.map(\.event.detail) == ["budgeted-fork-bind-inner"])
+        #expect(childPending.events.map(\.event.detail) == [detail])
         let parentPending = await session.outbox.pending()
         #expect(parentPending.events.isEmpty)
+    }
+
+    @Test(
+        "fork with a budget composes a non-String-output tool as bind only in the child: shared instance innermost, no cap layer"
+    )
+    @MainActor
+    func forkWithBudgetComposesBindOnlyForNonStringOutput() async throws {
+        try await assertForkComposesBindOnlyForNonStringOutput(
+            budget: Self.budgetWithSmallToolOutputCap, detail: "budgeted-fork-bind-inner")
+    }
+
+    @Test(
+        "makeSession without a budget composes a non-String-output tool as bind only: the same bind(tool) chain as the with-budget case"
+    )
+    @MainActor
+    func makeSessionWithoutBudgetComposesBindOnlyForNonStringOutput() async throws {
+        try await assertMakeSessionComposesBindOnlyForNonStringOutput(
+            budget: nil, detail: "uncapped-bind-inner")
+    }
+
+    @Test(
+        "fork without a budget composes a non-String-output tool as bind only in the child: shared instance innermost, no cap layer"
+    )
+    @MainActor
+    func forkWithoutBudgetComposesBindOnlyForNonStringOutput() async throws {
+        try await assertForkComposesBindOnlyForNonStringOutput(
+            budget: nil, detail: "uncapped-fork-bind-inner")
     }
 
     // MARK: - Elevation behavior through a session's composed tool list

@@ -46,6 +46,13 @@ struct SessionTreeRestorationToolWiringTests {
     /// own per-node instanced tool list through — plus every backend it has
     /// vended, keyed by call order, so a test can inspect each restored
     /// node's own threaded list rather than only the last one.
+    ///
+    /// `@unchecked Sendable` is safe here without synchronization:
+    /// `threadedToolsByCall` and `backendsByCall` are appended to only
+    /// synchronously inside `makeSession(transcript:tools:)` — called from
+    /// the `restoreSessionTree` call a `@MainActor` test awaits — and read
+    /// only after that call returns to the same test method, so no two
+    /// tasks ever touch the mutable state concurrently.
     private final class ToolCapturingRestoreContainer: LoadedLLMContainer, @unchecked Sendable {
         private(set) var threadedToolsByCall: [[any Tool]] = []
         private(set) var backendsByCall: [StubSessionBackend] = []
@@ -356,6 +363,68 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(forkPending.events.map(\.event.detail) == ["from-fork"])
     }
 
+    @Test(
+        "each restored node in a tree gets its own ContextBindingTool for a non-String-output tool, posting to its own outbox with the tool's identity and its call's own correlationID"
+    )
+    @MainActor
+    func eachRestoredNodeGetsItsOwnOutboxAndBindingWrapperForNonStringOutput() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container1 = ToolCapturingRestoreContainer()
+        let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+        let fork = try await root.fork(workingDirectory: nil)
+        _ = try await fork.respond(to: "fork turn")
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: router1.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        let restoredFork = try #require(restored.children(of: root.id).first)
+
+        #expect(restored.root.outbox !== restoredFork.outbox)
+
+        guard
+            let rootBound = container2.threadedToolsByCall[0].first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
+            let forkBound = container2.threadedToolsByCall[1].first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+        else {
+            Issue.record("expected both restored nodes to receive their own ContextBindingTool wrapper")
+            return
+        }
+        // Both nodes share the caller's one original instance — the
+        // per-node isolation is each node's own binding wrapper, whose
+        // ambient context posts to that node's own outbox.
+        #expect(elevationWrapped(rootBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(elevationWrapped(forkBound) as? AmbientNonStringOutputTool === emitter)
+
+        let rootOutput = try await rootBound.call(arguments: AmbientToolArguments(value: "from-root"))
+        let forkOutput = try await forkBound.call(arguments: AmbientToolArguments(value: "from-fork"))
+
+        let rootEvents = await restored.root.outbox.pending().events.map(\.event)
+        let forkEvents = await restoredFork.outbox.pending().events.map(\.event)
+        #expect(rootEvents.map(\.detail) == ["from-root"])
+        #expect(forkEvents.map(\.detail) == ["from-fork"])
+        #expect(rootEvents.map(\.tool) == [emitter.name])
+        #expect(forkEvents.map(\.tool) == [emitter.name])
+        // Each node's event carries its own call's freshly minted token as
+        // correlationID — never the other node's.
+        #expect(rootEvents.map(\.correlationID) == [rootOutput.text])
+        #expect(forkEvents.map(\.correlationID) == [forkOutput.text])
+        #expect(rootOutput.text != forkOutput.text)
+    }
+
     @Test("a session with no tools argument restores with an empty, unconnected outbox")
     @MainActor
     func restoringWithNoToolsHasEmptyOutbox() async throws {
@@ -429,6 +498,126 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(rootPending.events.isEmpty)
     }
 
+    @Test(
+        "forking a restored session wraps its non-String-output original in the fork's own ContextBindingTool, posting to the child's outbox under a fresh per-call token"
+    )
+    @MainActor
+    func forkOfRestoredSessionComposesItsOwnBindingLayerForNonStringOutput() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container1 = ToolCapturingRestoreContainer()
+        let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: router1.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        let child = try await restored.root.fork(workingDirectory: nil)
+
+        guard let childActor = child as? RoutedSessionActor,
+            let childBound = childActor.tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+        else {
+            Issue.record("expected the fork of a restored session to expose its own ContextBindingTool wrapper")
+            return
+        }
+        // The fork-of-restored chain combines both transformations: the
+        // restore call's original instance, shared through the fork, inside
+        // the child's own binding wrapper.
+        #expect(elevationWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
+
+        let output = try await childBound.call(arguments: AmbientToolArguments(value: "from-fork-of-restored"))
+        let childEvents = await child.outbox.pending().events.map(\.event)
+        #expect(childEvents.map(\.detail) == ["from-fork-of-restored"])
+        #expect(childEvents.map(\.tool) == [emitter.name])
+        // The event's correlationID is the call's own freshly minted token.
+        #expect(childEvents.map(\.correlationID) == [output.text])
+        #expect(output.text != "unbound")
+
+        // The restored root's own outbox is untouched by the fork's event.
+        let rootPending = await restored.root.outbox.pending()
+        #expect(rootPending.events.isEmpty)
+    }
+
+    /// Deliberately mirrors `SessionOutboxToolWiringTests`'s
+    /// `parentAndForkNonStringOutputToolsPostToTheirOwnOutboxesConcurrently`
+    /// — the same concurrent-isolation invariant checked at this suite's own
+    /// composition site. The structural similarity is intentional and the
+    /// bodies stay separate: the two suites build their sessions through
+    /// different seams (this one restores through
+    /// ``ToolCapturingRestoreContainer`` over a recordings root; the outbox
+    /// suite composes directly through `makeSession(tools:)`), so a shared
+    /// closure-parameterized helper would abstract over exactly the
+    /// per-suite wiring each test exists to pin.
+    @Test(
+        "the restored root's and its fork's non-String-output binding wrappers post concurrently to their own outboxes, each call under its own fresh token"
+    )
+    @MainActor
+    func restoredRootAndForkNonStringOutputToolsPostToTheirOwnOutboxesConcurrently() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container1 = ToolCapturingRestoreContainer()
+        let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: router1.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+        let child = try await restored.root.fork(workingDirectory: nil)
+
+        guard
+            let rootBound = container2.threadedToolsByCall.first?.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
+            let childActor = child as? RoutedSessionActor,
+            let childBound = childActor.tools.first
+                as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>
+        else {
+            Issue.record("expected both the restored root and its fork to expose their own ContextBindingTool wrapper")
+            return
+        }
+
+        // Concurrently call through each node's own binding wrapper —
+        // event delivery must never migrate between the two outboxes, and
+        // each concurrent call must run under its own freshly minted token.
+        async let rootCall = rootBound.call(arguments: AmbientToolArguments(value: "from-restored-root"))
+        async let childCall = childBound.call(arguments: AmbientToolArguments(value: "from-fork-of-restored"))
+        let (rootOutput, childOutput) = try await (rootCall, childCall)
+
+        let rootEvents = await restored.root.outbox.pending().events.map(\.event)
+        let childEvents = await child.outbox.pending().events.map(\.event)
+        #expect(rootEvents.map(\.detail) == ["from-restored-root"])
+        #expect(childEvents.map(\.detail) == ["from-fork-of-restored"])
+        #expect(rootEvents.map(\.tool) == [emitter.name])
+        #expect(childEvents.map(\.tool) == [emitter.name])
+        // Each event's correlationID is exactly its own call's token — the
+        // concurrent bindings never bled into each other.
+        #expect(rootEvents.map(\.correlationID) == [rootOutput.text])
+        #expect(childEvents.map(\.correlationID) == [childOutput.text])
+        #expect(rootOutput.text != childOutput.text)
+    }
+
     // MARK: - Elevation layer: restore's own chain order (task ^k4nygqa)
 
     @Test("restore composes elevate only: elevation outermost, no fork, no capping; the original tool innermost")
@@ -472,5 +661,57 @@ struct SessionTreeRestorationToolWiringTests {
         _ = try await elevating.call(arguments: AmbientToolArguments(value: "restore-chain-inner"))
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["restore-chain-inner"])
+    }
+
+    @Test(
+        "restore composes bind only for a non-String-output tool: no fork, no capping; the original tool innermost"
+    )
+    @MainActor
+    func restoreComposesBindOnlyForNonStringOutput() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container1 = ToolCapturingRestoreContainer()
+        let router1 = Self.makeRouter(container: container1, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let container2 = ToolCapturingRestoreContainer()
+        let router2 = Self.makeRouter(
+            id: router1.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let emitter = AmbientNonStringOutputTool()
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
+
+        let threaded = try #require(container2.threadedToolsByCall.first?.first)
+        // Restore applies no capping — no budget travels through
+        // restoration, and capping is String-only anyway — so the chain is
+        // bind(tool), consistent with the makeSession and fork sites'
+        // non-String composition.
+        // The no-cap check below is type-guaranteed for a non-String
+        // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
+        // — it documents the shape; the load-bearing chain proof is
+        // `wrapped` being the original instance directly.
+        #expect(!(threaded is TokenCappingTool<AmbientToolArguments>))
+        guard
+            let bound = threaded as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>,
+            let inner = bound.wrapped as? AmbientNonStringOutputTool
+        else {
+            Issue.record("expected bind(tool) at the restore container boundary")
+            return
+        }
+        #expect(inner === emitter)
+
+        // Calling the composed wrapper routes the ambient-context event to
+        // the restored root's own outbox.
+        _ = try await bound.call(arguments: AmbientToolArguments(value: "restore-bind-inner"))
+        let pending = await restored.root.outbox.pending()
+        #expect(pending.events.map(\.event.detail) == ["restore-bind-inner"])
     }
 }
