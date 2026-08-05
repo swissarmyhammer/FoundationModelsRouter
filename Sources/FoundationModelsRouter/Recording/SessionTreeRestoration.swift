@@ -297,10 +297,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // This site's chain is connect → elevate — deliberately no fork
             // (restoration re-instances from the caller's originals, it
             // never derives one live session from another) and no capping
-            // (no budget travels through restoration) — distinct from the
-            // root site's connect → elevate → cap and the fork site's
+            // (no budget travels through restoration, so the shared helper
+            // gets a `nil` token limit) — distinct from the root site's
+            // connect → elevate → cap and the fork site's
             // fork → connect → elevate → cap (task ^k4nygqa; see
-            // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``
+            // ``RoutedModel/instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let outbox = SessionOutbox()
             // The mailbox shares the outbox's scope rule: every restored
@@ -308,16 +309,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // elicitations never survive a restore or migrate between
             // sessions (see ``RoutedSession/mailbox``).
             let mailbox = SessionMailbox()
-            let instancedTools = tools.map { tool -> any Tool in
-                let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
-                return ToolElevation.wrapping(
-                    connected,
-                    sessionID: node.id,
-                    mailbox: mailbox,
-                    sink: outbox,
-                    configuration: .nativeSessionMount
-                )
-            }
+            let instancedTools = instanceToolsWithElevation(
+                tools,
+                sessionID: node.id,
+                outbox: outbox,
+                mailbox: mailbox,
+                cappedToTokenLimit: nil
+            )
             let backend = routedLLM.container.makeSession(transcript: transcript, tools: instancedTools)
             // ``RoutedSession/contextFill``'s restored numerator
             // (compaction_plan.md §1.5, checkpoint-aware restore

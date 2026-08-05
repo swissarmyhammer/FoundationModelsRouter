@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -42,6 +43,11 @@ struct RoutedSessionToolContextBindingTests {
         /// call order — `nil` recorded when no binding was present.
         private(set) var respondCaptures: [ContextCapture?] = []
 
+        /// Every ambient context the grammar-guided
+        /// `respond(to:following:maxTokens:)` observed, in call order —
+        /// `nil` recorded when no binding was present.
+        private(set) var grammarRespondCaptures: [ContextCapture?] = []
+
         /// The ambient context the last `streamResponse(to:maxTokens:)`
         /// observed, or `nil` when no binding was present.
         private(set) var streamCapture: ContextCapture??
@@ -74,7 +80,22 @@ struct RoutedSessionToolContextBindingTests {
         }
 
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-            try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+            // The binding contract covers *every* backend generation entry
+            // point, so the guided path captures and posts exactly as the
+            // plain `respond(to:maxTokens:)` above does.
+            if let context = ToolContext.current {
+                grammarRespondCaptures.append(
+                    ContextCapture(
+                        sessionID: context.sessionID,
+                        completionToken: context.completionToken,
+                        isCancelled: context.isCancelled
+                    )
+                )
+                await context.progress("from inside grammar respond")
+            } else {
+                grammarRespondCaptures.append(nil)
+            }
+            return try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
         }
 
         func makeFork() -> any LanguageModelSessionBackend {
@@ -99,6 +120,12 @@ struct RoutedSessionToolContextBindingTests {
     }
 
     /// Vends one retained ``ContextProbingBackend`` per session.
+    ///
+    /// `@unchecked Sendable` invariant: `lastBackend` is written once,
+    /// synchronously, inside `makeSession(instructions:)` — called from the
+    /// (synchronous, non-actor-isolated) session-vending path — and read
+    /// only by the `@MainActor` test method after that vend returns, so the
+    /// write and every read happen on the same thread, never concurrently.
     private final class ProbingLLMContainer: PlainTranscriptStubContainer, @unchecked Sendable {
         private(set) var lastBackend: ContextProbingBackend?
 
@@ -109,40 +136,105 @@ struct RoutedSessionToolContextBindingTests {
         }
     }
 
-    /// A backend whose `respond` polls the ambient context's `isCancelled`
-    /// — never structured task cancellation — and returns the moment the
-    /// flag flips, proving the binding's probe mirrors the bound model-call
-    /// task rather than reporting a constant.
+    /// A backend whose `respond`/`streamResponse` poll the ambient
+    /// context's `isCancelled` — never structured task cancellation — and
+    /// return the moment the flag flips, proving the binding's probe
+    /// mirrors the bound model-call task rather than reporting a constant.
     ///
-    /// `@unchecked Sendable` on the same terms as ``ContextProbingBackend``.
+    /// `@unchecked Sendable` on different terms than
+    /// ``ContextProbingBackend``: tests poll this backend's observation
+    /// flags *while* the driving turn is still in flight (that concurrent
+    /// observation is the whole point), so every flag is a `Mutex`-guarded
+    /// `Bool` (the ``ModelCallCancellationProbe`` precedent) and the only
+    /// other stored property, `inner`, is an immutable reference the
+    /// owning session drives one call at a time.
     private final class CancellationObservingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let inner = StubSessionBackend()
 
+        /// How many times a polling loop re-reads the ambient flag before
+        /// giving up.
+        private static let pollIterations = 6_000
+
+        /// How long each polling iteration sleeps.
+        private static let pollIntervalNanoseconds: UInt64 = 5_000_000
+
+        /// Backing storage for ``respondStarted``.
+        private let respondStartedFlag = Mutex(false)
+
+        /// Backing storage for ``observedCancellation``.
+        private let observedCancellationFlag = Mutex(false)
+
+        /// Backing storage for ``streamStarted``.
+        private let streamStartedFlag = Mutex(false)
+
+        /// Backing storage for ``observedStreamCancellation``.
+        private let observedStreamCancellationFlag = Mutex(false)
+
         /// Flips when `respond` begins polling, so a test can wait for the
         /// model call to be in flight before cancelling the turn.
-        private(set) var respondStarted = false
+        var respondStarted: Bool { respondStartedFlag.withLock { $0 } }
 
-        /// Whether the ambient probe ever reported `true`.
-        private(set) var observedCancellation = false
+        /// Whether the ambient probe `respond` polled ever reported `true`.
+        var observedCancellation: Bool { observedCancellationFlag.withLock { $0 } }
+
+        /// Flips when `streamResponse`'s production task begins polling, so
+        /// a test can wait for the streaming model call to be in flight
+        /// before cancelling the turn.
+        var streamStarted: Bool { streamStartedFlag.withLock { $0 } }
+
+        /// Whether the ambient probe polled on the streaming path ever
+        /// reported `true`.
+        var observedStreamCancellation: Bool { observedStreamCancellationFlag.withLock { $0 } }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            respondStarted = true
+            respondStartedFlag.withLock { $0 = true }
             if let context = ToolContext.current {
-                for _ in 0..<6_000 {
+                for _ in 0..<Self.pollIterations {
                     if context.isCancelled {
-                        observedCancellation = true
+                        observedCancellationFlag.withLock { $0 = true }
                         break
                     }
                     // Deliberately swallow the cancellation error: this
                     // backend cooperates through the ambient flag alone.
-                    try? await Task.sleep(nanoseconds: 5_000_000)
+                    try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
                 }
             }
             return try await inner.respond(to: prompt, maxTokens: maxTokens)
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-            inner.streamResponse(to: prompt, maxTokens: maxTokens)
+            // Captured at call time — inside the turn's binding — then
+            // polled from the stream's own production task: the probe is a
+            // plain closure, so it stays honest across the task hop, and
+            // the binding contract covers the streaming entry point exactly
+            // as it covers `respond`.
+            let context = ToolContext.current
+            let inner = self.inner
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    self.streamStartedFlag.withLock { $0 = true }
+                    if let context {
+                        for _ in 0..<Self.pollIterations {
+                            if context.isCancelled {
+                                self.observedStreamCancellationFlag.withLock { $0 = true }
+                                break
+                            }
+                            // Deliberately swallow the cancellation error,
+                            // as in `respond` above.
+                            try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
+                        }
+                    }
+                    do {
+                        for try await chunk in inner.streamResponse(to: prompt, maxTokens: maxTokens) {
+                            continuation.yield(chunk)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { @Sendable _ in task.cancel() }
+            }
         }
 
         func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
@@ -171,6 +263,12 @@ struct RoutedSessionToolContextBindingTests {
     }
 
     /// Vends one retained ``CancellationObservingBackend`` per session.
+    ///
+    /// `@unchecked Sendable` invariant: `lastBackend` is written once,
+    /// synchronously, inside `makeSession(instructions:)` — called from the
+    /// (synchronous, non-actor-isolated) session-vending path — and read
+    /// only by the `@MainActor` test method after that vend returns, so the
+    /// write and every read happen on the same thread, never concurrently.
     private final class CancellationObservingLLMContainer: PlainTranscriptStubContainer, @unchecked Sendable {
         private(set) var lastBackend: CancellationObservingBackend?
 
@@ -181,107 +279,48 @@ struct RoutedSessionToolContextBindingTests {
         }
     }
 
-    // MARK: - Stubs
-
-    private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension: Int
-        func embed(texts: [String]) async throws -> [[Float]] {
-            texts.map { _ in [Float](repeating: 0.5, count: dimension) }
-        }
-    }
-
-    private struct StubProbe: MachineProbe {
-        let chip: String
-        let totalRAM: Int64
-        let recommendedMaxWorkingSetSize: Int64
-    }
-
-    private struct StubMetadataSource: MetadataSource {
-        let raw: RawRepoMetadata
-        func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata { raw }
-    }
-
-    private struct StubModelLoader: ModelLoader {
-        let container: any LoadedLLMContainer
-        let dimension: Int
-
-        func loadLLM(
-            ref: ModelRef,
-            slot: ModelSlot,
-            context: Int,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedLLMContainer {
-            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return container
-        }
-
-        func loadEmbedder(
-            ref: ModelRef,
-            slot: ModelSlot,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedEmbeddingContainer {
-            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return StubEmbeddingContainer(dimension: dimension)
-        }
-
-        func preload(container: any LoadedModelContainer) async throws {}
-    }
-
     // MARK: - Fixtures
 
-    private static let configJSON = Data("""
-        {
-            "num_hidden_layers": 2,
-            "num_attention_heads": 8,
-            "num_key_value_heads": 2,
-            "head_dim": 16,
-            "hidden_size": 128
-        }
-        """.utf8)
+    /// The suite's temp-directory prefix, handed to
+    /// ``RouterTestFixtures/makeTempDir(prefix:)``.
+    private static let tempDirPrefix = "RoutedSessionToolContextBindingTests"
 
-    private static let treeJSON = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
-
-    private static var rawMetadata: RawRepoMetadata {
-        RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
-    }
-
-    private static let profile = ProfileDefinition(
-        name: "coding",
-        description: "test profile",
-        standard: ["org/std-a"],
-        flash: ["org/flash-a"],
-        embedding: ["org/emb-a"]
-    )
-
-    private static let stubDimension = 8
-
-    private static func makeTempDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "RoutedSessionToolContextBindingTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+    /// Builds a fresh router + resolved profile + vended session over a
+    /// ``ContextProbingBackend`` — guided by `grammar` when supplied.
+    private static func makeSession(grammar: Grammar? = nil) async throws -> (
+        session: RoutedSession, backend: ContextProbingBackend, dir: URL
+    ) {
+        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        let container = ProbingLLMContainer()
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: dir,
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+        )
+        let profile = try await router.resolve(
+            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+        let session =
+            if let grammar {
+                profile.standard.makeGuidedSession(grammar: grammar)
+            } else {
+                profile.standard.makeSession()
+            }
+        let backend = try #require(container.lastBackend)
+        return (session, backend, dir)
     }
 
     /// Builds a fresh router + resolved profile + vended session over a
-    /// ``ContextProbingBackend``.
-    private static func makeSession() async throws -> (
-        session: RoutedSession, backend: ContextProbingBackend, dir: URL
+    /// ``CancellationObservingBackend``.
+    private static func makeCancellationObservingSession() async throws -> (
+        session: RoutedSession, backend: CancellationObservingBackend, dir: URL
     ) {
-        let dir = makeTempDir()
-        let container = ProbingLLMContainer()
-        let router = Router(
+        let dir = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
+        let container = CancellationObservingLLMContainer()
+        let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
-            recorder: InMemoryRecorder(),
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
-            metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: StubModelLoader(container: container, dimension: stubDimension)
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let profile = try await router.resolve(
+            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         let session = profile.standard.makeSession()
         let backend = try #require(container.lastBackend)
         return (session, backend, dir)
@@ -311,6 +350,28 @@ struct RoutedSessionToolContextBindingTests {
         #expect(posted.detail == "from inside respond")
         #expect(posted.tool == "session")
         #expect(posted.op == "respond")
+        #expect(posted.correlationID == capture.completionToken)
+    }
+
+    @Test("grammar-guided respond binds the same ambient context around the backend's guided call")
+    @MainActor
+    func grammarRespondBindsToolContext() async throws {
+        let (session, backend, dir) = try await Self.makeSession(
+            grammar: .ebnf("root ::= \"yes\" | \"no\""))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await session.respond(to: "hello")
+
+        let capture = try #require(backend.grammarRespondCaptures.first ?? nil)
+        #expect(capture.sessionID == session.id)
+        #expect(!capture.isCancelled)
+
+        // The guided entry point's posted event landed in this session's
+        // own outbox with the turn binding's per-turn completionToken.
+        let pending = await session.outbox.pending()
+        let posted = try #require(pending.events.first?.event)
+        #expect(posted.kind == .progress)
+        #expect(posted.detail == "from inside grammar respond")
         #expect(posted.correlationID == capture.completionToken)
     }
 
@@ -344,19 +405,8 @@ struct RoutedSessionToolContextBindingTests {
     @Test("cancelling the turn flips the binding's isCancelled probe to true — it mirrors the model-call task, never a constant")
     @MainActor
     func cancellingTheTurnFlipsTheBoundProbe() async throws {
-        let dir = Self.makeTempDir()
+        let (session, backend, dir) = try await Self.makeCancellationObservingSession()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let container = CancellationObservingLLMContainer()
-        let router = Router(
-            cacheDir: dir,
-            recorder: InMemoryRecorder(),
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
-            metadataSource: StubMetadataSource(raw: Self.rawMetadata),
-            loader: StubModelLoader(container: container, dimension: Self.stubDimension)
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        let session = profile.standard.makeSession()
-        let backend = try #require(container.lastBackend)
 
         let turn = Task { try await session.respond(to: "poll the flag") }
         for _ in 0..<600 {
@@ -368,5 +418,31 @@ struct RoutedSessionToolContextBindingTests {
         _ = try? await turn.value
 
         #expect(backend.observedCancellation)
+    }
+
+    @Test("cancelling a streaming turn flips the bound probe observed on the streaming path too")
+    @MainActor
+    func cancellingAStreamingTurnFlipsTheBoundProbe() async throws {
+        let (session, backend, dir) = try await Self.makeCancellationObservingSession()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let turn = Task {
+            for try await _ in await session.streamResponse(to: "poll the flag") {}
+        }
+        for _ in 0..<600 {
+            if backend.streamStarted { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(backend.streamStarted)
+        await session.cancelCurrentTurn()
+        _ = try? await turn.value
+
+        // The polling loop runs in the stream's own production task, which
+        // outlives the cancelled turn briefly — wait for its observation.
+        for _ in 0..<600 {
+            if backend.observedStreamCancellation { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(backend.observedStreamCancellation)
     }
 }

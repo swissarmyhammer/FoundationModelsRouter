@@ -184,51 +184,30 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let sessionId = ULID.generate()
         let recordingDirectory = self.recordingDirectory(forSessionId: sessionId, recordingRoot: recordingRoot)
 
-        // Pure per-session instancing, before the backend is ever built:
-        // every `EventEmittingTool` among `tools` is replaced by a
-        // `connecting(_:)` copy wired to a brand-new outbox, never mutating
-        // `tools` itself — a non-conforming tool simply fails the cast and
-        // passes through unchanged. This is what makes "implementing
+        // Pure per-session instancing, before the backend is ever built —
+        // see ``instanceToolsWithElevation(_:sessionID:outbox:mailbox:cappedToTokenLimit:)``
+        // for the connect → elevate → cap chain this site applies (task
+        // ^k4nygqa; the fork and restore sites each have their own
+        // deliberately distinct chain — see
+        // ``RoutedSessionActor/fork(workingDirectory:)`` and
+        // `restoreSessionTree`). This is what makes "implementing
         // `EventEmittingTool` IS the subscription" hold with no explicit
         // wiring call anywhere: nobody has to remember to connect a tool
         // separately, and — because this runs before `container.makeSession`
         // below — the model-facing tool list the backend actually receives
         // is these sink-bound copies, not the originals.
-        //
-        // This site's chain is connect → elevate → cap (task ^k4nygqa; the
-        // fork and restore sites each have their own deliberately distinct
-        // chain — see ``RoutedSessionActor/fork(workingDirectory:)`` and
-        // `restoreSessionTree`):
-        //
-        // - ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
-        //   mounts the elevation engine around the connected copy
-        //   (eventplan.md § "Elevation": the native mount, elevation on,
-        //   `waitSeconds` default 5 s), parking a slow call in this
-        //   session's own `mailbox` and posting its events to `outbox`.
-        // - When `budget.toolOutputLimit` is set, ``ToolOutputCapping/optionallyCapped(_:toTokenLimit:)``
-        //   wraps the elevated tool outermost (task 1334fk3): the SDK's own
-        //   call reaches the capped decorator last, so both continued
-        //   generation and the recorded `.toolOutput` entry see the capped
-        //   text, never the oversized original. Capping outside elevation
-        //   is safe: a rendered pending envelope is exempt from capping
-        //   (see ``TokenCappingTool/call(arguments:)``), so the
-        //   `completionToken` survives any configured limit.
         let outbox = SessionOutbox()
         // The mailbox shares the outbox's scope rule: fresh per session,
         // never shared, so parked runs and pending elicitations never
         // migrate between sessions (see ``RoutedSession/mailbox``).
         let mailbox = SessionMailbox()
-        let instancedTools = tools.map { tool -> any Tool in
-            let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
-            let elevated = ToolElevation.wrapping(
-                connected,
-                sessionID: sessionId,
-                mailbox: mailbox,
-                sink: outbox,
-                configuration: .nativeSessionMount
-            )
-            return ToolOutputCapping.optionallyCapped(elevated, toTokenLimit: budget?.toolOutputLimit)
-        }
+        let instancedTools = instanceToolsWithElevation(
+            tools,
+            sessionID: sessionId,
+            outbox: outbox,
+            mailbox: mailbox,
+            cappedToTokenLimit: budget?.toolOutputLimit
+        )
 
         // The container is only a factory: it manufactures the backend the
         // vended session owns and drives for its whole lifetime, born already
@@ -283,6 +262,68 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             autoCompactionPrompt: compactionPrompt,
             agentSpawn: agentSpawn
         )
+    }
+
+    /// Instances `tools` for one session: each tool is connected to the
+    /// session's own outbox, wrapped in the elevation engine, and — only when
+    /// `tokenLimit` is set — capped outermost.
+    ///
+    /// The shared connect → elevate → optional-cap pipeline behind two of
+    /// task ^k4nygqa's three composition sites: the root site
+    /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``,
+    /// connect → elevate → cap) and the restore site (`restoreSessionTree`,
+    /// connect → elevate — it passes a `nil` `tokenLimit`, so no capping
+    /// layer is ever added). The fork site composes its own chain because it
+    /// forks each tool before connecting it (see
+    /// ``RoutedSessionActor/fork(workingDirectory:)``).
+    ///
+    /// Per tool, in order:
+    ///
+    /// - An `EventEmittingTool` is replaced by a pure `connecting(_:)` copy
+    ///   wired to `outbox`, never mutating the original — a non-conforming
+    ///   tool simply fails the cast and passes through unchanged.
+    /// - ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
+    ///   mounts the elevation engine around the connected copy
+    ///   (eventplan.md § "Elevation": the native mount, elevation on,
+    ///   `waitSeconds` default 5 s), parking a slow call in the session's
+    ///   own `mailbox` and posting its events to `outbox`.
+    /// - When `tokenLimit` is set, ``ToolOutputCapping/optionallyCapped(_:toTokenLimit:)``
+    ///   wraps the elevated tool outermost (task 1334fk3): the SDK's own
+    ///   call reaches the capped decorator last, so both continued
+    ///   generation and the recorded `.toolOutput` entry see the capped
+    ///   text, never the oversized original. Capping outside elevation is
+    ///   safe: a rendered pending envelope is exempt from capping (see
+    ///   ``TokenCappingTool/call(arguments:)``), so the `completionToken`
+    ///   survives any configured limit.
+    ///
+    /// - Parameters:
+    ///   - tools: The caller's original tools, never mutated.
+    ///   - sessionID: The owning session's identity, stamped into each
+    ///     elevated run's ``ToolContext``.
+    ///   - outbox: The session's own outbox — both the `connecting(_:)` sink
+    ///     and the elevation engine's upstream sink.
+    ///   - mailbox: The session's own mailbox, where elevated runs park.
+    ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap rendered
+    ///     output to, or `nil` for no capping layer.
+    /// - Returns: The instanced, model-facing tool list.
+    func instanceToolsWithElevation(
+        _ tools: [any Tool],
+        sessionID: ULID,
+        outbox: SessionOutbox,
+        mailbox: SessionMailbox,
+        cappedToTokenLimit tokenLimit: Int?
+    ) -> [any Tool] {
+        tools.map { tool -> any Tool in
+            let connected = (tool as? any EventEmittingTool)?.connecting(outbox) ?? tool
+            let elevated = ToolElevation.wrapping(
+                connected,
+                sessionID: sessionID,
+                mailbox: mailbox,
+                sink: outbox,
+                configuration: .nativeSessionMount
+            )
+            return ToolOutputCapping.optionallyCapped(elevated, toTokenLimit: tokenLimit)
+        }
     }
 
     /// The recording directory a fresh session/handle with `sessionId` nests

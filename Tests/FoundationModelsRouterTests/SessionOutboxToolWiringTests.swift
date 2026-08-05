@@ -157,13 +157,6 @@ struct SessionOutboxToolWiringTests {
         }
     }
 
-    /// Peels the elevation layer every composition site wraps around a
-    /// String-output tool, returning the inner (connected) tool — or `nil`
-    /// when `tool` is not the expected ``ElevatingTool``.
-    private static func elevationWrapped(_ tool: (any Tool)?) -> (any Tool)? {
-        (tool as? ElevatingTool<FakeToolArguments>)?.wrapped
-    }
-
     private static func event(correlationID: String = "c1", detail: String = "done") -> OperationEvent {
         OperationEvent(tool: "fake-emitter", op: "run thing", correlationID: correlationID, kind: .completed, detail: detail)
     }
@@ -279,6 +272,13 @@ struct SessionOutboxToolWiringTests {
 
     /// Vends one retained ``ToolInvokingBackend`` per session, handing it
     /// the composed tool list makeSession threaded through.
+    /// `@unchecked Sendable` invariant: `lastBackend` is written once,
+    /// synchronously, inside `makeSession(instructions:tools:)` — itself
+    /// called synchronously from `RoutedModel.makeSession` on the vending
+    /// thread — and read only by the `@MainActor` test method after that
+    /// vend returns, so the write and every read happen on the same
+    /// thread, never concurrently (the same invariant
+    /// ``ToolCapturingLLMContainer`` documents).
     private final class ToolInvokingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         private(set) var lastBackend: ToolInvokingBackend?
 
@@ -375,6 +375,16 @@ struct SessionOutboxToolWiringTests {
 
     private static let stubDimension = 8
 
+    /// The budget the capping-layer tests vend sessions with: an ample
+    /// context limit and a deliberately tiny `toolOutputLimit`, so the cap
+    /// layer is present and easy to trip.
+    private static let budgetWithSmallToolOutputCap = TokenBudget(limit: 4096, toolOutputLimit: 5)
+
+    /// How long a test waits for a parked run to settle before giving up —
+    /// generous, because the gate is opened first and the wait only has to
+    /// observe an already-finishing run.
+    private static let mailboxWaitTimeoutSeconds: Double = 30
+
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionOutboxToolWiringTests-\(UUID().uuidString)", isDirectory: true)
@@ -382,10 +392,12 @@ struct SessionOutboxToolWiringTests {
         return dir
     }
 
-    private static func makeRouter(container: any LoadedLLMContainer, cacheDir: URL) -> Router {
+    private static func makeRouter(
+        container: any LoadedLLMContainer, cacheDir: URL, recorder: any TranscriptRecorder = InMemoryRecorder()
+    ) -> Router {
         Router(
             cacheDir: cacheDir,
-            recorder: InMemoryRecorder(),
+            recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(container: container, dimension: stubDimension)
@@ -411,7 +423,7 @@ struct SessionOutboxToolWiringTests {
         #expect(container.lastTools.count == 2)
         // Every String-output tool arrives wrapped in the elevation layer;
         // the shape assertion peels it to reach the threaded originals.
-        let innerTools = container.lastTools.compactMap(Self.elevationWrapped)
+        let innerTools = container.lastTools.compactMap(elevationWrapped)
         #expect(innerTools.contains { $0 is FakeEmittingTool })
         #expect(innerTools.contains { $0 is PlainTool })
     }
@@ -429,7 +441,7 @@ struct SessionOutboxToolWiringTests {
         let emitter = FakeEmittingTool()
         let session = profile.standard.makeSession(tools: [emitter])
 
-        guard let instancedEmitter = Self.elevationWrapped(container.lastTools.first) as? FakeEmittingTool else {
+        guard let instancedEmitter = elevationWrapped(container.lastTools.first) as? FakeEmittingTool else {
             Issue.record("expected the container to receive a FakeEmittingTool")
             return
         }
@@ -467,7 +479,7 @@ struct SessionOutboxToolWiringTests {
 
         // No call to `connecting(...)` appears anywhere in this test —
         // `makeSession(tools:)` itself must have wired it during construction.
-        guard let instancedEmitter = Self.elevationWrapped(container.lastTools.first) as? FakeEmittingTool else {
+        guard let instancedEmitter = elevationWrapped(container.lastTools.first) as? FakeEmittingTool else {
             Issue.record("expected the container to receive a FakeEmittingTool")
             return
         }
@@ -491,7 +503,7 @@ struct SessionOutboxToolWiringTests {
         let plain = PlainTool()
         let session = profile.standard.makeSession(tools: [plain, emitter])
 
-        let mixedInnerTools = container.lastTools.compactMap(Self.elevationWrapped)
+        let mixedInnerTools = container.lastTools.compactMap(elevationWrapped)
         guard let instancedEmitter = mixedInnerTools.first(where: { $0 is FakeEmittingTool }) as? FakeEmittingTool,
             let instancedPlain = mixedInnerTools.first(where: { $0 is PlainTool }) as? PlainTool
         else {
@@ -561,8 +573,8 @@ struct SessionOutboxToolWiringTests {
 
         guard let parentActor = session as? RoutedSessionActor,
             let childActor = child as? RoutedSessionActor,
-            let parentInstance = Self.elevationWrapped(parentActor.tools.first) as? FakeEmittingTool,
-            let childInstance = Self.elevationWrapped(childActor.tools.first) as? FakeEmittingTool
+            let parentInstance = elevationWrapped(parentActor.tools.first) as? FakeEmittingTool,
+            let childInstance = elevationWrapped(childActor.tools.first) as? FakeEmittingTool
         else {
             Issue.record("expected both the parent and the fork to expose their own instanced FakeEmittingTool")
             return
@@ -599,7 +611,7 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [emitter])
 
         guard let parentActor = session as? RoutedSessionActor,
-            let capturedInstance = Self.elevationWrapped(parentActor.tools.first) as? FakeEmittingTool
+            let capturedInstance = elevationWrapped(parentActor.tools.first) as? FakeEmittingTool
         else {
             Issue.record("expected the parent session to expose its own instanced FakeEmittingTool")
             return
@@ -638,8 +650,8 @@ struct SessionOutboxToolWiringTests {
             return
         }
 
-        let parentInnerTools = parentActor.tools.compactMap(Self.elevationWrapped)
-        let childInnerTools = childActor.tools.compactMap(Self.elevationWrapped)
+        let parentInnerTools = parentActor.tools.compactMap(elevationWrapped)
+        let childInnerTools = childActor.tools.compactMap(elevationWrapped)
         guard let parentForkable = parentInnerTools.first(where: { $0 is ForkableEmittingTool }) as? ForkableEmittingTool,
             let childForkable = childInnerTools.first(where: { $0 is ForkableEmittingTool }) as? ForkableEmittingTool
         else {
@@ -690,7 +702,7 @@ struct SessionOutboxToolWiringTests {
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childInstance = Self.elevationWrapped(childActor.tools.first) as? FakeEmittingTool
+            let childInstance = elevationWrapped(childActor.tools.first) as? FakeEmittingTool
         else {
             Issue.record("expected the fork to expose its own instanced FakeEmittingTool")
             return
@@ -702,7 +714,7 @@ struct SessionOutboxToolWiringTests {
         // is what actually reached the model-facing backend construction
         // seam, not just the fork's own actor-level bookkeeping array.
         #expect(rootBackend.lastForkTools.count == 1)
-        guard let forkedToolAtBackend = Self.elevationWrapped(rootBackend.lastForkTools.first) as? FakeEmittingTool else {
+        guard let forkedToolAtBackend = elevationWrapped(rootBackend.lastForkTools.first) as? FakeEmittingTool else {
             Issue.record("expected the backend's makeFork(tools:) to have received a FakeEmittingTool")
             return
         }
@@ -731,7 +743,7 @@ struct SessionOutboxToolWiringTests {
         let emitter = FakeEmittingTool()
         let session = profile.standard.makeSession(
             tools: [emitter],
-            budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
+            budget: Self.budgetWithSmallToolOutputCap
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments>,
@@ -790,7 +802,7 @@ struct SessionOutboxToolWiringTests {
         let forkable = ForkableEmittingTool()
         let session = profile.standard.makeSession(
             tools: [forkable],
-            budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
+            budget: Self.budgetWithSmallToolOutputCap
         )
         let child = try await session.fork(workingDirectory: nil)
 
@@ -810,6 +822,41 @@ struct SessionOutboxToolWiringTests {
         #expect(childPending.events.map(\.event.detail) == ["fork-chain-inner"])
     }
 
+    @Test("fork without a budget composes fork → connect → elevate: elevation outermost, no capping layer")
+    @MainActor
+    func forkWithoutBudgetComposesConnectElevate() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = ToolCapturingLLMContainer()
+        let router = Self.makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let forkable = ForkableEmittingTool()
+        let session = profile.standard.makeSession(tools: [forkable])
+        let child = try await session.fork(workingDirectory: nil)
+
+        guard let childActor = child as? RoutedSessionActor else {
+            Issue.record("expected the fork to be a RoutedSessionActor")
+            return
+        }
+        #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
+        guard let elevating = childActor.tools.first as? ElevatingTool<FakeToolArguments>,
+            let forkedConnected = elevating.wrapped as? ForkableEmittingTool
+        else {
+            Issue.record("expected elevate(connect(forked(tool))) in the fork's tool list")
+            return
+        }
+        // `forked()` ran before `connecting(_:)`: the innermost instance is
+        // the next generation, wired to the child's own outbox — the same
+        // fork → connect order as the with-budget case, just with no cap
+        // layer anywhere in the chain.
+        #expect(forkedConnected.generation == 1)
+        await forkedConnected.postEvent(Self.event(detail: "uncapped-fork-chain-inner"))
+        let childPending = await child.outbox.pending()
+        #expect(childPending.events.map(\.event.detail) == ["uncapped-fork-chain-inner"])
+    }
+
     // MARK: - Elevation behavior through a session's composed tool list
 
     @Test(
@@ -822,13 +869,7 @@ struct SessionOutboxToolWiringTests {
 
         let container = ToolCapturingLLMContainer()
         let recorder = InMemoryRecorder()
-        let router = Router(
-            cacheDir: dir,
-            recorder: recorder,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
-            metadataSource: StubMetadataSource(raw: Self.rawMetadata),
-            loader: StubModelLoader(container: container, dimension: Self.stubDimension)
-        )
+        let router = Self.makeRouter(container: container, cacheDir: dir, recorder: recorder)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = ToolGate()
@@ -848,7 +889,7 @@ struct SessionOutboxToolWiringTests {
         // Let the parked run finish; its synthesized `.completed` funnels
         // into this session's own outbox.
         await gate.open()
-        _ = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: 30)
+        _ = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
         var pendingEvents: [OperationEvent] = []
         for _ in 0..<600 {
             pendingEvents = await session.outbox.pending().events.map(\.event)
@@ -911,7 +952,7 @@ struct SessionOutboxToolWiringTests {
 
         // Settle the parked run so no detached work outlives the test.
         await gate.open()
-        _ = await child.mailbox.wait(completionToken: envelope.completionToken, seconds: 30)
+        _ = await child.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
     }
 
     @Test("a pending envelope survives the outer capping layer intact, even under a cap smaller than the envelope itself")
@@ -931,7 +972,7 @@ struct SessionOutboxToolWiringTests {
         // must pass through untouched.
         let session = profile.standard.makeSession(
             tools: [GatedZeroWaitTool(gate: gate)],
-            budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
+            budget: Self.budgetWithSmallToolOutputCap
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments> else {
@@ -945,7 +986,7 @@ struct SessionOutboxToolWiringTests {
 
         // Settle the parked run so no detached work outlives the test.
         await gate.open()
-        _ = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: 30)
+        _ = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
     }
 
     @Test(
@@ -989,7 +1030,7 @@ struct SessionOutboxToolWiringTests {
         // The parked run outlived the cancelled turn un-cancelled: opening
         // the gate lets it settle as a normal success.
         await gate.open()
-        let settled = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: 30)
+        let settled = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
         guard case .settled(let terminal) = settled else {
             Issue.record("expected the parked run to settle after the gate opened, got \(settled)")
             return

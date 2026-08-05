@@ -75,24 +75,6 @@ struct AutoCompactionTests {
         }
     }
 
-    private struct StubEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension: Int
-        func embed(texts: [String]) async throws -> [[Float]] {
-            texts.map { _ in [Float](repeating: 0.5, count: dimension) }
-        }
-    }
-
-    private struct StubProbe: MachineProbe {
-        let chip: String
-        let totalRAM: Int64
-        let recommendedMaxWorkingSetSize: Int64
-    }
-
-    private struct StubMetadataSource: MetadataSource {
-        let raw: RawRepoMetadata
-        func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata { raw }
-    }
-
     /// Vends `standard` for the `.standard` slot and `flash` for the `.flash`
     /// slot, so a test can distinguish which slot's model auto-compaction
     /// actually asked to summarize.
@@ -125,27 +107,9 @@ struct AutoCompactionTests {
 
     // MARK: - Fixture content
 
-    private static let configJSON = Data("""
-        {
-            "num_hidden_layers": 2,
-            "num_attention_heads": 8,
-            "num_key_value_heads": 2,
-            "head_dim": 16,
-            "hidden_size": 128
-        }
-        """.utf8)
-
-    private static let treeJSON = Data("""
-        [
-            {"type": "file", "path": "model.safetensors", "size": 10000000}
-        ]
-        """.utf8)
-
-    private static var rawMetadata: RawRepoMetadata {
-        RawRepoMetadata(configJSON: configJSON, treeJSON: treeJSON)
-    }
-
-    private static let stubDimension = 8
+    /// The suite's temp-directory prefix, handed to
+    /// ``RouterTestFixtures/makeTempDir(prefix:)``.
+    private static let tempDirPrefix = "AutoCompactionTests"
 
     /// A long-ish canned response repeated across every warm-up turn, so a
     /// handful of turns' worth of transcript already carries a real,
@@ -194,34 +158,6 @@ struct AutoCompactionTests {
         return TokenBudget(limit: recencyOnly * 2, trigger: 0.8, target: 0.25)
     }()
 
-    private static func profile(context: Int) -> ProfileDefinition {
-        ProfileDefinition(
-            name: "coding",
-            description: "test profile",
-            standard: ["org/std-a"],
-            flash: ["org/flash-a"],
-            embedding: ["org/emb-a"],
-            context: context
-        )
-    }
-
-    private static func makeTempDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AutoCompactionTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private static func makeRouter(loader: PerSlotModelLoader, recorder: any TranscriptRecorder, cacheDir: URL) -> Router {
-        Router(
-            cacheDir: cacheDir,
-            recorder: recorder,
-            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
-            metadataSource: StubMetadataSource(raw: rawMetadata),
-            loader: loader
-        )
-    }
-
     /// Vends a `profile.standard` session with `budget` and drives
     /// ``turnCount`` warm-up turns whose per-turn measured usage escalates
     /// (30% of the profile's 100,000-token context on the last turn: 90%),
@@ -246,13 +182,13 @@ struct AutoCompactionTests {
         budget: TokenBudget?,
         tools: [any Tool] = []
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
-        let dir = Self.makeTempDir()
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recorder = InMemoryRecorder()
         let standardContainer = ConfiguredLLMContainer(responseText: Self.cannedText)
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
-        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: Self.stubDimension)
-        let router = Self.makeRouter(loader: loader, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
+        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
+        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
+        let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(tools: tools, budget: budget)
         let backend = try #require(standardContainer.lastBackend)
@@ -536,15 +472,15 @@ struct AutoCompactionTests {
     )
     @MainActor
     func reactiveRetryRecoversFromContextOverflowAutomatically() async throws {
-        let dir = Self.makeTempDir()
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recorder = InMemoryRecorder()
         let seedEntries = ScriptedOverflowBackend.seedEntries(turnCount: 6, responseText: Self.cannedText)
         let standardContainer = OverflowLLMContainer(
             responseText: "recovered", seedEntries: seedEntries, overflowsRemaining: 1)
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
-        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: Self.stubDimension)
-        let router = Self.makeRouter(loader: loader, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
+        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
+        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
+        let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
 
         // A budget whose trigger will never fire proactively (usage is
         // unmeasured — `usageTokenCounts()` always `nil` — so fill stays at
@@ -576,7 +512,7 @@ struct AutoCompactionTests {
     )
     @MainActor
     func reactiveRetrySurfacesAfterOneFailedRetry() async throws {
-        let dir = Self.makeTempDir()
+        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recorder = InMemoryRecorder()
         let seedEntries = ScriptedOverflowBackend.seedEntries(turnCount: 6, responseText: Self.cannedText)
         // Overflows on every call this test could plausibly make (initial +
@@ -585,9 +521,9 @@ struct AutoCompactionTests {
         let standardContainer = OverflowLLMContainer(
             responseText: "unreachable", seedEntries: seedEntries, overflowsRemaining: 1_000)
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
-        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: Self.stubDimension)
-        let router = Self.makeRouter(loader: loader, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
+        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
+        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
+        let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(budget: TokenBudget(limit: 100_000, target: 0.35))
 
@@ -654,7 +590,7 @@ struct AutoCompactionTests {
         }
         // contextFill's own denominator is always the session's resolved
         // `contextTokens` (100_000, per `makeTriggeredSession`'s own
-        // `router.resolve(profile: Self.profile(context: 100_000)...)`) —
+        // `router.resolve(profile: RouterTestFixtures.profile(context: 100_000)...)`) —
         // never `budget.limit`, which only sizes the compaction target.
         #expect(retryUsage == TokenUsage(tokensIn: 1_000, tokensOut: 0, contextFill: 1_000.0 / 100_000.0))
         // The context meter genuinely moved *during* this one logical turn,
@@ -668,7 +604,7 @@ struct AutoCompactionTests {
     @MainActor
     func hardCeilingStillExceededAfterRetrySurfacesError() async throws {
         // `limit: 100_000` matches the session's own resolved `contextTokens`
-        // (`makeTriggeredSession`'s `router.resolve(profile: Self.profile(context: 100_000)...)`),
+        // (`makeTriggeredSession`'s `router.resolve(profile: RouterTestFixtures.profile(context: 100_000)...)`),
         // and `target: 0.9` sits far above the tiny warm-up transcript's real
         // size, so every fold this budget drives — including the reactive
         // retry's own lowered-target fold — is a genuine no-op (nothing to

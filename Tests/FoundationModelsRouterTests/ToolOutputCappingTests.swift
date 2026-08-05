@@ -363,8 +363,10 @@ struct ToolOutputCappingTests {
             budget: TokenBudget(limit: 4096, toolOutputLimit: 5)
         )
 
-        guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments> else {
-            Issue.record("expected the container to receive a TokenCappingTool")
+        guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments>,
+            capping.wrapped is ElevatingTool<FakeToolArguments>
+        else {
+            Issue.record("expected the container to receive a TokenCappingTool wrapping an ElevatingTool")
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
@@ -465,9 +467,10 @@ struct ToolOutputCappingTests {
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let capping = childActor.tools.first as? TokenCappingTool<FakeToolArguments>
+            let capping = childActor.tools.first as? TokenCappingTool<FakeToolArguments>,
+            capping.wrapped is ElevatingTool<FakeToolArguments>
         else {
-            Issue.record("expected the fork's own tool list to contain a TokenCappingTool")
+            Issue.record("expected the fork's own tool list to contain a TokenCappingTool wrapping an ElevatingTool")
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))

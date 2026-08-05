@@ -73,13 +73,6 @@ struct SessionTreeRestorationToolWiringTests {
         OperationEvent(tool: "fake-emitter", op: "run thing", correlationID: correlationID, kind: .completed, detail: detail)
     }
 
-    /// Peels the elevation layer restoration wraps around a String-output
-    /// tool, returning the inner (connected) tool — or `nil` when `tool` is
-    /// not the expected ``ElevatingTool``.
-    private static func elevationWrapped(_ tool: (any Tool)?) -> (any Tool)? {
-        (tool as? ElevatingTool<FakeToolArguments>)?.wrapped
-    }
-
     // MARK: - Stub container capturing the threaded tool list per restored node
 
     /// A ``LoadedLLMContainer`` that records the `tools` most recently passed
@@ -248,7 +241,7 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(threaded.count == 2)
         // Every String-output tool arrives wrapped in the elevation layer;
         // the shape assertion peels it to reach the threaded originals.
-        let innerTools = threaded.compactMap(Self.elevationWrapped)
+        let innerTools = threaded.compactMap(elevationWrapped)
         #expect(innerTools.contains { $0 is FakeEmittingTool })
         #expect(innerTools.contains { $0 is PlainTool })
     }
@@ -277,7 +270,7 @@ struct SessionTreeRestorationToolWiringTests {
         let emitter = FakeEmittingTool()
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
 
-        guard let instancedEmitter = Self.elevationWrapped(container2.threadedToolsByCall.first?.first) as? FakeEmittingTool else {
+        guard let instancedEmitter = elevationWrapped(container2.threadedToolsByCall.first?.first) as? FakeEmittingTool else {
             Issue.record("expected the container to receive a FakeEmittingTool")
             return
         }
@@ -325,8 +318,8 @@ struct SessionTreeRestorationToolWiringTests {
 
         #expect(restored.root.outbox !== restoredFork.outbox)
 
-        guard let rootInstancedEmitter = Self.elevationWrapped(container2.threadedToolsByCall[0].first) as? FakeEmittingTool,
-            let forkInstancedEmitter = Self.elevationWrapped(container2.threadedToolsByCall[1].first) as? FakeEmittingTool
+        guard let rootInstancedEmitter = elevationWrapped(container2.threadedToolsByCall[0].first) as? FakeEmittingTool,
+            let forkInstancedEmitter = elevationWrapped(container2.threadedToolsByCall[1].first) as? FakeEmittingTool
         else {
             Issue.record("expected both restored nodes to receive an instanced FakeEmittingTool")
             return
@@ -399,7 +392,7 @@ struct SessionTreeRestorationToolWiringTests {
         let child = try await restored.root.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childInstance = Self.elevationWrapped(childActor.tools.first) as? FakeEmittingTool
+            let childInstance = elevationWrapped(childActor.tools.first) as? FakeEmittingTool
         else {
             Issue.record("expected the fork of a restored session to expose its own instanced FakeEmittingTool")
             return
