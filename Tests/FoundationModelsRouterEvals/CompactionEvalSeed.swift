@@ -35,11 +35,11 @@ struct CompactionEvalSeed: Sendable {
     /// Builds a seed from a hand-written fixture spec: one turn per fact
     /// (the probed fact's turn optionally delivered as a tool call/output
     /// pair instead of a plain reply — "tool traffic"), followed by
-    /// `spec.recentTurnCount` filler turns drawn from
+    /// the spec's `recentTurnCount` filler turns drawn from
     /// ``compactionEvalFillerTurns`` (cycled if a fixture asks for more
     /// filler turns than the pool has).
     ///
-    /// - Parameter spec: The fixture to build.
+    /// - Parameter from: The fixture to build.
     /// - Returns: The assembled seed.
     static func build(from spec: CompactionEvalFixtureSpec) -> CompactionEvalSeed {
         let instructions = Transcript.Entry.instructions(

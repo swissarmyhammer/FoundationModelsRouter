@@ -379,7 +379,7 @@ extension TranscriptEntryPayload {
         )
     }
 
-    /// Returns a copy with `transform` applied to every textual content site
+    /// Returns a copy with the redaction hook applied to every textual content site
     /// at ``RecordingLevel/full``: segment text/structure/custom content and
     /// custom descriptions (via ``SegmentPayload/redacted(with:)``) and
     /// tool-call arguments (via ``ToolCallPayload/redacted(with:)``).
@@ -393,11 +393,11 @@ extension TranscriptEntryPayload {
     ///
     /// Tool definitions, the response-format schema, the reasoning
     /// `signature`, and an attachment's `url` are declared/structural or
-    /// opaque-binary data, not user- or model-authored text, so `transform`
+    /// opaque-binary data, not user- or model-authored text, so the hook
     /// never touches them. ``contentRemoved`` is left as-is (`full` never
     /// strips).
     ///
-    /// - Parameter transform: The redaction hook applied to each content site.
+    /// - Parameter with: The redaction hook applied to each content site.
     /// - Returns: A copy with every textual content site redacted.
     func redacted(with transform: (String) -> String) -> TranscriptEntryPayload {
         TranscriptEntryPayload(
@@ -461,12 +461,12 @@ extension SegmentPayload {
         }
     }
 
-    /// Returns a copy with `transform` applied to this segment's textual
+    /// Returns a copy with the redaction hook applied to this segment's textual
     /// content sites: `.text`'s `content`, `.structure`'s `contentJSON` (as an
     /// opaque string), `.attachment`'s `label` (its `url` is untouched), and
     /// `.custom`'s `contentJSON` (as an opaque string) and `description`.
     ///
-    /// - Parameter transform: The redaction hook applied to each content site.
+    /// - Parameter with: The redaction hook applied to each content site.
     /// - Returns: A copy with this segment's textual content sites redacted.
     func redacted(with transform: (String) -> String) -> SegmentPayload {
         switch self {
@@ -506,10 +506,10 @@ extension ToolCallPayload {
         ToolCallPayload(id: id, toolName: toolName, argumentsJSON: "")
     }
 
-    /// Returns a copy with `transform` applied to `argumentsJSON` as an
+    /// Returns a copy with the redaction hook applied to `argumentsJSON` as an
     /// opaque string, keeping `id` and `toolName` untouched.
     ///
-    /// - Parameter transform: The redaction hook applied to `argumentsJSON`.
+    /// - Parameter with: The redaction hook applied to `argumentsJSON`.
     /// - Returns: A copy with `argumentsJSON` redacted.
     func redacted(with transform: (String) -> String) -> ToolCallPayload {
         ToolCallPayload(id: id, toolName: toolName, argumentsJSON: transform(argumentsJSON))

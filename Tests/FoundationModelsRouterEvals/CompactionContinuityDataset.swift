@@ -230,11 +230,11 @@ struct CompactionContinuitySeed: Sendable {
     let expectedMinimumRecordedEntries: Int
 
     /// Builds a seed from a hand-written fixture spec: one setup step per
-    /// fact, then `spec.fillerStepCount` filler steps drawn from
+    /// fact, then the spec's `fillerStepCount` filler steps drawn from
     /// ``compactionContinuityFillerSteps`` (cycled if a fixture asks for
     /// more filler steps than the pool has), then the final instruction.
     ///
-    /// - Parameter spec: The fixture to build.
+    /// - Parameter from: The fixture to build.
     /// - Returns: The assembled seed.
     static func build(from spec: CompactionContinuityTaskSpec) -> CompactionContinuitySeed {
         let factSteps = spec.facts

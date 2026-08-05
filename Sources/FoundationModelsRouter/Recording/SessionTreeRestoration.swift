@@ -93,8 +93,8 @@ public struct RestoredSessionTree: Sendable {
 
     /// A restored session's direct forks, ordered by id (creation order).
     ///
-    /// - Parameter id: The parent session's span id.
-    /// - Returns: Its restored children, or an empty array if `id` is
+    /// - Parameter of: The parent session's span id.
+    /// - Returns: Its restored children, or an empty array if the id is
     ///   unknown or a leaf.
     public func children(of id: ULID) -> [RoutedSession] {
         tree.children(of: id).compactMap { sessionsById[$0.id] }
@@ -184,7 +184,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// ``TranscriptTree/lostRunTerminalEvents(in:)``.
     ///
     /// - Parameters:
-    ///   - rootId: The root session's span id to restore the whole tree from.
+    ///   - root: The root session's span id to restore the whole tree from.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
     ///     `.custom` segment anywhere in the tree's recorded transcripts may
     ///     need to rebuild. Defaults to ``CustomSegmentRegistry/routerDefault``
@@ -226,7 +226,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// rehydrate it from. A caller that wants the restored tree to keep
     /// managing its own window calls ``RoutedSession/compact(prompt:budget:)``
     /// manually, or re-opts-in on a fresh fork from the restored root.
-    /// - Returns: The restored tree, rooted at the session named by `rootId`.
+    /// - Returns: The restored tree, rooted at the session named by `root`.
     /// - Throws: ``SessionTreeRestorationError`` for every documented
     ///   restoration-specific failure; ``TranscriptTreeError`` /
     ///   ``TranscriptReconstructionError`` for anything
@@ -455,7 +455,7 @@ extension TranscriptTree {
     }
 
     /// The terminal `.completed`/``OperationOutcome/lost`` events a restore
-    /// must manufacture for `events`' orphaned journaled runs — the crash
+    /// must manufacture for the given events' orphaned journaled runs — the crash
     /// edge of run-outcome durability (the orderly-shutdown edge is
     /// ``RoutedSessionActor/close()``'s ``SessionMailbox/sweep()``).
     ///
@@ -483,7 +483,7 @@ extension TranscriptTree {
     /// (``RecordingLevel/metadataOnly``) is skipped rather than guessed at —
     /// the same nil-not-throw stance `compactionSegmentContent(in:)` takes.
     ///
-    /// - Parameter events: A session's effective recorded events, in order
+    /// - Parameter in: A session's effective recorded events, in order
     ///   (as ``effectiveEntryEvents(forSession:)`` returns them).
     /// - Returns: The manufactured terminal events, or empty when every
     ///   journaled run completed.

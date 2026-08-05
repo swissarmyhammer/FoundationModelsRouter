@@ -11,10 +11,10 @@ import Synchronization
 /// falls back to that configuration; a tool that does not conform always
 /// uses it.
 public protocol ElevationParameterProviding {
-    /// Returns the per-call clocks encoded in `arguments`, or `nil` fields
+    /// Returns the per-call clocks encoded in the call's arguments, or `nil` fields
     /// for whichever the call does not supply.
     ///
-    /// - Parameter arguments: The call's arguments as opaque
+    /// - Parameter from: The call's arguments as opaque
     ///   `GeneratedContent` — the same content the tool's typed `Arguments`
     ///   were decoded from.
     /// - Returns: The per-call `waitSeconds` and `timeout`, each `nil` to
@@ -246,10 +246,10 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// Whether the schema is included in the tool's instructions.
     public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
-    /// Wraps `wrapped` in the elevation engine.
+    /// Wraps the given tool in the elevation engine.
     ///
     /// - Parameters:
-    ///   - wrapped: The tool to decorate.
+    ///   - wrapping: The tool to decorate.
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the run's events are posted to.
@@ -711,10 +711,10 @@ public struct ContextBindingTool<
     /// Whether the schema is included in the tool's instructions.
     public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
-    /// Wraps `wrapped` in the binding-only decorator.
+    /// Wraps the given tool in the binding-only decorator.
     ///
     /// - Parameters:
-    ///   - wrapped: The tool to decorate.
+    ///   - wrapping: The tool to decorate.
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the bound context posts events to.
@@ -864,11 +864,11 @@ private final class RaceGate<Value: Sendable>: Sendable {
         }
     }
 
-    /// Resolves the race with `value`: resumes the registered continuation,
+    /// Resolves the race with the given value: resumes the registered continuation,
     /// records the value for a registration still to come, or no-ops when
     /// the race is already resolved.
     ///
-    /// - Parameter value: The competitor's value.
+    /// - Parameter with: The competitor's value.
     func resume(with value: Value) {
         let continuation: CheckedContinuation<Value, Never>? = state.withLock { current in
             switch current {
@@ -995,7 +995,7 @@ private actor RunEventFunnel: OperationEventSink {
     /// Marks the run elevated and, iff it has posted nothing yet, delivers
     /// the one synthesized progress event.
     ///
-    /// - Parameter progress: The synthesized progress to deliver when the
+    /// - Parameter postingIfSilent: The synthesized progress to deliver when the
     ///   run has been silent.
     /// - Returns: `true` when the run is (now) elevated; `false` when it
     ///   already settled — the caller returns the in-band result instead
@@ -1014,13 +1014,13 @@ private actor RunEventFunnel: OperationEventSink {
     }
 
     /// Records the run's settlement and applies the terminal-scoped
-    /// synthesis rule: deliver `terminal` upstream iff no terminal has
+    /// synthesis rule: deliver the terminal event upstream iff no terminal has
     /// passed yet **and** the run either elevated, posted any event of its
     /// own, or ended abnormally. A silent, successful, in-band run posts
     /// nothing at all — the `OperationEventKind` contract's "may post
     /// nothing" case.
     ///
-    /// - Parameter terminal: The engine's synthesized terminal event.
+    /// - Parameter with: The engine's synthesized terminal event.
     func settleRun(with terminal: OperationEvent) async {
         let wasElevated: Bool =
             if case .elevated = phase { true } else { false }

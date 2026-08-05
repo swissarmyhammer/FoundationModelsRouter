@@ -75,7 +75,7 @@ public enum TranscriptEntryMapper {
     /// `GenerationSchema` or `GeneratedContent` the SDK produced, or a
     /// `CustomSegment.Content` the protocol guarantees is `Encodable`).
     ///
-    /// - Parameter entry: The real transcript entry to persist.
+    /// - Parameter from: The real transcript entry to persist.
     /// - Returns: The event ``TranscriptEvent/Kind`` this entry mirrors, its
     ///   structural payload, and the flattened text — the joined content of
     ///   every `.text` segment the entry carries, or `nil` for an entry kind
@@ -158,15 +158,15 @@ public enum TranscriptEntryMapper {
     /// Rebuilds a real transcript entry from its on-disk payload.
     ///
     /// - Parameters:
-    ///   - payload: The structural payload to rebuild from.
+    ///   - from: The structural payload to rebuild from.
     ///   - kind: Which of the six `Transcript.Entry` cases to rebuild.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
-    ///     `.custom` segment in `payload` may need to rebuild. Defaults to an
+    ///     `.custom` segment in the payload may need to rebuild. Defaults to an
     ///     empty registry, so any `.custom` segment throws
     ///     ``TranscriptEntryReconstructionError/unregisteredCustomSegmentType(discriminator:)``
     ///     unless the caller supplies one.
     /// - Returns: The rebuilt entry.
-    /// - Throws: ``TranscriptEntryReconstructionError`` when `payload` cannot
+    /// - Throws: ``TranscriptEntryReconstructionError`` when the payload cannot
     ///   be honestly rebuilt — stripped content, a missing required field,
     ///   undecodable JSON, or an unregistered custom-segment discriminator.
     public static func entry(

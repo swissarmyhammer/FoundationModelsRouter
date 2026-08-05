@@ -749,7 +749,7 @@ struct TurnCancellationTests {
     /// when the helper exists to avoid hanging.
     ///
     /// - Parameters:
-    ///   - session: The session to run one more turn on.
+    ///   - on: The session to run one more turn on.
     ///   - observer: The observer that turn's model call reports to.
     ///   - prompt: That turn's prompt.
     /// - Returns: The turn's events in order, or `nil` when it never ran or failed.
@@ -833,10 +833,10 @@ struct TurnCancellationTests {
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose hook to install into.
-    ///   - parksOn: Whether the model call carrying this prompt is the one to
+    ///   - parkingOn: Whether the model call carrying this prompt is the one to
     ///     park. Every call it rejects runs straight through, so one hook serves a
     ///     whole test: an ordinary turn's prompt (see
-    ///     ``parkInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``) or
+    ///     ``parkInsideCancellationAwareTool(_:parkingOn:insideTool:humanWait:)``) or
     ///     a fold's own summarizer call (see ``isSummarizerCall``).
     ///   - insideTool: Signalled once the turn is provably suspended inside the
     ///     tool call, so a test cancels at a known point rather than racing to

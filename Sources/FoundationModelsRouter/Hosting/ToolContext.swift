@@ -112,7 +112,7 @@ public struct ToolContext: Sendable {
     /// `OperationEvent.tool`/`.op` fields regardless of the conformer.
     ///
     /// - Parameters:
-    ///   - tool: The plain wrapped tool whose `name` (or, when that is
+    ///   - stamping: The plain wrapped tool whose `name` (or, when that is
     ///     empty, whose type name) stamps both identity fields.
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.

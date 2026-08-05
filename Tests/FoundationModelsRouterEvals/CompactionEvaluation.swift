@@ -184,16 +184,16 @@ struct CompactionEvaluation: Evaluation {
     }
 
     /// The `Evaluation` protocol's per-sample subject work: looks the full
-    /// seed back up by `sample.expected.seedID`, runs ``runSubject`` to
+    /// seed back up by the sample's `expected.seedID`, runs ``runSubject`` to
     /// compact its entries, resume a session over the result, and ask its
     /// question, then wraps the produced answer and token counts in a
     /// ``Subject``.
     ///
-    /// - Parameter sample: The sample to produce a subject result for.
+    /// - Parameter from: The sample to produce a subject result for.
     /// - Returns: The subject carrying the produced answer, token counts, and
     ///   applied compaction stages.
     /// - Throws: ``CompactionEvaluationError/missingExpectedValue`` if
-    ///   `sample` carries no `expected` value, or
+    ///   the sample carries no `expected` value, or
     ///   ``CompactionEvaluationError/unknownSeed(_:)`` if `expected.seedID`
     ///   matches no seed this evaluation was constructed with.
     func subject(from sample: Sample) async throws -> Subject {
@@ -269,7 +269,7 @@ struct CompactionEvaluation: Evaluation {
     /// `Faithfulness`, and `Continuability` — for mean aggregation, as the
     /// `Evaluation` protocol requires.
     ///
-    /// - Parameter aggregator: The aggregator to register the four metrics
+    /// - Parameter using: The aggregator to register the four metrics
     ///   with.
     func aggregateMetrics(using aggregator: inout MetricsAggregator) {
         aggregator.computeMean(of: CompactionEvalMetric.factRetention)

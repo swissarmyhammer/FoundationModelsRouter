@@ -311,8 +311,8 @@ public actor Router {
     /// consistent snapshot of the pool.
     ///
     /// - Parameters:
-    ///   - def: The authored profile to resolve.
-    ///   - progress: The UI-bindable progress to drive (mutated on the main actor).
+    ///   - profile: The authored profile to resolve.
+    ///   - reporting: The UI-bindable progress to drive (mutated on the main actor).
     /// - Returns: The resolved, resident profile.
     /// - Throws: ``ResolutionFailure`` when no trio co-fits the effective
     ///   budget, or any download/load error from the ``ModelLoader``.
@@ -782,7 +782,7 @@ public actor Router {
     /// one body and differ only in the closure passed in.
     ///
     /// - Parameters:
-    ///   - chosen: The chosen model reference.
+    ///   - ref: The chosen model reference.
     ///   - slot: The slot the model is being loaded for.
     ///   - progress: The progress to mark downloading before loading.
     ///   - load: The loader call producing the resident container, invoked with

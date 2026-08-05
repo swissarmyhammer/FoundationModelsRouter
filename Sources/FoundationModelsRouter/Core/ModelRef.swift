@@ -58,7 +58,7 @@ public struct ModelRef: Sendable, Hashable, ExpressibleByStringLiteral, Codable 
     /// Parses a model reference from a string literal, enabling bare literals
     /// such as `let ref: ModelRef = "org/repo@rev"`.
     ///
-    /// - Parameter value: The string literal to parse.
+    /// - Parameter stringLiteral: The string literal to parse.
     public init(stringLiteral value: String) {
         self.init(value)
     }

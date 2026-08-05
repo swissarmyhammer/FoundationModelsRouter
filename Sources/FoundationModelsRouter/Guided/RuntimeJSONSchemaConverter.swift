@@ -83,11 +83,11 @@ import Foundation
         /// into `properties`/`items` for objects/arrays.
         ///
         /// - Parameters:
-        ///   - name: The node's name (a property key, `rootName`, or a synthesized
+        ///   - named: The node's name (a property key, `rootName`, or a synthesized
         ///     `"<name>Item"` for an array's element schema) — `DynamicGenerationSchema`
         ///     requires every named node to carry one.
         ///   - path: A dotted path to this node, for error messages only.
-        ///   - schema: The parsed JSON Schema node.
+        ///   - from: The parsed JSON Schema node.
         private static func node(
             named name: String,
             path: String,
@@ -161,10 +161,10 @@ import Foundation
         /// produce a looser schema than requested.
         ///
         /// - Parameters:
-        ///   - schema: The parsed JSON Schema node to check.
+        ///   - on: The parsed JSON Schema node to check.
         ///   - path: The node's dotted path, for the thrown error.
-        /// - Throws: ``ConversionError/unsupportedNode(_:)`` if `schema` carries an
-        ///   `enum` key.
+        /// - Throws: ``ConversionError/unsupportedNode(_:)`` if the schema node
+        ///   carries an `enum` key.
         private static func rejectUnsupportedEnum(on schema: [String: Any], path: String) throws {
             guard schema["enum"] != nil else { return }
             throw ConversionError.unsupportedNode("\(path).enum")

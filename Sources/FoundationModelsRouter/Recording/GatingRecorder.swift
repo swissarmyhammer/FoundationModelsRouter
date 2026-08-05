@@ -44,12 +44,12 @@ public struct GatingRecorder: TranscriptRecorder {
     /// The sink each gated event is forwarded to.
     private let inner: any TranscriptRecorder
 
-    /// Creates a gating recorder wrapping `inner`.
+    /// Creates a gating recorder wrapping the given sink.
     ///
     /// - Parameters:
     ///   - level: How much of each event to record.
     ///   - redact: The redaction hook for body text, or `nil` to record verbatim.
-    ///   - inner: The sink each gated event is forwarded to.
+    ///   - wrapping: The sink each gated event is forwarded to.
     public init(
         level: RecordingLevel,
         redact: (@Sendable (String) -> String)?,

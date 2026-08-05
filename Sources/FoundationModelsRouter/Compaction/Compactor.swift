@@ -198,7 +198,7 @@ public enum Compactor {
         )
     }
 
-    /// Estimates `transcript`'s size in tokens: the total on-disk-payload
+    /// Estimates the transcript's size in tokens: the total on-disk-payload
     /// byte size of every entry (via ``TranscriptEntryMapper``, which maps
     /// every entry kind — segments, tool calls, tool definitions — without
     /// throwing), divided by ``charsPerTokenEstimate``.
@@ -207,7 +207,7 @@ public enum Compactor {
     /// content-bearing field a stage might shrink (segment text, tool-call
     /// arguments, tool names), not just `.text` segments.
     ///
-    /// - Parameter transcript: The transcript to estimate.
+    /// - Parameter of: The transcript to estimate.
     /// - Returns: The estimated token count.
     static func estimatedTokenCount(of transcript: Transcript) -> Int {
         let totalBytes = transcript.reduce(into: 0) { total, entry in
@@ -216,13 +216,13 @@ public enum Compactor {
         return estimatedTokenCount(bytes: totalBytes)
     }
 
-    /// Estimates `text`'s size in tokens using the same
+    /// Estimates the text's size in tokens using the same
     /// ``charsPerTokenEstimate`` character-ratio ``estimatedTokenCount(of:)``
     /// applies to a whole transcript — shared so a single-string estimate
     /// (e.g. ``ToolOutputCapping``'s tool-output cap, task 1334fk3) is
     /// measured consistently with the transcript-level one.
     ///
-    /// - Parameter text: The text to estimate.
+    /// - Parameter of: The text to estimate.
     /// - Returns: The estimated token count.
     static func estimatedTokenCount(of text: String) -> Int {
         estimatedTokenCount(bytes: text.utf8.count)
@@ -240,10 +240,10 @@ public enum Compactor {
         Int((Double(bytes) / charsPerTokenEstimate).rounded(.up))
     }
 
-    /// The JSON-encoded byte size of `entry`'s ``TranscriptEntryPayload``
+    /// The JSON-encoded byte size of the entry's ``TranscriptEntryPayload``
     /// mirror — a proxy for its textual content size across every entry kind.
     ///
-    /// - Parameter entry: The entry to measure.
+    /// - Parameter of: The entry to measure.
     /// - Returns: The entry's payload size in bytes, or `0` when it cannot be
     ///   encoded (unreachable in practice: `TranscriptEntryMapper.event(from:)`
     ///   never produces a payload its own `Codable` conformance can't encode).

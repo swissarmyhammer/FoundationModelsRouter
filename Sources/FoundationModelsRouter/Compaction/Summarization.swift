@@ -392,14 +392,14 @@ public struct Summarization: Sendable {
         return chunks
     }
 
-    /// Estimates `text`'s size in tokens via the same character-ratio
+    /// Estimates the text's size in tokens via the same character-ratio
     /// estimate ``Compactor/estimatedTokenCount(of:)`` uses for a transcript
     /// (``Compactor/charsPerTokenEstimate``), applied directly to a plain
     /// string's UTF-8 byte count rather than a JSON-encoded payload — used by
     /// ``reduce(_:prompt:summarizer:)`` to size chunk summaries, which are
     /// plain text, not transcript entries.
     ///
-    /// - Parameter text: The text to estimate.
+    /// - Parameter of: The text to estimate.
     /// - Returns: The estimated token count.
     static func estimatedTokens(of text: String) -> Int {
         Int((Double(text.utf8.count) / Compactor.charsPerTokenEstimate).rounded(.up))
@@ -444,12 +444,12 @@ public struct Summarization: Sendable {
         }
     }
 
-    /// The joined content of every `.text` segment in `segments`, in order —
+    /// The joined content of every `.text` segment in the given segments, in order —
     /// the rendering counterpart of ``TranscriptEntryMapper``'s own
     /// `flattenedText(_:)`, kept local since it operates on live
     /// `Transcript.Segment` values rather than persisted `SegmentPayload`s.
     ///
-    /// - Parameter segments: The segments to flatten.
+    /// - Parameter of: The segments to flatten.
     /// - Returns: The joined text content.
     private static func text(of segments: [Transcript.Segment]) -> String {
         segments.compactMap { segment -> String? in

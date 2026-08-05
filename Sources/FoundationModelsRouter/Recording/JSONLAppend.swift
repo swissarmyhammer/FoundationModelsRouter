@@ -31,11 +31,11 @@ private func isPlainFileName(_ fileName: String) -> Bool {
 /// strategy — this always creates and opens a fresh handle.
 ///
 /// - Parameters:
-///   - fileName: The file's name within `directory` (e.g. `"transcript.jsonl"`).
+///   - fileName: The file's name within the directory (e.g. `"transcript.jsonl"`).
 ///     Must be a plain single path component — validated before use so a
 ///     future caller can never widen this shared helper into a directory
 ///     escape.
-///   - directory: The directory the file lives in, created if missing.
+///   - in: The directory the file lives in, created if missing.
 /// - Returns: A handle positioned at the end of the file.
 /// - Throws: ``JSONLAppendError/invalidFileName(_:)`` if `fileName` contains a
 ///   path separator or is a `.`/`..` navigation token; otherwise if the

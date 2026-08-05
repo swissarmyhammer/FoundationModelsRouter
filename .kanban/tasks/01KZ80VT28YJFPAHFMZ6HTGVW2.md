@@ -67,8 +67,31 @@ comments:
     - evidence: `swift test` (no FM_ROUTER_INTEGRATION_TESTS) — 735+20+12 = 767 tests passed, 0 failed; 32 gated suites/tests skipped (expected range 28-32, integration env var correctly unset); build clean except pre-existing llbuild "missing creator for mutated node" warning from mlx-swift Cmlx.bundle; HumanWaitGateTests (3 tests) passed, no flake observed this run.
     - next: none — full suite green.
   timestamp: 2026-08-05T08:27:56.396630+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kz8gmtdnbqk5kar2r8ckwq56
+  text: |-
+    ### commit — changed
+    - evidence: 84913d4 test(router): add regression tests for ContextBindingTool composition paths
+    - next: none
+  timestamp: 2026-08-05T08:29:08.405284+00:00
+- actor: claude-code
+  id: 01kz8gvdhxthvpzakxpqjq2h8k
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 84913d4) — 0 new findings (counts: findings 0, confirmed 0, refuted 0, attempted 9, failed 0); all 5 prior items in "## Review Findings (2026-08-05 02:25)" verified checked
+    - next: none — task moved to done
+  timestamp: 2026-08-05T08:32:44.605131+00:00
+- actor: claude-code
+  id: 01kz8gxfc04zx2gevsjxff5ztk
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 test files (7 new ContextBindingTool composition regression tests + shared assert helpers, all scratch-break verified)
+    - test: green — swift test, 767 passed, 0 failures, 32 gated skips
+    - commit: 84913d4
+    - review: clean — 0 new findings, all 5 prior items checked; task → done
+  timestamp: 2026-08-05T08:33:52.000757+00:00
+position_column: done
+position_ordinal: f180
 title: '[Router] Non-String-output tools bypass the elevation layer: ambient events lose per-tool identity/correlation'
 ---
 Repo: this repo (FoundationModelsRouter). Discovered while implementing ^ew49xjj (delete `EventEmittingTool`/`connecting(_:)`).
