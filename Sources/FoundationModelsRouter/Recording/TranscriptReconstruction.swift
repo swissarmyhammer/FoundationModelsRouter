@@ -232,11 +232,11 @@ extension TranscriptTree {
     ///    choice to report its fold's `tokensAfter` immediately after
     ///    folding, before the next live turn re-measures.
     /// 3. Else (no checkpoint recorded at all) the newest stamped `.response`
-    ///    event anywhere in the given events — the pre-compaction behavior,
+    ///    event anywhere in `events` — the pre-compaction behavior,
     ///    unchanged.
     /// 4. Else ``ContextUsageState/unknown`` — never a guess.
     ///
-    /// - Parameter in: A session's raw effective recorded events, in
+    /// - Parameter events: A session's raw effective recorded events, in
     ///   order (as ``effectiveEntryEvents(forSession:)`` returns them —
     ///   unfiltered, so the checkpoint's own position can be located).
     /// - Returns: The restored usage state.
@@ -274,7 +274,7 @@ extension TranscriptTree {
     /// degrade as documented on ``TranscriptEntryMapper``.
     ///
     /// - Parameters:
-    ///   - forSession: The session's span id.
+    ///   - id: The session's span id.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
     ///     `.custom` segment in this session's effective transcript may need
     ///     to rebuild. Defaults to ``CustomSegmentRegistry/routerDefault``

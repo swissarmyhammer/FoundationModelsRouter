@@ -430,7 +430,7 @@ public actor SessionMailbox {
     /// rejected duplicate.
     ///
     /// - Parameters:
-    ///   - to: The typed request whose `elicitationId` keys the
+    ///   - request: The typed request whose `elicitationId` keys the
     ///     registry entry.
     ///   - posting: The upstream delivery of the request — run only after
     ///     the pending entry is registered. Defaults to doing nothing, for a

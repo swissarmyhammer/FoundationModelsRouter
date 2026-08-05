@@ -117,8 +117,7 @@ extension Grammar {
     }
 
     /// Walks a parsed JSON *schema* node, inserting any
-    /// ``unsupportedSchemaKeywords`` used in *keyword position* into the
-    /// accumulating set.
+    /// ``unsupportedSchemaKeywords`` used in *keyword position* into `found`.
     ///
     /// The walk is position-aware so a property (or definition) that merely has a
     /// name like a keyword is not mistaken for the keyword itself: the keys of a
@@ -129,8 +128,8 @@ extension Grammar {
     /// schema.
     ///
     /// - Parameters:
-    ///   - in: A parsed JSON value occupying a schema position.
-    ///   - into: The accumulating set of unsupported keywords encountered.
+    ///   - node: A parsed JSON value occupying a schema position.
+    ///   - found: The accumulating set of unsupported keywords encountered.
     private static func collectUnsupportedKeywords(in node: Any, into found: inout Set<String>) {
         if let array = node as? [Any] {
             // An array node is a list of subschemas (e.g. under `anyOf`/`oneOf`).
@@ -155,7 +154,7 @@ extension Grammar {
 
     /// Walks the *values* of a ``subschemaMapKeywords`` map (e.g.
     /// `properties`/`definitions`), inserting any unsupported keywords found
-    /// into the accumulating set.
+    /// into `found`.
     ///
     /// The map's keys are property/definition names, not schema keywords, so
     /// only the values are recursed into as subschemas; a value that is not an
@@ -163,8 +162,8 @@ extension Grammar {
     /// this walk's concern).
     ///
     /// - Parameters:
-    ///   - inSubschemaMap: The value found at a ``subschemaMapKeywords`` key.
-    ///   - into: The accumulating set of unsupported keywords encountered.
+    ///   - value: The value found at a ``subschemaMapKeywords`` key.
+    ///   - found: The accumulating set of unsupported keywords encountered.
     private static func collectUnsupportedKeywords(inSubschemaMap value: Any, into found: inout Set<String>) {
         guard let submap = value as? [String: Any] else { return }
         for subschema in submap.values {
@@ -186,12 +185,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// This vends a one-shot guided ``RoutedSession`` over the resident container
     /// and responds through it, so the turn funnels through the recorder-bracketed
-    /// `generate` chokepoint and is stamped with the grammar — exactly as a
+    /// `generate` chokepoint and is stamped with `grammar` — exactly as a
     /// long-lived guided session's turns are.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
-    ///   - following: The grammar constraining the output.
+    ///   - prompt: The prompt to respond to.
+    ///   - grammar: The grammar constraining the output.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the container's own default ceiling.
     /// - Returns: The constrained, unparsed text response.
@@ -296,8 +295,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// type.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
-    ///   - matching: The runtime JSON Schema source constraining the output.
+    ///   - prompt: The prompt to respond to.
+    ///   - jsonSchema: The runtime JSON Schema source constraining the output.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the container's own default ceiling.
     /// - Returns: The schema-valid output parsed into a ``JSONValue``.
@@ -327,7 +326,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// the schema string the raw guided layer constrains against. This is a
         /// pure transform (no GPU), so it is asserted directly in the unit suite.
         ///
-        /// - Parameter for: The `Generable` type to derive a schema from.
+        /// - Parameter type: The `Generable` type to derive a schema from.
         /// - Returns: The derived JSON Schema source string.
         /// - Throws: An encoding error if the schema cannot be encoded (not
         ///   expected for a valid `Generable` type).
@@ -344,7 +343,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         ///
         /// - Parameters:
         ///   - raw: The raw constrained output text.
-        ///   - as: The `Generable` type to decode into.
+        ///   - type: The `Generable` type to decode into.
         /// - Returns: The decoded value of type `T`.
         /// - Throws: ``GuidedRequestError/decodingFailed(_:)`` if `raw` is not
         ///   parseable as `T` — malformed JSON or a shape the type rejects.
@@ -370,8 +369,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         /// milestone 7.
         ///
         /// - Parameters:
-        ///   - to: The prompt to respond to.
-        ///   - generating: The `Generable` type to generate and decode into.
+        ///   - prompt: The prompt to respond to.
+        ///   - type: The `Generable` type to generate and decode into.
         ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
         ///     use the container's own default ceiling.
         /// - Returns: The decoded value of type `T`.

@@ -66,7 +66,7 @@ public struct OperationEventSegment: PersistableCustomSegment, Equatable, Custom
     /// (``RoutedSessionActor``'s turn chokepoint) and this segment's own
     /// ``description``, so the two textual views of one event never drift.
     ///
-    /// - Parameter for: The event to render.
+    /// - Parameter event: The event to render.
     /// - Returns: The one-line rendering.
     static func renderedLine(for event: OperationEvent) -> String {
         let state: String

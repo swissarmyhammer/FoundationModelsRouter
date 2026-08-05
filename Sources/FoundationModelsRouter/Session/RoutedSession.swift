@@ -219,7 +219,7 @@ public protocol RoutedSession: Actor {
     /// Generates a complete text response to a prompt, recording the call.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
     /// - Returns: The model's complete text response.
@@ -229,7 +229,7 @@ public protocol RoutedSession: Actor {
     /// Streams a text response to a prompt as it is produced, recording the call.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
     /// Abandoning the stream — breaking out of the loop, or dropping the
@@ -286,7 +286,7 @@ public protocol RoutedSession: Actor {
     /// set never emits it here.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
     ///     use the underlying model's own default ceiling.
     /// Abandoning this stream cancels the turn behind it and has it recorded as a
@@ -596,7 +596,7 @@ extension RoutedSession {
     /// Generates a complete text response to a prompt using the underlying
     /// model's own default token ceiling, recording the call.
     ///
-    /// - Parameter to: The prompt to respond to.
+    /// - Parameter prompt: The prompt to respond to.
     /// - Returns: The model's complete text response.
     /// - Throws: Any error thrown by the model.
     public func respond(to prompt: String) async throws -> String {
@@ -606,7 +606,7 @@ extension RoutedSession {
     /// Streams a text response to a prompt as it is produced, using the
     /// underlying model's own default token ceiling, recording the call.
     ///
-    /// - Parameter to: The prompt to respond to.
+    /// - Parameter prompt: The prompt to respond to.
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     public func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
@@ -616,7 +616,7 @@ extension RoutedSession {
     /// Streams a rich event sequence for a prompt as it is produced, using
     /// the underlying model's own default token ceiling, recording the call.
     ///
-    /// - Parameter to: The prompt to respond to.
+    /// - Parameter prompt: The prompt to respond to.
     /// - Returns: A stream of session events; see ``streamEvents(to:maxTokens:)``.
     public func streamEvents(to prompt: String) -> AsyncThrowingStream<SessionEvent, Error> {
         streamEvents(to: prompt, maxTokens: nil)
@@ -1429,7 +1429,7 @@ actor RoutedSessionActor: RoutedSession {
     /// a fold under an outstanding stop is abandoned rather than degraded.
     ///
     /// - Parameters:
-    ///   - discarding: The failure the tier threw. When the fold is abandoned it is
+    ///   - error: The failure the tier threw. When the fold is abandoned it is
     ///     reported by ``noteAbandonedFold(discarding:tier:)`` — unless it is itself
     ///     a `CancellationError`, the usual case and the one with nothing to say —
     ///     since the `CancellationError` thrown in its place carries none of it.
@@ -1475,7 +1475,7 @@ actor RoutedSessionActor: RoutedSession {
     /// and ids public for the same reason.
     ///
     /// - Parameters:
-    ///   - discarding: The failure the abandoned tier threw.
+    ///   - error: The failure the abandoned tier threw.
     ///   - tier: The tier that threw it.
     private func noteAbandonedFold(discarding error: Error, tier: FoldSummarizerTier) {
         guard !(error is CancellationError) else { return }
@@ -1623,7 +1623,7 @@ actor RoutedSessionActor: RoutedSession {
     /// ``generate(grammar:_:)`` chokepoint.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
     /// - Returns: The model's complete text response.
@@ -1648,7 +1648,7 @@ actor RoutedSessionActor: RoutedSession {
     /// stream cancels the underlying `Task`.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
     /// - Returns: A stream of response fragments, finishing when generation
@@ -1705,8 +1705,8 @@ actor RoutedSessionActor: RoutedSession {
     ///     outbox drained for this turn, to stream a response to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
-    ///   - into: The stream continuation each wrapped chunk is yielded to.
-    ///   - wrapChunk: Wraps a raw text chunk into the continuation's element type.
+    ///   - continuation: The stream continuation each wrapped chunk is yielded to.
+    ///   - wrapChunk: Wraps a raw text chunk into `continuation`'s element type.
     /// - Returns: The accumulated, unwrapped response text.
     /// - Throws: Any error thrown by the model, or `CancellationError` when this
     ///   turn's model call was cancelled part-way through the stream.
@@ -1736,7 +1736,7 @@ actor RoutedSessionActor: RoutedSession {
     }
 
     /// Runs the recorder-bracketed streaming generation, forwarding each chunk
-    /// the model produces to the stream continuation.
+    /// the model produces to `continuation`.
     ///
     /// Extracted from ``streamResponse(to:)`` so that method's stream/`Task`
     /// scaffolding stays shallow: the bracketed `for`-loop lives here instead of
@@ -1746,7 +1746,7 @@ actor RoutedSessionActor: RoutedSession {
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
-    ///   - into: The stream continuation each produced chunk is yielded to.
+    ///   - continuation: The stream continuation each produced chunk is yielded to.
     /// - Throws: Any error thrown by the model, after the chokepoint records the
     ///   close event.
     private func streamGenerating(
@@ -1777,7 +1777,7 @@ actor RoutedSessionActor: RoutedSession {
     /// `Task`.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
     /// - Returns: A stream of session events, finishing when generation
@@ -1791,7 +1791,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Runs the recorder-bracketed streaming generation, forwarding each
     /// text chunk the model produces as a ``SessionEvent/textDelta(_:)`` and,
     /// once the turn's diff runs, every other ``SessionEvent`` it implies —
-    /// to the stream continuation.
+    /// to `continuation`.
     ///
     /// Extracted from ``streamEvents(to:maxTokens:)`` so that method's
     /// stream/`Task` scaffolding stays shallow, mirroring
@@ -1802,7 +1802,7 @@ actor RoutedSessionActor: RoutedSession {
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
-    ///   - into: The stream continuation each produced event is
+    ///   - continuation: The stream continuation each produced event is
     ///     yielded to.
     /// - Throws: Any error thrown by the model, after the chokepoint records the
     ///   close event and yields whatever ``SessionEvent``s that close implied.
@@ -2687,11 +2687,11 @@ actor RoutedSessionActor: RoutedSession {
     /// documented reactive pattern's own hardcoded "fold harder" example
     /// (``compact(prompt:budget:)``'s own doc comment folds to `0.35`
     /// against a default `0.50` target) — computed relative to whatever
-    /// target the caller actually configured, halved and floored so a very
+    /// `target` the caller actually configured, halved and floored so a very
     /// low configured target still folds meaningfully harder rather than
     /// going to (or past) zero.
     ///
-    /// - Parameter from: The budget's own configured target.
+    /// - Parameter target: The budget's own configured target.
     /// - Returns: The lowered target the retry's fold uses.
     private static func loweredRetryTarget(from target: Double) -> Double {
         max(target / 2, 0.1)
@@ -2855,7 +2855,7 @@ actor RoutedSessionActor: RoutedSession {
         return textContents.joined()
     }
 
-    /// Returns a copy of the given partial with one ``OperationEventSegment`` appended
+    /// Returns a copy of `partial` with one ``OperationEventSegment`` appended
     /// to its recorded entry per event in `events`, in outbox order — the
     /// durable counterpart to ``composedPrompt(pendingEvents:prompt:)``'s text
     /// preamble, attached only to what gets persisted, never to the SDK's own
@@ -2863,8 +2863,8 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// - Parameters:
     ///   - events: The events to attach, in outbox order.
-    ///   - to: The turn's `.prompt`-kind partial to augment.
-    /// - Returns: The partial unchanged if it carries no ``TranscriptEvent/Partial/entry``
+    ///   - partial: The turn's `.prompt`-kind partial to augment.
+    /// - Returns: `partial` unchanged if it carries no ``TranscriptEvent/Partial/entry``
     ///   (nothing to attach a segment to); otherwise a copy with the segments
     ///   appended.
     private static func appendingOperationEventSegments(
@@ -3139,7 +3139,7 @@ actor RoutedSessionActor: RoutedSession {
     /// ``dispatchNextPrompt()`` paths, which never supply one.
     ///
     /// - Parameters:
-    ///   - for: The diff partial just recorded.
+    ///   - partial: The diff partial just recorded.
     ///   - dispatchedToolCallIds: Every tool-call id seen from a `.toolCalls`
     ///     partial earlier in this same diff, in request order — appended to
     ///     here.

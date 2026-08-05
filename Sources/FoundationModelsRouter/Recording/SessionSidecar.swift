@@ -284,7 +284,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// carries no such key at all. Every other field decodes exactly as
     /// synthesis would; only ``workingDirectory`` needs this custom handling.
     ///
-    /// - Parameter from: The decoder, whose `userInfo` supplies the
+    /// - Parameter decoder: The decoder, whose `userInfo` supplies the
     ///   fallback directory when ``read(in:)`` set one.
     /// - Throws: Whatever decoding any other field throws, or
     ///   `DecodingError.keyNotFound` when `workingDirectory` is absent and no
@@ -347,7 +347,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         )
     }
 
-    /// Creates the directory and writes `sidecar` into it as `session.json`,
+    /// Creates `directory` and writes `sidecar` into it as `session.json`,
     /// exactly once.
     ///
     /// Write-once is enforced by the filesystem rather than by a check-then-write
@@ -357,10 +357,10 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///
     /// - Parameters:
     ///   - sidecar: The facts to record.
-    ///   - to: The session's own recording directory, created here along
+    ///   - directory: The session's own recording directory, created here along
     ///     with the sidecar — this is the call that brings a session's directory
     ///     into existence, before any transcript event can land in it.
-    /// - Throws: If the directory cannot be created, `sidecar` cannot be encoded,
+    /// - Throws: If `directory` cannot be created, `sidecar` cannot be encoded,
     ///   or a `session.json` already exists there.
     public static func write(_ sidecar: SessionSidecar, to directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -376,14 +376,14 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     /// Decodes the sidecar in a session's own recording directory.
     ///
-    /// Sets ``sidecarDirectoryUserInfoKey`` to the given directory on the decoder
+    /// Sets ``sidecarDirectoryUserInfoKey`` to `directory` on the decoder
     /// before decoding, so a pre-task-6j4bven recording with no
     /// `workingDirectory` key at all still decodes — falling back to this
-    /// same directory, the default a live session used for its working
+    /// same `directory`, the default a live session used for its working
     /// directory before that field existed to override it.
     ///
-    /// - Parameter in: The session's recording directory.
-    /// - Returns: The decoded sidecar, or `nil` when the directory holds no
+    /// - Parameter directory: The session's recording directory.
+    /// - Returns: The decoded sidecar, or `nil` when `directory` holds no
     ///   `session.json` at all — the caller decides whether an absent sidecar is
     ///   benign (a directory that is not a session's) or an error (a session
     ///   directory whose sidecar was deleted).
@@ -522,7 +522,7 @@ public struct SessionSidecarWriter: Sendable {
     ///     from, or `nil`. Recorded only when `forkedAtEntryCount` is `nil`
     ///     (a root session), mirroring ``profile``'s own root-only rule —
     ///     see ``SessionSidecar/agentSpawn``.
-    ///   - to: The session's own recording directory.
+    ///   - directory: The session's own recording directory.
     func write(
         instructions: String?,
         grammar: String?,
@@ -596,23 +596,23 @@ enum SessionSidecarOrigin: Sendable {
     case memoryOnly
 
     /// The origin of a session coming into existence now under
-    /// the given durable recording, or ``memoryOnly`` when the router records to
+    /// `durableRecording`, or ``memoryOnly`` when the router records to
     /// memory/none.
     ///
-    /// - Parameter under: The vending handle's durable recording, or
+    /// - Parameter durableRecording: The vending handle's durable recording, or
     ///   `nil` when it has none.
     /// - Returns: The new session's sidecar origin.
     static func new(under durableRecording: DurableRecording?) -> SessionSidecarOrigin {
         origin(under: durableRecording) { .new($0) }
     }
 
-    /// The origin of a session reconstructed from disk under the given durable
-    /// recording, or ``memoryOnly`` when the router records to memory/none.
+    /// The origin of a session reconstructed from disk under `durableRecording`,
+    /// or ``memoryOnly`` when the router records to memory/none.
     ///
     /// The restored session's write-once sidecar is already on disk, so the
     /// writer travels only for the forks the restored session takes.
     ///
-    /// - Parameter under: The vending handle's durable recording, or
+    /// - Parameter durableRecording: The vending handle's durable recording, or
     ///   `nil` when it has none.
     /// - Returns: The restored session's sidecar origin.
     static func restored(under durableRecording: DurableRecording?) -> SessionSidecarOrigin {
@@ -620,7 +620,7 @@ enum SessionSidecarOrigin: Sendable {
     }
 
     /// The shared body behind ``new(under:)`` and ``restored(under:)``: maps a
-    /// durable recording's write-once sidecar writer through `wrappedBy` into the
+    /// durable recording's write-once sidecar writer through `wrap` into the
     /// matching origin case, or yields ``memoryOnly`` when the router records to
     /// memory/none.
     ///
@@ -628,9 +628,9 @@ enum SessionSidecarOrigin: Sendable {
     /// comments but the same shape; this holds that shape in one place.
     ///
     /// - Parameters:
-    ///   - under: The vending handle's durable recording, or `nil`
+    ///   - durableRecording: The vending handle's durable recording, or `nil`
     ///     when it has none.
-    ///   - wrappedBy: Wraps the recording's sidecar writer in the origin case that
+    ///   - wrap: Wraps the recording's sidecar writer in the origin case that
     ///     matches how the session came to be (``new(_:)`` vs ``restored(_:)``).
     /// - Returns: The wrapped origin, or ``memoryOnly`` when there is no
     ///   durable recording.
@@ -667,7 +667,7 @@ enum SessionSidecarOrigin: Sendable {
     ///   - workingDirectory: The session's own working directory.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
     ///     from, or `nil`. See ``SessionSidecar/agentSpawn``.
-    ///   - to: The session's own recording directory.
+    ///   - directory: The session's own recording directory.
     func writeSidecarIfNew(
         instructions: String?,
         grammar: String?,

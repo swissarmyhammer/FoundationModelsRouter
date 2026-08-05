@@ -29,8 +29,8 @@ public protocol TranscriptRecorder: Sendable {
     /// A single recorder assigns `seq` and `ts` across *all* directories it is
     /// asked to write, so the sequence is one globally monotonic total order even
     /// when concurrent sessions and forks append into their own lineage-nested
-    /// transcript files. The destination directory selects *where* the event is
-    /// persisted — a session passes its ``RoutedSession/recordingDirectory`` — while `seq`
+    /// transcript files. The `directory` selects *where* the event is persisted —
+    /// a session passes its ``RoutedSession/recordingDirectory`` — while `seq`
     /// stays global; a sink that keeps no on-disk layout (in-memory, no-op) simply
     /// ignores it.
     ///
@@ -39,7 +39,7 @@ public protocol TranscriptRecorder: Sendable {
     ///
     /// - Parameters:
     ///   - partial: The event to record, minus its `seq` and `ts`.
-    ///   - to: The session directory to persist the event under, or `nil`
+    ///   - directory: The session directory to persist the event under, or `nil`
     ///     to use the recorder's own default location.
     func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async
 }

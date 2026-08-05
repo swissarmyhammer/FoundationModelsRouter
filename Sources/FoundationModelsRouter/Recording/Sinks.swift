@@ -63,7 +63,7 @@ public actor JSONLRecorder: TranscriptRecorder {
     /// Returns the reusable append handle for a directory, creating the directory
     /// and its `transcript.jsonl` and seeking to the end on first use.
     ///
-    /// - Parameter in: The directory whose `transcript.jsonl` to append to.
+    /// - Parameter directory: The directory whose `transcript.jsonl` to append to.
     /// - Returns: A handle positioned at the end of that file.
     /// - Throws: If the directory or file cannot be created or opened.
     private func handleForAppending(in directory: URL) throws -> FileHandle {

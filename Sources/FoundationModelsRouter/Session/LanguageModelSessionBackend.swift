@@ -22,7 +22,7 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// Generates a complete text response to a prompt.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the backend's own default ceiling.
     /// - Returns: The model's complete text response.
@@ -32,7 +32,7 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// Streams a text response to a prompt as it is produced.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
+    ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the backend's own default ceiling.
     /// - Returns: A stream of response fragments, finishing when generation
@@ -44,8 +44,8 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// Guided output is whole-chunk: there is no constrained streaming variant.
     ///
     /// - Parameters:
-    ///   - to: The prompt to respond to.
-    ///   - following: The grammar constraining the output.
+    ///   - prompt: The prompt to respond to.
+    ///   - grammar: The grammar constraining the output.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the backend's own default ceiling.
     /// - Returns: The constrained text response.

@@ -544,7 +544,7 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer, Sendable {
     ///
     /// - Parameters:
     ///   - texts: The strings to embed.
-    ///   - in: The embedder model container to use.
+    ///   - container: The embedder model container to use.
     /// - Returns: One vector per input string.
     /// - Throws: If embedding computation fails.
     static func embed(texts: [String], in container: EmbedderModelContainer) async throws -> [[Float]] {

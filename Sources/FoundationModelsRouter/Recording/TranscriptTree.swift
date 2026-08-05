@@ -148,7 +148,7 @@ public struct TranscriptTree: Sendable {
     /// or a write was dropped (see ``SessionSidecarWriter``'s best-effort
     /// policy).
     ///
-    /// - Parameter under: The router's recording root —
+    /// - Parameter routerDirectory: The router's recording root —
     ///   `recordings/<routerId>/` — the same directory
     ///   ``MergedTranscript/merged(under:)`` reads.
     /// - Returns: The loaded tree.
@@ -191,7 +191,7 @@ public struct TranscriptTree: Sendable {
     /// initializer into ``TranscriptTreeError/duplicateSessionId(id:directories:)``
     /// naming the colliding directories.
     ///
-    /// - Parameter in: Every discovered session's raw node.
+    /// - Parameter rawNodes: Every discovered session's raw node.
     /// - Throws: ``TranscriptTreeError/duplicateSessionId(id:directories:)``.
     private static func checkForDuplicateIds(in rawNodes: [RawNode]) throws {
         let directoriesById = Dictionary(grouping: rawNodes, by: \.id)
@@ -210,16 +210,16 @@ public struct TranscriptTree: Sendable {
     /// Reads one session directory's identity, lineage, and facts.
     ///
     /// - Parameters:
-    ///   - in: The session directory, known to hold a `session.json`.
+    ///   - directory: The session directory, known to hold a `session.json`.
     ///   - sessionDirectoryPaths: Every discovered session directory's
     ///     standardized path, to resolve this one's parent by nesting.
     ///   - routerDirectoryPath: The router root's standardized path — a
     ///     session directly inside it is a root.
-    /// - Returns: The raw node for the given directory.
+    /// - Returns: The raw node for `directory`.
     /// - Throws: ``TranscriptTreeError`` if the directory is not named for a
     ///   session id, its sidecar cannot be decoded, or the directory it nests
     ///   under is not a session's (see ``parentId(of:sessionDirectoryPaths:routerDirectoryPath:)``);
-    ///   otherwise if the directory's `transcript.jsonl` exists but cannot be
+    ///   otherwise if `directory`'s `transcript.jsonl` exists but cannot be
     ///   read or decoded (needed to compute the sidecar's
     ///   ``SessionSidecar/compactionCount``).
     private static func rawNode(
@@ -260,11 +260,11 @@ public struct TranscriptTree: Sendable {
         )
     }
 
-    /// The span id of the session the given directory nests directly under, or
-    /// `nil` when it sits at the router root and is therefore a root session.
+    /// The span id of the session `directory` nests directly under, or `nil`
+    /// when it sits at the router root and is therefore a root session.
     ///
     /// - Parameters:
-    ///   - of: The session directory whose parent to resolve.
+    ///   - directory: The session directory whose parent to resolve.
     ///   - sessionDirectoryPaths: Every discovered session directory's
     ///     standardized path.
     ///   - routerDirectoryPath: The router root's standardized path.
@@ -305,8 +305,8 @@ public struct TranscriptTree: Sendable {
 
     /// A session's direct forks, ordered by id (creation order).
     ///
-    /// - Parameter of: The parent session's span id.
-    /// - Returns: Its children, or an empty array if the id is unknown or a leaf.
+    /// - Parameter id: The parent session's span id.
+    /// - Returns: Its children, or an empty array if `id` is unknown or a leaf.
     public func children(of id: ULID) -> [SessionNode] {
         nodesById[id]?.children ?? []
     }
@@ -316,14 +316,14 @@ public struct TranscriptTree: Sendable {
     /// Decodes one session's own recorded events — its `transcript.jsonl`
     /// alone, never an ancestor's or a descendant's.
     ///
-    /// - Parameter forSession: The session's span id.
+    /// - Parameter id: The session's span id.
     /// - Returns: Every event that session recorded, in `seq` order, or an
     ///   empty array if the session never recorded anything (no
     ///   `transcript.jsonl` was ever created for it — a session writes no file
     ///   at all until its first generation).
-    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` if the session id
-    ///   is not in the tree; otherwise if `transcript.jsonl` exists but cannot
-    ///   be read or decoded.
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` if `id` is not in
+    ///   the tree; otherwise if `transcript.jsonl` exists but cannot be read
+    ///   or decoded.
     public func events(forSession id: ULID) throws -> [TranscriptEvent] {
         guard let node = nodesById[id] else {
             throw TranscriptTreeError.sessionNotFound(id)
@@ -354,11 +354,11 @@ public struct TranscriptTree: Sendable {
     /// truncation point was fixed at fork time, independent of how much the
     /// ancestor's own transcript grows afterward.
     ///
-    /// - Parameter forSession: The session's span id.
+    /// - Parameter id: The session's span id.
     /// - Returns: The session's full effective entry-kind conversation, oldest
     ///   first.
-    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` if the session id
-    ///   is not in the tree; ``TranscriptTreeError/forkCutPointMissing(session:directory:)``
+    /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` if `id` is not in
+    ///   the tree; ``TranscriptTreeError/forkCutPointMissing(session:directory:)``
     ///   if this session or any ancestor on the path to a root nests under a
     ///   parent yet records no cut point; otherwise if an underlying
     ///   `transcript.jsonl` cannot be read or decoded.
@@ -449,7 +449,7 @@ public struct TranscriptTree: Sendable {
     /// children before the node itself, so children (and roots) come out
     /// ordered by id.
     ///
-    /// - Parameter from: Every session's flat identity/lineage/facts.
+    /// - Parameter rawNodes: Every session's flat identity/lineage/facts.
     /// - Returns: The tree's roots and a flat id-keyed lookup of every node.
     private static func buildTree(
         from rawNodes: [RawNode]
@@ -486,15 +486,15 @@ public struct TranscriptTree: Sendable {
 
     // MARK: - Discovery
 
-    /// Finds every file with the given name nested at any depth under the
-    /// given directory — the same enumeration ``MergedTranscript`` performs, kept
+    /// Finds every file named `fileName` nested at any depth under
+    /// `directory` — the same enumeration ``MergedTranscript`` performs, kept
     /// file-local here rather than shared, matching this module's existing
     /// precedent (each JSONL sink/reader hardcodes its own filename; see
     /// `Sinks.swift` and `MergedTranscript.swift`).
     ///
     /// - Parameters:
-    ///   - named: The file name to match.
-    ///   - under: The recording root to search.
+    ///   - fileName: The file name to match.
+    ///   - directory: The recording root to search.
     /// - Returns: The discovered file URLs, in no particular order.
     private static func fileURLs(named fileName: String, under directory: URL) -> [URL] {
         guard let enumerator = FileManager.default.enumerator(

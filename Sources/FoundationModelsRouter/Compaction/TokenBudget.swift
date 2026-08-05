@@ -178,7 +178,7 @@ extension ContextUsageState {
 }
 
 /// The newest stamped `.response`-kind event's `(tokensIn, tokensOut)` among
-/// the given events, or `nil` when none carries a stamp — a recording made before
+/// `events`, or `nil` when none carries a stamp — a recording made before
 /// per-turn metering existed, or one whose metadata was stripped
 /// (compaction_plan.md §1.5).
 ///
@@ -193,7 +193,7 @@ extension ContextUsageState {
 /// would otherwise silently corrupt restored fill with a bogus (often
 /// zero) delta.
 ///
-/// - Parameter in: A session's effective recorded events, in order.
+/// - Parameter events: A session's effective recorded events, in order.
 /// - Returns: The newest stamped usage, or `nil`.
 func newestStampedUsage(in events: [TranscriptEvent]) -> (input: Int, output: Int)? {
     guard

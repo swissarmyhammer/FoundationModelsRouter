@@ -150,8 +150,8 @@ enum TranscriptDiffer {
         )
     }
 
-    /// The text of the transcript's leading `.instructions` entry, or `nil`
-    /// when the transcript has none (or does not open with one).
+    /// The text of `transcript`'s leading `.instructions` entry, or `nil` when
+    /// `transcript` has none (or does not open with one).
     ///
     /// A `LanguageModelSession`'s transcript carries supplied instructions as
     /// its first entry, so this only ever looks at the transcript's first
@@ -163,7 +163,7 @@ enum TranscriptDiffer {
     /// observes) — one place instead of two independently
     /// re-deriving the same fact from a transcript's shape.
     ///
-    /// - Parameter of: The transcript to inspect.
+    /// - Parameter transcript: The transcript to inspect.
     /// - Returns: The leading instructions' joined text-segment content, or
     ///   `nil`.
     static func leadingInstructionsText(of transcript: Transcript) -> String? {

@@ -14,10 +14,10 @@ import Foundation
 /// recorder served — is the tiebreaker, so events sharing an instant still fall
 /// into their exact recorded order even under concurrent generation.
 public enum MergedTranscript {
-    /// Merges every nested `transcript.jsonl` under the router's recording root
-    /// into one stream totally ordered by `(ts, seq)`.
+    /// Merges every nested `transcript.jsonl` under `routerDirectory` into one
+    /// stream totally ordered by `(ts, seq)`.
     ///
-    /// - Parameter under: The router's recording root —
+    /// - Parameter routerDirectory: The router's recording root —
     ///   `recordings/<routerId>/` — under which the session transcript files are
     ///   nested.
     /// - Returns: Every recorded event across all sessions and forks, ordered by
@@ -35,10 +35,9 @@ public enum MergedTranscript {
         return events.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
     }
 
-    /// Finds every `transcript.jsonl` nested at any depth under the given
-    /// recording root.
+    /// Finds every `transcript.jsonl` nested at any depth under `routerDirectory`.
     ///
-    /// - Parameter under: The recording root to search.
+    /// - Parameter routerDirectory: The recording root to search.
     /// - Returns: The URLs of the discovered transcript files, in no particular
     ///   order — ``merged(under:)`` sorts the decoded events, not the files.
     private static func transcriptFiles(under routerDirectory: URL) -> [URL] {

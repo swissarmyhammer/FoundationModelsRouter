@@ -480,7 +480,7 @@ public struct RepoMetadataReader: Sendable {
     /// A cached entry for the `(repo, revision)` is returned without invoking the
     /// source; otherwise the source is fetched once, parsed, and cached.
     ///
-    /// - Parameter for: The model reference to size.
+    /// - Parameter ref: The model reference to size.
     /// - Returns: The parsed sizing metadata.
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the repo
     ///   lacks sizing inputs, or any error from the source or cache I/O.
@@ -496,7 +496,7 @@ public struct RepoMetadataReader: Sendable {
 
     /// Returns the memory footprint estimate for a model.
     ///
-    /// - Parameter for: The model reference to size.
+    /// - Parameter ref: The model reference to size.
     /// - Returns: The footprint, with the GQA and head-dim fallbacks applied.
     /// - Throws: As ``metadata(for:)``.
     public func footprint(for ref: ModelRef) async throws -> Footprint {
@@ -644,7 +644,7 @@ public struct HuggingFaceMetadataSource: MetadataSource {
     /// Fetches bytes from a URL, returning `nil` for an HTTP 404 so a missing
     /// `config.json` is reported as absent rather than thrown.
     ///
-    /// - Parameter from: The URL to GET.
+    /// - Parameter url: The URL to GET.
     /// - Returns: The response bytes, or `nil` on HTTP 404.
     /// - Throws: Any transport error other than a 404.
     private func optionalData(from url: URL) async throws -> Data? {

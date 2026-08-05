@@ -190,16 +190,16 @@ struct CompactionContinuityEvaluation: Evaluation {
     }
 
     /// The `Evaluation` protocol's per-sample subject work: looks the full
-    /// task back up by the sample's `expected.taskID`, runs ``runSubject`` to
+    /// task back up by `sample.expected.taskID`, runs ``runSubject`` to
     /// drive its steps and ask its final instruction, then wraps the
     /// produced answer, fold accounting, and recording completeness in a
     /// ``Subject``.
     ///
-    /// - Parameter from: The sample to produce a subject result for.
+    /// - Parameter sample: The sample to produce a subject result for.
     /// - Returns: The subject carrying the produced answer, fold counts, and
     ///   recorded-entry count.
     /// - Throws: ``CompactionContinuityEvaluationError/missingExpectedValue``
-    ///   if the sample carries no `expected` value, or
+    ///   if `sample` carries no `expected` value, or
     ///   ``CompactionContinuityEvaluationError/unknownTask(_:)`` if
     ///   `expected.taskID` matches no task this evaluation was constructed
     ///   with.
@@ -293,7 +293,7 @@ struct CompactionContinuityEvaluation: Evaluation {
     /// `FactsSurvived`, `BudgetHeld`, `RecordingComplete` — for mean
     /// aggregation, as the `Evaluation` protocol requires.
     ///
-    /// - Parameter using: The aggregator to register the five metrics
+    /// - Parameter aggregator: The aggregator to register the five metrics
     ///   with.
     func aggregateMetrics(using aggregator: inout MetricsAggregator) {
         aggregator.computeMean(of: CompactionContinuityMetric.answersCorrect)

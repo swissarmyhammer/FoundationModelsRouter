@@ -168,7 +168,7 @@ public final class SessionProjection {
         }
     }
 
-    /// Drains the given stream, ``apply(_:)``-ing every event as it arrives — the
+    /// Drains `stream`, ``apply(_:)``-ing every event as it arrives — the
     /// convenience for feeding a whole ``RoutedSession/streamEvents(to:maxTokens:)``
     /// call straight into this projection.
     ///
@@ -176,8 +176,8 @@ public final class SessionProjection {
     /// normally or throws, so a turn that fails partway never leaves the
     /// projection stuck reporting a stale non-idle phase.
     ///
-    /// - Parameter eventsFrom: The event stream to drain.
-    /// - Throws: Whatever the stream throws, after applying every event it
+    /// - Parameter stream: The event stream to drain.
+    /// - Throws: Whatever `stream` throws, after applying every event it
     ///   yielded first.
     public func apply(eventsFrom stream: AsyncThrowingStream<SessionEvent, Error>) async throws {
         defer { phase = .idle }
