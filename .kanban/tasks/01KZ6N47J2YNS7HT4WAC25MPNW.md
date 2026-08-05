@@ -30,6 +30,38 @@ comments:
     - evidence: 1 new file — Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift (gated probe suite, verdict pinned); 1 working-tree-only edit outside this repo — ../FoundationModelsMultitool/eventplan.md (observed result recorded in §Phases + §The ambient context effect 3; contradicting passages in §vocabulary move list and §MultiTool is a host and an emitter reconciled; NOT committed); follow-up deletion task ^ew49xjj created. Gated run: FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter PropagationProbe → 2 tests in 1 suite passed; verdict: ToolContext PROPAGATES on both MLX and system-model paths (observedCompletionToken == bound token on each). Ungated swift test → 718 + 20 + 12 tests passed, zero failures.
     - next: /review
   timestamp: 2026-08-05T01:16:20.991721+00:00
+- actor: claude-code
+  id: 01kz7r41jyacdt5m3cn7gc6514
+  text: |-
+    ### commit — changed
+    - evidence: ce0bc47 test(router): add gated propagation probe integration suite (7 files changed, 391 insertions(+), 9 deletions(-))
+    - next: none
+  timestamp: 2026-08-05T01:20:32.862970+00:00
+- actor: claude-code
+  id: 01kz7rd9vhfaynhjn5brzbmhn5
+  text: |-
+    ### review — findings
+    - evidence: 1 finding — Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift:126 (review sha HEAD~1..HEAD, counts: 1 finding, 1 confirmed, 1 refuted)
+    - next: implement fix for DiscardingSink duplication (share via Support or document file-local isolation), then re-review
+  timestamp: 2026-08-05T01:25:36.241682+00:00
+- actor: claude-code
+  id: 01kz7rg9sk03jdn9zwase0ab7q
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — new gated PropagationProbeIntegrationTests suite; verdict: ToolContext PROPAGATES through respond() on both MLX and system-model paths (gated 2/2); eventplan.md working-tree edit; follow-up ^ew49xjj created
+    - test: green — swift test (ungated), 750 passed, 0 failures, 32 expected gated skips (new probe suite skips correctly)
+    - commit: ce0bc47
+    - review: findings — Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift:126 (DiscardingSink duplicates ElicitationRoutingTests' no-op sink; extract shared or document file-local)
+  timestamp: 2026-08-05T01:27:14.483789+00:00
+- actor: claude-code
+  id: 01kz7rms8nydez7p7pv98deez2
+  text: |-
+    Review finding resolved by the finding's sanctioned file-local option: the DiscardingSink in PropagationProbeIntegrationTests.swift now carries a doc comment explaining why it cannot reuse ElicitationRoutingTests' identical sink — that copy is `private` inside a suite in the FoundationModelsRouterTests target, SwiftPM forbids any target from depending on a test target, and this target's Support/ directory (GatedSuiteSerialGate's home) is equally target-local, so extraction there would not deduplicate across targets; the only genuine share would be a new non-test support library target in Package.swift carrying a two-line no-op. Cross-target extraction was NOT attempted for that reason (dead end for future agents: `.testTarget` cannot appear in another target's dependencies — manifest validation rejects it). Finding checkbox flipped to [x]; description + tags re-verified intact after update task (known corruption issue did not bite).
+
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift (doc comment on DiscardingSink documenting the file-local reason). swift build: Build complete. swift test (ungated): 718 + 20 + 12 tests passed, zero failures. Finding checked: 0 open of 1.
+    - next: /review
+  timestamp: 2026-08-05T01:29:41.397663+00:00
 depends_on:
 - 01KZ6N3B3YC884JDVKEK4NYGQA
 position_column: doing
@@ -60,4 +92,8 @@ Run it per the gated-run discipline: one `FM_ROUTER_INTEGRATION_TESTS=1 swift te
 - [x] `swift test` (ungated) green
 
 ## Workflow
-- Use `/tdd` — write failing tests first, then implement to make them pass. #phase-1 #router-first
+- Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-08-04 20:21)
+
+- [x] `Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift:126` — DiscardingSink reinvents an identical OperationEventSink implementation that already exists in ElicitationRoutingTests.swift. The same no-op sink pattern defined here should call or reuse the existing one rather than duplicating it. Either extract DiscardingSink to a shared test utility in the Support directory (like GatedSuiteSerialGate.swift), or if it must remain file-local due to test isolation, add a comment explaining why this cannot reuse the ElicitationRoutingTests implementation. The identical implementation across two test files suggests the pattern should be shared. #phase-1 #router-first

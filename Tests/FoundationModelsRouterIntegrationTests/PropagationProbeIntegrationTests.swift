@@ -123,6 +123,17 @@ struct PropagationProbeIntegrationTests {
 
     /// A sink that drops every event — the probe never posts, but a real
     /// ``ToolContext`` needs one.
+    ///
+    /// Deliberately file-local even though `ElicitationRoutingTests` (in the
+    /// `FoundationModelsRouterTests` target) defines an identical no-op sink:
+    /// that copy is `private` inside a suite in a *different test target*, and
+    /// SwiftPM forbids any target from depending on a test target, so the two
+    /// modules cannot see each other's test code. This target's `Support/`
+    /// directory (home of `GatedSuiteSerialGate`) is equally target-local, so
+    /// moving the sink there would not deduplicate across targets either — the
+    /// only genuine share would be a new non-test support library target added
+    /// to Package.swift solely to carry this two-line no-op across test
+    /// modules.
     private struct DiscardingSink: OperationEventSink {
         func post(_ event: OperationEvent) async {}
     }
