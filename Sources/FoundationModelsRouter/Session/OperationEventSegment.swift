@@ -25,8 +25,12 @@ import FoundationModels
 /// ``CustomSegmentRegistry/routerDefault`` (exactly as it does
 /// ``CompactionSegment``), so every default-argument reconstruction entry
 /// point rebuilds it out of the box.
-public struct OperationEventSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+public struct OperationEventSegment: PersistableCustomSegment, Equatable, CustomStringConvertible, Sendable {
+    /// A unique identifier for this segment — a fresh UUID for an event newly
+    /// drained from the outbox, or the persisted id when rebuilding from disk.
     public let id: String
+
+    /// The drained ``OperationEvent`` this segment durably records.
     public let content: OperationEvent
 
     /// Creates a segment wrapping `content`.
