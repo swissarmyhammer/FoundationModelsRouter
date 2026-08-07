@@ -87,6 +87,19 @@ let package = Package(
             dependencies: [.target(name: packageName)] + mlxProducts,
             path: "Tests/\(packageName)Tests"
         ),
+        // Test-only support shared by the two gated targets below. It exists
+        // because `MetalLibraryTestBootstrap` has to run inside *each* gated
+        // test process — `swift test` builds one `.xctest` per test target and
+        // runs each in its own process, and the symlink it installs is placed
+        // beside the running binary — while SwiftPM cannot share source
+        // between two `.testTarget`s directly. A plain `.target` both can
+        // depend on is the only way to keep one copy of that code. It is
+        // deliberately not part of any `product`, so nothing outside this
+        // package can import it.
+        .target(
+            name: "\(packageName)TestSupport",
+            path: "Tests/\(packageName)TestSupport"
+        ),
         // Gated, real-model suite (milestone 7): downloads deliberately tiny
         // real models and runs them end to end, behind an opt-in env var so it
         // never fires on a network/GPU-less box. It links the Hub client +
@@ -94,7 +107,9 @@ let package = Package(
         // `MLXHuggingFace` macros.
         .testTarget(
             name: "\(packageName)IntegrationTests",
-            dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
+            dependencies: [
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+            ] + mlxProducts + hubProducts,
             path: "Tests/\(packageName)IntegrationTests"
         ),
         // Runnable demo (live twin of the offline `ExamplesTests` example): one
@@ -148,7 +163,9 @@ let package = Package(
         // resolves a real profile through `LiveModelLoader`.
         .testTarget(
             name: "FoundationModelsRouterEvals",
-            dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
+            dependencies: [
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+            ] + mlxProducts + hubProducts,
             path: "Tests/FoundationModelsRouterEvals"
         ),
     ]

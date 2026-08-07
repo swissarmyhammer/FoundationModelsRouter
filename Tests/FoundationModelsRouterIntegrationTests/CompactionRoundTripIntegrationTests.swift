@@ -55,13 +55,12 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
 /// uses — so a handful of scripted turns crosses the 0.80 compaction trigger
 /// without needing enormous prompts.
 ///
-/// Not executed in the authoring sandbox: like every other gated suite in
-/// this target, a pre-existing MLX `default.metallib` load failure blocks
-/// real-model runs here (see `compaction_plan.md`'s build-order §6.1 spike
-/// notes for the same environment limitation, reproduced identically against
-/// already-passing suites). This is an environment limitation of that
-/// sandbox, not something this task introduced; the suite is asserted to
-/// compile and be correctly gated, per this task's own instructions.
+/// This suite executes against real hardware. It was long described here as
+/// blocked by an unfixable MLX `default.metallib` load failure; that was
+/// wrong. The failure was a resource-colocation bug in how `swift test` lays
+/// out its binaries, and ``MetalLibraryTestBootstrap`` fixes it — see that
+/// type for the root cause. Nothing about the toolchain or the machine ever
+/// needed to change.
 @Suite(
     "Gated real-model end-to-end coverage: RoutedSession.compact(prompt:budget:) round trip (task rjvrgt9)",
     .serialized,

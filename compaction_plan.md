@@ -458,22 +458,21 @@ gated (`FM_ROUTER_INTEGRATION_TESTS`).
    the same synthesized shape, and asserts the turn completes, the model
    recalls a fact planted only in the synthesized summary entry, and the
    synthesized ids are unchanged both immediately after ingest and after the
-   turn. (Not executed in the authoring sandbox — a pre-existing MLX
-   `default.metallib` load failure blocks *every* gated integration suite
-   there, reproduced identically against the already-passing
-   `TranscriptReconstructionIntegrationTests`; this is an environment
-   limitation of that sandbox, not something this task introduced. The
-   hermetic suite above fully covers the recording-mirror half without this
-   dependency.)
+   turn. (This was long recorded here as blocked by a `default.metallib` load
+   failure that no gated integration suite could get past, and described as an
+   environment limitation. That diagnosis was wrong: the failure was a
+   resource-colocation bug in `swift test`'s binary layout, now fixed by
+   `MetalLibraryTestBootstrap` — see that type for the root cause. The gated
+   suites execute against real hardware.)
 
    **Gotcha for `CompactionSegment` (§1.2) implementers:** none found on the
    hermetic (disk) half. Both synthesis directions (fresh id, reused id)
    round-trip cleanly; there is no observed id-reassignment or collision
    hazard synthesizing entries outside of a real model turn. The live-session
-   half of this verdict (whether `LanguageModelSession(transcript:)` itself
-   preserves ids on ingest) remains to be empirically confirmed by running
-   `CompactionSpikeIntegrationTests` in an environment with working MLX/Metal
-   (e.g. CI, which already runs this target's other gated suites).
+   half of this verdict — whether `LanguageModelSession(transcript:)` itself
+   preserves ids on ingest — is now empirically confirmed too:
+   `CompactionSpikeIntegrationTests` passes against a real model under
+   `FM_ROUTER_INTEGRATION_TESTS=1 swift test`.
 
 2. **`CompactionSegment` + registry default registration**; recording
    round-trip tests.

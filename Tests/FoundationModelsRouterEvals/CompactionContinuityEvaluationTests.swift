@@ -8,9 +8,9 @@ import Testing
 
 /// The same opt-in environment variable every other gated real-model suite in
 /// this repository checks — see ``compactionEvalsIntegrationEnvVar``'s own
-/// doc comment. Unset (the default, and on any network/GPU-less box,
-/// including this sandbox) the gated eval below is skipped, so `swift test`
-/// stays green with no real model download or inference.
+/// doc comment. Unset (the default, and on any network/GPU-less box) the
+/// gated eval below is skipped, so `swift test` stays green with no real
+/// model download or inference.
 private let compactionContinuityIntegrationEnvVar = "FM_ROUTER_INTEGRATION_TESTS"
 
 private var compactionContinuityIntegrationEnabled: Bool {
@@ -214,10 +214,14 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 ///
 /// Runtime-gated on `FM_ROUTER_INTEGRATION_TESTS`, exactly like every other
 /// real-model suite in this repository — never runs on a network/GPU-less
-/// box (including this task's authoring sandbox: real model inference is
-/// unavailable here, the same documented limitation every other gated suite
-/// in this repository already carries). The target itself, and this file's
-/// hermetic tests above, always build and run.
+/// box. The target itself, and this file's hermetic tests above, always build
+/// and run.
+///
+/// This suite was long described here as blocked by an MLX `default.metallib`
+/// load failure that no gated suite in this repository could get past. That
+/// was wrong: the failure was a resource-colocation bug in `swift test`'s
+/// binary layout, which ``MetalLibraryTestBootstrap`` now fixes from inside
+/// ``CompactionContinuityEvalRealSubjectRunner``'s own model load.
 @Suite(.enabled(if: compactionContinuityIntegrationEnabled))
 struct CompactionContinuityEvaluationIntegrationTests {
     @Test(
