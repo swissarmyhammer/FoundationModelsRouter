@@ -52,13 +52,118 @@ struct CompactionContinuityTaskSpec: Sendable {
 /// never itself the subject of ``CompactionContinuityTaskSpec/finalInstruction``,
 /// so its variety (or lack of it) does not affect dataset diversity. Mirrors
 /// ``compactionEvalFillerTurns``'s own convention.
+///
+/// Each step is a substantial paragraph rather than a one-line aside, and the
+/// length is the point, not decoration: a step's job here is to *consume
+/// context*, and ten of these have to estimate past
+/// ``compactionContinuityDefaultBudget``'s ``TokenBudget/triggerTokens`` (1638)
+/// on their own for any task built from them to force a live fold.
+/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceAFold` asserts
+/// exactly that. The one-line versions these replaced estimated about 14 tokens
+/// each — roughly an eleventh of what the trigger needs — and the sizing test
+/// of the day never noticed, because it counted steps instead of tokens (task
+/// 5m97h14).
+///
+/// Every step still closes by asking for a trivial one-word or one-sentence
+/// answer, so the model's own replies stay short and the padding is all on the
+/// prompt side, and none of them mentions any fixture's planted facts.
 let compactionContinuityFillerSteps: [String] = [
-    "By the way, what's a good one-word codename for a low-priority task?",
-    "Quick check: does this conversation still make sense to you so far?",
-    "Unrelated question: name any color that isn't blue.",
-    "Just chatting — what's a common synonym for \"quick\"?",
-    "Give me a one-word synonym for \"finished\".",
-    "Say any short greeting.",
+    """
+    By the way, here is a tangent with no bearing at all on anything above. \
+    Our team keeps arguing about how to label the tickets nobody plans to pick \
+    up this quarter. One camp wants strictly numeric identifiers, on the \
+    grounds that a bare number cannot be misread as a priority signal, and \
+    that anything more expressive invites people to read urgency into a label \
+    that was never meant to carry it. Another camp insists on short evocative \
+    words, because a memorable label is far easier to raise in conversation \
+    than a five-digit string nobody can recall under pressure. A third group \
+    has proposed borrowing from botany, on the theory that plant names are \
+    plentiful, pronounceable, and carry no accidental connotations of urgency \
+    whatsoever. Nobody has persuaded anybody, and the argument has now \
+    outlasted several of the tickets it was about. Ignore all of that context \
+    and simply answer the question: what is one good single word to use as a \
+    codename for a task nobody considers urgent? Reply with just that one \
+    word and nothing else.
+    """,
+    """
+    Setting the earlier material aside entirely for a moment, here is an aside \
+    about how long exchanges like this one tend to go. People often assume a \
+    lengthy conversation degrades steadily, as though every additional \
+    paragraph blurs whatever came before it by some fixed amount. In practice \
+    the failure is much lumpier than that: whole stretches stay perfectly \
+    crisp while one specific detail quietly evaporates, and it is almost \
+    always the detail nobody thought to repeat. That is why careful \
+    interviewers double back on the same question in different words rather \
+    than trusting a single answer, and why good notes get taken during a \
+    discussion instead of reconstructed afterward from memory. The same \
+    asymmetry shows up in written records: the summary someone wrote at the \
+    time is usually more reliable than the far longer account assembled from \
+    recollection weeks later. None of which needs any analysis from you. Just \
+    confirm that you are still following this exchange, in one short \
+    sentence, and say nothing further.
+    """,
+    """
+    Here is an entirely unrelated digression, offered purely as padding. \
+    Colour naming across languages is far less uniform than most people \
+    expect. Some languages draw the boundary between green and blue in a place \
+    English speakers would find arbitrary; others have a single basic term \
+    covering both, and speakers of those languages have no more trouble \
+    describing the sky than anybody else. Several languages have separate \
+    basic terms for light and dark shades of what English treats as one colour \
+    with a modifier attached. The order in which languages acquire basic \
+    colour terms turns out to be strikingly consistent even so, which is one \
+    of the more famous findings in the field and one of the more heavily \
+    argued over. Weavers, dyers, and printers each carry their own vocabulary \
+    on top of all that, finer grained than the everyday one and mutually \
+    unintelligible. You do not need to engage with any of it. Simply name any \
+    single colour that is not blue, and reply with nothing but that colour's \
+    name.
+    """,
+    """
+    Just chatting, with nothing here that connects to the work above. English \
+    is unusually rich in words for doing something in a short span of time, \
+    and the shades between them are real rather than stylistic. One implies \
+    haste and the mistakes that come with it; another implies practised \
+    efficiency with no mistakes at all; a third implies suddenness, which is \
+    about the beginning of an action rather than its duration. A fourth is \
+    mostly about impatience on the part of whoever is waiting. Translators \
+    tend to find this cluster harder than technical vocabulary, because a \
+    specialist term usually has one correct counterpart while an everyday \
+    word has a dozen near ones, each wrong in a different direction. Style \
+    guides are not much help either, since they mostly advise picking the \
+    shortest option and moving on. Skip all of that and answer plainly: give \
+    one common synonym for the word "quick", and reply with that single word \
+    only.
+    """,
+    """
+    Another interlude, unconnected to everything else in this conversation. \
+    Words for the state of being complete carry a surprising amount of \
+    baggage. Some suggest that the work stopped because it reached its natural \
+    end, others that it stopped because someone decided to stop, and the \
+    difference matters enormously in a status report even though both describe \
+    the same halted activity. A few carry an implication of polish, meaning \
+    not merely ended but brought to a good standard, which is why they get \
+    used in advertising far more often than in engineering. Project managers \
+    have invented elaborate vocabularies to keep these apart, with tiers for \
+    work that is done, work that is done pending review, and work that is \
+    done pending a review that has been scheduled but not held. None of that \
+    taxonomy is needed here. Give one single-word synonym for "finished", and \
+    reply with nothing but that word.
+    """,
+    """
+    One last aside before we continue, and it has no connection to any of the \
+    preceding material. Greetings are among the most heavily ritualised parts \
+    of any language, and among the first things a learner is taught, precisely \
+    because getting one wrong is noticed immediately while an awkward sentence \
+    in the middle of a paragraph usually is not. Their literal meanings are \
+    frequently beside the point: several common ones are questions nobody \
+    expects an answer to, and others are abbreviated blessings whose original \
+    sense has worn away entirely from centuries of use. Length signals \
+    formality more reliably than vocabulary does, which is why the shortest \
+    options travel best between contexts and why written correspondence keeps \
+    inventing new short ones. There is nothing to analyse here. Say any short \
+    greeting, and reply with nothing else.
+    """,
 ]
 
 /// Every hand-written multi-step task fixture (task 4ce0a1k): each requires

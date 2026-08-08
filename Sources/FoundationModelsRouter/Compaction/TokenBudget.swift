@@ -3,11 +3,15 @@ import Foundation
 /// The token-accounting knobs governing when and how far a session's
 /// transcript gets folded (compaction_plan.md §1.4).
 ///
-/// `limit` has no universal default — it is always the profile's resolved
-/// working context (``SlotResolution/contextTokens``), which varies by
-/// profile and machine; callers construct a ``TokenBudget`` with that figure
-/// in hand (a future compaction task defaults a `nil` budget to it
-/// automatically — see compaction_plan.md §1.4's `compact(prompt:budget:)`).
+/// `limit` normally *is* the profile's resolved working context
+/// (``SlotResolution/contextTokens``), which varies by profile and machine;
+/// callers construct a ``TokenBudget`` with that figure in hand, and
+/// ``RoutedSession/compact(prompt:budget:)`` defaults a `nil` budget to exactly
+/// that (compaction_plan.md §1.4). A caller is free to pass a *smaller* limit
+/// than the session's own window — "keep this conversation under N tokens even
+/// though the model could hold more" — and every threshold below is measured
+/// against whatever `limit` says, never against the session's window. See
+/// ``triggerTokens``.
 /// `trigger`/`target` are stable defaults, research-backed against Claude
 /// Code's and the Claude platform's own compaction guidance
 /// (compaction_plan.md §2): fold once a session crosses 80% of its context,
@@ -17,23 +21,26 @@ public struct TokenBudget: Sendable, Equatable {
     /// normally a profile's resolved ``SlotResolution/contextTokens``.
     public var limit: Int
 
-    /// Compact once measured ``RoutedSession/contextFill`` reaches this
-    /// fraction of ``limit``.
+    /// Compact once measured context usage reaches this fraction of ``limit``
+    /// — see ``triggerTokens``, the token count that fraction resolves to and
+    /// the form the check is actually made in.
     public var trigger: Double
 
-    /// Compact down to at most this fraction of ``limit``.
+    /// Compact down to at most this fraction of ``limit`` — see
+    /// ``targetTokens``.
     public var target: Double
 
-    /// The optional hard ceiling on measured ``RoutedSession/contextFill``, as
-    /// a fraction of ``limit`` — `nil` (the default) opts out entirely
-    /// (compaction_plan.md §1.7's mid-turn strategy, task g2hcm36).
+    /// The optional hard ceiling on measured context usage, as a fraction of
+    /// ``limit`` — `nil` (the default) opts out entirely
+    /// (compaction_plan.md §1.7's mid-turn strategy, task g2hcm36). See
+    /// ``ceilingTokens``.
     ///
     /// Unlike ``trigger`` (compact proactively, ahead of time, so a turn never
     /// dies) this is a deterministic last resort: when set on a session's
-    /// auto-compaction budget, ``RoutedSessionActor`` checks fill against it
+    /// auto-compaction budget, ``RoutedSessionActor`` checks usage against it
     /// immediately before submitting a turn's own generate call — after any
     /// proactive fold ``trigger`` already triggered, so this only ever fires
-    /// when fill is *still* at or above it (an oversized-tail transcript no
+    /// when usage is *still* at or above it (an oversized-tail transcript no
     /// fold could bring down far enough). Fails fast with
     /// ``ContextBudgetError/hardCeilingExceeded(fill:ceiling:)`` instead of
     /// submitting a call doomed to overflow the backend's own context window,
@@ -66,13 +73,13 @@ public struct TokenBudget: Sendable, Equatable {
     /// Creates a token budget.
     ///
     /// - Parameters:
-    ///   - limit: The working context, in tokens, to measure fill against —
+    ///   - limit: The working context, in tokens, to measure usage against —
     ///     normally a profile's resolved ``SlotResolution/contextTokens``.
-    ///   - trigger: Compact once fill reaches this fraction of `limit`.
+    ///   - trigger: Compact once usage reaches this fraction of `limit`.
     ///     Defaults to `0.80`.
     ///   - target: Compact down to at most this fraction of `limit`.
     ///     Defaults to `0.50`.
-    ///   - hardCeiling: The optional hard ceiling on fill, as a fraction of
+    ///   - hardCeiling: The optional hard ceiling on usage, as a fraction of
     ///     `limit` — see ``hardCeiling``. Defaults to `nil` (opted out).
     ///   - toolOutputLimit: The optional cap, in tokens, on any single tool
     ///     call's own result — see ``toolOutputLimit``. Defaults to `nil`
@@ -90,6 +97,61 @@ public struct TokenBudget: Sendable, Equatable {
         self.hardCeiling = hardCeiling
         self.toolOutputLimit = toolOutputLimit
     }
+
+    /// The measured context usage, in tokens, at or above which a session
+    /// carrying this budget folds proactively: ``trigger`` resolved against
+    /// ``limit``.
+    ///
+    /// The comparison a session makes is this token count against its own
+    /// measured usage — deliberately *not* ``trigger`` against
+    /// ``RoutedSession/contextFill``. Those two are only interchangeable when
+    /// ``limit`` happens to equal the session's resolved
+    /// ``SlotResolution/contextTokens``, which `contextFill` always divides by;
+    /// a caller who asks to be kept under a *smaller* limit than the window
+    /// would otherwise have its trigger silently scaled by the ratio between
+    /// the two (a budget of `limit: 2048` on an 8192-token window fired at 6554
+    /// tokens instead of 1638).
+    public var triggerTokens: Int {
+        tokens(for: trigger)
+    }
+
+    /// The measured context usage, in tokens, a fold aims to land at or under:
+    /// ``target`` resolved against ``limit``.
+    public var targetTokens: Int {
+        tokens(for: target)
+    }
+
+    /// The measured context usage, in tokens, at or above which a session
+    /// carrying this budget refuses to submit a turn's generate call:
+    /// ``hardCeiling`` resolved against ``limit``, or `nil` when the budget
+    /// opts out of a ceiling.
+    public var ceilingTokens: Int? {
+        hardCeiling.map(tokens(for:))
+    }
+
+    /// `measuredTokens` expressed as a fraction of ``limit`` — the inverse of
+    /// ``triggerTokens``/``targetTokens``/``ceilingTokens``, for reporting a
+    /// measured usage back on the same scale the fractions are configured in
+    /// (see ``ContextBudgetError/hardCeilingExceeded(fill:ceiling:)``).
+    ///
+    /// - Parameter measuredTokens: The measured context usage, in tokens.
+    /// - Returns: The fraction of ``limit`` that usage comes to, or `0` for a
+    ///   budget with no positive limit to divide by.
+    public func fill(measuredTokens: Int) -> Double {
+        guard limit > 0 else { return 0 }
+        return Double(measuredTokens) / Double(limit)
+    }
+
+    /// Resolves `fraction` of ``limit`` to a whole number of tokens — the one
+    /// rounding rule ``triggerTokens``, ``targetTokens`` and ``ceilingTokens``
+    /// all share, so the three thresholds can never round differently from one
+    /// another.
+    ///
+    /// - Parameter fraction: The fraction of ``limit`` to resolve.
+    /// - Returns: The token count `fraction` of ``limit`` comes to.
+    private func tokens(for fraction: Double) -> Int {
+        Int((Double(limit) * fraction).rounded())
+    }
 }
 
 /// A typed, deterministic budget failure raised at the generate boundary
@@ -99,18 +161,25 @@ public struct TokenBudget: Sendable, Equatable {
 ///
 /// Only ever thrown by ``RoutedSessionActor`` when a session's
 /// auto-compaction budget sets ``TokenBudget/hardCeiling``: immediately
-/// before submitting a turn's own generate call, measured
-/// ``RoutedSession/contextFill`` is checked against it, and this is thrown
-/// instead of running the call when fill is already at or over the ceiling.
+/// before submitting a turn's own generate call, measured context usage is
+/// checked against ``TokenBudget/ceilingTokens``, and this is thrown
+/// instead of running the call when usage is already at or over it.
 /// Treated exactly like `LanguageModelError.contextSizeExceeded` by
 /// auto-compaction's own reactive retry-once recovery: the session folds
-/// harder and retries once; a second hit (the fold could not bring fill
+/// harder and retries once; a second hit (the fold could not bring usage
 /// under the ceiling — an unfoldable oversized transcript) surfaces this to
 /// the caller instead of looping.
 public enum ContextBudgetError: Error, Equatable, LocalizedError {
-    /// Measured ``RoutedSession/contextFill`` (`fill`) was at or above the
-    /// configured ``TokenBudget/hardCeiling`` (`ceiling`) immediately before
-    /// this turn's generate call would have been submitted.
+    /// Measured context usage, as a fraction of the budget's own
+    /// ``TokenBudget/limit`` (`fill`), was at or above the configured
+    /// ``TokenBudget/hardCeiling`` (`ceiling`) immediately before this turn's
+    /// generate call would have been submitted.
+    ///
+    /// `fill` is denominated in the budget's ``TokenBudget/limit`` so it is
+    /// directly comparable to `ceiling`. That is the same number as
+    /// ``RoutedSession/contextFill`` whenever the budget's limit is the
+    /// session's own resolved working context — the normal case — and differs
+    /// only for a budget deliberately set below that window.
     case hardCeilingExceeded(fill: Double, ceiling: Double)
 
     /// A human-readable description naming the measured fill and the
@@ -173,6 +242,28 @@ extension ContextUsageState {
         case .measured(let input, let output):
             guard contextTokens > 0 else { return 0 }
             return Double(input + output) / Double(contextTokens)
+        }
+    }
+
+    /// The measured context usage, in tokens, this state stands for, or `nil`
+    /// when it cannot be measured at all (``unknown``) — the numerator
+    /// ``fill(contextTokens:)`` divides, before any denominator is chosen.
+    ///
+    /// Every budget threshold is compared against this rather than against a
+    /// fill fraction, so a comparison never has to assume a
+    /// ``TokenBudget/limit`` and a session's resolved working context are the
+    /// same number (see ``TokenBudget/triggerTokens``). `nil` means "no
+    /// comparison is possible", which is what leaves an unmeasured session
+    /// alone instead of folding it on a guess — the same behavior the previous
+    /// `NaN >= trigger` comparison happened to produce.
+    var measuredTokens: Int? {
+        switch self {
+        case .none:
+            return 0
+        case .unknown:
+            return nil
+        case .measured(let input, let output):
+            return input + output
         }
     }
 }

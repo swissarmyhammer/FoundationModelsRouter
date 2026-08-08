@@ -108,9 +108,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     that manages its own window" opt-in, task 8213x39), or `nil` (the
     ///     default) for manual-only compaction via
     ///     ``RoutedSession/compact(prompt:budget:)``. When set, the vended
-    ///     session checks measured ``RoutedSession/contextFill`` against
-    ///     `budget`'s trigger before every turn and folds automatically once
-    ///     it is reached, and a turn that still overflows mid-generation
+    ///     session checks its measured context usage against
+    ///     `budget`'s ``TokenBudget/triggerTokens`` before every turn and folds
+    ///     automatically once it is reached, and a turn that still overflows mid-generation
     ///     (`LanguageModelError.contextSizeExceeded`) is compacted harder and
     ///     retried exactly once before the error surfaces. A fork inherits
     ///     its parent's opt-in.

@@ -84,20 +84,24 @@ struct CompactionEvaluationHermeticTests {
         "the default budget forces the model-assisted Summarization stage for every fixture, not just ToolOutputElision/TurnTruncation"
     )
     func defaultBudgetForcesSummarizationStage() async throws {
-        // A hermetic proof of `CompactionEvaluation.init`'s own claim: the
-        // default budget's target is small enough that the untouched
-        // recency window alone still exceeds it, so `Compactor.compact`
-        // always falls through past the two deterministic stages into
-        // `Summarization` — never stopping at `TurnTruncation`, which would
-        // drop the planted fact with no trace at all (no summary entry to
-        // check `FactRetention` against). Uses the real `Compactor` pipeline
-        // directly (not `CompactionEvaluation`) with a trivial fake
-        // summarizer — still no real inference.
+        // A hermetic proof of `compactionEvalDefaultBudget`'s own claim: its
+        // target is small enough that the untouched recency window alone still
+        // exceeds it, so `Compactor.compact` always falls through past the two
+        // deterministic stages into `Summarization` — never stopping at
+        // `TurnTruncation`, which would drop the planted fact with no trace at
+        // all (no summary entry to check `FactRetention` against). Uses the
+        // real `Compactor` pipeline directly (not `CompactionEvaluation`) with
+        // a trivial fake summarizer — still no real inference.
+        //
+        // The budget is read from the same constant the evaluation itself
+        // defaults to, never restated as a literal here: a copy would let the
+        // two drift, and this assertion's whole job is to fail when the value
+        // stops forcing `Summarization`.
         struct FakeSummarizer: CompactionSummarizer {
             func summarize(_ prompt: String) async throws -> String { "fake summary" }
         }
 
-        let budget = TokenBudget(limit: 4000, trigger: 0.80, target: 0.05)
+        let budget = compactionEvalDefaultBudget
         for seed in compactionEvalSeeds {
             let (_, result) = try await Compactor.compact(
                 Transcript(entries: seed.entries),

@@ -80,7 +80,7 @@ struct CompactionRoundTripIntegrationTests {
     /// than ``RealModels/context`` so scripted turns cross the 0.80
     /// compaction trigger without needing huge prompts. See this type's own
     /// doc comment.
-    private static let context = 2048
+    fileprivate static let context = 2048
 
     /// Loads the tiny model directly through a real ``LiveModelLoader`` and
     /// returns its concrete ``MLXFoundationModelsContainer``. Called once per
@@ -187,14 +187,34 @@ struct CompactionRoundTripIntegrationTests {
     /// to cross the 0.80 compaction trigger within a handful of turns. The
     /// first plants a fact only recoverable, after compaction, from the
     /// fold's summary — mirroring `Examples/CompactionDemo`'s own fixtures.
-    private static let scriptedTurns: [String] = [
+    ///
+    /// Each turn is a long paragraph, and the length is load-bearing rather
+    /// than decorative: crossing the trigger takes 1638 measured tokens
+    /// (`0.80 * 2048`), so the turns have to carry that much text between them
+    /// before the loop below runs out of them. The shorter versions these
+    /// replaced totalled roughly 718 estimated tokens across all eight — the
+    /// live run measured 846 and stalled at a `contextFill` of 0.41, less than
+    /// half the trigger, because the suite had never actually executed against
+    /// real hardware to find out (task 5m97h14).
+    /// `ScriptedTurnSizingTests` pins the size so it cannot silently shrink
+    /// again.
+    fileprivate static let scriptedTurns: [String] = [
         """
         Project brief: this session's internal vault code is CRIMSON-77.
         Remember it precisely; you will be asked about it later. The project
         catalogs a fictional archive of nineteenth-century weather station
         logs from six remote outposts, each reporting barometric pressure,
         wind direction, and temperature three times daily for eleven
-        consecutive years. Reply with one short sentence acknowledging this.
+        consecutive years. The outposts were staffed on rotating two-year
+        postings, so the handwriting changes partway through most volumes and
+        the abbreviations used for wind direction change along with it. Two of
+        the six kept their readings in a local unit that a later archivist
+        converted in pencil directly onto the original page, which means the
+        converted figures and the originals now sit side by side with nothing
+        marking which is which. The archive also holds the outposts' incoming
+        correspondence, which is out of scope for this project but shares the
+        same shelf numbering and is easy to pull by mistake. Reply with one
+        short sentence acknowledging this.
         """,
         """
         Architecture notes: the archive is split into per-outpost shards,
@@ -202,8 +222,16 @@ struct CompactionRoundTripIntegrationTests {
         naming the outpost, its coordinates, and the observer's name for
         that decade. Shards are concatenated chronologically before
         indexing, so ingestion must sort by the header's decade field
-        before doing anything else. Reply with one short sentence
-        acknowledging this.
+        before doing anything else; sorting by filename looks equivalent and
+        is not, because three of the outposts were renamed mid-century and
+        their files were retitled to match. The delimiter is a tab in the
+        earlier shards and a run of spaces in the later ones, a change that
+        was never recorded anywhere except in the ingestion code, so the
+        reader sniffs the first data line of each shard rather than trusting
+        a configured value. Headers are repeated at the top of every page in
+        the original volumes and were transcribed each time, so the reader
+        also has to drop repeated headers rather than treat them as rows.
+        Reply with one short sentence acknowledging this.
         """,
         """
         Data-quality notes: roughly four percent of entries are missing a
@@ -211,46 +239,95 @@ struct CompactionRoundTripIntegrationTests {
         omitted entirely, so parsers must treat a lone dash as an explicit
         missing value rather than a parse failure. A smaller share carry an
         obviously transposed temperature decimal, flagged for manual review
-        rather than auto-corrected. Reply with one short sentence
-        acknowledging this.
+        rather than auto-corrected, because the transposition is not always
+        recoverable: a reading of 3.71 could plausibly have been 37.1 or
+        73.1 depending on the season and the outpost's altitude. Pressure
+        readings taken during the two documented instrument replacements
+        show a step change of about half a unit that is an artefact of the
+        new instrument rather than weather, and the archive's own notes
+        disagree with the correspondence about exactly which week each
+        replacement happened. None of these are corrected in place; every
+        one is annotated. Reply with one short sentence acknowledging this.
         """,
         """
         Indexing notes: the search index keys on outpost name and decade,
         with a secondary index on temperature range so a query for cold
         readings at any outpost in a given decade resolves without a full
         scan. The secondary index is rebuilt lazily, the first time a
-        range-style query touches an un-indexed decade. Reply with one
-        short sentence acknowledging this.
+        range-style query touches an un-indexed decade, which keeps the
+        initial ingest fast at the cost of one slow query per decade per
+        process. Outpost names are stored twice, once as transcribed and
+        once normalised, because the renames mean a single outpost appears
+        under two names across the archive and a reader searching for either
+        should find both. The decade field is stored as an integer rather
+        than a string so range queries work without lexicographic
+        surprises, and the pre-1800 volumes, of which there are only a
+        handful, are excluded from the secondary index entirely rather than
+        special-cased. Reply with one short sentence acknowledging this.
         """,
         """
         Open questions: whether to normalize pre-1875 pressure readings,
         which used a different reference unit than later entries, and
         whether the six outposts should be weighted equally or by their
         number of surviving entries when computing archive-wide averages,
-        since two outposts lost several years of records to a fire. Reply
-        with one short sentence acknowledging this.
+        since two outposts lost several years of records to a fire. Related
+        and unresolved: whether a reading annotated as a suspected
+        transposition should be excluded from averages, included as
+        transcribed, or included with the correction the annotator
+        suggested but did not apply. Excluding them biases the averages
+        toward the outposts with tidier record-keeping, and including them
+        as transcribed leaves a handful of physically impossible values in
+        the summary statistics. There is also no agreement on whether the
+        pencil unit conversions should be treated as data or as commentary.
+        Reply with one short sentence acknowledging this.
         """,
         """
         Status notes: three of the six outposts have been fully indexed and
         validated against their source shards. The remaining three await a
         second ingestion pass to resolve the missing wind-direction dashes
-        described earlier, since the first pass's parser predates that fix.
-        Reply with one short sentence acknowledging this.
+        described earlier, since the first pass's parser predates that fix
+        and silently dropped those rows instead of keeping them as explicit
+        missing values. The validation for the finished three compared row
+        counts, date continuity, and a sampled hundred readings per decade
+        against photographs of the original pages; two transcription errors
+        were found and corrected that way, both in the same volume, both in
+        the observer name rather than in a reading. The photographs
+        themselves are not part of the archive and live on separate
+        storage, so the validation is not reproducible from the archive
+        alone, which several people have objected to. Reply with one short
+        sentence acknowledging this.
         """,
         """
         Further status: no archive-wide statistics should be treated as
         final until all six outposts have passed the second ingestion pass.
         The three already-indexed outposts are believed correct on their
         own, but any statistic mixing outposts across the two ingestion
-        passes is provisional. Reply with one short sentence acknowledging
-        this.
+        passes is provisional, and that includes every headline number
+        published so far. The provisional figures have already been quoted
+        in two internal write-ups without that caveat attached, which is
+        how the current confusion started, and both write-ups now carry a
+        correction notice that is easy to miss. Going forward every derived
+        figure is stamped with the ingestion-pass state of each outpost it
+        draws on, so a reader can tell at a glance whether a number mixes
+        passes, and any figure that does is rendered in a way that makes
+        the mixture obvious rather than relying on a footnote. Reply with
+        one short sentence acknowledging this.
         """,
         """
         Final notes for this session: the second ingestion pass is expected
         to complete within the week, at which point the archive-wide
         averages described earlier can be finalized and the open questions
-        about normalization and outpost weighting revisited. Reply with one
-        short sentence acknowledging this.
+        about normalization and outpost weighting revisited. The plan is to
+        resolve the weighting question first, since the normalization
+        decision only changes pre-1875 readings while the weighting
+        decision changes every archive-wide figure, and to write both
+        decisions down as part of the archive rather than as a separate
+        document that can drift away from it. After that the remaining work
+        is the transposition annotations, which need a human pass rather
+        than a rule, and the question of what to do with the pencil unit
+        conversions. Nothing in this list depends on the indexing work,
+        which is finished apart from the lazy secondary-index rebuilds.
+        Reply with one short sentence acknowledging this.
         """,
     ]
 
@@ -344,5 +421,69 @@ struct CompactionRoundTripIntegrationTests {
 
             await container2.model.evict()
         }
+    }
+}
+
+// MARK: - Ungated fixture sizing
+
+/// Ungated proof that ``CompactionRoundTripIntegrationTests``' own scripted
+/// turns are still sized to reach the 0.80 compaction trigger (task 5m97h14).
+///
+/// The gated suite above is the real end-to-end proof, but it only runs with
+/// `FM_ROUTER_INTEGRATION_TESTS` set and a GPU present, so nothing under a
+/// plain `swift test` noticed when its fixtures were less than half the size
+/// the trigger needs — the suite's own doc comment claimed "a handful of
+/// scripted turns crosses the 0.80 compaction trigger" and a live run measured
+/// a `contextFill` of 0.41 against a 0.80 trigger. These two assertions are
+/// mechanical, need no model, and fail loudly if the fixtures shrink or grow
+/// out of range again.
+@Suite("CompactionRoundTripIntegrationTests fixture sizing (ungated)")
+struct ScriptedTurnSizingTests {
+    /// The measured usage, in tokens, the gated suite's loop waits to see —
+    /// ``CompactionRoundTripIntegrationTests/context`` at the default
+    /// ``TokenBudget/trigger``, which is the same threshold that suite's
+    /// `fillBeforeCompaction >= 0.80` assertion checks.
+    private static var triggerTokens: Int {
+        TokenBudget(limit: CompactionRoundTripIntegrationTests.context).triggerTokens
+    }
+
+    /// The estimated token count of each scripted turn's prompt text, in order.
+    private static var perTurnTokens: [Int] {
+        CompactionRoundTripIntegrationTests.scriptedTurns.map(Compactor.estimatedTokenCount(of:))
+    }
+
+    @Test("the scripted turns carry more prompt tokens between them than the 0.80 trigger needs")
+    func scriptedTurnsExceedTheTrigger() throws {
+        // Prompt text only: a live transcript also carries the instructions and
+        // every reply, so this is the conservative bound — the real run crosses
+        // the trigger strictly sooner than these numbers alone would.
+        let total = Self.perTurnTokens.reduce(0, +)
+        #expect(
+            total > Self.triggerTokens,
+            "the scripted turns estimate \(total) prompt tokens, which does not exceed the trigger's \(Self.triggerTokens)"
+        )
+    }
+
+    @Test("the prefix that first crosses the trigger still fits inside the working context")
+    func crossingPrefixFitsTheContext() throws {
+        // The turn that crosses the trigger is submitted with everything before
+        // it as its prompt, so that prefix has to fit the window or the turn
+        // dies instead of folding. Replies push the real crossing earlier,
+        // making this the worst case for prompt size.
+        var cumulative = 0
+        var crossingPrefix: Int?
+        for tokens in Self.perTurnTokens {
+            cumulative += tokens
+            if cumulative > Self.triggerTokens {
+                crossingPrefix = cumulative
+                break
+            }
+        }
+        let prefix = try #require(
+            crossingPrefix, "no prefix of the scripted turns crosses the trigger at all")
+        #expect(
+            prefix <= CompactionRoundTripIntegrationTests.context,
+            "the prefix that crosses the trigger estimates \(prefix) tokens, over the \(CompactionRoundTripIntegrationTests.context)-token working context"
+        )
     }
 }

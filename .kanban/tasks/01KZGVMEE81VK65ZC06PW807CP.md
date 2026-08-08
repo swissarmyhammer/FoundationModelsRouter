@@ -1,6 +1,70 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kzh0f0c5vbh4s49s8t11s80n
+  text: |-
+    ### Evidence from `^5m97h14`: this class also hits `FoundationModelsRouterEvals`, and it is the sole remaining cause of two red gated evals
+
+    Recorded here rather than worked, per this card owning the class. `^5m97h14` fixed the fill/trigger accounting (the estimator counting a transcript's JSON envelope as tokenizable text, and the trigger comparing a fraction of `contextTokens` against a fraction of `budget.limit`). With that fixed, folds now happen correctly everywhere — and the residue is entirely this card's.
+
+    **This card's AC "The recall half of `CompactionRoundTripIntegrationTests` is attributed either to this class or to `^5m97h14`" is now answerable: to this class.** `recall.contains("CRIMSON-77")` is green in an isolated gated run of that suite (61.8s, whole suite passing) now that the fold happens at the right point, so its recall failure under a *full* gated run is inherited cross-suite state, not sizing.
+
+    #### New: the same defect inside `FoundationModelsRouterEvals`, one target, one process
+
+    Both eval runners cache a single resident `MLXFoundationModelsContainer` across every sample (`CompactionEvalRealSubjectRunner.loaded`, `CompactionContinuityEvalRealSubjectRunner.loaded`) and only `evict()` after the whole `@Test` finishes. So 24 and 10 samples respectively share one prompt cache, and — in the first runner — so do the blank-slate *summarizer* session and the session that answers the question.
+
+    `CompactionEvaluationIntegrationTests` `mean(factRetention)` is `0.0833` (2 of 24). Instrumented gated run, printing each fold's summary alongside the answer:
+
+    ```
+    summary=1. Intent — Inform the assistant of the internal codename for a new feature.
+            2. Constraints & decisions — The internal codename for the new feature is "Project Longbow". …
+    question=What is the internal codename for the new feature?
+    answer=Noted.
+
+    summary=… 2. Constraints & decisions — Staging database port is 6543. …
+    question=What port does the staging database listen on?
+    answer=Noted.
+
+    summary=… The production deployment region is eu-west-2, selected for data-residency reasons. …
+    question=Which region is the production deployment in, and why was it chosen?
+    answer=Noted.
+
+    summary=… 2. Constraints & decisions — Data at rest in this project is encrypted with AES-256-GCM …
+    question=Which encryption mode is used for data at rest in this project?
+    answer=Noted.
+    ```
+
+    **Every summary contains the planted fact verbatim.** The compaction is correct and the summary quality is high. The answer is `"Noted."` — the reply that belongs to *acknowledging a fact statement*, which is what the seed transcripts' own turns do, in some other sample's conversation. Same shape as this card's "narrating a call it never made": the model emits a reply that fits a neighbouring conversation rather than the one it was given.
+
+    The second signature is the summarizer's own output format leaking into the next turn:
+
+    ```
+    answer=1. Intent — The user is asking for specific information (return flight number)
+           that was provided in the conversation.
+    ```
+
+    `CompactionContinuityEvaluationIntegrationTests` shows the identical leak. Ten samples, every one folding correctly; eight answered perfectly from the folded summary, two returned the summarizer's format instead:
+
+    ```
+    answer=1. Intent — The user asked for two specific pieces of information from the
+           conversation history: the escalation time for a tier-1 ticket and the on-call
+           escalation contact for the current week.
+    answer=1. Intent — The user asked for the exact file paths to the migration script and
+           its corresponding rollback script, without re-reading prior context.
+    ```
+
+    Both are `foldCount=2` samples — the ones that made an *extra* summarizer call. The eight correct ones are mostly `foldCount=1`. That correlation is the strongest pointer yet at the mechanism: each summarizer call is a separate blank-slate conversation on the shared model, and the turn that follows it inherits its chunks.
+
+    The same run-to-run variability this card already documents holds: `mean(answersCorrect)` was `0.5` on one gated run and 8-of-10 on the next, same code, same fixtures.
+
+    #### What this adds to the plan
+
+    Option (1) here is "cross-suite clean-model isolation in one shared place". These two eval runners are in a *different* test target from `GatedSuiteSerialGate`, and the contamination is **within** a single suite — sample to sample, and summarizer-session to answering-session — not only across suites. So whatever shared "start from a clean model" step lands has to be reachable per *sample* and per *summarizer call*, not only per suite. Worth measuring the cost: eviction drops the container, so a naive per-sample evict reloads a 27B model 24 times.
+
+    That summarizer-to-answerer leak inside one sample is also the strongest evidence yet for escalating to option (2): two sessions constructed blank-slate over disjoint transcripts on the same model should not be able to see each other's KV state at all. If that reproduces after isolation, it is a `PromptCache` prefix-resolution question in `mlx-swift-lm` and belongs on the fork's board, not here.
+  timestamp: 2026-08-08T15:39:30.565287+00:00
 position_column: todo
 position_ordinal: '8680'
 title: Gated tool-calling suites lose their tool call or their recall when they inherit another suite's prompt cache

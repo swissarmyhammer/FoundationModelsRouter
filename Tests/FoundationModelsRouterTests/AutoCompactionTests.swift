@@ -148,14 +148,34 @@ struct AutoCompactionTests {
         return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
     }
 
+    /// The working context every session this suite vends resolves at — the
+    /// denominator of both ``RoutedSession/contextFill`` and, deliberately,
+    /// ``fixedBudget``'s own ``TokenBudget/limit``.
+    ///
+    /// The two must be the same number for this suite's escalating warm-up to
+    /// mean what its assertions say: `contextFill` always divides by the
+    /// session's resolved context, while ``TokenBudget/triggerTokens`` resolves
+    /// against the budget's `limit`, so a budget whose limit is *smaller* than
+    /// this would fire its trigger far earlier than any `contextFill` reading
+    /// suggests (see ``TokenBudget/triggerTokens``).
+    private static let warmUpContextTokens = 100_000
+
     /// A budget whose target sits strictly below the warm-up transcript's
     /// own recency-window floor — forcing every fold this suite drives to
     /// need the model-assisted ``Summarization`` stage (and so to actually
     /// call a summarizer), the same ratio `RoutedSessionCompactTests.compactIsAppendOnlyAndPreservesIdentity()`
-    /// uses. `trigger: 0.8` matches ``TokenBudget``'s own default.
+    /// uses. `trigger: 0.8` matches ``TokenBudget``'s own default, and `limit`
+    /// is ``warmUpContextTokens`` so the trigger fires exactly where the
+    /// escalating warm-up's own `contextFill` readings say it does; `target` is
+    /// expressed as the fraction of that limit which lands on half the recency
+    /// floor.
     private static let fixedBudget: TokenBudget = {
         let recencyOnly = recencyWindowOnlyEstimate(expectedWarmUpEntries())
-        return TokenBudget(limit: recencyOnly * 2, trigger: 0.8, target: 0.25)
+        return TokenBudget(
+            limit: warmUpContextTokens,
+            trigger: 0.8,
+            target: Double(recencyOnly / 2) / Double(warmUpContextTokens)
+        )
     }()
 
     /// Vends a `profile.standard` session with `budget` and drives
@@ -188,7 +208,8 @@ struct AutoCompactionTests {
         let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
         let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
         let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
-        let profile = try await router.resolve(profile: RouterTestFixtures.profile(context: 100_000), reporting: ResolutionProgress())
+        let profile = try await router.resolve(
+            profile: RouterTestFixtures.profile(context: Self.warmUpContextTokens), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession(tools: tools, budget: budget)
         let backend = try #require(standardContainer.lastBackend)
@@ -549,7 +570,13 @@ struct AutoCompactionTests {
         // `trigger: 2.0` never fires proactively (fill tops out at 0.9 across
         // this suite) — isolating the hard-ceiling pre-check in
         // `runTurnAttempt` from the trigger-driven proactive fold in `runTurn`.
-        let hardCeilingBudget = TokenBudget(limit: Self.fixedBudget.limit, trigger: 2.0, target: 0.25, hardCeiling: 0.85)
+        // Built by overriding ``fixedBudget`` rather than restating its
+        // numbers: the recovery this test asserts depends on the retry's own
+        // fold *actually shrinking* the transcript, which is exactly what
+        // `fixedBudget`'s derived below-the-recency-floor target guarantees.
+        var hardCeilingBudget = Self.fixedBudget
+        hardCeilingBudget.trigger = 2.0
+        hardCeilingBudget.hardCeiling = 0.85
         let (session, standard, _) = try await Self.makeTriggeredSession(budget: hardCeilingBudget)
         #expect(await session.contextFill == 0.9)
 

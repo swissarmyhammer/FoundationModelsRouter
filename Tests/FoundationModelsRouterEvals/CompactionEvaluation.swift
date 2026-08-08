@@ -71,6 +71,32 @@ enum CompactionEvaluationError: Error {
     case unexpectedContainerType
 }
 
+/// The token budget every ``CompactionEvaluation`` folds against unless a
+/// caller passes its own.
+///
+/// `limit` is small because the hand-written seeds are small — around 100-185
+/// estimated tokens of content each (``compactionEvalSeeds``) — and `target`
+/// resolves to 40 tokens, strictly below the smallest seed's untouched
+/// recency-window size (63). That is the whole point of the value: it
+/// guarantees ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``
+/// can never land under target on the deterministic stages alone, so it always
+/// falls through to the model-assisted `Summarization` stage — the one stage
+/// that leaves a summary entry for ``CompactionEvalMetric/factRetention`` to
+/// check, where `TurnTruncation` would instead drop the planted fact with no
+/// trace at all (see ``CompactionEvalSeed``'s doc comment).
+///
+/// `CompactionEvaluationTests.defaultBudgetForcesSummarizationStage` asserts
+/// that property against every seed, and is what caught this value going stale
+/// once ``Compactor/estimatedTokenCount(of:)-(Transcript)`` stopped counting a
+/// transcript's JSON envelope as if a tokenizer would see it: the old
+/// `limit: 4000, target: 0.05` resolved to 200 tokens, more than half of which
+/// were envelope padding rather than content.
+///
+/// `trigger` plays no part here — this evaluation calls `Compactor` directly
+/// rather than driving a session that could fold on its own — and is left at
+/// ``TokenBudget``'s own default.
+let compactionEvalDefaultBudget = TokenBudget(limit: 400, trigger: 0.80, target: 0.10)
+
 /// The compaction-quality evaluation (compaction_plan.md §5): plants a fact in
 /// a seed transcript's foldable head, folds it with ``prompt``/``budget``,
 /// resumes a session over the result, and asks the seed's question —
@@ -135,18 +161,19 @@ struct CompactionEvaluation: Evaluation {
     /// - Parameters:
     ///   - prompt: The compaction prompt under test. Defaults to
     ///     ``CompactionPrompt/default``.
-    ///   - budget: The token budget every sample folds against. Defaults to a
-    ///     budget whose `target` is small enough that the untouched recency
-    ///     window alone still exceeds it — guaranteeing the pipeline falls
-    ///     through to the model-assisted `Summarization` stage rather than
-    ///     stopping at `TurnTruncation` (which would drop the planted fact
-    ///     with no trace at all — see ``CompactionEvalSeed``'s doc comment).
+    ///   - budget: The token budget every sample folds against. Defaults to
+    ///     ``compactionEvalDefaultBudget``, whose `target` is small enough that
+    ///     the untouched recency window alone still exceeds it — guaranteeing
+    ///     the pipeline falls through to the model-assisted `Summarization`
+    ///     stage rather than stopping at `TurnTruncation` (which would drop the
+    ///     planted fact with no trace at all — see ``CompactionEvalSeed``'s doc
+    ///     comment).
     ///   - seeds: The seed transcripts to draw samples from. Defaults to
     ///     ``compactionEvalSeeds`` (every hand-written fixture).
     ///   - runSubject: Runs one sample's subject work — see ``runSubject``.
     init(
         prompt: CompactionPrompt = .default,
-        budget: TokenBudget = TokenBudget(limit: 4000, trigger: 0.80, target: 0.05),
+        budget: TokenBudget = compactionEvalDefaultBudget,
         seeds: [CompactionEvalSeed] = compactionEvalSeeds,
         runSubject: @escaping @Sendable (
             _ entries: [Transcript.Entry],

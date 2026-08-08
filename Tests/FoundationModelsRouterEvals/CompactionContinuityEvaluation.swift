@@ -71,6 +71,24 @@ enum CompactionContinuityEvaluationError: Error {
     case unexpectedContainerType
 }
 
+/// The auto-compaction budget every ``CompactionContinuityEvaluation`` vends
+/// its sessions with unless a caller passes its own.
+///
+/// `limit` is deliberately far below any real model's working context: the
+/// point of this evaluation is that a *multi-step task* forces at least one
+/// live fold partway through, and a small limit is what makes that happen
+/// within a dozen-odd turns instead of hundreds. Since ``TokenBudget/trigger``
+/// resolves against this `limit` rather than against the session's own resolved
+/// window (see ``TokenBudget/triggerTokens``), the trigger fires at 1638 real
+/// tokens however large the model's window is — which is exactly the property
+/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceAFold` sizes the
+/// fixtures against.
+///
+/// `target` leaves the folded window at 30% of the limit, well clear of the
+/// four-turn recency window no deterministic stage may touch, so a fold has
+/// somewhere to land.
+let compactionContinuityDefaultBudget = TokenBudget(limit: 2048, trigger: 0.80, target: 0.30)
+
 /// The compaction-continuity evaluation (task 4ce0a1k): drives a
 /// multi-step task's steps through a real session vended with a small
 /// ``budget`` (task 8213x39's auto-compaction opt-in), one step at a time,
@@ -142,15 +160,16 @@ struct CompactionContinuityEvaluation: Evaluation {
     ///   - prompt: The compaction prompt under test. Defaults to
     ///     ``CompactionPrompt/default``.
     ///   - budget: The auto-compaction budget every session this evaluation
-    ///     drives is vended with. Defaults to a budget small enough that
-    ///     every hand-written task (see ``compactionContinuityTaskSpecs``)
-    ///     forces at least one live fold before its final instruction.
+    ///     drives is vended with. Defaults to
+    ///     ``compactionContinuityDefaultBudget``, small enough that every
+    ///     hand-written task (see ``compactionContinuityTaskSpecs``) forces at
+    ///     least one live fold before its final instruction.
     ///   - tasks: The task fixtures to draw samples from. Defaults to
     ///     ``compactionContinuitySeeds`` (every hand-written fixture).
     ///   - runSubject: Runs one sample's subject work — see ``runSubject``.
     init(
         prompt: CompactionPrompt = .default,
-        budget: TokenBudget = TokenBudget(limit: 2048, trigger: 0.80, target: 0.30),
+        budget: TokenBudget = compactionContinuityDefaultBudget,
         tasks: [CompactionContinuitySeed] = compactionContinuitySeeds,
         runSubject: @escaping @Sendable (
             _ steps: [String],

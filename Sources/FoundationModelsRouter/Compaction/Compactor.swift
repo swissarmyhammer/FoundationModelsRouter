@@ -77,15 +77,16 @@ public enum Compactor {
     static let stages: [any CompactionStage] = [ToolOutputElision(), TurnTruncation()]
 
     /// The characters-per-token ratio ``estimatedTokenCount(of:)`` uses to
-    /// turn a transcript's on-disk-payload byte size into a token estimate
+    /// turn a transcript's content size into a token estimate
     /// (compaction_plan.md §1.5's "prospective size check"), in the absence
     /// of any live model measurement at this layer: `Compactor` is a pure
     /// function over a bare `Transcript`, with no session and no backend to
     /// ask for real usage. `4.0` is the commonly cited average for English
-    /// text under BPE-style tokenizers — safe as a *relative* estimate
-    /// (before vs. after the same transcript, measured the same way) even
-    /// though it is never exact, because the next real turn re-measures the
-    /// live window exactly and replaces it (§1.5).
+    /// text under BPE-style tokenizers, so what it is applied to must itself
+    /// be text a model will actually be shown — never a transcript's on-disk
+    /// JSON envelope, which is why ``estimatedTokenCount(of:)`` measures
+    /// ``TranscriptEntryPayload/contentByteCount`` rather than the encoded
+    /// payload's own size.
     static let charsPerTokenEstimate: Double = 4.0
 
     /// Runs the pipeline over `transcript`, folding it down to at most
@@ -132,7 +133,7 @@ public enum Compactor {
         pendingRuns: [CompactionSegment.PendingRunSummary] = []
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let tokensBefore = estimatedTokenCount(of: transcript)
-        let targetTokens = Int((Double(budget.limit) * budget.target).rounded())
+        let targetTokens = budget.targetTokens
 
         guard tokensBefore > targetTokens else {
             return (
@@ -198,20 +199,32 @@ public enum Compactor {
         )
     }
 
-    /// Estimates `transcript`'s size in tokens: the total on-disk-payload
-    /// byte size of every entry (via ``TranscriptEntryMapper``, which maps
-    /// every entry kind — segments, tool calls, tool definitions — without
-    /// throwing), divided by ``charsPerTokenEstimate``.
+    /// Estimates `transcript`'s size in tokens: the total *content* byte size
+    /// of every entry (``TranscriptEntryPayload/contentByteCount``, reached via
+    /// ``TranscriptEntryMapper``, which maps every entry kind — segments, tool
+    /// calls, tool definitions — without throwing), divided by
+    /// ``charsPerTokenEstimate``.
     ///
-    /// Reusing the payload mapper keeps this estimate honest about *every*
-    /// content-bearing field a stage might shrink (segment text, tool-call
-    /// arguments, tool names), not just `.text` segments.
+    /// Routing through the payload mapper keeps this estimate honest about
+    /// *every* content-bearing field a stage might shrink (segment text,
+    /// tool-call arguments, tool names), not just `.text` segments — while
+    /// ``TranscriptEntryPayload/contentByteCount`` keeps the payload's own JSON
+    /// envelope out of the sum. That distinction is load-bearing, not
+    /// cosmetic: this estimate is compared *absolutely* against real token
+    /// counts in two places — ``compact(_:prompt:budget:summarizer:pendingRuns:)``
+    /// checks it against ``TokenBudget/targetTokens``, and a session's fold
+    /// writes ``CompactionResult/tokensAfter`` into
+    /// ``RoutedSession/contextFill``'s numerator, where every other writer puts
+    /// measured tokenizer counts. Measuring `entryId`s, segment ids, `"type"`
+    /// discriminators and JSON punctuation as if a tokenizer would see them
+    /// inflated the estimate by roughly 1.8x on a realistic transcript, which
+    /// made a fold *raise* measured fill.
     ///
     /// - Parameter transcript: The transcript to estimate.
     /// - Returns: The estimated token count.
     static func estimatedTokenCount(of transcript: Transcript) -> Int {
         let totalBytes = transcript.reduce(into: 0) { total, entry in
-            total += payloadByteCount(of: entry)
+            total += contentByteCount(of: entry)
         }
         return estimatedTokenCount(bytes: totalBytes)
     }
@@ -231,8 +244,9 @@ public enum Compactor {
     /// Converts a raw byte count into an estimated token count via
     /// ``charsPerTokenEstimate``, rounding up — the shared arithmetic both
     /// ``estimatedTokenCount(of:)`` overloads apply to their respective byte
-    /// counts (a transcript's total payload size, or a single string's UTF-8
-    /// size).
+    /// counts (a transcript's total content size, or a single string's UTF-8
+    /// size). Rounding once, over the whole sum, is what makes the two
+    /// overloads agree exactly on the same text.
     ///
     /// - Parameter bytes: The byte count to convert.
     /// - Returns: The estimated token count.
@@ -240,16 +254,15 @@ public enum Compactor {
         Int((Double(bytes) / charsPerTokenEstimate).rounded(.up))
     }
 
-    /// The JSON-encoded byte size of `entry`'s ``TranscriptEntryPayload``
-    /// mirror — a proxy for its textual content size across every entry kind.
+    /// The content byte size of `entry`, measured through its
+    /// ``TranscriptEntryPayload`` mirror — every content-bearing field across
+    /// every entry kind, and none of the mirror's own JSON envelope (see
+    /// ``TranscriptEntryPayload/contentByteCount``).
     ///
     /// - Parameter entry: The entry to measure.
-    /// - Returns: The entry's payload size in bytes, or `0` when it cannot be
-    ///   encoded (unreachable in practice: `TranscriptEntryMapper.event(from:)`
-    ///   never produces a payload its own `Codable` conformance can't encode).
-    private static func payloadByteCount(of entry: Transcript.Entry) -> Int {
+    /// - Returns: The entry's content size in bytes.
+    private static func contentByteCount(of entry: Transcript.Entry) -> Int {
         let (_, payload, _) = TranscriptEntryMapper.event(from: entry)
-        guard let data = try? JSONEncoder().encode(payload) else { return 0 }
-        return data.count
+        return payload.contentByteCount
     }
 }

@@ -335,6 +335,83 @@ public struct GenerationOptionsPayload: Sendable, Codable, Equatable {
     }
 }
 
+// MARK: - Content sizing
+
+/// The total UTF-8 size, in bytes, of every non-`nil` string in `strings` —
+/// the one accumulator every ``contentByteCount`` below sums through, so a
+/// payload's content is measured the same way at every level.
+///
+/// - Parameter strings: The content strings to measure; `nil` entries
+///   contribute nothing.
+/// - Returns: The total size in bytes.
+private func utf8ByteCount(of strings: [String?]) -> Int {
+    strings.reduce(0) { $0 + ($1?.utf8.count ?? 0) }
+}
+
+extension TranscriptEntryPayload {
+    /// The total UTF-8 size, in bytes, of every field this payload carries that
+    /// holds authored or model-visible content: segment content, tool
+    /// definitions, tool calls, the tool name a `.toolOutput` answers, asset
+    /// ids, a reasoning signature's bytes, and a response format's schema.
+    ///
+    /// Deliberately excludes this payload's own JSON envelope: ``entryId``,
+    /// ``contentRemoved``, every segment's and tool call's `id`, the `"type"`
+    /// discriminators ``SegmentPayload/encode(to:)`` writes, and the braces,
+    /// quotes, commas and string escaping `JSONEncoder` adds around all of it.
+    /// None of that is ever sent to a model, so none of it is ever tokenized —
+    /// measuring it would add a fixed cost per entry to
+    /// ``Compactor/estimatedTokenCount(of:)-(Transcript)`` however little
+    /// content the entry actually carries, and that estimate is compared
+    /// against real token counts (see that method's own doc comment).
+    ///
+    /// ``options`` and ``responseFormatName`` are excluded for the reason
+    /// ``strippingContent()`` states when it passes both through untouched:
+    /// generation configuration and a format's declared name are not content.
+    var contentByteCount: Int {
+        utf8ByteCount(of: [toolName, responseFormatSchemaJSON])
+            + utf8ByteCount(of: assetIds ?? [])
+            + (signature?.count ?? 0)
+            + (segments ?? []).reduce(0) { $0 + $1.contentByteCount }
+            + (toolDefinitions ?? []).reduce(0) { $0 + $1.contentByteCount }
+            + (toolCalls ?? []).reduce(0) { $0 + $1.contentByteCount }
+    }
+}
+
+extension SegmentPayload {
+    /// The total UTF-8 size, in bytes, of this segment's content — the case's
+    /// authored text, schema name, label, URL, type discriminator, and
+    /// description, never its `id` or its `"type"` tag.
+    var contentByteCount: Int {
+        switch self {
+        case .text(_, let content):
+            return utf8ByteCount(of: [content])
+        case .structure(_, let schemaName, let contentJSON):
+            return utf8ByteCount(of: [schemaName, contentJSON])
+        case .attachment(_, let label, let url):
+            return utf8ByteCount(of: [label, url])
+        case .custom(_, let typeDiscriminator, let contentJSON, let description):
+            return utf8ByteCount(of: [typeDiscriminator, contentJSON, description])
+        }
+    }
+}
+
+extension ToolDefinitionPayload {
+    /// The total UTF-8 size, in bytes, of this tool definition's content — its
+    /// name, description, and parameters schema, every one of which the model
+    /// is shown.
+    var contentByteCount: Int {
+        utf8ByteCount(of: [name, description, parametersSchemaJSON])
+    }
+}
+
+extension ToolCallPayload {
+    /// The total UTF-8 size, in bytes, of this tool call's content — the tool
+    /// name and its arguments, never the call's own `id`.
+    var contentByteCount: Int {
+        utf8ByteCount(of: [toolName, argumentsJSON])
+    }
+}
+
 // MARK: - Gating: metadataOnly stripping and full-level redaction
 
 /// Both `GatingRecorder` operations below act on the payload's content-bearing

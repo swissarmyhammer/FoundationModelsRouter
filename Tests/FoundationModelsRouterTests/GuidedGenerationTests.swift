@@ -507,12 +507,22 @@ struct GuidedGenerationTests {
         return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
     }
 
+    /// The working context the guided trigger test's session resolves at, and
+    /// deliberately also ``autoCompactionFixedBudget``'s own
+    /// ``TokenBudget/limit`` — mirrors `AutoCompactionTests.warmUpContextTokens`,
+    /// including why the two have to be the same number.
+    private static let autoCompactionContextTokens = 100_000
+
     /// A budget whose target sits strictly below the warm-up transcript's own
     /// recency-window floor — forcing the triggering fold to need the
     /// model-assisted ``Summarization`` stage. Mirrors `AutoCompactionTests.fixedBudget`.
     private static let autoCompactionFixedBudget: TokenBudget = {
         let recencyOnly = autoCompactionRecencyWindowOnlyEstimate(autoCompactionWarmUpEntries())
-        return TokenBudget(limit: recencyOnly * 2, trigger: 0.8, target: 0.25)
+        return TokenBudget(
+            limit: autoCompactionContextTokens,
+            trigger: 0.8,
+            target: Double(recencyOnly / 2) / Double(autoCompactionContextTokens)
+        )
     }()
 
     /// Drains `stream` into an array, in order — mirrors `AutoCompactionTests.collect(_:)`.
@@ -547,7 +557,7 @@ struct GuidedGenerationTests {
         // own profile so the same escalating-usage warm-up below produces
         // the same 0.9 final fill.
         var triggerProfile = Self.profile
-        triggerProfile.context = 100_000
+        triggerProfile.context = Self.autoCompactionContextTokens
         let resolvedProfile = try await router.resolve(profile: triggerProfile, reporting: ResolutionProgress())
 
         let session = resolvedProfile.standard.makeGuidedSession(

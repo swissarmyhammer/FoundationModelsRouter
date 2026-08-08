@@ -76,8 +76,25 @@ comments:
     - evidence: 1 file — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift. Ungated `swift test` green (757 + 20 + 12 tests, 0 failures). Gated `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter FoundationModelsRouterIntegrationTests`: propagation probe suite passes, both paths, `recordedCallCount=1`, `observedCompletionToken == bound`.
     - next: `/review`. Follow-up `^pw807cp` filed for the sibling suites.
   timestamp: 2026-08-08T14:19:20.062816+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzgw7yxvs01m3t1wx27e2hdr
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 4e158c3) — 0 findings, 0 confirmed, 0 refuted; 9 validators attempted, 0 failed, 0 skipped. Zero new findings. Engine note: tool rule 'code-hygiene/missing-docs-swift' unavailable (tool missing), prompt rule 'missing-docs' ran instead.
+    - next: task moved to done; all prior acceptance criteria already checked and no prior Review Findings sections were open.
+  timestamp: 2026-08-08T14:25:45.403943+00:00
+- actor: claude-code
+  id: 01kzgw8fyrspwjtmntct9ad7bs
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file, Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift
+    - test: green — swift test, 789 passed (757+20+12), 0 failures, 0 warnings, 37 skips all in FM_ROUTER_INTEGRATION_TESTS-gated suites
+    - commit: 4e158c3
+    - review: clean — zero new findings, 9 validators, task advanced to done
+    - next: none — task done
+  timestamp: 2026-08-08T14:26:02.840680+00:00
+position_column: done
+position_ordinal: f680
 title: Gated ToolContext propagation probe records zero tool calls on the MLX path
 ---
 Discovered by `^ce4hb6n`, which removed the `default.metallib` abort and so let this probe execute against real hardware for the FIRST time. Not a regression — never observable before.

@@ -1205,8 +1205,8 @@ actor RoutedSessionActor: RoutedSession {
     /// The auto-compaction opt-in (the "session manages its own
     /// window", task 8213x39), or `nil` for the default manual-only
     /// behavior. When set, ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
-    /// checks measured ``contextFill`` against ``TokenBudget/trigger`` before
-    /// every turn and folds automatically once it has been reached, and a
+    /// checks measured context usage against ``TokenBudget/triggerTokens``
+    /// before every turn and folds automatically once it has been reached, and a
     /// turn that still overflows mid-generation
     /// (`LanguageModelError.contextSizeExceeded`) is compacted harder and
     /// retried exactly once before the error surfaces. Set at construction
@@ -2429,8 +2429,9 @@ actor RoutedSessionActor: RoutedSession {
     /// place regardless of where the turn's prompt came from.
     ///
     /// Auto-compaction's proactive half lives here too (task 8213x39): when
-    /// ``autoCompactionBudget`` is set, this checks measured ``contextFill``
-    /// against its trigger *before* this turn's own physical attempt runs —
+    /// ``autoCompactionBudget`` is set, this checks measured context usage
+    /// against its ``TokenBudget/triggerTokens`` *before* this turn's own
+    /// physical attempt runs —
     /// "turns never die" the same way the proactive pattern documented on
     /// ``compact(prompt:budget:)`` does, just driven by the session itself
     /// instead of by the caller — and folds automatically if it has already
@@ -2468,7 +2469,16 @@ actor RoutedSessionActor: RoutedSession {
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
-        if let budget = autoCompactionBudget, contextFill >= budget.trigger {
+        // Compared in tokens against ``TokenBudget/triggerTokens``, never as
+        // `contextFill >= budget.trigger` — see the matching note on the
+        // hard-ceiling pre-check in
+        // ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
+        // and ``TokenBudget/triggerTokens`` itself for why those two fractions
+        // are not interchangeable.
+        if let budget = autoCompactionBudget,
+            let measuredTokens = usageState.measuredTokens,
+            measuredTokens >= budget.triggerTokens
+        {
             let started = Date()
             let usageBefore = backend.usageTokenCounts()
             do {
@@ -2619,7 +2629,7 @@ actor RoutedSessionActor: RoutedSession {
         do {
             // The hard-ceiling pre-check (compaction_plan.md §1.7, task g2hcm36):
             // when the budget opts into ``TokenBudget/hardCeiling``, measured
-            // fill is checked *before* `body` ever submits this attempt's
+            // usage is checked *before* `body` ever submits this attempt's
             // generate call — deterministic, so a transcript already too
             // large to fit (typically because the proactive fold above
             // couldn't bring it down far enough) fails fast rather than
@@ -2630,8 +2640,23 @@ actor RoutedSessionActor: RoutedSession {
             // is never touched) and, via ``isRecoverableContextOverflow(_:)``,
             // recovered by the same fold-harder-and-retry-once path as
             // `LanguageModelError.contextSizeExceeded`.
-            if let budget = autoCompactionBudget, let hardCeiling = budget.hardCeiling, contextFill >= hardCeiling {
-                throw ContextBudgetError.hardCeilingExceeded(fill: contextFill, ceiling: hardCeiling)
+            //
+            // Compared in tokens against ``TokenBudget/ceilingTokens``, never
+            // as `contextFill >= hardCeiling`: `contextFill`'s denominator is
+            // this session's resolved ``contextTokens`` while the ceiling is a
+            // fraction of the budget's own ``TokenBudget/limit``, so the two
+            // fractions are only comparable when those happen to be the same
+            // number (see ``TokenBudget/triggerTokens``). An unmeasured session
+            // (``ContextUsageState/measuredTokens`` `nil`) is left alone rather
+            // than blocked on a guess.
+            if let budget = autoCompactionBudget,
+                let hardCeiling = budget.hardCeiling,
+                let ceilingTokens = budget.ceilingTokens,
+                let measuredTokens = usageState.measuredTokens,
+                measuredTokens >= ceilingTokens
+            {
+                throw ContextBudgetError.hardCeilingExceeded(
+                    fill: budget.fill(measuredTokens: measuredTokens), ceiling: hardCeiling)
             }
             let response = try await runCancellableModelCall(composedPrompt: composedPrompt, body)
             // A turn can succeed (return a response) yet still leave the SDK's
@@ -2892,14 +2917,23 @@ actor RoutedSessionActor: RoutedSession {
     /// documented reactive pattern's own hardcoded "fold harder" example
     /// (``compact(prompt:budget:)``'s own doc comment folds to `0.35`
     /// against a default `0.50` target) — computed relative to whatever
-    /// `target` the caller actually configured, halved and floored so a very
-    /// low configured target still folds meaningfully harder rather than
-    /// going to (or past) zero.
+    /// `target` the caller actually configured, so halving is all it takes to
+    /// stay strictly lower without ever reaching zero for a positive target.
+    ///
+    /// Deliberately carries no absolute floor. An earlier `max(target / 2, 0.1)`
+    /// broke this method's own "strictly lower" contract for every target under
+    /// `0.2`, and inverted it outright under `0.1`: a budget configured to fold
+    /// to 5% of its limit had its *recovery* retry fold to 10%, i.e. softer than
+    /// the target that had already overflowed, so the retry was a guaranteed
+    /// no-op and the overflow surfaced to the caller. A floor stated as a
+    /// fraction cannot be right here anyway — what counts as "meaningfully
+    /// hard" depends on ``TokenBudget/limit``, which this fraction knows
+    /// nothing about.
     ///
     /// - Parameter target: The budget's own configured target.
     /// - Returns: The lowered target the retry's fold uses.
     private static func loweredRetryTarget(from target: Double) -> Double {
-        max(target / 2, 0.1)
+        target / 2
     }
 
     /// Runs the earliest still-pending queued prompt as one normal recorded

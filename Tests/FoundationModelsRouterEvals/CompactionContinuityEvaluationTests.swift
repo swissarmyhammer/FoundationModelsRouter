@@ -42,15 +42,28 @@ struct CompactionContinuityEvaluationHermeticTests {
 
     @Test("every hand-written task is sized so its filler steps alone exceed the default budget's trigger threshold")
     func everyTaskIsSizedToForceAFold() async throws {
-        // A mechanical proxy for "sized to be impossible without >=1 fold"
-        // (task 4ce0a1k): every fixture's own `fillerStepCount` pads the
-        // task well past a handful of turns — the same order of magnitude
-        // `CompactionRoundTripIntegrationTests`'s own scripted turns use to
-        // reliably cross a small budget's trigger — so no fixture accidentally
-        // ships too small to ever force a fold once actually driven through
-        // a live session.
-        for spec in compactionContinuityTaskSpecs {
-            #expect(spec.fillerStepCount >= 8, "task \(spec.id) has too few filler steps to reliably force a fold")
+        // The mechanical proof of "sized to be impossible without >=1 fold"
+        // (task 4ce0a1k), measured in the same tokens the live trigger is
+        // measured in: every fixture's filler steps, on their own, estimate to
+        // more than `compactionContinuityDefaultBudget.triggerTokens`. A live
+        // session's transcript also carries the setup steps, the final
+        // instruction, and every reply, so the real conversation crosses the
+        // trigger strictly sooner than this — filler alone is the conservative
+        // bound.
+        //
+        // This deliberately does not assert `fillerStepCount`. A step *count*
+        // says nothing about token size, and asserting one let this dataset
+        // ship roughly 8x too small to ever reach the trigger while the test
+        // stayed green (task 5m97h14).
+        let triggerTokens = compactionContinuityDefaultBudget.triggerTokens
+        for seed in compactionContinuitySeeds {
+            let spec = try #require(compactionContinuityTaskSpecs.first { $0.id == seed.id })
+            let fillerSteps = seed.steps.suffix(spec.fillerStepCount)
+            let fillerTokens = Compactor.estimatedTokenCount(of: fillerSteps.joined(separator: "\n"))
+            #expect(
+                fillerTokens > triggerTokens,
+                "task \(seed.id)'s \(spec.fillerStepCount) filler steps estimate \(fillerTokens) tokens, which does not exceed the trigger's \(triggerTokens)"
+            )
         }
     }
 
