@@ -64,6 +64,14 @@ comments:
     - next: task moved to done by the review gate. Two card deviations independently confirmed by review: (1) prose says "Call this tool again" not "Call runCode again" because PendingRunEnvelope's initializer takes only a token and splicing a tool name would make the frame variable-length, contradicting the card's own fixed-frame isRendered requirement — the card carries an internal tension, resolved in favor of the stated recognition contract; (2) no RunPlaneState equivalent exists in Sources/ (WaitResult has no raw value; OperationOutcome.wireVocabulary has only succeeded/failed/timed_out/stopped/cancelled/lost), so settledStateName/deadlineElapsedStateName are the only way to name those spellings
     - OPEN: acceptance criterion "Committed on `main` and PUSHED" remains UNCHECKED. Push is not authorized by the user; MultiTool pins Router by branch so the fix stays invisible to MultiTool's gated suite until pushed. Awaiting user authorization.
   timestamp: 2026-08-08T10:35:12.189486+00:00
+- actor: claude-code
+  id: 01kzgrjd4n10096ysr6kqf6pen
+  text: |-
+    ### push — done
+    - User authorized the push on 2026-08-08. `git push origin main` succeeded: `b5bf2ba..da275c6`.
+    - This card's implementation commit `0bbf84e` (`feat(router): teach pending envelope its next-step instruction`) is now on `origin/main`.
+    - The final acceptance criterion "Committed on `main` and PUSHED" is therefore satisfied. MultiTool consumes Router via `.package(url:branch:)`, so the self-describing pending envelope is now visible to MultiTool's gated suite.
+  timestamp: 2026-08-08T13:21:33.333247+00:00
 position_column: done
 position_ordinal: f480
 title: '[Router] Pending envelope must teach the collect step: render next-step instructions into PendingRunEnvelope'
@@ -98,7 +106,7 @@ Make the rendered envelope self-describing while keeping recognition byte-exact:
 - [x] `rendered`/`isRendered` round-trip exact for random ULIDs; tampered variants (mismatched twin tokens, wrong lengths, edited prose) rejected
 - [x] `TokenCappingTool` passes the new envelope through untouched
 - [x] `swift test` green in FoundationModelsRouter (ungated)
-- [ ] Committed on `main` and PUSHED — MultiTool consumes Router via `.package(url:branch:)`, so the fix is invisible to MultiTool's gated suite until it is on the remote branch (push 159aada with it, or as agreed with the human)
+- [x] Committed on `main` and PUSHED — MultiTool consumes Router via `.package(url:branch:)`, so the fix is invisible to MultiTool's gated suite until it is on the remote branch (push 159aada with it, or as agreed with the human)
 
 ## Tests
 - [x] Unit tests for the new wire form incl. adversarial variants (same file's existing envelope tests extended)

@@ -225,6 +225,14 @@ comments:
     - OPEN, carried forward: acceptance criterion "Committed AND PUSHED on `main`" remains UNCHECKED. All four source commits (663c763, 40eddea, 97d24e4, 867f873) are LOCAL only. MultiTool pins Router by branch, so this fix and ^ywc0q4f's stay invisible to MultiTool's gated suite until pushed. Push requires user authorization and was never given.
     - Card premise correction worth carrying to any follow-up: the card asserts "Apple's LanguageModelSession exposes no tool_choice: required". macOS 27 DOES have GenerationOptions.ToolCallingMode with .allowed/.required/.disallowed. It does not replace this card — .required cannot name a SPECIFIC tool with a SPECIFIC argument — but it is a probe worth running for ^f9zt7c5: if the vendored MLXLanguageModel executor ignores toolCallingMode, that is evidence it may be dropping tool-call decoding generally, which would explain a gated probe recording zero tool calls independent of anything Router does
   timestamp: 2026-08-08T12:20:15.983982+00:00
+- actor: claude-code
+  id: 01kzgrjmyey3f67x0mc5t5dtrt
+  text: |-
+    ### push — done
+    - User authorized the push on 2026-08-08. `git push origin main` succeeded: `b5bf2ba..da275c6`.
+    - This card's four implementation commits are now on `origin/main`: `663c763` (seed a real discovery call into a turn's transcript), `40eddea` (surface discovery-priming failures on respond/dispatch paths), `97d24e4` (name both discoveryPrimingFailed routes), `867f873` (fix remaining Parameter doc keys to internal names).
+    - The final acceptance criterion "Committed AND PUSHED on `main`" is therefore satisfied. MultiTool pins Router by branch, so `DiscoveryPriming` and the new `streamSessionEvents()` route are now visible to MultiTool's gated re-measure.
+  timestamp: 2026-08-08T13:21:41.326993+00:00
 position_column: done
 position_ordinal: f580
 title: '[Router] Pre-discovery seeding: deterministic first tool call via transcript construction'
@@ -257,7 +265,7 @@ Design constraints:
 - [x] Seeded entries round-trip through recording/diffing with no special-case branch
 - [x] Discovery-throw path: turn proceeds unseeded, failure surfaced as an event
 - [x] `swift test` green in FoundationModelsRouter
-- [ ] Committed AND PUSHED on `main` — MultiTool consumes Router by branch pin; unpushed = invisible to the gated re-measure
+- [x] Committed AND PUSHED on `main` — MultiTool consumes Router by branch pin; unpushed = invisible to the gated re-measure
 
 ## Tests
 - [x] Unit coverage per criteria above (stub tools, no live inference)
