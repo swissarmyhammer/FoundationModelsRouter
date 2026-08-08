@@ -350,6 +350,7 @@ struct ElevatingToolTests {
     private struct DecodedEnvelope: Decodable {
         let pending: Bool
         let completionToken: String
+        let next: String
     }
 
     /// Decodes the pending envelope out of a returned rendered output.
@@ -370,6 +371,157 @@ struct ElevatingToolTests {
             throw FixtureError()
         }
         return terminal
+    }
+
+    // MARK: - The pending envelope's wire form
+
+    /// How many freshly generated tokens the round-trip test renders and
+    /// recognizes — enough that a token-dependent shape defect cannot hide.
+    private static let wireFormTokenSampleCount = 32
+
+    /// Asserts that `text` contains every element of `facts`, each after the
+    /// previous one, and records which fact broke the sequence when it does
+    /// not.
+    private static func expect(_ text: String, saysInOrder facts: [String]) {
+        var searchStart = text.startIndex
+        for fact in facts {
+            guard let found = text.range(of: fact, range: searchStart..<text.endIndex) else {
+                Issue.record("\"\(fact)\" is missing, or out of order, in: \(text)")
+                return
+            }
+            searchStart = found.upperBound
+        }
+    }
+
+    @Test("every freshly generated token renders to a recognized envelope that decodes back to itself")
+    func renderedEnvelopeRoundTripsForFreshTokens() throws {
+        for _ in 0..<Self.wireFormTokenSampleCount {
+            let completionToken = ULID.generate().ulidString
+            let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
+
+            #expect(PendingRunEnvelope.isRendered(rendered))
+            let decoded = try Self.decodeEnvelope(rendered)
+            #expect(decoded.pending)
+            #expect(decoded.completionToken == completionToken)
+        }
+    }
+
+    @Test("the rendered envelope's next field teaches the collect step: still running, do not answer, the exact wait snippet, and both run-plane states")
+    func renderedEnvelopeTeachesTheCollectStep() throws {
+        let completionToken = ULID.generate().ulidString
+        let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
+
+        let next = try Self.decodeEnvelope(rendered).next
+        Self.expect(
+            next,
+            saysInOrder: [
+                // The run has not finished.
+                "still",
+                // Do not answer, and do not invent the result.
+                "not answer",
+                "never invent",
+                // The follow-up snippet, verbatim, carrying the real token.
+                "return await wait(\"\(completionToken)\", 60)",
+                // Where the result is once the run settles.
+                "settled",
+                "detail",
+                // What to do when the follow-up wait comes back empty.
+                "deadline_elapsed",
+            ]
+        )
+    }
+
+    @Test("the rendered envelope fits the run plane's detail cap, which truncates from the front")
+    func renderedEnvelopeFitsTheRunPlaneDetailCap() {
+        // `ElevatingTool.elevate` carries the rendered envelope as the
+        // synthesized progress event's `detail`, and the mailbox bounds a
+        // `detail` by keeping its TRAILING characters — so an envelope that
+        // outgrew the cap would lose the completionToken the model needs.
+        let rendered = PendingRunEnvelope(completionToken: ULID.generate().ulidString).rendered
+
+        #expect(rendered.count <= SessionMailbox.terminalDetailTailLimit)
+    }
+
+    @Test("an envelope whose two token slots disagree is not recognized")
+    func mismatchedTwinTokensAreRejected() throws {
+        let completionToken = ULID.generate().ulidString
+        let other = ULID.generate().ulidString
+        #expect(other != completionToken)
+        let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
+
+        let firstSlot = try #require(rendered.range(of: completionToken))
+        let lastSlot = try #require(rendered.range(of: completionToken, options: .backwards))
+        #expect(firstSlot != lastSlot)
+
+        for slot in [firstSlot, lastSlot] {
+            let tampered = rendered.replacingCharacters(in: slot, with: other)
+            #expect(tampered.count == rendered.count)
+            #expect(!PendingRunEnvelope.isRendered(tampered))
+        }
+    }
+
+    @Test("an envelope with anything added to or removed from it is not recognized")
+    func alteredLengthIsRejected() {
+        let completionToken = ULID.generate().ulidString
+        let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
+
+        let tampered = [
+            rendered + " ",
+            " " + rendered,
+            String(rendered.dropLast()),
+            String(rendered.dropFirst()),
+            // Both slots shortened to a 25-character stub.
+            rendered.replacingOccurrences(
+                of: completionToken, with: String(completionToken.dropLast())
+            ),
+        ]
+
+        for text in tampered {
+            #expect(!PendingRunEnvelope.isRendered(text))
+        }
+    }
+
+    @Test("an envelope whose instruction prose was edited is not recognized, even at an unchanged length")
+    func editedProseIsRejected() {
+        let rendered = PendingRunEnvelope(completionToken: ULID.generate().ulidString).rendered
+
+        // Same length, so only a content check can catch it.
+        let tampered = rendered.replacingOccurrences(of: "detail", with: "result")
+
+        #expect(tampered != rendered)
+        #expect(tampered.count == rendered.count)
+        #expect(!PendingRunEnvelope.isRendered(tampered))
+    }
+
+    @Test("an envelope whose twin slots hold a same-length non-ULID is not recognized")
+    func nonULIDTokenSlotsAreRejected() {
+        let completionToken = ULID.generate().ulidString
+        let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
+
+        let notAToken = String(repeating: "!", count: ULID.stringLength)
+        let tampered = rendered.replacingOccurrences(of: completionToken, with: notAToken)
+
+        #expect(tampered.count == rendered.count)
+        #expect(!PendingRunEnvelope.isRendered(tampered))
+    }
+
+    @Test("neither ordinary tool output nor an envelope missing its next instruction is recognized")
+    func nonEnvelopeOutputIsRejected() {
+        let completionToken = ULID.generate().ulidString
+
+        let notEnvelopes = [
+            "",
+            "fast: x",
+            "{}",
+            // The instruction-free wire form this envelope used to render.
+            "{\"pending\":true,\"completionToken\":\"\(completionToken)\"}",
+            // The same facts as JSON, but not this envelope's byte shape.
+            "{\"completionToken\":\"\(completionToken)\",\"pending\":true,\"next\":\"wait\"}",
+        ]
+
+        for text in notEnvelopes {
+            #expect(!PendingRunEnvelope.isRendered(text))
+        }
     }
 
     // MARK: - Inline fast path

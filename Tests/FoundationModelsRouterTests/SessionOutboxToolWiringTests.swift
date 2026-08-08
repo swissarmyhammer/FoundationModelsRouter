@@ -1243,6 +1243,12 @@ struct SessionOutboxToolWiringTests {
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
         #expect(ULID(envelope.completionToken) != nil)
+        // Byte-for-byte what the elevation layer rendered: the capping
+        // decorator still recognizes the envelope's wire form, so neither the
+        // completionToken nor the next-step instruction it carries is
+        // truncated away.
+        #expect(rendered == PendingRunEnvelope(completionToken: envelope.completionToken).rendered)
+        #expect(PendingRunEnvelope.isRendered(rendered))
 
         // Settle the parked run so no detached work outlives the test.
         await gate.open()

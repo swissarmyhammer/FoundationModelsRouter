@@ -115,12 +115,24 @@ public enum ElevatingToolError: Error, Equatable {
     case timedOut(tool: String, timeoutSeconds: TimeInterval)
 }
 
-/// The rendered output an elevated call returns in place of its result:
-/// `{"pending": true, "completionToken": "01…"}`.
+/// The rendered output an elevated call returns in place of its result: the
+/// `pending` discriminator, the parked run's `completionToken`, and a `next`
+/// field spelling out the collect step the model must take instead of
+/// answering.
 ///
 /// The `completionToken` is the parked run's key in the session's
 /// ``SessionMailbox`` and the `correlationID` on every event the run posts —
 /// one string, two planes.
+///
+/// The `next` instruction is not decoration (task ^ywc0q4f). This envelope is
+/// the whole message a model receives when its long tool call parks, so a
+/// bare token leaves it holding a key it has no reason to understand while
+/// the user waits for an answer — the measured failure was a model inventing
+/// the result outright. Every other in-band text this package hands a model
+/// is phrased as repair instructions; so is this one. It is derived entirely
+/// from ``completionToken``, so it is regenerated rather than carried as a
+/// stored property: ``rendered``, not the synthesized `Codable` conformance,
+/// is the authoritative wire form.
 public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// Always `true` — the discriminator a reader branches on.
     public let pending: Bool
@@ -135,41 +147,96 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
         self.completionToken = completionToken
     }
 
-    /// The frame around the `completionToken` in ``rendered``'s wire form —
-    /// shared with ``isRendered(_:)`` so recognition can never drift from
-    /// rendering.
+    /// The `seconds` argument of the follow-up `wait` the ``rendered``
+    /// instruction tells the model to make: long enough that most parked runs
+    /// settle inside that single collect step, short enough that a stalled one
+    /// still hands control back rather than blocking the turn.
+    private static let followUpWaitSeconds = 60
+
+    /// The run-plane state name a `wait` reports for a run that finished — the
+    /// wire spelling of ``SessionMailbox/WaitResult/settled``, whose event
+    /// carries the run's output in its `detail`.
+    private static let settledStateName = "settled"
+
+    /// The run-plane state name a `wait` reports when its own deadline ran out
+    /// with the run still parked — the wire spelling of
+    /// ``SessionMailbox/WaitResult/deadlineElapsed``.
+    private static let deadlineElapsedStateName = "deadline_elapsed"
+
+    /// The fixed text before the first `completionToken` slot in
+    /// ``rendered``'s wire form.
     private static let renderedPrefix = "{\"pending\":true,\"completionToken\":\""
 
-    /// ``renderedPrefix``'s closing counterpart.
-    private static let renderedSuffix = "\"}"
+    /// The fixed text between ``rendered``'s two `completionToken` slots: the
+    /// opening of the `next` instruction, ending inside the quoted token
+    /// argument of the follow-up snippet it hands the model.
+    private static let renderedMidfix =
+        "\",\"next\":\"This run is still going. Do not answer yet, "
+        + "and never invent or guess its result. "
+        + "Call this tool again with a snippet that does: return await wait(\\\""
 
-    /// The envelope rendered as its JSON wire form. Built literally — the
-    /// token is a 26-character Crockford base32 ULID, so no escaping can
-    /// ever be needed — keeping the rendering total and deterministic.
+    /// The fixed text after ``rendered``'s second `completionToken` slot: the
+    /// rest of the follow-up snippet, then how to read each state it can
+    /// report back.
+    private static let renderedSuffix =
+        "\\\", \(followUpWaitSeconds)). "
+        + "When the returned state is \\\"\(settledStateName)\\\", "
+        + "the result is in its detail field. "
+        + "When it is \\\"\(deadlineElapsedStateName)\\\", the run is still going: "
+        + "call wait again with the same completionToken.\"}"
+
+    /// ``rendered``'s exact length: the three fixed frame parts around two
+    /// ``ULID/stringLength``-character token slots.
+    private static let renderedLength =
+        renderedPrefix.count + ULID.stringLength + renderedMidfix.count + ULID.stringLength
+        + renderedSuffix.count
+
+    /// Renders the wire form of an envelope for `completionToken`.
+    ///
+    /// The one definition both ``rendered`` and ``isRendered(_:)`` go through,
+    /// so recognition can never drift from rendering. Built literally — a
+    /// completion token is a 26-character Crockford base32 ULID, so no
+    /// escaping can ever be needed — keeping the rendering total and
+    /// deterministic.
+    ///
+    /// - Parameter completionToken: The parked run's completion token, spliced
+    ///   into both of the wire form's token slots.
+    /// - Returns: The envelope's JSON wire form.
+    private static func rendered(forCompletionToken completionToken: String) -> String {
+        renderedPrefix + completionToken + renderedMidfix + completionToken + renderedSuffix
+    }
+
+    /// The envelope rendered as its JSON wire form.
     public var rendered: String {
-        Self.renderedPrefix + completionToken + Self.renderedSuffix
+        Self.rendered(forCompletionToken: completionToken)
     }
 
     /// Whether `text` is exactly a rendered pending envelope: the fixed
-    /// ``rendered`` frame around one valid ULID `completionToken`.
+    /// ``rendered`` frame around two slots holding one and the same valid ULID
+    /// `completionToken`.
     ///
     /// This is what lets a decorator outside the elevation layer — today
     /// ``TokenCappingTool`` — recognize control-plane wire data and pass it
     /// through untouched, without JSON-parsing arbitrary tool output: the
-    /// wire form is deterministic, so a byte-shape check is exact.
+    /// wire form is deterministic, so a byte-shape check is exact. Recognition
+    /// is defined as re-rendering: the token is read out of the first slot,
+    /// and `text` must equal what this envelope renders for exactly that
+    /// token, so a twin-slot mismatch, an edited instruction, and any length
+    /// change are all rejections by construction.
     ///
     /// - Parameter text: The rendered tool output to test.
     /// - Returns: `true` iff `text` is a rendered pending envelope.
     public static func isRendered(_ text: String) -> Bool {
-        guard
-            text.count == renderedPrefix.count + ULID.stringLength + renderedSuffix.count,
-            text.hasPrefix(renderedPrefix),
-            text.hasSuffix(renderedSuffix)
-        else {
+        guard text.count == renderedLength, text.hasPrefix(renderedPrefix) else {
             return false
         }
-        let completionToken = String(text.dropFirst(renderedPrefix.count).dropLast(renderedSuffix.count))
-        return ULID(completionToken) != nil
+        let completionToken = String(
+            text.dropFirst(renderedPrefix.count).prefix(ULID.stringLength)
+        )
+        guard ULID(completionToken) != nil else {
+            return false
+        }
+        return text == rendered(forCompletionToken: completionToken)
     }
 }
 

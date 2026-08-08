@@ -154,8 +154,9 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// site) — passes through untouched. The envelope is control-plane
     /// data, not tool output: truncating it would destroy the
     /// `completionToken` the model needs to ever hear the parked run's
-    /// completion again, so the exemption holds under any `limit`, however
-    /// small. Recognition is the exact byte-shape check
+    /// completion again — and the `next` instruction that tells it to collect
+    /// with that token instead of answering — so the exemption holds under
+    /// any `limit`, however small. Recognition is the exact byte-shape check
     /// ``PendingRunEnvelope/isRendered(_:)``, so ordinary tool output can
     /// never ride through it.
     ///
