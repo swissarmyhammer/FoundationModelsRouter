@@ -241,6 +241,16 @@ struct DiscoveryPrimingTests {
     /// The canned discovery result the recording fixture returns.
     private static let discoveryOutput = "func rates(base: String) -> [String: Double]"
 
+    /// The instructions an instructed session in this suite is created with —
+    /// the ordinary production shape, whose backend transcript therefore opens
+    /// with one `.instructions` entry (see ``StubSessionBackend``).
+    private static let instructions = "answer with typed signatures"
+
+    /// The grammar a guided session in this suite is constrained to.
+    private static let guidedSchema = """
+        {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}
+        """
+
     /// One vended session plus everything a test needs to inspect it.
     private struct Fixture {
         /// The vended session under test.
@@ -260,10 +270,18 @@ struct DiscoveryPrimingTests {
     /// ``PrimingObservingBackend``.
     ///
     /// - Parameters:
+    ///   - instructions: The session's instructions, or `nil` for an
+    ///     uninstructed session — whose backend transcript is therefore empty at
+    ///     seed time, rather than opening with one `.instructions` entry.
+    ///   - grammar: The grammar to constrain the session to — vending it through
+    ///     the guided factory instead of the plain one — or `nil` for an
+    ///     unguided session.
     ///   - tools: The tools to mount on the session.
     ///   - priming: The priming opt-in, or `nil` to leave it off.
     /// - Returns: The fixture.
     private static func makeFixture(
+        instructions: String? = nil,
+        grammar: Grammar? = nil,
         tools: [any Tool] = [],
         priming: DiscoveryPriming? = nil
     ) async throws -> Fixture {
@@ -277,7 +295,14 @@ struct DiscoveryPrimingTests {
         )
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
-        let session = profile.standard.makeSession(tools: tools, discoveryPriming: priming)
+        let session: RoutedSession
+        if let grammar {
+            session = profile.standard.makeGuidedSession(
+                grammar: grammar, instructions: instructions, tools: tools, discoveryPriming: priming)
+        } else {
+            session = profile.standard.makeSession(
+                instructions: instructions, tools: tools, discoveryPriming: priming)
+        }
         return Fixture(session: session, log: container.log, recorder: recorder, dir: dir)
     }
 
@@ -290,6 +315,21 @@ struct DiscoveryPrimingTests {
     ) async throws -> [SessionEvent] {
         var events: [SessionEvent] = []
         for try await event in stream {
+            events.append(event)
+        }
+        return events
+    }
+
+    /// Drains a session-scoped event stream into an array.
+    ///
+    /// The stream is finished by ``RoutedSession/close()``, so a caller drains
+    /// it after closing the session it came from.
+    ///
+    /// - Parameter stream: The stream to drain.
+    /// - Returns: Every event it yielded, in order.
+    private static func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
+        var events: [SessionEvent] = []
+        for await event in stream {
             events.append(event)
         }
         return events
@@ -535,5 +575,106 @@ struct DiscoveryPrimingTests {
         #expect(tool.queries == [Self.prompt])
         let seeded = try #require(fixture.log.entriesAtGeneration.first)
         #expect(seeded.map { TranscriptEntryMapper.event(from: $0).kind } == [.prompt, .toolCalls, .toolOutput])
+    }
+
+    @Test("an instructed session seeds after its leading instructions entry, never in place of it")
+    @MainActor
+    func primingSeedsAfterTheLeadingInstructionsEntry() async throws {
+        let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
+        let fixture = try await Self.makeFixture(
+            instructions: Self.instructions,
+            tools: [tool],
+            priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+
+        _ = try await fixture.session.respond(to: Self.prompt)
+
+        // Seeding is append-only, so the shape a host actually vends — a session
+        // created *with* instructions, whose backend transcript already opens
+        // with one `.instructions` entry — reaches generation holding that entry
+        // and then the seeded triple.
+        let seeded = try #require(fixture.log.entriesAtGeneration.first)
+        let mapped = seeded.map { TranscriptEntryMapper.event(from: $0) }
+        #expect(mapped.map(\.kind) == [.instructions, .prompt, .toolCalls, .toolOutput])
+        #expect(mapped[0].text == Self.instructions)
+        #expect(mapped[1].text == Self.prompt)
+        #expect(mapped[3].text == Self.discoveryOutput)
+
+        let call = try #require(mapped[2].payload.toolCalls?.first)
+        #expect(mapped[3].payload.entryId == call.id)
+    }
+
+    @Test("respond(to:) has no turn stream of its own, and its priming failure still surfaces as an event")
+    @MainActor
+    func respondSurfacesThePrimingFailureAsASessionEvent() async throws {
+        let fixture = try await Self.makeFixture(
+            tools: [FailingDiscoveryTool()],
+            priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+
+        let sessionEvents = await fixture.session.streamSessionEvents()
+        let response = try await fixture.session.respond(to: Self.prompt)
+
+        // The turn ran anyway, unseeded.
+        #expect(response == StubSessionBackend().responseText)
+        #expect(fixture.log.reseeds.isEmpty)
+
+        await fixture.session.close()
+        let failures = Self.primingFailures(in: await Self.collect(sessionEvents))
+        #expect(failures.count == 1)
+        guard case .callFailed(let tool, _) = failures.first else {
+            Issue.record("expected a .callFailed priming failure, got \(String(describing: failures.first))")
+            return
+        }
+        #expect(tool == "findAPIs")
+    }
+
+    @Test("dispatchNextPrompt() has no turn stream either, and its priming failure surfaces the same way")
+    @MainActor
+    func dispatchNextPromptSurfacesThePrimingFailureAsASessionEvent() async throws {
+        let fixture = try await Self.makeFixture(
+            tools: [FailingDiscoveryTool()],
+            priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+
+        let sessionEvents = await fixture.session.streamSessionEvents()
+        await fixture.session.enqueue(prompt: Self.prompt)
+        let response = try await fixture.session.dispatchNextPrompt()
+
+        #expect(response == StubSessionBackend().responseText)
+        #expect(fixture.log.reseeds.isEmpty)
+
+        await fixture.session.close()
+        let failures = Self.primingFailures(in: await Self.collect(sessionEvents))
+        #expect(failures.count == 1)
+        guard case .callFailed(let tool, _) = failures.first else {
+            Issue.record("expected a .callFailed priming failure, got \(String(describing: failures.first))")
+            return
+        }
+        #expect(tool == "findAPIs")
+    }
+
+    @Test("a guided session primes its turns exactly like an unguided one")
+    @MainActor
+    func guidedSessionPrimesDiscovery() async throws {
+        let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
+        let fixture = try await Self.makeFixture(
+            grammar: .jsonSchema(Self.guidedSchema),
+            tools: [tool],
+            priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+
+        #expect(fixture.session.grammar == .jsonSchema(Self.guidedSchema))
+        _ = try await fixture.session.respond(to: Self.prompt)
+
+        #expect(tool.queries == [Self.prompt])
+        let seeded = try #require(fixture.log.entriesAtGeneration.first)
+        let mapped = seeded.map { TranscriptEntryMapper.event(from: $0) }
+        #expect(mapped.map(\.kind) == [.prompt, .toolCalls, .toolOutput])
+        #expect(mapped[2].text == Self.discoveryOutput)
     }
 }

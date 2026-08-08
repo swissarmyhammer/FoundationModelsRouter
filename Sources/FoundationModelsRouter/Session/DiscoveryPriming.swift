@@ -74,8 +74,11 @@ public struct DiscoveryPriming: Sendable, Equatable {
 /// Every case is recoverable by the same rule: the turn generates **unseeded**
 /// rather than failing. Priming is an improvement to a turn's opening move, not
 /// a precondition for having one, so a failure here can never block a turn.
-/// Each one is surfaced as ``SessionEvent/discoveryPrimingFailed(_:)`` on the
-/// session's event stream so it is visible rather than silent.
+/// Each one is surfaced as ``SessionEvent/discoveryPrimingFailed(_:)`` so it is
+/// visible rather than silent: on ``RoutedSession/streamSessionEvents()`` for
+/// every turn whichever entry point ran it, and additionally on the turn's own
+/// stream when the turn was started through
+/// ``RoutedSession/streamEvents(to:maxTokens:)``.
 public enum DiscoveryPrimingFailure: Error, Equatable, Sendable {
     /// No mounted tool answers to ``DiscoveryPriming/tool``.
     ///

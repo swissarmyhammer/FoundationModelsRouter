@@ -64,7 +64,15 @@ public enum SessionEvent: Sendable, Equatable {
     /// turn's opening move rather than being a precondition for having one. A
     /// session with priming off never emits it.
     ///
-    /// - Parameter failure: Why the seed could not be built.
+    /// Its payload is the ``DiscoveryPrimingFailure`` saying why the seed could
+    /// not be built. Because priming runs on every turn, whichever entry point
+    /// started it, this is emitted on two routes: a turn started by
+    /// ``RoutedSession/streamEvents(to:maxTokens:)`` yields it on that turn's own
+    /// stream, and *every* turn — including the ones
+    /// ``RoutedSession/respond(to:maxTokens:)`` and
+    /// ``RoutedSession/dispatchNextPrompt()`` run, which hand their caller a
+    /// response rather than a stream — yields it on
+    /// ``RoutedSession/streamSessionEvents()``.
     case discoveryPrimingFailed(DiscoveryPrimingFailure)
 
     /// One physical generate attempt closed, carrying its own measured token

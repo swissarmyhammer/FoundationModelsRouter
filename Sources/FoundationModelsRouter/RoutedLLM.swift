@@ -135,8 +135,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     model has to decide to make (see ``DiscoveryPriming``). A discovery
     ///     call that fails never blocks the turn: the turn generates unseeded
     ///     and the failure surfaces as
-    ///     ``SessionEvent/discoveryPrimingFailed(_:)``. A fork inherits its
-    ///     parent's opt-in.
+    ///     ``SessionEvent/discoveryPrimingFailed(_:)`` on
+    ///     ``RoutedSession/streamSessionEvents()`` — every turn, whichever entry
+    ///     point ran it. A fork inherits its parent's opt-in.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,

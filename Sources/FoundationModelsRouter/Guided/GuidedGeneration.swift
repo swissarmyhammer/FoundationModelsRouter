@@ -220,6 +220,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
+    ///   - tools: The tools the model can call during this session, wrapped and
+    ///     threaded exactly as
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+    ///     does it. Defaults to no tools. A guided session mounts tools for the
+    ///     same reasons an unguided one does, and `discoveryPriming` below needs
+    ///     them: priming names a *mounted* tool, so a session with none has
+    ///     nothing to prime.
     ///   - budget: The auto-compaction opt-in (task 8213x39) — see
     ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
@@ -230,18 +237,27 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     from — see
     ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
+    ///   - discoveryPriming: The pre-discovery seeding opt-in — see
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     Defaults to `nil`, which leaves priming off. A guided session primes
+    ///     exactly like an unguided one: the seed is a real host-side call whose
+    ///     entries land in the transcript the turn resumes from, so the grammar
+    ///     constrains only what the model then generates.
     /// - Returns: A new guided ``RoutedSession``.
     public func makeGuidedSession(
         grammar: Grammar,
         instructions: String? = nil,
         workingDirectory: URL? = nil,
+        tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil
+        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
         makeSession(
             grammar: grammar, instructions: instructions, workingDirectory: workingDirectory,
-            budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn)
+            tools: tools, budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn,
+            discoveryPriming: discoveryPriming)
     }
 }
 

@@ -22,8 +22,11 @@ private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
 /// Its own category rather than ``sessionRecordingLogger``'s, for the same
 /// reason ``sessionCompactionLogger`` has one: what it reports is a priming
 /// outcome, not a recording one. A failure is logged *and* surfaced as
-/// ``SessionEvent/discoveryPrimingFailed(_:)``, because a plain
-/// ``RoutedSession/respond(to:)`` has no event stream to carry it.
+/// ``SessionEvent/discoveryPrimingFailed(_:)`` — the log is for an operator
+/// reading a session's console after the fact, the event for a host watching the
+/// session live (see ``RoutedSession/streamSessionEvents()``, the route that
+/// carries it on every turn including the ones that hand their caller a response
+/// rather than a stream).
 private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming")
 
 /// The outcome of ``RoutedSession/cancelCurrentTurn()``.
@@ -307,6 +310,36 @@ public protocol RoutedSession: Actor {
     ///   produced first).
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
 
+    /// Streams the ``SessionEvent``s that belong to this *session* rather than
+    /// to one of its turns, for as long as the session lives.
+    ///
+    /// ``streamEvents(to:maxTokens:)`` is one turn's stream: it exists only
+    /// while that turn runs, and only the caller that started the turn *that
+    /// way* has one. A session-scoped event can arise on any turn, including the
+    /// ones ``respond(to:maxTokens:)`` and ``dispatchNextPrompt()`` run — those
+    /// hand their caller a response, not a stream, so a turn-scoped sink cannot
+    /// reach them. This is the route that does: subscribe once, when the session
+    /// is vended, and observe every such event whichever entry point ran the
+    /// turn that produced it.
+    ///
+    /// Exactly one event travels here today:
+    /// ``SessionEvent/discoveryPrimingFailed(_:)``, the report that a turn's
+    /// pre-discovery seeding could not run and the turn therefore generated
+    /// unseeded (see ``DiscoveryPriming``). Priming happens on every turn a
+    /// primed session runs, so its failure has to be observable on every one.
+    ///
+    /// Each call vends its own independent subscription, buffered without bound
+    /// so a slow consumer drops nothing, and every subscription sees every
+    /// event. A turn started by ``streamEvents(to:maxTokens:)`` still yields the
+    /// same event on that turn's own stream as well, unchanged — a caller
+    /// holding both sees it once per stream, which is what each subscription
+    /// asked for. Ending iteration (or cancelling the task iterating) drops the
+    /// subscription; ``close()`` finishes every outstanding one, so a consumer
+    /// looping over this stream ends when the session does.
+    ///
+    /// - Returns: A stream of this session's own session-scoped events.
+    func streamSessionEvents() -> AsyncStream<SessionEvent>
+
     /// Cancels the turn currently in flight on this session — best-effort, and
     /// additive to ``cancel(_:)`` rather than a replacement for it.
     ///
@@ -522,8 +555,12 @@ public protocol RoutedSession: Actor {
     /// crashed session's runs are the `.lost` restoration path's territory,
     /// never silently reconciled here.
     ///
+    /// It also finishes every outstanding ``streamSessionEvents()``
+    /// subscription, so a consumer looping over one ends here rather than
+    /// awaiting an event the closed session can no longer produce.
+    ///
     /// Idempotent: a second call finds the mailbox already empty and
-    /// journals nothing.
+    /// journals nothing, and has no subscriptions left to finish.
     func close() async
 
     /// Runs the earliest still-pending prompt in ``outbox``'s queue as one
@@ -1195,6 +1232,15 @@ actor RoutedSessionActor: RoutedSession {
     /// turns exactly like its parent.
     nonisolated let discoveryPriming: DiscoveryPriming?
 
+    /// The live ``streamSessionEvents()`` subscriptions
+    /// ``emitSessionScopedEvent(_:)`` fans a session-scoped event out to, keyed
+    /// by the subscription's own id so a finished stream removes exactly its own
+    /// continuation and no other.
+    ///
+    /// Empty for a session nobody subscribed to, which is what makes the fan-out
+    /// cost nothing on the path a session-scoped event is not being watched.
+    private var sessionEventSubscriptions: [ULID: AsyncStream<SessionEvent>.Continuation] = [:]
+
     /// Creates a session, landing its own `session.json` when it is a new one.
     ///
     /// The sidecar write happens here, synchronously, rather than at each
@@ -1815,6 +1861,63 @@ actor RoutedSessionActor: RoutedSession {
         }
     }
 
+    /// See ``RoutedSession/streamSessionEvents()``.
+    ///
+    /// Registers a fresh continuation in ``sessionEventSubscriptions`` and hands
+    /// back its stream. Buffering is unbounded because these events are reports a
+    /// consumer must not silently lose, and there are very few of them per turn —
+    /// unlike the per-token text a turn stream carries.
+    ///
+    /// The termination handler runs outside this actor's isolation (the stream can
+    /// end on any task, including by cancellation), so dropping the subscription
+    /// has to hop back in through a `Task` — the one place an unstructured task is
+    /// unavoidable here. It captures `self` weakly, so an abandoned stream never
+    /// keeps a finished session alive.
+    func streamSessionEvents() -> AsyncStream<SessionEvent> {
+        let subscriptionId = ULID.generate()
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: SessionEvent.self, bufferingPolicy: .unbounded)
+        continuation.onTermination = { [weak self] _ in
+            guard let self else { return }
+            Task { await self.dropSessionEventSubscription(subscriptionId) }
+        }
+        sessionEventSubscriptions[subscriptionId] = continuation
+        return stream
+    }
+
+    /// Forgets one ``streamSessionEvents()`` subscription, whose stream has
+    /// finished or been abandoned.
+    ///
+    /// - Parameter subscriptionId: The subscription's id.
+    private func dropSessionEventSubscription(_ subscriptionId: ULID) {
+        sessionEventSubscriptions.removeValue(forKey: subscriptionId)
+    }
+
+    /// Fans one session-scoped event out to every live ``streamSessionEvents()``
+    /// subscription — the route a turn that has no event stream of its own
+    /// surfaces such an event through (see ``RoutedSession/streamSessionEvents()``).
+    ///
+    /// - Parameter event: The event to deliver.
+    private func emitSessionScopedEvent(_ event: SessionEvent) {
+        for continuation in sessionEventSubscriptions.values {
+            continuation.yield(event)
+        }
+    }
+
+    /// Finishes every live ``streamSessionEvents()`` subscription, so a consumer
+    /// looping over one ends when the session does rather than awaiting an event
+    /// that can no longer arrive.
+    ///
+    /// Each `finish()` fires that subscription's termination handler, which drops
+    /// it from ``sessionEventSubscriptions`` on its own; the map is cleared here
+    /// too so a second ``close()`` has nothing left to finish.
+    private func finishSessionEventSubscriptions() {
+        for continuation in sessionEventSubscriptions.values {
+            continuation.finish()
+        }
+        sessionEventSubscriptions.removeAll()
+    }
+
     /// Runs the recorder-bracketed streaming generation, forwarding each
     /// text chunk the model produces as a ``SessionEvent/textDelta(_:)`` and,
     /// once the turn's diff runs, every other ``SessionEvent`` it implies —
@@ -2196,6 +2299,11 @@ actor RoutedSessionActor: RoutedSession {
     /// `generate(grammar:prompt:_:)`'s "writes no file at all until it
     /// generates" invariant.
     func close() async {
+        // Before anything that can return early: a consumer looping over
+        // ``streamSessionEvents()`` must end when the session does, whether or
+        // not this close has anything to journal.
+        finishSessionEventSubscriptions()
+
         let terminalEvents = await mailbox.sweep()
         guard !terminalEvents.isEmpty else { return }
         await recordSessionMetaIfNeeded()
@@ -2441,7 +2549,17 @@ actor RoutedSessionActor: RoutedSession {
             sessionPrimingLogger.warning(
                 "generating unseeded: discovery priming failed for session \(self.id.description, privacy: .public): \(String(describing: error), privacy: .public)"
             )
-            onEvent?(.discoveryPrimingFailed(error))
+            // Two routes, because priming runs on every turn but only some turns
+            // have a stream of their own: `onEvent` is this turn's own sink when
+            // the caller started the turn through
+            // ``streamEvents(to:maxTokens:)``, and the session-scoped route
+            // reaches a subscriber whichever entry point ran the turn — including
+            // ``respond(to:maxTokens:)`` and ``dispatchNextPrompt()``, which hand
+            // their caller a response rather than a stream (see
+            // ``RoutedSession/streamSessionEvents()``).
+            let failed = SessionEvent.discoveryPrimingFailed(error)
+            onEvent?(failed)
+            emitSessionScopedEvent(failed)
         }
     }
 
