@@ -125,6 +125,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     ``SessionSidecar/agentSpawn``); a fork of this session never
     ///     repeats it, since the fork's lineage back to this root is already
     ///     stated by directory nesting. Defaults to `nil`.
+    ///   - discoveryPriming: The pre-discovery seeding opt-in, or `nil` (the
+    ///     default) to leave it off — with it off, a turn's transcript
+    ///     construction is exactly what it has always been. When set, every
+    ///     turn on the vended session first runs the named mounted tool
+    ///     host-side over the turn's own prompt and seeds the real call it made
+    ///     into the turn's transcript before generation, so the turn's first
+    ///     tool call is deterministic by construction rather than something the
+    ///     model has to decide to make (see ``DiscoveryPriming``). A discovery
+    ///     call that fails never blocks the turn: the turn generates unseeded
+    ///     and the failure surfaces as
+    ///     ``SessionEvent/discoveryPrimingFailed(_:)``. A fork inherits its
+    ///     parent's opt-in.
     /// - Returns: A new ``RoutedSession`` over this model.
     public func makeSession(
         instructions: String? = nil,
@@ -133,12 +145,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil
+        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
         makeSession(
             grammar: nil, instructions: instructions, workingDirectory: workingDirectory,
             recordingRoot: recordingRoot, tools: tools,
-            budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn)
+            budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn,
+            discoveryPriming: discoveryPriming)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
@@ -157,20 +171,24 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
     ///   - recordingRoot: A per-session recording root override — see
-    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``.
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - tools: The tools the model can call during this session. See
     ///     ``makeSession(instructions:workingDirectory:tools:)`` for the
     ///     elevation wrapping applied before threading. Defaults to no tools.
     ///   - budget: The auto-compaction opt-in — see
-    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``.
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Defaults to
     ///     ``CompactionPrompt/default``.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from — see ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``.
+    ///     from — see ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
+    ///   - discoveryPriming: The pre-discovery seeding opt-in — see
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     Defaults to `nil`, which leaves priming off and transcript
+    ///     construction exactly as it has always been.
     /// - Returns: A new ``RoutedSession`` over this model.
     func makeSession(
         grammar: Grammar?,
@@ -180,7 +198,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil
+        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
         let owningProfile = requireOwningProfile(apiName: "makeSession")
 
@@ -259,7 +278,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             usageState: .none,
             autoCompactionBudget: budget,
             autoCompactionPrompt: compactionPrompt,
-            agentSpawn: agentSpawn
+            agentSpawn: agentSpawn,
+            discoveryPriming: discoveryPriming
         )
     }
 
@@ -287,7 +307,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// The shared elevate → optional-cap pipeline behind two of
     /// task ^k4nygqa's three composition sites: the root site
-    /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``,
+    /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
     /// elevate → cap) and the restore site (`restoreSessionTree`,
     /// elevate — it passes a `nil` `cappedToTokenLimit`, so no capping
     /// layer is ever added). The fork site mints its own wiring because it
@@ -336,7 +356,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - **`recordingRoot` supplied** — a flat `<recordingRoot>/<sessionId>/`,
     ///   with no ``RoutedModel/routerId`` segment. This is what a caller
-    ///   opting into ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``'s
+    ///   opting into ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
     ///   per-session root gets: the routerId groups recordings by *process
     ///   run*, a detail nobody browses by, and reintroducing it under a
     ///   caller-chosen project-local root would just be a pile of opaque

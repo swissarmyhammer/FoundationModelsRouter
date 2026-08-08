@@ -53,6 +53,20 @@ public enum SessionEvent: Sendable, Equatable {
     /// this type's own documentation for when this is emitted.
     case compaction(CompactionResult)
 
+    /// This turn's ``DiscoveryPriming`` could not seed, so the turn generated
+    /// unseeded.
+    ///
+    /// Emitted only by a session that opted into priming
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
+    /// `discoveryPriming:` parameter), and only when its host-side discovery
+    /// call did not produce a seed. It is a report, not a failure: the turn
+    /// proceeds exactly as an unprimed one would, because priming improves a
+    /// turn's opening move rather than being a precondition for having one. A
+    /// session with priming off never emits it.
+    ///
+    /// - Parameter failure: Why the seed could not be built.
+    case discoveryPrimingFailed(DiscoveryPrimingFailure)
+
     /// One physical generate attempt closed, carrying its own measured token
     /// usage and the session's resulting ``RoutedSession/contextFill``.
     ///

@@ -16,6 +16,16 @@ private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 /// compaction outcome, not a recording one.
 private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
 
+/// The logger ``RoutedSessionActor`` reports a turn's failed pre-discovery
+/// seeding to (see ``RoutedSessionActor/primeDiscoveryIfConfigured(prompt:onEvent:)``).
+///
+/// Its own category rather than ``sessionRecordingLogger``'s, for the same
+/// reason ``sessionCompactionLogger`` has one: what it reports is a priming
+/// outcome, not a recording one. A failure is logged *and* surfaced as
+/// ``SessionEvent/discoveryPrimingFailed(_:)``, because a plain
+/// ``RoutedSession/respond(to:)`` has no event stream to carry it.
+private let sessionPrimingLogger = makeModuleLogger(category: "DiscoveryPriming")
+
 /// The outcome of ``RoutedSession/cancelCurrentTurn()``.
 public enum TurnCancellationResult: Sendable, Equatable {
     /// A turn was in flight and cancellation was requested of it.
@@ -788,7 +798,8 @@ func makeRoutedSessionActor(
     usageState: ContextUsageState = .none,
     autoCompactionBudget: TokenBudget? = nil,
     autoCompactionPrompt: CompactionPrompt = .default,
-    agentSpawn: SessionSidecar.AgentSpawn? = nil
+    agentSpawn: SessionSidecar.AgentSpawn? = nil,
+    discoveryPriming: DiscoveryPriming? = nil
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -816,7 +827,8 @@ func makeRoutedSessionActor(
         usageState: usageState,
         autoCompactionBudget: autoCompactionBudget,
         autoCompactionPrompt: autoCompactionPrompt,
-        agentSpawn: agentSpawn
+        agentSpawn: agentSpawn,
+        discoveryPriming: discoveryPriming
     )
 }
 
@@ -1170,6 +1182,19 @@ actor RoutedSessionActor: RoutedSession {
     /// summarizer, when ``autoCompactionBudget`` is set. Ignored otherwise.
     nonisolated let autoCompactionPrompt: CompactionPrompt
 
+    /// The pre-discovery seeding opt-in (`^s4405wc`), or `nil` (the default)
+    /// for a session whose transcript construction is untouched.
+    ///
+    /// When set, ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)`` runs
+    /// the named mounted tool host-side over the turn's own prompt and reseeds
+    /// ``backend`` from its current transcript plus the real call it made,
+    /// before the turn's own generate call ever submits (see
+    /// ``primeDiscoveryIfConfigured(prompt:onEvent:)``). Set at construction
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
+    /// and carried forward by ``fork(workingDirectory:)`` — a fork primes its
+    /// turns exactly like its parent.
+    nonisolated let discoveryPriming: DiscoveryPriming?
+
     /// Creates a session, landing its own `session.json` when it is a new one.
     ///
     /// The sidecar write happens here, synchronously, rather than at each
@@ -1228,7 +1253,8 @@ actor RoutedSessionActor: RoutedSession {
         usageState: ContextUsageState = .none,
         autoCompactionBudget: TokenBudget? = nil,
         autoCompactionPrompt: CompactionPrompt = .default,
-        agentSpawn: SessionSidecar.AgentSpawn? = nil
+        agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        discoveryPriming: DiscoveryPriming? = nil
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -1255,6 +1281,7 @@ actor RoutedSessionActor: RoutedSession {
         self.usageState = usageState
         self.autoCompactionBudget = autoCompactionBudget
         self.autoCompactionPrompt = autoCompactionPrompt
+        self.discoveryPriming = discoveryPriming
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into
@@ -2131,7 +2158,11 @@ actor RoutedSessionActor: RoutedSession {
             // task auto-compacts too rather than silently losing the
             // opt-in at fork time.
             autoCompactionBudget: autoCompactionBudget,
-            autoCompactionPrompt: autoCompactionPrompt
+            autoCompactionPrompt: autoCompactionPrompt,
+            // Priming travels with the session for the same reason the
+            // auto-compaction opt-in does: a fork continues its parent's
+            // conversation, so it primes its turns exactly like its parent.
+            discoveryPriming: discoveryPriming
         )
     }
 
@@ -2353,9 +2384,65 @@ actor RoutedSessionActor: RoutedSession {
             }
         }
 
+        await primeDiscoveryIfConfigured(prompt: ownPrompt, onEvent: onEvent)
+
         return try await runTurnAttempt(
             grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt, onEvent: onEvent,
             allowOverflowRetry: autoCompactionBudget != nil, body)
+    }
+
+    /// Seeds this turn's pre-discovery pair into ``backend``, when
+    /// ``discoveryPriming`` is set — the whole of pre-discovery seeding's
+    /// session-side behavior (`^s4405wc`).
+    ///
+    /// Runs the named mounted tool host-side over `prompt` (a real call through
+    /// this session's own instanced tool, so it elevates and caps exactly as the
+    /// model's own call would) and reseeds ``backend`` from its current
+    /// transcript plus the `.prompt` → `.toolCalls` → `.toolOutput` entries that
+    /// call produced, via ``LanguageModelSessionBackend/replacingTranscript(_:)``
+    /// — the same reseeding primitive ``compact(prompt:budget:)`` swaps its inner
+    /// session through. The turn's own prompt is left untouched: seeding happens
+    /// through the transcript, never by rewriting what the caller asked.
+    ///
+    /// Called from ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``,
+    /// deliberately *before* ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
+    /// rather than inside it, for the two reasons the proactive auto-compaction
+    /// fold sits in the same position: a reseeded backend reports its own usage
+    /// from zero, so the attempt's `usageBefore` snapshot has to be taken *after*
+    /// the swap or the turn's measured delta would go negative; and the reactive
+    /// overflow retry recurses into that attempt, where re-priming would run
+    /// discovery a second time for one logical turn.
+    ///
+    /// ``persistedEntryCount`` is deliberately **not** advanced: the seeded
+    /// entries are genuinely new, so the turn's own post-generation diff picks
+    /// them up and records them like any other entries the SDK appended — which
+    /// is what makes them indistinguishable from SDK-native ones on disk.
+    ///
+    /// Never throws. A failure means the turn generates unseeded, logged here and
+    /// surfaced as ``SessionEvent/discoveryPrimingFailed(_:)`` (see
+    /// ``DiscoveryPrimingFailure``).
+    ///
+    /// - Parameters:
+    ///   - prompt: This turn's own prompt, passed to the discovery tool as its
+    ///     query and recorded as the seeded `.prompt` entry.
+    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, or `nil` to
+    ///     skip event derivation.
+    private func primeDiscoveryIfConfigured(
+        prompt: String,
+        onEvent: ((SessionEvent) -> Void)?
+    ) async {
+        guard let discoveryPriming else { return }
+        do {
+            let seeded = try await DiscoveryPrimer.seededEntries(
+                for: prompt, priming: discoveryPriming, mountedTools: tools)
+            let transcript = Transcript(entries: backend.transcriptEntries() + seeded)
+            backend = backend.replacingTranscript(transcript)
+        } catch {
+            sessionPrimingLogger.warning(
+                "generating unseeded: discovery priming failed for session \(self.id.description, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            onEvent?(.discoveryPrimingFailed(error))
+        }
     }
 
     /// One physical attempt at a turn's model work and recording — the whole

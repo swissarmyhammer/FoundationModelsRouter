@@ -207,7 +207,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///
     /// Recorded so the routerId stays discoverable even when a session's
     /// directory omits that path segment — a caller-supplied per-session
-    /// recording root (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``)
+    /// recording root (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
     /// nests a session directly as `<recordingRoot>/<sessionId>/`, with
     /// nothing above it to name the router that wrote it. `nil` only for a
     /// recording made before this field existed — every sidecar written from

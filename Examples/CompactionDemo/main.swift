@@ -72,6 +72,8 @@ func runTurn(
                 [auto-compact] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) \
                 stagesApplied=\(result.stagesApplied)
                 """)
+        case .discoveryPrimingFailed(let failure):
+            print("[priming] could not seed this turn: \(failure)")
         case .reasoningDelta:
             break
         case .turnEnded(let usage):

@@ -160,6 +160,14 @@ public final class SessionProjection {
         case .compaction(let result):
             phase = .compacting
             transcript.append(TranscriptEntry(kind: .compaction(result)))
+        case .discoveryPrimingFailed:
+            // Handled explicitly, and deliberately changes nothing: a turn whose
+            // discovery priming could not seed generates exactly as an unprimed
+            // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), so
+            // this projection's phase, transcript, and counters are already the
+            // faithful mirror of what happened. The failure is a diagnostic for
+            // a driver watching the event stream, not session state.
+            break
         case .turnEnded(let usage):
             tokensIn += usage.tokensIn
             tokensOut += usage.tokensOut

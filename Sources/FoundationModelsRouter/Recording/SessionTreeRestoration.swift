@@ -206,7 +206,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     sibling or ancestor's outbox. Defaults to no tools.
     ///   - recordingRoot: The exact directory to load the tree from, or `nil`
     ///     for this handle's router-level default (task ke41yth). Mirrors
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``:
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``:
     ///     pass the same root a session was vended with to restore it.
     ///     Omitted (`nil`), this loads today's nested
     ///     `<recordingsRoot>/<routerId>/` layout, throwing
@@ -226,6 +226,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// rehydrate it from. A caller that wants the restored tree to keep
     /// managing its own window calls ``RoutedSession/compact(prompt:budget:)``
     /// manually, or re-opts-in on a fresh fork from the restored root.
+    ///
+    /// Every restored node's ``RoutedSessionActor/discoveryPriming`` (`^s4405wc`)
+    /// comes back `nil` for exactly the same reason: a `SessionSidecar` records
+    /// no priming opt-in either, so a restored session's turns are unprimed
+    /// until a caller opens a fresh session — or a fresh fork from the restored
+    /// root, which does inherit whatever that fork's parent carries — with
+    /// `discoveryPriming:` set.
     /// - Returns: The restored tree, rooted at the session named by `rootId`.
     /// - Throws: ``SessionTreeRestorationError`` for every documented
     ///   restoration-specific failure; ``TranscriptTreeError`` /
