@@ -328,7 +328,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The caller's original tools, never mutated.
     ///   - sessionID: The owning session's identity, stamped into each
     ///     elevated run's ``ToolContext``.
-    ///   - cappedToTokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
+    ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
     ///     rendered output to, or `nil` for no capping layer.
     /// - Returns: The session's fresh outbox and mailbox alongside the
     ///   instanced, model-facing tool list wired to them.
@@ -375,7 +375,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   ``makeLanguageModel()`` so the two factories nest identically.
     ///
     /// - Parameters:
-    ///   - forSessionId: The fresh session/handle's own span id.
+    ///   - sessionId: The fresh session/handle's own span id.
     ///   - recordingRoot: A per-session recording root override, or `nil` for
     ///     the router-level default. Defaults to `nil`.
     /// - Returns: The directory its transcript is recorded under.
@@ -512,7 +512,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   alive when this is called — mirrors ``makeLanguageModel()``'s own
     ///   precondition.
     /// - Parameters:
-    ///   - resuming: The previously recorded session's span id to resume
+    ///   - sessionId: The previously recorded session's span id to resume
     ///     from — any session already recorded under this router's root (a
     ///     root, a fork, or another recording-handle session).
     ///   - registry: The registered ``PersistableCustomSegment`` types a
