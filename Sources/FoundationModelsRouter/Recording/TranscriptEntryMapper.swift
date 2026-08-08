@@ -448,11 +448,52 @@ public enum TranscriptEntryMapper {
     /// or `nil` if there are none — the flattened GUI/redaction convenience
     /// body ``TranscriptEvent/text`` carries.
     private static func flattenedText(_ segments: [SegmentPayload]) -> String? {
-        let textContents = segments.compactMap { segment -> String? in
+        let contents = textContents(segments)
+        return contents.isEmpty ? nil : contents.joined(separator: "\n")
+    }
+
+    /// The joined content of every `.text` segment in `prompt`, in order and
+    /// with nothing between them — the plain-text form
+    /// ``RoutedSession/dispatchNextPrompt()`` hands
+    /// ``LanguageModelSessionBackend/respond(to:maxTokens:)``/
+    /// ``LanguageModelSessionBackend/respond(to:following:maxTokens:)`` for a
+    /// queued prompt, since the backend's generation surface takes a `String`,
+    /// not a `Transcript.Prompt`.
+    ///
+    /// Shares one segment extraction with the recording-side
+    /// `flattenedText(_:)` above — the same `.text` filter over the same
+    /// ``SegmentPayload`` mapping ``event(from:)`` applies to a live
+    /// `.prompt` entry — so the two cannot drift on *what* counts as text.
+    /// They deliberately differ on the two things that are not shared:
+    ///
+    /// - **No separator.** The recording side joins with a newline for a
+    ///   human-readable body; a submitted prompt is the literal string the
+    ///   model receives, so nothing may be inserted into it.
+    /// - **`""`, never `nil`.** Non-text segments (e.g. a `.custom` segment)
+    ///   are silently skipped, and a prompt carrying none of type `.text`
+    ///   flattens to the empty string: queuing anything richer than plain text
+    ///   is not supported by that dispatch path.
+    ///
+    /// - Parameter prompt: The queued prompt to flatten.
+    /// - Returns: The joined text, or `""` if `prompt` carries no `.text`
+    ///   segment.
+    static func flattenedText(_ prompt: Transcript.Prompt) -> String {
+        textContents(prompt.segments.map(segmentPayload)).joined()
+    }
+
+    /// The content of every `.text` segment in `segments`, in order — the one
+    /// place the `.text` filter lives, read by both `flattenedText(_:)`
+    /// overloads so the recording-side and prompt-side flattening agree on
+    /// which segments carry text.
+    ///
+    /// - Parameter segments: The segments to read text content from.
+    /// - Returns: One string per `.text` segment, in `segments` order; empty
+    ///   when `segments` carries none.
+    private static func textContents(_ segments: [SegmentPayload]) -> [String] {
+        segments.compactMap { segment -> String? in
             guard case .text(_, let content) = segment else { return nil }
             return content
         }
-        return textContents.isEmpty ? nil : textContents.joined(separator: "\n")
     }
 
     // MARK: - JSON helpers

@@ -308,6 +308,75 @@ comments:
     - evidence: 11 files. Split: `Sources/FoundationModelsRouter/Session/RoutedSession.swift` (2722 lines removed) into 7 new siblings — `RoutedSessionActor.swift`, `RoutedSessionActorCompaction.swift`, `RoutedSessionActorForking.swift`, `RoutedSessionActorGeneration.swift`, `RoutedSessionActorRecording.swift`, `RoutedSessionActorTurnExecution.swift`, `RoutedSessionActorTurnGating.swift`. Stale doc references re-pointed in `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift` and `Sources/FoundationModelsRouter/Compaction/Summarization.swift`. Largest resulting file 43470 bytes (~77k rendered) against the 262144-byte cap — 6x margin. Every moved member `cmp`-verified byte-identical against `git show HEAD:`, plus a sorted whole-file `comm` conservation check whose only differences are the 34 access-modifier prefixes, 6 reworded locality doc lines, and the authored extension declarations. `swift build` clean; `swift test` exit 0, 796 tests (762 + 22 + 12), 0 failures, 0 compiler diagnostics.
     - next: `/review` — re-run the delta so the 9 validators that skipped `RoutedSession.swift` actually run against the trigger comparison and `loweredRetryTarget(from:)`, both of which now live in the reviewable `RoutedSessionActorTurnExecution.swift`. The second finding (`mean(factRetention) >= 0.9` = `0.0833`) is left unchecked by instruction: it is escalated to a human decision and out of this iteration's scope.
   timestamp: 2026-08-08T16:18:09.294219+00:00
+- actor: claude-code
+  id: 01kzh3s24ehag9a79rtee4ezj1
+  text: |-
+    ### review — findings
+
+    - evidence: `review sha HEAD~1..HEAD` (commit `2adf089`). Engine counts: 5 findings, 5 confirmed, 2 refuted, 18 attempted, 0 failed, **0 skipped, 0 skipped files**. The iteration-1 cap finding is resolved by measurement — the previous run skipped `RoutedSession.swift`, this run skips nothing, and the nine previously blocked validators (code-hygiene, code-security, completeness, complexity, duplication, missing-docs, reuse, swift, test-integrity) now cover the split files. Three of the five findings are in `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift`, the file that holds this card's two previously unreviewed production fixes (trigger/ceiling token comparisons in `runTurn`/`runTurnAttempt`, and `loweredRetryTarget(from:)`), so that coverage is proven present. New open findings: `RoutedSessionActorRecording.swift:100` (doc names external label `since` instead of internal `started`), `RoutedSessionActorRecording.swift:460` (magic numbers), `RoutedSessionActorTurnExecution.swift:91` (`generate` doc omits `onEvent`), `RoutedSessionActorTurnExecution.swift:638` (magic numbers), `RoutedSessionActorTurnExecution.swift:730` (`flattenedPromptText` reimplements `TranscriptEntryMapper.flattenedText`). No finding was dropped this pass — all five are in production sources, so the test-refactor exception did not apply.
+    - next: iteration 3 fixes the five findings above, removing each cause from the whole file rather than only the flagged line. The `mean(factRetention) >= 0.9` = `0.0833` criterion remains unchecked and untouched — it is escalated to a human decision (hand `factRetention` to `^pw807cp`, or hold this card until `^pw807cp` closes). Task stays in `review`; it cannot advance to `done` while that criterion is unmet.
+  timestamp: 2026-08-08T16:37:25.774546+00:00
+- actor: claude-code
+  id: 01kzh3t7d9knx3y6mmtavx7bh4
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — RoutedSession.swift split 1 to 8 files, largest 43470 bytes (~77k rendered) vs the 262144 cap; function bodies byte-identical to git show HEAD~1:, only access widening plus 6 corrected file-locality doc comments
+    - test: green — swift test, 796 passed (762+22+12), 0 failures; diagnostics check working 0 errors 0 warnings; fork verified no behavior drift
+    - commit: 2adf089
+    - review: findings — prior cap finding RESOLVED (engine now reports 0 skipped files where it reported 1). 5 new findings, all production code: Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift:100, :460; Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:91, :638, :730
+    - next: iteration 3 works the 5 findings. Three of them are in RoutedSessionActorTurnExecution.swift — the file holding this card's trigger-comparison and loweredRetryTarget fixes — which proves the nine validators read that code for the first time. The factRetention AC remains escalated to a human; not checked, card not advanced.
+  timestamp: 2026-08-08T16:38:03.945881+00:00
+- actor: claude-code
+  id: 01kzh4rnvxxwtctpbyjwf3asfv
+  text: |-
+    ### Iteration 3 — all five review findings worked, each cause removed from the whole file
+
+    Card pulled back to `doing`. The `mean(factRetention) >= 0.9` criterion was not touched: it is escalated to a human and out of scope, and its checklist item is still `- [ ]`.
+
+    Rules were loaded before any edit (`dump validators` on one `.swift` example → 48 rules across 9 validators, read whole). Two rule facts shaped the work and are worth recording, because both are easy to get backwards:
+
+    - **`magic-numbers-swift` supersedes the prompt `magic-numbers` rule and reports by *position*, not repetition** — so a literal used exactly once is a finding under the Swift tool rule even though the prompt rule carves one-offs out. That is why both flagged numbers needed naming despite each having a single call site. The same rule text names the fix: it "reported nothing for … a `static let` … each of those declarations names its value", and `allowed_numbers` is `[0, 1, -1, 100]`.
+    - **`swift/doc-parameter-naming` fixes the *direction* and forbids the inverse.** A finding asking to change a correct internal-name key to the external label "is a validator error, in any file, on any declaration", and symbol links legitimately keep external labels. So the sweep only moved keys toward internal names, and left every ``symbol(link:)`` alone.
+
+    #### What the sweeps turned up beyond the five flagged lines
+
+    Each finding names one example of a cause; removing the cause from the whole file found four more instances that were never flagged:
+
+    1. **Doc key using an external label** — also in `RoutedSessionActorTurnExecution.swift`, not just the flagged `Recording` file: `recordFailedTurn` likewise declares `since started: Date` and likewise documented it as `- since:`. Fixed. Verified the *non*-instances too: `finishTurn`, `recordTranscriptDelta`, and `makePartialEvent` all declare a plain `since: Date`, so their `- since:` keys are already the internal name and were correctly left alone — changing those would have been the validator error the rule warns about.
+    2. **Doc block not covering what the signature declares** — three more in `RoutedSessionActorTurnExecution.swift` besides `generate`'s missing `onEvent`: `ModelCallCancellationProbe.bind(to task:)` had no `- Parameter task:` at all, and `dispatchNextPrompt()` documented neither its `String?` result nor its `throws`. All fixed; every other declaration in both files was checked and was already complete.
+    3. **Magic numbers** — after both fixes, the only numeric literals left anywhere in either file are the two new `static let` values themselves, which the deciding rule does not report.
+
+    #### Finding 5 was the only behavioral risk, and it is pinned, not asserted
+
+    The three ways the finding allows this to be fixed are not equivalent, and the first one is wrong here. `TranscriptEntryMapper.flattenedText` takes `[SegmentPayload]`, joins with `"\n"`, and answers `nil` for empty; `flattenedPromptText` took a `Transcript.Prompt`, joined with **nothing**, and answered `""`. Calling the existing function directly would have silently inserted a newline between every text segment of every queued prompt and changed what the model is asked. So: the `.text` filter — the actual duplicated logic — was lifted into one `textContents(_ segments: [SegmentPayload]) -> [String]`, and a `Prompt` overload was added over it, keeping each side's own join and own empty answer stated on its own doc comment.
+
+    The prompt overload reaches `[SegmentPayload]` via `segmentPayload(_:)` rather than filtering `Transcript.Segment` a second time — `event(from:)` already maps a live `.prompt` entry's segments with exactly that call, and `segmentPayload`'s own doc invites the reuse ("reuses the exact same encoding … rather than duplicating it"). One consequence worth knowing: for a future SDK segment case, `segmentPayload`'s `@unknown default` traps where the old private copy would have silently skipped. That is the mapper's documented stance for every other entry it maps, and it is unreachable with the current SDK, so output is identical for every constructible input.
+
+    **Proof the pins can fail**, per the rule that a test you never watched fail proves nothing: temporarily giving the shared implementation a `"\n"` separator failed 3 of the 5 new tests, naming the exact strings — `flattenedText(prompt) == "first line\nsecond line"`, `== "alpha omega"`, and the session-level `promptEvent.text == "alpha omega"` — and the sabotage was reverted and re-verified. Note it is the *session-level* test in `PromptQueueTests` that catches this at the level that matters: it enqueues a genuinely multi-segment `Transcript.Prompt` (two text segments around a `.custom` one) and asserts the exact string the backend received. No pre-existing test covered a multi-segment queued prompt — every one of them queues a single text segment — which is exactly why this could have regressed silently.
+
+    #### Discovered work, filed not fixed
+
+    `^6ejrrr7` — six DocC symbol links in three session files name argument lists their declarations no longer have (all missing `onEvent:`). Distinct from these findings: the rule explicitly separates symbol links from doc keys and forbids citing links under the doc-key rule. Also recorded there: a naive scanner reported 97 of them in `Session/` alone, and that number is wrong twice over (enum-case links counted as unresolved; the `>` of a `->` closure return parsed as a bracket close), so the next agent does not repeat the mistake.
+
+    #### Verification
+
+    `swift test` → **801 tests, 0 failures** (767 + 22 + 12), up from 796 by the 5 new tests. `diagnostics check working` → 0 errors, 0 warnings. The only `warning:` in the build is SwiftPM's pre-existing `missing creator for mutated node` on the vendored mlx-swift resource bundle, not a compiler diagnostic. No gated run: three of the five findings are documentation, two are named constants with byte-identical values, and the fifth is covered by ungated tests that pin its exact output — the gated evidence for this card is already recorded above.
+  timestamp: 2026-08-08T16:54:41.789946+00:00
+- actor: claude-code
+  id: 01kzh4s19cwcgzg7yvhhdfcd29
+  text: |-
+    ### implement — changed
+    - evidence: 5 files. Sources: `Recording/TranscriptEntryMapper.swift` (shared `textContents(_:)` extraction + new `flattenedText(_ prompt: Transcript.Prompt)` overload), `Session/RoutedSessionActorTurnExecution.swift` (`flattenedPromptText` deleted and its caller repointed; `onEvent` documented on `generate`; `bind(to task:)` and `dispatchNextPrompt()` doc blocks completed; `recordFailedTurn`'s `- since:` key → `- started:`; `retryTargetHalvingDivisor` named), `Session/RoutedSessionActorRecording.swift` (`finishTurnAndRequeueIfUnattached`'s `- since:` key → `- started:`; `millisecondsPerSecond` named). Tests: `FoundationModelsRouterTests/PromptTextFlatteningTests.swift` (new, 4 tests), `FoundationModelsRouterTests/PromptQueueTests.swift` (+1 session-level dispatch test). All five review findings from the 2026-08-08 11:26 section are `- [x]`, each with its cause swept from the whole file — four unflagged instances of the same causes were found and fixed that way. `swift test` 801 tests (767 + 22 + 12), 0 failures; `diagnostics check working` 0 errors, 0 warnings. Finding 5's pins were watched failing (3 of 5 tests) under a deliberate separator change, then reverted.
+    - next: `/review` — re-run the delta. The `mean(factRetention) >= 0.9` = `0.0833` criterion is untouched and still `- [ ]` by instruction: escalated to a human decision (rewrite the criterion to hand `factRetention` to `^pw807cp`, or hold this card until `^pw807cp` closes). Discovered work filed as `^6ejrrr7` (six stale DocC symbol links in the split session files), deliberately not fixed here.
+  timestamp: 2026-08-08T16:54:53.484717+00:00
+- actor: claude-code
+  id: 01kzh4x5nz0j8fbq91675vt085
+  text: |-
+    ### test — green
+    - evidence: `swift test` — Test run with 767 tests in 72 suites passed after 2.614 seconds; Test run with 22 tests in 9 suites passed after 0.008 seconds; Test run with 12 tests in 4 suites passed after 0.008 seconds (767+22+12=801 total). Zero failures, zero warnings. All 32 skipped items trace to the 12 files gated on `FM_ROUTER_INTEGRATION_TESTS` (verified via grep).
+    - Verified the behavioral risk: `TranscriptEntryMapper.flattenedText(_ segments:)` (recording side) still joins with `"\n"` and returns `nil` for empty; the new `flattenedText(_ prompt: Transcript.Prompt)` overload joins with no separator and returns `""` for empty. `PromptTextFlatteningTests.textSegmentsJoinInOrderWithNoSeparator`/`recordingSideFlatteningIsUnchanged` pin both literal outcomes distinctly, and `PromptQueueTests.dispatchNextPromptFlattensEveryTextSegment` confirms the real `dispatchNextPrompt()` path submits multi-segment queued prompts with no separator end-to-end.
+    - next: ready for review/commit.
+  timestamp: 2026-08-08T16:57:09.055810+00:00
 position_column: doing
 position_ordinal: '80'
 title: Gated compaction suites never reach the 0.80 trigger on real hardware — live contextFill contradicts hermetic sizing
@@ -366,4 +435,34 @@ Both engine findings below ask to change test code that already existed, so the 
 
 ### Engine run notes
 
-18 validator/file pairs attempted, 0 failed, 1 file skipped (`RoutedSession.swift`, over the prompt cap). The tool rule `code-hygiene/missing-docs-swift` was unavailable (tool missing, exit status 1); the prompt rule `missing-docs` ran instead. #phase-1
+18 validator/file pairs attempted, 0 failed, 1 file skipped (`RoutedSession.swift`, over the prompt cap). The tool rule `code-hygiene/missing-docs-swift` was unavailable (tool missing, exit status 1); the prompt rule `missing-docs` ran instead.
+
+## Review Findings (2026-08-08 11:26)
+
+Scope: `review sha HEAD~1..HEAD` (commit `2adf089`) — this iteration's delta only.
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift:100` — The parameter `since started: Date` (line 102) is documented with its external label `since` instead of its internal name `started`. The rule requires documenting the internal (local) parameter name that Swift-DocC resolves against. Change the documentation from `///   - since:` to `///   - started:` to match the internal parameter name.
+
+  Fixed in iteration 3. `finishTurnAndRequeueIfUnattached`'s doc key is now `- started:`. Swept both flagged files for the whole cause rather than the flagged line: every parameter carrying a distinct external label was checked against its doc key, and one further instance was found and fixed in the *other* file — `recordFailedTurn(grammar:since:usageBefore:pendingEvents:onEvent:)` in `RoutedSessionActorTurnExecution.swift` also declares `since started: Date` and also documented it as `- since:`. The remaining `- since:` keys in `RoutedSessionActorRecording.swift` (`finishTurn`, `recordTranscriptDelta`, `makePartialEvent`) are correct: those three declare `since: Date` with no separate internal name, so `since` *is* the internal name. DocC symbol links such as ``finishTurn(grammar:since:usageBefore:pendingEvents:onEvent:)`` were deliberately left alone — the rule states a symbol link uses the declaration's external labels and is not a violation.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift:460` — Magic numbers should be replaced by named constants.
+
+  Fixed in iteration 3. `Int(Date().timeIntervalSince($0) * 1_000)` now reads `* Self.millisecondsPerSecond`, declared as `private static let millisecondsPerSecond: Double = 1_000` beside its one consumer (the same placement the file's sibling `turnBindingToolStamp` uses). Swept the whole file: after the fix the only numeric literal left anywhere in it is that `static let`'s own value, which the deciding `magic-numbers-swift` rule explicitly does not report ("reported nothing for … a `static let` … each of those declarations names its value").
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:91` — The `generate` function's doc comment does not document the `onEvent` parameter, violating the rule that documentation must cover exactly the parameters, return, and throws the signature declares. Add `onEvent` parameter documentation to the `- Parameters:` block, e.g., `///   - onEvent: A sink for this turn's derived ``SessionEvent``s, or `nil` to skip event derivation.`.
+
+  Fixed in iteration 3, and the cause removed from the whole file rather than only from `generate`. Three further declarations in the same file did not document exactly what their signature declares, and all three are corrected: `ModelCallCancellationProbe.bind(to task:)` carried no `- Parameter task:` at all, and `dispatchNextPrompt()` documented neither its `String?` result nor the fact that it `throws` (`- Returns:` appears iff the result is non-`Void`, `- Throws:` iff the function throws). Every other declaration in the file was checked and already complete.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:638` — Magic numbers should be replaced by named constants.
+
+  Fixed in iteration 3. `loweredRetryTarget(from:)`'s body is now `target / retryTargetHalvingDivisor`, declared as `private static let retryTargetHalvingDivisor: Double = 2` immediately above its one consumer. Swept the whole file: the only numeric literal left is that declaration's own value. The `max(target / 2, 0.1)` inside `loweredRetryTarget`'s doc comment is prose describing the bug iteration 1 fixed, not a live literal, and is left verbatim.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:730` — flattenedPromptText reimplements existing functionality from TranscriptEntryMapper.flattenedText; both extract text content from transcript-related structures (Transcript.Prompt vs transcript entries) by filtering segments and joining text. Call TranscriptEntryMapper.flattenedText(prompt) instead of reimplementing the segment-extraction logic, or if that function operates on a different type, check whether it can be generalized to handle Transcript.Prompt, or extend it with a Prompt-specific overload.
+
+  Fixed in iteration 3 by taking the third option the finding offers — a `Prompt`-specific overload — with the shared extraction genuinely shared rather than copied. `RoutedSessionActor.flattenedPromptText(_:)` is deleted; `dispatchNextPrompt()` now calls `TranscriptEntryMapper.flattenedText(queued.prompt)`. Inside the mapper the `.text` filter was lifted into one `textContents(_ segments: [SegmentPayload]) -> [String]`, which both overloads read, so the recording side and the prompt side can no longer drift on *what* counts as text. The prompt overload reaches `[SegmentPayload]` through `segmentPayload(_:)` — the same mapping `event(from:)` already applies to a live `.prompt` entry, and the reuse that function's own doc invites — rather than adding a second filter over `Transcript.Segment`.
+
+  The two overloads still differ on the two things that are not shared, both preserved byte-for-byte from the deleted implementation and both now documented on the overload: it joins with **no separator** (the recording side joins with `"\n"`), and it answers `""` rather than `nil` for a prompt carrying no `.text` segment. That was the behavioral risk in this finding, so it is pinned by tests rather than asserted: a new ungated `PromptTextFlatteningTests` suite (multiple text segments join with nothing between them; a non-text segment contributes nothing; no `.text` segment flattens to `""`; the recording-side overload keeps its own newline join and its `nil`-for-empty answer) plus a new session-level test in `PromptQueueTests` that dispatches a genuinely multi-segment queued prompt and asserts the exact string the backend received. The pins were proven able to fail: temporarily giving the shared implementation a `"\n"` separator failed 3 of the 5, including the session-level one, and the run was reverted.
+
+### The prior cap finding is confirmed resolved
+
+The 2026-08-08 10:44 section's first item is closed by measurement, not by assertion: this run reports `skipped: 0` and `skipped_files: []` against the previous run's 1 skipped file, with the same 18 validator/file pairs attempted and 0 failed. The nine validators that could not read `RoutedSession.swift` — code-hygiene, code-security, completeness, complexity, duplication, missing-docs, reuse, swift, test-integrity — did run this time, and three of the five findings above are *in* `RoutedSessionActorTurnExecution.swift`, the file that now holds this card's two previously unreviewed production fixes (the trigger and ceiling token comparisons in `runTurn`/`runTurnAttempt`, and `loweredRetryTarget(from:)`). That coverage was the point of iteration 2, and it is now proven present.
+
+### Engine run notes
+
+`counts`: 5 findings, 5 confirmed, 2 refuted, 18 attempted, 0 failed, 0 skipped, no skipped files. All five findings are in production sources under `Sources/FoundationModelsRouter/Session/`; none is a test-refactor finding, so the skill's test-refactor exception drops nothing this pass. #phase-1

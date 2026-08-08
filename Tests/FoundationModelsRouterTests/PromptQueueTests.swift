@@ -348,6 +348,36 @@ struct PromptQueueTests {
         #expect(promptEvent.text == expectedLine + "\n\nwhat happened?")
     }
 
+    // MARK: - dispatchNextPrompt() flattens the queued prompt to backend text
+
+    @Test(
+        "dispatchNextPrompt() submits every .text segment of a queued prompt joined with no separator, skipping non-text segments"
+    )
+    @MainActor
+    func dispatchNextPromptFlattensEveryTextSegment() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let event = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
+        _ = await session.enqueue(
+            prompt: Transcript.Prompt(segments: [
+                .text(Transcript.TextSegment(content: "alpha ")),
+                .custom(OperationEventSegment(id: "seg-1", content: event)),
+                .text(Transcript.TextSegment(content: "omega")),
+            ]))
+
+        _ = try await session.dispatchNextPrompt()
+
+        // What the backend was actually asked: the two text contents adjacent,
+        // with nothing inserted between them and nothing contributed by the
+        // `.custom` segment. A separator here would change the prompt the model
+        // sees on every multi-segment queued turn.
+        let events = await recorder.events
+        let promptEvent = try #require(events.first { $0.kind == .prompt })
+        #expect(promptEvent.text == "alpha omega")
+    }
+
     // MARK: - Commit-boundary race: cancel/replace/enqueue vs. an in-flight dispatch
 
     @Test("cancel racing an in-flight dispatch reports alreadySent; the in-flight turn is unaffected")

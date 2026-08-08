@@ -89,7 +89,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn.
-    ///   - since: The turn's start time, forwarded to `finishTurn`.
+    ///   - started: The turn's start time, forwarded to `finishTurn`.
     ///   - usageBefore: The token-usage snapshot taken before the turn ran.
     ///   - pendingEvents: The events drained from ``outbox`` for this turn.
     ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, forwarded
@@ -412,6 +412,11 @@ extension RoutedSessionActor {
         await recorder.append(partial, to: recordingDirectory)
     }
 
+    /// The number of milliseconds in one second — the scale ``TranscriptEvent/ms``
+    /// is stamped in, applied to the `TimeInterval` seconds
+    /// `Date.timeIntervalSince(_:)` reports.
+    private static let millisecondsPerSecond: Double = 1_000
+
     /// Builds an event of the given kind stamped with this session's provenance.
     ///
     /// The `session` meta event, every entry-derived event
@@ -457,7 +462,7 @@ extension RoutedSessionActor {
             text: text,
             tokensIn: tokensIn,
             tokensOut: tokensOut,
-            ms: since.map { Int(Date().timeIntervalSince($0) * 1_000) },
+            ms: since.map { Int(Date().timeIntervalSince($0) * Self.millisecondsPerSecond) },
             entry: entry
         )
     }

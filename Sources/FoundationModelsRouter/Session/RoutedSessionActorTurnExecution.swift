@@ -81,6 +81,8 @@ extension RoutedSessionActor {
     ///     onto every event this turn appends.
     ///   - prompt: The caller's own prompt, before this turn's drain-on-turn
     ///     composition (see below).
+    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, or
+    ///     `nil` to skip event derivation entirely.
     ///   - body: The model work to run inside the bracket, given this turn's
     ///     composed prompt and returning the response text callers receive
     ///     (still returned directly; no longer the source of any recorded
@@ -411,7 +413,7 @@ extension RoutedSessionActor {
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn.
-    ///   - since: The turn's start time, stamped as `ms`.
+    ///   - started: The turn's start time, stamped as `ms`.
     ///   - usageBefore: The token-usage snapshot taken before the failed work ran.
     ///   - pendingEvents: The events this turn drained from ``outbox``, re-queued
     ///     unless the diff produced a `.prompt`-kind partial to attach them to.
@@ -462,6 +464,9 @@ extension RoutedSessionActor {
         private let modelCall = Mutex<Task<String, any Error>?>(nil)
 
         /// Binds the created model-call task as the probe's subject.
+        ///
+        /// - Parameter task: The model-call task whose cancellation this probe
+        ///   reports.
         func bind(to task: Task<String, any Error>) {
             modelCall.withLock { $0 = task }
         }
@@ -614,6 +619,11 @@ extension RoutedSessionActor {
         return false
     }
 
+    /// The divisor ``loweredRetryTarget(from:)`` applies to a budget's own
+    /// configured target — halving, the smallest reduction that lands strictly
+    /// below every positive target without ever reaching zero.
+    private static let retryTargetHalvingDivisor: Double = 2
+
     /// The fold target the reactive overflow-recovery retry compacts to:
     /// strictly lower than the budget's own configured target, mirroring the
     /// documented reactive pattern's own hardcoded "fold harder" example
@@ -635,7 +645,7 @@ extension RoutedSessionActor {
     /// - Parameter target: The budget's own configured target.
     /// - Returns: The lowered target the retry's fold uses.
     private static func loweredRetryTarget(from target: Double) -> Double {
-        target / 2
+        target / retryTargetHalvingDivisor
     }
 
     /// Runs the earliest still-pending queued prompt as one normal recorded
@@ -656,6 +666,12 @@ extension RoutedSessionActor {
     ///
     /// Honors ``grammar`` exactly like ``respond(to:maxTokens:)``: a guided
     /// session constrains this turn's response too.
+    ///
+    /// - Returns: The response text the dispatched turn produced, or `nil` when
+    ///   nothing was queued to dispatch — including the case where a concurrent
+    ///   ``cancel(_:)`` won the race for the only queued prompt.
+    /// - Throws: Whatever the dispatched turn throws, recorded exactly as any
+    ///   other failed turn is.
     func dispatchNextPrompt() async throws -> String? {
         await beginTurn()
         defer { endTurn() }
@@ -689,7 +705,7 @@ extension RoutedSessionActor {
         // Only now — with a prompt confirmed to actually dispatch as a turn
         // — is it safe to record the session's first-line meta event.
         await recordSessionMetaIfNeeded()
-        let ownPrompt = Self.flattenedPromptText(queued.prompt)
+        let ownPrompt = TranscriptEntryMapper.flattenedText(queued.prompt)
 
         return try await runTurn(
             grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
@@ -713,25 +729,5 @@ extension RoutedSessionActor {
         guard !pendingEvents.isEmpty else { return prompt }
         let preamble = pendingEvents.map(OperationEventSegment.renderedLine(for:)).joined(separator: "\n")
         return preamble + "\n\n" + prompt
-    }
-
-    /// The joined content of every `.text` segment in `prompt`, in order —
-    /// the plain-text form ``dispatchNextPrompt()`` hands to
-    /// ``LanguageModelSessionBackend/respond(to:maxTokens:)``/
-    /// ``LanguageModelSessionBackend/respond(to:following:maxTokens:)`` for a
-    /// queued prompt, since the backend's generation surface takes a
-    /// `String`, not a `Transcript.Prompt`. Non-text segments (e.g. a
-    /// `.custom` segment) are silently skipped: queuing anything richer than
-    /// plain text is not supported by this dispatch path.
-    ///
-    /// - Parameter prompt: The queued prompt to flatten.
-    /// - Returns: The joined text, or `""` if `prompt` carries no `.text`
-    ///   segment.
-    private static func flattenedPromptText(_ prompt: Transcript.Prompt) -> String {
-        let textContents = prompt.segments.compactMap { segment -> String? in
-            guard case .text(let text) = segment else { return nil }
-            return text.content
-        }
-        return textContents.joined()
     }
 }
