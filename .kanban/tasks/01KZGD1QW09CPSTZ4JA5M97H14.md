@@ -184,6 +184,130 @@ comments:
     - evidence: 18 files. Sources: `Compaction/Compactor.swift`, `Compaction/TokenBudget.swift`, `Recording/TranscriptEntryPayload.swift`, `RoutedLLM.swift`, `Session/RoutedSession.swift`. Tests: `FoundationModelsRouterTests/CompactionTokenAccountingTests.swift` (new), `AutoCompactionTests.swift`, `GuidedGenerationTests.swift`; `FoundationModelsRouterEvals/CompactionContinuityDataset.swift`, `CompactionContinuityEvaluation.swift`, `CompactionContinuityEvaluationTests.swift`, `CompactionEvaluation.swift`, `CompactionEvaluationTests.swift`; `FoundationModelsRouterIntegrationTests/CompactionRoundTripIntegrationTests.swift`. Ungated `swift test`: 796 tests, 0 failures. Gated: `CompactionRoundTripIntegrationTests` green (all four listed assertions unmodified); `mean(foldOccurred) == 1.0` green; `mean(factRetention)` still `0.0833`, attributed by direct evidence to `^pw807cp`.
     - next: `/review`. One acceptance criterion (`factRetention` mean >= 0.9) is not closed and cannot be inside this card's stated scope — the summaries provably carry the planted fact verbatim and the *answers* are contaminated; evidence filed on `^pw807cp`.
   timestamp: 2026-08-08T15:39:39.525118+00:00
+- actor: claude-code
+  id: 01kzh16ggscyzwv2kx0yg5d3rp
+  text: |
+    ### review — findings
+
+    - evidence: `review sha HEAD~1..HEAD` (commit `bda41be`). Engine counts: 3 findings, 3 confirmed, 0 refuted, 18 attempted, 0 failed, 1 file skipped. 2 of the 3 dropped under the skill's written test-refactor exception (pre-existing lines in `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluation.swift:194` and `CompactionEvaluation.swift:197`, both deduplications of `TokenBudget.targetTokens` against code blamed to `10955bea` / `598fc24c`, predating this delta). Recorded open: `Sources/FoundationModelsRouter/Session/RoutedSession.swift:1` (341682 rendered bytes over the 262144-byte cap; 9 validators could not review it — and part of this delta's trigger-comparison fix lives in that unreviewed file), plus the unmet acceptance criterion `mean(factRetention) >= 0.9` = `0.0833`.
+    - next: split `RoutedSession.swift` so it fits the review prompt cap, then re-review the delta so the 9 skipped validators actually run against the trigger-comparison change. The `factRetention` criterion needs a human decision — the `^pw807cp` attribution is well-evidenced (summaries carry the fact verbatim; the answers are contaminated), but the criterion as written on this card is unmet, so the card cannot advance to done. Task stays in `review`.
+  timestamp: 2026-08-08T15:52:20.761581+00:00
+- actor: claude-code
+  id: 01kzh18p48drcce1zc576ysm07
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 18 files, 3 token-accounting bugs (envelope-vs-content estimate, trigger denominator mismatch, loweredRetryTarget contract violation)
+    - test: green — swift test, 796 passed (762+22+12), 0 failures, 0 warnings on changed files
+    - commit: bda41be
+    - review: findings — Sources/FoundationModelsRouter/Session/RoutedSession.swift:1 (341682 rendered bytes over the 262144 cap; 9 validators skipped, and this delta's trigger-comparison + loweredRetryTarget fixes live in that unreviewed file); unmet AC mean(factRetention) >= 0.9 = 0.0833
+    - next: iteration 2 splits RoutedSession.swift to fit the cap so the 9 skipped validators run against the trigger fix. The factRetention criterion is escalated to a human — not checked, card not advanced.
+  timestamp: 2026-08-08T15:53:32.040929+00:00
+- actor: claude-code
+  id: 01kzh1t15k9jzmh0nm5dhpaphj
+  text: |-
+    ### Iteration 2 research — the split plan for `RoutedSession.swift`
+
+    Card pulled back to `doing`. Working only the first open finding (the 341682-byte review-cap overflow). The `factRetention` criterion stays unchecked and untouched per the escalation.
+
+    **Measured:** `RoutedSession.swift` is 191794 bytes / 3485 lines on disk, rendering to 341682 bytes for the review engine — a 1.78x factor. To be comfortably under the 262144-byte cap after rendering, each resulting file wants to stay well under ~100k on disk; the plan lands every file at 45k or less.
+
+    **Structure found** (`code_context list symbols` on this file overflows the tool's own token cap, so the map came from declaration greps):
+
+    - 1-4 imports; 6-30 three file-private loggers; 32-50 `public enum TurnCancellationResult`; 52-793 `public protocol RoutedSession` + its default-implementation extension; 795-870 `makeRoutedSessionActor`; 880-965 two private `CompactionSummarizer` conformers; 967-3485 `actor RoutedSessionActor` (2519 lines, the bulk).
+
+    **Split (9 sibling files under Session/, extensions of the one actor — no type renamed, no public API touched):**
+
+    1. `RoutedSession.swift` — `TurnCancellationResult`, the protocol, its defaults (~40k)
+    2. `RoutedSessionActor.swift` — `makeRoutedSessionActor` + the actor declaration, stored properties, `init`, `deinit` (~31k; stored properties, `init`, and `deinit` cannot live in an extension, so this file is the actor's main declaration)
+    3. `RoutedSessionActorCompaction.swift` — both summarizers + `contextFill`, `compact`, `performAutoCompaction`, `FoldSummarizerTier`, `abandonFoldIfCancelled`, `noteAbandonedFold`, `fold` (~22k)
+    4. `RoutedSessionActorGeneration.swift` — `respond`/`streamResponse`/`streamEvents`/`streamSessionEvents` + subscription bookkeeping (~14k)
+    5. `RoutedSessionActorTurnGating.swift` — `awaitingUser`, `cancelCurrentTurn`, `beginTurn`/`endTurn`, generation permit, human wait (~7.5k)
+    6. `RoutedSessionActorForking.swift` — `fork`, `close` (~12k)
+    7. `RoutedSessionActorTurnExecution.swift` — `respondBody`, `generate`, `runTurn`, `primeDiscoveryIfConfigured`, `runTurnAttempt`, `recordFailedTurn`, `ModelCallCancellationProbe`, `runCancellableModelCall`, `isTurnCancelled`, `isRecoverableContextOverflow`, **`loweredRetryTarget`** (~35k)
+    8. `RoutedSessionActorPromptQueue.swift` — `dispatchNextPrompt` + prompt composition (~11k)
+    9. `RoutedSessionActorRecording.swift` — `finishTurn`, `usageDelta`, `recordTranscriptDelta`, `emitSessionEvents`, `recordSessionMetaIfNeeded`, partials (~18k)
+
+    Both of this task's fixes that were unreviewed land in reviewable files: the trigger comparison `measuredTokens >= budget.triggerTokens` / `measuredTokens >= budget.ceilingTokens` in `runTurn` → file 7, and `loweredRetryTarget(from:)` → file 7.
+
+    **Three consequences worth recording before the edit:**
+
+    - **Each logger has exactly one call site**, so all three move with their consumer and stay `private`: `sessionCompactionLogger` → file 3, `sessionPrimingLogger` → file 7, `sessionRecordingLogger` → file 9. Two doc comments elsewhere name `Session/RoutedSession.swift` as the file those live in and must be re-pointed: `Recording/RecordingLanguageModel.swift:8` and `Compaction/Summarization.swift:309`.
+    - **`runCancellableModelCall` must widen `fileprivate` → internal.** It is `fileprivate` today only because `CancellableCompactionSummarizer` is a sibling type in the same file. The summarizers belong with compaction (file 3) and the method with turn execution (file 7), so they are no longer file siblings. Widening the one method is the smaller change than making both summarizer types internal.
+    - **A pre-existing documentation defect the split forces a decision on:** lines 872-878 document `RoutedSessionActor` ("The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``. It is `internal` with an `internal` initializer so the only way to obtain one is ``RoutedModel/makeSession(instructions:workingDirectory:)``…") but sit fused onto the front of `BackendCompactionSummarizer`'s doc comment, and `actor RoutedSessionActor` itself carries no doc comment at all. Those paragraphs move to the actor declaration in file 2; the summarizer's own doc keeps everything from "Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``" onward. Verbatim text, correct owner.
+
+    Every moved member is extracted byte-for-byte via `tail`/`head` rather than retyped, and verified against `git show HEAD:` afterwards, so no transcription can alter the token-accounting logic this card just landed.
+  timestamp: 2026-08-08T16:03:00.403059+00:00
+- actor: claude-code
+  id: 01kzh2nedyxken3n17x3b8hqzb
+  text: |-
+    ### Iteration 2 implementation landed — the file split, with the mechanics and every consequence
+
+    `RoutedSession.swift` is now 8 files, all comfortably under the review engine's cap:
+
+    | file | bytes | ~rendered (1.78x) |
+    |---|---|---|
+    | `RoutedSessionActorTurnGating.swift` | 7039 | 12529 |
+    | `RoutedSessionActorForking.swift` | 13117 | 23348 |
+    | `RoutedSessionActorGeneration.swift` | 13980 | 24884 |
+    | `RoutedSessionActorCompaction.swift` | 23961 | 42651 |
+    | `RoutedSessionActor.swift` | 24604 | 43795 |
+    | `RoutedSessionActorRecording.swift` | 25648 | 45653 |
+    | `RoutedSessionActorTurnExecution.swift` | 41681 | 74192 |
+    | `RoutedSession.swift` | 43470 | 77377 |
+
+    Largest is 6x under the 262144-byte cap, so no file is anywhere near the edge again.
+
+    #### How the move was made safe
+
+    No moved line was retyped. Every member was extracted with `tail`/`head` byte ranges and then `cmp`-verified against `git show HEAD:` — 15 range comparisons, all identical. Then a whole-file conservation check: sort every non-blank line of the old file and of the 8 new files and `comm` them. The only lines that differ are the 46 I intended (34 access-modifier prefixes, 6 reworded doc lines, the dropped `///` doc separator, the extra import lines) and the 42 I authored (6 extension declarations, their doc comments, 6 closing braces). Nothing was dropped and nothing was silently altered — the token-accounting logic this card landed is byte-identical to what the gated runs proved.
+
+    #### One grouping decision reversed mid-work, and why
+
+    The first cut had a ninth file, `RoutedSessionActorPromptQueue.swift`, holding everything between `dispatchNextPrompt` and the prompt-composition statics purely because that is the order the original file happened to use. It was a weak grouping — most of its contents were turn-finishing helpers — and it forced six extra members to widen. Re-cut: `finishTurnAndRequeueIfUnattached`, `requeueUnattachedPendingEvents`, and `appendingOperationEventSegments` went to the file that owns `finishTurn`/`recordTranscriptDelta` (Recording), and `dispatchNextPrompt` plus `composedPrompt`/`flattenedPromptText` went to the file that owns the chokepoint (TurnExecution). That left `finishTurn`, `requeueUnattachedPendingEvents`, `appendingOperationEventSegments`, `composedPrompt`, `flattenedPromptText`, and `runTurn` **still `private`**, and it is the more cohesive layout besides.
+
+    #### Access control: what widened, and what deliberately did not
+
+    Cross-file access was decided by measurement, not by blanket widening — a script listed every `private`/`fileprivate` member and counted its references in the other files, with comment lines (`//` and `///`) excluded so a DocC link or a prose mention never counted as a call. That filter mattered: `fold`, `recordTranscriptDelta`, and `composedPrompt` all looked like cross-file callees until the comment lines were removed, and all three stayed `private`.
+
+    - **21 stored properties on the actor** lost `private` (now the file's prevailing unmodified-`internal` form, matching `profile`/`routerId`/`tools` beside them). Unavoidable: stored properties cannot live in an extension, so the actor's storage is in one file and its methods in six.
+    - **13 methods** widened, each with at least one confirmed cross-file caller: `performAutoCompaction`, `emitSessionScopedEvent`, `finishSessionEventSubscriptions`, `finishTurnAndRequeueIfUnattached`, `requeueUnattachedPendingEvents`, `recordSessionMetaIfNeeded`, `makePartialEvent`, `append(partial:)`, `respondBody`, `generate`, `isTurnCancelled`, `beginTurn`, `endTurn`.
+    - **`runCancellableModelCall` went `fileprivate` → internal.** It was `fileprivate` only because `CancellableCompactionSummarizer` was a same-file sibling; the summarizers belong with compaction and the method with turn execution. Widening one method beat making two types internal. Its doc comment, which explained the `fileprivate`, now says "Internal rather than `private` for one caller" and still names the caller.
+    - **21 members stayed `private`**, including every one that is genuinely local to its new file: `FoldSummarizerTier`, `abandonFoldIfCancelled`, `noteAbandonedFold`, `fold`, `wrapAsyncStream`, `streamGeneratingBody`, `streamGenerating`, `dropSessionEventSubscription`, `streamEventsGenerating`, `finishTurn`, `usageDelta`, `recordTranscriptDelta`, `appendingOperationEventSegments`, `emitSessionEvents`, `runTurn`, `primeDiscoveryIfConfigured`, `runTurnAttempt`, `recordFailedTurn`, `ModelCallCancellationProbe`, `isRecoverableContextOverflow`, `loweredRetryTarget`, `composedPrompt`, `flattenedPromptText`, both turn-binding stamps, both summarizer structs, and all three loggers.
+
+    #### Six doc comments the split falsified, all corrected
+
+    Splitting a file invalidates every comment that reasons about file locality, and there were six:
+
+    - `turnLock`: "nothing outside this file acquires it" → names its three real acquirers (`beginTurn()`, `endTurn()`, `fork(workingDirectory:)`).
+    - `contextFill`: "every read or write of `usageState` **in this file** (init, here, `compact`, `fork`, `finishTurn`)" → drops the file claim, and adds the trigger/ceiling reads in `runTurn` that this card's own fix introduced and the enumeration had already gone stale on.
+    - `noteAbandonedFold`: "which is **this file's** other 'dropped, so say so' case" → "the session's other".
+    - `runCancellableModelCall`: the `fileprivate` rationale, above.
+    - The `RoutedSession` protocol's "funnels through one **private** recorder-bracketed chokepoint" → "internal", since `generate` is now internal.
+    - Two doc comments in *other* files named `Session/RoutedSession.swift` as where a symbol lives: `Recording/RecordingLanguageModel.swift` (pointing at `sessionRecordingLogger`) and `Compaction/Summarization.swift` (pointing at the summarizer that registers a fold's in-flight model call). Both re-pointed at the file that now holds the symbol. A repo-wide grep confirms zero remaining references to the old path.
+
+    Each logger has exactly one call site, so all three moved with their consumer and stayed `private`: `sessionCompactionLogger` → Compaction, `sessionPrimingLogger` → TurnExecution, `sessionRecordingLogger` → Recording.
+
+    #### A pre-existing documentation defect the split surfaced
+
+    `actor RoutedSessionActor` carried **no doc comment at all** — its two paragraphs ("The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``… the `backend`, `slot`, and `model` are what the single ``generate(grammar:_:)`` chokepoint runs the model with") were fused onto the front of `BackendCompactionSummarizer`'s doc comment, which sat 60 lines above the actor. The split forced the question of which file those paragraphs belong in; they moved to the actor declaration, verbatim, and the summarizer's own doc now begins where it always meant to ("Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``"). The one `///` separator line between the two blocks is the only original line deliberately dropped.
+
+    #### Imports
+
+    Each file imports exactly what it uses, verified per file: `Foundation` where `URL`/`Date` appear, `FoundationModels` where `Transcript`/`any Tool`/`LanguageModelError` appear, `Synchronization` only in TurnExecution (the probe's `Mutex`), `os` only in the three files that host a logger. `Compaction` needed no `Foundation` and does not import it; `Generation` and `TurnGating` reference nothing outside the module and the stdlib, so they import nothing.
+
+    #### Verification
+
+    `swift build` clean. `swift test` exit 0, **796 tests, 0 failures** (762 + 22 + 12), no compiler diagnostics — the only `warning:` is SwiftPM's pre-existing `missing creator for mutated node` on the vendored mlx-swift resource bundle. No gated run: this is a code-organization change with no behavioral delta, and the gated evidence for this card is already recorded above.
+
+    Not touched, per the escalation: the `mean(factRetention) >= 0.9` criterion stays `- [ ]`.
+  timestamp: 2026-08-08T16:17:58.718150+00:00
+- actor: claude-code
+  id: 01kzh2nrrek54tr11qfypcana5
+  text: |-
+    ### implement — changed
+    - evidence: 11 files. Split: `Sources/FoundationModelsRouter/Session/RoutedSession.swift` (2722 lines removed) into 7 new siblings — `RoutedSessionActor.swift`, `RoutedSessionActorCompaction.swift`, `RoutedSessionActorForking.swift`, `RoutedSessionActorGeneration.swift`, `RoutedSessionActorRecording.swift`, `RoutedSessionActorTurnExecution.swift`, `RoutedSessionActorTurnGating.swift`. Stale doc references re-pointed in `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift` and `Sources/FoundationModelsRouter/Compaction/Summarization.swift`. Largest resulting file 43470 bytes (~77k rendered) against the 262144-byte cap — 6x margin. Every moved member `cmp`-verified byte-identical against `git show HEAD:`, plus a sorted whole-file `comm` conservation check whose only differences are the 34 access-modifier prefixes, 6 reworded locality doc lines, and the authored extension declarations. `swift build` clean; `swift test` exit 0, 796 tests (762 + 22 + 12), 0 failures, 0 compiler diagnostics.
+    - next: `/review` — re-run the delta so the 9 validators that skipped `RoutedSession.swift` actually run against the trigger comparison and `loweredRetryTarget(from:)`, both of which now live in the reviewable `RoutedSessionActorTurnExecution.swift`. The second finding (`mean(factRetention) >= 0.9` = `0.0833`) is left unchecked by instruction: it is escalated to a human decision and out of this iteration's scope.
+  timestamp: 2026-08-08T16:18:09.294219+00:00
 position_column: doing
 position_ordinal: '80'
 title: Gated compaction suites never reach the 0.80 trigger on real hardware — live contextFill contradicts hermetic sizing
@@ -222,4 +346,24 @@ So the hermetic budget/trigger accounting and the live `contextFill` measurement
 ## Tests
 - [ ] The gated run is the proof. Gated runs: one at a time, one shell command per run.
 - [ ] Add ungated coverage pinning whichever accounting bug is found, so it cannot silently return
-#phase-1
+
+
+## Review Findings (2026-08-08 10:44)
+
+Scope: `review sha HEAD~1..HEAD` (commit `bda41be`) — this iteration's delta only.
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:1` — This file exceeds the review prompt cap — 341682 rendered bytes against the 262144-byte per-file cap — so these validators could not review it: code-hygiene, code-security, completeness, complexity, duplication, missing-docs, reuse, swift, test-integrity. Split the file into smaller modules that fit the review prompt cap.
+
+  Fixed in iteration 2: split into 8 sibling files under `Sources/FoundationModelsRouter/Session/`, largest now 43470 bytes (~77k rendered at the measured 1.78x factor) against the 262144-byte cap. `RoutedSession.swift` keeps `TurnCancellationResult`, the `RoutedSession` protocol, and its default implementations; `RoutedSessionActor.swift` holds `makeRoutedSessionActor` and the actor's declaration, stored properties, `init`, and `deinit` (none of which Swift permits in an extension); the other six are cohesive extensions of the one actor — `Compaction` (both `CompactionSummarizer` conformers, `contextFill`, `compact`, `fold`), `Generation` (the respond/stream surface and session-event subscriptions), `TurnGating` (turn lock, cancellation, generation permit, human wait), `Forking` (`fork`, `close`), `TurnExecution` (the chokepoint, prompt composition, discovery priming, overflow recovery, cancellation boundary — this is where **both** of this card's previously unreviewed production fixes live: the trigger and ceiling comparisons in `runTurn`/`runTurnAttempt`, and `loweredRetryTarget(from:)`), and `Recording` (usage delta, transcript-delta snapshot diff, session meta, partials, the drained-event requeue). Pure code organization: every moved member was extracted byte-for-byte and verified against `git show HEAD:`, no type or public API was renamed, and no token-accounting logic changed. `swift test` 796 tests (762 + 22 + 12), 0 failures.
+- [ ] Acceptance criterion `mean(CompactionEvalMetric.factRetention) >= 0.9` is unmet: measured `0.0833`. The card's third acceptance criterion lists it alongside `fillBeforeCompaction >= 0.80` and `foldOccurred` mean `1.0`, which are both now green. The implement step's evidence for attributing it to `^pw807cp` is accepted on the merits — every summary provably carries the planted fact verbatim and the *answer* is `"Noted."` or the summarizer's own output format, which is `^pw807cp`'s documented resident-container KV-bleed signature, not a token-accounting failure. The criterion as written on this card is still unmet, so this box is not checked and the task does not advance to the terminal column. A human decides whether to rewrite this criterion to hand `factRetention` to `^pw807cp`, or to keep this card open until `^pw807cp` closes.
+
+### Findings dropped under the review skill's written test-refactor exception
+
+Both engine findings below ask to change test code that already existed, so the skill's blanket exception drops them. Recorded for history; no action required.
+
+- `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluation.swift:194` — inline `Int((Double(budget.limit) * budget.target).rounded())` duplicates the new `TokenBudget.targetTokens`. The line predates this delta (`git blame` → `10955bea`, 2026-07-24) and `TokenBudget.tokens(for:)` computes the byte-identical expression `Int((Double(limit) * fraction).rounded())`, so this is deduplication of pre-existing test code with no behavioral difference.
+- `Tests/FoundationModelsRouterEvals/CompactionEvaluation.swift:197` — the same finding on the same expression. The line predates this delta (`git blame` → `598fc24c`, 2026-07-23).
+
+### Engine run notes
+
+18 validator/file pairs attempted, 0 failed, 1 file skipped (`RoutedSession.swift`, over the prompt cap). The tool rule `code-hygiene/missing-docs-swift` was unavailable (tool missing, exit status 1); the prompt rule `missing-docs` ran instead. #phase-1

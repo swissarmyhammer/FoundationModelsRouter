@@ -5,8 +5,8 @@ import os
 /// The logger ``RecordingLanguageModelState`` reports a defensively-clamped
 /// transcript shrink to (see ``RecordingLanguageModelState/diffAndRecord(current:)``)
 /// — mirrors ``RoutedSessionActor``'s own `sessionRecordingLogger` in
-/// Session/RoutedSession.swift, kept as a separate constant since that one is
-/// `private` to its own file.
+/// Session/RoutedSessionActorRecording.swift, kept as a separate constant since
+/// that one is `private` to its own file.
 private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording")
 
 /// A `FoundationModels.LanguageModel` conformer any caller can build a

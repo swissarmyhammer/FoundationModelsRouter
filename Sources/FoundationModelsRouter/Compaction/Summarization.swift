@@ -306,7 +306,7 @@ public struct Summarization: Sendable {
     /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` a `summarizer` that
     /// registers each call as that turn's one in-flight model call, which is what
     /// lets a client stop interrupt a fold already under way rather than wait it out (see
-    /// Sources/FoundationModelsRouter/Session/RoutedSession.swift). Only one call can be
+    /// Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift). Only one call can be
     /// registered at a time, so summarizing chunks — or reduce-round groups —
     /// concurrently would leave every call but the last-registered one unreachable by
     /// the session's own stop primitive. (A caller cancelling its enclosing task would
