@@ -31,11 +31,29 @@ enum CompactionEvalRealModel {
 /// `Sources/FoundationModelsRouter/Session/RoutedSession.swift` and this
 /// target has no `RoutedSession`/`RoutedSessionActor` in play — the eval
 /// drives the bare-session recipe (compaction_plan.md §1.5) directly.
-private struct BlankSlateSummarizer: CompactionSummarizer {
-    let container: MLXFoundationModelsContainer
+///
+/// An `actor` rather than a `struct` so it can count its own calls: one fold
+/// makes more than one summarizer call when ``Summarization`` chunks a long
+/// span into several map calls plus a reduce call, and
+/// ``CompactionEvalSampleDiagnostic/summarizerCallCount`` reports that.
+private actor BlankSlateSummarizer: CompactionSummarizer {
+    /// The resident container every call opens a fresh, empty session over.
+    private let container: MLXFoundationModelsContainer
+
+    /// How many times ``summarize(_:)`` has been called.
+    private(set) var callCount = 0
+
+    /// Creates a summarizer over a resident container.
+    ///
+    /// - Parameter container: The resident container to summarize with.
+    init(container: MLXFoundationModelsContainer) {
+        self.container = container
+    }
 
     func summarize(_ prompt: String) async throws -> String {
-        try await container.makeSession(transcript: Transcript(entries: [])).respond(to: prompt, maxTokens: nil)
+        callCount += 1
+        return try await container.makeSession(transcript: Transcript(entries: []))
+            .respond(to: prompt, maxTokens: nil)
     }
 }
 
@@ -49,6 +67,18 @@ private struct BlankSlateSummarizer: CompactionSummarizer {
 /// actual load only happens the first time a sample's subject work runs.
 actor CompactionEvalRealSubjectRunner {
     private var loaded: MLXFoundationModelsContainer?
+
+    /// Every sample's recorded `FactRetention` evidence, appended by
+    /// ``run(entries:prompt:budget:question:)`` in the order the samples ran.
+    private var diagnostics: [CompactionEvalSampleDiagnostic] = []
+
+    /// The evidence recorded so far, for the gated `@Test` to classify once
+    /// the evaluation has finished running every sample.
+    ///
+    /// - Returns: One record per sample that ran, in sample order.
+    func recordedDiagnostics() -> [CompactionEvalSampleDiagnostic] {
+        diagnostics
+    }
 
     /// The resident container, loading it on first access and caching it for
     /// every later call.
@@ -99,6 +129,11 @@ actor CompactionEvalRealSubjectRunner {
     ///   model, or whatever ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``
     ///   or the resumed session's `respond(to:maxTokens:)` throws while
     ///   folding `entries` or answering `question`.
+    ///
+    /// Also appends this sample's ``CompactionEvalSampleDiagnostic`` to
+    /// ``recordedDiagnostics()``. The evaluation's own outcome type carries no
+    /// summary text, so without this the gated run cannot tell a fact the fold
+    /// dropped from a fact the fold preserved into an answer that ignored it.
     func run(
         entries: [Transcript.Entry],
         prompt: CompactionPrompt,
@@ -106,14 +141,24 @@ actor CompactionEvalRealSubjectRunner {
         question: String
     ) async throws -> (answer: String, tokensBefore: Int, tokensAfter: Int, stagesApplied: [String]) {
         let container = try await self.container()
+        let summarizer = BlankSlateSummarizer(container: container)
         let (folded, result) = try await Compactor.compact(
             Transcript(entries: entries),
             prompt: prompt,
             budget: budget,
-            summarizer: BlankSlateSummarizer(container: container)
+            summarizer: summarizer
         )
         let answer = try await container.makeSession(transcript: folded)
-            .respond(to: question, maxTokens: 64)
+            .respond(to: question, maxTokens: Self.answerTokenCeiling)
+        diagnostics.append(
+            CompactionEvalSampleDiagnostic(
+                question: question,
+                summary: result.summary,
+                answer: answer,
+                stagesApplied: result.stagesApplied,
+                summarizerCallCount: await summarizer.callCount
+            )
+        )
         return (
             answer: answer,
             tokensBefore: result.tokensBefore,
@@ -121,6 +166,12 @@ actor CompactionEvalRealSubjectRunner {
             stagesApplied: result.stagesApplied
         )
     }
+
+    /// The token ceiling the resumed session answers each seed's question
+    /// under — the seeds ask for one short, specific value, so the answer never
+    /// needs more, and a ceiling keeps one runaway generation from stalling a
+    /// 24-sample run.
+    private static let answerTokenCeiling = 64
 
     /// Evicts the resident model, if one was ever loaded — called once after
     /// the gated `@Test` has read its ``EvaluationResult``, mirroring every

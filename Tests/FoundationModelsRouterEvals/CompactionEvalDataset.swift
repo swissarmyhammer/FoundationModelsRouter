@@ -55,18 +55,81 @@ struct CompactionEvalFixtureSpec: Sendable {
     let recentTurnCount: Int
 }
 
-/// A small, reused pool of filler turns padding every fixture's untouchable
-/// recency window — content that pads the transcript but is never itself the
-/// subject of a question, so its variety (or lack of it) does not affect
-/// dataset diversity. Mirrors ``CompactionRoundTripIntegrationTests``'s own
-/// convention of reusing a short trailing instruction across scripted turns.
-let compactionEvalFillerTurns: [String] = [
-    "By the way, what's a good one-word codename for a low-priority task?",
-    "Quick check: does this conversation still make sense to you so far?",
-    "Unrelated question: name any color that isn't blue.",
-    "Just chatting — what's a common synonym for \"quick\"?",
-    "Give me a one-word synonym for \"finished\".",
-    "Say any short greeting.",
+/// One filler turn: the line that prompts it and the reply the assistant gives
+/// it, kept together so the two can never drift apart.
+struct CompactionEvalFillerTurn: Sendable {
+    /// The filler line, asked as the turn's prompt.
+    let prompt: String
+
+    /// The assistant's reply to ``prompt`` — a plausible answer to that
+    /// specific line, and distinct from every other reply in this pool and in
+    /// ``compactionEvalFactAcknowledgements``.
+    let reply: String
+}
+
+/// A pool of filler turns padding every fixture's untouchable recency window —
+/// content that pads the transcript but is never itself the subject of a
+/// question.
+///
+/// Every reply differs from every other, and the pool is longer than the
+/// largest ``CompactionEvalFixtureSpec/recentTurnCount``, so cycling can never
+/// repeat a turn inside one fixture's recency window. That is the property
+/// `CompactionEvaluationHermeticTests.noSeedRepeatsAnAssistantReply` pins, and
+/// it is load-bearing rather than cosmetic: the gated run of 2026-08-09
+/// measured 18 of 19 `factRetention` failures answering with the single canned
+/// reply every statement turn then shared, which is pattern completion over
+/// the model's own visible transcript rather than a verdict on the summary
+/// above it. A dataset whose recency window repeats one string cannot tell
+/// those two apart.
+let compactionEvalFillerTurns: [CompactionEvalFillerTurn] = [
+    CompactionEvalFillerTurn(
+        prompt: "By the way, what's a good one-word codename for a low-priority task?",
+        reply: "\"Pebble\" would suit something low-priority."
+    ),
+    CompactionEvalFillerTurn(
+        prompt: "Quick check: does this conversation still make sense to you so far?",
+        reply: "Yes, everything so far follows."
+    ),
+    CompactionEvalFillerTurn(
+        prompt: "Unrelated question: name any color that isn't blue.",
+        reply: "Amber."
+    ),
+    CompactionEvalFillerTurn(
+        prompt: "Just chatting — what's a common synonym for \"quick\"?",
+        reply: "\"Rapid\" is the usual one."
+    ),
+    CompactionEvalFillerTurn(
+        prompt: "Give me a one-word synonym for \"finished\".",
+        reply: "Complete."
+    ),
+    CompactionEvalFillerTurn(
+        prompt: "Say any short greeting.",
+        reply: "Hello there."
+    ),
+    CompactionEvalFillerTurn(
+        prompt: "One more aside: name a month with exactly thirty days.",
+        reply: "September runs to thirty days."
+    ),
+    CompactionEvalFillerTurn(
+        prompt: "Last aside: what's the opposite of \"early\"?",
+        reply: "Late."
+    ),
+]
+
+/// The acknowledgements the assistant gives a fact-bearing statement turn, one
+/// per fact in fixture order.
+///
+/// Distinct from one another and from every ``CompactionEvalFillerTurn/reply``,
+/// for the reason ``compactionEvalFillerTurns`` states, and longer than the
+/// largest fixture's fact count so no fixture repeats one. Deliberately
+/// content-free: an acknowledgement that restated its fact would put the fact
+/// itself in the reply, and the variable under test is reply homogeneity
+/// alone — never how much of the fact the transcript repeats.
+let compactionEvalFactAcknowledgements: [String] = [
+    "Got it — I'll keep that in mind.",
+    "Understood; thanks for the heads-up.",
+    "Right, I'll remember that.",
+    "Sure, that's clear.",
 ]
 
 /// Every hand-written fixture (compaction_plan.md §5): 24 seed transcripts —

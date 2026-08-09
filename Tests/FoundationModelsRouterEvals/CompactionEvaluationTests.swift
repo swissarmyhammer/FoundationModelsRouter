@@ -144,6 +144,46 @@ struct CompactionEvaluationHermeticTests {
         #expect(subjectB.value.answer == promptB.name)
     }
 
+    @Test("no seed transcript repeats an assistant reply, so no recency window is saturated with one string")
+    func noSeedRepeatsAnAssistantReply() {
+        // The gated run of 2026-08-09 classified 18 of 19 `factRetention`
+        // failures as `answerMissedFactSummaryCarriedIt`, and every one of the
+        // 18 answered with the literal string `"Noted."` — which was, at the
+        // time, the single canned reply every statement turn of every fixture
+        // carried. `Summarization` keeps the newest turns verbatim, so each
+        // resumed window ended in 4-7 consecutive `question -> "Noted."` pairs
+        // and the model had a repeated pattern of its own visible transcript to
+        // complete instead of a summary to read. A dataset that repeats one
+        // reply cannot tell compaction quality apart from pattern completion,
+        // so uniqueness is the property the fixtures must hold.
+        for seed in compactionEvalSeeds {
+            let replies = Self.assistantReplies(of: seed)
+            #expect(!replies.isEmpty, "seed \(seed.id) built no assistant replies at all")
+            #expect(
+                Set(replies).count == replies.count,
+                "seed \(seed.id) repeats an assistant reply: \(replies)"
+            )
+        }
+    }
+
+    /// Every assistant reply in `seed`'s built transcript, in order — the text
+    /// content of each `.response` entry.
+    ///
+    /// - Parameter seed: The built seed to read.
+    /// - Returns: The replies, in transcript order.
+    private static func assistantReplies(of seed: CompactionEvalSeed) -> [String] {
+        seed.entries.compactMap { entry -> String? in
+            guard case .response(let response) = entry else { return nil }
+            return
+                response.segments
+                .compactMap { segment -> String? in
+                    guard case .text(let text) = segment else { return nil }
+                    return text.content
+                }
+                .joined(separator: "\n")
+        }
+    }
+
     private static func firstSample(
         of evaluation: CompactionEvaluation
     ) async throws -> ModelSample<CompactionEvaluationOutcome>? {
@@ -151,6 +191,184 @@ struct CompactionEvaluationHermeticTests {
             return sample
         }
         return nil
+    }
+}
+
+// MARK: - Hermetic fact-retention classification
+
+/// Hermetic proof that ``CompactionEvalFactRetentionReport`` attributes a
+/// failing `FactRetention` sample to the right side of the fold.
+///
+/// The gated eval's mean is one number over the whole dataset, so a run that
+/// misses the bar says nothing about *where* each failing sample lost its
+/// fact. These tests pin the three distinguishable places apart — the answer
+/// lost a fact the summary carried, the fold itself dropped it, or no summary
+/// was produced at all — so the gated run's attribution is a measurement over
+/// every sample rather than an argument from a few of them.
+@Suite("CompactionEvaluation fact-retention classification")
+struct CompactionEvalFactRetentionReportTests {
+    /// A seed whose `question` is the join key every test below records
+    /// against.
+    private static let seed = CompactionEvalSeed(
+        id: "probe-seed",
+        entries: [],
+        plantedFact: "The project's internal vault code is CRIMSON-77.",
+        factKeyPhrase: "CRIMSON-77",
+        question: "What is the exact vault code for this project?"
+    )
+
+    /// Builds a recorded sample against ``seed``'s question.
+    ///
+    /// - Parameters:
+    ///   - summary: The fold's summary text, or `nil` for a fold that produced
+    ///     none.
+    ///   - answer: The resumed session's answer.
+    ///   - question: The question recorded for the sample. Defaults to
+    ///     ``seed``'s own, which joins back to it.
+    /// - Returns: The recorded sample.
+    private static func diagnostic(
+        summary: String?,
+        answer: String,
+        question: String = seed.question
+    ) -> CompactionEvalSampleDiagnostic {
+        CompactionEvalSampleDiagnostic(
+            question: question,
+            summary: summary,
+            answer: answer,
+            stagesApplied: ["ToolOutputElision", "TurnTruncation", "Summarization"],
+            summarizerCallCount: 1
+        )
+    }
+
+    @Test("an answer carrying the key phrase classifies as retained")
+    func answerCarryingKeyPhraseIsRetained() {
+        let classification = CompactionEvalFactRetentionClass.classify(
+            summary: "The vault code is CRIMSON-77.",
+            answer: "The vault code is CRIMSON-77.",
+            factKeyPhrase: Self.seed.factKeyPhrase
+        )
+        #expect(classification == .retained)
+    }
+
+    @Test("a summary carrying the key phrase and an answer that does not is an answering failure")
+    func summaryCarriesKeyPhraseButAnswerDoesNot() {
+        let classification = CompactionEvalFactRetentionClass.classify(
+            summary: "2. Constraints & decisions — The vault code is CRIMSON-77.",
+            answer: "Noted.",
+            factKeyPhrase: Self.seed.factKeyPhrase
+        )
+        #expect(classification == .answerMissedFactSummaryCarriedIt)
+    }
+
+    @Test("a summary that dropped the key phrase is a fold failure")
+    func summaryWithoutKeyPhraseIsAFoldFailure() {
+        let classification = CompactionEvalFactRetentionClass.classify(
+            summary: "2. Constraints & decisions — the team discussed a vault.",
+            answer: "I do not have that information.",
+            factKeyPhrase: Self.seed.factKeyPhrase
+        )
+        #expect(classification == .summaryLostFact)
+    }
+
+    @Test("a fold that produced no summary is its own class")
+    func absentSummaryIsItsOwnClass() {
+        let classification = CompactionEvalFactRetentionClass.classify(
+            summary: nil,
+            answer: "I do not have that information.",
+            factKeyPhrase: Self.seed.factKeyPhrase
+        )
+        #expect(classification == .foldProducedNoSummary)
+    }
+
+    @Test("the key-phrase check is case-insensitive, exactly as the FactRetention metric's is")
+    func keyPhraseMatchingIsCaseInsensitive() {
+        let classification = CompactionEvalFactRetentionClass.classify(
+            summary: nil,
+            answer: "the vault code is crimson-77.",
+            factKeyPhrase: Self.seed.factKeyPhrase
+        )
+        #expect(classification == .retained)
+    }
+
+    @Test("a recorded sample joins back to its seed's planted fact and summary evidence")
+    func findingCarriesTheSeedsGroundTruth() throws {
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [Self.diagnostic(summary: "The vault code is CRIMSON-77.", answer: "Noted.")],
+            seeds: [Self.seed]
+        )
+        let finding = try #require(findings.first)
+        #expect(finding.seedID == Self.seed.id)
+        #expect(finding.plantedFact == Self.seed.plantedFact)
+        #expect(finding.factKeyPhrase == Self.seed.factKeyPhrase)
+        #expect(finding.factInSummary == true)
+        #expect(finding.classification == .answerMissedFactSummaryCarriedIt)
+    }
+
+    @Test("a recorded sample matching no seed is still classified, so no sample is dropped")
+    func unmatchedSampleIsStillClassified() {
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [Self.diagnostic(summary: "anything", answer: "anything", question: "a question no seed asks")],
+            seeds: [Self.seed]
+        )
+        #expect(findings.count == 1)
+        #expect(findings.first?.classification == .unrecognizedSample)
+    }
+
+    @Test("the counts name every class and sum to the number of recorded samples")
+    func countsCoverEveryClassAndSumToTheSampleCount() {
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [
+                Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77."),
+                Self.diagnostic(summary: "CRIMSON-77", answer: "Noted."),
+                Self.diagnostic(summary: "no code here", answer: "Noted."),
+                Self.diagnostic(summary: nil, answer: "Noted."),
+            ],
+            seeds: [Self.seed]
+        )
+        let counts = CompactionEvalFactRetentionReport.counts(of: findings)
+        #expect(counts.count == CompactionEvalFactRetentionClass.allCases.count)
+        #expect(counts[.retained] == 1)
+        #expect(counts[.answerMissedFactSummaryCarriedIt] == 1)
+        #expect(counts[.summaryLostFact] == 1)
+        #expect(counts[.foldProducedNoSummary] == 1)
+        #expect(counts[.unrecognizedSample] == 0)
+        #expect(counts.values.reduce(0, +) == findings.count)
+    }
+
+    @Test("the rendered table states each sample's fact, question, answer and summary")
+    func renderedTableStatesEverySamplesEvidence() {
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [Self.diagnostic(summary: "The vault code is CRIMSON-77.", answer: "Noted.")],
+            seeds: [Self.seed]
+        )
+        let table = CompactionEvalFactRetentionReport.lines(of: findings).joined(separator: "\n")
+        #expect(table.contains(Self.seed.id))
+        #expect(table.contains(Self.seed.plantedFact))
+        #expect(table.contains(Self.seed.question))
+        #expect(table.contains("The vault code is CRIMSON-77."))
+        #expect(table.contains("answer=Noted."))
+        #expect(table.contains("factInSummary=true"))
+        #expect(table.contains("folded=true"))
+        #expect(table.contains(CompactionEvalFactRetentionClass.answerMissedFactSummaryCarriedIt.rawValue))
+    }
+
+    @Test("a stage list without Summarization records the sample as unfolded")
+    func stagesWithoutSummarizationAreNotFolded() {
+        let unfolded = CompactionEvalSampleDiagnostic(
+            question: Self.seed.question,
+            summary: nil,
+            answer: "Noted.",
+            stagesApplied: ["ToolOutputElision", "TurnTruncation"],
+            summarizerCallCount: 0
+        )
+        #expect(unfolded.folded == false)
+        #expect(Self.diagnostic(summary: "s", answer: "a").folded == true)
+    }
+
+    @Test("every seed's question is unique, so a recorded sample joins back to exactly one seed")
+    func everySeedQuestionIsUnique() {
+        let questions = compactionEvalSeeds.map(\.question)
+        #expect(Set(questions).count == questions.count)
     }
 }
 
@@ -200,6 +418,19 @@ struct CompactionEvaluationIntegrationTests {
     )
     func evaluateCompaction() async throws {
         let result = EvaluationContext.current.result
+
+        // Printed before the assertion so a run that misses the bar still
+        // leaves the evidence behind: the mean alone cannot say whether a
+        // failing sample lost its fact in the fold or in the answering turn,
+        // and this table classifies every sample on exactly that question.
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: await compactionEvalRealSubjectRunner.recordedDiagnostics(),
+            seeds: compactionEvalSeeds
+        )
+        for line in CompactionEvalFactRetentionReport.lines(of: findings) {
+            print(line)
+        }
+
         #expect(result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention)) >= 0.9)
         await compactionEvalRealSubjectRunner.evictIfLoaded()
     }

@@ -284,21 +284,39 @@ facts from the conversation — never invent, never infer beyond it.
 Structure the summary exactly as:
 
 1. Intent — the user's request(s) and overall goal, in order given.
-2. Constraints & decisions — instructions, preferences, and decisions still
+2. Stated facts — every concrete fact stated in the conversation, each with
+   its value written out: names, identifiers, codes, numbers, locations,
+   paths, dates, settings, preferences.
+   Record WHAT was stated, never merely THAT something was stated — write
+   "the spare toner is in the third-floor supply closet", never "the user
+   gave the location of the spare toner".
+3. Constraints & decisions — instructions, preferences, and decisions still
    in force. Preserve safety- or security-relevant instructions VERBATIM
    (files or data to avoid, operations not to perform, secret handling).
-3. Completed — work finished so far, with concrete outcomes.
-4. In progress — what is being worked on right now, and its exact state.
-5. Files & code — every file path touched or discussed, with the symbols,
+4. Completed — work finished so far, with concrete outcomes.
+5. In progress — what is being worked on right now, and its exact state.
+6. Files & code — every file path touched or discussed, with the symbols,
    commands, and short code fragments that matter. Exact paths and names.
-6. Errors & fixes — problems encountered and how they were (or were not)
+7. Errors & fixes — problems encountered and how they were (or were not)
    resolved. Keep failed approaches so they are not repeated.
-7. Next steps — the immediate next actions, in order, detailed enough to
+8. Next steps — the immediate next actions, in order, detailed enough to
    resume without re-deriving them.
 
 No praise, no padding, no meta-commentary. Omit a section only if truly
-empty.
+empty. Never replace a stated value with a description of it.
 ```
+
+`Stated facts` is section 2 because the other seven have nowhere to put a bare
+fact the user simply told the assistant — a location, a code, a name, a number
+is not a constraint, a decision, a file, an error, or a next step. Measured on
+the gated `CompactionEvaluation` run of 2026-08-09, the seven-section form
+folded "the office printer's spare toner cartridges are kept in the third-floor
+supply closet" into `1. Intent — Inform the assistant about the location of
+spare toner cartridges.` with `2. Constraints & decisions — None.`: it recorded
+THAT a fact was communicated and discarded WHAT it was, and no answering turn
+could recover the location from that summary. The prompt is named
+`router-default-v2`; the seven-section form it supersedes was
+`router-default-v1`.
 
 Consumers pass their own `CompactionPrompt` to specialize (a coding harness
 might add "always list test commands"); the prompt's `name` is recorded in the

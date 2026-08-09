@@ -37,16 +37,28 @@ public struct CompactionPrompt: Sendable, Equatable {
     /// (structured numbered sections; exact paths and identifiers;
     /// security-relevant instructions preserved verbatim) and the Claude
     /// platform's own compaction guidance (completed / in-progress / next
-    /// steps / constraints / critical context). Seven numbered sections:
-    /// Intent, Constraints & decisions, Completed, In progress, Files & code,
-    /// Errors & fixes, Next steps — no padding, no meta-commentary.
+    /// steps / constraints / critical context). Eight numbered sections:
+    /// Intent, Stated facts, Constraints & decisions, Completed, In progress,
+    /// Files & code, Errors & fixes, Next steps — no padding, no
+    /// meta-commentary.
     ///
-    /// Named `"router-default-v1"` rather than plain `"default"` so a fold's
+    /// `Stated facts` exists because the other seven have nowhere to put a
+    /// bare fact the user simply told the assistant — a location, a code, a
+    /// name, a number is not a constraint, a decision, a file, an error, or a
+    /// next step. Without a slot of its own, such content is elided into a
+    /// meta-sentence in `Intent` ("the user gave the location of the spare
+    /// toner"), which records THAT a fact was stated and discards WHAT it was:
+    /// a fold that silently drops a fact while leaving a plausible-looking
+    /// summary behind. `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift`'s
+    /// `defaultPromptKeepsBareStatedFacts` pins the section so it cannot be
+    /// removed silently.
+    ///
+    /// Named `"router-default-v2"` rather than plain `"default"` so a fold's
     /// recorded ``CompactionSegment/Content/promptName`` unambiguously
-    /// identifies this exact wording, distinct from any future revision an
-    /// eval-driven hill-climb might introduce as `"router-default-v2"`, etc.
+    /// identifies this exact wording, distinct from the `"router-default-v1"`
+    /// revision it supersedes and from any future one.
     public static let `default` = CompactionPrompt(
-        name: "router-default-v1",
+        name: "router-default-v2",
         text: """
             You are compacting an agent conversation into a continuation summary. The
             summary will REPLACE the older conversation: whoever continues has no other
@@ -56,20 +68,26 @@ public struct CompactionPrompt: Sendable, Equatable {
             Structure the summary exactly as:
 
             1. Intent — the user's request(s) and overall goal, in order given.
-            2. Constraints & decisions — instructions, preferences, and decisions still
+            2. Stated facts — every concrete fact stated in the conversation, each with
+               its value written out: names, identifiers, codes, numbers, locations,
+               paths, dates, settings, preferences.
+               Record WHAT was stated, never merely THAT something was stated — write
+               "the spare toner is in the third-floor supply closet", never "the user
+               gave the location of the spare toner".
+            3. Constraints & decisions — instructions, preferences, and decisions still
                in force. Preserve safety- or security-relevant instructions VERBATIM
                (files or data to avoid, operations not to perform, secret handling).
-            3. Completed — work finished so far, with concrete outcomes.
-            4. In progress — what is being worked on right now, and its exact state.
-            5. Files & code — every file path touched or discussed, with the symbols,
+            4. Completed — work finished so far, with concrete outcomes.
+            5. In progress — what is being worked on right now, and its exact state.
+            6. Files & code — every file path touched or discussed, with the symbols,
                commands, and short code fragments that matter. Exact paths and names.
-            6. Errors & fixes — problems encountered and how they were (or were not)
+            7. Errors & fixes — problems encountered and how they were (or were not)
                resolved. Keep failed approaches so they are not repeated.
-            7. Next steps — the immediate next actions, in order, detailed enough to
+            8. Next steps — the immediate next actions, in order, detailed enough to
                resume without re-deriving them.
 
             No praise, no padding, no meta-commentary. Omit a section only if truly
-            empty.
+            empty. Never replace a stated value with a description of it.
             """
     )
 }

@@ -39,6 +39,14 @@ struct CompactionEvalSeed: Sendable {
     /// ``compactionEvalFillerTurns`` (cycled if a fixture asks for more
     /// filler turns than the pool has).
     ///
+    /// Every turn carries its own assistant reply — a fact turn takes the
+    /// acknowledgement at its own index in ``compactionEvalFactAcknowledgements``,
+    /// a filler turn takes its paired ``CompactionEvalFillerTurn/reply`` — so
+    /// no seed's transcript repeats a reply. Both pools are longer than the
+    /// largest fixture needs, so cycling never wraps back onto a reply the
+    /// same seed already used. See ``compactionEvalFillerTurns`` for why that
+    /// property is the point rather than a detail.
+    ///
     /// - Parameter spec: The fixture to build.
     /// - Returns: The assembled seed.
     static func build(from spec: CompactionEvalFixtureSpec) -> CompactionEvalSeed {
@@ -51,12 +59,13 @@ struct CompactionEvalSeed: Sendable {
 
         let factTurns: [Transcript.Entry] = spec.facts.enumerated().flatMap { index, fact -> [Transcript.Entry] in
             let deliverViaTool = spec.probedFactViaTool && index == spec.probedFactIndex
-            return CompactionEvalTurn.statement(fact, viaTool: deliverViaTool)
+            let acknowledgement = compactionEvalFactAcknowledgements[index % compactionEvalFactAcknowledgements.count]
+            return CompactionEvalTurn.statement(fact, viaTool: deliverViaTool, reply: acknowledgement)
         }
 
         let fillerTurns: [Transcript.Entry] = (0..<spec.recentTurnCount).flatMap { offset -> [Transcript.Entry] in
             let filler = compactionEvalFillerTurns[offset % compactionEvalFillerTurns.count]
-            return CompactionEvalTurn.statement(filler, viaTool: false)
+            return CompactionEvalTurn.statement(filler.prompt, viaTool: false, reply: filler.reply)
         }
 
         return CompactionEvalSeed(
@@ -75,17 +84,21 @@ struct CompactionEvalSeed: Sendable {
 enum CompactionEvalTurn {
     /// - Parameters:
     ///   - text: The fact or filler line to state, as the turn's prompt.
-    ///   - viaTool: Whether the reply is a simulated tool call + tool output
-    ///     pair (agentic tool traffic) instead of a plain assistant reply.
+    ///   - viaTool: Whether the turn also carries a simulated tool call + tool
+    ///     output pair (agentic tool traffic) ahead of the assistant reply.
+    ///   - replyText: The assistant's reply, closing the turn on both the plain
+    ///     and the tool-traffic path. Supplied per turn rather than canned here
+    ///     so no seed's transcript repeats a reply — see
+    ///     ``CompactionEvalSeed/build(from:)``.
     /// - Returns: The turn's entries, in order.
-    static func statement(_ text: String, viaTool: Bool) -> [Transcript.Entry] {
+    static func statement(_ text: String, viaTool: Bool, reply replyText: String) -> [Transcript.Entry] {
         let prompt = Transcript.Entry.prompt(
             Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: text))])
         )
+        let reply = Transcript.Entry.response(
+            Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: replyText))])
+        )
         guard viaTool else {
-            let reply = Transcript.Entry.response(
-                Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "Noted."))])
-            )
             return [prompt, reply]
         }
 
@@ -109,9 +122,6 @@ enum CompactionEvalTurn {
                 toolName: "recordFact",
                 segments: [.text(Transcript.TextSegment(content: "recorded"))]
             )
-        )
-        let reply = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "Noted."))])
         )
         return [prompt, toolCalls, toolOutput, reply]
     }

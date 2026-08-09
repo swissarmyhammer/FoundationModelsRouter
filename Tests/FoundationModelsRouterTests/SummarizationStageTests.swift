@@ -58,7 +58,7 @@ struct SummarizationStageTests {
     @Test("CompactionPrompt.default's name and text match compaction_plan.md §2 verbatim")
     func defaultPromptMatchesPlanText() {
         let prompt = CompactionPrompt.default
-        #expect(prompt.name == "router-default-v1")
+        #expect(prompt.name == "router-default-v2")
 
         let text = prompt.text
         #expect(
@@ -70,12 +70,13 @@ struct SummarizationStageTests {
             ))
         for heading in [
             "1. Intent — the user's request(s) and overall goal, in order given.",
-            "2. Constraints & decisions — instructions, preferences, and decisions still",
-            "3. Completed — work finished so far, with concrete outcomes.",
-            "4. In progress — what is being worked on right now, and its exact state.",
-            "5. Files & code — every file path touched or discussed, with the symbols,",
-            "6. Errors & fixes — problems encountered and how they were (or were not)",
-            "7. Next steps — the immediate next actions, in order, detailed enough to",
+            "2. Stated facts — every concrete fact stated in the conversation, each with",
+            "3. Constraints & decisions — instructions, preferences, and decisions still",
+            "4. Completed — work finished so far, with concrete outcomes.",
+            "5. In progress — what is being worked on right now, and its exact state.",
+            "6. Files & code — every file path touched or discussed, with the symbols,",
+            "7. Errors & fixes — problems encountered and how they were (or were not)",
+            "8. Next steps — the immediate next actions, in order, detailed enough to",
         ] {
             #expect(text.contains(heading))
         }
@@ -85,6 +86,22 @@ struct SummarizationStageTests {
                     + "   (files or data to avoid, operations not to perform, secret handling)."
             ))
         #expect(text.contains("No praise, no padding, no meta-commentary. Omit a section only if truly\nempty."))
+    }
+
+    @Test("CompactionPrompt.default gives a bare stated fact its own section, so a fold cannot record that a fact was stated without stating what it was")
+    func defaultPromptKeepsBareStatedFacts() {
+        // Pins the defect the gated eval measured on the `printer-and-supply-closet`
+        // fixture: the summary read "1. Intent — Inform the assistant about the
+        // location of spare toner cartridges. / 2. Constraints & decisions — None."
+        // It recorded THAT a fact was communicated and discarded WHAT it was,
+        // because a bare stated fact — a location, a code, a name, a number the
+        // user simply told the assistant — is none of the other seven sections.
+        // Compacting a conversation must not silently drop a fact stated in it
+        // while leaving a plausible-looking summary behind.
+        let text = CompactionPrompt.default.text
+        #expect(text.contains("2. Stated facts — every concrete fact stated in the conversation, each with"))
+        #expect(text.contains("Record WHAT was stated, never merely THAT something was stated"))
+        #expect(text.contains("Never replace a stated value with a description of it."))
     }
 
     // MARK: - Segment contents: text segment + fully-populated CompactionSegment
@@ -143,7 +160,7 @@ struct SummarizationStageTests {
         // §1.5).
         #expect(abs(segment.content.tokensAfter - Compactor.estimatedTokenCount(of: unwrapped.transcript)) <= 1)
         #expect(segment.content.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"])
-        #expect(segment.content.promptName == "router-default-v1")
+        #expect(segment.content.promptName == "router-default-v2")
 
         // The recency window itself survives byte-identical.
         #expect(Array(entries.suffix(expectedRecentTail.count)) == expectedRecentTail)
