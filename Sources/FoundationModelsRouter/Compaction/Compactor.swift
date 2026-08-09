@@ -138,11 +138,15 @@ public enum Compactor {
         let tokensBefore = estimatedTokenCount(of: transcript)
         let targetTokens = budget.targetTokens
 
+        // Every exit that returns `transcript` untouched — already under
+        // target, and the shortfall at the end — reports the same thing: no
+        // stage applied, no summary, and `tokensAfter` naming the size of what
+        // is actually being returned. One value, so the two cannot drift.
+        let shortfallResult = CompactionResult(
+            summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [])
+
         guard tokensBefore > targetTokens else {
-            return (
-                transcript,
-                CompactionResult(summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [])
-            )
+            return (transcript, shortfallResult)
         }
 
         var current = transcript
@@ -208,10 +212,7 @@ public enum Compactor {
         // *original* transcript unchanged, so `tokensAfter` must report
         // `tokensBefore` — the size of what is actually being returned — not
         // the size of an attempt that was thrown away.
-        return (
-            transcript,
-            CompactionResult(summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [])
-        )
+        return (transcript, shortfallResult)
     }
 
     /// Estimates `transcript`'s size in tokens: the total *content* byte size

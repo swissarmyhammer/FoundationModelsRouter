@@ -72,17 +72,21 @@ struct SummarizationStageTests {
 
     /// The output ceiling ``Summarization`` should have computed for a call
     /// condensing `content`: that content's own estimated size scaled by
-    /// `ratio`, never below ``Summarization/minimumSummaryTokens``. Restated
-    /// here rather than read off the stage, so these tests pin the arithmetic
+    /// `ratio`, never below ``Summarization/minimumSummaryTokens`` and never
+    /// above what a full `maxChunkTokens` of content would earn. Restated here
+    /// rather than read off the stage, so these tests pin the arithmetic
     /// instead of comparing it against itself.
     ///
     /// - Parameters:
     ///   - content: The content the call was asked to condense.
     ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
+    ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
     /// - Returns: The expected ceiling, in tokens.
-    private static func expectedCeiling(condensing content: String, ratio: Double) -> Int {
-        let share = Int((Double(Summarization.estimatedTokens(of: content)) * ratio).rounded(.up))
-        return max(Summarization.minimumSummaryTokens, share)
+    private static func expectedCeiling(condensing content: String, ratio: Double, maxChunkTokens: Int) -> Int {
+        func ceiling(ingesting tokens: Int) -> Int {
+            max(Summarization.minimumSummaryTokens, Int((Double(tokens) * ratio).rounded(.up)))
+        }
+        return min(ceiling(ingesting: maxChunkTokens), ceiling(ingesting: Summarization.estimatedTokens(of: content)))
     }
 
     /// The content a summarizer call was asked to condense, recovered from the
@@ -471,7 +475,10 @@ struct SummarizationStageTests {
         let ceiling = try #require(summarizer.receivedMaxTokens.first)
         #expect(summarizer.receivedMaxTokens.count == 1)
         let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
-        #expect(ceiling == Self.expectedCeiling(condensing: condensed, ratio: stage.summaryTokenRatio))
+        #expect(
+            ceiling
+                == Self.expectedCeiling(
+                    condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
         // The point of the bound: a summary can never come back the size of
         // the span it replaces, which is what made a fold save almost nothing.
         #expect(ceiling < Summarization.estimatedTokens(of: condensed))
@@ -523,8 +530,107 @@ struct SummarizationStageTests {
         #expect(summarizer.receivedMaxTokens.count == 3)
         for (index, ceiling) in summarizer.receivedMaxTokens.enumerated() {
             let condensed = try Self.condensedContent(of: summarizer.receivedPrompts[index])
-            #expect(ceiling == Self.expectedCeiling(condensing: condensed, ratio: stage.summaryTokenRatio))
+            #expect(
+                ceiling
+                    == Self.expectedCeiling(
+                        condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
         }
+    }
+
+    @Test(
+        "the reduce step's no-progress flat fallback ingests more than maxChunkTokens, and its answer is still bounded by what a full chunk earns"
+    )
+    func reduceFallbackCallIsBoundedDespiteIngestingMoreThanAChunk() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        // 3 old turns (7 total, keepRecentTurns: 4), each its own map chunk —
+        // the same shape as `reduceFallsBackToFlatCallWhenNoGroupingProgressIsPossible`,
+        // sized large enough that a quarter of the joined summaries is well
+        // clear of the minimumSummaryTokens floor, so the ceiling this asserts
+        // is the cap doing the work rather than the floor.
+        let bigText = String(repeating: "old span content ", count: 400)
+        let turns = try (1...7).map {
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+        }
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let maxChunkTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        // Twice the chunk ceiling each, so `chunkStrings` can pair no two of
+        // them and `reduce` takes its no-progress fallback over the whole
+        // joined set — the one call that must ingest more than maxChunkTokens.
+        let oversizedSummaryTokens = maxChunkTokens * 2
+        let oversizedResponse = String(
+            repeating: "y", count: oversizedSummaryTokens * Int(Compactor.charsPerTokenEstimate))
+        let responses = (1...3).map { _ in oversizedResponse } + ["flat-fallback-summary"]
+        let summarizer = ScriptedSummarizer(responses: responses)
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: maxChunkTokens)
+
+        _ = try await stage.apply(
+            transcript,
+            prompt: .default,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+
+        // 3 map calls + exactly 1 flat-fallback reduce call.
+        #expect(summarizer.receivedMaxTokens.count == 4)
+        let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.last))
+        // sanity: the fallback really does ingest more than a chunk's worth.
+        #expect(Summarization.estimatedTokens(of: condensed) > maxChunkTokens)
+
+        let ceiling = try #require(summarizer.receivedMaxTokens.last)
+        #expect(
+            ceiling
+                == Self.expectedCeiling(
+                    condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
+        // The ratio alone would let this one call's ceiling grow with the
+        // number of chunk summaries joined into it, which is exactly how the
+        // final summary of an arbitrarily long span escaped its bound.
+        let unbounded = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
+        #expect(ceiling < unbounded)
+    }
+
+    @Test(
+        "a single turn too large to fit a chunk ingests more than maxChunkTokens, and its answer is still bounded by what a full chunk earns"
+    )
+    func unsplittableTurnCallIsBoundedDespiteIngestingMoreThanAChunk() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let bigText = String(repeating: "old span content ", count: 400)
+        let turns = try (1...5).map {
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+        }
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        // One old turn (5 turns, keepRecentTurns: 4), and `chunk(_:maxTokens:)`
+        // never splits a turn — so a chunk ceiling well under that turn's own
+        // size still yields a single, oversized chunk and a single map call.
+        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let chunkCeilingDivisor = 8
+        let maxChunkTokens = oneTurnTokens / chunkCeilingDivisor
+
+        let summarizer = ScriptedSummarizer(responses: ["single-oversized-chunk-summary"])
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: maxChunkTokens)
+
+        _ = try await stage.apply(
+            transcript,
+            prompt: .default,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+
+        #expect(summarizer.receivedMaxTokens.count == 1)
+        let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
+        // sanity: the lone turn really is bigger than a chunk may be.
+        #expect(Summarization.estimatedTokens(of: condensed) > maxChunkTokens)
+
+        let ceiling = try #require(summarizer.receivedMaxTokens.first)
+        #expect(
+            ceiling
+                == Self.expectedCeiling(
+                    condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
+        let unbounded = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
+        #expect(ceiling < unbounded)
     }
 
     // MARK: - Nothing to fold: Summarization is a no-op (Compactor's fallback path)

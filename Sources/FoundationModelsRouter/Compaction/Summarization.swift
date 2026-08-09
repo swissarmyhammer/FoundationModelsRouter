@@ -77,12 +77,18 @@ public struct Summarization: Sendable {
     /// character-ratio estimate) a single summarizer call's rendered content
     /// may reach before the folded span is split into multiple chunks,
     /// summarized independently (map), and their summaries re-summarized
-    /// (reduce) into one final summary — so no summarizer call ever has to
-    /// ingest more than this, however long the folded span is. The reduce
-    /// step itself re-chunks and re-reduces when the chunk summaries
-    /// themselves would exceed this in one call (see
-    /// ``reduce(_:prompt:summarizer:)``), so the ceiling holds at every level
-    /// of the map-reduce tree, not just the first.
+    /// (reduce) into one final summary. The reduce step itself re-chunks and
+    /// re-reduces when the chunk summaries themselves would exceed this in
+    /// one call (see ``reduce(_:prompt:summarizer:)``), so the ceiling holds
+    /// at every level of the map-reduce tree, not just the first.
+    ///
+    /// Two paths cannot honor it, because neither has anything smaller left
+    /// to hand a summarizer: ``chunk(_:maxTokens:)`` never splits a turn, so
+    /// a single turn larger than this becomes one oversized chunk, and
+    /// ``reduce(_:prompt:summarizer:)``'s no-progress fallback joins every
+    /// remaining summary into one call rather than recurse forever. Neither
+    /// escapes the *output* bound: ``maximumOutputTokens`` caps what any one
+    /// call may answer, however much it was handed.
     public var maxChunkTokens: Int
 
     /// The fraction of the content a single summarizer call condenses that
@@ -100,9 +106,15 @@ public struct Summarization: Sendable {
     /// The ceiling is per call, against that call's own content, so the bound
     /// holds at every level of the map-reduce tree rather than only over the
     /// whole span: a chunk's summary is a quarter of that chunk, and each
-    /// reduce round's summary a quarter of the summaries it joins. Since
-    /// ``maxChunkTokens`` bounds what any one call ingests, the final summary
-    /// of an arbitrarily long span is bounded too.
+    /// reduce round's summary a quarter of the summaries it joins.
+    ///
+    /// A share of the input alone would still leave the final summary of an
+    /// arbitrarily long span unbounded, because two calls have to ingest more
+    /// than ``maxChunkTokens`` (see that property) and a quarter of *those*
+    /// grows with the span. ``maximumOutputTokens`` closes that: it caps every
+    /// call's ceiling at what a full ``maxChunkTokens`` of content earns, so
+    /// the bound holds for every call a fold makes, and therefore for the
+    /// final summary of a span of any length.
     public var summaryTokenRatio: Double
 
     /// The floor, in tokens, no call's ceiling is squeezed below — `128`,
@@ -286,10 +298,11 @@ public struct Summarization: Sendable {
     /// Combines `summaries` (the map step's chunk summaries) into one final
     /// summary — the map-reduce "reduce" step — recursing when the joined
     /// summaries would themselves exceed ``maxChunkTokens`` in a single
-    /// summarizer call, so *no* summarizer call in this fold — map, reduce,
-    /// or any re-reduce round — ever has to ingest more than
+    /// summarizer call, so every reduce round that can group ingests at most
     /// ``maxChunkTokens`` worth of content, however many chunks the original
-    /// span needed.
+    /// span needed. The one round that cannot group — the no-progress
+    /// fallback below — hands a single call everything left, and is bounded
+    /// on its *output* instead (``maximumOutputTokens``).
     ///
     /// When the joined `summaries` don't fit, they are grouped into
     /// turn-aligned-style batches via ``chunkStrings(_:maxTokens:)`` (never
@@ -331,7 +344,9 @@ public struct Summarization: Sendable {
             // or over maxChunkTokens, so grouping produced one singleton
             // group per summary. Recursing further would never terminate —
             // a single flat reduce, over budget or not, is the only option
-            // left.
+            // left. Over budget on its *input* only: this call's answer is
+            // still capped at `maximumOutputTokens`, so a span shaped this way
+            // cannot buy a final summary that grows with it.
             return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer)
         }
 
@@ -365,7 +380,8 @@ public struct Summarization: Sendable {
     ///
     /// Every call made through here is bounded by ``outputTokenCeiling(condensing:)``,
     /// so a summary can never come back the size of what it condenses — the
-    /// defect ``summaryTokenRatio`` records.
+    /// defect ``summaryTokenRatio`` records — and never larger than
+    /// ``maximumOutputTokens``, however much content the call was handed.
     private func summarizeOnce(
         _ content: String,
         prompt: CompactionPrompt,
@@ -379,7 +395,8 @@ public struct Summarization: Sendable {
 
     /// The ceiling, in tokens, a single summarizer call condensing `content`
     /// may answer within: ``summaryTokenRatio`` of `content`'s own estimated
-    /// size, never below ``minimumSummaryTokens``.
+    /// size, never below ``minimumSummaryTokens`` and never above
+    /// ``maximumOutputTokens``.
     ///
     /// Measured on the content alone, never on the assembled prompt: the
     /// compaction instructions are the same however small the span is, and
@@ -390,8 +407,33 @@ public struct Summarization: Sendable {
     ///   chunk of turns, or a batch of prior summaries.
     /// - Returns: The output ceiling for that call, in tokens.
     private func outputTokenCeiling(condensing content: String) -> Int {
-        let share = Int((Double(Self.estimatedTokens(of: content)) * summaryTokenRatio).rounded(.up))
-        return max(Self.minimumSummaryTokens, share)
+        min(maximumOutputTokens, outputTokenCeiling(ingesting: Self.estimatedTokens(of: content)))
+    }
+
+    /// The ceiling no single summarizer call's answer may exceed, however much
+    /// content that call was handed: what a full ``maxChunkTokens`` of content
+    /// earns under ``summaryTokenRatio``.
+    ///
+    /// Chunking already keeps most calls at or under ``maxChunkTokens``, so for
+    /// them this cap never binds. It exists for the two calls that cannot be
+    /// kept there — a turn too large to fit a chunk, and
+    /// ``reduce(_:prompt:summarizer:)``'s no-progress fallback (see
+    /// ``maxChunkTokens``) — whose ceilings would otherwise grow with the span
+    /// and leave the final summary of a long conversation unbounded, which is
+    /// the whole defect ``summaryTokenRatio`` exists to close.
+    private var maximumOutputTokens: Int {
+        outputTokenCeiling(ingesting: maxChunkTokens)
+    }
+
+    /// ``summaryTokenRatio`` of `tokens`, floored at ``minimumSummaryTokens`` —
+    /// the one place the ceiling arithmetic lives, shared by the per-call
+    /// ceiling and the cap it is clamped to.
+    ///
+    /// - Parameter tokens: The estimated size, in tokens, of what a call
+    ///   ingests.
+    /// - Returns: The share of it that call's answer may occupy, in tokens.
+    private func outputTokenCeiling(ingesting tokens: Int) -> Int {
+        max(Self.minimumSummaryTokens, Int((Double(tokens) * summaryTokenRatio).rounded(.up)))
     }
 
     // MARK: - Chunking
