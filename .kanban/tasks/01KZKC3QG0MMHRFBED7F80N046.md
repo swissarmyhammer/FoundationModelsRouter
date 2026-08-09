@@ -90,8 +90,34 @@ comments:
     - evidence: `swift test` — 818 total tests (770+24+24 across three run summaries), 0 failed, 0 errors; 1 warning (`missing creator for mutated node` from vendored mlx-swift-lm fork, pre-approved out-of-scope); 36 skips, all confirmed attributable to `FM_ROUTER_INTEGRATION_TESTS`-gated suites/tests (grep confirmed no `.disabled(` traits or `XCTSkip` anywhere in Tests/Sources; every skipped suite/test name traced to a file using the `FM_ROUTER_INTEGRATION_TESTS` gate: `CompactionRoundTripIntegrationTests.swift`, `CompactionContinuityEvaluationTests.swift`, `CompactionEvaluationTests.swift`, `PropagationProbeIntegrationTests.swift`, and other `Tests/FoundationModelsRouterIntegrationTests/*` files).
     - next: none — did not run gated FM_ROUTER_INTEGRATION_TESTS=1 suite per instruction (implement step already verified it 3x consecutively).
   timestamp: 2026-08-09T15:10:51.050396+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzkhsy3s51yk1z1sbzszhxjt
+  text: |
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (commit f645e24), task-mode on ^f80n046
+    - engine: 18 validator attempts, 0 failed, 0 skipped; 2 confirmed findings, both dropped
+    - dropped (blanket "never refactor existing tests" exception, verified by `git blame`):
+      - `Tests/FoundationModelsRouterEvals/Support/CompactionContinuityEvalRealSubjectRunner.swift:212` magic number — blames 10955bea (2026-07-24), pre-existing
+      - `Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:480` assign-only `lastBackend` — blames c5a62235 (2026-07-24), pre-existing
+    - AC3 verified against the diff, not taken on trust: `CompactionRoundTripIntegrationTests` replaced `#expect(!result.stagesApplied.isEmpty)` with exact equality against `["ToolOutputElision", "TurnTruncation", "Summarization"]` and added `#expect(result.summary != nil)` (tightened); `RoutedSessionCompactTests`' `postFoldFill ==` stayed exact equality, only its reference unit was corrected from the fold's estimate to the measured-ratio value; `AutoCompactionTests` assertions untouched (only `cannedText` count 12 -> 60 plus doc); `CompactionContinuityEvaluationTests.swift:253` `mean(answersCorrect) >= 0.8` untouched — that file is not in the diff. No bound relaxed anywhere in the delta.
+    - design question on change 1 judged on the merits: the shipped default is NOT changed. `LiveModelLoader.samplingMode` and `MLXFoundationModelsContainer.samplingMode` default to `nil`, which leaves the provider's sampling default in place for every production caller; `GenerationOptions(samplingMode: nil, maximumResponseTokens:)` is the prior call. `.greedy` is opt-in at the loader boundary and passed only by the two gated harnesses. Determinism lives in the test harness, which is the correct placement.
+    - evidence: zero new findings
+    - next: none — task advanced to done
+  timestamp: 2026-08-09T15:21:03.353781+00:00
+- actor: claude-code
+  id: 01kzkhw1pthsxcs1eegcmqhsbp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 8 files. Root cause: the MLX backend never set `samplingMode`, leaving `GenerateParameters.temperature` at its 0.6 default, so `sampler()` returned `CategoricalSampler` drawing from `MLXRandom.globalState`, seeded from `DispatchTime.now().uptimeNanoseconds`. Two masked defects also fixed: the fold wrote the character-ratio estimate into `usageState` where every other writer puts measured counts (a genuine shrink drove reported contextFill UP, 0.002 -> 0.00546), and `SegmentPayload.contentByteCount` counted a CompactionSegment's `contentJSON` id-manifest as model-visible content (271 estimated tokens for 18 ids).
+    - test: green — swift test 818 passed (770+24+24), 0 failures, 36 skips all FM_ROUTER_INTEGRATION_TESTS-gated
+    - commit: f645e24
+    - review: clean — zero new findings. 18 validator attempts, 0 failed, 0 skipped. Two engine findings both `git blame`d to 2026-07-24 commits (10955bea, c5a62235), dropped under the written test-refactor exception.
+    - AC3 verified against the diff rather than trusted: `stagesApplied` non-empty was replaced by exact equality against the three-stage list plus a new `result.summary != nil` (strictly tighter); RoutedSessionCompactTests kept exact equality and changed only the reference unit from the fold's own estimate to the measured-ratio value; AutoCompactionTests assertions untouched (only `cannedText` 12 -> 60 repetitions); `mean(answersCorrect) >= 0.8` untouched and not in the diffstat.
+    - design question resolved: the sampling change does NOT alter production decoding. `samplingMode` defaults to `nil` on `LiveModelLoader.init` and is carried as an optional through `MLXFoundationModelsContainer` and `MLXFoundationModelsSessionBackend`; with `nil` the provider default stands. `.greedy` is opt-in at the loader boundary, passed only by the two gated harnesses, and propagates through `makeFork`/`replacingTranscript` so a post-fold replacement decodes as its parent did.
+    - next: none — task done. This unblocks ^5m97h14, whose AC4 can now be judged against a suite that answers the same way twice.
+  timestamp: 2026-08-09T15:22:12.570758+00:00
+position_column: done
+position_ordinal: f780
 title: Two gated compaction suites are flaky at HEAD — CompactionRoundTripIntegrationTests and the continuity eval fail intermittently with no code change
 ---
 Discovered by `^5m97h14` iteration 5 while verifying that a `CompactionPrompt.default` change had not regressed the other gated suites. It had not — but the verification uncovered that two gated suites do not give the same answer twice on the same code.

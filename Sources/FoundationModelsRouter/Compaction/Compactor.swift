@@ -16,8 +16,9 @@ public struct CompactionResult: Sendable, Equatable {
     /// ran — either no `summarizer` was supplied to
     /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` (the model-free
     /// fallback), the deterministic stages alone already landed the
-    /// transcript under target, or there was no old span left to summarize
-    /// (the oversized-tail case).
+    /// transcript under target, there was no old span left to summarize (the
+    /// oversized-tail case), or the fold's own summary left the transcript no
+    /// smaller than it was and so was discarded unapplied.
     public let summary: String?
 
     /// The transcript's estimated size, in tokens, before this pipeline ran.
@@ -25,13 +26,14 @@ public struct CompactionResult: Sendable, Equatable {
 
     /// The transcript's estimated size, in tokens, after this pipeline ran —
     /// equal to ``tokensBefore`` when no stage was applied (already under
-    /// target, or an oversized recency window made every stage insufficient).
+    /// target, an oversized recency window made every stage insufficient, or
+    /// the fold that ran did not shrink the transcript).
     public let tokensAfter: Int
 
     /// The stages that actually ran, in order — empty when the transcript
-    /// was already under target, or when every stage ran but still left the
-    /// transcript over target (the oversized-tail case, where the original
-    /// transcript is returned unchanged rather than partially folded).
+    /// was already under target, or when every stage ran and the original
+    /// transcript is returned unchanged anyway: the oversized-tail case, and
+    /// a fold whose summary left the transcript no smaller than it was.
     public let stagesApplied: [String]
 
     /// Creates a compaction result.
@@ -97,9 +99,10 @@ public enum Compactor {
     /// ``Summarization``) and the pipeline stops as soon as one lands the
     /// transcript under target. When the transcript is already under target,
     /// no stage runs. When every deterministic stage runs without success and
-    /// either no `summarizer` was supplied or ``Summarization`` finds no old
-    /// span left to fold (the recency window itself is too large, and no
-    /// stage may touch it) — the *original* transcript is returned unchanged
+    /// no `summarizer` was supplied, ``Summarization`` finds no old span left
+    /// to fold (the recency window itself is too large, and no stage may
+    /// touch it), or the fold it produced is no smaller than the transcript
+    /// it folded — the *original* transcript is returned unchanged
     /// (``CompactionResult/stagesApplied`` is empty) with the shortfall
     /// reported via ``CompactionResult/tokensAfter``.
     ///
@@ -123,7 +126,7 @@ public enum Compactor {
     ///     which leaves the boundary exactly as before.
     /// - Returns: The folded transcript (unchanged from `transcript` when no
     ///   stage helped enough) and a report of what happened.
-    /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified, when
+    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified, when
     ///   ``Summarization`` runs and the summarizer call fails.
     public static func compact(
         _ transcript: Transcript,
@@ -174,25 +177,37 @@ public enum Compactor {
                 pendingRuns: pendingRuns
             )
         {
+            // A fold is applied only when it actually shrank the transcript.
+            // Summarizing replaces a span of real conversation with a lossy
+            // paraphrase, so a summary that came back as long as the span it
+            // replaces (a model that ran on past its output ceiling, or a
+            // span too small to compress) buys nothing and costs the original
+            // text — and, worse, the caller would swap its backend for a
+            // *larger* transcript and record a checkpoint saying so. A fold
+            // that fails to shrink therefore falls through to the same
+            // shortfall exit the oversized-tail case takes below.
             let tokensAfter = estimatedTokenCount(of: folded.transcript)
-            return (
-                folded.transcript,
-                CompactionResult(
-                    summary: folded.summary,
-                    tokensBefore: tokensBefore,
-                    tokensAfter: tokensAfter,
-                    stagesApplied: stagesApplied + [Summarization.stageName]
+            if tokensAfter < tokensBefore {
+                return (
+                    folded.transcript,
+                    CompactionResult(
+                        summary: folded.summary,
+                        tokensBefore: tokensBefore,
+                        tokensAfter: tokensAfter,
+                        stagesApplied: stagesApplied + [Summarization.stageName]
+                    )
                 )
-            )
+            }
         }
 
-        // Oversized tail: every available stage ran and the transcript is
-        // still over target — the recency window alone is too big, and
-        // nothing may touch it. `current` at this point may be smaller than
-        // `transcript` (old turns folded away in the discarded attempt), but
-        // the function returns the *original* transcript unchanged, so
-        // `tokensAfter` must report `tokensBefore` — the size of what is
-        // actually being returned — not `current`'s size.
+        // Shortfall: every available stage ran and none of them left a
+        // transcript worth returning — either the oversized tail (the recency
+        // window alone is too big, and nothing may touch it) or a fold that
+        // did not shrink the transcript. `current`, and the discarded fold,
+        // may be smaller than `transcript`, but the function returns the
+        // *original* transcript unchanged, so `tokensAfter` must report
+        // `tokensBefore` — the size of what is actually being returned — not
+        // the size of an attempt that was thrown away.
         return (
             transcript,
             CompactionResult(summary: nil, tokensBefore: tokensBefore, tokensAfter: tokensBefore, stagesApplied: [])

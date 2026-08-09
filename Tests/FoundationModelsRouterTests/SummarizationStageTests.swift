@@ -33,14 +33,21 @@ struct SummarizationStageTests {
     /// never issues concurrent summarizer calls.
     private final class ScriptedSummarizer: CompactionSummarizer, @unchecked Sendable {
         private(set) var receivedPrompts: [String] = []
+
+        /// The output ceiling each call was given, in call order — the bound a
+        /// real summarizer would generate under.
+        private(set) var receivedMaxTokens: [Int] = []
         private let responses: [String]
 
         init(responses: [String]) {
             self.responses = responses
         }
 
-        func summarize(_ prompt: String) async throws -> String {
-            defer { receivedPrompts.append(prompt) }
+        func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
+            defer {
+                receivedPrompts.append(prompt)
+                receivedMaxTokens.append(maxTokens)
+            }
             let index = receivedPrompts.count
             return index < responses.count ? responses[index] : "unscripted-response-\(index)"
         }
@@ -50,7 +57,42 @@ struct SummarizationStageTests {
     /// summarizer failure propagates rather than being silently swallowed.
     private struct ThrowingSummarizer: CompactionSummarizer {
         struct Failure: Error {}
-        func summarize(_ prompt: String) async throws -> String { throw Failure() }
+        func summarize(_ prompt: String, maxTokens: Int) async throws -> String { throw Failure() }
+    }
+
+    /// A ``CompactionSummarizer`` whose answer is far larger than anything it
+    /// could be asked to condense — a model that ignores the ceiling it was
+    /// given, which is the one thing no output bound can prevent.
+    private struct OversizedSummarizer: CompactionSummarizer {
+        /// The summary every call returns, whatever it was asked to condense.
+        let summary: String
+
+        func summarize(_ prompt: String, maxTokens: Int) async throws -> String { summary }
+    }
+
+    /// The output ceiling ``Summarization`` should have computed for a call
+    /// condensing `content`: that content's own estimated size scaled by
+    /// `ratio`, never below ``Summarization/minimumSummaryTokens``. Restated
+    /// here rather than read off the stage, so these tests pin the arithmetic
+    /// instead of comparing it against itself.
+    ///
+    /// - Parameters:
+    ///   - content: The content the call was asked to condense.
+    ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
+    /// - Returns: The expected ceiling, in tokens.
+    private static func expectedCeiling(condensing content: String, ratio: Double) -> Int {
+        let share = Int((Double(Summarization.estimatedTokens(of: content)) * ratio).rounded(.up))
+        return max(Summarization.minimumSummaryTokens, share)
+    }
+
+    /// The content a summarizer call was asked to condense, recovered from the
+    /// assembled prompt it received — the compaction instructions, then the
+    /// separator, then the content (see `Summarization.summarizeOnce`).
+    ///
+    /// - Parameter prompt: The assembled prompt the call received.
+    /// - Returns: The content part alone.
+    private static func condensedContent(of prompt: String) throws -> String {
+        try #require(prompt.components(separatedBy: "\n\n---\n\n").last)
     }
 
     // MARK: - CompactionPrompt.default matches compaction_plan.md §2 verbatim
@@ -400,6 +442,91 @@ struct SummarizationStageTests {
         #expect(unwrapped.summary == "single-call-summary")
     }
 
+    // MARK: - Output bound: every summarizer call generates under a ceiling
+
+    @Test(
+        "a summarizer call is bounded by a share of the content it condenses, never left to the generation path's own default ceiling"
+    )
+    func summarizerCallIsBoundedByTheContentItCondenses() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let bigText = String(repeating: "old span content ", count: 400)
+        let turns = try (1...5).map {
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+        }
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let summarizer = ScriptedSummarizer(responses: ["summary"])
+        // One old turn, well within maxChunkTokens: exactly one call, whose
+        // ceiling is the whole fold's.
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
+
+        _ = try await stage.apply(
+            transcript,
+            prompt: .default,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+
+        let ceiling = try #require(summarizer.receivedMaxTokens.first)
+        #expect(summarizer.receivedMaxTokens.count == 1)
+        let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
+        #expect(ceiling == Self.expectedCeiling(condensing: condensed, ratio: stage.summaryTokenRatio))
+        // The point of the bound: a summary can never come back the size of
+        // the span it replaces, which is what made a fold save almost nothing.
+        #expect(ceiling < Summarization.estimatedTokens(of: condensed))
+    }
+
+    @Test("a span too small to compress still gets the minimum a usable summary needs, not a truncated fragment")
+    func shortSpanIsBoundedAtTheMinimum() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(5)
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let summarizer = ScriptedSummarizer(responses: ["summary"])
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
+
+        _ = try await stage.apply(
+            transcript,
+            prompt: .default,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+
+        let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
+        let share = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
+        #expect(share < Summarization.minimumSummaryTokens)  // sanity: this span's share really is below the floor
+        #expect(summarizer.receivedMaxTokens == [Summarization.minimumSummaryTokens])
+    }
+
+    @Test("every call a chunked fold makes is bounded by its own content, the reduce round over the chunk summaries included")
+    func everyCallOfAChunkedFoldIsBounded() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        // One old turn per chunk (as `longSpanMapReducesAcrossChunks` sets up):
+        // 2 map calls, then 1 reduce call over their summaries.
+        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let summarizer = ScriptedSummarizer(responses: ["chunk-summary-A", "chunk-summary-B", "final-combined-summary"])
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
+
+        _ = try await stage.apply(
+            transcript,
+            prompt: .default,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+
+        #expect(summarizer.receivedMaxTokens.count == 3)
+        for (index, ceiling) in summarizer.receivedMaxTokens.enumerated() {
+            let condensed = try Self.condensedContent(of: summarizer.receivedPrompts[index])
+            #expect(ceiling == Self.expectedCeiling(condensing: condensed, ratio: stage.summaryTokenRatio))
+        }
+    }
+
     // MARK: - Nothing to fold: Summarization is a no-op (Compactor's fallback path)
 
     @Test("when every turn is inside the recency window, there is no old span to fold: Summarization returns nil")
@@ -504,6 +631,45 @@ struct SummarizationStageTests {
         #expect(resultTranscript == transcript)
         #expect(result.stagesApplied.isEmpty)
         #expect(result.summary == nil)
+    }
+
+    @Test(
+        "a fold whose summary leaves the transcript no smaller than it was is not applied: the original transcript comes back, with the shortfall reported"
+    )
+    func foldThatDoesNotShrinkTheTranscriptIsNotApplied() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let bigText = String(repeating: "large content ", count: 400)
+        let turns = try (1...6).map {
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+        }
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
+        // A target below even the deterministic stages' best effort, so the
+        // model-assisted stage runs — the same setup as
+        // `compactorWiresInSummarizationAsFinalStage`, differing only in what
+        // the summarizer answers.
+        let limit = 1_000_000
+        let budget = TokenBudget(limit: limit, trigger: 0.80, target: Double(afterBoth / 2) / Double(limit))
+
+        // A summary bigger than the whole transcript it would replace — sized
+        // off `tokensBefore` itself, so the scenario holds however the
+        // fixtures above are resized: the fold "succeeds" and leaves the
+        // session worse off than before.
+        let summarizer = OversizedSummarizer(summary: String(repeating: "verbose summary ", count: tokensBefore))
+        #expect(Summarization.estimatedTokens(of: summarizer.summary) > tokensBefore)  // sanity: the fold really does grow it
+
+        let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
+
+        // Reported exactly like the oversized-tail case: the original
+        // transcript, no stages applied, and `tokensAfter` naming the size of
+        // what is actually being returned.
+        #expect(resultTranscript == transcript)
+        #expect(result.stagesApplied.isEmpty)
+        #expect(result.summary == nil)
+        #expect(result.tokensBefore == tokensBefore)
+        #expect(result.tokensAfter == tokensBefore)
     }
 
     @Test("a supplied summarizer is never invoked when the deterministic stages alone already land under target")

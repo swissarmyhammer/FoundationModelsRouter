@@ -17,7 +17,7 @@ private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
 ///
 /// Deliberately wraps a **fresh, blank-slate** backend
 /// (``LanguageModelSessionBackend/replacingTranscript(_:)`` seeded with an
-/// empty transcript) built fresh for every ``summarize(_:)`` call, rather
+/// empty transcript) built fresh for every ``summarize(_:maxTokens:)`` call, rather
 /// than the session's own live, accumulating backend:
 ///
 /// - The live backend may already be at or near the context limit — that is
@@ -42,8 +42,11 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
     /// blank-slate summarizer call is built from.
     let backend: any LanguageModelSessionBackend
 
-    func summarize(_ prompt: String) async throws -> String {
-        try await backend.replacingTranscript(Transcript(entries: [])).respond(to: prompt, maxTokens: nil)
+    func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
+        // The fold's own ceiling, passed down to the generation path rather
+        // than left to resolve to its generic per-turn default — see
+        // ``CompactionSummarizer/summarize(_:maxTokens:)``.
+        try await backend.replacingTranscript(Transcript(entries: [])).respond(to: prompt, maxTokens: maxTokens)
     }
 }
 
@@ -58,7 +61,7 @@ private struct BackendCompactionSummarizer: CompactionSummarizer {
 /// folding its own transcript has no `body(composedPrompt)` outstanding for
 /// ``RoutedSession/cancelCurrentTurn()`` to cancel, so before this a stop
 /// arriving mid-fold was remembered but the fold was waited out. Routing each
-/// `summarize(_:)` through the same boundary a turn's own model call uses gives
+/// `summarize(_:maxTokens:)` through the same boundary a turn's own model call uses gives
 /// the whole contract at once: the pre-flight check on both cancellation routes,
 /// registration as the turn's ``RoutedSessionActor/inFlightModelCall`` so
 /// `cancelCurrentTurn()` reaches a summarizer call already in flight, and the
@@ -75,7 +78,7 @@ private struct CancellableCompactionSummarizer: CompactionSummarizer {
     /// The session whose in-flight turn those calls belong to.
     let session: RoutedSessionActor
 
-    func summarize(_ prompt: String) async throws -> String {
+    func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         // Each of a map-reduce fold's several calls is registered, and cancellable,
         // on its own — so a cancellation landing between two chunks is honored by
         // the next chunk's pre-flight check rather than waiting out the rest of the
@@ -91,7 +94,7 @@ private struct CancellableCompactionSummarizer: CompactionSummarizer {
         // loops therefore means registering a *set* of in-flight calls, not one —
         // see the matching note in Sources/FoundationModelsRouter/Compaction/Summarization.swift.
         try await session.runCancellableModelCall(composedPrompt: prompt) { [base] promptText in
-            try await base.summarize(promptText)
+            try await base.summarize(promptText, maxTokens: maxTokens)
         }
     }
 }
@@ -332,7 +335,7 @@ extension RoutedSessionActor {
     ///     ``CancellableCompactionSummarizer`` before the pipeline sees it, so
     ///     each of its model calls is cancellable as this turn's own.
     /// - Returns: What the fold did.
-    /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified, when
+    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified, when
     ///   the model-assisted stage runs and fails — including `CancellationError`
     ///   when this turn was cancelled before or during a summarizer call. A fold
     ///   that throws leaves this session exactly as it was: the fold's own

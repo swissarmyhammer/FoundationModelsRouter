@@ -19,11 +19,25 @@ public protocol CompactionSummarizer: Sendable {
     /// compaction instructions plus the span (or batch of chunk summaries)
     /// being condensed (see ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:)``).
     ///
-    /// - Parameter prompt: The assembled compaction instructions plus content
-    ///   to condense.
+    /// `maxTokens` is a real ceiling, not a hint: a fold exists to make a
+    /// transcript smaller, and a summarizer left to answer at any length
+    /// routinely returns a summary nearly the size of the span it replaces,
+    /// which saves a session almost nothing. A conformer that reaches a model
+    /// must pass it down to that model's own output limit rather than fall
+    /// back to whatever the generation path defaults to. A conformer that
+    /// cannot bound its model at all still owes the caller nothing beyond a
+    /// best effort: ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``
+    /// discards a fold that failed to shrink the transcript, so an ignored
+    /// ceiling costs a wasted call, never a worse transcript.
+    ///
+    /// - Parameters:
+    ///   - prompt: The assembled compaction instructions plus content to
+    ///     condense.
+    ///   - maxTokens: The ceiling, in tokens, on this call's own answer — see
+    ///     ``Summarization/summaryTokenRatio`` for how a fold sizes it.
     /// - Returns: The model's complete text response.
     /// - Throws: If summarization fails.
-    func summarize(_ prompt: String) async throws -> String
+    func summarize(_ prompt: String, maxTokens: Int) async throws -> String
 }
 
 /// The model-assisted compaction stage (compaction_plan.md §1.3 stage 3):
@@ -71,6 +85,38 @@ public struct Summarization: Sendable {
     /// of the map-reduce tree, not just the first.
     public var maxChunkTokens: Int
 
+    /// The fraction of the content a single summarizer call condenses that
+    /// its own answer may occupy — the compression a fold is run for, turned
+    /// into the ceiling every call generates under
+    /// (``CompactionSummarizer/summarize(_:maxTokens:)``'s `maxTokens`).
+    ///
+    /// Defaults to `0.25`. The number this replaces was no number at all: the
+    /// call went out unbounded and resolved to the generation path's generic
+    /// per-turn default, which on real hardware produced a 3346-character
+    /// summary for a span estimated at 1068 tokens — four fifths of what it
+    /// replaced, for a fold that then saved almost nothing. A quarter is the
+    /// compression a summary of a conversation is worth writing.
+    ///
+    /// The ceiling is per call, against that call's own content, so the bound
+    /// holds at every level of the map-reduce tree rather than only over the
+    /// whole span: a chunk's summary is a quarter of that chunk, and each
+    /// reduce round's summary a quarter of the summaries it joins. Since
+    /// ``maxChunkTokens`` bounds what any one call ingests, the final summary
+    /// of an arbitrarily long span is bounded too.
+    public var summaryTokenRatio: Double
+
+    /// The floor, in tokens, no call's ceiling is squeezed below — `128`,
+    /// roughly a few dense sentences.
+    ///
+    /// ``summaryTokenRatio`` alone would hand a small span a ceiling too tight
+    /// to say anything in, and a generation cut off mid-sentence is worse than
+    /// a slightly larger one: the ceiling is a hard stop, not a target the
+    /// model aims at. A fold that still fails to shrink the transcript is
+    /// caught where it should be —
+    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` returns
+    /// the original transcript rather than apply it.
+    public static let minimumSummaryTokens = 128
+
     /// Creates a summarization stage.
     ///
     /// - Parameters:
@@ -78,9 +124,12 @@ public struct Summarization: Sendable {
     ///     Defaults to `4`.
     ///   - maxChunkTokens: The estimated-token ceiling per summarizer call
     ///     before chunking kicks in. Defaults to `2000`.
-    public init(keepRecentTurns: Int = 4, maxChunkTokens: Int = 2000) {
+    ///   - summaryTokenRatio: The fraction of the content it condenses a
+    ///     single summarizer call's answer may occupy. Defaults to `0.25`.
+    public init(keepRecentTurns: Int = 4, maxChunkTokens: Int = 2000, summaryTokenRatio: Double = 0.25) {
         self.keepRecentTurns = keepRecentTurns
         self.maxChunkTokens = maxChunkTokens
+        self.summaryTokenRatio = summaryTokenRatio
     }
 
     /// What folding `transcript` down to a summary produced: the resulting
@@ -131,7 +180,7 @@ public struct Summarization: Sendable {
     ///   is no old span to fold (every turn is inside the recency window) —
     ///   the same "oversized tail" case the deterministic stages report as a
     ///   shortfall, since summarizing nothing cannot help either.
-    /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified — a
+    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified — a
     ///   summarizer failure is a real error, never silently swallowed into a
     ///   degraded result.
     public func apply(
@@ -263,7 +312,7 @@ public struct Summarization: Sendable {
     ///   - prompt: The compaction prompt sent to `summarizer` verbatim.
     ///   - summarizer: The model called to condense text.
     /// - Returns: The final, single combined summary.
-    /// - Throws: Whatever `summarizer.summarize(_:)` throws, unmodified.
+    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified.
     private func reduce(
         _ summaries: [String],
         prompt: CompactionPrompt,
@@ -313,12 +362,36 @@ public struct Summarization: Sendable {
     /// still reach each of them, so the exposure is specific to that primitive, not to
     /// cancellation in general.) Parallelize either loop above only together with that
     /// registration.
+    ///
+    /// Every call made through here is bounded by ``outputTokenCeiling(condensing:)``,
+    /// so a summary can never come back the size of what it condenses — the
+    /// defect ``summaryTokenRatio`` records.
     private func summarizeOnce(
         _ content: String,
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
     ) async throws -> String {
-        try await summarizer.summarize("\(prompt.text)\n\n---\n\n\(content)")
+        try await summarizer.summarize(
+            "\(prompt.text)\n\n---\n\n\(content)",
+            maxTokens: outputTokenCeiling(condensing: content)
+        )
+    }
+
+    /// The ceiling, in tokens, a single summarizer call condensing `content`
+    /// may answer within: ``summaryTokenRatio`` of `content`'s own estimated
+    /// size, never below ``minimumSummaryTokens``.
+    ///
+    /// Measured on the content alone, never on the assembled prompt: the
+    /// compaction instructions are the same however small the span is, and
+    /// charging a summary for the length of the instructions asking for it
+    /// would let a short span buy a long summary.
+    ///
+    /// - Parameter content: The content the call will condense — a rendered
+    ///   chunk of turns, or a batch of prior summaries.
+    /// - Returns: The output ceiling for that call, in tokens.
+    private func outputTokenCeiling(condensing content: String) -> Int {
+        let share = Int((Double(Self.estimatedTokens(of: content)) * summaryTokenRatio).rounded(.up))
+        return max(Self.minimumSummaryTokens, share)
     }
 
     // MARK: - Chunking

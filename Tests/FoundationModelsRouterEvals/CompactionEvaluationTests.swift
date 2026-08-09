@@ -98,7 +98,7 @@ struct CompactionEvaluationHermeticTests {
         // two drift, and this assertion's whole job is to fail when the value
         // stops forcing `Summarization`.
         struct FakeSummarizer: CompactionSummarizer {
-            func summarize(_ prompt: String) async throws -> String { "fake summary" }
+            func summarize(_ prompt: String, maxTokens: Int) async throws -> String { "fake summary" }
         }
 
         let budget = compactionEvalDefaultBudget

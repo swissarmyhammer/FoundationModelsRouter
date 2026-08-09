@@ -40,7 +40,7 @@ private actor BlankSlateSummarizer: CompactionSummarizer {
     /// The resident container every call opens a fresh, empty session over.
     private let container: MLXFoundationModelsContainer
 
-    /// How many times ``summarize(_:)`` has been called.
+    /// How many times ``summarize(_:maxTokens:)`` has been called.
     private(set) var callCount = 0
 
     /// Creates a summarizer over a resident container.
@@ -50,10 +50,10 @@ private actor BlankSlateSummarizer: CompactionSummarizer {
         self.container = container
     }
 
-    func summarize(_ prompt: String) async throws -> String {
+    func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
         callCount += 1
         return try await container.makeSession(transcript: Transcript(entries: []))
-            .respond(to: prompt, maxTokens: nil)
+            .respond(to: prompt, maxTokens: maxTokens)
     }
 }
 

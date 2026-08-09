@@ -433,6 +433,17 @@ struct CompactionRoundTripIntegrationTests {
             )
             #expect(result.summary != nil)
             #expect(result.tokensAfter < result.tokensBefore)
+            // The margin, on the record. This suite is the only place a fold's
+            // saving is measured against a real model, and the bare inequality
+            // above hides how much of one it is — a fold that saved a handful
+            // of tokens passes it exactly as a fold that halved the transcript
+            // does (task zche4zy, where an unbounded summary left the saving
+            // near zero). Reported against `Self.foldBudget`'s 0.25 target,
+            // not the production default of 0.50 — see `foldBudget`.
+            print(
+                "[compactionRoundTrip] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
+                    + "saved=\(result.tokensBefore - result.tokensAfter)"
+            )
             let fillAfterCompaction = await session.contextFill
             #expect(fillAfterCompaction < fillBeforeCompaction)
             #expect(session.id == sessionId)
