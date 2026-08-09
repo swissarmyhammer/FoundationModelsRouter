@@ -64,6 +64,9 @@ private let defaultMaxTokens = 8192
 ///   - model: The `LanguageModel` conformance to build the new session over.
 ///   - transcript: The transcript to seed the new session from.
 ///   - tools: The tools the model can call during this session.
+///   - samplingMode: The decoding strategy every generation call on the new
+///     backend requests — see
+///     ``MLXFoundationModelsContainer/samplingMode``.
 ///   - instructions: The new backend's instructions, or `nil` (the default)
 ///     to derive them from `transcript`'s own leading `.instructions` entry.
 /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
@@ -72,6 +75,7 @@ private func makeSessionBackend(
     model: MLXLanguageModel,
     transcript: FoundationModels.Transcript,
     tools: [any FoundationModels.Tool],
+    samplingMode: GenerationOptions.SamplingMode?,
     instructions: String?? = nil
 ) -> MLXFoundationModelsSessionBackend {
     let session = LanguageModelSession(model: model, tools: tools, transcript: transcript)
@@ -79,7 +83,8 @@ private func makeSessionBackend(
         session: session,
         model: model,
         instructions: instructions ?? TranscriptDiffer.leadingInstructionsText(of: transcript),
-        tools: tools
+        tools: tools,
+        samplingMode: samplingMode
     )
 }
 
@@ -103,6 +108,27 @@ private func makeSessionBackend(
 struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
+
+    /// The decoding strategy every generation call on every backend this
+    /// container vends requests, or `nil` (the usual case) to leave the
+    /// provider's own default in place.
+    ///
+    /// The default is not deterministic, and neither is a repeat run of the
+    /// same prompt under it: `MLXLMCommon.GenerateParameters.temperature`
+    /// defaults to `0.6` — a sampling value — so MLX builds a categorical
+    /// sampler that draws from `MLXRandom`'s process-global `RandomState`,
+    /// which seeds itself from the clock (`DispatchTime.now().uptimeNanoseconds`).
+    /// The same prompt against the same resident model therefore yields
+    /// different text in every process.
+    ///
+    /// Pinning ``FoundationModels/GenerationOptions/SamplingMode/greedy`` here
+    /// routes MLX to `ArgMaxSampler`, which consumes no randomness at all — so
+    /// a caller that needs generation it can repeat, rather than merely a
+    /// fixed seed it must not perturb, gets it. That is what the gated
+    /// real-model suites need to be a decision procedure: while their model's
+    /// replies vary run to run, so do the transcript sizes those replies
+    /// produce, and a red run cannot be attributed to the change under test.
+    let samplingMode: GenerationOptions.SamplingMode?
 
     /// The raw `FoundationModels.LanguageModel` this container wraps — the
     /// seam ``RoutedModel/makeLanguageModel()`` wraps in a
@@ -132,7 +158,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     func makeSession(instructions: String?, tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
         let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
         return MLXFoundationModelsSessionBackend(
-            session: session, model: model, instructions: instructions, tools: tools)
+            session: session, model: model, instructions: instructions, tools: tools, samplingMode: samplingMode)
     }
 
     /// Manufactures a live session backend seeded from an existing transcript.
@@ -175,7 +201,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool]
     ) -> any LanguageModelSessionBackend {
-        makeSessionBackend(model: model, transcript: transcript, tools: tools)
+        makeSessionBackend(model: model, transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 }
 
@@ -231,6 +257,14 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// field only ever matters to the zero-argument overload.
     private let tools: [any FoundationModels.Tool]
 
+    /// The decoding strategy every generation call this backend makes
+    /// requests, or `nil` to leave the provider's own default in place —
+    /// carried verbatim from the container that vended this backend (see
+    /// ``MLXFoundationModelsContainer/samplingMode``) and propagated to every
+    /// backend derived from this one, so a fork and a post-fold replacement
+    /// decode exactly as their parent did.
+    private let samplingMode: GenerationOptions.SamplingMode?
+
     /// Test-only accessor onto ``liveSession``, for `@testable import` in the
     /// gated integration suite (e.g. asserting `transcript.count` grows across
     /// turns, or matches a fork's parent at fork time). Deliberately not part
@@ -251,16 +285,21 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///   - tools: The tools `session` was created with. Stored so
     ///     ``makeFork()`` can propagate them to the forked backend; see
     ///     ``tools``. Defaults to none.
+    ///   - samplingMode: The decoding strategy every generation call this
+    ///     backend makes requests, or `nil` (the default) to leave the
+    ///     provider's own default in place; see ``samplingMode``.
     init(
         session: LanguageModelSession,
         model: MLXLanguageModel,
         instructions: String? = nil,
-        tools: [any FoundationModels.Tool] = []
+        tools: [any FoundationModels.Tool] = [],
+        samplingMode: GenerationOptions.SamplingMode? = nil
     ) {
         self.liveSession = session
         self.model = model
         self.instructions = instructions
         self.tools = tools
+        self.samplingMode = samplingMode
     }
 
     /// Generates a complete text response through ``liveSession``.
@@ -281,7 +320,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         schema: GenerationSchema?,
         maxTokens: Int?
     ) async throws -> String {
-        let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+        let options = GenerationOptions(
+            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? defaultMaxTokens)
         guard let schema else {
             let response = try await liveSession.respond(to: prompt, options: options)
             return response.content
@@ -304,7 +344,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// prior `ChatSession`-backed behavior), so this yields only the new suffix
     /// of each snapshot, computed against the previous one.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-        let options = GenerationOptions(maximumResponseTokens: maxTokens ?? defaultMaxTokens)
+        let options = GenerationOptions(
+            samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? defaultMaxTokens)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 await self.pumpStream(prompt: prompt, options: options, into: continuation)
@@ -429,7 +470,12 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// the (identical, at fork time) transcript.
     func makeFork(tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
         makeSessionBackend(
-            model: model, transcript: liveSession.transcript, tools: tools, instructions: instructions)
+            model: model,
+            transcript: liveSession.transcript,
+            tools: tools,
+            samplingMode: samplingMode,
+            instructions: instructions
+        )
     }
 
     /// Vends a fresh backend over ``model``, seeded from `transcript` instead
@@ -460,7 +506,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///   ``model``, whose accumulated history begins with `transcript`'s
     ///   entries.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
-        makeSessionBackend(model: model, transcript: transcript, tools: tools)
+        makeSessionBackend(model: model, transcript: transcript, tools: tools, samplingMode: samplingMode)
     }
 
     /// Returns ``liveSession``'s current transcript, in order.
@@ -624,6 +670,14 @@ public struct LiveModelLoader: ModelLoader {
     /// don't need those availability checks to resolve real paths.
     private let weightsLocation: @Sendable (String) -> URL
 
+    /// The decoding strategy every generation model this loader vends
+    /// generates with, or `nil` (the default) to leave the provider's own
+    /// default in place — stamped onto every
+    /// ``MLXFoundationModelsContainer`` ``loadLLM(ref:slot:context:reporting:)``
+    /// produces. See that property's own doc comment for why the provider
+    /// default is not repeatable and what pinning `.greedy` buys.
+    private let samplingMode: GenerationOptions.SamplingMode?
+
     /// Creates a live loader over an injected downloader and tokenizer loader.
     ///
     /// - Parameters:
@@ -635,16 +689,23 @@ public struct LiveModelLoader: ModelLoader {
     ///     a stub that never resolves a real path — pass the Hub cache's real
     ///     repo-directory resolver (e.g. `HubCache.repoDirectory(repo:kind:)`)
     ///     when those checks matter.
+    ///   - samplingMode: The decoding strategy every generation model this
+    ///     loader vends generates with. Defaults to `nil` — the provider's own
+    ///     default, which samples. Pass
+    ///     ``FoundationModels/GenerationOptions/SamplingMode/greedy`` for
+    ///     generation that repeats exactly; see ``samplingMode``.
     public init(
         downloader: any Downloader,
         tokenizerLoader: any TokenizerLoader,
         weightsLocation: @escaping @Sendable (String) -> URL = { _ in
             FileManager.default.temporaryDirectory
-        }
+        },
+        samplingMode: GenerationOptions.SamplingMode? = nil
     ) {
         self.downloader = downloader
         self.tokenizerLoader = tokenizerLoader
         self.weightsLocation = weightsLocation
+        self.samplingMode = samplingMode
     }
 
     /// Downloads and loads a generation model into an ``MLXFoundationModelsContainer``.
@@ -695,7 +756,7 @@ public struct LiveModelLoader: ModelLoader {
             }
         )
         _ = try await model.loadContainer()
-        return MLXFoundationModelsContainer(model: model)
+        return MLXFoundationModelsContainer(model: model, samplingMode: samplingMode)
     }
 
     /// Downloads and loads an embedding model.

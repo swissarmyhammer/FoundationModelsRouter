@@ -51,9 +51,18 @@ actor CompactionContinuityEvalRealSubjectRunner {
         // because `.evaluates(...)` does its work in a `TestScoping` trait
         // that runs ahead of the `@Test` body.
         _ = MetalLibraryTestBootstrap.ensureColocatedMetallib
+        // Decoding is pinned to greedy. The provider default samples at
+        // temperature 0.6 from MLX's process-global PRNG, which seeds itself
+        // from the clock, so every run of this evaluation drew different
+        // answers from identical code — `mean(AnswersCorrect)` measured 0.5,
+        // 0.8, and 0.7 across three runs of the same tree, which is a coin
+        // flip against a 0.8 threshold rather than a measurement of the prompt
+        // under test (task f80n046). Argmax decoding consumes no randomness at
+        // all, so a run's score is a fact about the prompt and the fixtures.
         let loader = LiveModelLoader(
             downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
+            tokenizerLoader: #huggingFaceTokenizerLoader(),
+            samplingMode: .greedy
         )
         let container = try await loader.loadLLM(
             ref: CompactionEvalRealModel.ref,

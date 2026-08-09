@@ -32,8 +32,10 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
 /// to read, asserted mechanically here against a real model instead:
 ///
 /// 1. `contextFill` climbs across scripted turns that grow the transcript.
-/// 2. Compacting at the 0.80 trigger shrinks `contextFill` and never changes
-///    the session's identity (id, recording directory, router id).
+/// 2. Compacting once the 0.80 trigger is reached — against ``foldBudget``,
+///    which forces the whole pipeline through its model-assisted stage —
+///    shrinks `contextFill` and never changes the session's identity (id,
+///    recording directory, router id).
 /// 3. A turn after compaction succeeds and recalls a fact planted only in
 ///    the folded span — proof the summary, not just the mechanism, worked.
 /// 4. Restoring from disk (a fresh `Router`/`LanguageModelProfile`,
@@ -82,14 +84,59 @@ struct CompactionRoundTripIntegrationTests {
     /// doc comment.
     fileprivate static let context = 2048
 
+    /// The reply ceiling every scripted turn below is submitted with, and the
+    /// worst case ``ScriptedTurnSizingTests`` bounds a turn's total size by.
+    fileprivate static let replyMaxTokens = 64
+
+    /// The system instructions the round trip's session is created with —
+    /// part of the transcript's header, which no compaction stage may touch,
+    /// so ``ScriptedTurnSizingTests`` counts it too.
+    fileprivate static let instructions =
+        "You are a terse assistant. Follow each instruction exactly and keep replies to one sentence."
+
+    /// The budget the round trip folds against.
+    ///
+    /// Deliberately not the default (`target` 0.50). A 0.50 target of this
+    /// suite's 2048-token working context is 1024 estimated tokens, and the
+    /// four newest scripted turns — the recency window
+    /// ``ToolOutputElision``/``TurnTruncation`` may not touch — estimate
+    /// within a couple of hundred tokens of that either side depending on how
+    /// long the model's own four most recent replies happened to run. Whether
+    /// the deterministic stages landed under target on their own, and so
+    /// whether ``Summarization`` ran at all, was therefore decided by sampled
+    /// reply lengths rather than by anything this suite asserts — the same run
+    /// could reach stage 3 or stop at stage 2, and only the stage-3 run
+    /// records a compaction checkpoint for step 4 to restore (task f80n046).
+    ///
+    /// A 0.25 target is 512 tokens, which the recency window's own prompt text
+    /// exceeds on its own by a wide margin whichever four turns it happens to
+    /// be — ``ScriptedTurnSizingTests/recencyWindowCannotFitUnderTheFoldTarget()``
+    /// pins that mechanically — so the deterministic stages cannot land under
+    /// it and the model-assisted stage always runs. It changes nothing about
+    /// *what* is folded: the old/recent split is `keepRecentTurns`' business,
+    /// not the target's, so the folded span, the summary, and the restored
+    /// window are exactly what a default-budget fold would produce on the run
+    /// where it happened to reach stage 3.
+    fileprivate static let foldBudget = TokenBudget(limit: context, target: 0.25)
+
     /// Loads the tiny model directly through a real ``LiveModelLoader`` and
     /// returns its concrete ``MLXFoundationModelsContainer``. Called once per
     /// simulated "process" — the second call models a fresh process reloading
     /// the same model from the Hub cache.
+    ///
+    /// Decoding is pinned to
+    /// ``FoundationModels/GenerationOptions/SamplingMode/greedy``. The provider
+    /// default samples at temperature `0.6` from MLX's process-global PRNG,
+    /// which seeds itself from the clock, so this suite's own scripted replies
+    /// — and therefore its transcript sizes, its fold, and its recall answer —
+    /// differed on every run of identical code (task f80n046). Argmax decoding
+    /// consumes no randomness at all, which is what lets a red run here be
+    /// attributed to the change under test.
     private func makeContainer() async throws -> MLXFoundationModelsContainer {
         let loader = LiveModelLoader(
             downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
+            tokenizerLoader: #huggingFaceTokenizerLoader(),
+            samplingMode: .greedy
         )
         let loaded = try await loader.loadLLM(
             ref: compactionRoundTripTinyModel,
@@ -351,16 +398,14 @@ struct CompactionRoundTripIntegrationTests {
             let (router, profile) = buildProfile(
                 container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
 
-            let session = profile.standard.makeSession(
-                instructions: "You are a terse assistant. Follow each instruction exactly and keep replies to one sentence."
-            )
+            let session = profile.standard.makeSession(instructions: Self.instructions)
             let sessionId = session.id
             let recordingDirectoryBefore = session.recordingDirectory
 
             // 1. contextFill climbs across scripted turns.
             var fills: [Double] = []
             for turn in Self.scriptedTurns {
-                _ = try await session.respond(to: turn, maxTokens: 64)
+                _ = try await session.respond(to: turn, maxTokens: Self.replyMaxTokens)
                 fills.append(await session.contextFill)
                 if fills.last! >= 0.80 { break }
             }
@@ -373,8 +418,20 @@ struct CompactionRoundTripIntegrationTests {
             #expect(fillBeforeCompaction >= 0.80)
 
             // 2. Compact at the trigger: shrinks fill, preserves identity.
-            let result = try await session.compact()
-            #expect(!result.stagesApplied.isEmpty, "expected at least one stage to fold the over-budget transcript")
+            let result = try await session.compact(budget: Self.foldBudget)
+            // Every stage, in order — not merely "something ran". A fold that
+            // stops after the deterministic stages synthesizes no summary
+            // entry, so it records no compaction checkpoint and step 4 below
+            // has nothing to restore; `stagesApplied` non-empty cannot tell
+            // that fold from this one. `Self.foldBudget` is what makes the
+            // full pipeline a property here rather than a coincidence.
+            #expect(
+                result.stagesApplied == [
+                    ToolOutputElision.stageName, TurnTruncation.stageName, Summarization.stageName,
+                ],
+                "expected the full pipeline through the model-assisted stage, got \(result.stagesApplied)"
+            )
+            #expect(result.summary != nil)
             #expect(result.tokensAfter < result.tokensBefore)
             let fillAfterCompaction = await session.contextFill
             #expect(fillAfterCompaction < fillBeforeCompaction)
@@ -447,6 +504,13 @@ struct ScriptedTurnSizingTests {
         TokenBudget(limit: CompactionRoundTripIntegrationTests.context).triggerTokens
     }
 
+    /// How many of the newest turns the deterministic stages must leave
+    /// untouched — read off ``TurnTruncation``'s own default rather than
+    /// restated, so this suite tracks the stage it reasons about.
+    private static var keepRecentTurns: Int {
+        TurnTruncation().keepRecentTurns
+    }
+
     /// The estimated token count of each scripted turn's prompt text, in order.
     private static var perTurnTokens: [Int] {
         CompactionRoundTripIntegrationTests.scriptedTurns.map(Compactor.estimatedTokenCount(of:))
@@ -484,6 +548,58 @@ struct ScriptedTurnSizingTests {
         #expect(
             prefix <= CompactionRoundTripIntegrationTests.context,
             "the prefix that crosses the trigger estimates \(prefix) tokens, over the \(CompactionRoundTripIntegrationTests.context)-token working context"
+        )
+    }
+
+    // MARK: - The fold reaches the model-assisted stage by construction (task f80n046)
+
+    @Test("no window of consecutive scripted turns fits under the fold target, so the deterministic stages alone can never land it")
+    func recencyWindowCannotFitUnderTheFoldTarget() throws {
+        // `TurnTruncation` keeps the newest `keepRecentTurns` turns verbatim
+        // and `ToolOutputElision` touches nothing here (these turns call no
+        // tools), so the deterministic pipeline's floor is that window. When
+        // the window cannot fit under target, the pipeline must fall through
+        // to `Summarization` — which is the only stage that synthesizes the
+        // summary entry the gated suite's step 4 restores.
+        //
+        // Which four turns the window holds depends on how many turns the live
+        // run needed to cross the trigger, so every consecutive window is
+        // checked rather than only the last. Prompt text alone: the window also
+        // carries the replies and the header, which only add.
+        let targetTokens = CompactionRoundTripIntegrationTests.foldBudget.targetTokens
+        let keepRecentTurns = Self.keepRecentTurns
+        let turns = CompactionRoundTripIntegrationTests.scriptedTurns
+        #expect(turns.count > keepRecentTurns)
+        for start in 0...(turns.count - keepRecentTurns) {
+            let window = turns[start..<(start + keepRecentTurns)]
+            let windowTokens = Compactor.estimatedTokenCount(of: window.joined())
+            #expect(
+                windowTokens > targetTokens,
+                "turns \(start)..<\(start + keepRecentTurns) estimate \(windowTokens) prompt tokens, which does not exceed the fold target's \(targetTokens)"
+            )
+        }
+    }
+
+    @Test("the first turns cannot cross the trigger before some turn falls outside the recency window, so a fold always has an old span to summarize")
+    func triggerIsNotReachedBeforeAnOldSpanExists() throws {
+        // The other half of the same property: `Summarization` returns `nil`
+        // — and the pipeline reports the oversized-tail shortfall with an
+        // empty `stagesApplied` — when every turn is still inside the recency
+        // window. So the trigger must not be reachable within the first
+        // `keepRecentTurns` turns.
+        //
+        // Worst case, and mechanical: every one of those turns' replies runs
+        // to the full `replyMaxTokens` ceiling, and the header's instructions
+        // count too.
+        let keepRecentTurns = Self.keepRecentTurns
+        let firstTurns = CompactionRoundTripIntegrationTests.scriptedTurns.prefix(keepRecentTurns)
+        let promptTokens = Compactor.estimatedTokenCount(of: firstTurns.joined())
+        let replyTokens = keepRecentTurns * CompactionRoundTripIntegrationTests.replyMaxTokens
+        let headerTokens = Compactor.estimatedTokenCount(of: CompactionRoundTripIntegrationTests.instructions)
+        let worstCase = promptTokens + replyTokens + headerTokens
+        #expect(
+            worstCase < Self.triggerTokens,
+            "the first \(keepRecentTurns) turns reach \(worstCase) tokens at their largest, at or over the trigger's \(Self.triggerTokens) — the fold could find no turn outside the recency window to summarize"
         )
     }
 }

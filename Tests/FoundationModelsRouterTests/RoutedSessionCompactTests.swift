@@ -226,9 +226,65 @@ struct RoutedSessionCompactTests {
 
         let postFoldFill = await session.contextFill
         #expect(postFoldFill < preFoldFill)
-        // The post-fold fill reflects this fold's own accurate tokensAfter
-        // over the resolved 100,000-token context.
-        #expect(postFoldFill == Double(result.tokensAfter) / 100_000)
+        // The post-fold fill reflects this fold's own shrink ratio applied to
+        // the measured usage the session already had — `tokensAfter` is the
+        // pipeline's character-ratio estimate, and `contextFill`'s numerator
+        // is measured tokens, so the estimate is rescaled onto that scale
+        // before it is reported (see `RoutedSessionActor.foldedUsage`).
+        let expectedPostFoldTokens = (50_000.0 * Double(result.tokensAfter) / Double(preFoldTokens)).rounded()
+        #expect(postFoldFill == expectedPostFoldTokens / 100_000)
+    }
+
+    // MARK: - A fold's reported fill is measured, not estimated
+
+    @Test("a fold never raises contextFill, even when the pipeline's own estimate of the folded transcript exceeds the session's measured usage")
+    @MainActor
+    func foldReportsShrinkOnTheMeasuredScale() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        // A *small* per-turn measured usage against a transcript the
+        // character-ratio estimator sizes far higher — the arrangement that
+        // exposed the unit mismatch on real hardware, where an over-counting
+        // estimate written into `contextFill`'s numerator made a genuine fold
+        // report a *higher* fill than the measured one it replaced (0.95068
+        // after a fold from 0.89453). The fold's own accounting has to be
+        // denominated in the same tokens the pre-fold fill was, or a caller
+        // comparing the two compares incommensurable numbers.
+        let measuredTokensPerTurn = 200
+        let container = ConfiguredLLMContainer(
+            responseText: Self.cannedText, usageIncrement: (input: measuredTokensPerTurn, output: 0))
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+        try await Self.driveTurns(6, on: session)
+
+        let backend = try #require(container.lastBackend)
+        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
+        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let preFoldFill = await session.contextFill
+        // The premise of this test: even the part of the transcript no
+        // deterministic stage may touch estimates larger than everything the
+        // session has actually measured, so reporting the fold's own estimate
+        // raw could only raise fill.
+        #expect(recencyOnly > measuredTokensPerTurn)
+
+        // The same deterministic-shrink budget
+        // `compactShrinksLiveWindowAndReportsAccurateResult` uses — a target
+        // TurnTruncation alone lands under, so what this test measures is the
+        // unit the shrink is reported in and nothing else.
+        let targetTokens = (recencyOnly + preFoldTokens) / 2
+        let budget = TokenBudget(limit: preFoldTokens, target: Double(targetTokens) / Double(preFoldTokens))
+        let result = try await session.compact(budget: budget)
+        #expect(result.tokensAfter < result.tokensBefore)
+
+        let postFoldFill = await session.contextFill
+        #expect(postFoldFill < preFoldFill)
+        let expectedPostFoldTokens =
+            (Double(measuredTokensPerTurn) * Double(result.tokensAfter) / Double(preFoldTokens)).rounded()
+        #expect(postFoldFill == expectedPostFoldTokens / 100_000)
     }
 
     // MARK: - Identity + append-only recording

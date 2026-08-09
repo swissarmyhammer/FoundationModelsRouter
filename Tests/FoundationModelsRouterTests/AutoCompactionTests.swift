@@ -111,11 +111,23 @@ struct AutoCompactionTests {
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "AutoCompactionTests"
 
-    /// A long-ish canned response repeated across every warm-up turn, so a
-    /// handful of turns' worth of transcript already carries a real,
-    /// non-trivial byte-size estimate — mirrors `RoutedSessionCompactTests.cannedText`.
+    /// A long canned response repeated across every warm-up turn, so a handful
+    /// of turns' worth of transcript already carries a real, non-trivial
+    /// byte-size estimate — mirrors `RoutedSessionCompactTests.cannedText`.
+    ///
+    /// The length is load-bearing for the hard-ceiling recovery test below,
+    /// which needs the retry's fold to shrink the transcript by enough that
+    /// the retry's own pre-check clears a ceiling the blocked attempt tripped.
+    /// A fold replaces the old span with one synthesized summary entry, and
+    /// that entry costs its summary text plus its `CompactionSegment`'s own
+    /// live-window/folded entry-id manifest — a fixed cost of roughly 175
+    /// estimated tokens with these fixtures' UUID entry ids. At 12 repetitions
+    /// the whole warm-up transcript estimated 819 tokens and a fold left 776:
+    /// the manifest ate two thirds of the old span it replaced, so the fold
+    /// was a 5% shrink and no ceiling could sit between it and the blocked
+    /// attempt's own fill.
     private static let cannedText = String(
-        repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
+        repeating: "The quick brown fox jumps over the lazy dog. ", count: 60)
 
     /// How many warm-up turns ``makeTriggeredSession(budget:)`` drives —
     /// past ``TurnTruncation``'s default 4-turn recency window, so folding

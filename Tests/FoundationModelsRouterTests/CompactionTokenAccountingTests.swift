@@ -91,6 +91,50 @@ struct CompactionTokenAccountingTests {
         )
     }
 
+    // MARK: - A compaction boundary's bookkeeping is not content
+
+    @Test("a fold's own CompactionSegment adds nothing to the estimate, however many entry ids its manifest carries")
+    func compactionSegmentManifestIsNotContent() throws {
+        // A boundary entry's model-visible part is its `.text` segments; the
+        // `CompactionSegment` beside them is bookkeeping the backend's
+        // transcript rendering skips outright, so it must not be measured as
+        // if a tokenizer would see it. The manifest is not a rounding error:
+        // it names every entry in the live window *and* every entry the fold
+        // dropped, so it grows with the transcript being folded.
+        let summaryText = "The archive project's vault code is CRIMSON-77; three of six outposts are indexed."
+        func boundaryEntry(includingCompactionSegment: Bool) -> Transcript.Entry {
+            var segments: [Transcript.Segment] = [
+                .text(Transcript.TextSegment(id: "boundary-text", content: summaryText))
+            ]
+            if includingCompactionSegment {
+                segments.append(
+                    .custom(
+                        CompactionSegment(
+                            content: CompactionSegment.Content(
+                                liveWindowEntryIds: (0..<10).map { _ in UUID().uuidString },
+                                foldedEntryIds: (0..<8).map { _ in UUID().uuidString },
+                                tokensBefore: 2074,
+                                tokensAfter: 1843,
+                                stagesApplied: ["ToolOutputElision", "TurnTruncation", "Summarization"],
+                                promptName: CompactionPrompt.default.name
+                            )
+                        )
+                    )
+                )
+            }
+            return .response(Transcript.Response(id: "boundary", assetIDs: [], segments: segments))
+        }
+
+        let withSegment = Compactor.estimatedTokenCount(of: Transcript(entries: [boundaryEntry(includingCompactionSegment: true)]))
+        let withoutSegment = Compactor.estimatedTokenCount(
+            of: Transcript(entries: [boundaryEntry(includingCompactionSegment: false)]))
+
+        #expect(withSegment == withoutSegment)
+        // And the text that *is* rendered still counts, so this is not a blanket
+        // "boundary entries are free".
+        #expect(withSegment == Compactor.estimatedTokenCount(of: summaryText))
+    }
+
     // MARK: - Still honest about every content-bearing field
 
     @Test("the estimate still counts tool-call arguments and tool output, not only text segments")

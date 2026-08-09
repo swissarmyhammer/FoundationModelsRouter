@@ -414,14 +414,58 @@ extension RoutedSessionActor {
         // requirement 4).
         backend = backend.replacingTranscript(folded)
         persistedEntryCount = folded.count
-        // `result.tokensAfter` is this fold's own measured/estimated size of
-        // what `backend` now holds — reported as `contextFill`'s numerator
-        // immediately, the same way a restored session whose newest event is
+        // What `backend` now holds, reported as `contextFill`'s numerator
+        // immediately — the same way a restored session whose newest event is
         // a compaction checkpoint reports its segment's own `tokensAfter`
         // (compaction_plan.md §1.5); the next live turn re-measures exactly
-        // and replaces it, same as any other measured state.
-        usageState = .measured(input: result.tokensAfter, output: 0)
+        // and replaces it, same as any other measured state. Rescaled onto the
+        // measured scale first, because `result.tokensAfter` is not measured at
+        // all — see `foldedUsage(tokensBefore:tokensAfter:)`.
+        usageState = .measured(
+            input: foldedUsage(tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter),
+            output: 0
+        )
 
         return result
+    }
+
+    /// A fold's post-fold size, in the same unit ``usageState`` is denominated
+    /// in everywhere else: real tokenizer counts read off
+    /// `LanguageModelSessionBackend.usageTokenCounts()`.
+    ///
+    /// ``CompactionResult/tokensAfter`` is not one of those. It is
+    /// ``Compactor/estimatedTokenCount(of:)``'s character-ratio estimate, and
+    /// ``Compactor`` has no session or backend to ask for a real count. Writing
+    /// it straight into ``usageState`` put an estimate where every other writer
+    /// puts a measurement, which made ``RoutedSession/contextFill`` — and every
+    /// budget threshold compared against it — mix two units: a fold whose real
+    /// saving was smaller than the estimator's own overcount *raised* reported
+    /// fill, and a caller comparing fill across a fold was comparing
+    /// incommensurable numbers.
+    ///
+    /// The pre-fold state carries exactly what is needed to convert between
+    /// them. This session has just measured `usageState` over the same
+    /// transcript ``Compactor`` estimated at `tokensBefore`, so their ratio is
+    /// this transcript's own measured-per-estimated-token rate, and the folded
+    /// transcript — the same prose, minus an old span, plus a summary written
+    /// in it — is tokenized by the same tokenizer at close to the same rate.
+    /// Rescaling by that ratio cancels the estimator's systematic bias instead
+    /// of leaving it to be compared against measurements.
+    ///
+    /// Falls back to `tokensAfter` unchanged when there is nothing to calibrate
+    /// against — a session with no measurement yet (``ContextUsageState/none``,
+    /// ``ContextUsageState/unknown``) or a transcript the estimator sized at
+    /// zero — which is the previous behavior, and still the best available
+    /// number until the next live turn re-measures.
+    ///
+    /// - Parameters:
+    ///   - tokensBefore: The pipeline's estimate of the transcript it folded.
+    ///   - tokensAfter: The pipeline's estimate of the transcript it produced.
+    /// - Returns: `tokensAfter` on the measured scale.
+    private func foldedUsage(tokensBefore: Int, tokensAfter: Int) -> Int {
+        guard let measuredBefore = usageState.measuredTokens, measuredBefore > 0, tokensBefore > 0 else {
+            return tokensAfter
+        }
+        return Int((Double(measuredBefore) * Double(tokensAfter) / Double(tokensBefore)).rounded())
     }
 }

@@ -379,8 +379,34 @@ extension TranscriptEntryPayload {
 
 extension SegmentPayload {
     /// The total UTF-8 size, in bytes, of this segment's content — the case's
-    /// authored text, schema name, label, URL, type discriminator, and
-    /// description, never its `id` or its `"type"` tag.
+    /// authored text, schema name, label, and URL, never its `id` or its
+    /// `"type"` tag.
+    ///
+    /// A `.custom` segment counts as **zero**: nothing in it is ever shown to
+    /// a model. Verified against the backend that does the showing —
+    /// `MLXFoundationModels.TranscriptConverter.extractConcatenatedText`
+    /// renders `.text` (and `.structure`, where a caller asks for it) and
+    /// logs "Skipping non-text segment" for everything else — and the
+    /// router's own renderings agree (``Summarization``'s span rendering and
+    /// ``TranscriptEntryMapper``'s flattened text both read `.text` only).
+    /// The router's one custom segment, ``CompactionSegment``, is deliberately
+    /// built that way: the model-visible part of a compaction boundary is
+    /// synthesized as separate `.text` segments (the summary itself, and
+    /// ``CompactionSegment/renderedPendingRuns(_:)``), and the segment proper
+    /// carries bookkeeping — the `liveWindowEntryIds`/`foldedEntryIds`
+    /// manifest, token counts, stage names — that only a reader of the
+    /// recording ever sees.
+    ///
+    /// Counting that manifest is the same defect ``contentByteCount``'s owner
+    /// (``Compactor/estimatedTokenCount(of:)``) already documents having fixed
+    /// at the entry level, one level further down: entry ids, `"type"`
+    /// discriminators and JSON punctuation measured as if a tokenizer would
+    /// see them. Its cost is not marginal — a fold's boundary entry carries an
+    /// id for every entry in the live window *and* every entry it folded away,
+    /// so on a nineteen-entry transcript with UUID ids it measured about 300
+    /// estimated tokens, enough that a real fold reported a *larger*
+    /// transcript than the one it replaced (2074 -> 2143) and so raised
+    /// ``RoutedSession/contextFill``.
     var contentByteCount: Int {
         switch self {
         case .text(_, let content):
@@ -389,8 +415,8 @@ extension SegmentPayload {
             return utf8ByteCount(of: [schemaName, contentJSON])
         case .attachment(_, let label, let url):
             return utf8ByteCount(of: [label, url])
-        case .custom(_, let typeDiscriminator, let contentJSON, let description):
-            return utf8ByteCount(of: [typeDiscriminator, contentJSON, description])
+        case .custom:
+            return 0
         }
     }
 }

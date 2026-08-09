@@ -635,7 +635,31 @@ comments:
     - new task filed: `^f80n046` — `CompactionRoundTripIntegrationTests` and `CompactionContinuityEvaluationIntegrationTests` are flaky at HEAD, proven by five gated runs including two of HEAD's own unmodified code that disagree with each other.
     - next: `/review`. Acceptance criteria 3 (`factRetention` clause) is met and its review-findings box is checked with evidence; criterion 4 is left unchecked and untouched — the suite it names cannot currently answer the same way twice, which is `^f80n046`, not this card.
   timestamp: 2026-08-09T13:43:06.532693+00:00
-position_column: doing
+- actor: claude-code
+  id: 01kzkcxhz0s9amm5c8cmh8jwvh
+  text: |
+    ### review — findings
+
+    - evidence: `review sha HEAD~1..HEAD` (commit `dd91e56`). Engine counts: **26 findings, 26 confirmed, 0 refuted, 9 attempted, 0 failed, 0 skipped, 0 skipped files**. All 26 are `Magic numbers should be replaced by named constants.` in `Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift` (lines 146, 155, 164, 173, 182, 191, 200, 209, 221, 233, 245, 257, 269, 281, 290, 299, 308, 312, 325, 337, 349, 362, 371, 380, 389, 393 — 24 `recentTurnCount:`, 2 `probedFactIndex: 2`), and **all 26 are dropped under the skill's written test-refactor exception**: every one blames line-by-line to `598fc24c`, not to this delta's `dd91e56`. The delta's +87 lines to that file shifted those declarations downward and so drew the validator's eye, but authored none of them. **Zero actionable findings.** Nothing was raised against this delta's production change — `Sources/FoundationModelsRouter/Compaction/CompactionPrompt.swift` (the `Stated facts` section and the `router-default-v2` rename) drew zero findings.
+    - acceptance criteria audited on evidence, 13 of 15 boxes now checked (progress 0.867). Checked: 1 and 2 (iteration 1, documented on the card); **3** — `foldOccurred` 1.0 and `factRetention` 1.0 (24/24 on two consecutive gated runs) directly measured, and `fillBeforeCompaction >= 0.80` (`CompactionRoundTripIntegrationTests.swift:373`) absent from every failure list across all five runs recorded on `^f80n046` — the reported failures `:380`, `:392`, `:412` are all downstream of it and `#expect` is non-fatal, so `:373` was evaluated and passed each time, run 1 recording `0.89453` against the card's opening `0.4130859375`; **5** — `swift test` 768+22+24 = 814 tests, 0 failures, the only `warning:` being SwiftPM's pre-existing `missing creator for mutated node` for the vendored mlx-swift bundle; and both Tests items — gated runs one at a time, one shell command per run, and the two new ungated pins (`defaultPromptKeepsBareStatedFacts`, `noSeedRepeatsAnAssistantReply`) added and watched failing first, with 3 and 24 issues respectively.
+    - **Criterion 4 is left unchecked and is the only blocker.** `CompactionRoundTripIntegrationTests` does not answer the same way twice on identical code — `^f80n046`, five gated runs at 1 pass / 4 fails across both prompt versions, failure mode moving, HEAD's own unmodified code reproducing it in run 5. A suite green once in five runs cannot certify the criterion, and checking it on the single passing run would be the same error inverted. No assertion in that suite was modified by this delta and none may be to close this item. The structural doubt `^f80n046` raises (`checkpointedWindow.count == fullHistory.count == 19`, no summary entry recorded) lands squarely on criterion 4's checkpoint assertion — which is why criterion 4 stays unchecked while criterion 3 does not.
+    - next: the card cannot advance to `done` on this pass and stays in `review`, blocked solely on `^f80n046`. This card's own work is complete and clean — its production fix reviewed with zero findings, its `factRetention` criterion closed at 1.0 without loosening the `>= 0.9` bar. Criterion 4 closes when `^f80n046` makes the suite answer stably and it can be run to a real verdict, or when a human rewrites criterion 4. Do not fix the flakiness here.
+  timestamp: 2026-08-09T13:55:39.104836+00:00
+- actor: claude-code
+  id: 01kzkczk4qdb9gpve3axgk6911
+  text: |-
+    ### finish iteration 5 — findings (blocked, not stuck)
+    - implement: changed — 7 files. Two causes staged so neither could confound the other. (1) Production fold defect: CompactionPrompt.default gained a `Stated facts` section, renamed router-default-v2; isolation run with fixtures held byte-for-byte at old form moved summaryLostFact 1 -> 0. (2) Fixture artifact: every statement turn had shared the literal "Noted.", saturating the post-fold recency window; each turn now gets its own reply.
+    - test: green — swift test 814 passed (768+22+24), 0 failures, 32 skips all FM_ROUTER_INTEGRATION_TESTS-gated
+    - commit: dd91e56
+    - review: zero actionable findings. 26 engine findings, all `magic numbers` in Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift, every one verified by `git blame` to 598fc24c rather than to dd91e56 — the delta's +87 lines shifted those declarations down and drew the validator's attention but authored none of them, so all 26 drop under the written test-refactor exception. Sources/FoundationModelsRouter/Compaction/CompactionPrompt.swift drew zero findings.
+    - acceptance criteria: 13 of 15 checked. AC3's `fillBeforeCompaction >= 0.80` was judged on evidence rather than assumed: it is asserted at CompactionRoundTripIntegrationTests.swift:373, appears in no failure list across any of ^f80n046's five recorded runs (those are :380, :392, :412 — all downstream), and Swift Testing's `#expect` is non-fatal, so :373 was evaluated and passed every run; run 1 records 0.89453 against this card's opening 0.4130859375.
+    - BLOCKER: AC4 only. `CompactionRoundTripIntegrationTests` does not answer the same way twice on identical code (^f80n046: 1 pass / 4 fails, failure mode moving, HEAD's own unmodified code reproducing it). A suite green once in five runs cannot certify the criterion, and checking it on that single passing run would be the same error inverted. No assertion in that suite was touched.
+    - next: drive ^f80n046. This card is blocked on it, not stuck on its own work — the production fix reviewed clean and factRetention closed at 1.0 with the >= 0.9 bar untouched. Depends_on set so this card is not re-picked as ready while blocked.
+  timestamp: 2026-08-09T13:56:45.847436+00:00
+depends_on:
+- 01KZKC3QG0MMHRFBED7F80N046
+position_column: review
 position_ordinal: '80'
 title: Gated compaction suites never reach the 0.80 trigger on real hardware — live contextFill contradicts hermetic sizing
 ---
@@ -664,15 +688,15 @@ The hermetic tests that assert the fixtures are sized big enough all PASS in the
 So the hermetic budget/trigger accounting and the live `contextFill` measurement disagree by roughly 2x. Either the hermetic sizing model mis-estimates token counts (e.g. assumes a smaller context window than the real 27B exposes, or counts characters/entries where the live path counts real tokens), or live `contextFill` reads a different denominator than the budget's trigger compares against. Find which side is wrong before touching any fixture size or threshold — resizing fixtures to brute-force the trigger would paper over a real accounting bug.
 
 ## Acceptance Criteria
-- [ ] Root cause identified and stated: which of (hermetic sizing estimate) vs (live `contextFill` denominator) vs (trigger comparison) is wrong, with the token/window numbers that prove it
-- [ ] The disagreement between the passing hermetic sizing tests and the measured 0.41 live fill is closed — they measure the same thing, or the hermetic test is corrected to stop asserting something untrue
-- [ ] `FM_ROUTER_INTEGRATION_TESTS=1 swift test` reaches a real fold: `fillBeforeCompaction >= 0.80`, `foldOccurred` mean 1.0, `factRetention` mean >= 0.9
+- [x] Root cause identified and stated: which of (hermetic sizing estimate) vs (live `contextFill` denominator) vs (trigger comparison) is wrong, with the token/window numbers that prove it
+- [x] The disagreement between the passing hermetic sizing tests and the measured 0.41 live fill is closed — they measure the same thing, or the hermetic test is corrected to stop asserting something untrue
+- [x] `FM_ROUTER_INTEGRATION_TESTS=1 swift test` reaches a real fold: `fillBeforeCompaction >= 0.80`, `foldOccurred` mean 1.0, `factRetention` mean >= 0.9
 - [ ] `CompactionRoundTripIntegrationTests`' four assertions pass unmodified, or any change to them is justified as fixing a wrong assertion rather than lowering a bar
-- [ ] Ungated `swift test` stays green
+- [x] Ungated `swift test` stays green
 
 ## Tests
-- [ ] The gated run is the proof. Gated runs: one at a time, one shell command per run.
-- [ ] Add ungated coverage pinning whichever accounting bug is found, so it cannot silently return
+- [x] The gated run is the proof. Gated runs: one at a time, one shell command per run.
+- [x] Add ungated coverage pinning whichever accounting bug is found, so it cannot silently return
 
 
 ## Review Findings (2026-08-08 10:44)
@@ -744,4 +768,30 @@ All five findings of the 2026-08-08 11:26 section are `- [x]`, and this run adds
 ### Engine run notes
 
 `counts`: 0 findings, 0 confirmed, 0 refuted, 9 attempted, 0 failed, 0 skipped, no skipped files. Commit `fb49f78`'s code files are `Sources/FoundationModelsRouter/Recording/TranscriptEntryMapper.swift`, `Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift`, `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift`, `Tests/FoundationModelsRouterTests/PromptQueueTests.swift`, and `Tests/FoundationModelsRouterTests/PromptTextFlatteningTests.swift`; none was skipped for the prompt cap. No finding was dropped this pass — the engine reported none, so the skill's test-refactor exception had nothing to apply to.
+
+## Review Findings (2026-08-09 08:48)
+
+Scope: `review sha HEAD~1..HEAD` (commit `dd91e56`) — this iteration's delta only.
+
+Zero actionable findings. The engine returned 26 findings, and all 26 are dropped under the review skill's written test-refactor exception; the reasoning and the blame evidence are recorded below. This section therefore adds exactly one checklist item, and it is not an engine finding.
+
+- [ ] Acceptance criterion 4 — ``CompactionRoundTripIntegrationTests``' four assertions pass unmodified — is neither met nor refutable at HEAD, because the suite that hosts it does not answer the same way twice on identical code. That is filed as `^f80n046` (five gated runs: 1 pass / 4 fails, across both prompt versions, with the failure mode moving between a fill-ordering failure and a recall + checkpoint failure, and HEAD's own unmodified code reproducing the failure in run 5). The box is deliberately left unchecked: a suite that is green once in five runs cannot certify anything, and checking it on the one passing run would be the same error in the other direction. No assertion in that suite was modified by this delta, and none may be modified to close this item. **This is the only blocker on this card.** It is not this card's defect to fix — `^f80n046` owns it — so this item closes when `^f80n046` closes and the suite can be run to a stable verdict, or when a human rewrites criterion 4.
+
+### The 26 engine findings, and why every one is dropped
+
+All 26 are `Magic numbers should be replaced by named constants.` in `Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift`, at lines 146, 155, 164, 173, 182, 191, 200, 209, 221, 233, 245, 257, 269, 281, 290, 299, 308, 312, 325, 337, 349, 362, 371, 380, 389, and 393. Twenty-four are the `recentTurnCount:` argument of a `CompactionEvalFixtureSpec` (values 4, 5, 6, 7); two are `probedFactIndex: 2`.
+
+Every one of the 26 lines blames to `598fc24cb1d2816c26d92e9407e76b05b6384e37`, not to this delta's `dd91e56` — verified line by line with `git blame -L <n>,<n> --porcelain`. This delta did add 87 lines to that file (`CompactionEvalFillerTurn`, `compactionEvalFactAcknowledgements`, the filler pool 6 -> 8), which shifted these declarations down the file and so drew the validator's attention to them, but it did not author or alter a single flagged line. The subject of all 26 findings is therefore restyling test code that already existed, which the skill's blanket test-refactor exception drops outright. Recorded here for history; no action required, and none should be taken.
+
+### Acceptance criteria audited against evidence this pass
+
+Criteria 1, 2, 3, 5 and both Tests items are checked above on the evidence below. Criterion 4 is left unchecked, as its own item states.
+
+- **Criterion 3** is checked on all three of the numbers it names, so a note on the one that is not self-evident. `foldOccurred` mean 1.0 and `factRetention` mean 1.0 (24 of 24, on two consecutive gated runs) are directly measured and stable — `^f80n046` separately records that `mean(foldOccurred) == 1.0` "passes consistently". `fillBeforeCompaction >= 0.80` is asserted at `Tests/FoundationModelsRouterIntegrationTests/CompactionRoundTripIntegrationTests.swift:373`, inside the suite tracked flaky as `^f80n046` — but that assertion is absent from every failure list across all five recorded gated runs. The failures reported there are `:380`, `:392` and `:412`, all downstream of `:373`, and Swift Testing's `#expect` is non-fatal, so `:373` was evaluated and passed on each of the five runs; run 1 records the value `0.89453`. Against the card's opening measurement of `0.4130859375` the trigger defect is decisively gone. The structural doubt `^f80n046` does raise — `checkpointedWindow.count == fullHistory.count == 19`, i.e. no summary entry recorded — lands on criterion 4's checkpoint assertion, which is exactly why criterion 4 stays unchecked while criterion 3 does not.
+- **Criterion 5** is checked on `swift test` — 768 + 22 + 24 = **814 tests, 0 failures**. The only `warning:` line is SwiftPM's pre-existing `missing creator for mutated node` for the vendored mlx-swift bundle, which is out of this repo's scope.
+- **Tests items** are checked: gated runs were issued one at a time, one shell command per run, throughout iterations 4 and 5; and the ungated pins were added and watched failing first — `defaultPromptKeepsBareStatedFacts` failed with 3 issues against the seven-heading prompt and `noSeedRepeatsAnAssistantReply` failed with 24 issues, one per fixture, before the fixes landed.
+
+### Engine run notes
+
+`counts`: 26 findings, 26 confirmed, 0 refuted, 9 attempted, 0 failed, 0 skipped, no skipped files. All 26 are in the single test file `Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift` and all 26 are dropped under the test-refactor exception, so the engine raised nothing against this delta's production change — `Sources/FoundationModelsRouter/Compaction/CompactionPrompt.swift`, which carries the `Stated facts` section and the `router-default-v2` rename, drew zero findings.
 #phase-1
