@@ -469,7 +469,7 @@ struct CompactionSegmentTests {
     /// A minimal `LanguageModel` conformer satisfying
     /// ``LoadedLLMContainer/languageModel``'s requirement — never actually
     /// driven in this suite, since the test below only calls
-    /// ``RecordingLanguageModel/sync(_:)`` directly with a fabricated
+    /// ``RecordingLanguageModel/sync(_:usage:)`` directly with a fabricated
     /// transcript rather than driving a real `LanguageModelSession` turn.
     private struct UndrivenLanguageModel: LanguageModel {
         var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([]) }

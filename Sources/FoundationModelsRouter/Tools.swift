@@ -29,7 +29,7 @@ import Foundation
 /// A tool that condenses text through an injected generation handle.
 ///
 /// It holds the ``RoutedLLM`` a resolved ``LanguageModelProfile`` vends — pass
-/// the handle in; do not re-resolve. Each ``summarize(_:)`` vends a fresh
+/// the handle in; do not re-resolve. Each ``summarize(text:)`` vends a fresh
 /// ``RoutedSession`` over the shared resident model and runs one recorded
 /// generation through it, so the call flows through the handle's chokepoint and
 /// is stamped with its slot's provenance.
@@ -70,7 +70,7 @@ public struct SummarizeTool: Sendable {
 /// A tool that embeds text through an injected embedding handle.
 ///
 /// It holds the ``RoutedEmbedder`` a resolved ``LanguageModelProfile`` vends —
-/// pass the handle in; do not re-resolve. Each ``embed(_:)`` runs one recorded
+/// pass the handle in; do not re-resolve. Each ``embed(texts:)`` runs one recorded
 /// embedding through the shared resident model, stamped with the embedding
 /// slot's provenance.
 public struct EmbedTool: Sendable {

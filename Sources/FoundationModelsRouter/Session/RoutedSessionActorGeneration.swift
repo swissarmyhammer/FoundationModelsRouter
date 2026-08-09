@@ -7,7 +7,7 @@ extension RoutedSessionActor {
     /// Routes through the guided path when ``grammar`` is set, constraining the
     /// response to it through the backend's whole-chunk xgrammar entry point;
     /// otherwise runs the plain path. Both funnel through the same
-    /// ``generate(grammar:_:)`` chokepoint.
+    /// ``generate(grammar:prompt:onEvent:_:)`` chokepoint.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -23,7 +23,7 @@ extension RoutedSessionActor {
         // the plain path. Both funnel through the same chokepoint, which stamps
         // the grammar (or `nil`) onto each event and composes `prompt` with
         // whatever the outbox drains for this turn (see
-        // ``generate(grammar:prompt:_:)``).
+        // ``generate(grammar:prompt:onEvent:_:)``).
         try await generate(grammar: grammar, prompt: prompt, respondBody(grammar: grammar, maxTokens: maxTokens))
     }
 

@@ -74,7 +74,7 @@ public struct SlotProgress: Sendable, Equatable {
     }
 }
 
-/// The UI-bindable progress of a single ``Router/resolve(_:reporting:)`` call.
+/// The UI-bindable progress of a single ``Router/resolve(profile:reporting:)`` call.
 ///
 /// It is `@MainActor @Observable` so it can be bound directly into SwiftUI and
 /// drive a `ProgressView`; the router mutates it on the main actor as resolution

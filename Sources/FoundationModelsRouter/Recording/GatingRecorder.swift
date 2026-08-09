@@ -6,7 +6,7 @@ import Foundation
 /// It is the one place the recording level and redaction are applied, wrapping
 /// whichever concrete sink the router hands down (``JSONLRecorder``,
 /// ``InMemoryRecorder``, or ``NoneRecorder``). Because every event source —
-/// the session ``generate`` chokepoint and ``RoutedEmbedder/embed(_:)`` alike —
+/// the session ``generate`` chokepoint and ``RoutedModel/embed(texts:)`` alike —
 /// records through the recorder the router threaded to it, wrapping that one
 /// recorder makes all of them honor the level and hook without each having to
 /// know about gating:

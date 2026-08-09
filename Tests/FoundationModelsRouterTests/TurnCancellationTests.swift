@@ -358,7 +358,7 @@ struct TurnCancellationTests {
         ///
         /// The only way to reach it: `RoutedSessionActor.backend` is `private` and
         /// ``RoutedSession`` exposes no accessor for it, and
-        /// ``makeFoldTriggeredSession(_:budget:)`` has to start metering on the
+        /// ``makeFoldTriggeredSession(_:budget:metersTriggeringFill:)`` has to start metering on the
         /// session's own backend to move its measured ``RoutedSession/contextFill``.
         var lastVendedBackend: HookedSessionBackend? { lastVended.withLock { $0 } }
 
@@ -550,14 +550,14 @@ struct TurnCancellationTests {
     /// fold to have any old span left to summarize.
     private static let foldRecencyWindowTurns = 4
 
-    /// How many warm-up turns ``makeFoldTriggeredSession(_:budget:)`` drives
+    /// How many warm-up turns ``makeFoldTriggeredSession(_:budget:metersTriggeringFill:)`` drives
     /// before the turn that folds — past ``foldRecencyWindowTurns``, so the fold
     /// has an old span to condense and therefore a real summarizer call to make.
     private static let foldWarmUpTurnCount = 6
 
     /// The measured fill a fold test's budget folds at — ``TokenBudget``'s own
     /// default trigger, spelled out because these budgets are built by
-    /// ``foldBudget(targetTokens:)`` rather than by ``TokenBudget/init(limit:)``.
+    /// ``foldBudget(targetTokens:)`` rather than by ``TokenBudget/init(limit:trigger:target:hardCeiling:toolOutputLimit:)``.
     private static let foldFillTrigger = 0.8
 
     /// The share of the session's own resolved context window the last warm-up

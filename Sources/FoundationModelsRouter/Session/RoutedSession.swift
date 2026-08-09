@@ -24,7 +24,7 @@ public enum TurnCancellationResult: Sendable, Equatable {
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
-/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:)``
+/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
 /// — there is no public initializer — so it is born holding the router's
 /// recording root (``routerId``) and the non-optional ``TranscriptRecorder`` the
 /// vending handle carried, and it **retains its ``profile``** so the resident
@@ -83,8 +83,8 @@ public protocol RoutedSession: Actor {
     /// for an unconstrained session.
     ///
     /// Set when the session is vended by
-    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)`` and
-    /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:)``.
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` and
+    /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///
     /// It travels with the session so ``fork(workingDirectory:)`` inherits it;
     /// ``streamResponse(to:)`` stays unconstrained regardless.
@@ -122,7 +122,7 @@ public protocol RoutedSession: Actor {
     ///   `(tokensIn + tokensOut) / contextTokens` — the newest turn's own
     ///   count already *is* the whole transcript, tokenized by the actual
     ///   model, because generation is stateless over transcripts.
-    /// - Restored from disk (``RoutedModel/restoreSessionTree(root:registry:)``)
+    /// - Restored from disk (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``)
     ///   with a stamped `.response` event recorded before the restore: that
     ///   stamp's `(tokensIn + tokensOut) / contextTokens`.
     /// - Restored from disk with no stamp at all (a pre-metering recording,

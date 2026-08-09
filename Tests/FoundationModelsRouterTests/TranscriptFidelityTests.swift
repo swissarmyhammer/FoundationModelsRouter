@@ -8,7 +8,7 @@ import Testing
 /// persistence — recorded per-turn content events are derived exclusively
 /// from `backend.transcriptEntries()` deltas, not from hand-built
 /// prompt/response strings. See plan.md's "Transcript fidelity" section and
-/// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``.
+/// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, canned/variable LLM
 /// containers, and either a ``JSONLRecorder`` writing into a temp directory or

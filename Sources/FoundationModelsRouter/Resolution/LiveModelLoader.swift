@@ -177,7 +177,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// Manufactures a live session backend seeded from an existing transcript,
     /// with `tools` threaded to the underlying `LanguageModelSession` so the
     /// model can call them — the seam a restored session tree
-    /// (``RoutedModel/restoreSessionTree(root:registry:tools:)``) needs to
+    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``) needs to
     /// give a restored node real, live tool-calling instead of `tools: []`.
     ///
     /// Builds the new `LanguageModelSession` directly over `transcript` via
@@ -464,7 +464,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// still be wired to an ancestor's outbox, defeating the fork-then-elevate
     /// composition's whole point for any tool the model actually invokes).
     ///
-    /// Delegates to ``makeSessionBackend(model:transcript:tools:instructions:)``,
+    /// Delegates to ``makeSessionBackend(model:transcript:tools:samplingMode:instructions:)``,
     /// passing ``instructions`` explicitly so the forked backend reports this
     /// backend's own instructions verbatim rather than re-deriving them from
     /// the (identical, at fork time) transcript.

@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises the ``Router`` actor's async ``Router/resolve(_:reporting:)``
+/// Exercises the ``Router`` actor's async ``Router/resolve(profile:reporting:)``
 /// orchestration end to end with a stubbed machine probe, metadata source, and
 /// model loader — no network, no GPU. The stubs observe the live
 /// ``ResolutionProgress`` phase at each call so the test can assert the

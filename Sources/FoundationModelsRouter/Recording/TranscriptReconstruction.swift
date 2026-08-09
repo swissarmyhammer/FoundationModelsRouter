@@ -3,7 +3,7 @@ import Foundation
 
 /// A failure reconstructing a `FoundationModels.Transcript` from a session's
 /// effective entry-kind events — thrown by
-/// ``TranscriptTree/effectiveTranscript(forSession:registry:)``.
+/// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``.
 ///
 /// Faithful reconstruction is a property of `full`-level recordings only
 /// (see plan.md's "Transcript fidelity" section, "Honest fidelity scope"):
@@ -102,7 +102,7 @@ public enum TranscriptReconstructionView: Sendable, Equatable {
     /// governs — earlier ones become historical markers, reachable only
     /// through ``fullHistory``.
     ///
-    /// This is the default, and what ``RoutedModel/restoreSessionTree(root:registry:)``
+    /// This is the default, and what ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
     /// always seeds a restored session's backend from.
     case restore
 
@@ -221,7 +221,7 @@ extension TranscriptTree {
 
     /// The restored ``ContextUsageState`` `events` implies
     /// (compaction_plan.md §1.5, checkpoint-aware restore precedence), used
-    /// by ``RoutedModel/restoreSessionTree(root:registry:)`` to seed a
+    /// by ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` to seed a
     /// restored session's ``RoutedSession/contextFill``:
     ///
     /// 1. The newest stamped `.response` event recorded *after* the newest
@@ -368,7 +368,7 @@ extension TranscriptTree {
     ///   era's bracket wrote `await append(makePartialEvent(kind: .prompt,
     ///   ...))` *unconditionally*, before ever calling into the backend —
     ///   so even a turn that failed instantly still left a `.prompt` event
-    ///   on disk, one `seq` before its `.response`. ``effectiveTranscript(forSession:registry:)``
+    ///   on disk, one `seq` before its `.response`. ``effectiveTranscript(forSession:registry:view:)``
     ///   processes `events` in `seq` order and throws immediately on the
     ///   first unresolvable event, and `.prompt` is never `.response`-kind,
     ///   so this check never applies to it: a genuine v1 turn's `.prompt`

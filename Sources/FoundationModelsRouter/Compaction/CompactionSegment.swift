@@ -33,8 +33,8 @@ import FoundationModels
 /// round-trips through ``TranscriptEntryMapper/entry(from:kind:registry:)``
 /// with zero schema work once a registry knows about it. Router pre-registers
 /// this type in ``CustomSegmentRegistry/routerDefault``, so every default-
-/// argument reconstruction entry point (``TranscriptTree/effectiveTranscript(forSession:registry:)``,
-/// ``RoutedModel/restoreSessionTree(root:registry:)``,
+/// argument reconstruction entry point (``TranscriptTree/effectiveTranscript(forSession:registry:view:)``,
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``,
 /// ``RoutedModel/makeLanguageModel(resuming:registry:)``) rebuilds a recorded
 /// `CompactionSegment` with no consumer setup — see the mechanism precedent,
 /// ``OperationEventSegment``, for the same round-trip shape applied to a

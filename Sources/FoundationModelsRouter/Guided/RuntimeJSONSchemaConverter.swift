@@ -4,8 +4,8 @@ import Foundation
     import FoundationModels
 
     /// Compiles a caller's runtime JSON Schema **document** into Apple's
-    /// `GenerationSchema`, for the ``RoutedModel/respond(to:matching:)`` (dynamic)
-    /// and ``RoutedModel/respond(to:following:)`` (raw, `.jsonSchema` source)
+    /// `GenerationSchema`, for the ``RoutedModel/respond(to:matching:maxTokens:)`` (dynamic)
+    /// and ``RoutedModel/respond(to:following:maxTokens:)`` (raw, `.jsonSchema` source)
     /// guided-generation shapes.
     ///
     /// ## Why this exists

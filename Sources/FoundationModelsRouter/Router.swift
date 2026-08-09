@@ -25,7 +25,7 @@ public let defaultHeadroomReserveBytes: Int64 = 4 << 30
 ///
 /// The level (and the ``Router``'s `redact` hook) are enforced by a
 /// ``GatingRecorder`` the router wraps its sink in, so every event source — the
-/// session ``generate`` chokepoint and ``RoutedEmbedder/embed(_:)`` alike —
+/// session ``generate`` chokepoint and ``RoutedModel/embed(texts:)`` alike —
 /// honors them at record time.
 public enum RecordingLevel: String, Sendable, Codable, Equatable {
     /// Record nothing.
@@ -133,7 +133,7 @@ private struct PoolEntry: Sendable {
 /// every profile that references it: two profiles naming the same model
 /// share one loaded instance and its generation gate, and a model stays
 /// loaded only while at least one profile still references it (see
-/// ``resolve(_:reporting:)`` and ``release(token:)``).
+/// ``resolve(profile:reporting:)`` and ``release(token:)``).
 ///
 /// `resolve(_:reporting:)` itself is single-flight — serialized by
 /// `poolLock` — so the budget decision for a new resolve is never
@@ -185,7 +185,7 @@ public actor Router {
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
 
-    /// Serializes every entry point that mutates ``pool`` — ``resolve(_:reporting:)``
+    /// Serializes every entry point that mutates ``pool`` — ``resolve(profile:reporting:)``
     /// end to end *and* ``release(token:)`` — so the budget decision (effective-
     /// budget computation → joint fit → pool acquisition) a resolve makes is
     /// never invalidated by a concurrent mutation. This is the single
@@ -215,7 +215,7 @@ public actor Router {
 
     /// The resident-model pool, keyed by exact artifact identity and
     /// reference-counted across every profile that references it. The
-    /// authority ``resolve(_:reporting:)`` and ``release(token:)`` operate on.
+    /// authority ``resolve(profile:reporting:)`` and ``release(token:)`` operate on.
     private var pool: [ResidencyKey: PoolEntry] = [:]
 
     /// Which pool keys each currently resident profile (by its residency
@@ -306,7 +306,7 @@ public actor Router {
     /// pooled model is still referenced by a live profile).
     ///
     /// Single-flight: the whole pipeline (through the final pool acquisition)
-    /// is serialized against any other in-flight ``resolve(_:reporting:)`` on
+    /// is serialized against any other in-flight ``resolve(profile:reporting:)`` on
     /// this router, so the budget decision is always made against a
     /// consistent snapshot of the pool.
     ///
@@ -546,7 +546,7 @@ public actor Router {
     /// another still-live profile also references stays resident.
     ///
     /// Called by ``LanguageModelProfile/release()`` (and its `deinit`), and
-    /// by ``resolve(_:reporting:)`` itself to roll back a failed attempt.
+    /// by ``resolve(profile:reporting:)`` itself to roll back a failed attempt.
     /// Idempotent and safe against staleness: `token` is looked up (and
     /// removed) from ``residentProfiles``, so a double release — or a
     /// `deinit` firing after an explicit release — finds nothing and is a
@@ -556,7 +556,7 @@ public actor Router {
     /// never collide with a later profile's token.
     ///
     /// Also serialized by ``poolLock`` against any in-flight
-    /// ``resolve(_:reporting:)`` — see that property's doc comment for why
+    /// ``resolve(profile:reporting:)`` — see that property's doc comment for why
     /// this is not optional: without it, this could evict a key a
     /// concurrent resolve's already-committed pricing decision assumed was
     /// still free to reuse.

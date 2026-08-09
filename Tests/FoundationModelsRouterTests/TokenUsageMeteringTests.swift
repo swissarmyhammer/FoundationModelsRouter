@@ -177,7 +177,7 @@ struct TokenUsageMeteringTests {
 
     /// Builds a router wired with a durable, on-disk recordings root, so a
     /// session vended from it can later be restored via
-    /// ``RoutedModel/restoreSessionTree(root:registry:)``.
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``.
     private static func makeDurableRouter(
         id: ULID = .generate(),
         usageIncrement: (input: Int, output: Int)?,

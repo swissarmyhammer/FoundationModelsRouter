@@ -10,7 +10,7 @@ import Foundation
 /// instead of a per-consumer type of its own. ``RoutedSession/streamEvents(to:maxTokens:)``
 /// emits every case, including ``compaction(_:)`` — the auto-compaction
 /// opt-in threaded through the same chokepoint (task 8213x39,
-/// ``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``'s
+/// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
 /// `budget:` parameter): a session with a budget set emits this whenever it
 /// folds mid-turn on its own, proactively before a turn whose measured fill
 /// has already reached the budget's trigger, or reactively after a turn

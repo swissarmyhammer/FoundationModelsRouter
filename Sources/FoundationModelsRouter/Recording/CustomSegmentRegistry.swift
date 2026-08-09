@@ -150,8 +150,8 @@ public struct CustomSegmentRegistry: Sendable {
 
 extension CustomSegmentRegistry {
     /// The registry every Router reconstruction entry point defaults its
-    /// `registry:` parameter to — ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
-    /// ``RoutedModel/restoreSessionTree(root:registry:)``, and
+    /// `registry:` parameter to — ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``,
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``, and
     /// ``RoutedModel/makeLanguageModel(resuming:registry:)`` — pre-seeded with
     /// ``CompactionSegment``, so a compacted session restores with zero
     /// consumer configuration: without this, the first compacted session

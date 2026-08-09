@@ -174,7 +174,7 @@ extension Grammar {
 
 /// The guided-generation surface on the generation handle.
 ///
-/// Like ``RoutedModel/makeSession(instructions:workingDirectory:)``, these arrive
+/// Like ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``, these arrive
 /// as a container-constrained extension so they are invisible on
 /// ``RoutedEmbedder``. Both produce *raw* constrained text — no token streaming
 /// (``RoutedSession/streamResponse(to:)`` stays unconstrained-only) and no typed
@@ -209,7 +209,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// The grammar travels with the session, so a milestone-9 fork inherits it.
     /// The session is otherwise identical to one from
-    /// ``makeSession(instructions:workingDirectory:)`` — it inherits this handle's
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` — it inherits this handle's
     /// recorder and router id, retains the owning profile, and funnels every turn
     /// through the recorder-bracketed chokepoint, which stamps the grammar onto
     /// each event. Its ``RoutedSession/streamResponse(to:)`` stays
@@ -269,7 +269,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 /// These are factored out of the ``RoutedModel`` shapes so they can be exercised
 /// directly in the unit suite without a model: the only gated part of guided
 /// generation is the constrained decode itself (milestone 7), which the shapes
-/// reach through the raw ``RoutedModel/respond(to:following:)`` layer. The
+/// reach through the raw ``RoutedModel/respond(to:following:maxTokens:)`` layer. The
 /// `Generable`-facing steps are compiled only where Apple's FoundationModels
 /// framework is available (see the `canImport(FoundationModels)` extension below).
 enum GuidedShapes {
@@ -305,7 +305,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// This is the shape for a schema known only at runtime — an MCP tool's
     /// `inputSchema`, say — where there is no `Generable` type to decode into. The
     /// caller's schema string is wrapped as a ``Grammar/jsonSchema(_:)`` and
-    /// routed through the raw ``respond(to:following:)`` layer (which validates it
+    /// routed through the raw ``respond(to:following:maxTokens:)`` layer (which validates it
     /// against the xgrammar subset), then the constrained output is parsed into a
     /// ``JSONValue`` the caller introspects dynamically — never decoded to a fixed
     /// type.
@@ -379,7 +379,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         ///
         /// The schema is *derived from* `T` (its `GenerationSchema` encoded to JSON
         /// Schema), wrapped as a ``Grammar/jsonSchema(_:)``, and routed through the
-        /// raw ``respond(to:following:)`` layer; the constrained output is then
+        /// raw ``respond(to:following:maxTokens:)`` layer; the constrained output is then
         /// decoded into `T`. Both the derivation and the decode are pure and
         /// unit-tested; only the constrained decode in between is gated to
         /// milestone 7.

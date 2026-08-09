@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task jkdae4b: threading `[any FoundationModels.Tool]` through
-/// ``RoutedModel/restoreSessionTree(root:registry:tools:)`` — the seam that
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` — the seam that
 /// used to hardcode `tools: []` through ``LoadedLLMContainer/makeSession(transcript:)``,
 /// leaving a restored session tree with no live tool-calling at all.
 ///
@@ -42,7 +42,7 @@ struct SessionTreeRestorationToolWiringTests {
 
     /// A ``LoadedLLMContainer`` that records the `tools` most recently passed
     /// to `makeSession(transcript:tools:)` — the seam
-    /// ``RoutedModel/restoreSessionTree(root:registry:tools:)`` threads its
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` threads its
     /// own per-node instanced tool list through — plus every backend it has
     /// vended, keyed by call order, so a test can inspect each restored
     /// node's own threaded list rather than only the last one.

@@ -40,7 +40,7 @@ extension RoutedSessionActor {
         // for this session. This site's chain is fork →
         // elevate → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
-        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:)``
+        // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
@@ -185,7 +185,7 @@ extension RoutedSessionActor {
     /// run, no orphans, no holes.
     ///
     /// **Restore-time decision, stated deliberately:** these `.toolOutput`
-    /// events are entry-kind, so ``TranscriptTree/effectiveTranscript(forSession:registry:)``
+    /// events are entry-kind, so ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
     /// rebuilds each one into the restored transcript as a
     /// `Transcript.Entry.toolOutput` (with no paired `.toolCalls` — the run
     /// was detached, not model-invoked). That is intended: a restored

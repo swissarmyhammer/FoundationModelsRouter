@@ -3,7 +3,7 @@ import FoundationModels
 import os
 
 /// The logger ``RecordingLanguageModelState`` reports a defensively-clamped
-/// transcript shrink to (see ``RecordingLanguageModelState/diffAndRecord(current:)``)
+/// transcript shrink to (see ``RecordingLanguageModelState/diffAndRecord(current:usage:)``)
 /// — mirrors ``RoutedSessionActor``'s own `sessionRecordingLogger` in
 /// Session/RoutedSessionActorRecording.swift, kept as a separate constant since
 /// that one is `private` to its own file.
@@ -17,7 +17,7 @@ private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording
 /// Vended only by ``RoutedModel/makeLanguageModel()`` — there is no public
 /// initializer — each call mints a fresh handle carrying its own per-handle
 /// state (``RecordingLanguageModelState``): a session ULID, a recording
-/// directory nested the same way ``RoutedModel/makeSession(instructions:workingDirectory:)``'s
+/// directory nested the same way ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
 /// is, and a last-seen ``FoundationModels/Transcript`` snapshot. Two live
 /// handles never interleave events or share a directory.
 ///
@@ -33,7 +33,7 @@ private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording
 ///
 /// The turn-final response is not observable at the executor boundary (only
 /// the request's *input* transcript is visible on any one call), so
-/// ``sync(_:)`` closes that gap: call it with `session.transcript` at turn
+/// ``sync(_:usage:)`` closes that gap: call it with `session.transcript` at turn
 /// end to record the final response. Any later `respond` call on the same
 /// session back-fills automatically via the diff, so mid-turn records are
 /// complete even without `sync`; `sync` matters for the last turn before
@@ -205,7 +205,7 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
 /// An actor — not a plain lock-guarded class — because
 /// ``RecordingLanguageModel/Executor/respond(to:model:streamingInto:)`` is not
 /// itself isolated (`LanguageModelExecutor`'s protocol requirement is
-/// `nonisolated(nonsending)`) and ``RecordingLanguageModel/sync(_:)`` is called
+/// `nonisolated(nonsending)`) and ``RecordingLanguageModel/sync(_:usage:)`` is called
 /// directly by a turn owner, potentially from any isolation domain. Both entry
 /// points additionally acquire the shared ``RoutedModel/generationGate`` around
 /// their whole diff-and-record (and, for `generate`, the inner passthrough)
@@ -254,7 +254,7 @@ actor RecordingLanguageModelState {
     nonisolated let forkedAtEntryCount: Int?
 
     /// The last-seen transcript snapshot every diff runs against; updated
-    /// after each successful diff (see ``diffAndRecord(current:)``). Primed
+    /// after each successful diff (see ``diffAndRecord(current:usage:)``). Primed
     /// to the resumed session's own reconstructed transcript for a handle
     /// born via ``RoutedModel/makeLanguageModel(resuming:registry:)``, so its
     /// first diff records only genuinely new entries — never the whole
@@ -327,7 +327,7 @@ actor RecordingLanguageModelState {
 
     /// The chokepoint every ``RecordingLanguageModel/Executor/respond(to:model:streamingInto:)``
     /// call runs through: diffs and gates on `request.transcript` (see
-    /// ``enterGateAndDiff(_:)``), then passes the request straight through
+    /// ``enterGateAndDiff(_:usage:)``), then passes the request straight through
     /// to the wrapped model's own (cached) executor over the SAME outer
     /// `channel` — still inside the gate, so generation itself, not just the
     /// diff, stays serialized — before releasing it.
@@ -352,7 +352,7 @@ actor RecordingLanguageModelState {
     }
 
     /// Diffs `transcript` against last-seen and records anything new (see
-    /// ``enterGateAndDiff(_:)``), closing the gap
+    /// ``enterGateAndDiff(_:usage:)``), closing the gap
     /// ``generate(request:channel:innerRespond:)`` cannot: the turn-final
     /// response, only ever visible once a turn's driving
     /// `LanguageModelSession` has returned. Idempotent — a `transcript`
@@ -404,7 +404,7 @@ actor RecordingLanguageModelState {
     /// Acquires the shared generation gate (via ``enterGateAndRecordMeta(_:)``)
     /// — without releasing it — and diffs `transcript` against last-seen,
     /// appending whatever is new. The shared chokepoint behind both
-    /// ``generate(request:channel:innerRespond:)`` and ``sync(_:)``, which
+    /// ``generate(request:channel:innerRespond:)`` and ``sync(_:usage:)``, which
     /// differ only in what (if anything) they run inside the gate after this
     /// returns; callers MUST release the gate themselves once that
     /// additional work completes — `generate` defers the signal around its
@@ -425,7 +425,7 @@ actor RecordingLanguageModelState {
     /// and persists exactly what is new, then updates ``lastSeen``.
     ///
     /// Defensively resets the baseline (recording nothing for this call, like
-    /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``'s
+    /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``'s
     /// own guard) rather than trapping when `current` is shorter than
     /// ``lastSeen`` — nothing guarantees the SDK's transcript stays
     /// strictly append-only forever.
@@ -433,7 +433,7 @@ actor RecordingLanguageModelState {
     /// When `usage` is non-nil, it is stamped as `tokensIn`/`tokensOut` (via
     /// ``TranscriptEvent/Partial/stampingUsage(tokensIn:tokensOut:)``) onto
     /// the *last* `.response`-kind partial this diff produced — mirroring
-    /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:)``'s
+    /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``'s
     /// own placement of the turn's usage delta on its diff's closing
     /// `.response` event, not every appended event.
     ///

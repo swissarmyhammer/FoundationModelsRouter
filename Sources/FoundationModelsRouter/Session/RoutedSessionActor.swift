@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 
 /// Builds a ``RoutedSessionActor``, the shared construction path behind both a
-/// fresh root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:)``)
+/// fresh root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
 /// and a forked child (``RoutedSessionActor/fork(workingDirectory:)``).
 ///
 /// The two call sites' constructor invocations used to be near-verbatim
@@ -15,7 +15,7 @@ import FoundationModels
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:contextTokens:usageState:autoCompactionBudget:autoCompactionPrompt:agentSpawn:discoveryPriming:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -81,10 +81,10 @@ func makeRoutedSessionActor(
 /// The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``.
 ///
 /// It is `internal` with an `internal` initializer so the only way to obtain one
-/// is ``RoutedModel/makeSession(instructions:workingDirectory:)`` — there is no
+/// is ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` — there is no
 /// public initializer. The recorder and `routerId` flow down from the vending
 /// handle; the `backend`, `slot`, and `model` are what the single
-/// ``generate(grammar:_:)`` chokepoint runs the model with.
+/// ``generate(grammar:prompt:onEvent:_:)`` chokepoint runs the model with.
 actor RoutedSessionActor: RoutedSession {
     nonisolated let profile: LanguageModelProfile
     nonisolated let routerId: ULID
@@ -152,7 +152,7 @@ actor RoutedSessionActor: RoutedSession {
     /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     /// This is the
     /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
-    /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
+    /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
     /// computes it before the backend exists), or via
     /// ``LanguageModelSessionBackend/makeFork(tools:)`` for a fork (see
     /// ``fork(workingDirectory:)``) — retained here too so it stays
@@ -164,7 +164,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Fresh per session: a root session is constructed already holding a
     /// brand-new, empty outbox and its own ``tools`` instanced to it (a pure
     /// map, computed by the caller before this session exists — see
-    /// ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``);
+    /// ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``);
     /// ``fork(workingDirectory:)`` builds another fresh outbox for the child
     /// and its own fork-then-elevate composed tool list instead — deliberately
     /// not sharing this session's outbox with the fork. Because this
@@ -315,7 +315,7 @@ actor RoutedSessionActor: RoutedSession {
     /// measured usage, or (restored, unstamped) unknown. See
     /// ``ContextUsageState``.
     ///
-    /// Updated by ``finishTurn(grammar:since:usageBefore:pendingEvents:)``
+    /// Updated by ``finishTurn(grammar:since:usageBefore:pendingEvents:onEvent:)``
     /// only when the SDK's own transcript diff actually included a
     /// `.response`-kind entry for the turn — a turn rejected before ever
     /// touching the backend (e.g. a guided turn whose grammar validation
@@ -331,7 +331,7 @@ actor RoutedSessionActor: RoutedSession {
     /// turn that still overflows mid-generation
     /// (`LanguageModelError.contextSizeExceeded`) is compacted harder and
     /// retried exactly once before the error surfaces. Set at construction
-    /// (``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``)
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
     /// and carried forward by ``fork(workingDirectory:)`` — a fork manages
     /// its own window exactly like its parent.
     nonisolated let autoCompactionBudget: TokenBudget?
@@ -375,10 +375,10 @@ actor RoutedSessionActor: RoutedSession {
     /// `makeSession` or a `fork`.
     ///
     /// Internal: construction is only via
-    /// ``RoutedModel/makeSession(instructions:workingDirectory:)`` /
-    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:)``,
+    /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` /
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
     /// ``fork(workingDirectory:)``, or
-    /// ``RoutedModel/restoreSessionTree(root:registry:)``.
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``.
     ///
     /// Every parameter here is documented on the stored property it
     /// initializes, above — no separate `Parameters:` block, so there is

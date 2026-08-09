@@ -262,7 +262,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// The pieces ``recordedEntryKindsMatchSessionTranscriptKinds()`` and its
     /// streaming counterpart both need: a real ``RoutedSessionActor`` wired
     /// directly to the already-loaded tiny model's backend (bypassing
-    /// ``Router/resolve(_:reporting:)``, which would need a real
+    /// ``Router/resolve(profile:reporting:)``, which would need a real
     /// `.flash`/`.embedding` download too), plus the on-disk locations its
     /// transcript is recorded under, via the same `internal` initializers
     /// production code uses — the same technique this file's other tests use

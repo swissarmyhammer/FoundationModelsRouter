@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task s61g2vb's per-session tool composition:
-/// ``RoutedModel/makeSession(instructions:workingDirectory:tools:)`` wrapping
+/// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` wrapping
 /// every String-output tool in the session's own ``ElevatingTool`` layer and
 /// every non-String-output tool in the binding-only ``ContextBindingTool``
 /// (task ^6htgvw2) — either way the ambient ``ToolContext`` posts the tool's
@@ -88,7 +88,7 @@ struct SessionOutboxToolWiringTests {
 
     /// A ``LoadedLLMContainer`` that records the `tools` it was handed at
     /// session-construction time, so a test can assert the exact list
-    /// ``RoutedModel/makeSession(instructions:workingDirectory:tools:)`` passed
+    /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` passed
     /// through reached the container/backend-construction boundary — the seam
     /// the live container threads into `LanguageModelSession(model:tools:instructions:)`.
     /// `@unchecked Sendable` invariant: `lastTools` is written once, synchronously,

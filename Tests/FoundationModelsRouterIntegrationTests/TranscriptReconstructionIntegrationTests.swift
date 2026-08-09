@@ -30,7 +30,7 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
 
 /// Gated real-model coverage for task dw0zx8k: reconstructing a real
 /// `FoundationModels.Transcript` from recorded events end-to-end against a
-/// live model, proving ``TranscriptTree/effectiveTranscript(forSession:registry:)``
+/// live model, proving ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
 /// against something more than stub-fabricated entries (see plan.md's
 /// "Transcript fidelity" section, "Reconstruction end-to-end").
 ///
@@ -203,7 +203,7 @@ struct TranscriptReconstructionIntegrationTests {
 
     /// Task dw0zx8k's core acceptance criterion, proved against a real
     /// model: after one live turn recorded at `full`, the `Transcript`
-    /// ``TranscriptTree/effectiveTranscript(forSession:registry:)`` rebuilds
+    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` rebuilds
     /// from disk has the same entry kinds and count — one-for-one, in order —
     /// as the live `LanguageModelSession`'s own `transcript` actually
     /// accumulated.

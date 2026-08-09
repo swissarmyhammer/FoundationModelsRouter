@@ -16,7 +16,7 @@ import Testing
 ///    but keeps counts/kinds/provenance, `full` keeps bodies, and `redact`
 ///    transforms recorded text before it is written. The gate is wired through
 ///    the recorder the router hands down, so both the session chokepoint and
-///    ``RoutedEmbedder/embed(_:)`` honor it, and a sink write failure stays
+///    ``RoutedModel/embed(texts:)`` honor it, and a sink write failure stays
 ///    best-effort (logged, swallowed) under gating.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, a canned LLM

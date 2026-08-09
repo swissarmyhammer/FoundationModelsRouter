@@ -115,7 +115,7 @@ extension RoutedSessionActor {
     /// ``RoutedSession/contextFill``), so isolation is never bypassed. There
     /// is no data race: every read or write of ``usageState`` — `init`, here,
     /// ``compact(prompt:budget:)``, ``fork(workingDirectory:)``, the trigger and ceiling checks in ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``,
-    /// and ``finishTurn(grammar:since:usageBefore:pendingEvents:)`` — executes
+    /// and ``finishTurn(grammar:since:usageBefore:pendingEvents:onEvent:)`` — executes
     /// inside this actor's isolation domain.
     var contextFill: Double {
         usageState.fill(contextTokens: contextTokens)

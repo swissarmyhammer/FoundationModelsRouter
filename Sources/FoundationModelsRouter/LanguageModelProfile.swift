@@ -7,7 +7,7 @@ import Foundation
 /// registered after the fact through this box. The held reference is **weak**:
 /// the profile already holds its models strongly for residency, and a strong
 /// reference back would form a retain cycle that defeats the profile's
-/// `deinit`-driven eviction. A session vended by ``RoutedModel/makeSession(instructions:workingDirectory:)``
+/// `deinit`-driven eviction. A session vended by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
 /// reads the profile here and retains it strongly, so the resident models stay
 /// alive for the session's lifetime even after the caller drops its profile
 /// handle.
@@ -89,8 +89,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// read, so the type does not offer that pairing (see ``DurableRecording``).
     ///
     /// Only the generation-session surface consumes either half
-    /// (``makeSession(instructions:workingDirectory:)`` /
-    /// ``makeGuidedSession(grammar:instructions:workingDirectory:)`` /
+    /// (``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` /
+    /// ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` /
     /// ``RoutedSessionActor/fork(workingDirectory:)``); the embedding handle
     /// never vends sessions, so it carries this only for storage symmetry.
     public let durableRecording: DurableRecording?
@@ -110,7 +110,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
 
     /// The weak back-reference to the profile that owns this model, registered by
     /// ``LanguageModelProfile``'s initializer. A session vended from this handle
-    /// reads it to retain the profile (see ``makeSession(instructions:workingDirectory:)``).
+    /// reads it to retain the profile (see ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``).
     let owningProfileBox = OwningProfileBox()
 
     /// The per-model generation gate (a fair FIFO ``AsyncSemaphore`` at value

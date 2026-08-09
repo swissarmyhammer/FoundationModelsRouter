@@ -112,7 +112,7 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// transcript, with `tools` threaded to the underlying `LanguageModelSession`
     /// so the model can call them.
     ///
-    /// This is the seam ``RoutedModel/restoreSessionTree(root:registry:tools:)``
+    /// This is the seam ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
     /// threads its own per-restored-node instanced tool list through, mirroring
     /// how ``makeSession(instructions:tools:)`` threads tools to a from-scratch
     /// session — a restored session tree gets real, live tool-calling instead
@@ -193,13 +193,13 @@ public protocol LoadedEmbeddingContainer: LoadedModelContainer {
     func embed(texts: [String]) async throws -> [[Float]]
 }
 
-/// The download-and-load step behind ``Router/resolve(_:reporting:)``,
+/// The download-and-load step behind ``Router/resolve(profile:reporting:)``,
 /// abstracted so the orchestration is unit-testable without network or GPU.
 ///
 /// The live implementation is ``LiveModelLoader``, which downloads weights from
 /// the Hugging Face Hub and materializes MLX containers; tests inject a stub
 /// that returns fake handles. `loadLLM` and `loadEmbedder` perform the download
-/// (reporting byte progress) and produce a resident container; ``preload(_:)``
+/// (reporting byte progress) and produce a resident container; ``preload(container:)``
 /// is the warm-up hook run once a container exists.
 public protocol ModelLoader: Sendable {
     /// Downloads and loads a generation model, reporting download progress.
@@ -244,7 +244,7 @@ public protocol ModelLoader: Sendable {
     /// Called from ``LanguageModelProfile/release()`` (and its `deinit`) so the
     /// router's one-active-profile rule can free RAM before another profile is
     /// resolved. Routing eviction through the loader keeps it stubbable: unit
-    /// tests inject a loader whose ``evict(_:)`` counts calls, with no real MLX
+    /// tests inject a loader whose ``evict(container:)`` counts calls, with no real MLX
     /// unload required. Best-effort and non-throwing.
     ///
     /// - Parameter container: The container to evict.

@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises milestone 5b: the generation-session surface
-/// (``RoutedModel/makeSession(instructions:workingDirectory:)``) and its single
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``) and its single
 /// recorder-bracketed `generate` chokepoint on the vended ``RoutedSession``.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader`` with an eviction spy,

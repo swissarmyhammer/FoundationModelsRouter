@@ -51,7 +51,7 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
 /// downloads too) — the same manual-harness technique
 /// ``SessionTreeRestorationIntegrationTests`` uses — so this suite reaches the
 /// real public ``RoutedSession/compact(prompt:budget:)`` /
-/// ``RoutedModel/restoreSessionTree(root:registry:)`` surface without paying
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` surface without paying
 /// for two extra downloads. `Self.context` (2048) is deliberately smaller than
 /// `RealModels.context` (8192) — the same convention `Examples/CompactionDemo`
 /// uses — so a handful of scripted turns crosses the 0.80 compaction trigger

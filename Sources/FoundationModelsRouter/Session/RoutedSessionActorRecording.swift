@@ -420,7 +420,7 @@ extension RoutedSessionActor {
     /// Builds an event of the given kind stamped with this session's provenance.
     ///
     /// The `session` meta event, every entry-derived event
-    /// ``recordTranscriptDelta(grammar:since:usage:)`` appends, and the throwing
+    /// ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)`` appends, and the throwing
     /// path's bodyless close event all share this one helper; a close-carrying
     /// call passes `since` to record the turn's measured duration.
     ///

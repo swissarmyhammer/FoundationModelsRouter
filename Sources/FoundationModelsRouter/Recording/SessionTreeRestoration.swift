@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 
 /// A failure restoring a session tree from disk via
-/// ``RoutedModel/restoreSessionTree(root:registry:)``.
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``.
 ///
 /// Restoration is rooted at a *root* session id — callers never restore an
 /// individual fork — and every node's recorded model/slot must resolve
@@ -59,7 +59,7 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
 }
 
 /// A restored fork tree: every session that was live under a router's
-/// recorded root, reconstructed by ``RoutedModel/restoreSessionTree(root:registry:)``
+/// recorded root, reconstructed by ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
 /// as live, usable ``RoutedSession``s synced with what is on disk.
 ///
 /// Mirrors ``TranscriptTree``'s own shape (``session(_:)``, ``children(of:)``),
@@ -107,7 +107,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Given a **root** session's id (forks are never restored individually —
     /// see ``SessionTreeRestorationError/notARootSession(_:)``), this loads the
     /// ``TranscriptTree`` under this handle's router recording root, computes
-    /// every node's ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
+    /// every node's ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``,
     /// seeds one backend per node via ``LoadedLLMContainer/makeSession(transcript:)``,
     /// and constructs a live ``RoutedSessionActor`` per node — preserving each
     /// node's original id, parent id, and recording directory, so a turn driven
@@ -201,7 +201,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     non-String-output tool gets the binding-only
     ///     ``ContextBindingTool``, posting there too) — exactly the
     ///     per-session instancing
-    ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``
+    ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
     ///     performs for a fresh session — so a node's tool never posts to a
     ///     sibling or ancestor's outbox. Defaults to no tools.
     ///   - recordingRoot: The exact directory to load the tree from, or `nil`
@@ -238,7 +238,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   restoration-specific failure; ``TranscriptTreeError`` /
     ///   ``TranscriptReconstructionError`` for anything
     ///   ``TranscriptTree/load(under:)`` or
-    ///   ``TranscriptTree/effectiveTranscript(forSession:registry:)`` throws.
+    ///   ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` throws.
     public func restoreSessionTree(
         root rootId: ULID,
         recordingRoot: URL? = nil,

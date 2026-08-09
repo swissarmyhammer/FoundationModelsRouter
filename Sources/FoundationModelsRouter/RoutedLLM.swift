@@ -22,7 +22,7 @@ private let missingOwningProfileMessageSuffix =
 ///
 /// ``RoutedLLM`` is `RoutedModel<any LoadedLLMContainer>`, so the
 /// generation-only API arrives here as a container-constrained extension — it is
-/// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(instructions:workingDirectory:)``
+/// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
 /// is the *only* way to obtain a ``RoutedSession``: the vended session inherits
 /// this handle's ``RoutedModel/routerId`` and non-optional
 /// ``RoutedModel/recorder``, retains the owning ``LanguageModelProfile`` so the
@@ -34,7 +34,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Shared by every generation-only entry point that requires a live
     /// owning ``LanguageModelProfile`` —
-    /// ``makeSession(grammar:instructions:workingDirectory:)``,
+    /// ``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
     /// ``makeLanguageModel()``, and ``makeLanguageModel(resuming:registry:)``
     /// — which otherwise differ only in which name the trap message should
     /// report. A handle holds its profile only *weakly* (no retain cycle
@@ -160,8 +160,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
     /// The shared builder behind the plain and guided session surfaces.
     ///
-    /// ``makeSession(instructions:workingDirectory:tools:)`` calls this with
-    /// `grammar` `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:)``
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` calls this with
+    /// `grammar` `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
     /// (in GuidedGeneration.swift) calls it with a grammar that then constrains
     /// every `respond` on the vended session and is stamped onto each recorded
     /// turn. It is `internal` so the guided surface in another file in this
@@ -177,7 +177,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - tools: The tools the model can call during this session. See
-    ///     ``makeSession(instructions:workingDirectory:tools:)`` for the
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` for the
     ///     elevation wrapping applied before threading. Defaults to no tools.
     ///   - budget: The auto-compaction opt-in — see
     ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
@@ -371,7 +371,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   is the router's durable transcripts root, or a per-process temporary
     ///   fallback when recording to memory/none. Reproduces every existing
     ///   caller's layout byte-for-byte — shared by
-    ///   ``makeSession(grammar:instructions:workingDirectory:)`` and
+    ///   ``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` and
     ///   ``makeLanguageModel()`` so the two factories nest identically.
     ///
     /// - Parameters:
@@ -394,7 +394,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
     /// Builds a fresh ``RecordingLanguageModel`` handle over this resident
     /// model, with `sessionId`'s own recording directory nested the same way
-    /// ``recordingDirectory(forSessionId:)`` nests any fresh session/handle.
+    /// ``recordingDirectory(forSessionId:recordingRoot:)`` nests any fresh session/handle.
     ///
     /// Shared by ``makeLanguageModel()`` (a from-scratch handle: no parent,
     /// no cut point, empty initial transcript, nested directly under the
@@ -454,18 +454,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// A FACTORY, not a property: each call mints a distinct handle with its
     /// own session ULID, its own recording directory (nested the same way
-    /// ``makeSession(instructions:workingDirectory:)``'s is), and its own
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s is), and its own
     /// last-seen transcript, so two live handles never interleave events or
     /// share a directory. Generation is recorded by diffing the transcript
     /// `LanguageModelExecutorGenerationRequest` carries on every call against
     /// last-seen; the turn-final response additionally needs an explicit
-    /// ``RecordingLanguageModel/sync(_:)`` call at turn end
+    /// ``RecordingLanguageModel/sync(_:usage:)`` call at turn end
     /// (`session.transcript`), since it is not observable at the executor
     /// boundary. See ``RecordingLanguageModelState`` for the full mechanism.
     ///
     /// - Precondition: The owning ``LanguageModelProfile`` must still be
     ///   alive when this is called — mirrors
-    ///   ``makeSession(instructions:workingDirectory:)``'s own precondition,
+    ///   ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s own precondition,
     ///   since this handle's resident model must stay alive for its whole
     ///   lifetime too.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle over this model.
@@ -485,7 +485,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Unlike ``makeLanguageModel()``, whose last-seen transcript starts
     /// empty, this primes the handle's last-seen transcript with the resumed
-    /// session's own reconstructed ``TranscriptTree/effectiveTranscript(forSession:registry:)``,
+    /// session's own reconstructed ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``,
     /// so the handle's *first* diff records only genuinely new entries —
     /// never the whole resumed history re-recorded into a fresh directory.
     /// The vended handle nests under the resumed session's own directory and records
@@ -529,7 +529,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   this handle has no durable transcripts root; ``TranscriptTreeError``
     ///   / ``TranscriptReconstructionError`` for anything
     ///   ``TranscriptTree/load(under:)`` or
-    ///   ``TranscriptTree/effectiveTranscript(forSession:registry:)`` throws.
+    ///   ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` throws.
     public func makeLanguageModel(
         resuming sessionId: ULID,
         registry: CustomSegmentRegistry = .routerDefault

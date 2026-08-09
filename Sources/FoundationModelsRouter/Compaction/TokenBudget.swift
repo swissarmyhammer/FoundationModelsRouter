@@ -59,7 +59,7 @@ public struct TokenBudget: Sendable, Equatable {
     /// *before* it ever reaches the model or gets recorded: tool outputs, not
     /// prompts, are what blow a turn's context window mid-turn, and this is
     /// the one seam Router's own tool-instancing pipeline
-    /// (``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``/
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``/
     /// ``RoutedSessionActor/fork(workingDirectory:)``) can intercept every
     /// result at. When set, a tool whose own output is `String` and whose
     /// estimated size exceeds this limit is truncated to it, with an
@@ -199,7 +199,7 @@ public enum ContextBudgetError: Error, Equatable, LocalizedError {
 /// measured — never a guessed fraction (compaction_plan.md §1.5).
 ///
 /// Only reachable immediately after
-/// ``RoutedModel/restoreSessionTree(root:registry:)`` restores a session
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` restores a session
 /// whose recorded transcript carries no stamped `tokensIn`/`tokensOut` on any
 /// `.response`-kind event (a recording made before per-turn metering
 /// existed, or one with metadata stripped) — the very next live turn

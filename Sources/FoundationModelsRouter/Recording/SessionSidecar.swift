@@ -33,7 +33,7 @@ let sessionSidecarFileName = "session.json"
 /// read back from (creation-metadata task 6j4bven).
 ///
 /// ``instructions``/``grammar`` are recorded (not merely implied by transcript
-/// content) so ``RoutedModel/restoreSessionTree(root:registry:)`` can rehydrate
+/// content) so ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` can rehydrate
 /// a restored session's actor state without replaying its transcript: `grammar`
 /// in particular changes the behavior of every future `respond` and exists
 /// nowhere else on disk.
@@ -162,7 +162,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// This is a primary fact with nowhere else to be read back from: unlike
     /// lineage or creation time, an overridden working directory is not
     /// implied by anything else on disk, so a caller restoring a stored
-    /// session (``RoutedModel/restoreSessionTree(root:registry:)``) could not
+    /// session (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``) could not
     /// otherwise reassemble its own composition-layer state (config,
     /// AGENTS.md instructions, confinement) against the directory the live
     /// session actually ran with.
@@ -171,14 +171,14 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// this type, so a recording made before it existed has no
     /// `workingDirectory` key in its on-disk `session.json` at all. Rather
     /// than make this `Optional` — which would push a `nil` case onto every
-    /// reader (``RoutedModel/restoreSessionTree(root:registry:)`` assigns it
+    /// reader (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` assigns it
     /// straight into ``RoutedSessionActor``'s own non-optional
     /// `workingDirectory`, with no sensible way to run a session with no
     /// working directory at all) — this type's custom `init(from:)`
     /// defaults an absent key to the session's own recording directory (see
     /// ``sidecarDirectoryUserInfoKey``): the exact default a live session
     /// used for `workingDirectory` before this field existed to override it
-    /// (see ``RoutedModel/makeSession(grammar:instructions:workingDirectory:tools:)``),
+    /// (see ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``),
     /// so an old recording restores with the same working directory its live
     /// session actually ran with.
     public let workingDirectory: URL
@@ -565,7 +565,7 @@ public struct SessionSidecarWriter: Sendable {
 /// ``RoutedSessionActor`` needs to know to keep its own directory loadable.
 ///
 /// A session lands its own sidecar as it comes into existence, so whoever builds
-/// one — ``RoutedModel/makeSession(grammar:instructions:workingDirectory:)``,
+/// one — ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
 /// ``RoutedSessionActor/fork(workingDirectory:)``, or a composition assembling an
 /// actor by hand because it needs the backend object itself — cannot record a
 /// durable session directory holding a transcript and no sidecar beside it, the
@@ -584,7 +584,7 @@ enum SessionSidecarOrigin: Sendable {
     case new(SessionSidecarWriter)
 
     /// The session is a reconstruction of one already on disk (see
-    /// ``RoutedModel/restoreSessionTree(root:registry:)``): its sidecar was
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``): its sidecar was
     /// written when the tree was first created and is write-once, so it is read,
     /// never rewritten. The writer travels only for the restored session's own
     /// new forks.

@@ -4,7 +4,7 @@ import Foundation
 /// syntactically valid — the raw input to xgrammar-backed guided generation.
 ///
 /// Two source forms are supported, mirroring the xgrammar engine's two compile
-/// paths (see ``RoutedModel/respond(to:following:)``):
+/// paths (see ``RoutedModel/respond(to:following:maxTokens:)``):
 ///
 /// - ``jsonSchema(_:)`` — a standard JSON Schema source string, compiled through
 ///   xgrammar's JSON-schema path. Only the xgrammar-supported subset is accepted;

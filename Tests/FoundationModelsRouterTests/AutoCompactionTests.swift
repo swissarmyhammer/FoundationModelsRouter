@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:tools:budget:compactionPrompt:)``'s
+/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
 /// `budget`/`compactionPrompt` parameters, the proactive fold
 /// ``RoutedSessionActor/runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
 /// runs before a turn once measured fill reaches the budget's trigger, the
@@ -129,12 +129,12 @@ struct AutoCompactionTests {
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 60)
 
-    /// How many warm-up turns ``makeTriggeredSession(budget:)`` drives —
+    /// How many warm-up turns ``makeTriggeredSession(budget:tools:)`` drives —
     /// past ``TurnTruncation``'s default 4-turn recency window, so folding
     /// has real old-span content to work with.
     private static let turnCount = 6
 
-    /// The exact entries ``makeTriggeredSession(budget:)``'s warm-up turns
+    /// The exact entries ``makeTriggeredSession(budget:tools:)``'s warm-up turns
     /// produce, computed without ever running a session — prompt/response
     /// text is fixed regardless of the escalating `usageIncrement` those
     /// turns are driven with, so ``fixedBudget`` can be sized once, up

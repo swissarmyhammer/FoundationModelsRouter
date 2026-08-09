@@ -59,7 +59,7 @@ extension RoutedSessionActor {
     /// first-line `session` meta event (once per session), drains ``outbox``
     /// and composes this turn's prompt (see below), then runs `body`, then
     /// snapshot-diffs ``backend``'s real transcript (see
-    /// ``recordTranscriptDelta(grammar:since:usage:pendingEvents:)``) so what
+    /// ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``) so what
     /// lands on disk mirrors the SDK's own `Transcript.Entry` values rather
     /// than a hand-built paraphrase of the prompt/response strings — on the
     /// success path and the throwing path alike, so a transcript always
@@ -125,7 +125,7 @@ extension RoutedSessionActor {
     }
 
     /// Runs one turn's model work and recording, given its already-resolved
-    /// prompt text and pending events — the common tail ``generate(grammar:prompt:_:)``
+    /// prompt text and pending events — the common tail ``generate(grammar:prompt:onEvent:_:)``
     /// (a caller-supplied prompt) and ``dispatchNextPrompt()`` (a queue-sourced
     /// prompt) share once each has resolved its own prompt text and drained
     /// its own pending events, so composing the preamble, timing the turn,
@@ -655,7 +655,7 @@ extension RoutedSessionActor {
     ///
     /// Dequeues the front queued prompt together with any pending
     /// turn-riding events in one atomic ``SessionOutbox/drainForDispatch()``
-    /// call, inside the same two gates ``generate(grammar:prompt:_:)`` runs
+    /// call, inside the same two gates ``generate(grammar:prompt:onEvent:_:)`` runs
     /// its own bracket in — so a dispatch never interleaves with a concurrent
     /// ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)`` turn, and
     /// races ``cancel(_:)``/``replace(_:prompt:)`` exactly at the drain: once
@@ -685,7 +685,7 @@ extension RoutedSessionActor {
             // claimed were never actually delivered on any turn, so
             // re-queue them rather than let this drain silently destroy
             // them (the same "claimed but never delivered" situation
-            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:)``
+            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:onEvent:)``
             // guards against on the ordinary respond/streamResponse path).
             //
             // Deliberately does NOT call `recordSessionMetaIfNeeded()` on

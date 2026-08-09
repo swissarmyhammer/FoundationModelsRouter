@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task zcxnbst: restoring a whole session tree from disk by root
-/// session id — ``RoutedModel/restoreSessionTree(root:registry:)`` — the
+/// session id — ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` — the
 /// final piece of plan.md's "Transcript fidelity" section, "Reconstruction
 /// end-to-end".
 ///
@@ -504,7 +504,7 @@ struct SessionTreeRestorationTests {
     }
 
     /// Documents and locks in a known, deliberate restoration limitation (see
-    /// ``RoutedModel/restoreSessionTree(root:registry:)``'s doc comment,
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``'s doc comment,
     /// "Known limitation: the `.ebnf` grammar case"): `SessionSidecar.grammar`
     /// persists only the grammar's `source` string, not which `Grammar` case
     /// it came from, so a session originally guided by `.ebnf(_:)` restores
