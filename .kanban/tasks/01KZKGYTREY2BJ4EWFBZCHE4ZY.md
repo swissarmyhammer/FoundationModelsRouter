@@ -173,6 +173,48 @@ comments:
     - no assertion loosened or deleted
     - next: /review
   timestamp: 2026-08-09T16:40:36.724393+00:00
+- actor: claude-code
+  id: 01kzkq7enc3ma21qgnmht1px82
+  text: |
+    ### review — findings
+    - evidence: 2 findings (2 confirmed, 1 refuted, 9 attempted) — Sources/FoundationModelsRouter/Compaction/Summarization.swift:70, Sources/FoundationModelsRouter/Compaction/Summarization.swift:80
+    - scope: `review sha HEAD~1..HEAD` (commit 1a9af63, iteration 3 delta only)
+    - iteration 3's false-claim defect is CLOSED. All four replacement claims verified against the code, not accepted from the record: (1) `summarizer.summarize` has exactly one invocation in `Sources` that originates a `maxTokens` — `Summarization.swift:404` inside `summarizeOnce`; `RoutedSessionActorCompaction.swift:97` is the cancellable decorator forwarding the ceiling it was handed. (2) `outputTokenCeiling(condensing:)` is a single unbranched `min(maximumOutputTokens, ...)` — clamps on every path, and `maximumOutputTokens` depends on `maxChunkTokens` alone so it cannot grow with the span. (3) The "examples, not a complete list" phrasing is genuinely non-exhaustive and each named example checks out against `binPack`. (4) Both extra corrected sites are true, including `reduce`'s singleton comment, which follows from `binPack`'s greedy `currentTokens + itemTokens > maxTokens` rule.
+    - the 2 new findings are a doc-formatting requirement (missing blank `///` line between first sentence and elaboration), not a return of the false-claim defect
+    - next: /implement — add the two blank `///` separator lines; remove that cause across the whole file, not only the two lines named
+  timestamp: 2026-08-09T16:55:49.164555+00:00
+- actor: claude-code
+  id: 01kzkqj253cv4ferhax9772vwj
+  text: |-
+    Iteration 4 — both findings worked. Pulled back to `doing` first. Doc-comment formatting only; no prose meaning and no code line changed.
+
+    **The rule, read before editing rather than inferred from the two findings.** `dump validators` on this path produces the Swift `documentation` rule word for word: "**The first line is a single-sentence summary ending in a period;** any elaboration follows after a blank `///` line." So the cause is not "these two lines lack a separator" — it is "a doc comment whose first paragraph runs to more than one sentence". That is what I swept for.
+
+    Checked against the surrounding style rather than invented: the convention already holds throughout this file and its neighbours. `Compactor.swift`'s own `compact` doc, and 20-plus doc comments in `Summarization.swift`, already open with exactly one sentence and then a bare `///`. The three sites below were the exceptions, not the rule, so this brings them into line with the file rather than imposing a new shape on it.
+
+    **Every doc comment in the file was checked, all 26 of them.** Three violated the rule; the other 23 already open with a single sentence followed by `///` (or carry no elaboration at all). Multi-sentence *discussion* paragraphs — `summaryTokenRatio`'s "Defaults to `0.25`. The number this replaces…", `reduce`'s termination argument, and the rest — are untouched: the rule governs the summary, and elaboration after the blank line is ordinary prose.
+
+    - `keepRecentTurns` (finding 1) — summary ended, then "Defaults to `4`…" began on the next `///` line with no separator. Blank `///` inserted.
+    - `maxChunkTokens` (finding 2) — summary ended mid-line at "…into one final summary.", with "The reduce step itself re-chunks…" continuing on the same line. Split at the sentence boundary, blank `///` inserted, and the elaboration re-wrapped to the file's column so no line runs long.
+    - `render(_:)` — **the third instance, which neither finding named.** Summary ended mid-line at "…in original order.", with "`.instructions` never appears here (it is always the header, excluded from the old span before this is called)." continuing on the same line. Same cause exactly, and the finding directs the cause be removed from the whole file, not the two lines cited. Split and re-wrapped the same way.
+
+    **Verified doc-only mechanically, not by eye.** `git diff -U0` on the file, filtered to drop every line that is a `///` comment, returns nothing — so every one of the 18 changed lines is a doc-comment line. No prose meaning was altered either: each edit only moves a sentence boundary onto its own paragraph and re-wraps the words that follow. The claims iterations 1-3 fought over are byte-identical apart from line wrapping.
+
+    **Not done, deliberately.** No test added — no behavior changed, so there is nothing new to pin, and TDD has no failing test to write for a comment. No gated run — a comment cannot move `saved=695`, and the card's constraints said none was needed. Did not run `swift format`/`swiftformat`: this repo has no config and it would reindent all 84 files; the separator lines were inserted by hand.
+  timestamp: 2026-08-09T17:01:36.803420+00:00
+- actor: claude-code
+  id: 01kzkqjajwz8ybfdxyhawv61ps
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Sources/FoundationModelsRouter/Compaction/Summarization.swift (doc-only; `git diff -U0` filtered of `///` lines returns nothing, so all 18 changed lines are doc-comment lines)
+    - findings: 2 of 2 worked and checked (Summarization.swift:70 `keepRecentTurns`, Summarization.swift:80 `maxChunkTokens`), plus a third instance of the same cause the findings did not name — `render(_:)`, whose summary also ran a second sentence onto the same line
+    - rule applied: Swift `documentation` validator, "The first line is a single-sentence summary ending in a period; any elaboration follows after a blank `///` line" — swept all 26 doc comments in the file, 3 violated it, 23 already conformed
+    - ungated: `swift test` — 824 tests passed (776 + 24 + 24), 0 failures, exit 0, unchanged from the baseline as expected for doc-only. The lone `warning:` in the log is SwiftPM's build-graph note about the vendored mlx-swift Cmlx resource bundle, not a compiler warning from any source file
+    - gated: not run — a comment cannot move `saved=695`, and the card's constraints said none was needed
+    - no test added: no behavior changed. No `swift format`/`swiftformat` run — separator lines inserted by hand
+    - no assertion loosened or deleted; no prose meaning changed and no code line touched
+    - next: /review
+  timestamp: 2026-08-09T17:01:45.436466+00:00
 position_column: doing
 position_ordinal: '80'
 title: A fold's summary is unbounded, so compaction can save far less than the span it replaces — and the pipeline applies a fold that grew the transcript
@@ -239,4 +281,21 @@ Judged on the merits against the delta, not accepted from the record.
 - **Not one defect traded for another.** The capped fallback does compress harder than the unbounded version, but the unbounded version is precisely the defect this task exists to close, and `maxTokens` as a hard generation stop is the same mechanism already applied to every in-budget call — the commit lowers a ceiling on two paths, it does not introduce a new loss mechanism.
 - **`summaryTokenRatio` (line 111) and `summarizeOnce` (line 381) now state something true.** Every call reaches the summarizer through `summarizeOnce` -> `outputTokenCeiling(condensing:)`, and the final summary is always some call's output (or `summaries[0]`, itself a call's output), so "the bound holds for every call a fold makes, and therefore for the final summary of a span of any length" holds. The two remaining doc sites are the subject of the finding above.
 
-Evidence on record for this pass: ungated `swift test` 824 tests (776+24+24), 0 failures; gated round trip 5 passed at `saved=695`, unchanged from iteration 1 (the cap is a no-op on that fixture, whose span is under `maxChunkTokens`). #phase-1
+Evidence on record for this pass: ungated `swift test` 824 tests (776+24+24), 0 failures; gated round trip 5 passed at `saved=695`, unchanged from iteration 1 (the cap is a no-op on that fixture, whose span is under `maxChunkTokens`).
+
+## Review Findings (2026-08-09 11:44)
+
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:70` — The first sentence should be separated from elaboration by a blank `///` line; instead elaboration begins immediately on line 71 without intervening blank line. Add a blank `///` line after line 70, before line 71.
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:80` — The first sentence should be separated from elaboration by a blank `///` line; instead elaboration begins on the same line without intervening blank line. Add a blank `///` line immediately after 'summary.' on line 80, before 'The reduce step itself'.
+
+## Design-Question Verification (2026-08-09 11:44)
+
+Iteration 3 rewrote this prose a third time, so every replacement claim was checked against the code rather than accepted from the record. All four claims the prior finding forced are true; the enumeration defect is closed.
+
+- **`summarizeOnce` is the only call site of `summarizer.summarize` in `Sources`.** Checked, not assumed. `grep -rn '\.summarize(' Sources/` returns exactly two invocations plus four doc references. The invocations are `Summarization.swift:404` (inside `summarizeOnce`) and `RoutedSessionActorCompaction.swift:97`, and the second is not a second source of `maxTokens`: it is `base.summarize(promptText, maxTokens: maxTokens)` inside the cancellable decorator's own `summarize(_:maxTokens:)`, forwarding the ceiling it was handed. Every `maxTokens` value that reaches a summarizer therefore originates at `Summarization.swift:406`.
+- **`outputTokenCeiling(condensing:)` clamps on every path.** Its body is a single unbranched expression — `min(maximumOutputTokens, outputTokenCeiling(ingesting: Self.estimatedTokens(of: content)))` — with no guard, no early return, and no sibling overload that skips the `min`. `maximumOutputTokens` is `outputTokenCeiling(ingesting: maxChunkTokens)`, a function of the configured chunk size alone, so it cannot grow with the span. The "every call is clamped" property is structural, not enumerated.
+- **The "examples, not a complete list" phrasing does not smuggle in completeness.** `maxChunkTokens`' doc names two ways a call can over-ingest and then states "Those are examples of a call ingesting more than this, not a complete list of them", resting the bound on the output clamp instead. The claim it does assert is verified: both packers share `binPack` (`chunk` and `chunkStrings` each delegate to it), and `binPack` never splits an item — it appends every item whole and starts a new group only when `!current.isEmpty && currentTokens + itemTokens > maxTokens`, so a lone oversized item becomes its own group. Nothing in the sentence becomes false if a third over-ingesting path is later found.
+- **`summaryTokenRatio`'s corrected count is true.** "because a call can be handed more than `maxChunkTokens` (see that property — neither packer splits a single item)" replaces the false "because two calls have to". It asserts existence, not a count, and the parenthetical matches `binPack`. Softening "a chunk's summary is a quarter of that chunk" to "is sized against that chunk" is also correct: `outputTokenCeiling(ingesting:)` is `max(minimumSummaryTokens, ceil(tokens * summaryTokenRatio))`, so the 128 floor and the `maximumOutputTokens` clamp both make the literal quarter inexact.
+- **`reduce`'s corrected inline comment is true.** The new text — "grouping produced one singleton group per summary, so no two adjacent summaries fit together under `maxChunkTokens`" — follows from `binPack`'s greedy rule. The guard fails only when `groups.count == summaries.count`, i.e. every group is a singleton, which happens exactly when each adjacent pair tripped `currentTokens + itemTokens > maxTokens`. The prior claim (singletons only when every summary is individually over the ceiling) was false, and the recorded counterexample holds: `[1500, 600, 1500, 600]` at `maxChunkTokens: 2000` packs into four singletons with no item over 2000.
+
+The change is doc-only as recorded: the commit's only source hunk is in `Summarization.swift`, and every changed line in it is `///` or `//`. The two findings above are a doc-formatting requirement, not a return of the false-claim defect. #phase-1

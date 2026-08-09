@@ -68,6 +68,7 @@ public struct Summarization: Sendable {
     public static let stageName = "Summarization"
 
     /// How many of the newest turns are the untouchable recency window.
+    ///
     /// Defaults to `4` (compaction_plan.md §1.3), matching
     /// ``ToolOutputElision``/``TurnTruncation``'s own default so every stage
     /// agrees on where the recency window starts.
@@ -77,10 +78,12 @@ public struct Summarization: Sendable {
     /// character-ratio estimate) a single summarizer call's rendered content
     /// may reach before the folded span is split into multiple chunks,
     /// summarized independently (map), and their summaries re-summarized
-    /// (reduce) into one final summary. The reduce step itself re-chunks and
-    /// re-reduces when the chunk summaries themselves would exceed this in
-    /// one call (see ``reduce(_:prompt:summarizer:)``), so the chunking
-    /// applies at every level of the map-reduce tree, not just the first.
+    /// (reduce) into one final summary.
+    ///
+    /// The reduce step itself re-chunks and re-reduces when the chunk
+    /// summaries themselves would exceed this in one call (see
+    /// ``reduce(_:prompt:summarizer:)``), so the chunking applies at every
+    /// level of the map-reduce tree, not just the first.
     ///
     /// It is a chunking target, not a promise about what any one call ingests.
     /// Both packers here — ``chunk(_:maxTokens:)`` over turns and
@@ -540,9 +543,10 @@ public struct Summarization: Sendable {
 
     /// Renders `turns`' entries to plain text for the summarizer to read: one
     /// line per prompt/response/tool-call/tool-output/reasoning entry,
-    /// labeled by role, in original order. `.instructions` never appears here
-    /// (it is always the header, excluded from the old span before this is
-    /// called).
+    /// labeled by role, in original order.
+    ///
+    /// `.instructions` never appears here (it is always the header, excluded
+    /// from the old span before this is called).
     ///
     /// - Parameter turns: The turns to render, in order.
     /// - Returns: The rendered text.
