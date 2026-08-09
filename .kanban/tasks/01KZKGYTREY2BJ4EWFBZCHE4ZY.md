@@ -215,8 +215,31 @@ comments:
     - no assertion loosened or deleted; no prose meaning changed and no code line touched
     - next: /review
   timestamp: 2026-08-09T17:01:45.436466+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzkr5yw7t0ydrfjeedm5mb41
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit b7bf459) — 0 findings, 9 validators attempted, 0 failed, 0 skipped. Confirming whole-file run `review file Sources/FoundationModelsRouter/Compaction/Summarization.swift --validators swift` — 0 findings, 9 attempted, 0 failed. All prior findings across the 10:58, 11:23, and 11:44 sections are checked.
+    - rule reading confirmed: the `swift` validator's `documentation` rule reads "**The first line is a single-sentence summary ending in a period;** any elaboration follows after a blank `///` line." The single-sentence constraint binds the summary; the elaboration clause requires only that elaboration be separated by a blank `///` line and places no sentence-count limit on it. The implementer's reading is correct, so `summaryTokenRatio`'s multi-sentence defaults note and `reduce`'s multi-sentence termination argument are not violations. The whole-file run corroborates: zero findings at either site.
+    - file compliance confirmed independently of the delta: the whole-file `swift` run covers every doc comment in `Summarization.swift`, not just the three changed sites, and returns clean — a stronger check than the implementer's count of 26.
+    - pattern note: iterations 1-3 closed a prose-truth defect and iteration 4 closed doc formatting, all in this one file. This pass surfaced no new doc-comment findings, so the streak ends at four rather than continuing.
+    - next: none — task advanced to done.
+  timestamp: 2026-08-09T17:12:28.807454+00:00
+- actor: claude-code
+  id: 01kzkr7cz5jf5yh8nfbhn27mfk
+  text: |-
+    ### finish iteration 4 — clean (task done)
+    - implement: changed — 1 file, doc-comment formatting only. Read the `documentation` rule from `dump validators` rather than generalizing from the two cited lines, which reframed the cause as "first paragraph runs past one sentence" and surfaced a THIRD violation neither finding named (`render(_:)`). Multi-sentence discussion paragraphs left alone deliberately.
+    - test: green — swift test 824 (776+24+24), 0 failures, baseline-identical. Doc-only verified independently: `git diff -U0` filtered to drop `///` lines returns empty (18/18 changed lines are doc comments); prose reconstructed by concatenation and compared word-for-word against HEAD for all three sites — identical apart from inserted blank lines; `summaryTokenRatio`'s 12 occurrences confirmed outside the changed ranges.
+    - commit: b7bf459
+    - review: clean — 0 findings on both the delta scan and a confirming whole-file `swift` validator run; 9 validators attempted, 0 failed, 0 skipped each. Card advanced to done.
+    - rule reading adjudicated, not assumed: "The first line is a single-sentence summary ending in a period; any elaboration follows after a blank `///` line." The single-sentence constraint is scoped to the SUMMARY; the elaboration clause states only where elaboration goes and sets no sentence limit. So `summaryTokenRatio`'s defaults note and `reduce`'s termination argument are not violations — corroborated by zero findings at either site in the whole-file run.
+    - compliance verified rather than accepted: the reviewer ran the `swift` validator over the entire file instead of re-counting the 26 doc comments, which covers every doc comment present and independently confirms `render(_:)`.
+    - PATTERN NAMED AND CLOSED: four consecutive rounds on this one file's comments (1-3 prose truth, 4 formatting). It stopped here because iteration 4 read the rule and swept the cause; the earlier rounds each fixed only the lines cited, which is why a new site surfaced each time.
+    - next: none — task done.
+  timestamp: 2026-08-09T17:13:16.005198+00:00
+position_column: done
+position_ordinal: f980
 title: A fold's summary is unbounded, so compaction can save far less than the span it replaces — and the pipeline applies a fold that grew the transcript
 ---
 Discovered by `^f80n046` while making the gated compaction suites deterministic. Not a determinism defect — the numbers below are now reproducible run to run — but a compaction-quality one, measured on real hardware for the first time.
