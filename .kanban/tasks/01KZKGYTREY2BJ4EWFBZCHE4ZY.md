@@ -112,6 +112,67 @@ comments:
     - filed out of scope: `^2c46sd7`
     - next: /review
   timestamp: 2026-08-09T16:18:19.341466+00:00
+- actor: claude-code
+  id: 01kzknrc35h6139hpd8n8qj6xh
+  text: |-
+    ### review — findings
+    - evidence: engine `review sha HEAD~1..HEAD` (d5155c8) clean — 0 findings, 9 validators attempted, 0 failed. 1 finding from the directed doc verification — Sources/FoundationModelsRouter/Compaction/Summarization.swift:301, with the same cause at :85 and :418.
+    - verified sound: shortfallResult is one construction used by both Compactor.compact exits; the output cap cannot affect reduce's termination (count-based measure, fallback returns without recursing, smaller summaries only pack better); no caller loops or re-summarizes (compact calls apply once, and a smaller tokensAfter moves away from the shortfall exit); the cap is a no-op for content at or under maxChunkTokens and preserves the 128 floor; summaryTokenRatio and summarizeOnce docs now state something true.
+    - next: correct the "two paths" enumeration at Summarization.swift:85, :301, :418 — a lone summary over maxChunkTokens becomes its own oversized group via chunkStrings/binPack, so a reduce round that groups (and recurses) can still over-ingest. Code is correct; the claims are not.
+  timestamp: 2026-08-09T16:30:06.437027+00:00
+- actor: claude-code
+  id: 01kzkp187wfw0yg76krd52frjh
+  text: |-
+    Iteration 3 picked up; pulled back to `doing`. Research done before editing.
+
+    **The finding reproduces exactly as written.** Walked it through the code rather than taking it on the record:
+
+    - `binPack` (the shared loop behind both chunkers) starts a new group only when `!current.isEmpty && currentTokens + itemTokens > maxTokens`, so a lone item already over `maxTokens` is appended to an empty `current` and becomes its own oversized group. At `maxChunkTokens: 2000` with summaries `[2400, 300, 300]`: A is appended alone; B would push 2400+300 over, so `[A]` is pushed and B starts a new group; C fits with B. Result `[[2400], [300, 300]]` — `groups.count` 2 `< summaries.count` 3, so `reduce`'s no-progress guard does NOT fire, the round groups and recurses, and the loop still calls `summarizeOnce` on the 2400-token summary alone. A round that *groups* can over-ingest. The doc claiming otherwise is false.
+
+    **The universal property, verified against the code.** `summarizer.summarize` is called from exactly one place in all of `Sources` — inside `summarizeOnce` — and every summarizer call this stage makes goes through `summarizeOnce` (the single-chunk map call, the map loop, the fits-in-one-call reduce, the no-progress fallback, and the grouping round's loop). That one call site always passes `maxTokens: outputTokenCeiling(condensing: content)`, which is `min(maximumOutputTokens, outputTokenCeiling(ingesting:))`. So the clamp applies to every call unconditionally; nothing about the property depends on knowing which calls over-ingest.
+
+    **A fourth site carries the same defect, which the finding did not name.** `summaryTokenRatio`'s doc says "because **two calls** have to ingest more than `maxChunkTokens`". That is the same false count as the three named sites (`maxChunkTokens`'s "Two paths cannot honor it", `reduce`'s "every reduce round that can group ingests at most `maxChunkTokens`", and `maximumOutputTokens`' "the two calls that cannot be kept there"). Fixing only the three named would leave the cause in the file.
+
+    **A fifth, of the same family.** The inline comment on `reduce`'s no-progress branch asserts "every summary is already, on its own, at or over maxChunkTokens" as the reason grouping produced singletons. That is not the only way: `[1500, 600, 1500, 600]` at 2000 packs into four singletons with no item over the ceiling. `reduce`'s own doc already says so ("but also possible with several under-ceiling summaries that simply don't pair up"), so the comment contradicts the doc six lines above it.
+
+    Plan, per the card's stated preference: state the universal property (every call's output is clamped to `maximumOutputTokens` regardless of what it ingests) and describe the *mechanism* that lets a call over-ingest (neither packer ever splits a single item), marking any specific path as an example rather than a complete set. No third enumeration.
+
+    No ARCHITECTURE.md in this repo, so nothing to reconcile there.
+  timestamp: 2026-08-09T16:34:57.404343+00:00
+- actor: claude-code
+  id: 01kzkpbby9ydft3jnqf2ctzwwd
+  text: |-
+    Iteration 3 landed. Doc-only; no code line changed (the whole diff is `///` and `//` lines).
+
+    **The option taken.** The finding offered two: name the third over-ingesting path, or drop the enumeration and state only what holds. Took the second, because the first is what iterations 1 and 2 already tried and what a fourth review would falsify again. Iteration 1 asserted an unconditional bound (false). Iteration 2 replaced it with a two-path enumeration (also false — this finding). A third enumeration would be the same mistake at a different arity. The enumeration was never what made the property true; `outputTokenCeiling(condensing:)`'s `min(maximumOutputTokens, …)` is, and it applies to every call whether or not anyone has listed it.
+
+    **What each site now says, and the line that makes it true.**
+
+    - `maxChunkTokens` — was "Two paths cannot honor it". Now states it is a chunking target, not a promise about what any one call ingests, and gives the *mechanism*: both packers share `binPack`, which never splits a single item, so an item already larger than the ceiling becomes its own oversized group. An unsplittable turn and `reduce`'s no-progress fallback are named as **examples of a call ingesting more than this, not a complete list of them** — the phrase is explicit so no future reader reads it as exhaustive. True by `binPack`'s `if !current.isEmpty && currentTokens + itemTokens > maxTokens` — an oversized item appended to an empty `current` is never split.
+    - `summaryTokenRatio` — was "because **two calls** have to ingest more than `maxChunkTokens`", the same false count the finding names at the other three sites, which the finding did not list. Now "a call can be handed more than `maxChunkTokens` … `maximumOutputTokens` closes it without having to know which calls those are". Also dropped "a chunk's summary **is a quarter of** that chunk" for "is sized against that chunk" — with the floor and the clamp both in play, the literal quarter is not exact, and an inexact arithmetic claim is the next thing a review would catch.
+    - `reduce` — was "every reduce round that can group ingests at most `maxChunkTokens`". Now says re-chunking aims each call at the ceiling without guaranteeing it, and states plainly that an oversized lone summary is condensed as it stands **in a round that groups and recurses, not only in the no-progress fallback** — the exact case the finding proved. Closes with the universal: every call here goes through `summarizeOnce`, whose ceiling is clamped to `maximumOutputTokens`.
+    - `maximumOutputTokens` — was "It exists for the two calls that cannot be kept there". Now "It is applied to every call all the same — `outputTokenCeiling(condensing:)` clamps to it, and every call reaches that through `summarizeOnce` — rather than to a listed set of calls … without the bound depending on any such list being complete."
+
+    **A fifth site, same family, not in the finding.** `reduce`'s no-progress inline comment claimed "every summary is already, on its own, at or over maxChunkTokens" as the reason grouping produced singletons. `[1500, 600, 1500, 600]` at 2000 packs into four singletons with nothing over the ceiling, and `reduce`'s own doc six lines above already said so. Now reads "grouping produced one singleton group per summary, so no two adjacent summaries fit together under maxChunkTokens" — which is exactly what `groups.count == summaries.count` means, since `binPack` emits at most one group per item.
+
+    **Verification of the replacement prose against the code, not against the record.** `summarizer.summarize` has exactly one call site in all of `Sources` — inside `summarizeOnce`. Every summarizer call this stage makes routes through it: the single-chunk map call, the map loop, the fits-in-one-call reduce, the no-progress fallback, and the grouping round's loop. That site always passes `maxTokens: outputTokenCeiling(condensing: content)` = `min(maximumOutputTokens, outputTokenCeiling(ingesting:))`. Every sentence written above points at one of those.
+
+    **Not done, deliberately.** No behavior changed, so no new test. The constraint was explicit that a behavior change would mean the finding was misdiagnosed; it was not — the code was already correct, and the two existing tests (`reduceFallbackCallIsBoundedDespiteIngestingMoreThanAChunk`, `unsplittableTurnCallIsBoundedDespiteIngestingMoreThanAChunk`) already pin the clamp. No gated run: a comment cannot move `saved=695`.
+
+    Left alone on purpose: the fixture comment in `SummarizationStageTests` reading "the one call that must ingest more than maxChunkTokens". It is scoped to that fixture, where the three map calls each ingest exactly one chunk and only the fallback exceeds it, so it is true as written and is in a different file from the finding.
+  timestamp: 2026-08-09T16:40:28.873969+00:00
+- actor: claude-code
+  id: 01kzkpbkkm4yw9b4k30zqkszar
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Sources/FoundationModelsRouter/Compaction/Summarization.swift (doc-only; `git diff` shows only `///` and `//` lines, no code line touched)
+    - findings: 1 of 1 worked and checked (Summarization.swift:301, with the same cause corrected at :85 and :418 as the finding directs, plus two more instances of the same cause the finding did not name — `summaryTokenRatio`'s "two calls" and `reduce`'s no-progress inline comment)
+    - ungated: `swift test` — 824 tests passed (776 + 24 + 24), 0 failures, unchanged from the baseline as expected for doc-only. The lone `warning:` in the log is SwiftPM's build-graph note about the vendored mlx-swift Cmlx resource bundle, not a compiler warning from any source file
+    - gated: not run — a comment cannot move `saved=695`, and the card's constraints said none was needed
+    - no test added: no behavior changed. The clamp is already pinned by `reduceFallbackCallIsBoundedDespiteIngestingMoreThanAChunk` and `unsplittableTurnCallIsBoundedDespiteIngestingMoreThanAChunk`
+    - no assertion loosened or deleted
+    - next: /review
+  timestamp: 2026-08-09T16:40:36.724393+00:00
 position_column: doing
 position_ordinal: '80'
 title: A fold's summary is unbounded, so compaction can save far less than the span it replaces — and the pipeline applies a fold that grew the transcript
@@ -161,4 +222,21 @@ Verified sound, no change required:
 - **`minimumSummaryTokens` (128) cannot reintroduce defect 2.** Verified independently, not accepted from the prior tester. `Compactor.compact` computes `tokensAfter` over the whole folded transcript and requires strict `tokensAfter < tokensBefore`; neither `summaryTokenRatio` nor `minimumSummaryTokens` appears in that comparison — they only size a summarizer call's ceiling. A 128-token floor applied to a span smaller than 512 tokens can indeed license a summary larger than the span it replaces, and the resulting transcript then fails the strict `<` check and takes the shortfall exit (original transcript, empty `stagesApplied`, `summary == nil`, `tokensAfter == tokensBefore`). The strict `<` also rejects a break-even fold. The floor is contained by construction.
 - **`summaryTokenRatio` as a public var, default 0.25.** Consistent with the two public vars already on the same struct (`keepRecentTurns`, `maxChunkTokens`) — it introduces no new surface shape. Note that `Compactor.compact` constructs `Summarization()` with all defaults, so none of the three knobs is settable from the production path; all three are reachable only by constructing the stage directly. 0.25 is defensible: it is a hard stop rather than a target, floored at 128, and measured against the 0.8-of-span summary that motivated the task.
 
-Evidence on record for this pass: ungated `swift test` 822 tests (774+24+24), 0 failures; gated round trip 3 consecutive runs at `tokensBefore=2074 tokensAfter=1379 saved=695`, identical across runs — that margin is against the harness `foldBudget` of 0.25, not the production default of 0.50. #phase-1
+Evidence on record for this pass: ungated `swift test` 822 tests (774+24+24), 0 failures; gated round trip 3 consecutive runs at `tokensBefore=2074 tokensAfter=1379 saved=695`, identical across runs — that margin is against the harness `foldBudget` of 0.25, not the production default of 0.50.
+
+## Review Findings (2026-08-09 11:23)
+
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:301` — the `reduce(_:prompt:summarizer:)` doc's replacement claim is false: "so every reduce round that can group ingests at most ``maxChunkTokens`` worth of content, however many chunks the original span needed. The one round that cannot group — the no-progress fallback below — hands a single call everything left". A round that *does* group can still ingest more than `maxChunkTokens`, because `chunkStrings(_:maxTokens:)` never splits a single summary, so a lone summary already over `maxChunkTokens` becomes its own oversized group — stated by `chunkStrings`' own `- Returns:` ("each (except a lone oversized summary) at or under `maxTokens`") and by `binPack` ("a lone already-oversized item becomes its own (over-`maxTokens`) group"). Concretely at `maxChunkTokens: 2000`, chunk summaries estimated `[2400, 300, 300]`: `binPack` yields `[[2400], [300, 300]]`, so `groups.count` (2) `< summaries.count` (3), the no-progress guard does not fire, the round groups and recurses — and `summarizeOnce` is nonetheless called on the 2400-token summary alone. `reduce`'s own doc already concedes this state exists ("always true when every summary is individually at or over the ceiling"), so the comment contradicts itself. Same cause makes two more sites incomplete: `Summarization.swift:85` ("Two paths cannot honor it") and `Summarization.swift:418` ("It exists for the two calls that cannot be kept there") both enumerate only the unsplittable turn and the no-progress fallback, omitting this third path. The code is correct — `outputTokenCeiling(condensing:)` clamps every call rather than only the enumerated ones — so fix the claims at all three sites: either name the third over-ingesting path, or drop the enumeration and state only what holds, that no call's output exceeds `maximumOutputTokens` however much it ingests.
+
+## Design-Question Verification (2026-08-09 11:23)
+
+Judged on the merits against the delta, not accepted from the record.
+
+- **Findings 1 and 2 are genuinely one construction now.** `Compactor.compact` builds `shortfallResult` once at the top and returns it from both the already-under-target guard and the final shortfall return. The two remaining `CompactionResult(...)` constructions in the function are distinct values (a stage-target hit, and an applied fold), not the shortfall. Verified.
+- **The termination argument is sound.** `reduce`'s recursion measure is `summaries.count`, made strictly decreasing by `guard groups.count < summaries.count`; it is a count, wholly independent of how many tokens any call answers, so capping output cannot affect it. The no-progress fallback `return`s the `summarizeOnce` result directly with no recursion after it, so capping that branch cannot make it recurse. Further, a smaller summary can only let `binPack` fit *more* per group, so groups.count is smaller or equal — the cap makes progress more likely, never less.
+- **No caller loops or re-summarizes on a shorter summary.** `Compactor.compact` calls `Summarization().apply` exactly once, inside an `if let`, with no retry. A truncated summary lowers `tokensAfter`, which makes the strict `tokensAfter < tokensBefore` check *more* likely to pass — a cap can only move the outcome away from the shortfall exit, never toward a re-attempt.
+- **The cap does not bind on any in-budget call, so it trades away nothing on the normal path.** `outputTokenCeiling(ingesting:)` is monotone nondecreasing in its argument, so for content at or under `maxChunkTokens` the new `min(maximumOutputTokens, ...)` is a no-op. The `minimumSummaryTokens` floor also survives the `min`: both operands are at least 128.
+- **Not one defect traded for another.** The capped fallback does compress harder than the unbounded version, but the unbounded version is precisely the defect this task exists to close, and `maxTokens` as a hard generation stop is the same mechanism already applied to every in-budget call — the commit lowers a ceiling on two paths, it does not introduce a new loss mechanism.
+- **`summaryTokenRatio` (line 111) and `summarizeOnce` (line 381) now state something true.** Every call reaches the summarizer through `summarizeOnce` -> `outputTokenCeiling(condensing:)`, and the final summary is always some call's output (or `summaries[0]`, itself a call's output), so "the bound holds for every call a fold makes, and therefore for the final summary of a span of any length" holds. The two remaining doc sites are the subject of the finding above.
+
+Evidence on record for this pass: ungated `swift test` 824 tests (776+24+24), 0 failures; gated round trip 5 passed at `saved=695`, unchanged from iteration 1 (the cap is a no-op on that fixture, whose span is under `maxChunkTokens`). #phase-1
