@@ -20,36 +20,6 @@ private actor RunCompletion {
     }
 }
 
-/// The finite ceiling ``AnswerDrivenRun/deliveredAnswer()`` waits under before
-/// it reports that no answer is ever coming.
-///
-/// The wait cannot simply await the run, because a break on the inbound answer
-/// route parks that run forever. So it asks repeatedly whether the run finished,
-/// and these values say how long the asking lasts. ``pollLimit`` is derived from
-/// the other two, so the ceiling is stated once as a span a reader recognises
-/// rather than left to be inferred from a count times an interval.
-///
-/// The values live here rather than on ``AnswerDrivenRun`` because that type is
-/// generic, and Swift allows a generic type no stored static property.
-private enum AnswerDeliveryBound {
-    /// The whole time the wait gives an answer to arrive.
-    ///
-    /// A wall-clock ceiling rather than a count of scheduler hops, because the
-    /// answer crosses an actor from whichever task delivers it and the wait has
-    /// to survive a loaded machine running the whole suite in parallel. High
-    /// enough that a delivery these tests genuinely order behind a few actor
-    /// hops always lands, low enough that a delivery which never happens gives
-    /// up in seconds instead of hanging the suite.
-    static let ceilingNanoseconds: UInt64 = 5_000_000_000
-
-    /// How long the wait sleeps between two questions about the run.
-    static let pollIntervalNanoseconds: UInt64 = 5_000_000
-
-    /// How many times the wait asks whether the run finished, so that the
-    /// questions fill ``ceilingNanoseconds`` and no more.
-    static let pollLimit = Int(ceilingNanoseconds / pollIntervalNanoseconds)
-}
-
 /// Work that only finishes once an answer is delivered to it — a parked
 /// ``ToolContext/elicit(_:)``, a ``SessionMailbox/awaitAnswer(to:posting:)``,
 /// or a tool call blocked behind either — started so a test reads its result
@@ -108,7 +78,7 @@ struct AnswerDrivenRun<Value: Sendable> {
     ///   bound, after recording an issue naming the run; otherwise whatever the
     ///   run itself threw.
     func deliveredAnswer() async throws -> Value {
-        guard try await finishesWithinDeliveryBound() else {
+        guard await finishesWithinDeliveryBound() else {
             Issue.record(
                 """
                 no answer ever reached \(label): the run is still parked, so the inbound \
@@ -125,11 +95,13 @@ struct AnswerDrivenRun<Value: Sendable> {
 
     /// Whether the run finished inside the bound, asked repeatedly rather than
     /// awaited so an answer that never arrives ends the wait.
-    private func finishesWithinDeliveryBound() async throws -> Bool {
-        for _ in 0..<AnswerDeliveryBound.pollLimit {
-            if await completion.isFinished { return true }
-            try await Task.sleep(nanoseconds: AnswerDeliveryBound.pollIntervalNanoseconds)
-        }
-        return await completion.isFinished
+    ///
+    /// The bound is ``BoundedWait/spin(until:)``, the one this test target
+    /// bounds every otherwise-unbreakable wait with. The question asked here
+    /// crosses an actor rather than reading a semaphore, but the wait around it
+    /// is the same wait: ask a question that cannot suspend forever, again and
+    /// again, until a wall-clock ceiling says no answer is coming.
+    private func finishesWithinDeliveryBound() async -> Bool {
+        await BoundedWait.spin(until: { await completion.isFinished })
     }
 }

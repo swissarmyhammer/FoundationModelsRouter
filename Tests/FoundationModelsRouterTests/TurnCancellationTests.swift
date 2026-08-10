@@ -686,26 +686,6 @@ struct TurnCancellationTests {
         return dir
     }
 
-    /// How many cooperative yields ``spin(until:)`` gives a condition before it
-    /// gives up.
-    ///
-    /// A timeout measured in scheduler hops rather than wall clock: high enough
-    /// that a state change these tests genuinely order behind a handful of task
-    /// suspensions always lands, low enough that a condition which never holds
-    /// gives up in well under a second instead of hanging the suite.
-    private static let spinYieldLimit = 100_000
-
-    /// Spins cooperatively until `condition` holds or ``spinYieldLimit`` yields
-    /// elapse, so a scheduler-ordered state change is observed without a sleep —
-    /// and a condition that never holds fails an assertion rather than hanging
-    /// the suite.
-    private static func spin(until condition: @Sendable () async -> Bool) async {
-        for _ in 0..<spinYieldLimit {
-            if await condition() { return }
-            await Task.yield()
-        }
-    }
-
     /// Whether one further ordinary turn on `session` runs to completion,
     /// observed through `observer` under a bounded spin rather than by awaiting
     /// the turn.
@@ -720,7 +700,7 @@ struct TurnCancellationTests {
         prompt: String = "after"
     ) async -> Bool {
         let task = Task { try await session.respond(to: prompt) }
-        await spin(until: { await observer.exited.contains(prompt) })
+        await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
         guard await observer.exited.contains(prompt) else {
             // Never admitted to the model at all — parked on a gate. Cancelling
             // will not unpark it (``AsyncSemaphore/wait()`` ignores cancellation
@@ -764,7 +744,7 @@ struct TurnCancellationTests {
                 await delivered.append(event)
             }
         }
-        await spin(until: { await observer.exited.contains(prompt) })
+        await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
         guard await observer.exited.contains(prompt) else {
             task.cancel()
             _ = try? await task.value
@@ -965,7 +945,7 @@ struct TurnCancellationTests {
         observer: TurnObserver,
         parked: AsyncSemaphore
     ) async -> Bool {
-        await spin(until: { await observer.toolSawCancellation })
+        await BoundedWait.spin(until: { await observer.toolSawCancellation })
         guard await observer.toolSawCancellation else {
             Issue.record("cancellation never reached the tool call running inside the model call")
             parked.signal()
@@ -1348,7 +1328,7 @@ struct TurnCancellationTests {
         await insideFirstTurn.wait()
 
         let queuedTask = Task { try await session.respond(to: "queued-and-cancelled") }
-        await Self.spin(until: { turnLock.waiterCount == 1 })
+        await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
         #expect(turnLock.waiterCount == 1)
 
         // Cancelled while parked on a gate. Gate acquisition ignores cancellation by
@@ -1406,7 +1386,7 @@ struct TurnCancellationTests {
         // the turn's diff must run while the backend still has no `.response` entry
         // for this turn, which is exactly the state a cut-short turn is in.
         await insideTool.wait()
-        await Self.spin(until: { await fixture.recorder.events.count == 3 })
+        await BoundedWait.spin(until: { await fixture.recorder.events.count == 3 })
 
         // Not "a turn that finished with a short response": a cancelled turn, with
         // the same lone bodyless close every other failed turn gets.
@@ -1417,7 +1397,7 @@ struct TurnCancellationTests {
         // Let the abandoned producer drain rather than leaving it parked for the
         // rest of the suite.
         release.signal()
-        await Self.spin(until: { await fixture.observer.exited.contains("abandon-stream") })
+        await BoundedWait.spin(until: { await fixture.observer.exited.contains("abandon-stream") })
         #expect(await fixture.observer.exited.contains("abandon-stream"))
     }
 
@@ -1810,7 +1790,7 @@ struct TurnCancellationTests {
         // because a cancelled consumer returns before the producer behind it has
         // finished recording (the same ordering
         // ``abandoningAStreamRecordsTheTurnAsCancelled()`` waits on).
-        await Self.spin(until: { await fixture.recorder.events.count == recordedBefore + 1 })
+        await BoundedWait.spin(until: { await fixture.recorder.events.count == recordedBefore + 1 })
         let recorded = await fixture.recorder.events
         #expect(recorded.count == recordedBefore + 1)
         #expect(recorded.last?.kind == .response)

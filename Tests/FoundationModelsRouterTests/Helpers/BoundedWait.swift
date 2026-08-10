@@ -30,24 +30,69 @@ struct SignalNeverArrived: Error {}
 /// and the `wait()`. Every semaphore a test uses purely as a signal — one
 /// signaller, one waiter — has exactly that shape.
 enum BoundedWait {
-    /// How many cooperative yields ``spin(until:)`` gives a condition before it
-    /// gives up.
+    /// The whole time ``spin(until:)`` gives a condition before it gives up.
     ///
-    /// A timeout measured in scheduler hops rather than wall clock: high enough
-    /// that a state change a test genuinely orders behind a handful of task
+    /// A wall-clock ceiling, not a count of scheduler hops. A count of hops
+    /// measures how often the waiting task ran, never how long the wait lasted,
+    /// so a loaded machine that gives the task making the change few slices
+    /// lets the waiter spend the whole count while the change is still on its
+    /// way. The bound is then a function of the load, and a correct test fails
+    /// for want of CPU. A clock reads the same under load as it does idle.
+    ///
+    /// High enough that a change these tests genuinely order behind a few task
     /// suspensions always lands, low enough that a condition which never holds
-    /// gives up in well under a second instead of hanging the suite.
-    static let yieldLimit = 100_000
+    /// gives up in seconds instead of hanging the suite.
+    ///
+    /// The same span ``AnswerDrivenRun`` waits under, because it is the same
+    /// bound: each asks a non-suspending question again and again until it
+    /// answers yes.
+    static let ceilingNanoseconds: UInt64 = 5_000_000_000
 
-    /// Spins cooperatively until `condition` holds or ``yieldLimit`` yields
-    /// elapse, so a scheduler-ordered state change is observed without a sleep —
-    /// and a condition that never holds ends the wait rather than hanging the
-    /// suite.
+    /// How long ``spin(until:)`` sleeps between two readings of a condition,
+    /// once its yields are spent.
+    static let pollIntervalNanoseconds: UInt64 = 5_000_000
+
+    /// How many cooperative yields ``spin(until:)`` spends before it begins to
+    /// sleep between readings.
+    ///
+    /// A state change a test orders behind a handful of task suspensions lands
+    /// inside these, so the ordinary wait costs microseconds rather than a poll
+    /// interval. Past them the wait is blocked on something slower than the
+    /// scheduler, and a sleep leaves the machine to the task that must make the
+    /// change instead of spinning against it.
+    static let yieldsBeforePolling = 1_000
+
+    /// Whether `condition` held inside the bound: yielded for first, then
+    /// polled for until ``ceilingNanoseconds`` elapse.
+    ///
+    /// A scheduler-ordered state change is observed without a sleep, a change
+    /// that a loaded machine delays is still observed, and a condition that
+    /// never holds ends the wait rather than hanging the suite.
     ///
     /// - Parameter condition: The state change to wait for.
-    static func spin(until condition: @Sendable () async -> Bool) async {
-        for _ in 0..<yieldLimit {
-            if await condition() { return }
+    /// - Returns: Whether the condition held inside the bound.
+    @discardableResult
+    static func spin(until condition: @Sendable () async -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .nanoseconds(ceilingNanoseconds))
+        for _ in 0..<yieldsBeforePolling {
+            if await condition() { return true }
+            await Task.yield()
+        }
+        while true {
+            if await condition() { return true }
+            if ContinuousClock.now >= deadline { return false }
+            await waitOnePollInterval()
+        }
+    }
+
+    /// Waits ``pollIntervalNanoseconds`` before the next reading of a condition.
+    ///
+    /// `Task.sleep` throws the moment the surrounding task is cancelled, and a
+    /// cancelled wait must still end on the deadline rather than on a hot loop,
+    /// so a sleep that cannot run becomes a yield. Cancellation never decides
+    /// when a wait ends here; only the deadline does.
+    private static func waitOnePollInterval() async {
+        if (try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)) == nil {
             await Task.yield()
         }
     }
@@ -56,17 +101,16 @@ enum BoundedWait {
     /// issue naming `label` when it never did.
     ///
     /// The one bounded observation every wait in these tests is built from: spin
-    /// for the condition, read it once more, then report rather than wait on
-    /// something that is never going to happen. Nothing here is specific to a
-    /// semaphore, a task, or a turn, so each of those observes through this.
+    /// for the condition, then report rather than wait on something that is
+    /// never going to happen. Nothing here is specific to a semaphore, a task,
+    /// or a turn, so each of those observes through this.
     ///
     /// - Parameters:
     ///   - label: What should have happened, named in the recorded issue.
     ///   - condition: The observable effect that says it happened.
     /// - Returns: Whether the condition held inside the bound.
     static func conditionReached(_ label: String, when condition: @Sendable () async -> Bool) async -> Bool {
-        await spin(until: condition)
-        guard await condition() else {
+        guard await spin(until: condition) else {
             Issue.record("\(label) was never observed inside the bound, so the code that makes it happen never ran")
             return false
         }

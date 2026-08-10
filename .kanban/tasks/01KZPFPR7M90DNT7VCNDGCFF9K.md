@@ -1,8 +1,54 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: 8a80
+comments:
+- actor: claude-code
+  id: 01kzphrq76drccextxmctb5kf3
+  text: |-
+    ### Research and measurements
+
+    **The defect, measured.** A test written first (`BoundedWaitTests`) shows the old bound in numbers. `BoundedWait.spin(until:)` with `yieldLimit = 100_000` gives up after **0.087 s** on an idle machine and after **0.121 s** under a load average of 100 on 32 cores. A signal that arrives 0.4 s later is thus lost, although the code is correct. The count of hops is not a measure of time.
+
+    **The fix.** `spin(until:)` now reads a `ContinuousClock` deadline of `ceilingNanoseconds` (5 s). It yields for the first `yieldsBeforePolling` (1000) hops, because a state change that a test puts behind a few task suspensions lands inside those hops and costs microseconds. Then it sleeps `pollIntervalNanoseconds` (5 ms) between readings until the deadline. The sleep is important on a loaded machine: a spin that continues to yield for 5 s takes slices away from the task that must make the change.
+
+    **The two bounds are now one.** `Helpers/AnswerDrivenRun.swift` had the same wall-clock bound with its own constants (`AnswerDeliveryBound`: 5 s ceiling, 5 ms interval, derived `pollLimit`). That enum is deleted. `finishesWithinDeliveryBound()` now calls `BoundedWait.spin(until:)`. The two do not conflict: `AnswerDrivenRun` asks a question that crosses an actor and `spin` reads a semaphore, but each asks a question that cannot suspend for ever, again and again, until a ceiling. The yield phase does not damage the actor-crossing question; it only makes an answer that is already there arrive without a sleep. `spin` returns `Bool` (`@discardableResult`), so `conditionReached` no longer reads the condition a second time.
+
+    **The same defect in a second file, removed.** `TurnCancellationTests.swift` carried a private copy: `spinYieldLimit = 100_000` and a private `spin(until:)`, used at 7 sites. Card `^h71b8yv` left it out of its scope. It is the same cause, thus the copy is deleted and the 7 sites call `BoundedWait.spin(until:)`.
+
+    **Kept, because they are the reason the helper exists.**
+    - The wait always ends: the deadline ends it, and `Task.sleep` that fails on cancellation becomes a yield, so cancellation never decides when a wait ends and never makes a hot loop.
+    - The fault still reports through `Issue.record` with the same words, and the test proves the recorded issue names the label.
+    - `awaitSignal`'s two steps are not collapsed. The non-suspending `availablePermits` reading stays before `wait()`, and the single-consumer precondition on the `enum BoundedWait` doc comment is unchanged, word for word.
+
+    **Cost.** The main test target goes from 2.776 s to 5.04 s, because one new test waits out the full 5 s ceiling to prove that a condition which never holds ends the wait. The other 781 tests still finish inside that time.
+  timestamp: 2026-08-10T19:18:06.822706+00:00
+- actor: claude-code
+  id: 01kzphss2xadd4xhpyfwxh698e
+  text: |-
+    ### implement — changed
+
+    - evidence: 4 files — `Tests/FoundationModelsRouterTests/Helpers/BoundedWait.swift` (wall-clock bound), `Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift` (`AnswerDeliveryBound` deleted, polls through `BoundedWait.spin`), `Tests/FoundationModelsRouterTests/TurnCancellationTests.swift` (private 100000-hop copy deleted, 7 sites through `BoundedWait.spin`), `Tests/FoundationModelsRouterTests/BoundedWaitTests.swift` (new, 2 tests).
+    - new bound: `ceilingNanoseconds` 5 s read from a `ContinuousClock` deadline, `yieldsBeforePolling` 1000 hops first, then `pollIntervalNanoseconds` 5 ms between readings. `spin` returns `Bool`, `@discardableResult`.
+    - red first: both new tests failed against the old bound. The hop budget expired after 0.087 s idle, thus a signal that arrives at 0.4 s was lost.
+    - A/B under load (96 busy processes on 32 cores, load average 101): OLD bound — the late signal test fails after 0.121 s; NEW bound — every test passes, the late signal is seen at 0.410 s, the false condition ends at 5.001 s with the named issue.
+    - under load, final tree: the 9 `HumanWaitGate` tests (the 3 named among them) pass in 0.015 s; the whole suite passes — 783/75 + 24/9 + 24/5, 0 failures, 1 known issue (the intended one).
+    - idle: `swift test` green, 783 tests in 75 suites + 24 in 9 + 24 in 5, 0 failures. The only build warning is the SwiftPM `missing creator for mutated node` warning, which is present on HEAD as well.
+    - `git diff -- Sources` is 0 bytes. `Scripts/check-doc-links.py`: 0 stale, 0 unresolved. No `swift format` run. No gated suite run. Nothing committed, nothing pushed.
+    - next: `/review`.
+  timestamp: 2026-08-10T19:18:41.501276+00:00
+- actor: claude-code
+  id: 01kzpj0pvgjhwpkr6nh6nbj58a
+  text: |-
+    ### test — green
+    - evidence: `swift test` — Test run with 783 tests in 75 suites passed after 5.022 seconds with 1 known issue (the deliberate `withKnownIssue` in the new give-up test). Plus 24 tests in 9 suites, and 24 tests in 5 suites, both passing. 0 failures. Only warning line is a pre-existing SwiftPM plugin message about `mlx-swift_Cmlx.bundle` (a dependency resource bundle), unrelated to this change — no new warnings in the changed files.
+    - three properties: (a) wait always ends — `spin(until:)` yields up to `yieldsBeforePolling` times, then loops checking the condition then the `ContinuousClock` deadline; `waitOnePollInterval()` falls back to `Task.yield()` when `Task.sleep` is cancelled, so a cancelled wait keeps looping to the deadline check instead of exiting early or hanging — confirmed by code read. (b) `conditionReached` records `Issue.record("\(label) was never observed inside the bound...")`, so the fault names the label — confirmed. (c) `awaitSignal` calls `signalArrived` (non-suspending `availablePermits` read via `spin`) strictly before `semaphore.wait()`; the enum doc comment still states the single-consumer precondition — confirmed.
+    - AnswerDrivenRun unchanged: `finishesWithinDeliveryBound()` now calls `BoundedWait.spin(until:)`, whose ceiling (5_000_000_000 ns) and poll interval (5_000_000 ns) match the prior 5 s / 5 ms bound; the give-up path in `deliveredAnswer()` still calls `task.cancel()` and throws without awaiting `task.value` — confirmed.
+    - `git diff -- Sources` is empty — confirmed (0 lines).
+    - untracked file: `Tests/FoundationModelsRouterTests/BoundedWaitTests.swift` — needs `git add` at commit.
+    - TurnCancellationTests: `git diff` shows the private `spinYieldLimit`/`spin(until:)` deletion and 7 mechanical call-site renames to `BoundedWait.spin(until:)`, with identical surrounding guard/`Issue.record`/`#expect` logic at each site — confirmed no rewrite.
+  timestamp: 2026-08-10T19:22:28.592008+00:00
+position_column: doing
+position_ordinal: '80'
 title: '[Router] BoundedWait''s yield-count bound makes HumanWaitGateTests fail under machine load'
 ---
 ## What happened
@@ -49,10 +95,10 @@ Keep the properties that the existing doc comment gives as the reason for this h
 
 ## Acceptance Criteria
 
-- [ ] The bound of `BoundedWait` does not fail because of the load on the machine.
-- [ ] The 3 named tests pass when the machine has a heavy load. Put a load on the machine, then run the suite, to make the check.
-- [ ] A condition that is truly false still ends the wait, and still records an issue that names it.
-- [ ] `swift test` green.
+- [x] The bound of `BoundedWait` does not fail because of the load on the machine.
+- [x] The 3 named tests pass when the machine has a heavy load. Put a load on the machine, then run the suite, to make the check.
+- [x] A condition that is truly false still ends the wait, and still records an issue that names it.
+- [x] `swift test` green.
 
 ## Notes
 
