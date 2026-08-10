@@ -30,7 +30,7 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// Gated real-model coverage for task 0n38p3w: the FIRST live traffic ever
 /// exercised for the tool-aware recording schema (`Kind.toolCalls` /
 /// `Kind.toolOutput` / `ToolDefinitionPayload`), proving a tool-using turn
-/// driven directly over a ``RecordingLanguageModel`` handle (`RoutedLLM/makeLanguageModel()`)
+/// driven directly over a ``RecordingLanguageModel`` handle (`RoutedModel/makeLanguageModel()`)
 /// round-trips to disk: everything up through `.toolOutput` back-fills live,
 /// during the turn (alongside an empty, metadata-only `.response` entry the
 /// tool-calling round registers before it ever decides to call a tool — real,

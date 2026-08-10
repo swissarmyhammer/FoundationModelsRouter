@@ -22,6 +22,13 @@ produces on this codebase:
   closure parameter's return type does not close a bracket and corrupt the
   depth count.
 
+One resolution rule keeps the report free of the false *negative* that matters
+just as much: a qualifier that owns no declaration resolves nothing. DocC
+resolves ``RoutedLLM/embed(texts:)`` against `RoutedLLM`'s own members, and a
+typealias has none — so such a link is reported even though the bare selector is
+declared on the type the alias names. Falling back to the whole-repo pool for an
+unknown qualifier would accept it silently.
+
 Usage:
 
     Scripts/check-doc-links.py [--root DIR] [DIR ...]
@@ -348,13 +355,31 @@ def base_name(symbol):
     return symbol[:symbol.index("(")]
 
 
+def resolution_pool(qualifier, everywhere, by_owner, owners):
+    """Return the declarations `qualifier` may resolve against, or None if it owns none.
+
+    An unqualified link may name any declaration in the scan. A qualified one may
+    name only a member of the type it qualifies, so a qualifier that owns no
+    declaration at all — a typealias, or a type belonging to another module — has
+    no pool, and every link through it resolves to nothing.
+
+    Widening to `everywhere` in that case is the bug this function exists to
+    prevent: it lets a same-named member of some *other* type stand in for the
+    missing one, so a typealias-qualified link passes a check it should fail.
+    """
+    if qualifier is None:
+        return everywhere
+    return by_owner.get(qualifier, set()) if qualifier in owners else None
+
+
 def find_stale_links(texts, declarations, owners):
     """Return `(stale, unresolved)` reports for every link that names no declaration.
 
     A link lands in `stale` when its base name is declared in the pool it should
-    resolve against but with different labels — the defect worth fixing. It
-    lands in `unresolved` when the pool has no such name at all, which usually
-    means the link points at another module and needs a human to read it.
+    resolve against but with different labels — the defect worth fixing. It lands
+    in `unresolved` when that pool holds no such name, or when the link's
+    qualifier owns no declarations at all; either way a human has to read it,
+    because the link may name another module or a type that has no such member.
     """
     everywhere = {symbol for _, symbol in declarations}
     by_owner = defaultdict(set)
@@ -364,12 +389,11 @@ def find_stale_links(texts, declarations, owners):
     stale, unresolved = [], []
     for path in sorted(texts):
         for line, raw, qualifier, base, symbol in collect_links(texts[path]):
-            pool = everywhere if qualifier is None else by_owner.get(qualifier, everywhere)
-            if symbol in pool:
+            pool = resolution_pool(qualifier, everywhere, by_owner, owners)
+            if pool is not None and symbol in pool:
                 continue
-            siblings = sorted(s for s in pool if base_name(s) == base)
-            resolvable = qualifier is None or qualifier in owners
-            if resolvable and siblings:
+            siblings = [] if pool is None else sorted(s for s in pool if base_name(s) == base)
+            if siblings:
                 stale.append((path, line, raw, siblings))
             else:
                 unresolved.append(

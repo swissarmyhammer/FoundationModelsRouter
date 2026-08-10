@@ -238,6 +238,10 @@ actor RecordingLanguageModelState {
     /// The owning profile, retained strongly so the resident models this
     /// handle drives stay alive for its whole lifetime — mirrors
     /// ``RoutedSessionActor``'s own retention of its owning ``LanguageModelProfile``.
+    // Never read on purpose: holding the reference *is* the whole behavior, so
+    // the index sees an assignment and no use. Deleting it would let the
+    // profile — and the resident models under it — deallocate mid-handle.
+    // periphery:ignore
     nonisolated let profile: LanguageModelProfile
     /// The span id of the session this handle resumed from, or `nil` for a
     /// fresh (non-resuming) handle — stamped onto every event this handle

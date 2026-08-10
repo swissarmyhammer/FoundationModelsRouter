@@ -7,7 +7,7 @@ import Testing
 /// Exercises milestone 5a: a resolved profile's residency lifecycle
 /// (``LanguageModelProfile/release()`` + the ``Router``'s one-active-profile
 /// rule) and the recorded embedding access surface
-/// (``RoutedEmbedder/embed(texts:)`` + `dimension`).
+/// (``RoutedModel/embed(texts:)`` + `dimension`).
 ///
 /// Everything runs against stubs — a stub ``ModelLoader`` with an eviction spy,
 /// a stub embedding container, and an ``InMemoryRecorder`` — so the suite needs

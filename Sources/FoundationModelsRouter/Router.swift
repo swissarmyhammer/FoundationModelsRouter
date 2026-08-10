@@ -60,9 +60,15 @@ private struct ResidencyKey: Hashable, Sendable {
     }
 
     /// The model reference (repo + optional pinned revision).
+    // Never read by name: both stored properties are consumed only through the
+    // synthesized `Hashable`/`Equatable` conformance, which is exactly what
+    // makes this a pool key. Deleting either would collapse every distinct
+    // model (or role) onto one bucket of `pool`.
+    // periphery:ignore
     let ref: ModelRef
 
     /// The role this instance was loaded under.
+    // periphery:ignore
     let role: Role
 }
 
@@ -156,9 +162,6 @@ public actor Router {
     /// gates").
     let maxConcurrentForks: Int
 
-    /// The disposable cache directory for host profiles and repo metadata.
-    let cacheDir: URL
-
     /// The durable transcripts root, or `nil` when recording to memory/none.
     let recordingsDir: URL?
 
@@ -169,9 +172,6 @@ public actor Router {
 
     /// How much of a session's activity is recorded, enforced through ``recorder``.
     let recordingLevel: RecordingLevel
-
-    /// An optional redaction hook applied to recorded text, enforced through ``recorder``.
-    let redact: (@Sendable (String) -> String)?
 
     /// The machine probe behind the budget.
     private let probe: any MachineProbe
@@ -267,7 +267,6 @@ public actor Router {
         self.headroomReserve = headroomReserve
         self.maxConcurrentForks = maxConcurrentForks
         let resolvedCacheDir = cacheDir ?? Self.defaultCacheDir()
-        self.cacheDir = resolvedCacheDir
         self.recordingsDir = recordingsDir
         let baseRecorder = recorder ?? Self.defaultRecorder(recordingsDir: recordingsDir)
         // Verbatim recording — `.full` with no `redact` hook — needs no gate, so
@@ -281,7 +280,6 @@ public actor Router {
             self.recorder = GatingRecorder(level: recordingLevel, redact: redact, wrapping: baseRecorder)
         }
         self.recordingLevel = recordingLevel
-        self.redact = redact
         self.probe = probe
         self.hostProfileCache = HostProfileCache(cacheDir: resolvedCacheDir)
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)

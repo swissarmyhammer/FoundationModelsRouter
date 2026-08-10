@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task em16az8: ``RoutedLLM/makeLanguageModel()``, the FACTORY that
+/// Exercises task em16az8: ``RoutedModel/makeLanguageModel()``, the FACTORY that
 /// mints a fresh ``RecordingLanguageModel`` handle — a `LanguageModel`
 /// conformer any caller can build a `LanguageModelSession(model:tools:instructions:)`
 /// over directly and get recording, serial gating, and tool-calling support

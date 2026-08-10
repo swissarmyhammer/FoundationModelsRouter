@@ -55,19 +55,27 @@ public struct SlotProgress: Sendable, Equatable {
         self.bytesTotal = bytesTotal
     }
 
+    /// The share of a slot's work that downloading accounts for, the rest
+    /// being the load that follows it. Fully earned the moment the last byte
+    /// lands, which is why a loading slot reads exactly this.
+    private static let downloadShare = 0.5
+
     /// This slot's contribution to the overall fraction, in `0...1`.
     ///
-    /// Downloading counts as the first half of a slot's work and loading as the
-    /// second, so a slot reads `0` until it downloads, `0...0.5` while bytes
-    /// arrive, `0.5` once loading, and `1` when ready.
+    /// Downloading counts as the first ``downloadShare`` of a slot's work and
+    /// loading as the rest, so a slot reads `0` until it downloads, climbs to
+    /// ``downloadShare`` while bytes arrive, sits there once loading, and
+    /// reads `1` when ready.
     var progressFraction: Double {
         switch state {
         case .pending, .sizing, .failed:
             return 0
         case .downloading:
-            return bytesTotal > 0 ? 0.5 * Double(bytesDownloaded) / Double(bytesTotal) : 0
+            return bytesTotal > 0
+                ? Self.downloadShare * Double(bytesDownloaded) / Double(bytesTotal)
+                : 0
         case .loading:
-            return 0.5
+            return Self.downloadShare
         case .ready:
             return 1
         }
