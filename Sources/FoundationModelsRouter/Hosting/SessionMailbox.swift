@@ -171,6 +171,12 @@ public actor SessionMailbox {
     /// clamp, so a caller can simply wait again.
     public static let waitSecondsCeiling: Double = 86_400
 
+    /// Nanoseconds in one second — the unit conversion
+    /// ``boundedNanoseconds(clamping:)`` applies, because every deadline
+    /// this mailbox is given arrives in seconds and every sleep it drives
+    /// (`Task.sleep(nanoseconds:)`) counts nanoseconds.
+    private static let nanosecondsPerSecond: Double = 1_000_000_000
+
     // MARK: - Token minting
 
     /// Mints a fresh completion token: a ULID string, generated through the
@@ -195,10 +201,6 @@ public actor SessionMailbox {
 
         /// The latest progress detail reported for the run.
         var latestProgressDetail: String?
-
-        /// The settling handle: resolves to the run's terminal event when
-        /// the run's own body ends.
-        let settling: Task<OperationEvent, Never>
 
         /// Requests cancellation with this run kind's own semantics and
         /// reports the honest ``OperationOutcome`` of that request.
@@ -311,7 +313,6 @@ public actor SessionMailbox {
             op: op,
             kind: kind,
             latestProgressDetail: nil,
-            settling: settling,
             canceler: canceler
         )
         parkOrder.append(completionToken)
@@ -627,7 +628,7 @@ public actor SessionMailbox {
     static func boundedNanoseconds(clamping seconds: Double) -> UInt64 {
         guard !seconds.isNaN else { return 0 }
         let clamped = min(max(seconds, 0), waitSecondsCeiling)
-        return UInt64(clamped * 1_000_000_000)
+        return UInt64(clamped * nanosecondsPerSecond)
     }
 
     /// Expires one waiter's deadline: if it is still parked, resumes it with

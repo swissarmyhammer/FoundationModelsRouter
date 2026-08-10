@@ -25,7 +25,7 @@ enum ToolOutputCapping {
     ///
     /// - Parameters:
     ///   - text: The tool's raw output.
-    ///   - toTokenLimit: The maximum number of tokens to keep.
+    ///   - limit: The maximum number of tokens to keep.
     /// - Returns: `text` unchanged when its estimated size is already at or
     ///   under `toTokenLimit` tokens; otherwise a truncated prefix
     ///   (approximately `toTokenLimit` tokens) followed by a
@@ -54,8 +54,8 @@ enum ToolOutputCapping {
     /// stopping before the one that would exceed `keepingAtMostUTF8Bytes`.
     ///
     /// - Parameters:
-    ///   - of: The text to take a prefix of.
-    ///   - keepingAtMostUTF8Bytes: The maximum UTF-8 byte count the
+    ///   - text: The text to take a prefix of.
+    ///   - maxBytes: The maximum UTF-8 byte count the
     ///     returned prefix may have.
     /// - Returns: The longest valid `Character`-boundary prefix of the given
     ///   text whose UTF-8 encoding is at most `keepingAtMostUTF8Bytes`
@@ -89,7 +89,7 @@ enum ToolOutputCapping {
     ///
     /// - Parameters:
     ///   - tool: The tool to consider for capping.
-    ///   - toTokenLimit: The token limit each call's output is capped to.
+    ///   - limit: The token limit each call's output is capped to.
     /// - Returns: A capping decorator around `tool` when its `Output` is
     ///   `String`; `tool` itself otherwise.
     static func wrapping(tool: any Tool, toTokenLimit limit: Int) -> any Tool {
@@ -109,7 +109,7 @@ enum ToolOutputCapping {
     ///
     /// - Parameters:
     ///   - tool: The tool to consider for capping.
-    ///   - toTokenLimit: The token limit to cap to, or `nil` (e.g. no
+    ///   - limit: The token limit to cap to, or `nil` (e.g. no
     ///     ``TokenBudget`` configured, or a `TokenBudget` with no
     ///     ``TokenBudget/toolOutputLimit``) to leave `tool` uncapped.
     /// - Returns: `tool` unchanged when `toTokenLimit` is `nil`; otherwise
@@ -208,7 +208,7 @@ extension ToolDetachment {
     ///   - mailbox: The owning session's mailbox, where detached runs park.
     ///   - sink: The upstream sink the run's events are posted to — the
     ///     session's own outbox.
-    ///   - cappedToTokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
+    ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
     ///     rendered output to, or `nil` for no capping layer.
     /// - Returns: The composed, model-facing tool.
     static func sessionMounted(
