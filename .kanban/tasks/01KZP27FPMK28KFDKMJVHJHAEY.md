@@ -1,0 +1,124 @@
+---
+assignees:
+- claude-code
+comments:
+- actor: claude-code
+  id: 01kzp9a1ktktwxm5946wz59287
+  text: |-
+    Picked up. Research notes before writing code.
+
+    **Reuse decision.** `^cvtfem3` (commits 4f1da63, 4a32675) put the whole scripted-model fixture set inside `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift`: `ToolOutputFeedbackFixture`, `MarkerEmittingTool`, `ScriptedToolCallingModel` (with its own `Executor`), `ScriptedToolCallingBackend`, `ScriptedToolCallingContainer`. The parity harness needs the same machinery but with a per-row turn shape, so the fixtures move to `Tests/FoundationModelsRouterTests/Helpers/` and become script-driven. No second copy is written.
+
+    **What the SDK gives the harness.** `FoundationModels` here is the macOS 27 system framework (not the vendored `mlx-swift-lm` fork). `LanguageModelExecutor.Configuration` is only `Hashable, Sendable`, so a per-run observation log can ride in the configuration as a class hashed by identity — that gives each run its own executor instance and hands the test the log directly, with no global registry. `Transcript.ToolCall` carries `id`, `toolName`, `arguments: GeneratedContent`, and `Transcript.ToolOutput` carries `toolName` + `segments`, so the answering turn can read back what the model was actually told.
+
+    **Observable outcome, by content only.** The compared value per surface is: final answer text, the `.toolCalls` entries the transcript carries at answer time (name + arguments JSON, in transcript order), the `.toolOutput` texts the answering generation read, the count of executor `respond(to:...)` invocations (model turns), how many times the mounted tool bodies ran, and the thrown-error description when a surface throws. No event count stands in for delivery — the marker text in the outputs is the delivery proof.
+
+    **Non-`String` row.** `ToolElevation.wrapping` sends a `String`-output tool through `ElevatingTool` and everything else through `ContextBindingTool`; the harness mounts a tool returning the existing `NonStringToolOutput` helper (already in `Helpers/AmbientEventToolFixtures.swift`) to cross that second path.
+  timestamp: 2026-08-10T16:50:17.338452+00:00
+- actor: claude-code
+  id: 01kzpa7masvssd6996brygrk67
+  text: |-
+    TDD record — each row's FIRST-RUN outcome, written one row at a time as the card asks.
+
+    | # | row | first run |
+    |---|---|---|
+    | 1 | one call, one output, answer | **PASS** |
+    | 2 | two sequential calls, each output feeding the next | **PASS** |
+    | 3 | two independent calls in one turn | **PASS** |
+    | 4 | a call that throws | **FAIL** |
+    | 5 | a tool with non-`String` output | **PASS** |
+    | 6 | no calls at all | **PASS** |
+
+    Row 4 is the one the harness caught, and it is worth stating precisely, because the failure is not the one the card's table predicted.
+
+    **The two surfaces did not diverge.** `respond(to:)` and `streamEvents(to:)` behaved identically: each ran the tool body exactly once, took exactly one model turn, produced no answer text, and raised the same `LanguageModelSession.ToolCallError` wrapping `MARKER-7F3A-FAILED-BOOM`. Parity holds.
+
+    **What is false is the card's premise for that row — "the error must reach the model".** It does not reach the model on *either* surface. The SDK's `LanguageModelSession` aborts the turn at the failed call and raises the failure to the *caller*; there is no second generation, no `.toolOutput` entry for the failed call, and nothing in the transcript tells the model its call failed. A host that mounts a tool which can fail gets an exception, not a model that can recover, and that is true through a plain `LanguageModelSession` as much as through a `RoutedSession` — `git diff -- Sources` is empty, so nothing in Router causes it. Not repaired here; the card builds the guard and does not repair what it catches. **Reported for filing, not filed.**
+
+    The row now records what both surfaces actually and identically do, so the guard locks that contract and a future change that makes only one surface start (or stop) aborting fails here.
+
+    Two harness-side facts the failure surfaced, both fixed inside the test code:
+
+    1. `String(describing:)` of a `ToolCallError` prints the whole mounted decorator chain including the owning session's own ULID, which differs per run. Comparing that raw text made the two surfaces look divergent on every run and would never have reported a real divergence. The outcome now compares a normalized `"<tool name>: <underlying error>"`.
+    2. A turn that aborts takes one model turn fewer than one that answers, so the expected model-turn count is derived as `rounds.count + 1` for a completing turn and `rounds.count` for an aborting one, rather than assumed.
+
+    Also confirmed while building: the harness can fail — row 4's first run is the proof, not a claim. And rows 3's two-calls-in-one-round shape is not order-flaky: the compared call order and output order come from the transcript, which the SDK writes deterministically, while the tool-side evidence is an order-free execution count. Three consecutive runs of the suite agree.
+  timestamp: 2026-08-10T17:06:26.777215+00:00
+- actor: claude-code
+  id: 01kzpa8wq4csdqmz3wcq400m1k
+  text: |-
+    ### implement — changed
+    - evidence: 6 files. New: `Tests/FoundationModelsRouterTests/SurfaceParityTests.swift` (the harness), `Tests/FoundationModelsRouterTests/Helpers/ScriptedTurnScript.swift`, `Helpers/ScriptedMarkerTools.swift`, `Helpers/ScriptedToolCallingModel.swift`, `Helpers/ScriptedSessionFixture.swift`. Modified: `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift` (419 → 99 lines, its fixtures moved out, its two assertions byte-identical in meaning and still passing).
+    - reuse: `^cvtfem3`'s fixtures were EXTRACTED to `Helpers/`, not copied. `ScriptedToolCallingModel`, its `Executor`, `ScriptedToolCallingBackend`, `ScriptedToolCallingContainer` and `MarkerEmittingTool` each exist once, generalised from two hard-coded steps to a `ScriptedTurnScript` of rounds. Every doc comment moved with its declaration, including the notes recording why the container and fork overrides refuse the protocol's tool-dropping defaults. `NonStringToolOutput` and `AmbientToolArguments` were reused from the existing `Helpers/AmbientEventToolFixtures.swift` rather than redeclared.
+    - first-run outcomes: row 1 PASS, row 2 PASS, row 3 PASS, **row 4 FAIL**, row 5 PASS, row 6 PASS. See the TDD record comment above for what row 4 disproves and why it is reported rather than repaired.
+    - tests: `swift test` — 781 tests / 74 suites, 24 / 9, 24 / 5, all passed, 0 failures. Clean rebuild of every touched file: 0 warnings. `Scripts/check-doc-links.py`: 1290 symbol links scanned, 0 stale, 0 unresolved.
+    - production: `git diff -- Sources` EMPTY. No gated suite run — the harness needs no GPU and no network.
+    - next: ready for `/review`.
+  timestamp: 2026-08-10T17:07:08.132201+00:00
+- actor: claude-code
+  id: 01kzpamk92twgvzxj8jyqxfqxm
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 781 tests / 74 suites passed (2.804s), plus 24 tests / 9 suites passed, plus 24 tests / 5 suites passed. 0 failures. 0 Swift compiler warnings (one pre-existing SPM build-plugin message, "missing creator for mutated node" for the vendored mlx-swift Cmlx bundle, unrelated to any changed file — not a code warning). Gated suites (FM_ROUTER_INTEGRATION_TESTS=1 / MULTITOOL_INTEGRATION=1) were not run, as instructed; their tests show as skipped, which is the existing gating convention, not new skips from this task.
+    - cvtfem3 regression check: both tests (respondFeedsToolOutputBackIntoGeneration, streamEventsFeedsToolOutputBackIntoGeneration) still exist in ToolOutputFeedbackTests.swift and both still call the shared `expectEveryToolOutputReachedTheAnswer(_:tool:)`, which asserts `tool.calledSteps == steps` (proves the multi-call shape) and then loops `for marker in markers { #expect(answer.contains(marker), ...) }` — each marker checked separately, so a loop delivering only the first output still fails on the second marker. The answer is built only from tool-output text read out of the transcript (never a canned string — confirmed in `ScriptedToolCallingModel.Executor.respond`, which composes the final answer via `ScriptedToolFixture.answer(fromToolOutputs:)` fed by `toolOutputTexts(in:)` read off the request's transcript). Both surfaces share the one assertion function. Nothing was weakened.
+    - `git diff -- Sources` is empty (0 lines) — no production code changed.
+    - Five new untracked (`??`) files, to `git add` at commit: Tests/FoundationModelsRouterTests/SurfaceParityTests.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedTurnScript.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedMarkerTools.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedToolCallingModel.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedSessionFixture.swift.
+    - No event-count proxies: `SurfaceTurnOutcome`'s doc states plainly "None of them is a count of stream events... only `deliveredToolOutputs` and `answer` are allowed to stand for delivery." Every row's parity assertion (`#expect(responded == row.expectedOutcome, ...)`) is anchored on `expectedAnswer` (content) and `expectedDeliveredToolOutputs` (content) in every row that delivers anything; `modelTurnCount`/`toolExecutionCount` ride along in the same struct but never substitute for content proof — the one row with no delivery ("a call that throws") proves the call ran via `toolExecutionCount` *plus* the tool-identified failure text, not via a count alone.
+    - Row 4 ("a call that throws") lock is honest: both surfaces are asserted to produce the *same* aborted outcome (`expectedAnswer: ""`, `expectedCalls: []`, `expectedDeliveredToolOutputs: []`, non-nil `expectedFailureDescription`), and `responded == streamed` is checked first — so both surfaces aborting identically is what's being locked, not vacuous emptiness. `failureDescription(of:)` normalizes a `LanguageModelSession.ToolCallError` to `"\(toolCallError.tool.name): \(toolCallError.underlyingError)"`, explicitly documented as avoiding the ULID-bearing `String(describing:)` form, matching `expectedFailure = "\(ThrowingMarkerTool.toolName): \(ThrowingMarkerTool.CallFailure(step: Step.failing))"`.
+    - Single-definition check: `grep`-confirmed `ScriptedToolCallingModel`, its nested `Executor`, `ScriptedToolCallingBackend`, `ScriptedToolCallingContainer`, and `MarkerEmittingTool` (plus `ThrowingMarkerTool`, `NonStringMarkerTool`) are each defined exactly once, only in `Helpers/ScriptedToolCallingModel.swift` / `Helpers/ScriptedMarkerTools.swift`. Other `struct Executor` matches elsewhere belong to unrelated fixture models (RecordingLanguageModelTests, LanguageModelBoundaryProbeTests, NoteCompactionTests, CompactionSegmentTests, RecordingHandleResumeTests) and the production `RecordingLanguageModel`, not duplicates. Doc comments explaining why the container/fork overrides refuse the protocol's tool-dropping defaults moved intact (present on `ScriptedToolCallingContainer`'s type doc and its `makeSession(instructions:tools:)`, and on `ScriptedToolCallingBackend.makeFork(tools:)`).
+    - `python3 Scripts/check-doc-links.py` — exit 0, 0 stale, 0 unresolved (1290 symbol links scanned, 2380 declarations indexed).
+    - next: hand off for review.
+  timestamp: 2026-08-10T17:13:31.682328+00:00
+position_column: doing
+position_ordinal: '80'
+title: '[Router] TDD: parity harness — respond(to:) and streamEvents must behave identically on a tool-using turn'
+---
+FOR THE ROUTER AGENT. The guard that stops the defect in `^cvtfem3` from recurring in a different shape.
+
+## Why
+
+A real-model suite in FoundationModelsMultitool scores **0/4 through `RoutedSession`** and **1/4–3/4 through a plain `LanguageModelSession`** — same tools, same prompts, same model, same commit. Router's own tests did not catch it, because nothing asserts that the two session surfaces behave the same on a turn that uses tools.
+
+Every Router feature a host wants — the run plane, recording, compaction, seeding, elevation — arrives by moving a host off `LanguageModelSession` and onto `RoutedSession`. That move must be behaviour-preserving for the ordinary case, or the features are bought at the cost of the thing they decorate. Right now nothing holds that line.
+
+## What to build
+
+A parity harness, driven by a deterministic scripted model, asserting that one tool-using turn produces the same observable outcome on both surfaces:
+
+- the same final answer text
+- the same tools called, in the same order, with the same arguments
+- the same outputs delivered back into generation
+- the same count of model turns
+
+Table-drive it over turn shapes, so one new row covers a new case rather than a new test:
+
+| shape | why |
+|---|---|
+| one call, one output, answer | the base case, and the one `^cvtfem3` is about |
+| two sequential calls, each output feeding the next | catches a loop that delivers only the first output |
+| two independent calls in one turn | catches ordering and interleaving bugs |
+| a call that throws | the error must reach the model on both surfaces |
+| a tool with non-`String` output | `wrapping` sends those down a different path (`ContextBindingTool`), so parity must hold there too |
+| no calls at all | the trivially-equal case, which should stay trivially equal |
+
+## TDD
+
+Write the table and the two drivers first, with **one** row. Watch it fail or pass, and record which. Add rows one at a time — each row that passes on the first write is still worth keeping, and each that fails is a defect this harness exists to find.
+
+Do not assert on event *counts* as a proxy for delivery. `^cvtfem3` exists because a turn where every call succeeded and no call failed still left the model uninformed; only content proves delivery.
+
+## Acceptance Criteria
+
+- [x] A table-driven harness asserts answer text, call sequence, call arguments, delivered outputs, and turn count are equal across `respond(to:)` and `streamEvents`
+- [x] All six shapes above are rows; each row's first-run outcome (pass or fail) is recorded on the task
+- [x] No row asserts an event count as a stand-in for output delivery
+- [x] The harness needs no GPU and no network — scripted model only, so it runs in the ordinary suite
+- [x] `swift test` green
+
+## Depends on
+
+`^cvtfem3` should land first: it isolates the single defect, and this harness then generalises the contract. Doing this one first is acceptable but expect several rows red at once, which is harder to diagnose.
+
+## Finding raised, not repaired
+
+Row 4 ("a call that throws") failed on its first run, and the failure is **not** a parity defect. Both surfaces behave identically. What the run disproves is the row's own premise: a failing tool's error **never reaches the model** on either surface. The SDK's `LanguageModelSession` aborts the turn at the failed call and raises `LanguageModelSession.ToolCallError` to the caller — no second generation, no `.toolOutput` for the failed call, nothing in the transcript telling the model its call failed. `git diff -- Sources` is empty, so no Router code causes this. The row now locks the behaviour both surfaces really share. **Reported for the user to file; deliberately not repaired under this card.**
