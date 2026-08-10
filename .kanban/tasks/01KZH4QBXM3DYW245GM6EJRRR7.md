@@ -136,6 +136,86 @@ comments:
     evidence: `swift test` → 776+24+24=824 passed, 0 failed; `grep -c "error:"` = 0, only warning is the out-of-scope mlx-swift-lm node warning; `python3 Scripts/check-doc-links.py` → 0 stale / 0 unresolved, exit 0.
     next: none — iteration 2 verified clean on both the green-suite axis and the four specifically-scrutinized code changes.
   timestamp: 2026-08-10T11:31:44.923860+00:00
+- actor: claude-code
+  id: 01kznqjgnatnwr6wtnqra0eyky
+  text: |-
+    ### review — findings
+
+    - evidence: 1 open finding — `Sources/FoundationModelsRouter/Router.swift:71`. Engine `review sha HEAD~1..HEAD` (checkpoint `891f3dc`): **12 attempted, 0 failed — a COMPLETE run**, against iteration 1's 75-attempted/2-failed incomplete run. 0 raw findings, 0 confirmed, 0 refuted. The single finding is reviewer-verified, not engine-sourced.
+    - the finding: `ResidencyKey.role` is now permanently exempted from dead-code analysis by `// periphery:ignore`, and no test would fail if `role` were dropped from the key. Read every profile fixture in the suite — each names a distinct repo per slot, so no fixture exercises one `ModelRef` under two `Role` values. Both discrimination axes are uncovered: same ref as `.llm(context:)` vs `.embedding`, and same ref as `.llm(context: N)` vs `.llm(context: M)` (standard and flash both mint `.llm(context:)` keys at `Router.swift:358`). `sharedEmbeddingRef` is shared under `.embedding` on both sides, so it pins nothing. Asymmetry is the point: the sibling `ref` IS pinned by `PooledResidencyTests.sameRepoDifferentRevisionDoesNotShare`, so the repo already treats a residency-key component as deserving a discrimination test. Fix is a NEW test of that same shape, so the existing-test exception does not apply.
+    - prior round verified, not taken on trust: all 11 iteration-1 findings re-checked against the working tree. All 11 closed. Markers confirmed present and correctly formed at `RecordingLanguageModel.swift:244`, `Router.swift:67`, `Router.swift:71`; `downloadShare` at `ResolutionProgress.swift:61` consumed at both `:75` and `:78` with no bare `0.5` left; `cacheDir`/`redact` stored properties absent from `Router.swift` with only the init parameters remaining; `grep` for `RoutedLLM/` or `RoutedEmbedder/` across `Sources/` and `Tests/` returns 0 hits.
+    - checker honesty confirmed by fault injection, not by reading: injected ``RoutedEmbedder/embed(texts:)`` into `ProfileLifecycleTests.swift`, re-ran `Scripts/check-doc-links.py` → `total unresolved here: 1`, exit 1, correctly bucketed and located; restored, tree clean, back to `0 stale / 0 unresolved`, exit 0. `resolution_pool` returns `None` for a qualifier owning no declaration, `find_stale_links` routes `None` to `unresolved`, `report` exits 1 on either bucket, and the dead `resolvable` expression is gone. It cannot silently report success when it has failed to resolve something.
+    - acronym-casing waiver: no `Ram`/`Json`/`Llm` finding was returned, so the project waiver had nothing to apply to this round.
+    - not reopened: `Scripts/check-doc-links.py` placement — reserved for the user, explicitly out of this review's scope. Not deleted, not CI-wired.
+    - next: add the two-roles-apart regression test, then re-review.
+  timestamp: 2026-08-10T11:40:20.522658+00:00
+- actor: claude-code
+  id: 01kznqm3z5kk7wdvt71eayvwrn
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 7 files, +58/-24; checker bug fixed (red→green watched, both buckets fault-injected); 3 DocC qualifier retargets incl. one in single backticks; 4 genuine periphery findings applied; 3 false positives marked `// periphery:ignore`
+    - test: green — swift test, 824 passed (776+24+24), 0 failures, 0 actionable warnings, 36 skips all FM_ROUTER_INTEGRATION_TESTS-gated. Verified Router.cacheDir/redact were internal (not public) and unread repo-wide — deletion is not an API break.
+    - commit: 891f3dc — 9 files, +187/-25, local only
+    - review: findings — Sources/FoundationModelsRouter/Router.swift:71. Engine returned 0 findings over HEAD~1..HEAD (12 attempted, 0 failed). All 11 prior findings re-checked against the tree and confirmed closed. Checker honesty proven by fault injection (bad qualifier → 1 unresolved, exit 1; restored → 0/0, exit 0).
+    - next: iteration 3 — add a ResidencyKey role-discrimination test covering both uncovered axes (.llm vs .embedding, and .llm(context:) at two different contexts)
+  timestamp: 2026-08-10T11:41:13.061961+00:00
+- actor: claude-code
+  id: 01kznr02g2m1mxrg0m3pka3zb0
+  text: |-
+    Iteration 3 research — the two uncovered `ResidencyKey.role` axes, and the seam each one needs.
+
+    Verified the reviewer's reasoning against the code rather than assuming it:
+
+    - **Axis (a), `.llm(context:)` vs `.embedding`, is a first-class supported shape, not a contrivance.** `Router.slotMembership(profile:)` and `Router.footprintBytes(for:context:metadataByRef:membership:residentKeys:)` both document and handle a ref that is a candidate for two slots: the ref is sized under *every* interpretation it could be used under and the larger figure is kept ("one small model listed as both an embedding and a standard candidate"). So one profile may name one repo in `standard` and in `embedding`, and the two acquisitions then run `acquireLLM` (key `.llm(context:)`) and `acquireEmbedder` (key `.embedding`) over the same `ModelRef`.
+    - **The collapse consequence is a crash, exactly as the finding states.** Acquisition order is standard, flash, embedding. With `role` gone from the key, the embedding acquisition would find the standard slot's pool entry, bump its refcount and never call `loadEmbedder`; `makeRoutedModel`'s `unwrap` then fails to pull a `LoadedEmbeddingContainer` out of a `PooledContainer.llm` and hits `preconditionFailure`. So the fail-mode of the axis-(a) test is a trap, not a clean assertion failure.
+    - **Axis (b) needs no metadata or budget gymnastics** — `ProfileDefinition.context` is an authored `Int?` that defaults to `defaultContext` (8192), and `JointFit.resolve` branches to `resolveAtFixedContext` whenever it is non-nil. Every existing fixture therefore resolves at a fixed 8192, and a second profile authored with `context: 4096` puts the same repo under `.llm(context: 4096)`. That fail-mode is clean: the second load simply never happens and the count assertion drops from 2 to 1.
+    - **Dead end recorded so nobody repeats it:** trying to reach axis (b) through the *context ladder* instead does not work. Pool-aware pricing (`residentKeys.contains(key) ? 0 : raw`) makes an already-resident rung free, so a second profile always fits at the resident rung first and shares; forcing it down a rung costs *more*, not less, because the shared ref stops being free. Getting two rungs apart that way needs per-repo metadata with a KV-dominant layer count, which the authored `context:` makes unnecessary.
+
+    Budget arithmetic checked against the fixture constants (`withMargin` is `(raw*6 + 4)/5`): LLM raw at 4096 is 10_000_000 + 1_048_576, margined 13_258_292; a 4096 trio is 38_516_584, and the second profile's effective budget after the first is resident is 41_034_166. `Self.oneTrioFootprint * 2 + Self.headroomBufferBytes` covers both tests, including the dual-role profile's 43_549_749 (its shared ref is charged the generation interpretation in both slots).
+  timestamp: 2026-08-10T11:47:44.770640+00:00
+- actor: claude-code
+  id: 01kznr7zv6qdy5qh34j0sgnf79
+  text: |-
+    Iteration 3 implement. One file changed, `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift` (+73). No production code touched — `git diff -- Sources/` is empty.
+
+    **Two new tests, both modelled on `sameRepoDifferentRevisionDoesNotShare`** (same file, same `LoadSpy`/`makeRouter`/`ProfileDefinition` helpers, same `#expect` shape), one for each uncovered axis:
+
+    - `sameRepoInTwoRolesDoesNotShare` — one profile names `org/role-repo` in its `standard` slot *and* its `embedding` slot. Asserts exactly one `loadLLM` and one `loadEmbedder` for that ref, then generates through `resolved.standard` and embeds through `resolved.embedding`, so each handle is shown to hold its own role's container rather than a shared one.
+    - `sameRepoDifferentContextDoesNotShare` — two profiles both name `org/ctx-repo` in `standard`, the second authored with `context: Self.steppedDownContext` (4096). Asserts 2 loads of that ref *and* `Set(...).count == 1` — the mirror of the sibling test's `Set(...).count == 2`, which is what proves `ref` alone cannot explain the second load, so only the context can.
+
+    One new fixture constant, `steppedDownContext`, sits beside `oneTrioFootprint`/`headroomBufferBytes` with a comment saying why the KV cache makes that context a different resident model.
+
+    **Fail-then-pass, watched — the test is not taken on trust.** Collapsed the key by giving `ResidencyKey` an explicit `static func ==` and `hash(into:)` over `ref` alone (compiles, keeps the `role:` initializer label, ignores `role` in the hash — the exact collapse the finding warns a future cleanup could make):
+
+    - `sameRepoDifferentContextDoesNotShare` **failed cleanly**: `Expectation failed: await spy.llmLoads.filter { $0 == "org/ctx-repo" }.count == 2` — the second profile reused the first's entry, so one load instead of two.
+    - `sameRepoInTwoRolesDoesNotShare` **failed by trapping**, which is the consequence the finding predicted verbatim: `FoundationModelsRouter/Router.swift:938: Fatal error: a ResidencyKey acquired this resolve must have a matching pool entry for embedding`, the test process exiting with signal 5. The embedding acquisition found the standard slot's `PooledContainer.llm` entry, never called `loadEmbedder`, and `makeRoutedModel`'s unwrap could not produce a `LoadedEmbeddingContainer`.
+    - Reverted the injection; `git diff -- Sources/` is empty and both tests pass again.
+
+    So each axis is now held by a test that demonstrably fails when `role` leaves the key, not by a comment.
+
+    Measurements: `swift test` — 778 + 24 + 24 = **826 tests, 0 failures**, up exactly 2 from the 824 baseline. Zero compiler errors, zero compiler warnings; the single `warning:` line is the pre-existing vendored mlx-swift-lm `missing creator for mutated node` build-graph note, unchanged and out of scope. `Scripts/check-doc-links.py`: 1256 links / 2321 declarations (2319 + the two new test funcs) / 0 stale / 0 unresolved, exit 0. SwiftLint `no_magic_numbers` with the rule's own `allowed_numbers: [0, 1, -1, 100]` on the changed file: 0 violations (its test-file exemption covers the `== 2` counts); `missing_docs` on the same file: 0 violations.
+  timestamp: 2026-08-10T11:52:04.198621+00:00
+- actor: claude-code
+  id: 01kznr88ggxe6qa6v3fnv1ktbc
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift` (+73). `git diff -- Sources/` is empty: no production code changed. Two new tests, `sameRepoInTwoRolesDoesNotShare` (`.llm(context:)` vs `.embedding`) and `sameRepoDifferentContextDoesNotShare` (`.llm(context: 8192)` vs `.llm(context: 4096)`), plus the `steppedDownContext` fixture constant.
+    - fail-then-pass, both observed: with `ResidencyKey` collapsed to `ref` alone (explicit `==`/`hash(into:)`), `sameRepoDifferentContextDoesNotShare` failed on `…count == 2` (one load, not two) and `sameRepoInTwoRolesDoesNotShare` trapped — `Router.swift:938: Fatal error: a ResidencyKey acquired this resolve must have a matching pool entry for embedding`, signal 5. Injection reverted; both pass.
+    - `swift test`: 778 + 24 + 24 = 826 passed, 0 failed — the 824 baseline plus exactly these two. 0 errors, 0 compiler warnings (only the pre-existing vendored mlx-swift-lm build-graph note).
+    - `Scripts/check-doc-links.py`: 1256 links / 2321 declarations / 0 stale / 0 unresolved, exit 0. SwiftLint `no_magic_numbers` and `missing_docs` on the changed file: 0 violations each.
+    - next: `/review`. The `Scripts/check-doc-links.py` placement decision stays reserved for the user — not deleted, not CI-wired.
+  timestamp: 2026-08-10T11:52:13.072176+00:00
+- actor: claude-code
+  id: 01kznrgpc2hgxm2ta2w2yegsma
+  text: |-
+    ### test — green
+    - evidence: `swift test` (full log, no truncation) — 3 test-run summaries: 778 + 24 + 24 = 826 tests, 0 fails. 32 skips, all traced to `FM_ROUTER_INTEGRATION_TESTS`-gated suites/tests (grep confirms env var name defined in the gated files). Only `warning:` line is the known vendored mlx-swift-lm `missing creator for mutated node` note — out of scope, not fixed.
+    - `git diff HEAD -- Sources/` is empty (0 lines): no production code changed this iteration.
+    - Both new tests read `Sources/FoundationModelsRouter/Router.swift`'s `ResidencyKey { let ref: ModelRef; let role: Role }` where `Role` is `.llm(context: Int)` or `.embedding` — confirmed by reading the pool key definition. `sameRepoInTwoRolesDoesNotShare` pins the same ref ("org/role-repo") under `.llm` vs `.embedding` (1 llm load + 1 embedder load, both roles' handles independently generate/embed). `sameRepoDifferentContextDoesNotShare` pins the same ref ("org/ctx-repo") under `.llm(context: 8192 default)` vs `.llm(context: 4096 authored via steppedDownContext)`: `llmLoads.filter{==ref}.count == 2` but `Set(...).count == 1` — one distinct ref, two loads, mirroring the sibling revision test's `Set(...).count == 2` shape but proving the opposite point (ref alone cannot explain the second load; context does).
+    - Both new tests use the file's existing `LoadSpy`/`makeRouter`/`ProfileDefinition`/`makeTempDir`/`oneTrioFootprint`/`headroomBufferBytes`/`steppedDownContext` helpers verbatim — the `git diff` shows the entire +73 lines are the two test bodies only; no new helpers, no parallel style introduced.
+    - No finding of a test passing for the wrong reason: neither assertion can be satisfied by ordinary `ModelRef` equality alone (the roles test needs both loader methods actually invoked; the context test needs a second load despite the ref hashing/comparing equal).
+    task: ^6ejrrr7
+  timestamp: 2026-08-10T11:56:49.410025+00:00
 position_column: doing
 position_ordinal: '80'
 title: Stale DocC symbol links in the split session files name signatures that no longer exist
@@ -218,4 +298,32 @@ Three engine findings ask for `grammar:` to be added to ``RoutedModel/makeSessio
 
 - **Retarget correctness (confirmed).** `RoutedEmbedder` and `RoutedLLM` are typealiases of `RoutedModel<…>` and own no members; `embed(texts:)` and both `makeSession` overloads are declared in `extension RoutedModel where Container == …`. ``RoutedModel/…`` is the repo-wide qualifier: 105 uses against 1 remaining each for ``RoutedLLM/…`` and ``RoutedEmbedder/…`` (the two findings above). The retargets are correct.
 - **Sweep completeness, label half (confirmed).** A second checker was written from scratch by the reviewer with an independent design (paren-matching declaration scanner, unlabelled-associated-value handling so enum cases resolve, both `/` and `.` separators). On `53e2a06` it reports 1256 parenthesised links and 0 label-stale, matching `Scripts/check-doc-links.py`'s 1256 / 0. On `53e2a06~1` it reports 128 label-stale, matching the commit's 128-line diff. The 0 is therefore corroborated by an independent tool, not taken on trust.
-- **Shared blind spot.** Both checkers match on base name plus argument labels and ignore the qualifier, which is precisely why the two typealias-qualified links above survived both. The `0 stale / 0 unresolved` result is evidence about labels only, not about resolvability. **Iteration 2: this blind spot is now closed in `Scripts/check-doc-links.py`** — the qualifier is checked, and a qualifier owning no declaration is reported rather than widened away. #phase-1
+- **Shared blind spot.** Both checkers match on base name plus argument labels and ignore the qualifier, which is precisely why the two typealias-qualified links above survived both. The `0 stale / 0 unresolved` result is evidence about labels only, not about resolvability. **Iteration 2: this blind spot is now closed in `Scripts/check-doc-links.py`** — the qualifier is checked, and a qualifier owning no declaration is reported rather than widened away.
+
+## Review Findings (2026-08-10 06:33)
+
+> Scope: `review sha HEAD~1..HEAD` — the checkpoint commit `891f3dc` only, not the accumulated task diff.
+> Engine: 12 tasks attempted, **0 failed — this run is COMPLETE**, unlike iteration 1's run which failed 2 of 75. 0 raw findings, 0 confirmed, 0 refuted.
+> Acronym-casing waiver: the engine returned no finding demanding `Ram`/`Json`/`Llm`, so the project's `RAM`/`JSON`/`LLM` waiver did not have to be applied to anything this round.
+> Prior-round verification: all 11 iteration-1 findings were re-checked against the tree, not taken on trust. All 11 are closed — see the section below.
+
+### Engine findings
+
+None. The engine returned zero findings over the delta.
+
+### Reviewer-verified finding
+
+- [x] `Sources/FoundationModelsRouter/Router.swift:71` — `ResidencyKey.role` is now permanently exempted from dead-code analysis by `// periphery:ignore`, and no test would fail if `role` were deleted from the key. The marker suppresses the only automated signal that `role` is unread; a comment does not fail a build, so after this commit nothing mechanical stops a future cleanup from collapsing the key. Confirmed by reading every profile fixture in the suite: each names a distinct repo per slot (`org/a-std`, `org/a-flash`, `org/a-emb`; `org/only-b-*`; `org/rc-*`; `org/solo-*`; `org/gate-*`), so **no fixture exercises one `ModelRef` under two `Role` values**. Both of `role`'s discrimination axes are uncovered: (1) the same ref as `.llm(context:)` and as `.embedding`, and (2) the same ref as `.llm(context: N)` and `.llm(context: M)` — the standard and flash slots both mint `.llm(context:)` keys from `Self.slotResolution(for:slot:).contextTokens` at `Router.swift:358`, so two slots naming one repo at different contexts is the second untested collapse. The one shared ref in the suite, `sharedEmbeddingRef` in `releaseCannotRaceAnInFlightResolveAndCorruptAccounting`, is shared under `.embedding` on both sides, so it pins nothing about `role`. The consequence is concrete, not hypothetical: `acquireLLM` and `acquireEmbedder` are separate paths calling `loadLLM` vs `loadEmbedder` with different footprints, so a collapsed key lets an LLM-role entry satisfy an embedding-role lookup and reach the `preconditionFailure` in `makeRoutedModel`'s unwrap — a crash, not a graceful failure. The asymmetry is the point: the sibling field `ref` *is* pinned, by `PooledResidencyTests.sameRepoDifferentRevisionDoesNotShare` (`org/rev-repo` vs `org/rev-repo@rev2`, asserting 2 distinct loads), so this repo already treats "a residency-key component deserves a discrimination test" as the standard. `role` is the one component held only by a comment. Add a new test of the same shape as `sameRepoDifferentRevisionDoesNotShare` — one profile naming the same repo in its standard slot and its embedding slot, asserting two distinct loads (one `loadLLM`, one `loadEmbedder`) rather than one shared pool entry. This is a new regression test, not a rewrite of existing test code, so the review skill's existing-test exception does not apply. **Iteration 3:** both axes covered by two new tests in `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift`, modelled on `sameRepoDifferentRevisionDoesNotShare` — `sameRepoInTwoRolesDoesNotShare` (one profile names `org/role-repo` in its standard slot and its embedding slot; asserts one `loadLLM` and one `loadEmbedder` for that ref, then generates through the standard handle and embeds through the embedding handle) and `sameRepoDifferentContextDoesNotShare` (two profiles name `org/ctx-repo`, the second authored with `context: 4096`; asserts 2 loads of that ref and `Set(...).count == 1`, so the ref alone cannot explain the second load). Proved by fault injection rather than asserted: collapsing the key with an explicit `==`/`hash(into:)` over `ref` alone made `sameRepoDifferentContextDoesNotShare` fail (`count == 2` → 1 load) and `sameRepoInTwoRolesDoesNotShare` trap at `Router.swift` `makeRoutedModel`'s unwrap — `Fatal error: a ResidencyKey acquired this resolve must have a matching pool entry for embedding`, signal 5 — exactly the crash the finding predicted. Reverted; `git diff -- Sources/` is empty and both pass. No production code changed.
+
+### Iteration 1 findings — re-verified closed against the tree
+
+Each was checked against the working tree, not accepted from the implement report.
+
+- `RecordingLanguageModel.swift:241` `profile` — closed. Marker present in the specified form at `RecordingLanguageModel.swift:244`, three-line reason above it, no trailing text on the marker line.
+- `ResolutionProgress.swift:68` and `:70` magic numbers — closed. `private static let downloadShare = 0.5` at `ResolutionProgress.swift:61`, consumed at both sites (`:75` scaled by bytes, `:78` flat). No bare `0.5` remains in the file.
+- `Router.swift:63` `ref` / `:66` `role` — closed as filed. Markers present at `Router.swift:67` and `:71`. The `role` marker raises the new finding above; the marker itself is correctly formed.
+- `Router.swift:160` `cacheDir` — closed. No stored property remains; `grep` over `Router.swift` shows only the `init` parameter, the local `resolvedCacheDir`, and the doc keys. No `self.cacheDir =`.
+- `Router.swift:174` `redact` — closed. Same shape: parameter and `GatingRecorder` construction only, no stored property, no `self.redact =`.
+- `RecordingLanguageModelTests.swift:7` and `ProfileLifecycleTests.swift:10` typealias qualifiers — closed. Both retargeted to ``RoutedModel/…`` in the commit; `grep` for `RoutedLLM/` or `RoutedEmbedder/` across `Sources/` and `Tests/` returns **0 hits**, so the third single-backtick instance is gone too.
+- `Scripts/check-doc-links.py` global-pool fallback — closed, and verified by fault injection rather than by reading. `resolution_pool` returns `None` when a qualifier owns no declaration; `find_stale_links` routes `pool is None` to `unresolved`; `report` returns 1 whenever either bucket is non-empty. The dead `resolvable` expression is gone from the file. Injected ``RoutedEmbedder/embed(texts:)`` into `ProfileLifecycleTests.swift` and re-ran: `total unresolved here: 1`, exit 1, correctly bucketed and correctly located. Restored; tree clean; back to `0 stale / 0 unresolved`, exit 0. **The checker cannot silently report success when it has failed to resolve something** — that property is now measured, not asserted.
+- `Scripts/check-doc-links.py` placement — the actionable half is closed (the dishonesty bug is fixed). The placement decision itself is explicitly reserved for the user and is out of this review's scope; it is not reopened here. #phase-1

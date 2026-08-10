@@ -218,6 +218,12 @@ struct PooledResidencyTests {
     /// between this constant's footprint arithmetic and the joint fit's own.
     private static let headroomBufferBytes: Int64 = 1_000
 
+    /// A working context below ``ProfileDefinition/defaultContext``, for the
+    /// profile that names an already-resident repo at a second context: the KV
+    /// cache is sized into the container at load time, so the same repo at this
+    /// context is a different resident model.
+    private static let steppedDownContext = 4096
+
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PooledResidencyTests-\(UUID().uuidString)", isDirectory: true)
@@ -462,6 +468,73 @@ struct PooledResidencyTests {
         // Same repo, different revision: two distinct loads, not a dedup.
         #expect(await spy.llmLoads.filter { $0.repo == "org/rev-repo" }.count == 2)
         #expect(Set(await spy.llmLoads.filter { $0.repo == "org/rev-repo" }).count == 2)
+    }
+
+    // MARK: - Same-ref-two-roles does not share.
+
+    @Test("the same repo used as a generation model and as an embedder does not share a resident instance")
+    @MainActor
+    func sameRepoInTwoRolesDoesNotShare() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // The shared ref is a candidate for two slots, so it is sized under its
+        // (larger) generation interpretation in both of them — more than a plain
+        // trio costs. Two trios' worth of budget covers that comfortably.
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
+
+        let dualRole = ProfileDefinition(
+            name: "dual-role", description: "one repo serves the standard slot and the embedding slot",
+            standard: ["org/role-repo"], flash: ["org/role-flash"], embedding: ["org/role-repo"]
+        )
+
+        let resolved = try await router.resolve(profile: dualRole, reporting: ResolutionProgress())
+
+        // Same ref, two roles: one generation load and one embedding load, not
+        // one pool entry serving both. The two are not interchangeable — they
+        // produce structurally different container types.
+        #expect(await spy.llmLoads.filter { $0 == "org/role-repo" }.count == 1)
+        #expect(await spy.embedderLoads.filter { $0 == "org/role-repo" }.count == 1)
+
+        // Each handle really holds its own role's container.
+        let reply = try await resolved.standard.makeSession(instructions: nil).respond(to: "hi")
+        #expect(reply == "from-org/role-repo")
+        let vectors = try await resolved.embedding.embed(texts: ["hi"])
+        #expect(vectors.count == 1)
+    }
+
+    // MARK: - Same-ref-different-context does not share.
+
+    @Test("the same repo resolved at two different working contexts does not share a resident instance")
+    @MainActor
+    func sameRepoDifferentContextDoesNotShare() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint * 2 + Self.headroomBufferBytes, cacheDir: dir)
+
+        let wide = ProfileDefinition(
+            name: "wide", description: "runs the shared repo at the default context",
+            standard: ["org/ctx-repo"], flash: ["org/ctx-flash-a"], embedding: ["org/ctx-emb-a"]
+        )
+        let narrow = ProfileDefinition(
+            name: "narrow", description: "runs the identical repo at a smaller context",
+            standard: ["org/ctx-repo"], flash: ["org/ctx-flash-b"], embedding: ["org/ctx-emb-b"],
+            context: Self.steppedDownContext
+        )
+
+        // Both resolved profiles are held for the whole test: an unretained
+        // profile is deallocated immediately, and its `deinit` fires an
+        // unstructured release `Task` that would race the next resolve.
+        let resolvedWide = try await router.resolve(profile: wide, reporting: ResolutionProgress())
+        let resolvedNarrow = try await router.resolve(profile: narrow, reporting: ResolutionProgress())
+        withExtendedLifetime((resolvedWide, resolvedNarrow)) {}
+
+        // One and the same ref — the loads differ only in the context each
+        // container was sized for, so a key that ignored the context would
+        // hand the second profile the first's KV cache.
+        #expect(await spy.llmLoads.filter { $0 == "org/ctx-repo" }.count == 2)
+        #expect(Set(await spy.llmLoads.filter { $0 == "org/ctx-repo" }).count == 1)
     }
 
     // MARK: - Single-profile callers are unaffected.
