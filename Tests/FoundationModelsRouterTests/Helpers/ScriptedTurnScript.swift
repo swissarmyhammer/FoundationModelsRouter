@@ -132,14 +132,26 @@ struct ScriptedTurnScript: Sendable, Hashable {
 
 /// One tool call as the transcript carries it — the model's own view of what it
 /// asked for, rather than the fixture's view of what it meant to ask for.
+///
+/// This type writes neither `==` nor `hash(into:)`. The compiler makes both
+/// from the `Hashable` conformance. A test compares whole records, and it does
+/// not read a single field. Thus those synthesized bodies are the only readers
+/// of the two properties below. Periphery cannot see a body that the compiler
+/// makes, thus each property has a `// periphery:ignore` marker. Do not delete
+/// a property: the code then does not compile. If you delete both, then any two
+/// records become equal.
 struct ScriptedCallRecord: Sendable, Hashable {
     /// The called tool's model-facing name.
+    // Only the synthesized `Hashable` `==` and `hash(into:)` read this property.
+    // periphery:ignore
     let toolName: String
 
     /// The call's `value` argument, decoded out of the arguments the
     /// transcript carries — or the arguments' raw `GeneratedContent.jsonString`
     /// when they carry no decodable `value`, so a malformed call stays visible
     /// instead of reading as an absent argument.
+    // Only the synthesized `Hashable` `==` and `hash(into:)` read this property.
+    // periphery:ignore
     let argumentValue: String
 }
 

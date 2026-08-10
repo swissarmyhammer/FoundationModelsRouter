@@ -12,26 +12,46 @@ import Testing
 /// announced and none failed can still leave the model uninformed (task
 /// ^cvtfem3), so only ``deliveredToolOutputs`` and ``answer`` are allowed to
 /// stand for delivery.
+///
+/// This type writes no `==` of its own. The compiler makes the `==` from the
+/// `Equatable` conformance. The harness asserts parity when it compares two
+/// whole values, thus that synthesized `==` is the only reader of each property
+/// below. Periphery cannot see a body that the compiler makes, thus each
+/// property has a `// periphery:ignore` marker. Do not delete a property: the
+/// code then does not compile. If you delete all of them, then any two outcomes
+/// become equal, and the harness asserts nothing but continues to pass.
 struct SurfaceTurnOutcome: Equatable {
     /// The turn's final answer text.
+    // Only the synthesized `Equatable` `==` reads this property.
+    // periphery:ignore
     let answer: String
 
     /// The tool calls the answering generation found in its transcript, in
     /// order.
+    // Only the synthesized `Equatable` `==` reads this property.
+    // periphery:ignore
     let requestedCalls: [ScriptedCallRecord]
 
     /// The tool output texts the answering generation read back, in order.
+    // Only the synthesized `Equatable` `==` reads this property.
+    // periphery:ignore
     let deliveredToolOutputs: [String]
 
     /// How many times the model was asked to generate.
+    // Only the synthesized `Equatable` `==` reads this property.
+    // periphery:ignore
     let modelTurnCount: Int
 
     /// How many mounted tool bodies actually ran, across every mounted tool.
+    // Only the synthesized `Equatable` `==` reads this property.
+    // periphery:ignore
     let toolExecutionCount: Int
 
     /// The normalized description of the error the surface threw, or `nil` when
     /// the turn completed. See
     /// ``SurfaceParityTests/failureDescription(of:)`` for what is kept.
+    // Only the synthesized `Equatable` `==` reads this property.
+    // periphery:ignore
     let failureDescription: String?
 }
 
