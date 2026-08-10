@@ -48,6 +48,77 @@ comments:
     Found but NOT this card's cause, filed as `^h71b8yv`: `SessionOutboxTests` (parks on `SessionOutbox.nextEvent()`, resumed by a later post; no bounded helper in that file at all, plus an uncapped `while true` drain loop) and `HumanWaitGateTests` (parks on `AsyncSemaphore.wait()` — a gate, not an answer).
     - next: /review
   timestamp: 2026-08-10T13:30:57.270214+00:00
+- actor: claude-code
+  id: 01kznym7v8g1ycrsw0ejcjnqyw
+  text: |
+    ### review — findings
+    - scope: review sha HEAD~1..HEAD (9680c9b)
+    - evidence: 2 findings (2 confirmed, 0 refuted, 18 attempted) — Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift:54, Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift:65
+    - note: the helper is new test infrastructure, so the "do not refactor pre-existing tests" exception does not apply to it. The 18 converted call sites in the pre-existing suites got no findings.
+    - waivers: none. The engine raised no acronym-casing finding on this delta.
+    - next: name the two constants in AnswerDrivenRun.swift, then re-review.
+  timestamp: 2026-08-10T13:43:37.064538+00:00
+- actor: claude-code
+  id: 01kznyp6gpyqgc2xvmggq9vc7w
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 5 files. New shared `Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift`; 18 call sites converted across ElicitationRoutingTests (7), ToolContextTests (5), SessionMailboxTests (4), ElevatingToolTests (2). `git diff -- Sources` empty. Hang before: `timeout 120 swift test --filter ElicitationRouting` produced NO test output and was killed at the full 120s. Fail fast after: same break, 7.291s, 7/7 red, each issue naming the stalled elicitation. Sweep proven independently by a second injection at `SessionMailbox.respond` → the other three suites failed in 7.390s instead of hanging.
+    - test: green — swift test 778/72 + 24/9 + 24/5, 0 failures, no new warnings. Verified independently: `git diff -- Sources` empty before AND after the run (no injected fault survived); all four suites share the one helper rather than copying it; the give-up path never reaches `task.value` (only the success path does), which matters because SessionMailbox parks on a `withCheckedContinuation` that ignores cancellation; the bound is a real finite ceiling (1,000 × 5 ms = 5 s).
+    - commit: 9680c9b — 11 files, +340/-39, local only. `AnswerDrivenRun.swift` confirmed in the commit via `create mode 100644`.
+    - review: findings — Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift:54 and :65, magic numbers wanting named constants (the poll-loop iteration count and sleep interval). Engine: 18 pairs attempted, 0 failed. The 18 converted call sites drew no findings; nothing was raised against the give-up path, its doc comment, the poll-loop shape, or the API. These findings are in scope because the file is new infrastructure — the pre-existing-test exception does not shield it.
+    - next: iteration 2 — name the two constants.
+  timestamp: 2026-08-10T13:44:41.238962+00:00
+- actor: claude-code
+  id: 01kznz09v0emf78yjcq3mgv0jh
+  text: |-
+    Iteration 2 — the two findings on `AnswerDrivenRun.swift`.
+
+    **The rule, read before editing.** `dump validators` returned 55 rules over 9 validators. The one that fired is `magic-numbers-swift`, which states `Supersedes: magic-numbers` — so this is a tool rule, `swiftlint`'s `no_magic_numbers`, not the prompt rule that reports by repetition. That distinction decided the fix. The prompt rule reports repetition; the tool reports by *position*, and the tool therefore reports the one-off the prompt rule carves out. Arguing "the value is used once" would have been the wrong reading.
+
+    The rule text also names the fix precisely: measured against a probe file, swiftlint "reported nothing for a variable declaration, a stored property, a `static let`, an enumeration raw value, or a default parameter — each of those declarations names its value."
+
+    **Reproduced the finding first, so the fix is checked and not guessed.** Rebuilt the rule's own config (`only_rules: [no_magic_numbers]`, `allowed_numbers: [0, 1, -1, 100]`) and ran swiftlint 0.65.0 against the file. It printed exactly the two reported findings, at `:54:49` and `:65:55`, with the finding's own wording: `Magic numbers should be replaced by named constants`.
+
+    **Why the file had already-named constants and was still flagged.** The values were `private static var deliveryPollLimit: Int { 1_000 }` — *computed* properties, not declarations that name a value. swiftlint sees a bare literal in a getter body. Checked why the author wrote them that way rather than assuming: `swiftc` on a two-line probe gives `error: static stored properties not supported in generic types`, and `AnswerDrivenRun` is generic over `Value`. So `static let` inside the struct cannot compile — the constants had to leave the generic type. That is the real cause, and it is why the first pass did not clear the rule.
+
+    **The fix.** A file-private `AnswerDeliveryBound` enum before `AnswerDrivenRun`, three documented `static let`s:
+
+    - `ceilingNanoseconds: UInt64 = 5_000_000_000` — the whole time the wait gives an answer to arrive.
+    - `pollIntervalNanoseconds: UInt64 = 5_000_000` — how long it sleeps between two questions.
+    - `pollLimit = Int(ceilingNanoseconds / pollIntervalNanoseconds)` — **derived**, so the five-second ceiling is stated once as a span rather than inferred by multiplying 1,000 by 5 ms.
+
+    The names now carry the reason: the composition into a finite ceiling is in the code, not only in a comment. It also satisfies "one place each value is defined and used" — `1_000` no longer exists in the file at all, so the count cannot drift from the interval. The naming matches the house style already in `RoutedSessionToolContextBindingTests.swift`, which carries the same `pollIterations` / `pollIntervalNanoseconds` pair with the identical 5 ms interval.
+
+    **File-wide sweep (not only the two cited lines).** After the change the only numeric literals left in the file are the two `static let` declarations — which the rule carves out, "a literal a declaration already names" — and the `0` in `for _ in 0..<AnswerDeliveryBound.pollLimit`, which is on the rule's own `allowed_numbers` list. swiftlint under the rule's config now reports **0 violations** in the file, which is the sweep proven rather than asserted.
+
+    **Not touched, deliberately.** `RoutedSessionToolContextBindingTests.swift` holds a second copy of the same 5 ms poll interval. It is a pre-existing file outside these two findings, so unifying it is not this card's scope.
+
+    Did NOT re-run the fault-injection experiments — they were proven in iteration 1 and recorded above, and re-running them produces no output and hangs.
+  timestamp: 2026-08-10T13:50:12.320888+00:00
+- actor: claude-code
+  id: 01kznz0qtc6wjrkqdcv34z7bx4
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — `Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift`. Both findings (`:54`, `:65`) fixed by moving the two poll-loop values out of the generic struct into a documented file-private `AnswerDeliveryBound` enum as `static let` declarations: `ceilingNanoseconds` (5 s), `pollIntervalNanoseconds` (5 ms), and `pollLimit` derived as `Int(ceilingNanoseconds / pollIntervalNanoseconds)`. The computed `static var` form could not be a `static let` in place, because Swift supports no stored static property in a generic type (`swiftc` probe: `error: static stored properties not supported in generic types`).
+    - rule: `magic-numbers-swift` (`Supersedes: magic-numbers`) — swiftlint `no_magic_numbers`. Reproduced under the rule's own config before the edit (2 violations, the two reported lines); 0 violations after.
+    - sweep: the whole file, not the two lines. The only literals left are the two `static let` values the rule carves out, plus the `0` in `0..<`, which is on the rule's `allowed_numbers` list. `1_000` no longer exists in the file.
+    - tests: `swift test` — 778 tests / 72 suites, 24 / 9, 24 / 5, **0 failures**. The one warning is the pre-existing SwiftPM `missing creator for mutated node … mlx-swift_Cmlx.bundle` line, present in the iteration-1 baseline; no compiler warning from the changed file.
+    - scope: `git diff -- Sources` is **empty** — tests only.
+    - next: /review
+  timestamp: 2026-08-10T13:50:26.636170+00:00
+- actor: claude-code
+  id: 01kznz8pa9nbws7pnwha111gv7
+  text: |-
+    ### test — green
+    - evidence: `swift test` — 778 tests / 72 suites, 24 / 9, 24 / 5 — 0 failures. Only warning is the pre-existing baseline `missing creator for mutated node … mlx-swift_Cmlx.bundle` line; no new warnings.
+    - `git diff -- Sources` is empty — this delta touched only `Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift` plus kanban records.
+    - Arithmetic check: `ceilingNanoseconds = 5_000_000_000`, `pollIntervalNanoseconds = 5_000_000`, `pollLimit = Int(5_000_000_000 / 5_000_000) = 1000`. The 5-second ceiling and 5 ms interval are unchanged; `pollLimit` is derived, not restated, so the two values cannot drift apart.
+    - `1_000` no longer appears anywhere in the file. All three values are `static let` declarations in a new file-private `AnswerDeliveryBound` enum — not the prior `static var { 1_000 }` computed-property form swiftlint's `no_magic_numbers` flags.
+    - swiftlint check run independently: swiftlint 0.65.0, config matching the `magic-numbers-swift` rule text exactly (`only_rules: [no_magic_numbers]`, `allowed_numbers: [0, 1, -1, 100]`, `--no-cache`). Result: 0 violations, matching the implementer's reported 2 before to 0 after.
+    - Confirmed the pre-existing duplicate 5 ms interval in `Tests/FoundationModelsRouterTests/RoutedSessionToolContextBindingTests.swift` (line 159) is untouched by this delta.
+    - Did not re-run fault-injection experiments (hangs, no output, per instructions). Did not run gated integration tests. Did not run swift format/swiftformat.
+    - next: /review
+  timestamp: 2026-08-10T13:54:47.241208+00:00
 position_column: doing
 position_ordinal: '80'
 title: ElicitationRoutingTests hangs instead of failing when the elicitation delivery path breaks
@@ -81,4 +152,9 @@ A hang is worse than a failure. It gives no file, no line, and no message; it bu
 
 - Out of scope for `^rhrk3mz`, which was a rename plus a parse extraction; filed separately so the discovery is not lost.
 - Do NOT run gated integration tests (`FM_ROUTER_INTEGRATION_TESTS=1`) — they load a 27B model.
-- Never run `swift format` / `swiftformat` in this repo. #phase-1
+- Never run `swift format` / `swiftformat` in this repo.
+
+## Review Findings (2026-08-10 08:39)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift:54` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift:65` — Magic numbers should be replaced by named constants. #phase-1
