@@ -968,7 +968,7 @@ struct ElevatingToolTests {
             )
         )
 
-        let calling = Task {
+        let calling = AnswerDrivenRun(waitingFor: "the elevating tool call blocked on its elicitation") {
             try await harness.elevating.call(
                 arguments: ElevatingArguments(value: "x")
             )
@@ -985,7 +985,7 @@ struct ElevatingToolTests {
             elicitationId: elicitationId, .accept(content: ["ok": .boolean(true)])
         )
 
-        let rendered = try await calling.value
+        let rendered = try await calling.deliveredAnswer()
         #expect(rendered == "answered: accept")
 
         let events = await harness.sink.events
@@ -1002,7 +1002,7 @@ struct ElevatingToolTests {
             )
         )
 
-        let calling = Task {
+        let calling = AnswerDrivenRun(waitingFor: "the elevating tool call blocked on its elicitation") {
             try await harness.elevating.call(
                 arguments: ElevatingArguments(value: "x")
             )
@@ -1011,7 +1011,7 @@ struct ElevatingToolTests {
         await harness.mailbox.respond(elicitationId: elicitationId, .decline)
 
         await #expect(throws: ElevatingToolError.self) {
-            _ = try await calling.value
+            _ = try await calling.deliveredAnswer()
         }
 
         let events = await harness.sink.events

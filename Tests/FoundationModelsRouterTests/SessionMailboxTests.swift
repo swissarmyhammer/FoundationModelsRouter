@@ -358,17 +358,17 @@ struct SessionMailboxTests {
     }
 
     @Test("a form-mode elicitation resumes on respond(), and a second respond is a no-op")
-    func formElicitationDeliversAnswer() async {
+    func formElicitationDeliversAnswer() async throws {
         let mailbox = SessionMailbox()
         let elicitationId = ULID.generate()
-        let answering = Task {
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(elicitationId)") {
             await mailbox.awaitAnswer(to: Self.formRequest(elicitationId: elicitationId))
         }
         #expect(await Self.eventually { await mailbox.pendingElicitationIds() == [elicitationId] })
 
         let answer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await mailbox.respond(elicitationId: elicitationId, answer) == .delivered)
-        #expect(await answering.value == answer)
+        #expect(try await answering.deliveredAnswer() == answer)
         #expect(await mailbox.pendingElicitationIds().isEmpty)
         #expect(await mailbox.respond(elicitationId: elicitationId, .decline) == .noPendingElicitation)
     }
@@ -382,7 +382,9 @@ struct SessionMailboxTests {
             elicitationId: elicitationId,
             url: try #require(URL(string: "https://example.com/flow"))
         )
-        let answering = Task { await mailbox.awaitAnswer(to: request) }
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
+            await mailbox.awaitAnswer(to: request)
+        }
         #expect(await Self.eventually { await mailbox.pendingElicitationIds() == [elicitationId] })
 
         #expect(await mailbox.respond(elicitationId: elicitationId, .accept(content: nil)) == .acceptedAwaitingCompletion)
@@ -390,7 +392,7 @@ struct SessionMailboxTests {
         #expect(await mailbox.pendingElicitationIds() == [elicitationId])
 
         #expect(await mailbox.complete(elicitationId: elicitationId) == .completed)
-        #expect(await answering.value == .accept(content: nil))
+        #expect(try await answering.deliveredAnswer() == .accept(content: nil))
         #expect(await mailbox.pendingElicitationIds().isEmpty)
         #expect(await mailbox.complete(elicitationId: elicitationId) == .noPendingElicitation)
     }
@@ -404,11 +406,13 @@ struct SessionMailboxTests {
             elicitationId: elicitationId,
             url: try #require(URL(string: "https://example.com/flow"))
         )
-        let answering = Task { await mailbox.awaitAnswer(to: request) }
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
+            await mailbox.awaitAnswer(to: request)
+        }
         #expect(await Self.eventually { await mailbox.pendingElicitationIds() == [elicitationId] })
 
         #expect(await mailbox.respond(elicitationId: elicitationId, .decline) == .delivered)
-        #expect(await answering.value == .decline)
+        #expect(try await answering.deliveredAnswer() == .decline)
         #expect(await mailbox.pendingElicitationIds().isEmpty)
     }
 
@@ -528,7 +532,7 @@ struct SessionMailboxTests {
         let tokenB = await Self.parkFakeRun(on: session.mailbox, latch: latchB, counter: counter)
 
         let elicitationId = ULID.generate()
-        let rejected = Task {
+        let rejected = AnswerDrivenRun(waitingFor: "the elicitation \(elicitationId) swept by close()") {
             await session.mailbox.awaitAnswer(to: Self.formRequest(elicitationId: elicitationId))
         }
         #expect(await Self.eventually { await session.mailbox.pendingElicitationIds() == [elicitationId] })
@@ -541,7 +545,7 @@ struct SessionMailboxTests {
         #expect(await session.mailbox.status().isEmpty)
         #expect(await session.mailbox.pendingElicitationIds().isEmpty)
         // The pending elicitation was rejected.
-        #expect(await rejected.value == .cancel)
+        #expect(try await rejected.deliveredAnswer() == .cancel)
 
         // The journal opens with the session's meta line — a close that
         // journals anything records the `.session` meta event first, exactly

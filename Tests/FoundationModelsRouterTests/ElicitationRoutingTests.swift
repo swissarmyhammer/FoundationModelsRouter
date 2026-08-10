@@ -169,13 +169,21 @@ struct ElicitationRoutingTests {
     }
 
     /// Parks a real `elicit(_:)` on `session` and waits until its pending
-    /// entry is registered, returning the task that resumes with the answer.
+    /// entry is registered, returning the run that resumes with the answer.
+    ///
+    /// The run is an ``AnswerDrivenRun`` rather than a bare `Task` so that
+    /// every test reads its answer under a bound: a break anywhere on the
+    /// inbound answer route leaves the run parked forever, and awaiting it
+    /// directly would hang the whole suite instead of failing the test that
+    /// caught the break.
     private static func parkElicitation(
         _ request: ElicitationRequest,
         on session: RoutedSession
-    ) async -> Task<ElicitationResponse, Error> {
+    ) async -> AnswerDrivenRun<ElicitationResponse> {
         let context = makeContext(for: session)
-        let answering = Task { try await context.elicit(request) }
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
+            try await context.elicit(request)
+        }
         #expect(
             await eventually {
                 await session.mailbox.pendingElicitationIds().contains(request.elicitationId)
@@ -197,7 +205,7 @@ struct ElicitationRoutingTests {
 
         let answer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: elicitationId.description, response: answer) == .delivered)
-        #expect(try await answering.value == answer)
+        #expect(try await answering.deliveredAnswer() == answer)
         #expect(await session.mailbox.pendingElicitationIds().isEmpty)
 
         // A second respond addresses an already-answered id: a safe no-op.
@@ -214,7 +222,7 @@ struct ElicitationRoutingTests {
         let answering = await Self.parkElicitation(Self.formRequest(elicitationId: elicitationId), on: session)
 
         #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
-        #expect(try await answering.value == .decline)
+        #expect(try await answering.deliveredAnswer() == .decline)
     }
 
     // MARK: - URL-mode two-step
@@ -235,7 +243,7 @@ struct ElicitationRoutingTests {
 
         // The out-of-band flow's completion is what resumes the run.
         #expect(await session.complete(elicitationId: elicitationId.description) == .completed)
-        #expect(try await answering.value == .accept(content: nil))
+        #expect(try await answering.deliveredAnswer() == .accept(content: nil))
         #expect(await session.mailbox.pendingElicitationIds().isEmpty)
 
         // A duplicate complete is a safe no-op.
@@ -253,8 +261,12 @@ struct ElicitationRoutingTests {
         let firstId = ULID.generate()
         let secondId = ULID.generate()
         let context = Self.makeContext(for: session)
-        let firstAnswering = Task { try await context.elicit(Self.formRequest(elicitationId: firstId)) }
-        let secondAnswering = Task { try await context.elicit(Self.formRequest(elicitationId: secondId)) }
+        let firstAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(firstId)") {
+            try await context.elicit(Self.formRequest(elicitationId: firstId))
+        }
+        let secondAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(secondId)") {
+            try await context.elicit(Self.formRequest(elicitationId: secondId))
+        }
         #expect(
             await Self.eventually {
                 await session.mailbox.pendingElicitationIds().count == 2
@@ -263,13 +275,13 @@ struct ElicitationRoutingTests {
 
         let firstAnswer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: firstId.description, response: firstAnswer) == .delivered)
-        #expect(try await firstAnswering.value == firstAnswer)
+        #expect(try await firstAnswering.deliveredAnswer() == firstAnswer)
 
         // The other elicitation is untouched: still parked, still pending.
         #expect(await session.mailbox.pendingElicitationIds() == [secondId])
 
         #expect(await session.respond(elicitationId: secondId.description, response: .decline) == .delivered)
-        #expect(try await secondAnswering.value == .decline)
+        #expect(try await secondAnswering.deliveredAnswer() == .decline)
     }
 
     @Test("unknown-id and malformed-id respond()/complete() are safe no-ops")
@@ -306,7 +318,7 @@ struct ElicitationRoutingTests {
             ) == .acceptedAwaitingCompletion
         )
         #expect(await session.complete(elicitationId: upperRespondId.description.lowercased()) == .completed)
-        #expect(try await upperAnswering.value == .accept(content: nil))
+        #expect(try await upperAnswering.deliveredAnswer() == .accept(content: nil))
 
         let lowerRespondId = ULID.generate()
         let lowerAnswering = await Self.parkElicitation(try Self.urlRequest(elicitationId: lowerRespondId), on: session)
@@ -317,7 +329,7 @@ struct ElicitationRoutingTests {
             ) == .acceptedAwaitingCompletion
         )
         #expect(await session.complete(elicitationId: lowerRespondId.description.uppercased()) == .completed)
-        #expect(try await lowerAnswering.value == .accept(content: nil))
+        #expect(try await lowerAnswering.deliveredAnswer() == .accept(content: nil))
     }
 
     @Test("cross-session isolation: respond on session A never resumes session B's elicitation")
@@ -339,6 +351,6 @@ struct ElicitationRoutingTests {
 
         // The same answer through session B resumes it.
         #expect(await sessionB.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
-        #expect(try await answering.value == .decline)
+        #expect(try await answering.deliveredAnswer() == .decline)
     }
 }

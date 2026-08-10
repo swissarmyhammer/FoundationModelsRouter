@@ -69,8 +69,30 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Tests/FoundationModelsRouterTests/PromptQueueTests.swift, Tests/FoundationModelsRouterTests/TurnCancellationTests.swift, plan.md. 6 call sites updated (all tests, 0 production), 12 doc/symbol-link references retargeted, 1 duplicated ULID parse collapsed to a single private helper. `swift test` ungated: 826 tests / 86 suites, 0 failures, no new warnings. `Scripts/check-doc-links.py`: exit 0, 0 stale, 0 unresolved. SOURCE-BREAKING for downstream callers of `cancel`/`replace` — no shim.
     - next: /review
   timestamp: 2026-08-10T12:57:52.014766+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kznwpdz80mg77w9z7zh909ry
+  text: |
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (sha 45b3930), 18 validator passes, 0 failed, 0 skipped
+    - evidence: engine returned 1 finding, 1 confirmed; it is dropped by the review skill's blanket exception for pre-existing test code — `Tests/FoundationModelsRouterTests/TurnCancellationTests.swift:256` (`streamResponse(to:maxTokens:)`, nesting depth) dates to commit f62bb01e (2026-07-25); this delta touches only lines 9, 1234, 1493 of that file (one DocC link, two call sites). Zero recordable findings.
+    - helper `deliver(toElicitation:orReturn:using:)` at `Sources/FoundationModelsRouter/Session/RoutedSession.swift:788`: no validator raised a finding on its generic signature, its argument labels, or its fallback-return design.
+    - acronym waiver: not needed this pass — the engine raised no `Ram`/`Json`/`Llm`/`Ulid` casing finding.
+    - all 6 prior checklist items checked; no prior `## Review Findings` sections existed.
+    - next: task moved to `done`.
+  timestamp: 2026-08-10T13:09:51.720185+00:00
+- actor: claude-code
+  id: 01kznwreaxfmvnv551zwfwzm2v
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files. `cancel(_:)`→`cancel(id:)`, `replace(_:prompt:)`→`replace(id:prompt:)`; duplicated ULID parse replaced by one private helper `deliver(toElicitation:orReturn:using:)`. Declarations changed first, then built — the compiler located the call sites, which is what proves the sweep complete.
+    - test: green — swift test 826 tests / 86 suites, 0 failures, no new warnings. check-doc-links.py exit 0 (1258 links, 0 stale, 0 unresolved). Independently verified: 6 call sites (4x cancel, 2x replace) all in Tests/, 0 in Sources/Evals/Scripts/docs; exactly one `ULID(elicitationId)` remains (RoutedSession.swift:788) with both respond() and complete() routing through it; `- Parameter` keys correctly left on internal names while DocC symbol links moved to the new external labels.
+    - commit: 45b3930 `refactor(router)!:` — 9 files, +163/-34, local only. Also carries ^6ejrrr7's board state (its done-move and ledger landed after c6d9606).
+    - review: clean — zero new findings; 6 prior items checked. Engine: 18 passes, 0 failed. 1 finding dropped by the skill's written pre-existing-test-code exception (TurnCancellationTests.swift:256, from f62bb01e). The new helper drew no finding from any of the 18 passes.
+    - **API BREAK — needs a release note.** `RoutedSession` is a `public protocol` and both methods are `public` in its extension. Downstream code calling `session.cancel(someId)` / `session.replace(someId, prompt:)` will no longer compile and must add `id:`. No deprecation shim was added — the card did not ask for one, and a shim would keep the old spelling in the public surface.
+    - next: task moved to done. Discovery filed separately as ^6fszv54 — ElicitationRoutingTests hangs (~794s) instead of failing when the delivery path breaks, because it lacks the bounded-spin escape hatch TurnCancellationTests has.
+  timestamp: 2026-08-10T13:10:57.629277+00:00
+position_column: done
+position_ordinal: fb80
 title: RoutedSession's cancel/replace omit the first argument label, and its two elicitation methods duplicate the ULID parse
 ---
 Surfaced by the `swift` + `missing-docs` validators while verifying `^6ejrrr7` (a doc-comment-only card). All four are pre-existing defects in `Sources/FoundationModelsRouter/Session/RoutedSession.swift` that `^6ejrrr7` deliberately did not touch: that card changes only ``…`` symbol-link text, and these are production signature/structure changes with callers.

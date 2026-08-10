@@ -245,7 +245,7 @@ struct ToolContextTests {
         )
         let request = Self.formRequest()
 
-        let answering = Task {
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
             try await ToolContext.$current.withValue(context) {
                 let current = try #require(ToolContext.current)
                 return try await current.elicit(request)
@@ -258,7 +258,7 @@ struct ToolContextTests {
             .accept(content: ["name": .string("Ada")])
         )
 
-        let answer = try await answering.value
+        let answer = try await answering.deliveredAnswer()
         #expect(answer.action == .accept)
         #expect(answer.content == ["name": .string("Ada")])
 
@@ -280,12 +280,14 @@ struct ToolContextTests {
         let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
         let request = Self.formRequest()
 
-        let answering = Task { try await context.elicit(request) }
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
+            try await context.elicit(request)
+        }
 
         try await Self.waitUntilPending([request.elicitationId], in: mailbox)
         await mailbox.respond(elicitationId: request.elicitationId, .decline)
 
-        let answer = try await answering.value
+        let answer = try await answering.deliveredAnswer()
         #expect(answer.action == .decline)
         #expect(answer.content == nil)
     }
@@ -296,12 +298,14 @@ struct ToolContextTests {
         let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
         let request = Self.formRequest()
 
-        let answering = Task { try await context.elicit(request) }
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
+            try await context.elicit(request)
+        }
 
         try await Self.waitUntilPending([request.elicitationId], in: mailbox)
         await mailbox.respond(elicitationId: request.elicitationId, .cancel)
 
-        let answer = try await answering.value
+        let answer = try await answering.deliveredAnswer()
         #expect(answer.action == .cancel)
         #expect(answer.content == nil)
     }
@@ -314,8 +318,12 @@ struct ToolContextTests {
         let first = Self.formRequest()
         let second = Self.formRequest()
 
-        let firstAnswering = Task { try await context.elicit(first) }
-        let secondAnswering = Task { try await context.elicit(second) }
+        let firstAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(first.elicitationId)") {
+            try await context.elicit(first)
+        }
+        let secondAnswering = AnswerDrivenRun(waitingFor: "the elicitation \(second.elicitationId)") {
+            try await context.elicit(second)
+        }
 
         try await Self.waitUntilPending(
             [first.elicitationId, second.elicitationId], in: mailbox
@@ -328,8 +336,8 @@ struct ToolContextTests {
         )
         await mailbox.respond(elicitationId: first.elicitationId, .decline)
 
-        let firstAnswer = try await firstAnswering.value
-        let secondAnswer = try await secondAnswering.value
+        let firstAnswer = try await firstAnswering.deliveredAnswer()
+        let secondAnswer = try await secondAnswering.deliveredAnswer()
         #expect(firstAnswer.action == .decline)
         #expect(firstAnswer.content == nil)
         #expect(secondAnswer.action == .accept)
@@ -353,7 +361,11 @@ struct ToolContextTests {
         let sink = ImmediatelyRespondingSink(mailbox: mailbox, response: .decline)
         let context = Self.makeContext(sink: sink, mailbox: mailbox)
 
-        let answer = try await context.elicit(Self.formRequest())
+        let request = Self.formRequest()
+        let answering = AnswerDrivenRun(waitingFor: "the elicitation \(request.elicitationId)") {
+            try await context.elicit(request)
+        }
+        let answer = try await answering.deliveredAnswer()
 
         #expect(answer.action == .decline)
         #expect(answer.content == nil)
