@@ -78,7 +78,7 @@ enum CompactionEvaluationError: Error {
 /// estimated tokens of content each (``compactionEvalSeeds``) — and `target`
 /// resolves to 40 tokens, strictly below the smallest seed's untouched
 /// recency-window size (63). That is the whole point of the value: it
-/// guarantees ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``
+/// guarantees ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
 /// can never land under target on the deterministic stages alone, so it always
 /// falls through to the model-assisted `Summarization` stage — the one stage
 /// that leaves a summary entry for ``CompactionEvalMetric/factRetention`` to
@@ -116,7 +116,7 @@ let compactionEvalDefaultBudget = TokenBudget(limit: 400, trigger: 0.80, target:
 ///   (``CompactionEvaluationTests``).
 /// - The gated `@Test` wires in a closure that drives a real resident MLX
 ///   model through the exact bare-session recipe compaction_plan.md §1.5
-///   describes: ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` over the
+///   describes: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` over the
 ///   seed's entries, then a live session resumed over the folded transcript.
 struct CompactionEvaluation: Evaluation {
     /// The expected/ground-truth sample type the `Evaluation` protocol

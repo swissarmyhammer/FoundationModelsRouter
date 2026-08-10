@@ -26,7 +26,7 @@ public protocol CompactionSummarizer: Sendable {
     /// must pass it down to that model's own output limit rather than fall
     /// back to whatever the generation path defaults to. A conformer that
     /// cannot bound its model at all still owes the caller nothing beyond a
-    /// best effort: ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``
+    /// best effort: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
     /// discards a fold that failed to shrink the transcript, so an ignored
     /// ceiling costs a wasted call, never a worse transcript.
     ///
@@ -50,9 +50,16 @@ public protocol CompactionSummarizer: Sendable {
 /// to ``CompactionStage``: it is async (it calls a model) and needs a prompt
 /// and a summarizer, neither of which that synchronous, dependency-free
 /// protocol accepts (see ``CompactionStage``'s own doc comment). Instead,
-/// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` invokes it directly as
+/// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` invokes it directly as
 /// the pipeline's last resort, once the deterministic stages alone don't land
 /// the transcript under target.
+///
+/// That call takes the stage itself, so the three knobs below are the
+/// pipeline's own tuning rather than settings only a direct caller of
+/// ``apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:)``
+/// can reach: a caller with a different model or a different tolerance for
+/// compression hands `compact` a configured instance, and one that has no
+/// opinion gets `Summarization()` — every default below — by omitting it.
 ///
 /// Always operates on the **original** transcript passed to it, never on a
 /// partially-folded intermediate: by the time the deterministic stages have
@@ -134,7 +141,7 @@ public struct Summarization: Sendable {
     /// a slightly larger one: the ceiling is a hard stop, not a target the
     /// model aims at. A fold that still fails to shrink the transcript is
     /// caught where it should be —
-    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` returns
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` returns
     /// the original transcript rather than apply it.
     public static let minimumSummaryTokens = 128
 
@@ -172,7 +179,7 @@ public struct Summarization: Sendable {
     ///
     /// - Parameters:
     ///   - transcript: The transcript to fold. Always the *original*
-    ///     transcript given to ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``,
+    ///     transcript given to ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``,
     ///     never an already-truncated intermediate (see this type's own doc
     ///     comment).
     ///   - prompt: The compaction prompt sent to `summarizer` verbatim, ahead
@@ -183,7 +190,7 @@ public struct Summarization: Sendable {
     ///     any stage ran — carried into the resulting ``CompactionSegment``
     ///     unchanged, matching ``CompactionResult/tokensBefore``.
     ///   - priorStagesApplied: The deterministic stages
-    ///     ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` already
+    ///     ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` already
     ///     attempted before falling back to this stage (e.g.
     ///     `["ToolOutputElision", "TurnTruncation"]`) — this stage's own
     ///     ``stageName`` is appended to produce the resulting
@@ -384,7 +391,7 @@ public struct Summarization: Sendable {
     ///
     /// The calls one fold makes through here must stay **serial**, and the reason
     /// lives outside this file: a session folding its own transcript hands
-    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` a `summarizer` that
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` a `summarizer` that
     /// registers each call as that turn's one in-flight model call, which is what
     /// lets a client stop interrupt a fold already under way rather than wait it out (see
     /// Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift). Only one call can be

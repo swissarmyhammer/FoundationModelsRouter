@@ -19,7 +19,7 @@ import Testing
 /// of a ~1.8x inflation over a realistic transcript.
 ///
 /// That mattered because the estimate is compared *absolutely* against
-/// real-token quantities in two places: ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``
+/// real-token quantities in two places: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
 /// checks it against ``TokenBudget/targetTokens``, and `RoutedSessionActor`'s
 /// fold writes ``CompactionResult/tokensAfter`` straight into
 /// ``RoutedSession/contextFill``'s numerator, where every other writer puts

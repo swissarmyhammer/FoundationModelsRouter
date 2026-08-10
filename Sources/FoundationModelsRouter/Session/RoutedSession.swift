@@ -134,14 +134,14 @@ public protocol RoutedSession: Actor {
     /// ``recordingDirectory``/``recorder`` identity, shorter live window
     /// (compaction_plan.md §1.4).
     ///
-    /// Runs the ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` pipeline
+    /// Runs the ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` pipeline
     /// over this session's current transcript — the deterministic stages
     /// first, then, only if they alone don't land it under `budget`'s
     /// target, the model-assisted ``Summarization`` stage, summarizing with
     /// this session's own resident model by default (a consumer wanting a
     /// different summarizer — e.g. the profile's `flash` slot — drives the
     /// lower-level bare-session recipe directly:
-    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` +
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` +
     /// ``RecordingLanguageModel/noteCompaction(_:)``). When folding changes
     /// anything, the synthesized summary entry (with its
     /// ``CompactionSegment``) is appended to the same `transcript.jsonl` this

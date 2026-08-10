@@ -11,7 +11,7 @@ private let sessionCompactionLogger = makeModuleLogger(category: "Compaction")
 
 /// Adapts a ``LanguageModelSessionBackend`` to ``CompactionSummarizer``, so
 /// ``RoutedSessionActor/compact(prompt:budget:)`` can hand
-/// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` a summarizer without
+/// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` a summarizer without
 /// spinning up a separate model handle — "summarizer defaults to the
 /// session's own model" (compaction_plan.md §1.4).
 ///
@@ -180,7 +180,7 @@ extension RoutedSessionActor {
     ///   `CancellationError` out of its own internals with nothing cancelled here
     ///   is an ordinary failure and degrades like any other. So the guarantee above
     ///   still holds unqualified — a broken summarizer model cannot block an
-    ///   automatic fold — and only ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``'s
+    ///   automatic fold — and only ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``'s
     ///   own non-summarizer failure modes (none today) would otherwise propagate.
     ///   Whatever the abandoned tier threw, unless it is itself a `CancellationError`,
     ///   is reported to the log on the way out
@@ -304,7 +304,7 @@ extension RoutedSessionActor {
 
     /// The fold mechanics ``compact(prompt:budget:)`` and
     /// ``performAutoCompaction(prompt:budget:)`` share: runs
-    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` over ``backend``'s
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` over ``backend``'s
     /// current transcript with `summarizer`. When folding actually changed
     /// anything (`result.stagesApplied` non-empty), the fold's
     /// never-before-recorded entries are persisted — identified by id,

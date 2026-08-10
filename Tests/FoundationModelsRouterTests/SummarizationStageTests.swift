@@ -679,26 +679,71 @@ struct SummarizationStageTests {
 
     // MARK: - Compactor-level integration: Summarization wired in as the final stage
 
-    @Test("Compactor.compact wires Summarization in as the final stage when the deterministic stages alone aren't enough")
-    func compactorWiresInSummarizationAsFinalStage() async throws {
+    /// How many turns ``makeModelAssistedFoldFixture()`` builds.
+    private static let foldFixtureTurnCount = 6
+
+    /// How many times each of a fixture turn's three text fields repeats its
+    /// content phrase — large enough that one turn on its own exceeds
+    /// ``Summarization/maxChunkTokens``'s default, so the default chunking
+    /// gives each old turn a summarizer call of its own.
+    private static let foldFixtureRepeatsPerTurn = 400
+
+    /// The context-window size ``makeModelAssistedFoldFixture()``'s budget is
+    /// stated against — far larger than the fixture, so the target fraction
+    /// alone decides what the pipeline has to do.
+    private static let foldFixtureBudgetLimit = 1_000_000
+
+    /// The fraction of ``foldFixtureBudgetLimit`` a fold is triggered at —
+    /// irrelevant to these tests, which call `compact` directly rather than
+    /// wait for a trigger, but a ``TokenBudget`` requires one.
+    private static let foldFixtureTrigger = 0.80
+
+    /// A ``Summarization/maxChunkTokens`` wide enough to hold any fixture span
+    /// here in a single summarizer call — the non-default setting a test uses
+    /// to prove chunking read the knob it was given.
+    private static let wholeSpanChunkTokens = 1_000_000
+
+    /// The fixture the `Compactor.compact` tests below share: a header, six
+    /// turns whose content is far too large for the deterministic stages to
+    /// land, and a budget whose target sits below even their best effort — so
+    /// the pipeline always falls through to ``Summarization``.
+    ///
+    /// Each turn's text names its own index, so a test can tell from a
+    /// summarizer's assembled prompt which turns the fold condensed.
+    ///
+    /// - Returns: The turns in order, the transcript over them, and the budget
+    ///   to fold it against.
+    private static func makeModelAssistedFoldFixture() throws -> (
+        turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
+    ) {
         let instructions = TranscriptFixtures.makeInstructions()
-        let bigText = String(repeating: "large content ", count: 400)
-        let turns = try (1...6).map {
-            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+        let turns = try (1...foldFixtureTurnCount).map { index -> [Transcript.Entry] in
+            let text = String(repeating: "large content turn-\(index) ", count: foldFixtureRepeatsPerTurn)
+            return try TranscriptFixtures.makeTurn(
+                index: index, promptText: text, toolOutputText: text, responseText: text)
         }
         let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
 
-        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
-        let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
         // A target below even the deterministic stages' best effort forces the
         // model-assisted stage to run.
-        let limit = 1_000_000
-        let budget = TokenBudget(limit: limit, trigger: 0.80, target: Double(afterBoth / 2) / Double(limit))
+        let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
+        let budget = TokenBudget(
+            limit: foldFixtureBudgetLimit,
+            trigger: foldFixtureTrigger,
+            target: Double(afterBoth / 2) / Double(foldFixtureBudgetLimit)
+        )
+        return (turns, transcript, budget)
+    }
 
-        // The two old turns' bigText content comfortably exceeds
-        // Summarization's default maxChunkTokens (2000), so each becomes its
-        // own chunk: 2 map calls, then 1 reduce call over their summaries —
-        // the reduce call's result is what CompactionResult.summary carries.
+    @Test("Compactor.compact wires Summarization in as the final stage when the deterministic stages alone aren't enough")
+    func compactorWiresInSummarizationAsFinalStage() async throws {
+        let (turns, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+
+        // The two old turns' content comfortably exceeds Summarization's
+        // default maxChunkTokens (2000), so each becomes its own chunk: 2 map
+        // calls, then 1 reduce call over their summaries — the reduce call's
+        // result is what CompactionResult.summary carries.
         let summarizer = ScriptedSummarizer(responses: ["chunk-summary-1", "chunk-summary-2", "end-to-end summary"])
         let (resultTranscript, result) = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
 
@@ -707,7 +752,7 @@ struct SummarizationStageTests {
         #expect(result.tokensBefore == tokensBefore)
 
         let entries = Array(resultTranscript)
-        #expect(entries.first == instructions)
+        #expect(entries.first == TranscriptFixtures.makeInstructions())
         guard case .response(let response) = entries[1], case .custom(let segment) = response.segments.last,
             let compaction = segment as? CompactionSegment
         else {
@@ -743,21 +788,12 @@ struct SummarizationStageTests {
         "a fold whose summary leaves the transcript no smaller than it was is not applied: the original transcript comes back, with the shortfall reported"
     )
     func foldThatDoesNotShrinkTheTranscriptIsNotApplied() async throws {
-        let instructions = TranscriptFixtures.makeInstructions()
-        let bigText = String(repeating: "large content ", count: 400)
-        let turns = try (1...6).map {
-            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
-        }
-        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
-
+        // The same fixture `compactorWiresInSummarizationAsFinalStage` folds —
+        // a target below even the deterministic stages' best effort, so the
+        // model-assisted stage runs — differing only in what the summarizer
+        // answers.
+        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
-        let afterBoth = Compactor.estimatedTokenCount(of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
-        // A target below even the deterministic stages' best effort, so the
-        // model-assisted stage runs — the same setup as
-        // `compactorWiresInSummarizationAsFinalStage`, differing only in what
-        // the summarizer answers.
-        let limit = 1_000_000
-        let budget = TokenBudget(limit: limit, trigger: 0.80, target: Double(afterBoth / 2) / Double(limit))
 
         // A summary bigger than the whole transcript it would replace — sized
         // off `tokensBefore` itself, so the scenario holds however the
@@ -795,5 +831,91 @@ struct SummarizationStageTests {
         #expect(result.stagesApplied.isEmpty)
         #expect(result.summary == nil)
         #expect(summarizer.receivedPrompts.isEmpty)
+    }
+
+    // MARK: - The stage's own tuning, set through Compactor.compact
+
+    @Test("a non-default summaryTokenRatio set through Compactor.compact reaches the ceiling the summarizer call is given")
+    func compactCarriesSummaryTokenRatioIntoTheSummarizerCall() async throws {
+        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let summarizer = ScriptedSummarizer(responses: [])
+        let defaults = Summarization()
+        let ratio = 0.5
+
+        let (_, result) = try await Compactor.compact(
+            transcript,
+            budget: budget,
+            summarizer: summarizer,
+            summarization: Summarization(summaryTokenRatio: ratio)
+        )
+
+        #expect(result.stagesApplied.last == Summarization.stageName)
+
+        // The first call is a map call over one whole old turn, whose content
+        // is large enough that the ratio — not the minimumSummaryTokens floor —
+        // decides the ceiling, so the knob is visible in the number the
+        // summarizer was handed.
+        let firstPrompt = try #require(summarizer.receivedPrompts.first)
+        let firstContent = try Self.condensedContent(of: firstPrompt)
+        let firstCeiling = try #require(summarizer.receivedMaxTokens.first)
+        #expect(
+            firstCeiling
+                == Self.expectedCeiling(condensing: firstContent, ratio: ratio, maxChunkTokens: defaults.maxChunkTokens))
+        // And it is that knob, not the default, that produced it.
+        #expect(
+            firstCeiling
+                != Self.expectedCeiling(
+                    condensing: firstContent, ratio: defaults.summaryTokenRatio, maxChunkTokens: defaults.maxChunkTokens))
+    }
+
+    @Test("a non-default maxChunkTokens set through Compactor.compact reaches the fold's map-reduce chunking")
+    func compactCarriesMaxChunkTokensIntoTheChunking() async throws {
+        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let summarizer = ScriptedSummarizer(responses: ["one-shot summary"])
+
+        let (_, result) = try await Compactor.compact(
+            transcript,
+            budget: budget,
+            summarizer: summarizer,
+            summarization: Summarization(maxChunkTokens: Self.wholeSpanChunkTokens)
+        )
+
+        // The default 2000 gives each of the two old turns a chunk of its own —
+        // 2 map calls, then a reduce call over their summaries, as
+        // `compactorWiresInSummarizationAsFinalStage` asserts. A ceiling wide
+        // enough for the whole span condenses both turns in one call instead.
+        #expect(summarizer.receivedPrompts.count == 1)
+        let content = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
+        #expect(content.contains("turn-1"))
+        #expect(content.contains("turn-2"))
+        #expect(result.summary == "one-shot summary")
+    }
+
+    @Test("a non-default keepRecentTurns set through Compactor.compact reaches the fold's recency window")
+    func compactCarriesKeepRecentTurnsIntoTheFold() async throws {
+        let (turns, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let summarizer = ScriptedSummarizer(responses: [])
+        let keepRecentTurns = 2
+
+        let (resultTranscript, _) = try await Compactor.compact(
+            transcript,
+            budget: budget,
+            summarizer: summarizer,
+            summarization: Summarization(keepRecentTurns: keepRecentTurns)
+        )
+
+        // The default 4 keeps turns 3...6 and folds turns 1 and 2. A window of
+        // 2 keeps only turns 5 and 6, so the tail the fold left untouched is
+        // shorter and turns 3 and 4 are inside the span the summarizer read.
+        let expectedRecentTail = turns.suffix(keepRecentTurns).flatMap { $0 }
+        let entries = Array(resultTranscript)
+        #expect(Array(entries.suffix(expectedRecentTail.count)) == expectedRecentTail)
+        // The header, the one synthesized summary entry, and that tail — and
+        // nothing else. Counting the whole transcript is what makes the window
+        // narrower rather than merely ending in the same turns: the default's
+        // wider window would leave turns 3 and 4 in front of the tail here.
+        #expect(entries.count == 1 + 1 + expectedRecentTail.count)
+        #expect(summarizer.receivedPrompts.contains { $0.contains("turn-4") })
+        #expect(!summarizer.receivedPrompts.contains { $0.contains("turn-5") })
     }
 }

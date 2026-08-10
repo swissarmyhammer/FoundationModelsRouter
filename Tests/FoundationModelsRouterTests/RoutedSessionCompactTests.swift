@@ -10,7 +10,7 @@ import Testing
 /// transcript in place — the actor counterpart to
 /// ``RecordingLanguageModel/noteCompaction(_:)`` for a bare session over the
 /// recording handle. Both are implemented on the same bare primitives
-/// (``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` +
+/// (``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` +
 /// ``LanguageModelSessionBackend/replacingTranscript(_:)``) — one mechanism,
 /// two entry points (compaction_plan.md §7).
 ///

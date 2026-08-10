@@ -5,7 +5,7 @@ import FoundationModels
 ///
 /// Every conforming stage is a pure `Transcript -> Transcript` function: same
 /// input, same output, no side effects — the property that lets
-/// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` try a stage, measure
+/// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` try a stage, measure
 /// the result, and stop as soon as the transcript is small enough, without
 /// ever worrying about having mutated something it shouldn't.
 ///
@@ -13,7 +13,7 @@ import FoundationModels
 /// conform here. The model-assisted ``Summarization`` stage is async and
 /// needs a prompt and a summarizer model, so it wires into the pipeline
 /// through a different mechanism rather than this synchronous protocol — see
-/// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``.
+/// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``.
 public protocol CompactionStage: Sendable {
     /// This stage's name, recorded in ``CompactionResult/stagesApplied`` (and,
     /// once a fold synthesizes a summary entry, in

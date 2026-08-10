@@ -14,7 +14,7 @@ import FoundationModels
 public struct CompactionResult: Sendable, Equatable {
     /// The synthesized fold summary, or `nil` when no ``Summarization``
     /// ran — either no `summarizer` was supplied to
-    /// ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)`` (the model-free
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` (the model-free
     /// fallback), the deterministic stages alone already landed the
     /// transcript under target, there was no old span left to summarize (the
     /// oversized-tail case), or the fold's own summary left the transcript no
@@ -63,7 +63,7 @@ public struct CompactionResult: Sendable, Equatable {
 /// is only ever used by ``Summarization``, so it is ignored entirely on that
 /// model-free path.
 ///
-/// `compact(_:prompt:budget:summarizer:pendingRuns:)` returns both the folded transcript
+/// `compact(_:prompt:budget:summarizer:summarization:pendingRuns:)` returns both the folded transcript
 /// and the report: compaction_plan.md §1.1 describes compaction itself as a
 /// pure `Transcript -> Transcript` function (model-assisted summarization
 /// aside, which needs to call out to `summarizer`), and both entry points
@@ -117,6 +117,16 @@ public enum Compactor {
     ///     folded span, or `nil` to degrade to the model-free pipeline
     ///     (``ToolOutputElision``/``TurnTruncation`` only —
     ///     ``CompactionResult/summary`` stays `nil`). Defaults to `nil`.
+    ///   - summarization: The model-assisted stage itself, carrying its own
+    ///     tuning: how many newest turns the fold leaves untouched
+    ///     (``Summarization/keepRecentTurns``), the estimated-token ceiling a
+    ///     single summarizer call's content may reach before the span is
+    ///     chunked (``Summarization/maxChunkTokens``), and the share of that
+    ///     content a call's answer may occupy
+    ///     (``Summarization/summaryTokenRatio``). Defaults to
+    ///     `Summarization()` — every knob at its own documented default, which
+    ///     is what a caller that does not tune the fold gets. Unused on the
+    ///     model-free path, for the same reason `prompt` is.
     ///   - pendingRuns: The run-plane summaries of the runs still parked in
     ///     the calling session's `SessionMailbox` at the moment this fold
     ///     runs, in park order — carried into the synthesized boundary when
@@ -133,6 +143,7 @@ public enum Compactor {
         prompt: CompactionPrompt = .default,
         budget: TokenBudget,
         summarizer: (any CompactionSummarizer)? = nil,
+        summarization: Summarization = Summarization(),
         pendingRuns: [CompactionSegment.PendingRunSummary] = []
     ) async throws -> (transcript: Transcript, result: CompactionResult) {
         let tokensBefore = estimatedTokenCount(of: transcript)
@@ -172,7 +183,7 @@ public enum Compactor {
         // `current` at this point (TurnTruncation already dropped the old
         // turns' content from it).
         if let summarizer,
-            let folded = try await Summarization().apply(
+            let folded = try await summarization.apply(
                 transcript,
                 prompt: prompt,
                 tokensBefore: tokensBefore,
@@ -227,7 +238,7 @@ public enum Compactor {
     /// ``TranscriptEntryPayload/contentByteCount`` keeps the payload's own JSON
     /// envelope out of the sum. That distinction is load-bearing, not
     /// cosmetic: this estimate is compared *absolutely* against real token
-    /// counts in two places — ``compact(_:prompt:budget:summarizer:pendingRuns:)``
+    /// counts in two places — ``compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
     /// checks it against ``TokenBudget/targetTokens``, and a session's fold
     /// writes ``CompactionResult/tokensAfter`` into
     /// ``RoutedSession/contextFill``'s numerator, where every other writer puts

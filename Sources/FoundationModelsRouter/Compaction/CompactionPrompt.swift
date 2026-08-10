@@ -3,7 +3,7 @@
 /// to structure the continuation summary, and a `name` so recorded folds can
 /// be attributed to the prompt that produced them.
 ///
-/// Passed to ``Compactor/compact(_:prompt:budget:summarizer:pendingRuns:)``; consumers
+/// Passed to ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``; consumers
 /// pass their own value to specialize summarization for their domain (e.g. a
 /// coding agent adding "always list test commands") while keeping
 /// ``default`` as the research-backed starting point.
