@@ -750,7 +750,7 @@ layer up:
   loop awaits instead of polling — but the loop that calls it is always
   the caller's own `Task`, never something Router starts on its own.
 - **Cancellation comes in two halves, queue-side and in-flight.**
-  `cancel(_:)` withdraws a still-pending queued prompt before it is ever
+  `cancel(id:)` withdraws a still-pending queued prompt before it is ever
   dispatched — a cancelled prompt never produces a turn. `cancelCurrentTurn()`
   is its in-flight counterpart: it cancels the `Task` Router runs the model call
   in, so cancellation propagates *into* the tool calls the SDK invokes from

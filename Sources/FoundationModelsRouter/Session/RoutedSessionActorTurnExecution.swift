@@ -658,7 +658,7 @@ extension RoutedSessionActor {
     /// call, inside the same two gates ``generate(grammar:prompt:onEvent:_:)`` runs
     /// its own bracket in — so a dispatch never interleaves with a concurrent
     /// ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)`` turn, and
-    /// races ``cancel(_:)``/``replace(_:prompt:)`` exactly at the drain: once
+    /// races ``cancel(id:)``/``replace(id:prompt:)`` exactly at the drain: once
     /// this call has drained an id, a `cancel`/`replace` racing it on that id
     /// finds it already gone from the queue and reports
     /// ``SessionOutbox/PromptQueueMutationResult/alreadySent``, leaving this
@@ -669,7 +669,7 @@ extension RoutedSessionActor {
     ///
     /// - Returns: The response text the dispatched turn produced, or `nil` when
     ///   nothing was queued to dispatch — including the case where a concurrent
-    ///   ``cancel(_:)`` won the race for the only queued prompt.
+    ///   ``cancel(id:)`` won the race for the only queued prompt.
     /// - Throws: Whatever the dispatched turn throws, recorded exactly as any
     ///   other failed turn is.
     func dispatchNextPrompt() async throws -> String? {
@@ -680,7 +680,7 @@ extension RoutedSessionActor {
         let pendingEvents = drained.events.map(\.event)
         guard let queued = drained.prompt else {
             // Nothing was queued to dispatch — including the case where a
-            // concurrent `cancel(_:)` won the race for the only queued
+            // concurrent `cancel(id:)` won the race for the only queued
             // prompt just before this drain. Any events this drain still
             // claimed were never actually delivered on any turn, so
             // re-queue them rather than let this drain silently destroy

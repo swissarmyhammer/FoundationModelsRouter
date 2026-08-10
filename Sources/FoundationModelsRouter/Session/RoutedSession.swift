@@ -313,9 +313,9 @@ public protocol RoutedSession: Actor {
     func streamSessionEvents() -> AsyncStream<SessionEvent>
 
     /// Cancels the turn currently in flight on this session — best-effort, and
-    /// additive to ``cancel(_:)`` rather than a replacement for it.
+    /// additive to ``cancel(id:)`` rather than a replacement for it.
     ///
-    /// ``cancel(_:)`` withdraws a *queued* prompt before it is ever dispatched;
+    /// ``cancel(id:)`` withdraws a *queued* prompt before it is ever dispatched;
     /// this reaches a turn already handed to the model. What it actually does is
     /// cancel the `Task` Router runs the model call in, so cancellation
     /// propagates *into* the tool calls the SDK invokes from inside that call —
@@ -366,7 +366,7 @@ public protocol RoutedSession: Actor {
     ///   cancelled ``dispatchNextPrompt()`` turn's *prompt* is a separate question
     ///   with a separate answer: ``SessionOutbox/drainForDispatch()`` is that
     ///   prompt's commit point — the very boundary that makes a racing
-    ///   ``cancel(_:)`` report ``SessionOutbox/PromptQueueMutationResult/alreadySent``
+    ///   ``cancel(id:)`` report ``SessionOutbox/PromptQueueMutationResult/alreadySent``
     ///   — and a cancellation does not roll it back. The prompt is spent, because
     ///   re-queueing it would resurrect an id the caller has already been told was
     ///   sent.
@@ -565,7 +565,7 @@ public protocol RoutedSession: Actor {
     ///
     /// - Returns: The model's response text, or `nil` if no prompt was queued
     ///   at the moment this call drained the outbox (including a prompt
-    ///   ``RoutedSession/cancel(_:)``-ed just before the drain) — any pending
+    ///   ``RoutedSession/cancel(id:)``-ed just before the drain) — any pending
     ///   events this drain also claimed in that case are re-queued rather
     ///   than lost.
     /// - Throws: Any error thrown by the model.
@@ -651,7 +651,7 @@ extension RoutedSession {
     ///
     /// - Parameter prompt: The prompt to stage.
     /// - Returns: The stable id assigned to this queued prompt, usable with
-    ///   ``pendingPrompts()``, ``cancel(_:)``, and ``replace(_:prompt:)``.
+    ///   ``pendingPrompts()``, ``cancel(id:)``, and ``replace(id:prompt:)``.
     @discardableResult
     public func enqueue(prompt: Transcript.Prompt) async -> SessionOutbox.ItemID {
         await outbox.enqueue(prompt: prompt)
@@ -672,7 +672,7 @@ extension RoutedSession {
     /// FIFO dispatch order.
     ///
     /// - Returns: Each queued prompt's stable id paired with its current
-    ///   content, reflecting any ``replace(_:prompt:)`` applied to it since
+    ///   content, reflecting any ``replace(id:prompt:)`` applied to it since
     ///   it was enqueued.
     public func pendingPrompts() async -> [(id: SessionOutbox.ItemID, prompt: Transcript.Prompt)] {
         await outbox.pending().prompts.map { (id: $0.id, prompt: $0.prompt) }
@@ -689,7 +689,7 @@ extension RoutedSession {
     ///   counterpart — stopping a turn already handed to the model — see
     ///   ``cancelCurrentTurn()``.
     @discardableResult
-    public func cancel(_ id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult {
+    public func cancel(id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult {
         await outbox.cancel(id: id)
     }
 
@@ -705,7 +705,7 @@ extension RoutedSession {
     ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
     ///   A replaced prompt dispatches its edited content.
     @discardableResult
-    public func replace(_ id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult {
+    public func replace(id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult {
         await outbox.replace(id: id, prompt: prompt)
     }
 
@@ -736,10 +736,9 @@ extension RoutedSession {
     /// - Returns: The ``SessionMailbox/ElicitationAnswerDelivery``.
     @discardableResult
     public func respond(elicitationId: String, response: ElicitationResponse) async -> SessionMailbox.ElicitationAnswerDelivery {
-        guard let id = ULID(elicitationId) else {
-            return .noPendingElicitation
+        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) {
+            await mailbox.respond(elicitationId: $0, response)
         }
-        return await mailbox.respond(elicitationId: id, response)
     }
 
     /// Signals that an accepted URL-mode elicitation's out-of-band flow
@@ -757,9 +756,38 @@ extension RoutedSession {
     /// - Returns: The ``SessionMailbox/ElicitationCompletionDelivery``.
     @discardableResult
     public func complete(elicitationId: String) async -> SessionMailbox.ElicitationCompletionDelivery {
-        guard let id = ULID(elicitationId) else {
-            return .noPendingElicitation
+        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) {
+            await mailbox.complete(elicitationId: $0)
         }
-        return await mailbox.complete(elicitationId: id)
+    }
+
+    /// Parses an inbound elicitation id and hands the parsed id to `delivery` —
+    /// the one place either inbound elicitation route decides what an
+    /// unparseable id means.
+    ///
+    /// ``respond(elicitationId:response:)`` and ``complete(elicitationId:)``
+    /// both take the id as a `String`, because it reaches Router from a host
+    /// app across a boundary that carries text, and both owe the MCP spec the
+    /// same safe no-op when that text is not a ``ULID`` at all. Routing both
+    /// through here keeps that one decision in one place: neither route can be
+    /// changed to treat an unparseable id differently without the other
+    /// following.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The elicitation's id as the caller supplied it.
+    ///   - unparseableResult: What to report when `elicitationId` is not a
+    ///     parseable ``ULID`` — each route's own `noPendingElicitation`.
+    ///   - delivery: Delivers the parsed id to this session's ``mailbox``.
+    /// - Returns: Whatever `delivery` reported, or `unparseableResult` when the
+    ///   id could not be parsed.
+    private func deliver<Delivery>(
+        toElicitation elicitationId: String,
+        orReturn unparseableResult: Delivery,
+        using delivery: (ULID) async -> Delivery
+    ) async -> Delivery {
+        guard let id = ULID(elicitationId) else {
+            return unparseableResult
+        }
+        return await delivery(id)
     }
 }

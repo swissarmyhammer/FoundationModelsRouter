@@ -216,8 +216,32 @@ comments:
     - No finding of a test passing for the wrong reason: neither assertion can be satisfied by ordinary `ModelRef` equality alone (the roles test needs both loader methods actually invoked; the context test needs a second load despite the ref hashing/comparing equal).
     task: ^6ejrrr7
   timestamp: 2026-08-10T11:56:49.410025+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kznrxj7gwtfva23bsk6ywb8p
+  text: |
+    ### review — clean
+
+    - scope: `review sha HEAD~1..HEAD` (checkpoint commit `c6d9606`), iteration 3. Not the accumulated task diff.
+    - engine: 9 tasks attempted, 0 failed — this run is COMPLETE. 1 raw finding, 1 confirmed, 0 refuted.
+    - dropped under the skill's written exception (1): `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift:63` — asks for a documented synchronization invariant on `ParkingSessionBackend`'s `@unchecked Sendable`. That line is pre-existing test code (`git blame` f6ea0646, 2026-07-28) and this commit does not touch it — the two hunks are at `+218` and `+470`. The subject is re-docstringing test code that already existed, which the review skill drops. Zero new findings remain.
+    - acronym-casing waiver: the engine returned no finding demanding `Ram`/`Json`/`Llm`, so the project's `RAM`/`JSON`/`LLM` waiver was not applied to anything this round.
+    - prior finding `Sources/FoundationModelsRouter/Router.swift:71` (`ResidencyKey.role` had no test that would fail if dropped): verified closed by fault injection, not accepted from the implement report. Baseline: the two new tests and `sameRepoDifferentRevisionDoesNotShare` pass. Then `ResidencyKey` was given an explicit `==`/`hash(into:)` over `ref` alone, collapsing `role` out of the key. `sameRepoDifferentContextDoesNotShare` failed by assertion at `PooledResidencyTests.swift:536` (`llmLoads.filter { $0 == "org/ctx-repo" }.count == 2`), and `sameRepoInTwoRolesDoesNotShare` trapped: `Router.swift:938: Fatal error: a ResidencyKey acquired this resolve must have a matching pool entry for embedding`, signal 5 — the exact crash the finding predicted. The injection was reverted; `git diff -- Sources/` is empty and both tests pass again.
+    - both `role` discrimination axes are now pinned: `.llm(context:)` against `.embedding` (roles test), and `.llm(context: N)` against `.llm(context: M)` (context test, which asserts 2 loads with `Set(...).count == 1`, so ref equality alone cannot explain the second load).
+    - prior items: all iteration-1 and iteration-2 checklist items are `- [x]`. No item is left open.
+    - next: none. Task moved to `done`. The placement decision on `Scripts/check-doc-links.py` stays reserved for the user and is out of this review's scope.
+  timestamp: 2026-08-10T12:03:51.152171+00:00
+- actor: claude-code
+  id: 01kznrytdg8j7vx04bdhaaxq63
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — Tests/FoundationModelsRouterTests/PooledResidencyTests.swift (+73), 2 tests; `git diff -- Sources/` empty. Fail-then-pass proven: with role collapsed out of ResidencyKey, sameRepoDifferentContextDoesNotShare failed by assertion and sameRepoInTwoRolesDoesNotShare trapped at Router.swift:938 (signal 5).
+    - test: green — swift test, 826 passed (778+24+24), 0 failures, 0 actionable warnings. Verified Sources/ diff empty and read both tests: neither can pass for the wrong reason.
+    - commit: c6d9606 — 3 files, +191/-1, local only
+    - review: clean — zero new findings; 12 prior items checked. Engine: 9 tasks attempted, 0 failed. 1 raw finding dropped under the skill's written exception (PooledResidencyTests.swift:63, pre-existing test code per git blame f6ea0646; this commit's hunks are at +218 and +470). Reviewer independently re-ran the fault injection and reproduced both failures rather than accepting the implement report.
+    - next: task moved to done. Scripts/check-doc-links.py untouched — placement remains the user's decision.
+  timestamp: 2026-08-10T12:04:32.304354+00:00
+position_column: done
+position_ordinal: fa80
 title: Stale DocC symbol links in the split session files name signatures that no longer exist
 ---
 Discovered while working `^5m97h14`'s iteration-3 review findings. Not one of those findings, and deliberately not fixed there: `^5m97h14`'s findings are about `- Parameter` doc *keys* and about magic numbers, and the `swift/doc-parameter-naming` rule explicitly separates the two concerns — "DocC symbol links follow the declaration, not this rule … do not 'fix' symbol links to internal names, and do not cite them as violations of this rule." These links are broken for a different reason: they name an argument list the declaration no longer has, so DocC resolves nothing at all.

@@ -7,7 +7,7 @@ import Testing
 /// Exercises task ndv3sc1: the ``RoutedSession`` prompt-queue surface over
 /// ``SessionOutbox``'s turn-starting prompt queue —
 /// ``RoutedSession/enqueue(prompt:)``/``RoutedSession/pendingPrompts()``/
-/// ``RoutedSession/cancel(_:)``/``RoutedSession/replace(_:prompt:)`` plus
+/// ``RoutedSession/cancel(id:)``/``RoutedSession/replace(id:prompt:)`` plus
 /// ``RoutedSession/dispatchNextPrompt()`` driver dispatch, race-safe against
 /// ``SessionOutbox/drainForDispatch()``'s commit boundary.
 ///
@@ -270,14 +270,14 @@ struct PromptQueueTests {
         var pending = await session.pendingPrompts()
         #expect(pending.map { Self.text(of: $0.prompt) } == ["cancel me", "original"])
 
-        let cancelResult = await session.cancel(firstId)
+        let cancelResult = await session.cancel(id: firstId)
         #expect(cancelResult == .applied)
 
         pending = await session.pendingPrompts()
         #expect(pending.map(\.id) == [secondId])
         #expect(pending.map { Self.text(of: $0.prompt) } == ["original"])
 
-        let replaceResult = await session.replace(secondId, prompt: Self.prompt("edited"))
+        let replaceResult = await session.replace(id: secondId, prompt: Self.prompt("edited"))
         #expect(replaceResult == .applied)
 
         pending = await session.pendingPrompts()
@@ -396,7 +396,7 @@ struct PromptQueueTests {
         // the outbox's drain already committed this prompt's id.
         await backend.started.wait()
 
-        let cancelResult = await session.cancel(id)
+        let cancelResult = await session.cancel(id: id)
         #expect(cancelResult == .alreadySent)
 
         // Let the in-flight turn actually finish, unaffected by the race.
@@ -422,7 +422,7 @@ struct PromptQueueTests {
         let dispatchTask = Task { try await session.dispatchNextPrompt() }
         await backend.started.wait()
 
-        let replaceResult = await session.replace(id, prompt: Self.prompt("too late"))
+        let replaceResult = await session.replace(id: id, prompt: Self.prompt("too late"))
         #expect(replaceResult == .alreadySent)
 
         backend.proceed.signal()

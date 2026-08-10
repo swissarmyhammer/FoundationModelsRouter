@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises ``RoutedSession/cancelCurrentTurn()``: cancelling the turn already
-/// **in flight**, as opposed to ``RoutedSession/cancel(_:)``'s queue-side
+/// **in flight**, as opposed to ``RoutedSession/cancel(id:)``'s queue-side
 /// withdrawal of a prompt that has not been dispatched yet.
 ///
 /// The chain this closes is `ACP session/cancel` -> Router -> MCP
@@ -1231,7 +1231,7 @@ struct TurnCancellationTests {
         // it back: the prompt is spent, and its id reports what it reported the
         // moment it was drained.
         #expect(await session.pendingPrompts().isEmpty)
-        #expect(await session.cancel(queued) == .alreadySent)
+        #expect(await session.cancel(id: queued) == .alreadySent)
     }
 
     // MARK: - No-ops and best-effort honesty
@@ -1490,7 +1490,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
 
         let id = await session.enqueue(prompt: "queued")
-        #expect(await session.cancel(id) == .applied)
+        #expect(await session.cancel(id: id) == .applied)
 
         // Nothing dispatched, nothing generated, nothing recorded — the
         // additive in-flight primitive left the queue-side one exactly as it was.
