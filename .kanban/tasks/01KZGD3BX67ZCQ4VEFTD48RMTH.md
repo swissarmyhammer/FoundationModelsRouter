@@ -56,6 +56,74 @@ comments:
     - not run: full `FM_ROUTER_INTEGRATION_TESTS=1 swift test` and any `MULTITOOL_INTEGRATION=1` run — AC #4 and the Tests line remain unchecked.
     - next: /review
   timestamp: 2026-08-10T21:24:47.144167+00:00
+- actor: claude-code
+  id: 01kzptbx5d9fet151de43cdd1f
+  text: |-
+    ### review — findings
+    - scope: `review sha HEAD~1..HEAD` (46a56ae), 18 files.
+    - engine counts: 6 findings, 8 confirmed, 3 refuted, 18 attempted, 0 failed. 1 finding recorded; 5 dropped under the skill's blanket exception on refactoring test code that already existed (4 name pre-existing helpers in SessionTreeRestoration/TranscriptReconstruction/RecordingHandle; 1 names a line in CompactionContinuityEvalRealSubjectRunner that this commit only removed an import and the bootstrap read from).
+    - open finding: `Tests/FoundationModelsRouterIntegrationTests/MetalLibraryBootstrapIntegrationTests.swift:29`.
+
+    Targeted verification of the removal risk — all six checks pass.
+
+    1. Trait coverage. Nine gated `@Suite`s in the integration target, every one carrying `.exclusiveRealModel`: IntegrationTests.swift:205, SessionTreeRestorationIntegrationTests.swift:66, CompactionSpikeIntegrationTests.swift:50, LanguageModelSessionBackendTests.swift:47, TranscriptReconstructionIntegrationTests.swift:43, CompactionRoundTripIntegrationTests.swift:66, RecordingHandleIntegrationTests.swift:62, PropagationProbeIntegrationTests.swift:107, MetalLibraryBootstrapIntegrationTests.swift:56. Every file that lost a permit gained the trait, one for one — 19 `withPermit` removals across 7 files plus the `wait()`/`defer signal()` pair in IntegrationTests. The only trait-less suite is `ScriptedTurnSizingTests` (CompactionRoundTripIntegrationTests.swift:507), which is ungated, loads no model, and touches no MLX. No gated suite lost its gate.
+
+    2. Permit residue. The permit is taken in exactly two places, both inside `provideScope`: GatedSuiteSerialGate.swift:92 and GatedEvalSerialGate.swift:139. No test body takes it, so nothing can deadlock on the value-1 permit. Every other mention in the two gated targets is doc-comment prose.
+
+    3. Ordering against `.evaluates(...)` — CONFIRMED against swift-testing's source, not accepted on assertion. `Runner._runStep` wraps the whole step body, including the `_runChildren` recursion, in `_applyScopingTraits(for: step.test, testCase: nil)`; a suite step's scope therefore opens before any child step exists. A test-level scoping trait is reachable only from `_runChildren` -> `_runStep(child)` -> `_runTestCases` -> `_runTestCase` -> `_applyScopingTraits(..., testCase:)`, strictly inside. Written trait order decides nesting only within one declaration's own list, never across the suite/test boundary. `EvaluationTrait` (Evaluations.framework, `arm64-apple-macos.swiftinterface`) is `TestTrait, TestScoping` — test-level — and declares no `scopeProvider`, so it takes the default returning `self` only when `testCase != nil`. Its model load runs per test case, inside the suite trait's scope. The bootstrap is not too late.
+
+    4. Chokepoints 3 -> 2, no duplicate. `ensureColocatedMetallib` has exactly two runtime reads: GatedSuiteSerialGate.swift:91 and GatedEvalSerialGate.swift:138, one per `swift test` process. All other hits are the declaration (MetalLibraryTestBootstrap.swift:41,58), string literals, or doc prose. In Evals, both real-model runners are file-private singletons reachable only from their own suite's `.exclusiveResidentModel(of:)` and the `.evaluates(...)` closure inside that same suite; the four hermetic suites import no MLX. No entry point in either target reaches a GPU `MLXArray` evaluation without passing through a trait.
+
+    5. Demonstration test is real, and re-verified on hardware by this review. Its body names no gate, no permit, and no bootstrap — only `MLXArray`, `.sum(stream: .gpu)`, `#expect`, `.item`, `reduce`; the gate and bootstrap tokens in that file appear only in the doc comment above the suite. It is gated at :60 and carries the trait at :61. Reproduced the positive control: deleted the symlink, then `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter 'MetalLibraryBootstrapIntegrationTests'` -> 1 test in 1 suite passed after 0.039s, and the symlink was reinstalled pointing at `Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib`. Since the trait is the only thing between that body and the abort, removing it would still surface the regression.
+
+    6. `GatedEvalResidencyTrait` keeps its `^86fff75` job. The new bootstrap read was only prepended ahead of `withPermit`; nothing inside the closure moved. `evictIfLoaded()` (:147) still runs before `try outcome.get()` (:148) and both before the closure returns, so the `70ca94b` eviction-before-permit-release ordering holds on the success and failure paths alike.
+
+    Also checked: `swift build --build-tests` clean; DocC `- Parameter` keys on the added code use internal names (`test`, `testCase`, `function`, `runner`) and match their declarations.
+
+    Not run, per instruction and unchanged: full `FM_ROUTER_INTEGRATION_TESTS=1 swift test` and any `MULTITOOL_INTEGRATION=1` run. AC #4 and the Tests line stay unticked as not-run, which is an environment limit rather than a finding.
+
+    - next: address the open finding at MetalLibraryBootstrapIntegrationTests.swift:29, then re-review.
+  timestamp: 2026-08-10T21:48:24.109678+00:00
+- actor: claude-code
+  id: 01kzpv6mg1cwtresks8k1ezf2m
+  text: |-
+    Review round 2 — the one open finding is closed, and the ordering documentation is corrected.
+
+    Finding: `MetalLibraryBootstrapIntegrationTests.swift:29` — "Magic numbers should be replaced by named constants". Read the rule before fixing it: the Swift rule is swiftlint `no_magic_numbers` with `allowed_numbers: [0, 1, -1, 100]`. Run against the file as it stood, it reported three violations on that one line, at columns 54, 57 and 60 — the `2`, the `3` and the `4` of `[1, 2, 3, 4]`. The `1` was already allowed, and `reduce(0, +)` on the assertion line was never reported.
+
+    The array is now built from two named bounds, so the run keeps its four operands and the probe's behaviour is byte-for-byte identical:
+
+        private let metalLibraryProbeFirstOperand: Int32 = 1
+        private let metalLibraryProbeLastOperand: Int32 = 4
+        private let metalLibraryProbeOperands: [Int32] = Array(
+            metalLibraryProbeFirstOperand...metalLibraryProbeLastOperand
+        )
+
+    The names state meaning, not value: the first and last operand of the run. Their doc comments carry the two reasons — the values themselves carry no meaning (evaluating *any* GPU-device `MLXArray` is what aborts the process), while the length does (four operands make the sum differ from every term, so a `sum` that returned one of its own terms would still fail the expectation). Re-running the rule over the file reports nothing.
+
+    Ordering claim: MEASURED, not asserted. The previous round wrote "whatever order the traits are written in", which overstates the rule. A throwaway probe suite in the ungated target settled both halves on this toolchain, then was deleted:
+    - Two `SuiteTrait & TestScoping` traits on ONE `@Suite` line, labelled A then B, printed `enter A, enter B, body, exit B, exit A`. Within one declaration's trait list the FIRST written is the outermost.
+    - One suite trait plus a test-level trait on the `@Test` printed `enter SUITE-TRAIT, enter TEST-TRAIT, body, exit TEST-TRAIT, exit SUITE-TRAIT`. The suite scope encloses the test-level trait.
+    - Third fact, from the compiler rather than the run: a `TestTrait` cannot be written on a `@Suite` line at all ("argument type 'OrderProbeTestTrait' does not conform to expected type 'SuiteTrait'"), so across the suite/test boundary written order is not even expressible.
+
+    All four sites that carried the overstated wording now state the accurate rule — a suite scope opens before any child step exists, so it encloses every test-level trait no matter where among the suite's own traits it is written; but among the traits on one declaration the first written is the outermost:
+    - `GatedRealModelSuiteTrait`'s "Ordering against test-level traits" section, which also names the consequence: a second suite trait that itself reached the GPU would have to be written after this one to run inside its scope.
+    - `GatedEvalResidencyTrait.provideScope(for:testCase:performing:)`, whose "It is the outermost thing a gated eval suite runs" is replaced — it is outermost against test-level traits, not against a suite trait written before it.
+    - `GatedEvalSerialGate`'s "Why the permit is taken at suite scope" section, which carried the same sentence and was not in the round's list.
+    - `MetalLibraryTestBootstrap.ensureColocatedMetallib`, which now tells a future author where a GPU-touching suite trait belongs.
+
+    `grep` for "whatever order", "regardless of written order", "regardless of the order" and "outermost thing" over Sources, Tests and the Markdown returns nothing.
+  timestamp: 2026-08-10T22:02:59.969023+00:00
+- actor: claude-code
+  id: 01kzpv6zws6swbf75kn352pspf
+  text: |-
+    ### implement — changed
+    - evidence: 4 files — `Tests/FoundationModelsRouterIntegrationTests/MetalLibraryBootstrapIntegrationTests.swift` (named constants `metalLibraryProbeFirstOperand` / `metalLibraryProbeLastOperand`, array built from the run), `Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift`, `Tests/FoundationModelsRouterEvals/Support/GatedEvalSerialGate.swift` (both the enum doc and `GatedEvalResidencyTrait.provideScope`), `Tests/FoundationModelsRouterTestSupport/MetalLibraryTestBootstrap.swift` — the last three carry the corrected trait-ordering rule.
+    - verified: `swift build --build-tests` complete, no Swift error or warning; ungated `swift test` green — 783 tests / 75 suites (the 1 pre-existing BoundedWait known issue), 25 tests / 10 suites, 24 tests / 5 suites; `Scripts/check-doc-links.py` 1295 links scanned, 0 stale, 0 unresolved; `- Parameter` keys checked by hand and unchanged (internal names `test`, `testCase`, `function`, `runner`); swiftlint `no_magic_numbers` with the rule's own `allowed_numbers: [0, 1, -1, 100]` reports nothing on the edited file.
+    - probe re-verified after the rename: symlink deleted first, then `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter 'MetalLibraryBootstrapIntegrationTests'` -> 1 test in 1 suite passed after 0.597s (test body 0.036s), and the symlink was reinstalled pointing at `Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib`. The probe still forces a GPU-device `MLXArray` evaluation.
+    - not run, and not claimed: full `FM_ROUTER_INTEGRATION_TESTS=1 swift test` and any `MULTITOOL_INTEGRATION=1` run (27B model, 8-11 min). AC #4 and the Tests line stay unticked as not-run.
+    - next: /review
+  timestamp: 2026-08-10T22:03:11.641959+00:00
 position_column: doing
 position_ordinal: '80'
 title: Make the metallib bootstrap trigger structural, not per-test discipline
@@ -81,4 +149,8 @@ Suggested direction (not prescriptive): a suite-level `TestScoping` trait applie
 - [x] Ungated `swift test` stays green
 
 ## Tests
-- [ ] Gated run confirming both targets still bootstrap. Gated runs: one at a time, one shell command per run. — NOT RUN (see above) #phase-1
+- [ ] Gated run confirming both targets still bootstrap. Gated runs: one at a time, one shell command per run. — NOT RUN (see above)
+
+## Review Findings (2026-08-10 16:29)
+
+- [x] `Tests/FoundationModelsRouterIntegrationTests/MetalLibraryBootstrapIntegrationTests.swift:29` — Magic numbers should be replaced by named constants. #phase-1

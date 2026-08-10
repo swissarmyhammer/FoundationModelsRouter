@@ -52,9 +52,13 @@ public enum MetalLibraryTestBootstrap {
     /// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests`
     /// and `GatedEvalResidencyTrait` in `FoundationModelsRouterEvals`. A trait
     /// written once on the `@Suite` line cannot be forgotten by a test the
-    /// suite later gains, and a suite's scope wraps every test-level trait, so
-    /// the symlink is in place even for a trait that reaches the GPU ahead of
-    /// the `@Test` body — which is what `.evaluates(...)` does.
+    /// suite later gains, and a suite's scope opens before any child step
+    /// exists, so it encloses every test-level trait no matter where among the
+    /// suite's own traits it is written — the symlink is in place even for a
+    /// trait that reaches the GPU ahead of the `@Test` body, which is what
+    /// `.evaluates(...)` does. Within one declaration's trait list the first
+    /// trait written is the outermost, so a suite trait that itself reaches
+    /// the GPU belongs after the one that reads this property.
     public static let ensureColocatedMetallib: Void = {
         do {
             try installSymlinkIfNeeded()

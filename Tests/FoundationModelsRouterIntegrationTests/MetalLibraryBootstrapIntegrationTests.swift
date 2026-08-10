@@ -21,12 +21,24 @@ private var metalLibraryBootstrapIntegrationEnabled: Bool {
 /// adds four integers and downloads nothing.
 private let metalLibraryBootstrapTimeLimitMinutes = 1
 
-/// The operands the probe below adds on the GPU.
+/// The first operand in the run the probe below adds on the GPU.
 ///
-/// Their values carry no meaning. Evaluating *any* GPU-device `MLXArray` is
-/// what aborts the process when the metallib symlink is missing, so the
-/// cheapest arithmetic there is makes the point at no cost.
-private let metalLibraryProbeOperands: [Int32] = [1, 2, 3, 4]
+/// The values themselves carry no meaning. Evaluating *any* GPU-device
+/// `MLXArray` is what aborts the process when the metallib symlink is missing,
+/// so the cheapest arithmetic there is makes the point at no cost.
+private let metalLibraryProbeFirstOperand: Int32 = 1
+
+/// The last operand in the run the probe below adds on the GPU.
+///
+/// The run holds four operands rather than one so that its sum differs from
+/// every operand in it: a `sum` that returned one of its own terms would still
+/// fail the expectation.
+private let metalLibraryProbeLastOperand: Int32 = 4
+
+/// The operands the probe below adds on the GPU.
+private let metalLibraryProbeOperands: [Int32] = Array(
+    metalLibraryProbeFirstOperand...metalLibraryProbeLastOperand
+)
 
 // MARK: - Suite
 

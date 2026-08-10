@@ -48,13 +48,20 @@ enum GatedSuiteSerialGate {
 ///
 /// ## Ordering against test-level traits
 ///
-/// A `SuiteTrait`'s scope wraps the suite's entire plan step, so it sits
-/// outside every test-level trait whatever order the traits are written in.
-/// That matters for any trait that reaches the GPU ahead of the `@Test` body —
-/// `.evaluates(...)` in `FoundationModelsRouterEvals` is exactly such a trait,
-/// which is why its sibling ``GatedEvalResidencyTrait`` is suite-scoped too.
-/// Nothing in this target carries such a trait today; being suite-scoped means
-/// nothing here has to.
+/// A `SuiteTrait`'s scope opens on the suite's own plan step, before any child
+/// step exists, so it encloses every test-level trait no matter where among
+/// the suite's own traits it is written. That matters for any trait that
+/// reaches the GPU ahead of the `@Test` body — `.evaluates(...)` in
+/// `FoundationModelsRouterEvals` is exactly such a trait, which is why its
+/// sibling ``GatedEvalResidencyTrait`` is suite-scoped too. Nothing in this
+/// target carries such a trait today; being suite-scoped means nothing here
+/// has to.
+///
+/// That freedom covers the suite/test boundary only. Written order still
+/// decides nesting *within* one declaration's own trait list, where the first
+/// trait written is the outermost — so a second suite trait that itself
+/// reached the GPU would have to be written after this one on the `@Suite`
+/// line to run inside its scope.
 struct GatedRealModelSuiteTrait: SuiteTrait, TestScoping {
     /// Provides the scope for the suite itself, and for nothing else.
     ///

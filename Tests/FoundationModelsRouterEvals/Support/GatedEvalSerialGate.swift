@@ -43,9 +43,11 @@ import Testing
 /// A permit taken inside a `@Test` body would be taken too late: `.evaluates(...)`
 /// runs the whole evaluation — every sample, and therefore the model load — in
 /// a `TestScoping` trait ahead of the body. ``GatedEvalResidencyTrait`` is a
-/// `SuiteTrait` instead, so its scope wraps the suite's entire plan step and
-/// sits outside every test-level trait, whatever order the traits are written
-/// in.
+/// `SuiteTrait` instead, so its scope opens on the suite's own plan step,
+/// before any child step exists, and encloses every test-level trait no matter
+/// where among the suite's own traits it is written. Written order decides
+/// nesting only among the traits on one declaration, where the first written
+/// is the outermost.
 ///
 /// That scope is also what makes eviction unconditional. The trait evicts on
 /// the success path and on the throwing path alike, before it hands the permit
@@ -115,11 +117,15 @@ struct GatedEvalResidencyTrait: SuiteTrait, TestScoping {
     /// ``GatedEvalSerialGate/shared``, evicting ``runner``'s model before the
     /// permit is released whether the suite succeeded or threw.
     ///
-    /// This scope is the whole target's single metallib trigger. It is the
-    /// outermost thing a gated eval suite runs, so the symlink is in place
-    /// before `.evaluates(...)` — itself a `TestScoping` trait, which runs the
-    /// entire evaluation, model load included, ahead of the `@Test` body —
-    /// reaches the GPU. Triggering from a runner's own model load worked too,
+    /// This scope is the whole target's single metallib trigger. A suite scope
+    /// opens before any child step exists, so it encloses every test-level
+    /// trait no matter where among the suite's own traits it is written, and
+    /// the symlink is in place before `.evaluates(...)` — itself a
+    /// `TestScoping` trait, which runs the entire evaluation, model load
+    /// included, ahead of the `@Test` body — reaches the GPU. Among the traits
+    /// on one `@Suite` line the first written is the outermost, so this trait
+    /// is outermost against test-level traits, not against a suite trait
+    /// written before it. Triggering from a runner's own model load worked too,
     /// but only for the runners that remembered to; this trigger covers a new
     /// gated eval suite whether or not its author knows the symlink exists.
     ///
