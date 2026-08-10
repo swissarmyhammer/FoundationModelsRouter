@@ -2,15 +2,15 @@ import Foundation
 import FoundationModels
 import Synchronization
 
-/// Extracts per-call elevation clocks from a call's opaque arguments.
+/// Extracts per-call detachment clocks from a call's opaque arguments.
 ///
 /// The per-call clock sourcing hook: a wrapped tool that conforms lets the
-/// ``ElevatingTool`` engine read a per-call `waitSeconds` and/or `timeout`
+/// ``DetachingTool`` engine read a per-call `waitSeconds` and/or `timeout`
 /// out of the call's `GeneratedContent` — however the tool encodes them —
-/// instead of using the wrap-time ``ElevationConfiguration``. A `nil` field
+/// instead of using the wrap-time ``DetachConfiguration``. A `nil` field
 /// falls back to that configuration; a tool that does not conform always
 /// uses it.
-public protocol ElevationParameterProviding {
+public protocol DetachmentParameterProviding {
     /// Returns the per-call clocks encoded in `arguments`, or `nil` fields
     /// for whichever the call does not supply.
     ///
@@ -19,12 +19,12 @@ public protocol ElevationParameterProviding {
     ///   were decoded from.
     /// - Returns: The per-call `waitSeconds` and `timeout`, each `nil` to
     ///   fall back to the wrap-time configuration.
-    func elevationClocks(
+    func detachmentClocks(
         from arguments: GeneratedContent
     ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?)
 }
 
-/// The wrap-time clock and mode configuration of an ``ElevatingTool``.
+/// The wrap-time clock and mode configuration of a ``DetachingTool``.
 ///
 /// The two clocks (eventplan.md § "Consolidation of the siblings"):
 ///
@@ -35,18 +35,18 @@ public protocol ElevationParameterProviding {
 ///
 /// Progress keeps the work alive; it never buys the caller more waiting
 /// time. Both values can be overridden per call through
-/// ``ElevationParameterProviding``.
-public struct ElevationConfiguration: Sendable, Equatable {
+/// ``DetachmentParameterProviding``.
+public struct DetachConfiguration: Sendable, Equatable {
     /// Whether a call detaches at ``waitSeconds`` or runs to completion.
     public enum Mode: Sendable, Equatable {
-        /// Race each call against ``ElevationConfiguration/waitSeconds``;
+        /// Race each call against ``DetachConfiguration/waitSeconds``;
         /// a call that does not complete in the window parks in the
         /// session's ``SessionMailbox`` and returns the pending envelope.
         /// Router's native-session mount.
-        case elevating
+        case detaching
 
         /// Run each call to completion, bounded only by
-        /// ``ElevationConfiguration/timeout`` — elevation off, the mode
+        /// ``DetachConfiguration/timeout`` — detachment off, the mode
         /// `ToolInvoker` mounts for inner `tools.*` calls. The same engine
         /// still owns correlation, events, and outcomes.
         case runToCompletion
@@ -64,14 +64,15 @@ public struct ElevationConfiguration: Sendable, Equatable {
     /// could cancel it, leaving real timeout headroom for follow-up.
     public static let defaultTimeoutSeconds: TimeInterval = 120
 
-    /// Router's native-session mount: elevation on, stock clocks
+    /// Router's native-session mount: detachment on, stock clocks
     /// (``defaultWaitSeconds``/``defaultTimeoutSeconds``). The one
     /// configuration all three tool-composition sites apply —
     /// `RoutedModel.makeSession`, `RoutedSessionActor.fork`, and
     /// `restoreSessionTree` — so the mount policy has exactly one
-    /// definition (eventplan.md § "Elevation": two mounts, one engine, two
-    /// policies; this is the native mount).
-    public static let nativeSessionMount = ElevationConfiguration(mode: .elevating)
+    /// definition (eventplan.md § "Elevation" — that plan's name for
+    /// detachment: two mounts, one engine, two policies; this is the
+    /// native mount).
+    public static let nativeSessionMount = DetachConfiguration(mode: .detaching)
 
     /// Whether a call detaches at ``waitSeconds`` or runs to completion.
     public var mode: Mode
@@ -107,15 +108,15 @@ public struct ElevationConfiguration: Sendable, Equatable {
     }
 }
 
-/// The failures the ``ElevatingTool`` engine itself produces.
-public enum ElevatingToolError: Error, Equatable {
+/// The failures the ``DetachingTool`` engine itself produces.
+public enum DetachingToolError: Error, Equatable {
     /// The per-call `timeout` elapsed with no progress and no pending
     /// elicitation; the work was cancelled and the run settled as
     /// ``OperationOutcome/timedOut``.
     case timedOut(tool: String, timeoutSeconds: TimeInterval)
 }
 
-/// The rendered output an elevated call returns in place of its result: the
+/// The rendered output a detached call returns in place of its result: the
 /// `pending` discriminator, the parked run's `completionToken`, and a `next`
 /// field spelling out the collect step the model must take instead of
 /// answering.
@@ -215,7 +216,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// ``rendered`` frame around two slots holding one and the same valid ULID
     /// `completionToken`.
     ///
-    /// This is what lets a decorator outside the elevation layer — today
+    /// This is what lets a decorator outside the detachment layer — today
     /// ``TokenCappingTool`` — recognize control-plane wire data and pass it
     /// through untouched, without JSON-parsing arbitrary tool output: the
     /// wire form is deterministic, so a byte-shape check is exact. Recognition
@@ -240,10 +241,11 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     }
 }
 
-/// The elevation engine: a decorator over `any Tool` that races each call
+/// The detachment engine: a decorator over `any Tool` that races each call
 /// against the soft `waitSeconds` deadline and parks a call that outlives it
 /// in the session's ``SessionMailbox`` (eventplan.md § "Elevation:
-/// waitSeconds and the completion token").
+/// waitSeconds and the completion token" — that plan's name for
+/// detachment).
 ///
 /// Follows ``TokenCappingTool``'s forwarding precedent — `name`,
 /// `description`, `parameters`, and `includesSchemaInInstructions` pass
@@ -254,7 +256,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 /// Per call, the engine:
 /// 1. Mints a `completionToken` (a ULID; it IS the run's event
 ///    `correlationID`) and binds a ``ToolContext`` around the inner call.
-/// 2. In ``ElevationConfiguration/Mode/elevating``, races the call against
+/// 2. In ``DetachConfiguration/Mode/detaching``, races the call against
 ///    `waitSeconds` using a continuation-based race (never a task group — a
 ///    group cannot exit with a suspended child). In-window completion
 ///    returns the rendered output inline; nothing resets `waitSeconds`.
@@ -263,8 +265,8 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 ///    one synthesized `progress` event iff the run has posted no events of
 ///    its own yet, and returns ``PendingRunEnvelope/rendered``.
 /// 4. Enforces terminal-scoped synthesis at a single posting funnel:
-///    exactly one `.completed` per elevated run in every path — inline,
-///    elevated, tool-throws, cancel, timeout — with the rendered output in
+///    exactly one `.completed` per detached run in every path — inline,
+///    detached, tool-throws, cancel, timeout — with the rendered output in
 ///    `detail`, the `completionToken` as `correlationID`, and the honest
 ///    ``OperationOutcome``. A run that posted its own terminal gets no
 ///    duplicate; a run that settles entirely in-band, silently and
@@ -273,15 +275,15 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 ///    journal must stay complete.
 /// 5. Bounds the work with the per-call `timeout`, which progress resets
 ///    and a pending elicitation suspends (the ported `CallDeadline` loop).
-///    In ``ElevationConfiguration/Mode/runToCompletion`` the call runs to
-///    completion bounded only by that timeout — same engine, elevation off.
+///    In ``DetachConfiguration/Mode/runToCompletion`` the call runs to
+///    completion bounded only by that timeout — same engine, detachment off.
 ///
 /// `Arguments` must be `Sendable` — beyond `Tool`'s own
-/// `ConvertibleFromGeneratedContent` bound — because elevation is exactly
+/// `ConvertibleFromGeneratedContent` bound — because detachment is exactly
 /// the act of moving a call across tasks: the arguments are handed to the
 /// detached run body that may outlive the call that received them.
-public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
-    /// The wrapped tool, called through untouched save for elevation.
+public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
+    /// The wrapped tool, called through untouched save for detachment.
     /// Internal rather than private, mirroring ``TokenCappingTool``'s own
     /// `wrapped`, so composition-site wiring tests can assert the per-site
     /// decorator chain order.
@@ -291,15 +293,15 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// ``ToolContext``.
     private let sessionID: ULID
 
-    /// The owning session's mailbox — where elevated runs park.
+    /// The owning session's mailbox — where detached runs park.
     private let mailbox: SessionMailbox
 
     /// The upstream sink every run's events funnel into.
     private let sink: any OperationEventSink
 
     /// The wrap-time mode and clock defaults; per-call values from
-    /// ``ElevationParameterProviding`` override the clocks.
-    private let configuration: ElevationConfiguration
+    /// ``DetachmentParameterProviding`` override the clocks.
+    private let configuration: DetachConfiguration
 
     /// The wrapped tool's name.
     public var name: String { wrapped.name }
@@ -313,7 +315,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// Whether the schema is included in the tool's instructions.
     public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
-    /// Wraps `wrapped` in the elevation engine.
+    /// Wraps `wrapped` in the detachment engine.
     ///
     /// - Parameters:
     ///   - wrapped: The tool to decorate.
@@ -326,7 +328,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
-        configuration: ElevationConfiguration
+        configuration: DetachConfiguration
     ) {
         self.wrapped = wrapped
         self.sessionID = sessionID
@@ -341,10 +343,10 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// - Parameter arguments: The call's arguments, forwarded to the
     ///   wrapped tool untouched.
     /// - Returns: The wrapped tool's rendered output when the call settles
-    ///   in-band, or ``PendingRunEnvelope/rendered`` when it elevates.
+    ///   in-band, or ``PendingRunEnvelope/rendered`` when it detaches.
     /// - Throws: Whatever the wrapped tool throws, unmodified, when the
     ///   call settles in-band with an error;
-    ///   ``ElevatingToolError/timedOut(tool:timeoutSeconds:)`` when the
+    ///   ``DetachingToolError/timedOut(tool:timeoutSeconds:)`` when the
     ///   per-call timeout ends an in-band call.
     public func call(arguments: Arguments) async throws -> String {
         let clocks = perCallClocks(from: arguments)
@@ -388,10 +390,10 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
                 cancellationFlag.request()
                 workTask.cancel()
             }
-        case .elevating:
+        case .detaching:
             let deadline = SessionMailbox.boundedNanoseconds(clamping: waitSeconds)
             guard deadline > 0 else {
-                return try await elevate(
+                return try await detach(
                     workTask: workTask, funnel: funnel, context: context,
                     cancellationFlag: cancellationFlag
                 )
@@ -400,7 +402,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             case .settled(let settlement):
                 return try settlement.result.get()
             case .deadlineElapsed:
-                return try await elevate(
+                return try await detach(
                     workTask: workTask, funnel: funnel, context: context,
                     cancellationFlag: cancellationFlag
                 )
@@ -411,28 +413,28 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     // MARK: - Per-call clocks
 
     /// The per-call clocks the wrapped tool supplies through
-    /// ``ElevationParameterProviding``, or all-`nil` when it does not
+    /// ``DetachmentParameterProviding``, or all-`nil` when it does not
     /// conform (or its arguments cannot round-trip to `GeneratedContent`).
     private func perCallClocks(
         from arguments: Arguments
     ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
         guard
-            let provider = wrapped as? any ElevationParameterProviding,
+            let provider = wrapped as? any DetachmentParameterProviding,
             let convertible = arguments as? any ConvertibleToGeneratedContent
         else {
             return (nil, nil)
         }
-        return provider.elevationClocks(from: convertible.generatedContent)
+        return provider.detachmentClocks(from: convertible.generatedContent)
     }
 
-    // MARK: - Elevation
+    // MARK: - Detachment
 
-    /// Elevates a call whose window elapsed: parks the still-running work
+    /// Detaches a call whose window elapsed: parks the still-running work
     /// in the mailbox, posts the synthesized progress iff the run has been
     /// silent, and returns the pending envelope. When the run settled in
-    /// the instants between the window elapsing and elevation, returns its
+    /// the instants between the window elapsing and detachment, returns its
     /// in-band result instead — a settled run is never parked.
-    private func elevate(
+    private func detach(
         workTask: Task<RunSettlement, Never>,
         funnel: RunEventFunnel,
         context: ToolContext,
@@ -446,7 +448,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             kind: .progress,
             detail: envelope.rendered
         )
-        guard await funnel.markElevated(postingIfSilent: synthesizedProgress) else {
+        guard await funnel.markDetached(postingIfSilent: synthesizedProgress) else {
             return try await workTask.value.result.get()
         }
         let settling = Task { await workTask.value.terminal }
@@ -511,7 +513,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// Races the inner call against the resettable per-call timeout — the
     /// ported `CallDeadline` loop — through the same continuation-based
     /// race the soft deadline uses. Timeout expiry cancels the inner call
-    /// and resolves as ``ElevatingToolError/timedOut(tool:timeoutSeconds:)``.
+    /// and resolves as ``DetachingToolError/timedOut(tool:timeoutSeconds:)``.
     private static func raceInnerAgainstTimeout(
         inner: Task<String, any Error>,
         timeoutSeconds: TimeInterval,
@@ -537,7 +539,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             cancellationFlag.request()
             inner.cancel()
             return .failure(
-                ElevatingToolError.timedOut(tool: tool, timeoutSeconds: timeoutSeconds)
+                DetachingToolError.timedOut(tool: tool, timeoutSeconds: timeoutSeconds)
             )
         }
     }
@@ -585,7 +587,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             if error is CancellationError {
                 return (.cancelled, String(describing: error))
             }
-            if case ElevatingToolError.timedOut = error {
+            if case DetachingToolError.timedOut = error {
                 return (.timedOut, String(describing: error))
             }
             return (.failed, String(describing: error))
@@ -631,7 +633,7 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 
 }
 
-/// The untyped entry point over the ``ElevatingTool`` decorator — the
+/// The untyped entry point over the ``DetachingTool`` decorator — the
 /// discovery half of the pair, mirroring `ToolOutputCapping`'s
 /// `wrapping(tool:toTokenLimit:)`: Router's tool-instancing seams hold plain
 /// `[any Tool]` lists, so this is where the existential is opened and the
@@ -643,51 +645,51 @@ public struct ElevatingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 /// layers `ToolOutputCapping` over ``wrapping(_:sessionID:mailbox:sink:configuration:)``,
 /// and lives beside the capping layer so this file carries no dependency
 /// on it.
-public enum ToolElevation {
-    /// Wraps `tool` in an ``ElevatingTool`` when it can be elevated,
+public enum ToolDetachment {
+    /// Wraps `tool` in a ``DetachingTool`` when it can be detached,
     /// discovered dynamically rather than requiring the tool to opt in —
     /// and in the binding-only ``ContextBindingTool`` otherwise, so every
     /// tool leaves here with a per-call, per-tool-stamped ambient
     /// ``ToolContext`` (task ^6htgvw2).
     ///
-    /// Elevation requires the wrapped tool's `Output` to be `String` —
+    /// Detachment requires the wrapped tool's `Output` to be `String` —
     /// checked with a runtime existential cast against `Tool`'s primary
     /// associated types — because the pending envelope replaces the
     /// rendered output on the same wire, and `FoundationModels.Prompt`
     /// exposes no generic way to substitute text into any other `Output`
     /// (the exact reasoning behind `ToolOutputCapping.wrapping`'s identical
     /// restriction). A tool with any other `Output` gets the
-    /// ``ContextBindingTool`` decorator instead: it runs un-elevated,
+    /// ``ContextBindingTool`` decorator instead: it runs un-detached,
     /// in-band, exactly as it does today — never detachable — but its
     /// ambient posts still carry its own tool identity and a fresh
     /// per-call `correlationID` rather than falling back to the session's
     /// turn-scope binding.
     ///
-    /// ``ElevatingTool``'s other bound — `Arguments: Sendable` — needs no
+    /// ``DetachingTool``'s other bound — `Arguments: Sendable` — needs no
     /// check here: `Tool`'s own `@concurrent call(arguments:)` requirement
     /// already makes a conformance with non-`Sendable` `Arguments`
     /// uncompilable, so every tool this can receive satisfies it.
     ///
     /// - Parameters:
-    ///   - tool: The tool to consider for elevation.
+    ///   - tool: The tool to consider for detachment.
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the run's events are posted to.
     ///   - configuration: The wrap-time mode and clock defaults.
-    /// - Returns: The elevating decorator around `tool` when it qualifies;
+    /// - Returns: The detaching decorator around `tool` when it qualifies;
     ///   the binding-only ``ContextBindingTool`` around it otherwise.
     public static func wrapping(
         _ tool: any Tool,
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
-        configuration: ElevationConfiguration
+        configuration: DetachConfiguration
     ) -> any Tool {
         func openArguments<A: ConvertibleFromGeneratedContent & Sendable>(
             _ argumentsType: A.Type, of candidate: any Tool
         ) -> any Tool {
             guard let typed = candidate as? any Tool<A, String> else { return candidate }
-            return ElevatingTool(
+            return DetachingTool(
                 wrapping: typed,
                 sessionID: sessionID,
                 mailbox: mailbox,
@@ -708,7 +710,7 @@ public enum ToolElevation {
             // marker protocol with no runtime representation, and `Tool`
             // conformance already guarantees it (see the doc above) — this
             // cast only restates that fact where the generic system can see
-            // it, so `ElevatingTool`'s `Arguments: Sendable` bound is
+            // it, so `DetachingTool`'s `Arguments: Sendable` bound is
             // satisfied. Routed through `Any` because the compiler can
             // neither prove the coercion statically nor represent a failing
             // path; the fallback is unreachable and kept only for totality.
@@ -727,7 +729,7 @@ public enum ToolElevation {
 
 /// The binding-only decorator over a non-`String`-output tool: binds a
 /// per-call, per-tool-stamped ``ToolContext`` around the wrapped call —
-/// exactly the ambient identity ``ElevatingTool`` binds — while skipping the
+/// exactly the ambient identity ``DetachingTool`` binds — while skipping the
 /// pending-envelope/park machinery entirely, because that machinery requires
 /// a `String` wire form the pending envelope can replace and this tool's
 /// `Output` has none (task ^6htgvw2).
@@ -750,7 +752,7 @@ public struct ContextBindingTool<
     Arguments: ConvertibleFromGeneratedContent, Output: PromptRepresentable
 >: Tool {
     /// The wrapped tool, called through untouched save for the ambient
-    /// binding. Internal rather than private, mirroring ``ElevatingTool``'s
+    /// binding. Internal rather than private, mirroring ``DetachingTool``'s
     /// own `wrapped`, so composition-site wiring tests can assert the
     /// per-site decorator chain.
     let wrapped: any Tool<Arguments, Output>
@@ -841,12 +843,12 @@ private struct RunSettlement: Sendable {
 /// Whichever of a run's settlement or its soft `waitSeconds` deadline
 /// arrives first. Only two cases: ambient cancellation of the bounded wait
 /// folds into ``deadlineElapsed`` (see
-/// `ElevatingTool.raceSettlement(of:deadlineNanoseconds:)`).
+/// `DetachingTool.raceSettlement(of:deadlineNanoseconds:)`).
 private enum WaitRaceOutcome: Sendable {
     /// The run settled in the window; return its in-band result.
     case settled(RunSettlement)
 
-    /// The window elapsed first; elevate the still-running call.
+    /// The window elapsed first; detach the still-running call.
     case deadlineElapsed
 }
 
@@ -955,7 +957,7 @@ private final class RaceGate<Value: Sendable>: Sendable {
 
 /// One run's single posting funnel: every event the run produces — the
 /// tool's own posts through its ``ToolContext``, the synthesized progress
-/// at elevation, and the terminal synthesis at settlement — passes through
+/// at detachment, and the terminal synthesis at settlement — passes through
 /// here, which is what makes "exactly one `.completed` per run" enforceable
 /// at all (precedent: `MCPServer.postOperationCompletedEvent`).
 ///
@@ -965,16 +967,16 @@ private final class RaceGate<Value: Sendable>: Sendable {
 /// bumps the reset count exactly as `endElicitation()` would).
 ///
 /// Upstream deliveries are FIFO-chained, so an engine post can never
-/// overtake a tool post — the synthesized progress at elevation always
+/// overtake a tool post — the synthesized progress at detachment always
 /// lands upstream before the run's terminal.
 private actor RunEventFunnel: OperationEventSink {
-    /// Where the run is in its elevation lifecycle.
+    /// Where the run is in its detachment lifecycle.
     private enum Phase {
         /// The call is running in-band.
         case running
 
         /// The window elapsed and the run was parked.
-        case elevated
+        case detached
 
         /// The run's body ended; the terminal decision has been made.
         case settled
@@ -1002,7 +1004,7 @@ private actor RunEventFunnel: OperationEventSink {
     /// The run's completion token — the key progress updates address.
     private let completionToken: String
 
-    /// Where the run is in its elevation lifecycle.
+    /// Where the run is in its detachment lifecycle.
     private var phase: Phase = .running
 
     /// Whether any event has been delivered upstream for this run.
@@ -1059,19 +1061,19 @@ private actor RunEventFunnel: OperationEventSink {
         await delivery.value
     }
 
-    /// Marks the run elevated and, iff it has posted nothing yet, delivers
+    /// Marks the run detached and, iff it has posted nothing yet, delivers
     /// the one synthesized progress event.
     ///
     /// - Parameter progress: The synthesized progress to deliver when the
     ///   run has been silent.
-    /// - Returns: `true` when the run is (now) elevated; `false` when it
+    /// - Returns: `true` when the run is (now) detached; `false` when it
     ///   already settled — the caller returns the in-band result instead
     ///   of parking a finished run.
-    func markElevated(postingIfSilent progress: OperationEvent) async -> Bool {
+    func markDetached(postingIfSilent progress: OperationEvent) async -> Bool {
         guard case .running = phase else {
             return false
         }
-        phase = .elevated
+        phase = .detached
         guard !hasDeliveredAnyEvent else {
             return true
         }
@@ -1082,19 +1084,19 @@ private actor RunEventFunnel: OperationEventSink {
 
     /// Records the run's settlement and applies the terminal-scoped
     /// synthesis rule: deliver `terminal` upstream iff no terminal has
-    /// passed yet **and** the run either elevated, posted any event of its
+    /// passed yet **and** the run either detached, posted any event of its
     /// own, or ended abnormally. A silent, successful, in-band run posts
     /// nothing at all — the `OperationEventKind` contract's "may post
     /// nothing" case.
     ///
     /// - Parameter terminal: The engine's synthesized terminal event.
     func settleRun(with terminal: OperationEvent) async {
-        let wasElevated: Bool =
-            if case .elevated = phase { true } else { false }
+        let wasDetached: Bool =
+            if case .detached = phase { true } else { false }
         phase = .settled
         let mustDeliver =
             !hasDeliveredTerminal
-            && (wasElevated || hasDeliveredAnyEvent || terminal.outcome != .succeeded)
+            && (wasDetached || hasDeliveredAnyEvent || terminal.outcome != .succeeded)
         guard mustDeliver else {
             return
         }

@@ -17,7 +17,7 @@ import FoundationModels
 /// signatures.
 ///
 /// The seeded call is a **real** call. The designated tool is invoked
-/// host-side — through the session's own instanced (elevated, optionally capped)
+/// host-side — through the session's own instanced (detached, optionally capped)
 /// tool, exactly as the model's own call would be — and its actual output is
 /// what lands in the seeded `.toolOutput` entry. Nothing is fabricated or
 /// templated, which is what lets the seeded entries be recorded, diffed, and
@@ -132,7 +132,7 @@ enum DiscoveryPrimer {
     ///   - priming: The opt-in naming the tool and its query property.
     ///   - mountedTools: The session's model-facing tool list — the same
     ///     instanced tools the model itself would call, so the seeded call runs
-    ///     through the same elevation and capping layers.
+    ///     through the same detachment and capping layers.
     /// - Returns: The seeded `.prompt`, `.toolCalls`, and `.toolOutput` entries,
     ///   in that order.
     /// - Throws: ``DiscoveryPrimingFailure`` when the tool is not mounted,

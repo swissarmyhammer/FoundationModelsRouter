@@ -134,17 +134,17 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The tools this session was constructed with, before any per-session
     /// instancing — retained purely so ``fork(workingDirectory:)`` can build
-    /// the child's own tool list via fork-then-elevate composition, sourced
+    /// the child's own tool list via fork-then-detach composition, sourced
     /// from these true originals rather than from ``tools``' already-instanced
     /// copies (see ``fork(workingDirectory:)``'s doc comment).
     nonisolated let originalTools: [any Tool]
 
     /// This session's own per-session tool list: every String-output tool
-    /// among ``originalTools`` wrapped in the ``ElevatingTool`` layer — whose
+    /// among ``originalTools`` wrapped in the ``DetachingTool`` layer — whose
     /// ambient ``ToolContext`` posts the tool's events to ``outbox`` — and,
     /// when a budget carries a `toolOutputLimit`, the capping layer, applied
-    /// per the owning composition site's own chain: elevate → cap at a root,
-    /// fork → elevate → cap at a fork, elevate at
+    /// per the owning composition site's own chain: detach → cap at a root,
+    /// fork → detach → cap at a fork, detach at
     /// restore (task ^k4nygqa); a non-String-output tool is wrapped in the
     /// binding-only ``ContextBindingTool`` — same per-call, per-tool-stamped
     /// ambient ``ToolContext``, no pending-envelope/park machinery — and
@@ -166,9 +166,9 @@ actor RoutedSessionActor: RoutedSession {
     /// map, computed by the caller before this session exists — see
     /// ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``);
     /// ``fork(workingDirectory:)`` builds another fresh outbox for the child
-    /// and its own fork-then-elevate composed tool list instead — deliberately
+    /// and its own fork-then-detach composed tool list instead — deliberately
     /// not sharing this session's outbox with the fork. Because this
-    /// session's own already-instanced ``tools`` carry their own elevation
+    /// session's own already-instanced ``tools`` carry their own detachment
     /// layer bound to this outbox, they keep posting to this outbox
     /// forever, regardless of how many further forks are taken: event
     /// delivery never migrates between sessions.

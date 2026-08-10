@@ -11,7 +11,7 @@ import FoundationModels
 ///
 /// **Composition order.** At fork, a host applies `forked()` first —
 /// `((tool as? any ForkableTool)?.forked() ?? tool)` — then wraps the
-/// forked result in the child session's own layers (elevation for a
+/// forked result in the child session's own layers (detachment for a
 /// String-output tool, the binding-only `ContextBindingTool` for a
 /// non-String-output one, and capping when configured — a non-String-output
 /// tool passes through the capping layer unwrapped). A tool that does not

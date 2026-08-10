@@ -11,7 +11,7 @@ import FoundationModels
 ///
 /// - **Turn-riding events** (``PendingEvent``) — ``OperationEvent``s posted
 ///   through this actor's ``OperationEventSink`` conformance (the ambient
-///   ``ToolContext`` route both per-call binding layers — ``ElevatingTool``
+///   ``ToolContext`` route both per-call binding layers — ``DetachingTool``
 ///   and ``ContextBindingTool`` — post through). They fold into whichever
 ///   prompt
 ///   dispatches next: ``RoutedSessionActor``'s turn chokepoint drains them

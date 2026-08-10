@@ -6,13 +6,13 @@ import Testing
 
 /// Exercises task s61g2vb's per-session tool composition:
 /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` wrapping
-/// every String-output tool in the session's own ``ElevatingTool`` layer and
+/// every String-output tool in the session's own ``DetachingTool`` layer and
 /// every non-String-output tool in the binding-only ``ContextBindingTool``
 /// (task ^6htgvw2) — either way the ambient ``ToolContext`` posts the tool's
 /// events to the session's own ``RoutedSession/outbox``, with **no explicit
 /// wiring call anywhere** in these tests — and
-/// ``RoutedSessionActor/fork(workingDirectory:)``'s fork-then-elevate
-/// composition (``ForkableTool/forked()`` then the child's own elevation
+/// ``RoutedSessionActor/fork(workingDirectory:)``'s fork-then-detach
+/// composition (``ForkableTool/forked()`` then the child's own detachment
 /// layer) building the child's tool list from the parent's true originals.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU. Real
@@ -20,7 +20,7 @@ import Testing
 /// ``MLXFoundationModelsContainer``/``MLXFoundationModelsSessionBackend``
 /// (`Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`),
 /// exercised end to end only by the gated integration suite.
-@Suite("makeSession(tools:): per-session composition + fork-then-elevate")
+@Suite("makeSession(tools:): per-session composition + fork-then-detach")
 struct SessionOutboxToolWiringTests {
     // MARK: - Test tools
 
@@ -31,7 +31,7 @@ struct SessionOutboxToolWiringTests {
 
     /// A plain `Tool` with no `ForkableTool` conformance and no ambient
     /// posting at all — proves a mixed tool list works: this one just passes
-    /// through into its own elevation wrapper untouched, both at
+    /// through into its own detachment wrapper untouched, both at
     /// construction and at fork.
     private struct PlainTool: Tool {
         let name = "plain"
@@ -43,7 +43,7 @@ struct SessionOutboxToolWiringTests {
     }
 
     /// A manually opened gate a fixture tool blocks on until the test lets
-    /// it finish (mirrors ``ElevatingToolTests``'s own gate).
+    /// it finish (mirrors ``DetachingToolTests``'s own gate).
     private actor ToolGate {
         private var isOpen = false
         private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -63,11 +63,11 @@ struct SessionOutboxToolWiringTests {
     }
 
     /// Blocks on a ``ToolGate`` and supplies a per-call `waitSeconds` of `0`
-    /// through ``ElevationParameterProviding``, so the composition-site
-    /// ``ElevatingTool`` detaches it immediately — keeping the
+    /// through ``DetachmentParameterProviding``, so the composition-site
+    /// ``DetachingTool`` detaches it immediately — keeping the
     /// pending-envelope tests fast without touching the wrap-time
-    /// ``ElevationConfiguration/defaultWaitSeconds``.
-    private struct GatedZeroWaitTool: Tool, ElevationParameterProviding {
+    /// ``DetachConfiguration/defaultWaitSeconds``.
+    private struct GatedZeroWaitTool: Tool, DetachmentParameterProviding {
         let name = "gated-zero-wait"
         let description = "test-only slow tool that detaches immediately"
         let gate: ToolGate
@@ -77,7 +77,7 @@ struct SessionOutboxToolWiringTests {
             return "gated: \(arguments.value)"
         }
 
-        func elevationClocks(
+        func detachmentClocks(
             from arguments: GeneratedContent
         ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
             (0, nil)
@@ -162,9 +162,9 @@ struct SessionOutboxToolWiringTests {
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             observedTurnTokens.append(ToolContext.current?.completionToken)
-            if let elevated = tools.first as? ElevatingTool<FakeToolArguments> {
+            if let detached = tools.first as? DetachingTool<FakeToolArguments> {
                 toolCallStarted = true
-                let rendered = try await elevated.call(arguments: FakeToolArguments(value: prompt))
+                let rendered = try await detached.call(arguments: FakeToolArguments(value: prompt))
                 renderedToolOutputs.append(rendered)
             }
             // The non-String counterpart: invokes the binding-only wrapper
@@ -367,14 +367,14 @@ struct SessionOutboxToolWiringTests {
         _ = profile.standard.makeSession(tools: [emitter, plain])
 
         #expect(container.lastTools.count == 2)
-        // Every String-output tool arrives wrapped in the elevation layer;
+        // Every String-output tool arrives wrapped in the detachment layer;
         // the shape assertion peels it to reach the threaded originals.
-        let innerTools = container.lastTools.compactMap(elevationWrapped)
+        let innerTools = container.lastTools.compactMap(detachmentWrapped)
         #expect(innerTools.contains { $0 is AmbientEventPostingTool })
         #expect(innerTools.contains { $0 is PlainTool })
     }
 
-    @Test("the container receives the original tool instance itself, wrapped in the session's own elevation layer")
+    @Test("the container receives the original tool instance itself, wrapped in the session's own detachment layer")
     @MainActor
     func toolsThreadedToContainerWrapTheOriginalInstance() async throws {
         let dir = Self.makeTempDir()
@@ -389,10 +389,10 @@ struct SessionOutboxToolWiringTests {
 
         // No per-tool copy step exists anymore: the composition wraps the
         // very same instance the caller passed, and per-session event
-        // routing lives entirely in the elevation wrapper's ambient
+        // routing lives entirely in the detachment wrapper's ambient
         // `ToolContext`.
-        guard let inner = elevationWrapped(container.lastTools.first) as? AmbientEventPostingTool else {
-            Issue.record("expected the container to receive an elevated AmbientEventPostingTool")
+        guard let inner = detachmentWrapped(container.lastTools.first) as? AmbientEventPostingTool else {
+            Issue.record("expected the container to receive a detached AmbientEventPostingTool")
             return
         }
         #expect(inner === emitter)
@@ -413,15 +413,15 @@ struct SessionOutboxToolWiringTests {
         let emitter = AmbientEventPostingTool()
         let session = profile.standard.makeSession(tools: [emitter])
 
-        // No wiring call appears anywhere in this test — the elevation
+        // No wiring call appears anywhere in this test — the detachment
         // layer `makeSession(tools:)` composed binds the ambient
         // `ToolContext` (carrying this session's own outbox) around the
         // call, so the tool's post lands there.
-        guard let elevated = container.lastTools.first as? ElevatingTool<AmbientToolArguments> else {
-            Issue.record("expected the container to receive an ElevatingTool over the ambient fixture")
+        guard let detached = container.lastTools.first as? DetachingTool<AmbientToolArguments> else {
+            Issue.record("expected the container to receive a DetachingTool over the ambient fixture")
             return
         }
-        _ = try await elevated.call(arguments: AmbientToolArguments(value: "auto-routed"))
+        _ = try await detached.call(arguments: AmbientToolArguments(value: "auto-routed"))
 
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["auto-routed"])
@@ -441,12 +441,12 @@ struct SessionOutboxToolWiringTests {
         let plain = PlainTool()
         let session = profile.standard.makeSession(tools: [plain, emitter])
 
-        let mixedInnerTools = container.lastTools.compactMap(elevationWrapped)
+        let mixedInnerTools = container.lastTools.compactMap(detachmentWrapped)
         guard
             let instancedPlain = mixedInnerTools.first(where: { $0 is PlainTool }) as? PlainTool,
-            let ambientElevated = container.lastTools.first(where: {
-                elevationWrapped($0) is AmbientEventPostingTool
-            }) as? ElevatingTool<AmbientToolArguments>
+            let ambientDetached = container.lastTools.first(where: {
+                detachmentWrapped($0) is AmbientEventPostingTool
+            }) as? DetachingTool<AmbientToolArguments>
         else {
             Issue.record("expected both an AmbientEventPostingTool and a PlainTool in the threaded list")
             return
@@ -454,7 +454,7 @@ struct SessionOutboxToolWiringTests {
 
         // The ambient tool's events still route to this session's own
         // outbox despite sharing the list with a plain tool.
-        _ = try await ambientElevated.call(arguments: AmbientToolArguments(value: "still works"))
+        _ = try await ambientDetached.call(arguments: AmbientToolArguments(value: "still works"))
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["still works"])
 
@@ -553,7 +553,7 @@ struct SessionOutboxToolWiringTests {
         #expect(pending.prompts.isEmpty)
     }
 
-    // MARK: - Fork behavior: fresh-per-session outbox, fork-then-elevate tool composition
+    // MARK: - Fork behavior: fresh-per-session outbox, fork-then-detach tool composition
 
     @Test("a fork gets its own fresh SessionOutbox, distinct from its parent's")
     @MainActor
@@ -589,22 +589,22 @@ struct SessionOutboxToolWiringTests {
 
         guard let parentActor = session as? RoutedSessionActor,
             let childActor = child as? RoutedSessionActor,
-            let parentElevated = parentActor.tools.first as? ElevatingTool<AmbientToolArguments>,
-            let childElevated = childActor.tools.first as? ElevatingTool<AmbientToolArguments>
+            let parentDetached = parentActor.tools.first as? DetachingTool<AmbientToolArguments>,
+            let childDetached = childActor.tools.first as? DetachingTool<AmbientToolArguments>
         else {
-            Issue.record("expected both the parent and the fork to expose their own ElevatingTool wrapper")
+            Issue.record("expected both the parent and the fork to expose their own DetachingTool wrapper")
             return
         }
         // Both sessions share the very same underlying tool instance —
         // per-session isolation lives entirely in each session's own
-        // elevation wrapper and the ambient context it binds per call.
-        #expect(elevationWrapped(parentElevated) as? AmbientEventPostingTool === emitter)
-        #expect(elevationWrapped(childElevated) as? AmbientEventPostingTool === emitter)
+        // detachment wrapper and the ambient context it binds per call.
+        #expect(detachmentWrapped(parentDetached) as? AmbientEventPostingTool === emitter)
+        #expect(detachmentWrapped(childDetached) as? AmbientEventPostingTool === emitter)
 
         // Concurrently call through each session's own composed wrapper —
         // event delivery must never migrate between the two outboxes.
-        async let parentCall = parentElevated.call(arguments: AmbientToolArguments(value: "from-parent"))
-        async let childCall = childElevated.call(arguments: AmbientToolArguments(value: "from-child"))
+        async let parentCall = parentDetached.call(arguments: AmbientToolArguments(value: "from-parent"))
+        async let childCall = childDetached.call(arguments: AmbientToolArguments(value: "from-child"))
         _ = try await (parentCall, childCall)
 
         let parentPending = await session.outbox.pending()
@@ -642,8 +642,8 @@ struct SessionOutboxToolWiringTests {
         // Both sessions share the very same underlying tool instance —
         // per-session isolation lives entirely in each session's own
         // binding wrapper and the ambient context it binds per call.
-        #expect(elevationWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
-        #expect(elevationWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
 
         let parentOutput = try await parentBound.call(arguments: AmbientToolArguments(value: "from-parent"))
         let childOutput = try await childBound.call(arguments: AmbientToolArguments(value: "from-child"))
@@ -691,8 +691,8 @@ struct SessionOutboxToolWiringTests {
         // Both sessions share the very same underlying tool instance —
         // per-session isolation lives entirely in each session's own
         // binding wrapper and the ambient context it binds per call.
-        #expect(elevationWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
-        #expect(elevationWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(parentBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
 
         // Concurrently call through each session's own binding wrapper —
         // event delivery must never migrate between the two outboxes, and
@@ -728,9 +728,9 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [emitter])
 
         guard let parentActor = session as? RoutedSessionActor,
-            let capturedElevated = parentActor.tools.first as? ElevatingTool<AmbientToolArguments>
+            let capturedDetached = parentActor.tools.first as? DetachingTool<AmbientToolArguments>
         else {
-            Issue.record("expected the parent session to expose its own ElevatingTool wrapper")
+            Issue.record("expected the parent session to expose its own DetachingTool wrapper")
             return
         }
 
@@ -738,7 +738,7 @@ struct SessionOutboxToolWiringTests {
         // operation start, before any fork happened.
         let child = try await session.fork(workingDirectory: nil)
 
-        _ = try await capturedElevated.call(arguments: AmbientToolArguments(value: "captured-before-fork"))
+        _ = try await capturedDetached.call(arguments: AmbientToolArguments(value: "captured-before-fork"))
         let parentPending = await session.outbox.pending()
         #expect(parentPending.events.map(\.event.detail) == ["captured-before-fork"])
         let childPending = await child.outbox.pending()
@@ -769,8 +769,8 @@ struct SessionOutboxToolWiringTests {
             return
         }
 
-        let parentInnerTools = parentActor.tools.compactMap(elevationWrapped)
-        let childInnerTools = childActor.tools.compactMap(elevationWrapped)
+        let parentInnerTools = parentActor.tools.compactMap(detachmentWrapped)
+        let childInnerTools = childActor.tools.compactMap(detachmentWrapped)
         guard let parentForkable = parentInnerTools.first(where: { $0 is ForkableAmbientTool }) as? ForkableAmbientTool,
             let childForkable = childInnerTools.first(where: { $0 is ForkableAmbientTool }) as? ForkableAmbientTool
         else {
@@ -784,17 +784,17 @@ struct SessionOutboxToolWiringTests {
         #expect(childForkable.generation == 1)
         #expect(childForkable !== forkable)
 
-        // Calling the forked tool through the child's own elevation wrapper
+        // Calling the forked tool through the child's own detachment wrapper
         // posts to the child's own outbox.
         guard
-            let childForkableElevated = childActor.tools.first(where: {
-                elevationWrapped($0) is ForkableAmbientTool
-            }) as? ElevatingTool<AmbientToolArguments>
+            let childForkableDetached = childActor.tools.first(where: {
+                detachmentWrapped($0) is ForkableAmbientTool
+            }) as? DetachingTool<AmbientToolArguments>
         else {
-            Issue.record("expected the child's tool list to hold the forked tool's own ElevatingTool")
+            Issue.record("expected the child's tool list to hold the forked tool's own DetachingTool")
             return
         }
-        _ = try await childForkableElevated.call(arguments: AmbientToolArguments(value: "from-forked-tool"))
+        _ = try await childForkableDetached.call(arguments: AmbientToolArguments(value: "from-forked-tool"))
         let childPending = await child.outbox.pending()
         #expect(childPending.events.map(\.event.detail) == ["from-forked-tool"])
 
@@ -809,7 +809,7 @@ struct SessionOutboxToolWiringTests {
     }
 
     @Test(
-        "fork threads the child's fork-then-elevate composed tools into the backend's makeFork(tools:) — the model-facing session, not just the actor's own bookkeeping list"
+        "fork threads the child's fork-then-detach composed tools into the backend's makeFork(tools:) — the model-facing session, not just the actor's own bookkeeping list"
     )
     @MainActor
     func forkThreadsChildToolsIntoBackendMakeFork() async throws {
@@ -831,21 +831,21 @@ struct SessionOutboxToolWiringTests {
 
         // `rootBackend` is the actual backend `RoutedSessionActor.fork()` calls
         // `makeFork(tools:)` on — asserting on `lastForkTools` here proves the
-        // child's fork-then-elevate composed tool list is what actually
+        // child's fork-then-detach composed tool list is what actually
         // reached the model-facing backend construction seam, not just the
         // fork's own actor-level bookkeeping array.
         #expect(rootBackend.lastForkTools.count == 1)
-        guard let forkedElevatedAtBackend = rootBackend.lastForkTools.first as? ElevatingTool<AmbientToolArguments>
+        guard let forkedDetachedAtBackend = rootBackend.lastForkTools.first as? DetachingTool<AmbientToolArguments>
         else {
-            Issue.record("expected the backend's makeFork(tools:) to have received the child's ElevatingTool")
+            Issue.record("expected the backend's makeFork(tools:) to have received the child's DetachingTool")
             return
         }
-        #expect(elevationWrapped(forkedElevatedAtBackend) as? AmbientEventPostingTool === emitter)
+        #expect(detachmentWrapped(forkedDetachedAtBackend) as? AmbientEventPostingTool === emitter)
 
         // Calling through the exact wrapper the backend received posts to
         // the child's own outbox — confirming it is genuinely the
         // child-composed wrapper, not a passthrough of the parent's.
-        _ = try await forkedElevatedAtBackend.call(
+        _ = try await forkedDetachedAtBackend.call(
             arguments: AmbientToolArguments(value: "from-backend-threaded-tool"))
         let childPending = await child.outbox.pending()
         #expect(childPending.events.map(\.event.detail) == ["from-backend-threaded-tool"])
@@ -853,11 +853,11 @@ struct SessionOutboxToolWiringTests {
         #expect(parentPending.events.isEmpty)
     }
 
-    // MARK: - Elevation layer: per-site chain order (task ^k4nygqa)
+    // MARK: - Detachment layer: per-site chain order (task ^k4nygqa)
 
-    @Test("makeSession composes elevate → cap: capping outermost, elevation inside it, the original tool innermost")
+    @Test("makeSession composes detach → cap: capping outermost, detachment inside it, the original tool innermost")
     @MainActor
-    func makeSessionComposesElevateCap() async throws {
+    func makeSessionComposesDetachCap() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -872,10 +872,10 @@ struct SessionOutboxToolWiringTests {
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<AmbientToolArguments>,
-            let elevating = capping.wrapped as? ElevatingTool<AmbientToolArguments>,
-            let inner = elevating.wrapped as? AmbientEventPostingTool
+            let detaching = capping.wrapped as? DetachingTool<AmbientToolArguments>,
+            let inner = detaching.wrapped as? AmbientEventPostingTool
         else {
-            Issue.record("expected cap(elevate(tool)) at the container boundary")
+            Issue.record("expected cap(detach(tool)) at the container boundary")
             return
         }
         #expect(inner === emitter)
@@ -887,9 +887,9 @@ struct SessionOutboxToolWiringTests {
         #expect(pending.events.map(\.event.detail) == ["chain-inner"])
     }
 
-    @Test("makeSession without a budget composes elevate only: elevation outermost, no capping layer")
+    @Test("makeSession without a budget composes detach only: detachment outermost, no capping layer")
     @MainActor
-    func makeSessionWithoutBudgetComposesElevateOnly() async throws {
+    func makeSessionWithoutBudgetComposesDetachOnly() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -901,22 +901,22 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [emitter])
 
         #expect(!(container.lastTools.first is TokenCappingTool<AmbientToolArguments>))
-        guard let elevating = container.lastTools.first as? ElevatingTool<AmbientToolArguments>,
-            let inner = elevating.wrapped as? AmbientEventPostingTool
+        guard let detaching = container.lastTools.first as? DetachingTool<AmbientToolArguments>,
+            let inner = detaching.wrapped as? AmbientEventPostingTool
         else {
-            Issue.record("expected elevate(tool) at the container boundary")
+            Issue.record("expected detach(tool) at the container boundary")
             return
         }
         #expect(inner === emitter)
 
-        _ = try await elevating.call(arguments: AmbientToolArguments(value: "uncapped-chain-inner"))
+        _ = try await detaching.call(arguments: AmbientToolArguments(value: "uncapped-chain-inner"))
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["uncapped-chain-inner"])
     }
 
-    @Test("fork composes fork → elevate → cap: capping outermost, elevation inside, the forked instance innermost")
+    @Test("fork composes fork → detach → cap: capping outermost, detachment inside, the forked instance innermost")
     @MainActor
-    func forkComposesForkElevateCap() async throws {
+    func forkComposesForkDetachCap() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -933,13 +933,13 @@ struct SessionOutboxToolWiringTests {
 
         guard let childActor = child as? RoutedSessionActor,
             let capping = childActor.tools.first as? TokenCappingTool<AmbientToolArguments>,
-            let elevating = capping.wrapped as? ElevatingTool<AmbientToolArguments>,
-            let forkedInner = elevating.wrapped as? ForkableAmbientTool
+            let detaching = capping.wrapped as? DetachingTool<AmbientToolArguments>,
+            let forkedInner = detaching.wrapped as? ForkableAmbientTool
         else {
-            Issue.record("expected cap(elevate(forked(tool))) in the fork's tool list")
+            Issue.record("expected cap(detach(forked(tool))) in the fork's tool list")
             return
         }
-        // `forked()` ran before the child's elevation wrapped it: the
+        // `forked()` ran before the child's detachment wrapped it: the
         // innermost instance is the next generation.
         #expect(forkedInner.generation == 1)
         _ = try await capping.call(arguments: AmbientToolArguments(value: "fork-chain-inner"))
@@ -947,9 +947,9 @@ struct SessionOutboxToolWiringTests {
         #expect(childPending.events.map(\.event.detail) == ["fork-chain-inner"])
     }
 
-    @Test("fork without a budget composes fork → elevate: elevation outermost, no capping layer")
+    @Test("fork without a budget composes fork → detach: detachment outermost, no capping layer")
     @MainActor
-    func forkWithoutBudgetComposesForkElevateOnly() async throws {
+    func forkWithoutBudgetComposesForkDetachOnly() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -966,18 +966,18 @@ struct SessionOutboxToolWiringTests {
             return
         }
         #expect(!(childActor.tools.first is TokenCappingTool<AmbientToolArguments>))
-        guard let elevating = childActor.tools.first as? ElevatingTool<AmbientToolArguments>,
-            let forkedInner = elevating.wrapped as? ForkableAmbientTool
+        guard let detaching = childActor.tools.first as? DetachingTool<AmbientToolArguments>,
+            let forkedInner = detaching.wrapped as? ForkableAmbientTool
         else {
-            Issue.record("expected elevate(forked(tool)) in the fork's tool list")
+            Issue.record("expected detach(forked(tool)) in the fork's tool list")
             return
         }
-        // `forked()` ran before the child's elevation wrapped it: the
+        // `forked()` ran before the child's detachment wrapped it: the
         // innermost instance is the next generation — the same fork →
-        // elevate order as the with-budget case, just with no cap layer
+        // detach order as the with-budget case, just with no cap layer
         // anywhere in the chain.
         #expect(forkedInner.generation == 1)
-        _ = try await elevating.call(arguments: AmbientToolArguments(value: "uncapped-fork-chain-inner"))
+        _ = try await detaching.call(arguments: AmbientToolArguments(value: "uncapped-fork-chain-inner"))
         let childPending = await child.outbox.pending()
         #expect(childPending.events.map(\.event.detail) == ["uncapped-fork-chain-inner"])
     }
@@ -1006,7 +1006,7 @@ struct SessionOutboxToolWiringTests {
 
         // Capping requires a String output to truncate, so at every budget
         // level the chain for a non-String-output tool is bind(tool) —
-        // never cap(bind(tool)) (see ``ToolElevation/sessionMounted``).
+        // never cap(bind(tool)) (see ``ToolDetachment/sessionMounted``).
         // The no-cap check below is type-guaranteed for a non-String
         // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
         // — it documents the shape; the load-bearing chain proof is
@@ -1117,13 +1117,13 @@ struct SessionOutboxToolWiringTests {
             budget: nil, detail: "uncapped-fork-bind-inner")
     }
 
-    // MARK: - Elevation behavior through a session's composed tool list
+    // MARK: - Detachment behavior through a session's composed tool list
 
     @Test(
-        "a slow elevated tool returns the pending envelope, and its later .completed rides the next turn's preamble and lands as a durable OperationEventSegment"
+        "a slow detached tool returns the pending envelope, and its later .completed rides the next turn's preamble and lands as a durable OperationEventSegment"
     )
     @MainActor
-    func elevatedSlowToolCompletionRidesNextTurn() async throws {
+    func detachedSlowToolCompletionRidesNextTurn() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1135,14 +1135,14 @@ struct SessionOutboxToolWiringTests {
         let gate = ToolGate()
         let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
         let backend = try #require(container.lastBackend)
-        guard let elevated = container.lastTools.first as? ElevatingTool<FakeToolArguments> else {
-            Issue.record("expected the composed tool list to hold an ElevatingTool")
+        guard let detached = container.lastTools.first as? DetachingTool<FakeToolArguments> else {
+            Issue.record("expected the composed tool list to hold a DetachingTool")
             return
         }
 
         // The model-facing call detaches immediately (per-call waitSeconds
         // 0) and returns the pending envelope on the wire.
-        let rendered = try await elevated.call(arguments: FakeToolArguments(value: "slow"))
+        let rendered = try await detached.call(arguments: FakeToolArguments(value: "slow"))
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
 
@@ -1180,7 +1180,7 @@ struct SessionOutboxToolWiringTests {
         #expect(journaled.contains { $0.kind == .completed && $0.correlationID == envelope.completionToken })
     }
 
-    @Test("a fork's parked elevated run lives in the fork's own mailbox; the parent's mailbox is untouched")
+    @Test("a fork's parked detached run lives in the fork's own mailbox; the parent's mailbox is untouched")
     @MainActor
     func forkParkedRunLivesInForkMailbox() async throws {
         let dir = Self.makeTempDir()
@@ -1195,13 +1195,13 @@ struct SessionOutboxToolWiringTests {
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childElevated = childActor.tools.first as? ElevatingTool<FakeToolArguments>
+            let childDetached = childActor.tools.first as? DetachingTool<FakeToolArguments>
         else {
-            Issue.record("expected the fork's composed tool list to hold an ElevatingTool")
+            Issue.record("expected the fork's composed tool list to hold a DetachingTool")
             return
         }
 
-        let rendered = try await childElevated.call(arguments: FakeToolArguments(value: "forked"))
+        let rendered = try await childDetached.call(arguments: FakeToolArguments(value: "forked"))
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
 
@@ -1243,7 +1243,7 @@ struct SessionOutboxToolWiringTests {
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
         #expect(ULID(envelope.completionToken) != nil)
-        // Byte-for-byte what the elevation layer rendered: the capping
+        // Byte-for-byte what the detachment layer rendered: the capping
         // decorator still recognizes the envelope's wire form, so neither the
         // completionToken nor the next-step instruction it carries is
         // truncated away.
@@ -1256,10 +1256,10 @@ struct SessionOutboxToolWiringTests {
     }
 
     @Test(
-        "cancelling a turn detaches an in-flight elevated tool call: it parks in the session's mailbox and later settles normally, never dying with the turn"
+        "cancelling a turn detaches an in-flight detached tool call: it parks in the session's mailbox and later settles normally, never dying with the turn"
     )
     @MainActor
-    func cancellingATurnParksInFlightElevatedToolCall() async throws {
+    func cancellingATurnParksInFlightDetachedToolCall() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1271,7 +1271,7 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
         let backend = try #require(container.lastBackend)
 
-        // Drive a turn whose backend invokes the composed elevated tool,
+        // Drive a turn whose backend invokes the composed detached tool,
         // then cancel the turn while that tool call is in flight. (The
         // per-call waitSeconds of 0 means the call detaches with or
         // without the cancel — what this pins is what cancellation does

@@ -197,7 +197,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     hand the restored tree the same live tool package the original
     ///     conversation ran with. Each restored node gets its own fresh
     ///     ``RoutedSession/outbox``, with every String-output tool wrapped
-    ///     in its own per-node elevation layer posting there (a
+    ///     in its own per-node detachment layer posting there (a
     ///     non-String-output tool gets the binding-only
     ///     ``ContextBindingTool``, posting there too) — exactly the
     ///     per-session instancing
@@ -305,13 +305,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // own outbox rather than a sibling or ancestor's, and parked
             // runs and pending elicitations never survive a restore (see
             // ``RoutedSession/mailbox``).
-            // This site's chain is elevate only — deliberately no fork
+            // This site's chain is detach only — deliberately no fork
             // (restoration re-instances from the caller's originals, it
             // never derives one live session from another) and no capping
             // (no budget travels through restoration, so the shared helper
             // gets a `nil` token limit) — distinct from the root site's
-            // elevate → cap and the fork site's
-            // fork → elevate → cap (task ^k4nygqa; see
+            // detach → cap and the fork site's
+            // fork → detach → cap (task ^k4nygqa; see
             // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
@@ -350,7 +350,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // "Known limitation: `.ebnf` grammar case").
             let grammar = node.sidecar.grammar.map(Grammar.jsonSchema)
 
-            // Crash-edge run-outcome durability (eventplan.md §"Elevation"):
+            // Crash-edge run-outcome durability (eventplan.md §"Elevation",
+            // that plan's name for detachment):
             // a journaled run with a non-terminal recorded event (`.progress`
             // or `.elicitation`) and no `.completed` for the same
             // `(tool, correlationID)` pair anywhere in this node's effective
@@ -392,7 +393,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // above; `originalTools` retains the true, un-instanced
                 // originals (this call's own `tools` parameter) so a later
                 // `fork(workingDirectory:)` off this restored node can still
-                // build its own fork-then-elevate composed tool list, exactly
+                // build its own fork-then-detach composed tool list, exactly
                 // as it would from a freshly vended root session.
                 tools: instancedTools,
                 originalTools: tools,

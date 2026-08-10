@@ -721,9 +721,9 @@ struct AutoCompactionTests {
             Issue.record("expected a RoutedSessionActor")
             return
         }
-        // Every String-output tool arrives wrapped in the elevation layer;
+        // Every String-output tool arrives wrapped in the detachment layer;
         // peel it to reach the threaded originals.
-        let innerTools = actor.tools.compactMap { ($0 as? ElevatingTool<SampleToolArguments>)?.wrapped }
+        let innerTools = actor.tools.compactMap { ($0 as? DetachingTool<SampleToolArguments>)?.wrapped }
         #expect(innerTools.contains { $0 is EchoTool })
         #expect(innerTools.contains { $0 is FailingTool })
 

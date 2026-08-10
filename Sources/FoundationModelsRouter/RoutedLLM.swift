@@ -96,7 +96,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - tools: The tools the model can call during this session. Before
     ///     being threaded to the underlying `LanguageModelSession` (mirroring
     ///     Apple's `LanguageModelSession(tools:)`), every String-output tool
-    ///     is wrapped in the elevation engine, and every non-String-output
+    ///     is wrapped in the detachment engine, and every non-String-output
     ///     tool in the binding-only ``ContextBindingTool``; both wrappers
     ///     bind the ambient ``ToolContext`` — stamped with the tool's own
     ///     identity and a fresh per-call `correlationID`, posting events to
@@ -178,7 +178,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     Defaults to `nil`.
     ///   - tools: The tools the model can call during this session. See
     ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` for the
-    ///     elevation wrapping applied before threading. Defaults to no tools.
+    ///     detachment wrapping applied before threading. Defaults to no tools.
     ///   - budget: The auto-compaction opt-in — see
     ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
@@ -212,7 +212,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // Per-session event wiring plus pure per-session instancing, before
         // the backend is ever built — see
         // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
-        // for the fresh outbox/mailbox scope rule and the elevate → cap
+        // for the fresh outbox/mailbox scope rule and the detach → cap
         // chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
         // deliberately distinct chain — see
@@ -220,7 +220,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // `restoreSessionTree`). Because this runs before
         // `container.makeSession` below, the model-facing tool list the
         // backend actually receives is these composed wrappers — each
-        // String-output tool's elevation layer, and each non-String-output
+        // String-output tool's detachment layer, and each non-String-output
         // tool's binding-only `ContextBindingTool`, binding the ambient
         // `ToolContext` that posts the tool's events to this session's own
         // `outbox` — not the bare originals.
@@ -252,7 +252,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             grammar: grammar,
             tools: instancedTools,
             // The true originals, retained only so a fork can later build its
-            // own tool list via fork-then-elevate composition, sourced from
+            // own tool list via fork-then-detach composition, sourced from
             // these rather than from `instancedTools` (see
             // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
             originalTools: tools,
@@ -288,16 +288,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
     /// Mints one session's event wiring — a fresh outbox and mailbox — and
     /// instances `tools` against it: each String-output tool is wrapped
-    /// in the elevation engine — whose ambient ``ToolContext`` posts the
+    /// in the detachment engine — whose ambient ``ToolContext`` posts the
     /// tool's events to the session's own outbox — and, only when
     /// `cappedToTokenLimit` is set, capped outermost. A non-String-output
     /// tool is wrapped in the binding-only ``ContextBindingTool`` instead
     /// (task ^6htgvw2; see
-    /// ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``):
+    /// ``ToolDetachment/wrapping(_:sessionID:mailbox:sink:configuration:)``):
     /// its ambient posts carry the tool's own identity and a fresh per-call
-    /// `correlationID` exactly as an elevated tool's do — never the
+    /// `correlationID` exactly as a detached tool's do — never the
     /// turn-scope binding's `"session"`/`"respond"` stamps — while the call
-    /// itself runs in-band, un-elevated, and the capping layer passes it
+    /// itself runs in-band, un-detached, and the capping layer passes it
     /// through unwrapped
     /// (``ToolOutputCapping/wrapping(tool:toTokenLimit:)``).
     ///
@@ -308,26 +308,27 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// elicitations never migrate between sessions or survive a restore
     /// (see ``RoutedSession/mailbox``).
     ///
-    /// The shared elevate → optional-cap pipeline behind two of
+    /// The shared detach → optional-cap pipeline behind two of
     /// task ^k4nygqa's three composition sites: the root site
     /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
-    /// elevate → cap) and the restore site (`restoreSessionTree`,
-    /// elevate — it passes a `nil` `cappedToTokenLimit`, so no capping
+    /// detach → cap) and the restore site (`restoreSessionTree`,
+    /// detach — it passes a `nil` `cappedToTokenLimit`, so no capping
     /// layer is ever added). The fork site mints its own wiring because it
     /// forks each tool first, then hands the forked copy to the same
     /// per-tool composition (see
     /// ``RoutedSessionActor/fork(workingDirectory:)``).
     ///
     /// Each tool is composed by the shared per-tool chain
-    /// ``ToolElevation/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
-    /// — elevation with the native session mount (eventplan.md
-    /// § "Elevation"), then, only when `cappedToTokenLimit` is set, capping
-    /// outermost — see that helper's doc for the full layering rationale.
+    /// ``ToolDetachment/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
+    /// — detachment with the native session mount (eventplan.md
+    /// § "Elevation", that plan's name for detachment), then, only when
+    /// `cappedToTokenLimit` is set, capping outermost — see that helper's
+    /// doc for the full layering rationale.
     ///
     /// - Parameters:
     ///   - tools: The caller's original tools, never mutated.
     ///   - sessionID: The owning session's identity, stamped into each
-    ///     elevated run's ``ToolContext``.
+    ///     detached run's ``ToolContext``.
     ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
     ///     rendered output to, or `nil` for no capping layer.
     /// - Returns: The session's fresh outbox and mailbox alongside the
@@ -340,7 +341,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let outbox = SessionOutbox()
         let mailbox = SessionMailbox()
         let instancedTools = tools.map { tool in
-            ToolElevation.sessionMounted(
+            ToolDetachment.sessionMounted(
                 tool: tool,
                 sessionID: sessionID,
                 mailbox: mailbox,

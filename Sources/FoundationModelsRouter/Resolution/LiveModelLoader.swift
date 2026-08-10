@@ -452,16 +452,16 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// instead of this backend's own.
     ///
     /// This is the overload ``RoutedSessionActor/fork(workingDirectory:)``
-    /// actually calls, with its own fork-then-elevate composed child tool
+    /// actually calls, with its own fork-then-detach composed child tool
     /// list (each of the parent's true originals forked via
     /// ``ForkableTool/forked()`` where applicable, then wrapped in the
-    /// child's own binding layer — ``ElevatingTool`` for a String-output
+    /// child's own binding layer — ``DetachingTool`` for a String-output
     /// tool, ``ContextBindingTool`` for a non-String-output one — posting
     /// to its own outbox) — so the
     /// live model backing the fork calls the child's own tool instances,
     /// wired to the child's own outbox, rather than silently carrying
     /// forward whatever instances this backend was built with (which would
-    /// still be wired to an ancestor's outbox, defeating the fork-then-elevate
+    /// still be wired to an ancestor's outbox, defeating the fork-then-detach
     /// composition's whole point for any tool the model actually invokes).
     ///
     /// Delegates to ``makeSessionBackend(model:transcript:tools:samplingMode:instructions:)``,

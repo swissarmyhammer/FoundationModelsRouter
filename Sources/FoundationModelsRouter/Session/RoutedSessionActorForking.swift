@@ -10,9 +10,9 @@ extension RoutedSessionActor {
     /// Waits on ``forkAdmissionGate`` for a free slot, then builds the child's
     /// tools from ``originalTools`` (never this session's own already-instanced
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
-    /// pristine state before being wrapped in the child's own elevation
-    /// layer — this site's full chain is fork → elevate → cap (task ^k4nygqa),
-    /// so the child's elevated runs park in the child's own mailbox. Acquires
+    /// pristine state before being wrapped in the child's own detachment
+    /// layer — this site's full chain is fork → detach → cap (task ^k4nygqa),
+    /// so the child's detached runs park in the child's own mailbox. Acquires
     /// ``turnLock`` just long enough to read `backend`'s conversation state
     /// and entry count together, closing the race against a concurrent
     /// in-flight turn mutating that same state. The child's
@@ -32,20 +32,20 @@ extension RoutedSessionActor {
         // permit is held for the child's lifetime and released in its `deinit`.
         await forkAdmissionGate.wait()
 
-        // Fresh-per-session outbox plus fork-then-elevate tool composition
+        // Fresh-per-session outbox plus fork-then-detach tool composition
         // (see ``outbox``'s doc comment): built from ``originalTools`` — the
         // true originals, never this session's own already-instanced
         // ``tools`` — so a ``ForkableTool`` conformer is forked exactly once,
         // from its pristine state, rather than from a copy already wrapped
         // for this session. This site's chain is fork →
-        // elevate → cap (task ^k4nygqa; the root and restore sites each
+        // detach → cap (task ^k4nygqa; the root and restore sites each
         // have their own deliberately distinct chain — see
         // ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
         // and `restoreSessionTree`). Composition order matters: a tool is
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
         // *then* the forked result is wrapped in the child's own binding
-        // layer — `ElevatingTool` for a String-output tool,
+        // layer — `DetachingTool` for a String-output tool,
         // `ContextBindingTool` for a non-String-output one — whose ambient
         // `ToolContext` posts to `childOutbox`. This
         // session's own already-instanced
@@ -59,10 +59,10 @@ extension RoutedSessionActor {
         // child-instanced tools rather than silently carrying forward
         // whatever this session's backend was built with (see
         // ``LanguageModelSessionBackend/makeFork(tools:)``).
-        // Elevation and capping arrive through the shared per-tool
+        // Detachment and capping arrive through the shared per-tool
         // composition
-        // ``ToolElevation/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
-        // (tasks ^k4nygqa, 1334fk3): the forked copy is elevated with the
+        // ``ToolDetachment/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
+        // (tasks ^k4nygqa, 1334fk3): the forked copy is detached with the
         // child's own identity, mailbox, and outbox — so the fork's parked
         // runs live in the fork's own mailbox, never the parent's — and,
         // when the fork inherits ``autoCompactionBudget``, capped outermost
@@ -75,13 +75,13 @@ extension RoutedSessionActor {
         // sessions (see ``RoutedSession/mailbox``).
         let childMailbox = SessionMailbox()
         // Minted before the tool composition below, deliberately: the
-        // child's binding layers (`ElevatingTool` and `ContextBindingTool`)
+        // child's binding layers (`DetachingTool` and `ContextBindingTool`)
         // stamp this id — the fork's own session identity — into every
         // composed run's ``ToolContext``.
         let childId = ULID.generate()
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
-            return ToolElevation.sessionMounted(
+            return ToolDetachment.sessionMounted(
                 tool: forked,
                 sessionID: childId,
                 mailbox: childMailbox,

@@ -622,7 +622,7 @@ public actor SessionMailbox {
     ///
     /// Owned here, next to ``waitSecondsCeiling`` — the constant it clamps
     /// against — and shared by ``wait(completionToken:seconds:)`` and
-    /// `ElevatingTool`'s two clocks, so the one clamping rule has exactly
+    /// `DetachingTool`'s two clocks, so the one clamping rule has exactly
     /// one implementation.
     static func boundedNanoseconds(clamping seconds: Double) -> UInt64 {
         guard !seconds.isNaN else { return 0 }

@@ -96,7 +96,7 @@ public protocol RoutedSession: Actor {
     ///
     /// Fresh per session — a fork is given its own outbox rather than sharing
     /// its parent's (see ``fork(workingDirectory:)``'s doc comment for the
-    /// fork-then-elevate composition that binds each session's own event
+    /// fork-then-detach composition that binds each session's own event
     /// route to it, so event delivery never migrates between sessions).
     nonisolated var outbox: SessionOutbox { get }
 

@@ -182,7 +182,7 @@ public struct ToolContext: Sendable {
     }
 
     /// Asks the user a question in the middle of the run — only another
-    /// elevation, with no second machinery: the run parks as a pending
+    /// detachment, with no second machinery: the run parks as a pending
     /// promise in the session's mailbox (keyed by the request's
     /// `elicitationId`), the request rides the event chain upstream as an
     /// elicitation-kind event on this run's correlation, and the answer

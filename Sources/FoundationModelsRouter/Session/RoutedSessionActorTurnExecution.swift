@@ -218,7 +218,7 @@ extension RoutedSessionActor {
     /// session-side behavior (`^s4405wc`).
     ///
     /// Runs the named mounted tool host-side over `prompt` (a real call through
-    /// this session's own instanced tool, so it elevates and caps exactly as the
+    /// this session's own instanced tool, so it detaches and caps exactly as the
     /// model's own call would) and reseeds ``backend`` from its current
     /// transcript plus the `.prompt` → `.toolCalls` → `.toolOutput` entries that
     /// call produced, via ``LanguageModelSessionBackend/replacingTranscript(_:)``
@@ -443,7 +443,7 @@ extension RoutedSessionActor {
     /// The `tool` identity stamped on the turn-scope ambient ``ToolContext``
     /// binding — a host-level stamp, since the binding covers a whole model
     /// call rather than one wrapped tool (per-tool stamps live in the
-    /// per-call bindings of ``ElevatingTool`` and ``ContextBindingTool``).
+    /// per-call bindings of ``DetachingTool`` and ``ContextBindingTool``).
     private static let turnBindingToolStamp = "session"
 
     /// The `op` stamped on the turn-scope ambient binding, alongside
@@ -482,17 +482,17 @@ extension RoutedSessionActor {
     ///
     /// The whole cancellation boundary in-flight cancellation needs — and
     /// deliberately the *only* part of a turn inside it. Cancelling
-    /// ``inFlightModelCall`` unwinds `body` and every un-elevated tool call
+    /// ``inFlightModelCall`` unwinds `body` and every un-detached tool call
     /// the SDK is running under it — including a non-String-output tool's
     /// call through its binding-only ``ContextBindingTool`` wrapper (task
     /// ^6htgvw2), which runs in-band and dies with the turn: its per-call
     /// `completionToken` is event-correlation identity only, never a
     /// mailbox-addressable run. A String-output tool from the session's
-    /// composed list is wrapped in ``ElevatingTool`` (task ^k4nygqa), and
-    /// an *elevated* in-flight call answers the cancellation by detaching
+    /// composed list is wrapped in ``DetachingTool`` (task ^k4nygqa), and
+    /// a *detached* in-flight call answers the cancellation by detaching
     /// instead of dying with the turn: it parks in the session's
     /// ``mailbox`` and returns the pending envelope (see
-    /// `ElevatingTool.raceSettlement(of:deadlineNanoseconds:)` — a caller
+    /// `DetachingTool.raceSettlement(of:deadlineNanoseconds:)` — a caller
     /// whose wait ends, by deadline or by cancellation, has already
     /// accepted that the work may outlive the call). The parked run stays
     /// individually addressable — ``SessionMailbox/cancel(completionToken:)``
@@ -538,10 +538,10 @@ extension RoutedSessionActor {
         // call runs under a ``ToolContext`` carrying this session's
         // identity, its mailbox, and its own ``SessionOutbox`` as the
         // upstream sink — so a tool Apple's runtime invokes from inside the
-        // model call sees the same ambient capabilities the elevation
+        // model call sees the same ambient capabilities the detachment
         // engine binds per call. Whether the runtime actually propagates
         // task locals into `Tool.call` is the propagation probe's question;
-        // this binding is correct either way, and ``ElevatingTool`` also
+        // this binding is correct either way, and ``DetachingTool`` also
         // binds per call regardless. The `completionToken` is minted fresh
         // per model call — run scope, never session scope — and the
         // cancellation probe mirrors this very model-call task's

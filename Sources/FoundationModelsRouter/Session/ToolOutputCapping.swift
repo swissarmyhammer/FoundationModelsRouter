@@ -127,7 +127,7 @@ enum ToolOutputCapping {
 /// Forwards `name`/`description`/`parameters`/`includesSchemaInInstructions`
 /// to `wrapped` untouched; only `call(arguments:)`'s return value is capped.
 /// `wrapped` is whatever the tool-instancing pipeline already produced (e.g.
-/// an ``ElevatingTool`` wrapper) — this decorator is applied
+/// a ``DetachingTool`` wrapper) — this decorator is applied
 /// outermost, so the model-facing tool the SDK actually calls is the capped
 /// one: both continued generation and the transcript's own recorded
 /// `.toolOutput` entry (and therefore
@@ -149,8 +149,8 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// ``ToolOutputCapping/capped(text:toTokenLimit:)``.
     ///
     /// One exemption: a rendered ``PendingRunEnvelope`` — the wire form an
-    /// elevated call returns in place of its output (task ^k4nygqa;
-    /// capping wraps outside the elevation layer at every composition
+    /// detached call returns in place of its output (task ^k4nygqa;
+    /// capping wraps outside the detachment layer at every composition
     /// site) — passes through untouched. The envelope is control-plane
     /// data, not tool output: truncating it would destroy the
     /// `completionToken` the model needs to ever hear the parked run's
@@ -174,22 +174,22 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     }
 }
 
-extension ToolElevation {
+extension ToolDetachment {
     /// The per-tool session-mount composition every session tool-instancing
-    /// site shares (task ^k4nygqa): elevates `tool` under the session's own
+    /// site shares (task ^k4nygqa): detaches `tool` under the session's own
     /// identity, mailbox, and sink with
-    /// ``ElevationConfiguration/nativeSessionMount``, then — only when
-    /// `cappedToTokenLimit` is set — caps the elevated tool outermost via
+    /// ``DetachConfiguration/nativeSessionMount``, then — only when
+    /// `cappedToTokenLimit` is set — caps the detached tool outermost via
     /// ``ToolOutputCapping/optionallyCapped(tool:toTokenLimit:)`` (task
     /// 1334fk3), so the SDK's own call reaches the capped decorator last
     /// and both continued generation and the recorded `.toolOutput` entry
-    /// see the capped text. Capping outside elevation is safe: a rendered
+    /// see the capped text. Capping outside detachment is safe: a rendered
     /// pending envelope is exempt from capping (see
     /// ``TokenCappingTool/call(arguments:)``), so the `completionToken`
     /// survives any configured limit.
     ///
     /// A non-String-output tool takes a narrower path through the same
-    /// chain (task ^6htgvw2): ``ToolElevation/wrapping(_:sessionID:mailbox:sink:configuration:)``
+    /// chain (task ^6htgvw2): ``ToolDetachment/wrapping(_:sessionID:mailbox:sink:configuration:)``
     /// mounts it in the binding-only ``ContextBindingTool`` — its ambient
     /// posts still carry the tool's own identity and a fresh per-call
     /// `correlationID` — and the capping layer passes it through unwrapped,
@@ -198,14 +198,14 @@ extension ToolElevation {
     /// Shared by ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
     /// (the root and restore sites) and
     /// ``RoutedSessionActor/fork(workingDirectory:)`` (which forks each
-    /// tool first, then hands the forked copy here), so the elevate → cap
+    /// tool first, then hands the forked copy here), so the detach → cap
     /// layering is stated exactly once.
     ///
     /// - Parameters:
     ///   - tool: The tool to mount for one session.
     ///   - sessionID: The owning session's identity, stamped into each
-    ///     elevated run's ``ToolContext``.
-    ///   - mailbox: The owning session's mailbox, where elevated runs park.
+    ///     detached run's ``ToolContext``.
+    ///   - mailbox: The owning session's mailbox, where detached runs park.
     ///   - sink: The upstream sink the run's events are posted to — the
     ///     session's own outbox.
     ///   - cappedToTokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
@@ -218,13 +218,13 @@ extension ToolElevation {
         sink: any OperationEventSink,
         cappedToTokenLimit tokenLimit: Int?
     ) -> any Tool {
-        let elevated = wrapping(
+        let detached = wrapping(
             tool,
             sessionID: sessionID,
             mailbox: mailbox,
             sink: sink,
             configuration: .nativeSessionMount
         )
-        return ToolOutputCapping.optionallyCapped(tool: elevated, toTokenLimit: tokenLimit)
+        return ToolOutputCapping.optionallyCapped(tool: detached, toTokenLimit: tokenLimit)
     }
 }

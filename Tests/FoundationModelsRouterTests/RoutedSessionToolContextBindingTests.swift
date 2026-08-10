@@ -13,7 +13,7 @@ import Testing
 ///
 /// Whether Apple's runtime propagates the task local into `Tool.call` is the
 /// propagation-probe task's question — the binding here is correct either
-/// way, and ``ElevatingTool`` also binds per call regardless. These tests
+/// way, and ``DetachingTool`` also binds per call regardless. These tests
 /// stand a probing backend in for the runtime: it reads
 /// `ToolContext.current` from inside the model call and posts through it.
 @Suite("ToolContext binding around native respond()/stream")

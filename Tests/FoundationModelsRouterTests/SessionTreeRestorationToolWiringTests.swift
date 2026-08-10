@@ -14,7 +14,7 @@ import Testing
 /// its `makeSession(transcript:tools:)` construction seam, so a test can
 /// assert both that the caller's `tools:` argument reaches the container/
 /// backend boundary for every restored node, and that each node gets its own
-/// per-node elevation wrapper — whose ambient ``ToolContext`` posts to that
+/// per-node detachment wrapper — whose ambient ``ToolContext`` posts to that
 /// node's own outbox — rather than sharing one event route tree-wide. Real
 /// `LanguageModelSession(tools:)` wiring for a restored
 /// transcript lives in the live ``MLXFoundationModelsContainer``
@@ -211,16 +211,16 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(container2.threadedToolsByCall.count == 1)
         let threaded = try #require(container2.threadedToolsByCall.first)
         #expect(threaded.count == 2)
-        // Every String-output tool arrives wrapped in the elevation layer;
+        // Every String-output tool arrives wrapped in the detachment layer;
         // the shape assertion peels it to reach the threaded originals.
-        let innerTools = threaded.compactMap(elevationWrapped)
+        let innerTools = threaded.compactMap(detachmentWrapped)
         #expect(innerTools.contains { $0 is AmbientEventPostingTool })
         #expect(innerTools.contains { $0 is PlainTool })
     }
 
-    @Test("the container receives the original tool wrapped in the restored root's own elevation layer")
+    @Test("the container receives the original tool wrapped in the restored root's own detachment layer")
     @MainActor
-    func restoredRootWrapsTheOriginalToolInItsOwnElevationLayer() async throws {
+    func restoredRootWrapsTheOriginalToolInItsOwnDetachmentLayer() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -243,20 +243,20 @@ struct SessionTreeRestorationToolWiringTests {
         let restored = try await profile2.standard.restoreSessionTree(root: root.id, tools: [emitter])
 
         // No per-tool copy step exists: the container receives the caller's
-        // original instance inside the restored root's own elevation
+        // original instance inside the restored root's own detachment
         // wrapper, and calling that wrapper — the tool the model would
         // actually call — routes the ambient-context event to the restored
         // root's own outbox.
         guard
-            let threadedElevated = container2.threadedToolsByCall.first?.first
-                as? ElevatingTool<AmbientToolArguments>
+            let threadedDetached = container2.threadedToolsByCall.first?.first
+                as? DetachingTool<AmbientToolArguments>
         else {
-            Issue.record("expected the container to receive an ElevatingTool over the ambient fixture")
+            Issue.record("expected the container to receive a DetachingTool over the ambient fixture")
             return
         }
-        #expect(elevationWrapped(threadedElevated) as? AmbientEventPostingTool === emitter)
+        #expect(detachmentWrapped(threadedDetached) as? AmbientEventPostingTool === emitter)
 
-        _ = try await threadedElevated.call(arguments: AmbientToolArguments(value: "threaded-to-restored-backend"))
+        _ = try await threadedDetached.call(arguments: AmbientToolArguments(value: "threaded-to-restored-backend"))
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["threaded-to-restored-backend"])
     }
@@ -300,7 +300,7 @@ struct SessionTreeRestorationToolWiringTests {
             Issue.record("expected the container to receive a ContextBindingTool over the non-String fixture")
             return
         }
-        #expect(elevationWrapped(threadedBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(threadedBound) as? AmbientNonStringOutputTool === emitter)
 
         let output = try await threadedBound.call(
             arguments: AmbientToolArguments(value: "threaded-to-restored-backend"))
@@ -312,9 +312,9 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(output.text != "unbound")
     }
 
-    @Test("each restored node in a tree gets its own fresh outbox with its own elevation wrapper — not shared tree-wide")
+    @Test("each restored node in a tree gets its own fresh outbox with its own detachment wrapper — not shared tree-wide")
     @MainActor
-    func eachRestoredNodeGetsItsOwnOutboxAndElevationWrapper() async throws {
+    func eachRestoredNodeGetsItsOwnOutboxAndDetachmentWrapper() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -342,20 +342,20 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(restored.root.outbox !== restoredFork.outbox)
 
         guard
-            let rootElevated = container2.threadedToolsByCall[0].first as? ElevatingTool<AmbientToolArguments>,
-            let forkElevated = container2.threadedToolsByCall[1].first as? ElevatingTool<AmbientToolArguments>
+            let rootDetached = container2.threadedToolsByCall[0].first as? DetachingTool<AmbientToolArguments>,
+            let forkDetached = container2.threadedToolsByCall[1].first as? DetachingTool<AmbientToolArguments>
         else {
-            Issue.record("expected both restored nodes to receive their own ElevatingTool wrapper")
+            Issue.record("expected both restored nodes to receive their own DetachingTool wrapper")
             return
         }
         // Both nodes share the caller's one original instance — the
-        // per-node isolation is each node's own elevation wrapper, whose
+        // per-node isolation is each node's own detachment wrapper, whose
         // ambient context posts to that node's own outbox.
-        #expect(elevationWrapped(rootElevated) as? AmbientEventPostingTool === emitter)
-        #expect(elevationWrapped(forkElevated) as? AmbientEventPostingTool === emitter)
+        #expect(detachmentWrapped(rootDetached) as? AmbientEventPostingTool === emitter)
+        #expect(detachmentWrapped(forkDetached) as? AmbientEventPostingTool === emitter)
 
-        _ = try await rootElevated.call(arguments: AmbientToolArguments(value: "from-root"))
-        _ = try await forkElevated.call(arguments: AmbientToolArguments(value: "from-fork"))
+        _ = try await rootDetached.call(arguments: AmbientToolArguments(value: "from-root"))
+        _ = try await forkDetached.call(arguments: AmbientToolArguments(value: "from-fork"))
 
         let rootPending = await restored.root.outbox.pending()
         let forkPending = await restoredFork.outbox.pending()
@@ -406,8 +406,8 @@ struct SessionTreeRestorationToolWiringTests {
         // Both nodes share the caller's one original instance — the
         // per-node isolation is each node's own binding wrapper, whose
         // ambient context posts to that node's own outbox.
-        #expect(elevationWrapped(rootBound) as? AmbientNonStringOutputTool === emitter)
-        #expect(elevationWrapped(forkBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(rootBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(forkBound) as? AmbientNonStringOutputTool === emitter)
 
         let rootOutput = try await rootBound.call(arguments: AmbientToolArguments(value: "from-root"))
         let forkOutput = try await forkBound.call(arguments: AmbientToolArguments(value: "from-fork"))
@@ -456,9 +456,9 @@ struct SessionTreeRestorationToolWiringTests {
 
     // MARK: - Forking a restored session still works with the threaded originals
 
-    @Test("forking a restored session builds its child's tools from the restore call's own originals, fork-then-elevate composed")
+    @Test("forking a restored session builds its child's tools from the restore call's own originals, fork-then-detach composed")
     @MainActor
-    func forkOfRestoredSessionComposesItsOwnElevationLayerFromTheOriginals() async throws {
+    func forkOfRestoredSessionComposesItsOwnDetachmentLayerFromTheOriginals() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -482,14 +482,14 @@ struct SessionTreeRestorationToolWiringTests {
         let child = try await restored.root.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childElevated = childActor.tools.first as? ElevatingTool<AmbientToolArguments>
+            let childDetached = childActor.tools.first as? DetachingTool<AmbientToolArguments>
         else {
-            Issue.record("expected the fork of a restored session to expose its own ElevatingTool wrapper")
+            Issue.record("expected the fork of a restored session to expose its own DetachingTool wrapper")
             return
         }
-        #expect(elevationWrapped(childElevated) as? AmbientEventPostingTool === emitter)
+        #expect(detachmentWrapped(childDetached) as? AmbientEventPostingTool === emitter)
 
-        _ = try await childElevated.call(arguments: AmbientToolArguments(value: "from-fork-of-restored"))
+        _ = try await childDetached.call(arguments: AmbientToolArguments(value: "from-fork-of-restored"))
         let childPending = await child.outbox.pending()
         #expect(childPending.events.map(\.event.detail) == ["from-fork-of-restored"])
 
@@ -535,7 +535,7 @@ struct SessionTreeRestorationToolWiringTests {
         // The fork-of-restored chain combines both transformations: the
         // restore call's original instance, shared through the fork, inside
         // the child's own binding wrapper.
-        #expect(elevationWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
+        #expect(detachmentWrapped(childBound) as? AmbientNonStringOutputTool === emitter)
 
         let output = try await childBound.call(arguments: AmbientToolArguments(value: "from-fork-of-restored"))
         let childEvents = await child.outbox.pending().events.map(\.event)
@@ -618,11 +618,11 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(rootOutput.text != childOutput.text)
     }
 
-    // MARK: - Elevation layer: restore's own chain order (task ^k4nygqa)
+    // MARK: - Detachment layer: restore's own chain order (task ^k4nygqa)
 
-    @Test("restore composes elevate only: elevation outermost, no fork, no capping; the original tool innermost")
+    @Test("restore composes detach only: detachment outermost, no fork, no capping; the original tool innermost")
     @MainActor
-    func restoreComposesElevateOnly() async throws {
+    func restoreComposesDetachOnly() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -648,17 +648,17 @@ struct SessionTreeRestorationToolWiringTests {
         // Restore applies no capping — deliberately: no budget travels
         // through restoration, and the pending envelope is tiny.
         #expect(!(threaded is TokenCappingTool<AmbientToolArguments>))
-        guard let elevating = threaded as? ElevatingTool<AmbientToolArguments>,
-            let inner = elevating.wrapped as? AmbientEventPostingTool
+        guard let detaching = threaded as? DetachingTool<AmbientToolArguments>,
+            let inner = detaching.wrapped as? AmbientEventPostingTool
         else {
-            Issue.record("expected elevate(tool) at the restore container boundary")
+            Issue.record("expected detach(tool) at the restore container boundary")
             return
         }
         #expect(inner === emitter)
 
         // Calling the composed wrapper routes the ambient-context event to
         // the restored root's own outbox.
-        _ = try await elevating.call(arguments: AmbientToolArguments(value: "restore-chain-inner"))
+        _ = try await detaching.call(arguments: AmbientToolArguments(value: "restore-chain-inner"))
         let pending = await restored.root.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["restore-chain-inner"])
     }
