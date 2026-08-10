@@ -119,8 +119,34 @@ comments:
     - Did not re-run fault-injection experiments (hangs, no output, per instructions). Did not run gated integration tests. Did not run swift format/swiftformat.
     - next: /review
   timestamp: 2026-08-10T13:54:47.241208+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kznze4ykjm30cbs6nq1gm5cx
+  text: |-
+    ### commit — changed
+    - evidence: dce5c5c test(router): move poll-loop constants into a named bound enum (^6fszv54); 3 files changed (Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift + 2 .kanban task files)
+    - next: local commit only, not pushed
+  timestamp: 2026-08-10T13:57:46.067244+00:00
+- actor: claude-code
+  id: 01kznzm4066fw5dctx6hzf2a4h
+  text: |-
+    ### review — clean
+    - scope: review sha dce5c5c (HEAD~1..HEAD), iteration 2
+    - evidence: zero new findings; 9 validators attempted, 0 failed, 0 skipped. 2 prior items checked and verified closed at Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift — the poll-loop values are now `static let` declarations that name them (`ceilingNanoseconds`, `pollIntervalNanoseconds`) in a file-private `AnswerDeliveryBound` enum, `pollLimit` is derived, and the literal `1_000` is gone from the file.
+    - new code judged: `AnswerDeliveryBound` drew no finding from any validator. No acronym-casing finding appeared, so no waiver was necessary.
+    - next: task moved to done.
+  timestamp: 2026-08-10T14:01:01.702179+00:00
+- actor: claude-code
+  id: 01kznznf6y7dcef539db4f9zdw
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file, Tests/FoundationModelsRouterTests/Helpers/AnswerDrivenRun.swift. Read the rule text first, which changed the fix: the rule is `magic-numbers-swift` (swiftlint `no_magic_numbers`), which reports by POSITION, not repetition. The constants were already named but as computed properties (`static var … { 1_000 }`), and a getter body is not a declaration naming a value. They could not become `static let` in place — `AnswerDrivenRun` is generic and Swift rejects `static stored properties not supported in generic types` — so they moved to a documented file-private `AnswerDeliveryBound` enum. `pollLimit` is now DERIVED as `Int(ceilingNanoseconds / pollIntervalNanoseconds)`, so the 5 s ceiling is stated once as a span and the count cannot drift from the interval. `1_000` no longer exists in the file.
+    - test: green — swift test 778/72 + 24/9 + 24/5, 0 failures, no new warnings. `git diff -- Sources` empty. Arithmetic checked rather than assumed: `Int(5_000_000_000 / 5_000_000) = 1000`, so behaviour is unchanged. swiftlint 0.65.0 run independently with the rule's exact config (`only_rules: [no_magic_numbers]`, `allowed_numbers: [0, 1, -1, 100]`) → 0 violations, corroborating the reported 2 → 0.
+    - commit: dce5c5c — 3 files, +118/-18, local only
+    - review: clean — zero new findings; both prior items verified closed (the two cited positions are now doc-comment prose; only the rule-exempt `0` lower bound remains). Engine: 9 validators, 0 failed. The new `AnswerDeliveryBound` enum was judged as new code and drew no finding.
+    - next: task moved to done. A pre-existing duplicate of the same 5 ms interval remains in RoutedSessionToolContextBindingTests.swift — deliberately left alone as outside these findings, and noted here so it is not lost.
+  timestamp: 2026-08-10T14:01:45.950070+00:00
+position_column: done
+position_ordinal: fc80
 title: ElicitationRoutingTests hangs instead of failing when the elicitation delivery path breaks
 ---
 A fault in the elicitation delivery path shows up as a **hung test suite**, not a red test. That turns a fast, legible failure into a run that has to be killed by hand.

@@ -291,23 +291,105 @@ struct HumanWaitGateTests {
         )
     }
 
-    /// How many cooperative yields ``spin(until:)`` gives a condition before it
-    /// gives up.
-    ///
-    /// A timeout measured in scheduler hops rather than wall clock: high enough
-    /// that a state change these tests genuinely order behind a handful of task
-    /// suspensions always lands, low enough that a condition which never holds
-    /// gives up in well under a second instead of hanging the suite.
-    private static let spinYieldLimit = 100_000
+    /// Thrown by ``completedRun(_:named:finishedWhen:)`` when the run it waited
+    /// on never finished, so the test that caught the fault stops there instead
+    /// of awaiting a task parked on a gate.
+    private struct RunNeverFinished: Error {}
 
-    /// Spins cooperatively until `condition` holds or ``spinYieldLimit`` yields
-    /// elapse, so a scheduler-ordered state change is observed without a sleep —
-    /// and a condition that never holds fails an assertion rather than hanging
-    /// the suite.
-    private static func spin(until condition: @Sendable () async -> Bool) async {
-        for _ in 0..<spinYieldLimit {
-            if await condition() { return }
-            await Task.yield()
+    /// Whether the run named `label` reached the point `condition` observes,
+    /// inside ``BoundedWait``'s bound, recording an issue when it never did.
+    ///
+    /// - Parameters:
+    ///   - label: What the run is, named in the recorded issue.
+    ///   - condition: The observable effect that says the run got there.
+    /// - Returns: Whether the run got there inside the bound.
+    private static func finished(_ label: String, when condition: @Sendable () async -> Bool) async -> Bool {
+        await BoundedWait.spin(until: condition)
+        guard await condition() else {
+            Issue.record("\(label) never finished: it is still parked, so something it waits on was never released")
+            return false
+        }
+        return true
+    }
+
+    /// The value `task` produced, awaited only once `condition` shows the run
+    /// reached the end of everything that can park it.
+    ///
+    /// Deliberately not a bare `await task.value`: a regression that strands a
+    /// generation permit or a turn lock parks the run inside
+    /// ``AsyncSemaphore/wait()``, which ignores cancellation by design, so
+    /// awaiting such a run directly hangs the whole `swift test` run — this
+    /// target sets no `.timeLimit` trait — instead of failing the test that
+    /// caught the fault. Past the observed point nothing left in the run waits on
+    /// a gate, so awaiting from there cannot hang.
+    ///
+    /// - Parameters:
+    ///   - task: The run to read a value from.
+    ///   - label: What the run is, named in the recorded issue.
+    ///   - condition: The observable effect that says the run got past its gates.
+    /// - Returns: Whatever the run returned.
+    /// - Throws: ``RunNeverFinished`` when the run never got there, after
+    ///   recording an issue; otherwise whatever the run itself threw.
+    private static func completedRun<Value: Sendable>(
+        _ task: Task<Value, Error>,
+        named label: String,
+        finishedWhen condition: @Sendable () async -> Bool
+    ) async throws -> Value {
+        guard await finished(label, when: condition) else {
+            task.cancel()
+            throw RunNeverFinished()
+        }
+        return try await task.value
+    }
+
+    /// ``completedRun(_:named:finishedWhen:)`` for a run that cannot fail.
+    ///
+    /// Swift declares `Task.value` separately for `Failure == Never`, so the two
+    /// spellings cannot be one generic function; everything but the `try` is
+    /// shared through ``finished(_:when:)``.
+    ///
+    /// - Parameters:
+    ///   - task: The run to wait on.
+    ///   - label: What the run is, named in the recorded issue.
+    ///   - condition: The observable effect that says the run got past its gates.
+    /// - Returns: Whatever the run returned.
+    /// - Throws: ``RunNeverFinished`` when the run never got there, after
+    ///   recording an issue.
+    @discardableResult
+    private static func completedRun<Value: Sendable>(
+        _ task: Task<Value, Never>,
+        named label: String,
+        finishedWhen condition: @Sendable () async -> Bool
+    ) async throws -> Value {
+        guard await finished(label, when: condition) else {
+            task.cancel()
+            throw RunNeverFinished()
+        }
+        return await task.value
+    }
+
+    /// The value `turnTask` produced, awaited only once `observer` shows that
+    /// turn left the model — ``completedRun(_:named:finishedWhen:)`` with the
+    /// observation every ordinary turn in this suite is bounded by.
+    ///
+    /// Leaving the model call is the right point to await from: a turn's gates
+    /// are taken before it and released by a `signal()` after it, and `signal()`
+    /// cannot suspend.
+    ///
+    /// - Parameters:
+    ///   - turnTask: The task running the turn.
+    ///   - prompt: That turn's prompt, as `observer` records it.
+    ///   - observer: The observer that turn's model call reports to.
+    /// - Returns: Whatever the turn returned.
+    /// - Throws: ``RunNeverFinished`` when the turn never reached the model,
+    ///   after recording an issue; otherwise whatever the turn itself threw.
+    private static func completedTurn<Value: Sendable>(
+        _ turnTask: Task<Value, Error>,
+        prompt: String,
+        observer: TurnObserver
+    ) async throws -> Value {
+        try await completedRun(turnTask, named: "the turn \(prompt)") {
+            await observer.exited.contains(prompt)
         }
     }
 
@@ -325,7 +407,7 @@ struct HumanWaitGateTests {
         prompt: String = "after"
     ) async -> Bool {
         let task = Task { try await session.respond(to: prompt) }
-        await spin(until: { await observer.exited.contains(prompt) })
+        await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
         guard await observer.exited.contains(prompt) else {
             // Never admitted to the model at all — parked on a gate. Cancelling
             // will not unpark it (``AsyncSemaphore/wait()`` ignores cancellation
@@ -409,32 +491,26 @@ struct HumanWaitGateTests {
         }
 
         let taskA = Task { try await sessionA.respond(to: "a-wait") }
-        await gateFreed.wait()
+        try await BoundedWait.awaitSignal(gateFreed, named: "the gate release inside sessionA's human wait")
 
         // The gate is free while a person is being waited on — no model work is
         // in flight, so nothing is being protected by holding it.
-        let gateFreeDuringWait = generationGate.availablePermits == 1
-        #expect(gateFreeDuringWait)
+        #expect(generationGate.availablePermits == 1)
 
         // …and that freedom is real: B runs a whole turn, start to finish, while
-        // A is still parked. B is awaited outright — deadlock-free because the
-        // gate was just proven free and A's own re-acquire is parked on
-        // `humanGate` — so `exited` is read after a finished turn instead of
-        // racing the scheduler. Were the gate still held, awaiting B before
-        // releasing A's wait would hang the suite rather than fail it, so that
-        // (already-failed) world skips the await: the guard keeps this await
-        // from adding a hang path, and the tail's own awaits behave exactly as
-        // they always did.
+        // A is still parked, so `exited` is read after a finished turn instead
+        // of racing the scheduler. B's finish is observed through the model call
+        // it leaves before it is awaited, so a gate that was in fact still held
+        // fails this test with a readable message instead of hanging the whole
+        // run on an await that could never return.
         let taskB = Task { try await sessionB.respond(to: "b") }
-        if gateFreeDuringWait {
-            _ = try await taskB.value
-        }
+        let responseB = try await Self.completedTurn(taskB, prompt: "b", observer: fixture.observer)
         #expect(await fixture.observer.exited == ["b"])
 
         // A then finishes its own turn normally, having re-acquired the gate.
         humanGate.signal()
-        #expect(try await taskA.value == "ok-a-wait")
-        #expect(try await taskB.value == "ok-b")
+        #expect(try await Self.completedTurn(taskA, prompt: "a-wait", observer: fixture.observer) == "ok-a-wait")
+        #expect(responseB == "ok-b")
         #expect(await fixture.observer.exited == ["b", "a-wait"])
         #expect(generationGate.availablePermits == 1)
         #expect(generationGate.waiterCount == 0)
@@ -459,13 +535,13 @@ struct HumanWaitGateTests {
         }
 
         let firstTask = Task { try await session.respond(to: "first") }
-        await Self.spin(until: { humanGate.waiterCount == 1 })
+        await BoundedWait.spin(until: { humanGate.waiterCount == 1 })
 
         // The second turn is admitted into the actor (it is reentrant at the
         // parked await) but must park on the session's own turn lock, which the
         // first turn keeps for its whole duration.
         let secondTask = Task { try await session.respond(to: "second") }
-        await Self.spin(until: { turnLock.waiterCount == 1 })
+        await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
 
         #expect(await fixture.observer.entered == ["first"])
         #expect(await fixture.observer.maxActive == 1)
@@ -473,8 +549,8 @@ struct HumanWaitGateTests {
         // Only once the human wait ends and the first turn completes does the
         // second one run — in submission order, never interleaved.
         humanGate.signal()
-        #expect(try await firstTask.value == "ok-first")
-        #expect(try await secondTask.value == "ok-second")
+        #expect(try await Self.completedTurn(firstTask, prompt: "first", observer: fixture.observer) == "ok-first")
+        #expect(try await Self.completedTurn(secondTask, prompt: "second", observer: fixture.observer) == "ok-second")
         #expect(await fixture.observer.entered == ["first", "second"])
         #expect(await fixture.observer.maxActive == 1)
     }
@@ -500,18 +576,24 @@ struct HumanWaitGateTests {
         // `.response` entry is not. Anything reading the transcript now would
         // read a torn turn.
         let turnTask = Task { try await session.respond(to: "turn") }
-        await Self.spin(until: { humanGate.waiterCount == 1 })
+        await BoundedWait.spin(until: { humanGate.waiterCount == 1 })
         #expect(Self.isResponse(backend.transcriptEntries().last) == false)
 
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
-        await Self.spin(until: { turnLock.waiterCount == 1 })
+        await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
 
         // The fork is parked on the turn lock, so it has not read anything yet.
         #expect(backend.lastFork === nil)
 
         humanGate.signal()
-        #expect(try await turnTask.value == "ok-turn")
-        let child = try await forkTask.value
+        #expect(try await Self.completedTurn(turnTask, prompt: "turn", observer: fixture.observer) == "ok-turn")
+        // The fork's own observation point is the transcript read it makes: it is
+        // parked on the turn lock until the turn above hands that lock back, so a
+        // lock that was never released fails here with a readable message rather
+        // than hanging the run.
+        let child = try await Self.completedRun(forkTask, named: "the fork racing the human wait") {
+            backend.lastFork != nil
+        }
 
         let childBackend = try #require(backend.lastFork)
         #expect(childBackend.transcriptEntries().count == backend.transcriptEntries().count)
@@ -536,8 +618,17 @@ struct HumanWaitGateTests {
             try await session.awaitingUser { throw ProbeError.boom }
         }
 
+        // The turn is run as its own task and its unwind observed before it is
+        // awaited: its tool waits on a person, so a regression on that wait's
+        // entry or exit route parks the turn forever, and a bare
+        // `await session.respond(to:)` here would hang the whole `swift test` run
+        // instead of failing this test. The observer records leaving the model
+        // call on the throwing path as much as the returning one.
+        let turnTask = Task { try await session.respond(to: "throwing") }
+        guard await Self.finished("the throwing turn", when: { await fixture.observer.exited.contains("throwing") })
+        else { return }
         await #expect(throws: ProbeError.boom) {
-            try await session.respond(to: "throwing")
+            try await turnTask.value
         }
 
         // Exactly one permit is back — not two (a re-acquire skipped on the
@@ -582,10 +673,15 @@ struct HumanWaitGateTests {
         }
 
         let turnTask = Task { try await session.respond(to: "cancelled") }
-        await insideWait.wait()
+        try await BoundedWait.awaitSignal(insideWait, named: "the turn parking inside its human wait")
         #expect(generationGate.availablePermits == 1)
 
         turnTask.cancel()
+        // The turn unwinds only once the cancellation reaches its parked body, so
+        // the unwind is observed before it is awaited: a cancellation that never
+        // arrives fails this test with a readable message rather than hanging.
+        guard await Self.finished("the cancelled turn", when: { await fixture.observer.exited.contains("cancelled") })
+        else { return }
         await #expect(throws: CancellationError.self) {
             try await turnTask.value
         }
@@ -628,7 +724,7 @@ struct HumanWaitGateTests {
         }
 
         let turnTask = Task { try await session.respond(to: "nested") }
-        await innerEntered.wait()
+        try await BoundedWait.awaitSignal(innerEntered, named: "the inner human wait being entered")
 
         // One permit back, not two: a second release would mint a permit the
         // session never held and let two real generations overlap.
@@ -636,7 +732,7 @@ struct HumanWaitGateTests {
         #expect(generationGate.waiterCount == 0)
 
         release.signal()
-        #expect(try await turnTask.value == "ok-nested")
+        #expect(try await Self.completedTurn(turnTask, prompt: "nested", observer: fixture.observer) == "ok-nested")
         #expect(generationGate.availablePermits == 1)
         #expect(generationGate.waiterCount == 0)
     }
@@ -666,38 +762,54 @@ struct HumanWaitGateTests {
         }
 
         let turnTask = Task { try await session.respond(to: "turn") }
-        await inTurn.wait()
+        try await BoundedWait.awaitSignal(inTurn, named: "the turn reaching the model")
         #expect(generationGate.availablePermits == 0)
 
         // The out-of-turn wait hands back the permit the turn is holding…
+        // `waitFinished` is signalled after `awaitingUser` returns, so the wait's
+        // whole exit — its re-acquire included — is observable without awaiting
+        // the task that could be parked in it.
         let waitEntered = AsyncSemaphore(value: 0)
         let releaseWait = AsyncSemaphore(value: 0)
+        let waitFinished = AsyncSemaphore(value: 0)
         let waitTask = Task {
             await session.awaitingUser {
                 waitEntered.signal()
                 await releaseWait.wait()
             }
+            waitFinished.signal()
         }
-        await waitEntered.wait()
+        try await BoundedWait.awaitSignal(waitEntered, named: "the out-of-turn human wait being entered")
         #expect(generationGate.availablePermits == 1)
 
         // …so the turn ending must not signal a permit it no longer holds.
         releaseTurn.signal()
-        #expect(try await turnTask.value == "ok-turn")
+        #expect(try await Self.completedTurn(turnTask, prompt: "turn", observer: fixture.observer) == "ok-turn")
         #expect(generationGate.availablePermits == 1)
 
         // …and the wait must not re-acquire one on the way out, either: the turn
         // that lent it already gave it back.
         releaseWait.signal()
-        await waitTask.value
+        try await Self.completedRun(waitTask, named: "the out-of-turn human wait") {
+            waitFinished.availablePermits > 0
+        }
         #expect(generationGate.availablePermits == 1)
         #expect(generationGate.waiterCount == 0)
 
         // The bookkeeping behind the count is clean too, not just the count: with
         // no turn in flight there is nothing to hand back, so a further wait must
-        // still see exactly one permit rather than mint a second.
-        await session.awaitingUser {
-            #expect(generationGate.availablePermits == 1)
+        // still see exactly one permit rather than mint a second. Run as its own
+        // task and bounded for the same reason as the wait above: a human wait
+        // that never returns must fail this test rather than hang the run.
+        let tailWaitFinished = AsyncSemaphore(value: 0)
+        let tailWaitTask = Task {
+            await session.awaitingUser {
+                #expect(generationGate.availablePermits == 1)
+            }
+            tailWaitFinished.signal()
+        }
+        try await Self.completedRun(tailWaitTask, named: "a further human wait with no turn in flight") {
+            tailWaitFinished.availablePermits > 0
         }
 
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
@@ -740,42 +852,48 @@ struct HumanWaitGateTests {
 
         // A's turn holds the permit and parks, without any wait of its own.
         let turnA = Task { try await sessionA.respond(to: "turn-a") }
-        await inTurnA.wait()
+        try await BoundedWait.awaitSignal(inTurnA, named: "sessionA's turn reaching the model")
         #expect(generationGate.availablePermits == 0)
 
-        // An out-of-turn wait borrows A's permit.
+        // An out-of-turn wait borrows A's permit. `waitFinished` is signalled
+        // after `awaitingUser` returns, so the re-acquire this test is about is
+        // observable without awaiting a task that could be parked in it.
         let waitEntered = AsyncSemaphore(value: 0)
         let releaseWait = AsyncSemaphore(value: 0)
+        let waitFinished = AsyncSemaphore(value: 0)
         let waitTask = Task {
             await sessionA.awaitingUser {
                 waitEntered.signal()
                 await releaseWait.wait()
             }
+            waitFinished.signal()
         }
-        await waitEntered.wait()
+        try await BoundedWait.awaitSignal(waitEntered, named: "the out-of-turn human wait being entered")
         #expect(generationGate.availablePermits == 1)
 
         // B takes the freed permit and parks too, so the re-acquire below cannot
         // complete promptly — it must genuinely suspend on the gate.
         let turnB = Task { try await sessionB.respond(to: "turn-b") }
-        await inTurnB.wait()
+        try await BoundedWait.awaitSignal(inTurnB, named: "sessionB's turn reaching the model")
         #expect(generationGate.availablePermits == 0)
 
         // The wait ends first, and its re-acquire is now provably in flight.
         releaseWait.signal()
-        await Self.spin(until: { generationGate.waiterCount == 1 })
+        await BoundedWait.spin(until: { generationGate.waiterCount == 1 })
         #expect(generationGate.waiterCount == 1)
 
         // The lending turn ends *while* that re-acquire is suspended.
         releaseTurnA.signal()
-        #expect(try await turnA.value == "ok-turn-a")
+        #expect(try await Self.completedTurn(turnA, prompt: "turn-a", observer: fixture.observer) == "ok-turn-a")
 
         // B hands its permit on to the suspended re-acquire, which must notice its
         // lender is gone and hand the permit straight back rather than sit on one
         // no turn will ever release.
         releaseTurnB.signal()
-        #expect(try await turnB.value == "ok-turn-b")
-        await waitTask.value
+        #expect(try await Self.completedTurn(turnB, prompt: "turn-b", observer: fixture.observer) == "ok-turn-b")
+        try await Self.completedRun(waitTask, named: "the out-of-turn human wait's re-acquire") {
+            waitFinished.availablePermits > 0
+        }
         #expect(generationGate.availablePermits == 1)
         #expect(generationGate.waiterCount == 0)
 
@@ -795,8 +913,20 @@ struct HumanWaitGateTests {
         let generationGate = fixture.model.generationGate
         let session = fixture.model.makeSession()
 
+        // Run as its own task and bounded rather than awaited outright: a
+        // regression on the wait's entry or exit route parks it forever, and this
+        // target sets no `.timeLimit` trait, so a bare await would hang the whole
+        // `swift test` run instead of failing this test.
         #expect(generationGate.availablePermits == 1)
-        let answer = await session.awaitingUser { 42 }
+        let answered = AsyncSemaphore(value: 0)
+        let waitTask = Task { () -> Int in
+            let value = await session.awaitingUser { 42 }
+            answered.signal()
+            return value
+        }
+        let answer = try await Self.completedRun(waitTask, named: "the human wait with no turn in flight") {
+            answered.availablePermits > 0
+        }
         #expect(answer == 42)
 
         // Still exactly one permit: with no turn in flight there was none held

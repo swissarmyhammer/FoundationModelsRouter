@@ -243,15 +243,27 @@ struct SessionOutboxTests {
         // Drain repeatedly (simulating repeated turn boundaries) until nothing
         // new is pending; every event must show up in exactly one drain, with
         // no duplication and no loss.
+        //
+        // The iteration cap is what keeps a broken drain from hanging the whole
+        // `swift test` run — this target sets no `.timeLimit` trait. Every drain
+        // that does not end the loop takes at least one event, so `totalEvents`
+        // drains empty the outbox and one further drain sees nothing; a drain
+        // that never empties would otherwise spin here forever.
+        let drainLimit = totalEvents + 1
         var seen: Set<String> = []
-        while true {
+        var emptied = false
+        for _ in 0..<drainLimit {
             let drained = await outbox.drainForDispatch()
-            if drained.events.isEmpty { break }
+            if drained.events.isEmpty {
+                emptied = true
+                break
+            }
             for pendingEvent in drained.events {
                 #expect(!seen.contains(pendingEvent.event.detail), "duplicate drain of \(pendingEvent.event.detail)")
                 seen.insert(pendingEvent.event.detail)
             }
         }
+        #expect(emptied, "drainForDispatch never emptied the outbox in \(drainLimit) drains")
         #expect(seen.count == totalEvents)
 
         let finalPending = await outbox.pending()
@@ -260,22 +272,82 @@ struct SessionOutboxTests {
 
     // MARK: - nextEvent(): driver wakeup
 
+    /// One ``SessionOutbox/nextEvent()`` wait, started so a test observes
+    /// whether it woke instead of awaiting it.
+    ///
+    /// The indirection is the point: `nextEvent()` parks on a
+    /// `CheckedContinuation<Void, Never>` that only a later
+    /// ``SessionOutbox/post(_:)`` or ``SessionOutbox/enqueue(prompt:)`` resumes,
+    /// and nothing can break such a wait — cancelling it does not unpark it. This
+    /// target sets no `.timeLimit` trait, so a regression anywhere on the wakeup
+    /// route would hang the whole `swift test` run rather than fail the test that
+    /// caught it. ``wokeUp()`` reports through a signal ``BoundedWait`` observes
+    /// under a bound, and never awaits the wait on its give-up path.
+    private struct OutboxWaiter {
+        /// What this wait expects to be woken by, named in the recorded issue
+        /// when no wakeup arrives.
+        private let label: String
+
+        /// Signalled by ``task`` once `nextEvent()` has returned — how "woken"
+        /// is observed without awaiting the wait itself.
+        private let woke: AsyncSemaphore
+
+        /// The parked wait.
+        private let task: Task<Void, Never>
+
+        /// Starts one ``SessionOutbox/nextEvent()`` wait on `outbox`.
+        ///
+        /// - Parameters:
+        ///   - outbox: The outbox to wait on.
+        ///   - label: What the wait expects to be woken by — "a post", say.
+        init(on outbox: SessionOutbox, waitingFor label: String) {
+            let woke = AsyncSemaphore(value: 0)
+            self.label = label
+            self.woke = woke
+            self.task = Task {
+                await outbox.nextEvent()
+                woke.signal()
+            }
+        }
+
+        /// Whether the wait is still suspended, read without awaiting it.
+        var isStillParked: Bool { woke.availablePermits == 0 }
+
+        /// Whether the wait woke inside ``BoundedWait``'s bound, recording an
+        /// issue and giving up when it did not.
+        ///
+        /// - Returns: Whether `nextEvent()` returned.
+        func wokeUp() async -> Bool {
+            guard await BoundedWait.signalArrived(woke, named: "the nextEvent() wait for \(label)") else {
+                // Cancelling cannot unpark a wait suspended in
+                // `withCheckedContinuation`, but the test must not await that
+                // wait either.
+                task.cancel()
+                return false
+            }
+            await task.value
+            return true
+        }
+    }
+
+    /// How long a test lets a fresh ``OutboxWaiter`` reach its suspension point
+    /// before it posts, so the post lands on a genuinely parked wait rather than
+    /// on an outbox the wait has not looked at yet.
+    private static let waiterSuspensionNanoseconds: UInt64 = 20_000_000
+
     @Test("nextEvent() suspends while the outbox is empty and resumes on the next post")
     func nextEventSuspendsUntilPost() async {
         let outbox = SessionOutbox()
-
-        let waiter = Task {
-            await outbox.nextEvent()
-        }
+        let waiter = OutboxWaiter(on: outbox, waitingFor: "a post")
 
         // Give the waiter a chance to actually start suspending before posting.
-        try? await Task.sleep(nanoseconds: 20_000_000)
-        #expect(!waiter.isCancelled)
+        try? await Task.sleep(nanoseconds: Self.waiterSuspensionNanoseconds)
+        #expect(waiter.isStillParked)
 
         await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "woke"))
 
         // The waiter must complete promptly once posted.
-        await waiter.value
+        #expect(await waiter.wokeUp())
     }
 
     @Test("nextEvent() returns immediately when the outbox is already non-empty")
@@ -284,21 +356,21 @@ struct SessionOutboxTests {
         await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "already here"))
 
         // Must not hang: the outbox is already non-empty.
-        await outbox.nextEvent()
+        let waiter = OutboxWaiter(on: outbox, waitingFor: "an outbox that is already non-empty")
+        #expect(await waiter.wokeUp())
     }
 
     @Test("nextEvent() also resumes on an enqueued prompt")
     func nextEventResumesOnEnqueuedPrompt() async {
         let outbox = SessionOutbox()
+        let waiter = OutboxWaiter(on: outbox, waitingFor: "an enqueued prompt")
 
-        let waiter = Task {
-            await outbox.nextEvent()
-        }
-        try? await Task.sleep(nanoseconds: 20_000_000)
+        try? await Task.sleep(nanoseconds: Self.waiterSuspensionNanoseconds)
+        #expect(waiter.isStillParked)
 
         _ = await outbox.enqueue(prompt: Self.prompt("hello"))
 
-        await waiter.value
+        #expect(await waiter.wokeUp())
     }
 
     // MARK: - Helpers
