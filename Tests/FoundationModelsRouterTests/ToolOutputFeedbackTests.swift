@@ -49,7 +49,15 @@ final class MarkerEmittingTool: Tool, Sendable {
     /// The model-facing tool name, also the name the scripted model calls.
     static let toolName = "marker-lookup"
 
+    /// The `Tool` name requirement, bound to ``toolName`` so the tool the
+    /// session mounts and the tool the scripted model calls can only ever be
+    /// the same one.
     let name = MarkerEmittingTool.toolName
+
+    /// The `Tool` description requirement. The scripted model picks its call
+    /// by name and never reads this, but the SDK renders it into the tool
+    /// definition it puts in the transcript, so it has to say what the tool is
+    /// for.
     let description = "test-only tool that returns a distinctive marker for the step it is given"
 
     /// Backing storage for ``calledSteps``.
@@ -63,6 +71,18 @@ final class MarkerEmittingTool: Tool, Sendable {
     /// tool-calling task.
     var calledSteps: [String] { calledStepsBox.withLock { $0 } }
 
+    /// Records the step this call names and returns that step's marker output.
+    ///
+    /// The returned text is the only place the step's marker exists anywhere in
+    /// the turn, so an answer carrying it can only have come from this output
+    /// reaching the model's next generation.
+    ///
+    /// - Parameter arguments: The call's decoded arguments; `value` is the step
+    ///   name, one of ``ToolOutputFeedbackFixture/steps``.
+    /// - Returns: ``ToolOutputFeedbackFixture/markerPrefix`` followed by the
+    ///   step name.
+    /// - Throws: Never — the tool cannot fail; `throws` comes from the `Tool`
+    ///   requirement.
     func call(arguments: AmbientToolArguments) async throws -> String {
         calledStepsBox.withLock { $0.append(arguments.value) }
         return ToolOutputFeedbackFixture.markerPrefix + arguments.value
@@ -231,11 +251,34 @@ final class ScriptedToolCallingBackend: LanguageModelSessionBackend, @unchecked 
         self.liveSession = LanguageModelSession(model: model, tools: tools, transcript: transcript)
     }
 
+    /// Runs one whole-response turn on ``liveSession``.
+    ///
+    /// The SDK drains its own tool loop inside this one call, so the text that
+    /// comes back is already the post-tool answer — the backend surface a
+    /// ``RoutedSession/respond(to:)`` turn ends up driving.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The response token ceiling, or `nil` for the SDK's own.
+    /// - Returns: The turn's final text, after every scripted tool call ran.
+    /// - Throws: Whatever the underlying session throws.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         let options = GenerationOptions(maximumResponseTokens: maxTokens)
         return try await liveSession.respond(to: prompt, options: options).content
     }
 
+    /// Streams one turn on ``liveSession`` as response fragments — the backend
+    /// surface a ``RoutedSession/streamEvents(to:)`` turn ends up driving.
+    ///
+    /// The SDK yields cumulative snapshots, not fragments, so the conversion
+    /// this protocol requires happens in ``pumpStream(prompt:options:into:)``;
+    /// a consumer that stops reading cancels the pumping task.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The response token ceiling, or `nil` for the SDK's own.
+    /// - Returns: A stream of response fragments, finishing when generation
+    ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
         let options = GenerationOptions(maximumResponseTokens: maxTokens)
         return AsyncThrowingStream { continuation in
@@ -277,26 +320,87 @@ final class ScriptedToolCallingBackend: LanguageModelSessionBackend, @unchecked 
         }
     }
 
+    /// Refuses a grammar-constrained turn.
+    ///
+    /// The scripted model emits plain text and tool calls only, so a grammar
+    /// has nothing to constrain here and no test in this suite drives a guided
+    /// turn. Failing loudly is what keeps a future guided test from quietly
+    /// reading unconstrained text as if it had been constrained.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - grammar: The grammar the output would be constrained to.
+    ///   - maxTokens: The response token ceiling, or `nil` for the SDK's own.
+    /// - Returns: Nothing — this entry point never returns a value.
+    /// - Throws: ``FixtureError/guidedGenerationUnsupported``, always.
     func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
         throw FixtureError.guidedGenerationUnsupported
     }
 
+    /// Forks this backend, keeping the tools this one already mounts.
+    ///
+    /// Delegates to ``makeFork(tools:)`` with the stored tool list, the way the
+    /// live `MLXFoundationModelsSessionBackend` delegates to its own `tools:`
+    /// overload: a fork of a tool-mounted session has to stay tool-mounted, or
+    /// the child's first turn silently loses tool calling.
+    ///
+    /// - Returns: A new backend that begins from this session's history and
+    ///   then diverges independently, with the same tools mounted.
     func makeFork() -> any LanguageModelSessionBackend {
         makeFork(tools: tools)
     }
 
+    /// Forks this backend over the same scripted model, seeding the child from
+    /// this session's transcript as of now and mounting `tools` on it.
+    ///
+    /// Implemented rather than left to the protocol's tool-dropping default:
+    /// that default exists for stubs whose model cannot call tools at all, and
+    /// this fixture's model can.
+    ///
+    /// - Parameter tools: The tools to mount on the forked session, in place of
+    ///   this backend's own.
+    /// - Returns: A new, independent backend seeded from this session's
+    ///   history.
     func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
         ScriptedToolCallingBackend(model: model, tools: tools, transcript: liveSession.transcript)
     }
 
+    /// Reseeds a new backend over the same scripted model from `transcript`,
+    /// discarding this backend's own accumulated history.
+    ///
+    /// The seam ``RoutedSessionActor/compact(prompt:budget:)`` swaps a session's
+    /// inner backend through. No test in this suite compacts, but the
+    /// conformance is real rather than the protocol's fork-shaped default, so a
+    /// later test that does compact gets the transcript it asked for instead of
+    /// this backend's.
+    ///
+    /// - Parameter transcript: The transcript to seed the new backend from.
+    /// - Returns: A new, independent backend whose history begins with
+    ///   `transcript`'s entries.
     func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
         ScriptedToolCallingBackend(model: model, tools: tools, transcript: transcript)
     }
 
+    /// Reports ``liveSession``'s transcript so far, in order.
+    ///
+    /// Read straight off the live session, so it holds only under the owning
+    /// session's turn lock — the same discipline the live backend documents.
+    /// The scripted model reads its own copy out of the request the SDK hands
+    /// it, so nothing in this suite depends on this accessor; it is here
+    /// because the protocol requires it.
+    ///
+    /// - Returns: Every entry ``liveSession`` has accumulated so far, in order.
     func transcriptEntries() -> [Transcript.Entry] {
         Array(liveSession.transcript)
     }
 
+    /// Reports ``liveSession``'s cumulative token usage.
+    ///
+    /// Never `nil`: the SDK meters the fragments the scripted model emits, so a
+    /// real pair of counts exists — fixture arithmetic rather than real
+    /// metering, and no assertion in this suite reads it.
+    ///
+    /// - Returns: The session's cumulative `(input, output)` token counts.
     func usageTokenCounts() -> (input: Int, output: Int)? {
         let usage = liveSession.usage
         return (usage.input.totalTokenCount, usage.output.totalTokenCount)
@@ -318,18 +422,49 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     /// model the container mounts.
     var languageModel: any FoundationModels.LanguageModel { model }
 
+    /// Vends a backend over a fresh session carrying `instructions`, with no
+    /// tools mounted.
+    ///
+    /// - Parameter instructions: The session's system instructions, or `nil`.
+    /// - Returns: A backend a vended `RoutedSession` drives for its lifetime.
     func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions, tools: [])
     }
 
+    /// Vends a backend over a fresh session carrying `instructions`, with
+    /// `tools` mounted so the model can call them.
+    ///
+    /// The factory this suite's own session is built through, and the reason
+    /// this container implements the `tools:` overloads at all: the protocol's
+    /// default drops the tools, which would leave the turn nothing to call and
+    /// the test asserting on a fixture defect rather than on Router.
+    ///
+    /// - Parameters:
+    ///   - instructions: The session's system instructions, or `nil`.
+    ///   - tools: The tools to mount on the session.
+    /// - Returns: A backend a vended `RoutedSession` drives for its lifetime.
     func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         ScriptedToolCallingBackend(model: model, tools: tools, instructions: instructions)
     }
 
+    /// Vends a backend over a fresh session seeded from `transcript`, with no
+    /// tools mounted.
+    ///
+    /// - Parameter transcript: The transcript to seed the session from.
+    /// - Returns: A backend whose history begins with `transcript`'s entries.
     func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
         makeSession(transcript: transcript, tools: [])
     }
 
+    /// Vends a backend over a fresh session seeded from `transcript`, with
+    /// `tools` mounted — the restore-shaped counterpart of
+    /// ``makeSession(instructions:tools:)``, implemented for the same reason.
+    ///
+    /// - Parameters:
+    ///   - transcript: The transcript to seed the session from.
+    ///   - tools: The tools to mount on the session.
+    /// - Returns: A backend whose history begins with `transcript`'s entries,
+    ///   with `tools` mounted.
     func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
         ScriptedToolCallingBackend(model: model, tools: tools, transcript: transcript)
     }

@@ -108,6 +108,131 @@ comments:
   id: 01kzp7189srfjfe4y8j4e73w8c
   text: '### test — green\n- evidence: `swift test` — 780 tests / 73 suites passed (2.733s); 24 tests / 9 suites passed; 24 tests / 5 suites passed. Zero failures anywhere in the run, zero skipped tests (all \"skip\"/\"failed\" hits are test-name text, not outcomes). One warning, pre-existing and unrelated: `missing creator for mutated node: .../mlx-swift_Cmlx.bundle/Contents/MacOS` (vendored dependency resource bundle). New suite \"Mounted tool output reaches the model''s next generation\" ran both tests, both passed: `respond(to:) answers with every mounted tool output the turn produced` and `streamEvents(to:) answers with every mounted tool output the turn produced`.\n- `git diff -- Sources` confirmed empty: no production code changed.\n- New file confirmed untracked (`?? Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift`) via `git status --porcelain`; will need `git add` at commit time.\n- H4 claim independently verified by reading source, not by trusting the report: `RoutedLLM.swift` builds the `RoutedSession` backend via `container.makeSession(instructions:tools:)`. `LiveModelLoader.swift`''s `MLXFoundationModelsContainer.makeSession(instructions:tools:)` builds `LanguageModelSession(model: model, tools: tools, instructions: instructions)` over the stored `model: MLXLanguageModel` — the raw handle, never wrapped. `RecordingLanguageModel` is constructed only inside `RoutedModel.makeLanguageModel()` and `makeLanguageModel(resuming:registry:)`, both separate public factories nothing on the `makeSession`/`RoutedSession` path calls. So the report''s claim holds: H4''s premise (\"Router hands the SDK a wrapped model handle\") is false for the `RoutedSession` path as written; `RecordingLanguageModel` does not reach it by any route found.\n- Teeth confirmed by inspection (no re-run of the injections): `ScriptedToolCallingModel.Executor.respond` composes the final answer from `toolOutputTexts(in: request.transcript)` — text read out of `.toolOutput` transcript entries — never a canned string, and only emits the answer once `toolOutputs.count` reaches `steps.count`. `expectEveryToolOutputReachedTheAnswer` asserts `tool.calledSteps == steps` (both calls happened, in order) and then loops over `ToolOutputFeedbackFixture.markers`, asserting each marker separately with its own `#expect` — so a loop delivering only `MARKER-7F3A-ONE` would fail on the `TWO` assertion independently.\n- Both surfaces confirmed on one contract: both `respondFeedsToolOutputBackIntoGeneration` and `streamEventsFeedsToolOutputBackIntoGeneration` call the same `Self.expectEveryToolOutputReachedTheAnswer(answer, tool: tool)`, no divergent copies.\n- Gated suites (`FM_ROUTER_INTEGRATION_TESTS=1`, `MULTITOOL_INTEGRATION=1`) intentionally NOT run, per instructions.\n- next: hand back to caller for review/commit decision.'
   timestamp: 2026-08-10T16:10:32.121689+00:00
+- actor: claude-code
+  id: 01kzp7kv0p3fe6c10j3e61qa2q
+  text: |
+    ### review — findings
+    - scope: review sha HEAD~1..HEAD (4f1da63) — one new test file, no Sources change
+    - evidence: 3 findings, 3 confirmed, 13 refuted, 9 attempted, 0 failed — Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift:284, :296, :300
+    - all three findings ask for documentation comments on new LanguageModelSessionBackend conformance methods in the new scripted-backend fixture
+    - the file is ALL new code, so the "do not refactor tests that already existed" exception does not apply to it
+    - no acronym-casing finding was returned, so no waiver was needed
+    - next: add the three documentation comments, then re-review
+  timestamp: 2026-08-10T16:20:41.110815+00:00
+- actor: claude-code
+  id: 01kzp7nwjh9cb47zk7xmbd51e4
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 1 new file, `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift` (419 lines). No production file touched (`git diff -- Sources` empty).
+    - **HEADLINE: the test PASSES on first write.** The hypothesis it was written to pin is wrong at this level. Per the card's own "If the hypothesis is wrong" branch, this is recorded rather than deleted. The only red seen first was a fixture defect (the scripted model declared `LanguageModelCapabilities([])`, so the SDK refused a tool-mounted session); declaring `[.toolCalling]` fixed that and both surfaces went green immediately. That does not count as the red the card wanted.
+    - **Teeth proved by two injections, both reverted.** Redacting the tool-output text the model reads back → both tests red on both markers. Repeating the first tool output in place of the second → both tests red on `MARKER-7F3A-TWO` only, which is what demonstrates the multi-call coverage actually works.
+    - **What the investigation eliminated.** H5 is not the cause as stated: prompt composition with an empty outbox carries a tool-eligible turn through intact on both surfaces. **H4's premise is FALSE for the `RoutedSession` path** — verified independently by reading source: `RoutedLLM.swift` goes through `container.makeSession(instructions:tools:)`, and `MLXFoundationModelsContainer.makeSession` builds `LanguageModelSession(model:tools:instructions:)` over the raw `MLXLanguageModel`; `RecordingLanguageModel` is constructed only in `RoutedModel.makeLanguageModel()` / `makeLanguageModel(resuming:registry:)`, which nothing on the session path calls. H4 was the card's top-ranked remaining hypothesis, so this saves a gated run. **H1 was NOT confirmed reachable** (the scripted model emits no pre-tool text, so snapshots stayed monotonic) and was deliberately NOT fixed.
+    - **Known limitation:** `MLXFoundationModelsSessionBackend.init` takes a concrete `MLXLanguageModel`, so the live backend cannot be built over a scripted model without a production signature change. `LiveModelLoader.pumpStream`'s snapshot-delta code is therefore outside this test — which the card's own CORRECTION already ruled out as the primary cause.
+    - test: green — swift test 780/73 + 24/9 + 24/5, 0 failures, no new warnings. Teeth re-confirmed by inspection: the answer is composed from `toolOutputTexts(in: request.transcript)` and only emitted once `toolOutputs.count == steps.count`; each marker is asserted in its own `#expect`; both surfaces call the one shared `expectEveryToolOutputReachedTheAnswer`.
+    - **NOT RUN:** `FM_ROUTER_INTEGRATION_TESTS=1` and `MULTITOOL_INTEGRATION=1` (27B model, 8–11 min). The acceptance-criteria line naming the gated suite is conditional and is reported as not-run. The criterion "failed before the fix and passes after" is unsatisfiable as written, because there is no fix — both outcomes are stated instead.
+    - commit: 4f1da63 — 3 files, +698, local only. `ToolOutputFeedbackTests.swift` confirmed present via `git show --stat HEAD`.
+    - review: findings — ToolOutputFeedbackTests.swift:284 (`makeFork`), :296 (`transcriptEntries`), :300 (`usageTokenCounts`), all undocumented `LanguageModelSessionBackend` conformance methods. Engine: 9 attempted, 0 failed, 3 confirmed, 13 refuted. Nothing filed contesting the passing diagnostic result or calling the test redundant. All new code, so the pre-existing-test exception shields none of it.
+    - next: iteration 2 — document those members, sweeping the whole file rather than the three cited lines.
+  timestamp: 2026-08-10T16:21:48.241375+00:00
+- actor: claude-code
+  id: 01kzp822k929j55kqdn4pbhfgj
+  text: |-
+    ## Iteration 2 — the rule text, read before writing
+
+    Pulled the applicable rules with `dump validators` on the file, then read the two that govern this work word for word (`get validator missing-docs`, `get validator swift`).
+
+    **What `missing-docs` actually requires** — it exempts "functions explicitly marked as tests by attribute or framework convention", but it carries an explicit yield clause: *"These exemptions yield to stricter language-specific documentation rules. Where a language validator requires documentation on every public item (e.g. the Swift and Rust documentation rules), that rule wins and the 'obvious implementation' / 'simple getter' carve-outs above do not apply."* So the "simple getter with a self-explanatory name" escape does NOT shield `name`/`description` on the tool. That is why the sweep documented them.
+
+    **What `swift/documentation` requires** — every `public`/`open` declaration carries a `///`; `///` never `/** */`; a single-sentence summary ending in a period, elaboration after a blank `///` line; **"Document exactly the parameters, return, and throws the signature has — no more, no less"**; `- Returns:` iff the result is non-`Void`; `- Throws:` iff the function `throws`. Its first line is also the one exemption used here: **"There is NO NEED to put doc comments on test methods."**
+
+    **The distinction this repo keeps getting bitten by, stated as the rule states it** — `swift/doc-parameter-naming`: *"`- Parameter` / `- Parameters:` entries name the internal (local) parameter, never the external argument label"*, and *"DocC symbol links follow the declaration, not this rule — a cross-reference like ``capped(text:)`` uses the function's external argument labels because that is the symbol's name."* The direction is fixed in both places; flagging a correct internal name toward the external label is a validator error.
+
+    Applied both ways, deliberately:
+    - Every `- Parameter` key is the **internal** name — `prompt` (not `to`), `transcript` (on `replacingTranscript(_ transcript:)`, whose label is `_`), plus `arguments`, `grammar`, `maxTokens`, `instructions`, `tools`.
+    - Every DocC symbol link is the **external** label form — ``makeFork(tools:)``, ``makeSession(instructions:tools:)``, ``pumpStream(prompt:options:into:)``, ``RoutedSession/respond(to:)``, ``RoutedSession/streamEvents(to:)``, ``RoutedSessionActor/compact(prompt:budget:)``.
+
+    Prevailing pattern followed from `Tests/FoundationModelsRouterTests/Helpers/StubSessionBackend.swift`, the repo's other `LanguageModelSessionBackend` fixture: conformance methods carry a summary saying what this conformer does differently, not a restatement of the protocol.
+  timestamp: 2026-08-10T16:28:27.625054+00:00
+- actor: claude-code
+  id: 01kzp8305ree12wt35xm7v002e
+  text: |-
+    ### The file-wide sweep — 12 more undocumented members beyond the 3 cited
+
+    A finding shows one example of a cause. The cause here is "a member of this new fixture carries no doc comment", and the review engine sampled three of them. Sweeping the whole file found **15** undocumented members, not 3:
+
+    **Cited by the review (3)**
+    - `ScriptedToolCallingBackend.makeFork()`
+    - `ScriptedToolCallingBackend.transcriptEntries()`
+    - `ScriptedToolCallingBackend.usageTokenCounts()`
+
+    **Found by the sweep, same cause, not cited (12)**
+    - `MarkerEmittingTool.name`
+    - `MarkerEmittingTool.description`
+    - `MarkerEmittingTool.call(arguments:)`
+    - `ScriptedToolCallingBackend.respond(to:maxTokens:)`
+    - `ScriptedToolCallingBackend.streamResponse(to:maxTokens:)`
+    - `ScriptedToolCallingBackend.respond(to:following:maxTokens:)` (the guided entry point)
+    - `ScriptedToolCallingBackend.makeFork(tools:)`
+    - `ScriptedToolCallingBackend.replacingTranscript(_:)`
+    - `ScriptedToolCallingContainer.makeSession(instructions:)`
+    - `ScriptedToolCallingContainer.makeSession(instructions:tools:)`
+    - `ScriptedToolCallingContainer.makeSession(transcript:)`
+    - `ScriptedToolCallingContainer.makeSession(transcript:tools:)`
+
+    So the review's three were a **quarter** of the actual violations of the same rule. Fixing only the cited lines would have left nine more `LanguageModelSessionBackend`/`LoadedLLMContainer` conformance methods and the whole mounted-tool surface bare, and the next review round would have found them.
+
+    **Left undocumented on purpose (2), with the rule that permits it:** `respondFeedsToolOutputBackIntoGeneration` and `streamEventsFeedsToolOutputBackIntoGeneration`. `swift/documentation`'s first line is "There is NO NEED to put doc comments on test methods", and `missing-docs` exempts items marked by test attribute. Both carry `@Test` display names that already state the claim.
+
+    Everything else in the file was documented when it was written in iteration 1 — the fixture constants, the scripted model and its `Executor` (including `Configuration`, `emittedTokenCount`, and `toolOutputTexts(in:)`), both backend initializers, `pumpStream`, `FixtureError`, the container's `model`/`languageModel`, and the suite's own helpers. Those were re-read, not rewritten.
+
+    ### What the docs say, and why that mattered here
+
+    Written to carry the fixture's reasoning forward, since the card notes other harnesses will copy this file:
+    - `call(arguments:)` states **why** the marker is the assertion's whole basis — it is the only place that step's marker exists in the turn, so an answer carrying it can only have come from the output reaching generation.
+    - The two generation entry points name which Router surface each one actually serves (`RoutedSession/respond(to:)` vs `RoutedSession/streamEvents(to:)`) — the two surfaces this card exists to hold to one contract.
+    - `makeFork()`/`makeFork(tools:)` and the container's `tools:` overloads state why the protocol's tool-dropping defaults are **not** taken: dropping the tools would leave the turn nothing to call, and the test would then be asserting on a fixture defect rather than on Router. That is the exact trap iteration 1 already fell into once, with `LanguageModelCapabilities([])`.
+    - The guided `respond` says why failing loudly beats returning unconstrained text.
+    - `transcriptEntries()`/`usageTokenCounts()` say plainly that nothing in this suite reads them and they exist because the protocol requires them — an honest note is worth more to the next author than an invented purpose.
+
+    ### Verification
+
+    - `swift test` — 780 tests / 73 suites, 24 / 9, 24 / 5. **Zero failures.** Both tests of the new suite still pass (`respond(to:) answers with every mounted tool output the turn produced`, `streamEvents(to:) answers with every mounted tool output the turn produced`). The only warning is the pre-existing SwiftPM `missing creator for mutated node ... mlx-swift_Cmlx.bundle`, a vendored dependency's resource bundle.
+    - `git diff -- Sources` — **empty**. No production file touched.
+    - No test behaviour or assertion changed. The scripted model, the shared assertion `expectEveryToolOutputReachedTheAnswer`, and the marker checks are byte-identical; only `///` lines were added.
+    - `swift format`/`swiftformat` NOT run, per the project constraint.
+
+    ### Lint counts before/after — reported plainly rather than guessed
+
+    I could not run a deterministic linter for this rule, and I am saying so rather than inventing numbers.
+
+    - There is **no `.swiftlint.yml`** anywhere in this repo (`find . -maxdepth 2 -name ".swiftlint*"` returns nothing). `swiftlint` is installed at `/opt/homebrew/bin/swiftlint`, but with no project config it would run its own default rule set, which is not what produced these findings and would report unrelated noise.
+    - The repo's `.validators/` directory is **empty**; `missing-docs` resolves to the user-layer LLM validator at `/Users/wballard/.validators/missing-docs` (`source_layer: user`). It is a model-driven validator run by the `review` engine, not a static linter with a violation count.
+    - **Before:** 3 confirmed findings, from the recorded iteration-1 review run (9 attempted, 0 failed, 3 confirmed, 13 refuted) — `:284`, `:296`, `:300`.
+    - **After:** not measured here. `/implement` is explicitly barred from self-reviewing, so the after count is the `/review` step's to produce.
+  timestamp: 2026-08-10T16:28:57.912893+00:00
+- actor: claude-code
+  id: 01kzp83c1c9fz54sxbw1gg6npj
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift` (419 -> 554 lines, `///` comments only). All 3 review findings (`:284` `makeFork`, `:296` `transcriptEntries`, `:300` `usageTokenCounts`) fixed and checked off in the description. The file-wide sweep found **12 more members with the same cause** and documented them too: `MarkerEmittingTool.name`/`.description`/`.call(arguments:)`; `ScriptedToolCallingBackend.respond(to:maxTokens:)`, `.streamResponse(to:maxTokens:)`, the guided `.respond(to:following:maxTokens:)`, `.makeFork(tools:)`, `.replacingTranscript(_:)`; all four `ScriptedToolCallingContainer.makeSession` overloads. The 2 `@Test` methods are left bare under `swift/documentation`'s "There is NO NEED to put doc comments on test methods". Rule text obeyed in both directions: `- Parameter` keys are internal names (`prompt`, `transcript`, `arguments`, `grammar`, `maxTokens`, `instructions`, `tools`), DocC symbol links are external labels (``makeFork(tools:)``, ``pumpStream(prompt:options:into:)``, ``RoutedSession/respond(to:)``). `swift test` green — 780/73 + 24/9 + 24/5, 0 failures, no new warnings. `git diff -- Sources` EMPTY. No behaviour or assertion changed. Gated suites NOT RUN. No swift format run. Lint before/after: no deterministic linter exists for this rule in this repo (no `.swiftlint.yml`, empty repo `.validators/`; `missing-docs` is the user-layer LLM validator) — before = 3 confirmed from iteration 1's review, after is `/review`'s to measure.
+    - next: `/review`.
+  timestamp: 2026-08-10T16:29:10.060746+00:00
+- actor: claude-code
+  id: 01kzp8a30tg7mamh2kv33cvxnk
+  text: |-
+    ### test — green
+    - evidence: `swift test` — Test run with 780 tests in 73 suites passed; 24 tests in 9 suites passed; 24 tests in 5 suites passed. 0 failures. Only warning present is the pre-existing baseline (`mlx-swift_Cmlx.bundle` missing-creator-for-mutated-node line). Gated suites (FM_ROUTER_INTEGRATION_TESTS, MULTITOOL_INTEGRATION) correctly report skipped, not run. New suite "Mounted tool output reaches the model's next generation" (both tests) passed.
+    - doc-only check: `git diff --numstat` on ToolOutputFeedbackTests.swift = 135 insertions, 0 deletions. Confirmed no deletions or modifications anywhere in the file — every changed line is a pure `+` addition of a doc comment.
+    - Sources check: `git diff -- Sources` is empty.
+    - DocC direction check: `replacingTranscript(_ transcript:)` doc key is `transcript` (not `_`) — correct. `respond(to prompt:...)` (both overloads) doc key is `prompt` (not `to`) — correct. Symbol links `` `makeFork(tools:)` ``, `` `RoutedSession/respond(to:)` ``, `` `RoutedSession/streamEvents(to:)` ``, `` `pumpStream(prompt:options:into:)` ``, `` `RoutedSessionActor/compact(prompt:budget:)` ``, `` `makeSession(instructions:tools:)` `` all use external argument labels matching their real declarations. No keys are backwards.
+    - Checker: `python3 Scripts/check-doc-links.py` — exit 0, symbol links scanned 1283, declarations indexed 2356, total stale 0, total unresolved 0.
+    - Comment-quality spot check: read the fork/container overload comments in full. Confirmed against source: `LanguageModelSessionBackend`'s default extension (`makeFork(tools:)`) ignores `tools` and forwards to `makeFork()` unchanged; `LoadedLLMContainer`'s default extension does the same for `makeSession(instructions:tools:)`/`makeSession(transcript:tools:)`. The fixture's own doc comments state it implements these overloads "rather than left to the protocol's tool-dropping default" because this fixture's model can really call tools — this is accurate, not restating the member's name, and documents a real near-miss (a stub-shaped default would silently drop tools from a fork/child session).
+    - No lint before/after count produced: repo has no `.swiftlint.yml`, `.validators/` is empty, and missing-docs is model-driven, not a static linter — this cannot be measured, so none is reported.
+
+    step: test
+    outcome: green
+    evidence: swift test — 780/73 + 24/9 + 24/5 suites, 0 failures, only pre-existing baseline warning; numstat 135/0 on the doc file; Sources diff empty; DocC Parameter keys and symbol-link labels verified correct in both directions; check-doc-links.py exit 0 (0 stale, 0 unresolved)
+  timestamp: 2026-08-10T16:32:50.202353+00:00
 position_column: doing
 position_ordinal: '80'
 title: '[Router] TDD: prove streamEvents feeds tool output back into generation'
@@ -270,3 +395,9 @@ Router passes `instructions:` through; this consumer passes `nil`, and the plain
 H4, then H5, then H6. H4 is the only one that explains the failure on *both* surfaces with a single mechanism, and it is the one structural difference between Router's session and the plain session that has not been eliminated.
 
 Reproduction unchanged: FoundationModelsMultitool, `MULTITOOL_INTEGRATION=1 swift test --filter SearchThenCallTests`, ~8–11 min. It points at Router by local path. The runner currently drives `respond(to:)`; `streamTurn` is still in the file to switch back to.
+
+## Review Findings (2026-08-10 11:13)
+
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift:284` — Public method `makeFork` lacks documentation comment — implements LanguageModelSessionBackend protocol requirement. Add a documentation comment explaining this method's behavior.
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift:296` — Public method `transcriptEntries` lacks documentation comment — implements LanguageModelSessionBackend protocol requirement. Add a documentation comment explaining this method's behavior.
+- [x] `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift:300` — Public method `usageTokenCounts` lacks documentation comment — implements LanguageModelSessionBackend protocol requirement. Add a documentation comment explaining this method's behavior.
