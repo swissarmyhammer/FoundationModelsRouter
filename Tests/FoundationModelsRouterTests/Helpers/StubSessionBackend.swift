@@ -60,6 +60,46 @@ extension PlainTranscriptStubContainer {
     }
 }
 
+/// One generation call a ``StubSessionBackend`` served, as the caller made it.
+struct StubGenerationCall: Sendable, Equatable {
+    /// The prompt the backend was asked to respond to.
+    let prompt: String
+
+    /// The ceiling the caller put on that call's own answer, or `nil` to leave
+    /// it to the model's own default.
+    let maxTokens: Int?
+}
+
+/// A generation log shared by a ``StubSessionBackend`` and every clone it
+/// produces (``StubSessionBackend/makeFork(tools:)``,
+/// ``StubSessionBackend/replacingTranscript(_:)``).
+///
+/// A fold's summarizer never calls the backend a container handed the session:
+/// `BackendCompactionSummarizer` builds a fresh, blank-slate backend for each
+/// call via `replacingTranscript(_:)`, so a per-instance history such as
+/// ``StubSessionBackend/receivedPrompts`` cannot see the calls a fold made. A
+/// log passed in at construction and carried across every clone can, which is
+/// what lets a test read the prompt and the output ceiling a session's fold
+/// actually handed its summarizer.
+///
+/// `@unchecked Sendable` invariant: ``record(prompt:maxTokens:)`` runs only
+/// from inside a backend call, and ``RoutedSessionActor`` serializes every
+/// backend call onto its own executor — the same invariant
+/// ``StubSessionBackend`` itself documents for its own mutable state.
+final class StubGenerationLog: @unchecked Sendable {
+    /// Every call served through this log, in call order.
+    private(set) var calls: [StubGenerationCall] = []
+
+    /// Appends one call.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt the backend was asked to respond to.
+    ///   - maxTokens: The ceiling on that call's own answer, or `nil`.
+    func record(prompt: String, maxTokens: Int?) {
+        calls.append(StubGenerationCall(prompt: prompt, maxTokens: maxTokens))
+    }
+}
+
 final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
     /// A failure ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)``/
     /// the guided `respond` raise when ``shouldThrow`` is `true`.
@@ -108,6 +148,11 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// ``usageIncrement`` on every successful call. See ``usageTokenCounts()``.
     private var cumulativeUsage: (input: Int, output: Int) = (0, 0)
 
+    /// The log every generation call this backend and its clones serve is
+    /// recorded into, or `nil` (the default) to record nowhere. See
+    /// ``StubGenerationLog``.
+    let generationLog: StubGenerationLog?
+
     /// The tools most recently passed to ``makeFork(tools:)``, or empty if
     /// never called with any.
     ///
@@ -137,18 +182,23 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     ///   - usageIncrement: The per-turn token counts to add to
     ///     ``cumulativeUsage`` on every successful call, or `nil` to report no
     ///     usage. See ``usageIncrement``.
+    ///   - generationLog: The shared log to record every call into, or `nil`
+    ///     (the default) to record nowhere. Carried by every clone this
+    ///     backend produces. See ``StubGenerationLog``.
     init(
         responseText: String = "stub response",
         shouldThrow: Bool = false,
         receivedPrompts: [String] = [],
         instructions: String? = nil,
         entries: [Transcript.Entry]? = nil,
-        usageIncrement: (input: Int, output: Int)? = nil
+        usageIncrement: (input: Int, output: Int)? = nil,
+        generationLog: StubGenerationLog? = nil
     ) {
         self.responseText = responseText
         self.shouldThrow = shouldThrow
         self.receivedPrompts = receivedPrompts
         self.usageIncrement = usageIncrement
+        self.generationLog = generationLog
         if let entries {
             self.entries = entries
         } else if let instructions {
@@ -161,7 +211,7 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// Records the call and returns ``responseText``, or throws
     /// ``StubError/boom`` when ``shouldThrow`` is set.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        recordPrompt(prompt)
+        recordPrompt(prompt, maxTokens: maxTokens)
         if shouldThrow { throw StubError.boom }
         recordResponse()
         return responseText
@@ -170,7 +220,7 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// Records the call and streams ``responseText`` as a single chunk, or
     /// finishes with ``StubError/boom`` when ``shouldThrow`` is set.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-        recordPrompt(prompt)
+        recordPrompt(prompt, maxTokens: maxTokens)
         let responseText = responseText
         let shouldThrow = shouldThrow
         if !shouldThrow {
@@ -191,7 +241,7 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// ``shouldThrow`` is set — mirroring the live backend's guided entry
     /// point, which validates before decoding.
     func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-        recordPrompt(prompt)
+        recordPrompt(prompt, maxTokens: maxTokens)
         try grammar.validateForXGrammar()
         if shouldThrow { throw StubError.boom }
         recordResponse()
@@ -220,7 +270,8 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
             shouldThrow: shouldThrow,
             receivedPrompts: receivedPrompts,
             entries: entries,
-            usageIncrement: usageIncrement
+            usageIncrement: usageIncrement,
+            generationLog: generationLog
         )
         fork.cumulativeUsage = cumulativeUsage
         return fork
@@ -238,7 +289,8 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
             responseText: responseText,
             shouldThrow: shouldThrow,
             entries: Array(transcript),
-            usageIncrement: usageIncrement
+            usageIncrement: usageIncrement,
+            generationLog: generationLog
         )
     }
 
@@ -254,11 +306,17 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
         return cumulativeUsage
     }
 
-    /// Records one call's prompt into ``receivedPrompts``/``entries`` and
-    /// bumps ``callCount``, shared by every generation entry point.
-    private func recordPrompt(_ prompt: String) {
+    /// Records one call's prompt into ``receivedPrompts``/``entries``, bumps
+    /// ``callCount``, and appends the call to ``generationLog`` when one was
+    /// supplied — shared by every generation entry point.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt this call was asked to respond to.
+    ///   - maxTokens: The ceiling this call was made under, or `nil`.
+    private func recordPrompt(_ prompt: String, maxTokens: Int?) {
         callCount += 1
         receivedPrompts.append(prompt)
+        generationLog?.record(prompt: prompt, maxTokens: maxTokens)
         entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
     }
 

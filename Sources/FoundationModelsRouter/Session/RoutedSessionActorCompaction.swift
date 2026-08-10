@@ -372,6 +372,11 @@ extension RoutedSessionActor {
             // ``CancellableCompactionSummarizer``). A `nil` summarizer stays `nil`,
             // so a deterministic-only fold is untouched.
             summarizer: summarizer.map { CancellableCompactionSummarizer(base: $0, session: self) },
+            // This session's own stage, not the pipeline's defaults — and read
+            // here, in the one place both folds share, so a caller-driven fold
+            // and an automatic one condense the same way (see
+            // ``RoutedSessionActor/summarization``).
+            summarization: summarization,
             pendingRuns: pendingRuns
         )
 

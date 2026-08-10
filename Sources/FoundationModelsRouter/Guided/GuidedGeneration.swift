@@ -174,7 +174,7 @@ extension Grammar {
 
 /// The guided-generation surface on the generation handle.
 ///
-/// Like ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``, these arrive
+/// Like ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``, these arrive
 /// as a container-constrained extension so they are invisible on
 /// ``RoutedEmbedder``. Both produce *raw* constrained text — no token streaming
 /// (``RoutedSession/streamResponse(to:)`` stays unconstrained-only) and no typed
@@ -209,7 +209,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// The grammar travels with the session, so a milestone-9 fork inherits it.
     /// The session is otherwise identical to one from
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` — it inherits this handle's
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` — it inherits this handle's
     /// recorder and router id, retains the owning profile, and funnels every turn
     /// through the recorder-bracketed chokepoint, which stamps the grammar onto
     /// each event. Its ``RoutedSession/streamResponse(to:)`` stays
@@ -222,23 +222,28 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     the recording directory.
     ///   - tools: The tools the model can call during this session, wrapped and
     ///     threaded exactly as
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
     ///     does it. Defaults to no tools. A guided session mounts tools for the
     ///     same reasons an unguided one does, and `discoveryPriming` below needs
     ///     them: priming names a *mounted* tool, so a session with none has
     ///     nothing to prime.
     ///   - budget: The auto-compaction opt-in (task 8213x39) — see
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Defaults to
     ///     ``CompactionPrompt/default``.
+    ///   - summarization: The model-assisted compaction stage every fold on the
+    ///     vended session runs — see
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
+    ///     Defaults to `Summarization()`. A guided session folds exactly like an
+    ///     unguided one.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
     ///     from — see
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - discoveryPriming: The pre-discovery seeding opt-in — see
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`, which leaves priming off. A guided session primes
     ///     exactly like an unguided one: the seed is a real host-side call whose
     ///     entries land in the transcript the turn resumes from, so the grammar
@@ -251,12 +256,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
+        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
         makeSession(
             grammar: grammar, instructions: instructions, workingDirectory: workingDirectory,
-            tools: tools, budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn,
+            tools: tools, budget: budget, compactionPrompt: compactionPrompt,
+            summarization: summarization, agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming)
     }
 }

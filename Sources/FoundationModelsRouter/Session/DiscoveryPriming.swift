@@ -25,7 +25,7 @@ import FoundationModels
 /// calls that genuinely happened.
 ///
 /// Off by default. A host opts one session in when it vends it
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``);
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``);
 /// a fork inherits its parent's opt-in. With it off, a turn's transcript
 /// construction is untouched.
 ///

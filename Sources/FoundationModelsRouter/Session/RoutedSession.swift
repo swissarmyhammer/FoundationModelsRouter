@@ -24,7 +24,7 @@ public enum TurnCancellationResult: Sendable, Equatable {
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
-/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
 /// — there is no public initializer — so it is born holding the router's
 /// recording root (``routerId``) and the non-optional ``TranscriptRecorder`` the
 /// vending handle carried, and it **retains its ``profile``** so the resident
@@ -83,8 +83,8 @@ public protocol RoutedSession: Actor {
     /// for an unconstrained session.
     ///
     /// Set when the session is vended by
-    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` and
-    /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` and
+    /// `nil` for one from ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///
     /// It travels with the session so ``fork(workingDirectory:)`` inherits it;
     /// ``streamResponse(to:)`` stays unconstrained regardless.
@@ -152,6 +152,15 @@ public protocol RoutedSession: Actor {
     /// ``recordingDirectory`` (requirement 4). When the transcript is
     /// already under target — or every stage ran and still couldn't land it,
     /// the oversized-tail case — nothing changes.
+    ///
+    /// The model-assisted stage a fold runs — its recency window, its chunk
+    /// ceiling, and how much of what it condenses a summary may occupy — is the
+    /// one this session was vended with
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s
+    /// `summarization`) rather than an argument here: a session's *automatic*
+    /// folds have no caller to pass one to, so the configuration lives on the
+    /// session and both folds condense the same way. See
+    /// ``RoutedSessionActor/summarization``.
     ///
     /// **Proactive use** (preferred): check ``contextFill`` between turns and
     /// compact before it gets too high — turns never die:

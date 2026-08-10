@@ -201,12 +201,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     non-String-output tool gets the binding-only
     ///     ``ContextBindingTool``, posting there too) — exactly the
     ///     per-session instancing
-    ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+    ///     ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
     ///     performs for a fresh session — so a node's tool never posts to a
     ///     sibling or ancestor's outbox. Defaults to no tools.
     ///   - recordingRoot: The exact directory to load the tree from, or `nil`
     ///     for this handle's router-level default (task ke41yth). Mirrors
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``:
+    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``:
     ///     pass the same root a session was vended with to restore it.
     ///     Omitted (`nil`), this loads today's nested
     ///     `<recordingsRoot>/<routerId>/` layout, throwing
@@ -220,10 +220,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Every restored node's ``RoutedSessionActor/autoCompactionBudget``/
     /// ``RoutedSessionActor/autoCompactionPrompt`` (task 8213x39) come back
-    /// `nil`/``CompactionPrompt/default`` regardless of what the original
+    /// `nil`/``CompactionPrompt/default``, and its
+    /// ``RoutedSessionActor/summarization`` comes back `Summarization()`,
+    /// regardless of what the original
     /// session was vended with: `SessionSidecar` records slot/model/
-    /// instructions/grammar, never a budget, so there is nothing to
-    /// rehydrate it from. A caller that wants the restored tree to keep
+    /// instructions/grammar, never a budget or a fold configuration, so there
+    /// is nothing to rehydrate them from. A caller that wants the restored tree to keep
     /// managing its own window calls ``RoutedSession/compact(prompt:budget:)``
     /// manually, or re-opts-in on a fresh fork from the restored root.
     ///

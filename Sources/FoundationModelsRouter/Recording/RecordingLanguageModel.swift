@@ -17,7 +17,7 @@ private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording
 /// Vended only by ``RoutedModel/makeLanguageModel()`` — there is no public
 /// initializer — each call mints a fresh handle carrying its own per-handle
 /// state (``RecordingLanguageModelState``): a session ULID, a recording
-/// directory nested the same way ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
+/// directory nested the same way ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s
 /// is, and a last-seen ``FoundationModels/Transcript`` snapshot. Two live
 /// handles never interleave events or share a directory.
 ///

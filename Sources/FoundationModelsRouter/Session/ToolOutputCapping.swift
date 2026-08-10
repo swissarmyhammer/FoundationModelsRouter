@@ -6,7 +6,7 @@ import FoundationModels
 ///
 /// Tool outputs, not prompts, are what blow a turn's context window
 /// mid-turn, and Router's own tool-instancing pipeline
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``/
+/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``/
 /// ``RoutedSessionActor/fork(workingDirectory:)``) is the one seam that sees
 /// every tool call's result before the model does — the same seam
 /// ``ForkableTool`` already hooks into. This absorbs the
@@ -102,7 +102,7 @@ enum ToolOutputCapping {
 
     /// Applies ``wrapping(tool:toTokenLimit:)`` only when a limit is actually
     /// configured — the shared guard-and-wrap both of Router's tool-instancing
-    /// seams need (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+    /// seams need (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
     /// for a root session, ``RoutedSessionActor/fork(workingDirectory:)`` for
     /// a forked one), so neither has to restate the nil-guard-and-wrap
     /// pattern itself.

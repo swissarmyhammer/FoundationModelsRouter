@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 
 /// Builds a ``RoutedSessionActor``, the shared construction path behind both a
-/// fresh root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
+/// fresh root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``)
 /// and a forked child (``RoutedSessionActor/fork(workingDirectory:)``).
 ///
 /// The two call sites' constructor invocations used to be near-verbatim
@@ -15,7 +15,7 @@ import FoundationModels
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:contextTokens:usageState:autoCompactionBudget:autoCompactionPrompt:agentSpawn:discoveryPriming:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:contextTokens:usageState:autoCompactionBudget:autoCompactionPrompt:summarization:agentSpawn:discoveryPriming:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -44,6 +44,7 @@ func makeRoutedSessionActor(
     usageState: ContextUsageState = .none,
     autoCompactionBudget: TokenBudget? = nil,
     autoCompactionPrompt: CompactionPrompt = .default,
+    summarization: Summarization = Summarization(),
     agentSpawn: SessionSidecar.AgentSpawn? = nil,
     discoveryPriming: DiscoveryPriming? = nil
 ) -> RoutedSessionActor {
@@ -73,6 +74,7 @@ func makeRoutedSessionActor(
         usageState: usageState,
         autoCompactionBudget: autoCompactionBudget,
         autoCompactionPrompt: autoCompactionPrompt,
+        summarization: summarization,
         agentSpawn: agentSpawn,
         discoveryPriming: discoveryPriming
     )
@@ -81,7 +83,7 @@ func makeRoutedSessionActor(
 /// The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``.
 ///
 /// It is `internal` with an `internal` initializer so the only way to obtain one
-/// is ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` — there is no
+/// is ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` — there is no
 /// public initializer. The recorder and `routerId` flow down from the vending
 /// handle; the `backend`, `slot`, and `model` are what the single
 /// ``generate(grammar:prompt:onEvent:_:)`` chokepoint runs the model with.
@@ -152,7 +154,7 @@ actor RoutedSessionActor: RoutedSession {
     /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     /// This is the
     /// exact list threaded to the backend/underlying `LanguageModelSession(tools:)`
-    /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+    /// — at construction for a root session (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
     /// computes it before the backend exists), or via
     /// ``LanguageModelSessionBackend/makeFork(tools:)`` for a fork (see
     /// ``fork(workingDirectory:)``) — retained here too so it stays
@@ -164,7 +166,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Fresh per session: a root session is constructed already holding a
     /// brand-new, empty outbox and its own ``tools`` instanced to it (a pure
     /// map, computed by the caller before this session exists — see
-    /// ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``);
+    /// ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``);
     /// ``fork(workingDirectory:)`` builds another fresh outbox for the child
     /// and its own fork-then-detach composed tool list instead — deliberately
     /// not sharing this session's outbox with the fork. Because this
@@ -331,7 +333,7 @@ actor RoutedSessionActor: RoutedSession {
     /// turn that still overflows mid-generation
     /// (`LanguageModelError.contextSizeExceeded`) is compacted harder and
     /// retried exactly once before the error surfaces. Set at construction
-    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``)
     /// and carried forward by ``fork(workingDirectory:)`` — a fork manages
     /// its own window exactly like its parent.
     nonisolated let autoCompactionBudget: TokenBudget?
@@ -339,6 +341,39 @@ actor RoutedSessionActor: RoutedSession {
     /// The compaction prompt auto-compaction's own folds send to the
     /// summarizer, when ``autoCompactionBudget`` is set. Ignored otherwise.
     nonisolated let autoCompactionPrompt: CompactionPrompt
+
+    /// The model-assisted compaction stage every fold this session runs uses —
+    /// the caller-driven ``compact(prompt:budget:)`` and the automatic
+    /// ``performAutoCompaction(prompt:budget:)`` alike, since both reach
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// through the one shared ``fold(prompt:budget:summarizer:)``. Its three
+    /// knobs — ``Summarization/keepRecentTurns``,
+    /// ``Summarization/maxChunkTokens``, ``Summarization/summaryTokenRatio`` —
+    /// are how a caller trades compression against summary fidelity, and how it
+    /// sizes chunking for the model that actually summarizes.
+    ///
+    /// Session-scoped rather than per-call, and deliberately so. A `summarization:`
+    /// argument on ``RoutedSession/compact(prompt:budget:)`` would reach the
+    /// caller-driven fold alone: an automatic fold is driven from inside
+    /// ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``, which has no
+    /// caller to thread one from, so the folds a long-running session actually
+    /// takes — its automatic ones — would go on running at ``Summarization``'s
+    /// own defaults however carefully the manual path was tuned. Widening the
+    /// protocol is not the alternative either: ``RoutedSession`` is public, so a
+    /// new requirement, or a re-signed one, breaks every conformer outside this
+    /// package. One value stored here and read inside `fold` reaches every fold
+    /// this session will ever run, and adds no protocol surface at all.
+    ///
+    /// Wider in scope than ``autoCompactionPrompt``, whose name says it
+    /// configures the automatic fold alone: a caller-driven fold carries its own
+    /// `prompt:` argument, while both folds share this one stage.
+    ///
+    /// Set at construction
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``)
+    /// and carried forward by ``fork(workingDirectory:)`` — a fold on a fork
+    /// condenses exactly like a fold on its parent. A session vended with no
+    /// opinion carries `Summarization()`, every default.
+    nonisolated let summarization: Summarization
 
     /// The pre-discovery seeding opt-in (`^s4405wc`), or `nil` (the default)
     /// for a session whose transcript construction is untouched.
@@ -348,7 +383,7 @@ actor RoutedSessionActor: RoutedSession {
     /// ``backend`` from its current transcript plus the real call it made,
     /// before the turn's own generate call ever submits (see
     /// ``primeDiscoveryIfConfigured(prompt:onEvent:)``). Set at construction
-    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``)
     /// and carried forward by ``fork(workingDirectory:)`` — a fork primes its
     /// turns exactly like its parent.
     nonisolated let discoveryPriming: DiscoveryPriming?
@@ -375,8 +410,8 @@ actor RoutedSessionActor: RoutedSession {
     /// `makeSession` or a `fork`.
     ///
     /// Internal: construction is only via
-    /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` /
-    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
+    /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` /
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
     /// ``fork(workingDirectory:)``, or
     /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``.
     ///
@@ -420,6 +455,7 @@ actor RoutedSessionActor: RoutedSession {
         usageState: ContextUsageState = .none,
         autoCompactionBudget: TokenBudget? = nil,
         autoCompactionPrompt: CompactionPrompt = .default,
+        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil
     ) {
@@ -448,6 +484,7 @@ actor RoutedSessionActor: RoutedSession {
         self.usageState = usageState
         self.autoCompactionBudget = autoCompactionBudget
         self.autoCompactionPrompt = autoCompactionPrompt
+        self.summarization = summarization
         self.discoveryPriming = discoveryPriming
 
         // The session's own directory is brought into existence here, by its

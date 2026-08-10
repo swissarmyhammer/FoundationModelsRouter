@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
+/// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s
 /// `budget`/`compactionPrompt` parameters, the proactive fold
 /// ``RoutedSessionActor/runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
 /// runs before a turn once measured fill reaches the budget's trigger, the
@@ -57,6 +57,14 @@ struct AutoCompactionTests {
     private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         let responseText: String
         var shouldThrow: Bool
+
+        /// The shared log every backend this container vends records into —
+        /// including the blank-slate clone a fold's summarizer builds through
+        /// `replacingTranscript(_:)`. On the `flash` container this holds an
+        /// automatic fold's own summarizer calls and nothing else, since a
+        /// warm-up turn never reaches the flash slot.
+        let generationLog = StubGenerationLog()
+
         private(set) var lastBackend: StubSessionBackend?
 
         init(responseText: String, shouldThrow: Bool = false) {
@@ -65,13 +73,17 @@ struct AutoCompactionTests {
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = StubSessionBackend(responseText: responseText, shouldThrow: shouldThrow, instructions: instructions)
+            let backend = StubSessionBackend(
+                responseText: responseText, shouldThrow: shouldThrow, instructions: instructions,
+                generationLog: generationLog)
             lastBackend = backend
             return backend
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: responseText, shouldThrow: shouldThrow, entries: Array(transcript))
+            StubSessionBackend(
+                responseText: responseText, shouldThrow: shouldThrow, entries: Array(transcript),
+                generationLog: generationLog)
         }
     }
 
@@ -129,12 +141,12 @@ struct AutoCompactionTests {
     private static let cannedText = String(
         repeating: "The quick brown fox jumps over the lazy dog. ", count: 60)
 
-    /// How many warm-up turns ``makeTriggeredSession(budget:tools:)`` drives —
+    /// How many warm-up turns ``makeTriggeredSession(budget:tools:summarization:)`` drives —
     /// past ``TurnTruncation``'s default 4-turn recency window, so folding
     /// has real old-span content to work with.
     private static let turnCount = 6
 
-    /// The exact entries ``makeTriggeredSession(budget:tools:)``'s warm-up turns
+    /// The exact entries ``makeTriggeredSession(budget:tools:summarization:)``'s warm-up turns
     /// produce, computed without ever running a session — prompt/response
     /// text is fixed regardless of the escalating `usageIncrement` those
     /// turns are driven with, so ``fixedBudget`` can be sized once, up
@@ -207,12 +219,17 @@ struct AutoCompactionTests {
     ///   - tools: The tools to vend the session with — see task 4ce0a1k's own
     ///     tools-plus-budget composition tests below. Defaults to none,
     ///     unchanged from every pre-existing test in this suite.
+    ///   - summarization: The model-assisted stage every fold on the vended
+    ///     session runs with. Defaults to `Summarization()` — every default —
+    ///     which is what every test in this suite but the fold-tuning one
+    ///     below wants.
     /// - Returns: The session plus its `standard`/`flash` containers, so a
     ///   test can configure `shouldThrow` on either before driving the
     ///   triggering turn.
     private static func makeTriggeredSession(
         budget: TokenBudget?,
-        tools: [any Tool] = []
+        tools: [any Tool] = [],
+        summarization: Summarization = Summarization()
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
         let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
         let recorder = InMemoryRecorder()
@@ -223,7 +240,8 @@ struct AutoCompactionTests {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(context: Self.warmUpContextTokens), reporting: ResolutionProgress())
 
-        let session = profile.standard.makeSession(tools: tools, budget: budget)
+        let session = profile.standard.makeSession(
+            tools: tools, budget: budget, summarization: summarization)
         let backend = try #require(standardContainer.lastBackend)
 
         for turn in 0..<Self.turnCount {
@@ -740,5 +758,46 @@ struct AutoCompactionTests {
         }
         #expect(result.stagesApplied.contains("Summarization"))
         #expect(events.contains(.textDelta(Self.cannedText)))
+    }
+
+    // MARK: - The session's own Summarization reaches the automatic fold
+
+    /// The recency window the fold-tuning test below vends its session's
+    /// ``Summarization`` with: half the stage's own default, so two turns the
+    /// default window would have kept land in the span flash actually reads.
+    private static let narrowedRecentTurns = Summarization().keepRecentTurns / 2
+
+    @Test(
+        "an automatic fold summarizes with the Summarization the session was vended with, not the stage's defaults: a narrowed keepRecentTurns puts turns the default window keeps out into the span flash reads"
+    )
+    @MainActor
+    func autoFoldSummarizesWithTheSessionsOwnKeepRecentTurns() async throws {
+        let (narrowedSession, _, narrowedFlash) = try await Self.makeTriggeredSession(
+            budget: Self.fixedBudget,
+            summarization: Summarization(keepRecentTurns: Self.narrowedRecentTurns))
+        let (unturnedSession, _, unturnedFlash) = try await Self.makeTriggeredSession(budget: Self.fixedBudget)
+
+        // No caller-side compact() in either arm: the triggering turn folds on
+        // its own, which is the fold this test exists for — it is the one no
+        // caller could pass a Summarization to.
+        let narrowedEvents = try await Self.collectEvents(narrowedSession, prompt: "turn \(Self.turnCount)")
+        let unturnedEvents = try await Self.collectEvents(unturnedSession, prompt: "turn \(Self.turnCount)")
+        #expect(narrowedEvents.contains { if case .compaction = $0 { return true }; return false })
+        #expect(unturnedEvents.contains { if case .compaction = $0 { return true }; return false })
+
+        // The newest turn only the narrowed window folds: inside the default
+        // window, so a fold running at the stage's defaults never reads it.
+        let narrowedWindowOnly = renderedLineOfNewestFoldedTurn(
+            turnCount: Self.turnCount, keepRecentTurns: Self.narrowedRecentTurns)
+        #expect(narrowedFlash.generationLog.calls.contains { $0.prompt.contains(narrowedWindowOnly) })
+        #expect(!unturnedFlash.generationLog.calls.contains { $0.prompt.contains(narrowedWindowOnly) })
+
+        // Both folds really did read a span — the newest turn the *default*
+        // window folds is in each — so the assertions above separate two live
+        // folds rather than a fold from a no-op.
+        let foldedEitherWay = renderedLineOfNewestFoldedTurn(
+            turnCount: Self.turnCount, keepRecentTurns: Summarization().keepRecentTurns)
+        #expect(narrowedFlash.generationLog.calls.contains { $0.prompt.contains(foldedEitherWay) })
+        #expect(unturnedFlash.generationLog.calls.contains { $0.prompt.contains(foldedEitherWay) })
     }
 }

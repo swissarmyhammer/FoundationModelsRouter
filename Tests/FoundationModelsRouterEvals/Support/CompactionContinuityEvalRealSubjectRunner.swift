@@ -11,7 +11,7 @@ import Tokenizers
 /// real, full ``RoutedSession`` (task 8213x39's auto-compaction opt-in) per
 /// call rather than the bare `Compactor.compact` + one-shot session recipe
 /// ``CompactionEvalRealSubjectRunner`` uses — this evaluation needs the whole
-/// session surface (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
+/// session surface (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
 /// ``RoutedSession/streamEvents(to:maxTokens:)``, and its durable recording)
 /// to drive a genuinely multi-step, auto-compacting conversation, not just
 /// one fold-then-ask call.

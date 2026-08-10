@@ -59,7 +59,7 @@ public struct TokenBudget: Sendable, Equatable {
     /// *before* it ever reaches the model or gets recorded: tool outputs, not
     /// prompts, are what blow a turn's context window mid-turn, and this is
     /// the one seam Router's own tool-instancing pipeline
-    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``/
+    /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``/
     /// ``RoutedSessionActor/fork(workingDirectory:)``) can intercept every
     /// result at. When set, a tool whose own output is `String` and whose
     /// estimated size exceeds this limit is truncated to it, with an

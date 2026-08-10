@@ -30,6 +30,13 @@ struct RoutedSessionCompactTests {
     private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         let responseText: String
         let usageIncrement: (input: Int, output: Int)?
+
+        /// The shared log every backend this container vends records into —
+        /// including the blank-slate clone a fold's summarizer builds through
+        /// `replacingTranscript(_:)`, which is the only place a fold's own
+        /// calls are observable from outside the session.
+        let generationLog = StubGenerationLog()
+
         private(set) var lastBackend: StubSessionBackend?
 
         init(responseText: String, usageIncrement: (input: Int, output: Int)? = nil) {
@@ -39,13 +46,16 @@ struct RoutedSessionCompactTests {
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             let backend = StubSessionBackend(
-                responseText: responseText, instructions: instructions, usageIncrement: usageIncrement)
+                responseText: responseText, instructions: instructions, usageIncrement: usageIncrement,
+                generationLog: generationLog)
             lastBackend = backend
             return backend
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: responseText, entries: Array(transcript), usageIncrement: usageIncrement)
+            StubSessionBackend(
+                responseText: responseText, entries: Array(transcript), usageIncrement: usageIncrement,
+                generationLog: generationLog)
         }
     }
 
@@ -739,5 +749,132 @@ struct RoutedSessionCompactTests {
         // and the CompactionSegment — no pending-run carrier of any kind.
         #expect(Self.textContents(of: response).count == 1)
         #expect(response.segments.count == 2)
+    }
+
+    // MARK: - The session's own Summarization reaches its folds
+
+    /// How many turns the two fold-tuning tests below drive before folding —
+    /// more than ``Summarization``'s default `keepRecentTurns` of 4, so the
+    /// default recency window and the narrowed one fold different spans.
+    private static let turnsBeforeTunedFold = 6
+
+    /// The recency window those tests vend their session's ``Summarization``
+    /// with: half the stage's own default, so two turns the default window
+    /// would have kept land in the span the summarizer actually reads.
+    private static let narrowedRecentTurns = Summarization().keepRecentTurns / 2
+
+    /// A canned response long enough that one turn's own rendered content
+    /// exceeds ``Summarization``'s default ``Summarization/maxChunkTokens``.
+    /// Every summarizer call a fold then makes is handed more than a full
+    /// chunk, so its output ceiling is the stage's own cap — `maxChunkTokens`
+    /// times ``Summarization/summaryTokenRatio`` — exactly, rather than a share
+    /// of whatever happened to land in that chunk.
+    private static let chunkOverflowingText = String(
+        repeating: "The quick brown fox jumps over the lazy dog. ", count: 280)
+
+    /// Vends a session configured with `summarization` and drives
+    /// ``turnsBeforeTunedFold`` turns on it, so it is ready to fold.
+    ///
+    /// - Parameters:
+    ///   - responseText: The canned response every driven turn produces.
+    ///   - summarization: The model-assisted stage to vend the session with.
+    /// - Returns: The session, the container holding its shared generation log,
+    ///   and the temp directory the caller is responsible for removing.
+    private static func makeSessionReadyToFold(
+        responseText: String,
+        summarization: Summarization
+    ) async throws -> (session: RoutedSession, container: ConfiguredLLMContainer, directory: URL) {
+        let dir = Self.makeTempDir()
+        let container = ConfiguredLLMContainer(responseText: responseText)
+        let router = Self.makeRouter(container: container, recorder: InMemoryRecorder(), cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
+        let session = profile.standard.makeSession(summarization: summarization)
+        try await Self.driveTurns(Self.turnsBeforeTunedFold, on: session)
+        return (session, container, dir)
+    }
+
+    /// Folds `session` against a budget derived from its own transcript that
+    /// sits strictly under the recency-window floor — so no deterministic stage
+    /// can land it and the model-assisted ``Summarization`` stage must run —
+    /// and returns the calls that fold made, without the warm-up turns' own.
+    ///
+    /// - Parameters:
+    ///   - session: The session to fold.
+    ///   - container: The container holding the shared generation log the fold
+    ///     records into.
+    /// - Returns: The fold's own summarizer calls, in call order.
+    private static func summarizerCallsOfForcedFold(
+        _ session: RoutedSession,
+        container: ConfiguredLLMContainer
+    ) async throws -> [StubGenerationCall] {
+        let backend = try #require(container.lastBackend)
+        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
+        let callsBeforeFold = container.generationLog.calls.count
+
+        let result = try await session.compact(budget: budget)
+        #expect(result.stagesApplied.contains("Summarization"))
+
+        return Array(container.generationLog.calls.suffix(from: callsBeforeFold))
+    }
+
+    @Test(
+        "compact() folds with the Summarization the session was vended with: a narrowed keepRecentTurns puts turns the stage's default window keeps out into the span the summarizer reads"
+    )
+    @MainActor
+    func compactFoldsWithTheSessionsOwnKeepRecentTurns() async throws {
+        let narrowed = try await Self.makeSessionReadyToFold(
+            responseText: Self.cannedText,
+            summarization: Summarization(keepRecentTurns: Self.narrowedRecentTurns))
+        defer { try? FileManager.default.removeItem(at: narrowed.directory) }
+        let unturned = try await Self.makeSessionReadyToFold(
+            responseText: Self.cannedText, summarization: Summarization())
+        defer { try? FileManager.default.removeItem(at: unturned.directory) }
+
+        let narrowedCalls = try await Self.summarizerCallsOfForcedFold(
+            narrowed.session, container: narrowed.container)
+        let unturnedCalls = try await Self.summarizerCallsOfForcedFold(
+            unturned.session, container: unturned.container)
+
+        // The newest turn only the narrowed window folds: inside the default
+        // window, so a fold running at the stage's defaults never reads it.
+        let narrowedWindowOnly = renderedLineOfNewestFoldedTurn(
+            turnCount: Self.turnsBeforeTunedFold, keepRecentTurns: Self.narrowedRecentTurns)
+        #expect(narrowedCalls.contains { $0.prompt.contains(narrowedWindowOnly) })
+        #expect(!unturnedCalls.contains { $0.prompt.contains(narrowedWindowOnly) })
+
+        // Both folds really did read a span — the newest turn the *default*
+        // window folds is in each — so the assertions above separate two live
+        // folds rather than a fold from a no-op.
+        let foldedEitherWay = renderedLineOfNewestFoldedTurn(
+            turnCount: Self.turnsBeforeTunedFold, keepRecentTurns: Summarization().keepRecentTurns)
+        #expect(narrowedCalls.contains { $0.prompt.contains(foldedEitherWay) })
+        #expect(unturnedCalls.contains { $0.prompt.contains(foldedEitherWay) })
+    }
+
+    @Test(
+        "compact() folds with the Summarization the session was vended with: a doubled summaryTokenRatio doubles the output ceiling every summarizer call is made under"
+    )
+    @MainActor
+    func compactFoldsWithTheSessionsOwnSummaryTokenRatio() async throws {
+        let doubled = try await Self.makeSessionReadyToFold(
+            responseText: Self.chunkOverflowingText,
+            summarization: Summarization(summaryTokenRatio: Summarization().summaryTokenRatio * 2))
+        defer { try? FileManager.default.removeItem(at: doubled.directory) }
+        let unturned = try await Self.makeSessionReadyToFold(
+            responseText: Self.chunkOverflowingText, summarization: Summarization())
+        defer { try? FileManager.default.removeItem(at: unturned.directory) }
+
+        let doubledCalls = try await Self.summarizerCallsOfForcedFold(
+            doubled.session, container: doubled.container)
+        let unturnedCalls = try await Self.summarizerCallsOfForcedFold(
+            unturned.session, container: unturned.container)
+
+        let doubledCeiling = try #require(doubledCalls.compactMap(\.maxTokens).max())
+        let unturnedCeiling = try #require(unturnedCalls.compactMap(\.maxTokens).max())
+        #expect(doubledCeiling == unturnedCeiling * 2)
+        // Read off the ratio and not the floor: a ceiling squeezed down to
+        // `minimumSummaryTokens` would be the same number whatever the ratio is.
+        #expect(unturnedCeiling > Summarization.minimumSummaryTokens)
     }
 }

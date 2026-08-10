@@ -22,7 +22,7 @@ private let missingOwningProfileMessageSuffix =
 ///
 /// ``RoutedLLM`` is `RoutedModel<any LoadedLLMContainer>`, so the
 /// generation-only API arrives here as a container-constrained extension — it is
-/// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+/// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
 /// is the *only* way to obtain a ``RoutedSession``: the vended session inherits
 /// this handle's ``RoutedModel/routerId`` and non-optional
 /// ``RoutedModel/recorder``, retains the owning ``LanguageModelProfile`` so the
@@ -34,7 +34,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Shared by every generation-only entry point that requires a live
     /// owning ``LanguageModelProfile`` —
-    /// ``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
+    /// ``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
     /// ``makeLanguageModel()``, and ``makeLanguageModel(resuming:registry:)``
     /// — which otherwise differ only in which name the trap message should
     /// report. A handle holds its profile only *weakly* (no retain cycle
@@ -117,6 +117,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Ignored
     ///     otherwise. Defaults to ``CompactionPrompt/default``.
+    ///   - summarization: The model-assisted compaction stage every fold on the
+    ///     vended session runs — the caller-driven
+    ///     ``RoutedSession/compact(prompt:budget:)`` and, when `budget` is set,
+    ///     the automatic one alike. Its three knobs
+    ///     (``Summarization/keepRecentTurns``, ``Summarization/maxChunkTokens``,
+    ///     ``Summarization/summaryTokenRatio``) are how a caller trades
+    ///     compression for summary fidelity and sizes chunking for the model
+    ///     that really summarizes. A session is where that choice belongs
+    ///     rather than a `compact` argument, because an automatic fold has no
+    ///     caller to pass one to — see
+    ///     ``RoutedSessionActor/summarization``. Defaults to `Summarization()`,
+    ///     every default. A fork inherits it.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
     ///     from — e.g. an agents tool creating this session as a
     ///     sub-agent mid-turn (creation-metadata task
@@ -148,20 +160,21 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
+        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
         makeSession(
             grammar: nil, instructions: instructions, workingDirectory: workingDirectory,
             recordingRoot: recordingRoot, tools: tools,
-            budget: budget, compactionPrompt: compactionPrompt, agentSpawn: agentSpawn,
-            discoveryPriming: discoveryPriming)
+            budget: budget, compactionPrompt: compactionPrompt, summarization: summarization,
+            agentSpawn: agentSpawn, discoveryPriming: discoveryPriming)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
     ///
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` calls this with
-    /// `grammar` `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` calls this with
+    /// `grammar` `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
     /// (in GuidedGeneration.swift) calls it with a grammar that then constrains
     /// every `respond` on the vended session and is stamped onto each recorded
     /// turn. It is `internal` so the guided surface in another file in this
@@ -174,22 +187,26 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - workingDirectory: A working directory override, or `nil` to default to
     ///     the recording directory.
     ///   - recordingRoot: A per-session recording root override — see
-    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - tools: The tools the model can call during this session. See
-    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` for the
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` for the
     ///     detachment wrapping applied before threading. Defaults to no tools.
     ///   - budget: The auto-compaction opt-in — see
-    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - compactionPrompt: The compaction prompt auto-compaction's own
     ///     folds send to the summarizer, when `budget` is set. Defaults to
     ///     ``CompactionPrompt/default``.
+    ///   - summarization: The model-assisted compaction stage every fold on the
+    ///     vended session runs — see
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
+    ///     Defaults to `Summarization()`.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from — see ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     from — see ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`.
     ///   - discoveryPriming: The pre-discovery seeding opt-in — see
-    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``.
+    ///     ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
     ///     Defaults to `nil`, which leaves priming off and transcript
     ///     construction exactly as it has always been.
     /// - Returns: A new ``RoutedSession`` over this model.
@@ -201,6 +218,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         tools: [any Tool] = [],
         budget: TokenBudget? = nil,
         compactionPrompt: CompactionPrompt = .default,
+        summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
@@ -281,6 +299,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             usageState: .none,
             autoCompactionBudget: budget,
             autoCompactionPrompt: compactionPrompt,
+            summarization: summarization,
             agentSpawn: agentSpawn,
             discoveryPriming: discoveryPriming
         )
@@ -310,7 +329,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// The shared detach → optional-cap pipeline behind two of
     /// task ^k4nygqa's three composition sites: the root site
-    /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
+    /// (``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
     /// detach → cap) and the restore site (`restoreSessionTree`,
     /// detach — it passes a `nil` `cappedToTokenLimit`, so no capping
     /// layer is ever added). The fork site mints its own wiring because it
@@ -360,7 +379,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - **`recordingRoot` supplied** — a flat `<recordingRoot>/<sessionId>/`,
     ///   with no ``RoutedModel/routerId`` segment. This is what a caller
-    ///   opting into ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s
+    ///   opting into ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s
     ///   per-session root gets: the routerId groups recordings by *process
     ///   run*, a detail nobody browses by, and reintroducing it under a
     ///   caller-chosen project-local root would just be a pile of opaque
@@ -372,7 +391,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   is the router's durable transcripts root, or a per-process temporary
     ///   fallback when recording to memory/none. Reproduces every existing
     ///   caller's layout byte-for-byte — shared by
-    ///   ``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)`` and
+    ///   ``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` and
     ///   ``makeLanguageModel()`` so the two factories nest identically.
     ///
     /// - Parameters:
@@ -455,7 +474,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// A FACTORY, not a property: each call mints a distinct handle with its
     /// own session ULID, its own recording directory (nested the same way
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s is), and its own
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s is), and its own
     /// last-seen transcript, so two live handles never interleave events or
     /// share a directory. Generation is recorded by diffing the transcript
     /// `LanguageModelExecutorGenerationRequest` carries on every call against
@@ -466,7 +485,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - Precondition: The owning ``LanguageModelProfile`` must still be
     ///   alive when this is called — mirrors
-    ///   ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``'s own precondition,
+    ///   ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s own precondition,
     ///   since this handle's resident model must stay alive for its whole
     ///   lifetime too.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle over this model.

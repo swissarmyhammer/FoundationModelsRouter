@@ -178,7 +178,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// defaults an absent key to the session's own recording directory (see
     /// ``sidecarDirectoryUserInfoKey``): the exact default a live session
     /// used for `workingDirectory` before this field existed to override it
-    /// (see ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``),
+    /// (see ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``),
     /// so an old recording restores with the same working directory its live
     /// session actually ran with.
     public let workingDirectory: URL
@@ -207,7 +207,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///
     /// Recorded so the routerId stays discoverable even when a session's
     /// directory omits that path segment — a caller-supplied per-session
-    /// recording root (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``)
+    /// recording root (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``)
     /// nests a session directly as `<recordingRoot>/<sessionId>/`, with
     /// nothing above it to name the router that wrote it. `nil` only for a
     /// recording made before this field existed — every sidecar written from
@@ -565,7 +565,7 @@ public struct SessionSidecarWriter: Sendable {
 /// ``RoutedSessionActor`` needs to know to keep its own directory loadable.
 ///
 /// A session lands its own sidecar as it comes into existence, so whoever builds
-/// one — ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:agentSpawn:discoveryPriming:)``,
+/// one — ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
 /// ``RoutedSessionActor/fork(workingDirectory:)``, or a composition assembling an
 /// actor by hand because it needs the backend object itself — cannot record a
 /// durable session directory holding a transcript and no sidecar beside it, the

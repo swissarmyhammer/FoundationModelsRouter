@@ -76,6 +76,85 @@ comments:
     - verification: ungated `swift test` 835 tests (786 + 25 + 24), 0 failures, 1 pre-existing known issue, 0 compiler warnings; `python3 Scripts/check-doc-links.py` 0 stale, 0 unresolved over 1298 links; 12 pre-existing call sites compile unchanged. Not run: `FM_ROUTER_INTEGRATION_TESTS=1` and `MULTITOOL_INTEGRATION=1` (27B model, 8-11 min) — no acceptance criterion needs them, the coverage this card asks for is ungated by design.
     - next: `/review`
   timestamp: 2026-08-10T22:52:05.367726+00:00
+- actor: claude-code
+  id: 01kzpz1fjbtt9gbxcjcm2mr2c5
+  text: |
+    ### review — findings
+
+    - evidence: `review sha HEAD~1..HEAD` (commit `b9e7e57`, 16 files). Engine counts: 6 findings, 8 confirmed, 1 refuted, 18 attempted, 0 failed. All 6 engine findings were dropped under the review skill's standing exception against refactoring pre-existing tests — every flagged line pre-dates this commit (`Tests/FoundationModelsRouterEvals/CompactionEvaluation.swift:31,32,33,98` from `598fc24`/`bda41be`; `Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift:30,172` from `5a4a048`), and this commit changed only `///` symbol-link lines in both files.
+    - recorded: 1 finding — `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:366`, acceptance criterion 2 is marked `[x]` but the production fold still calls `Compactor.compact` with no `summarization:`, so every live-session fold (manual and automatic, which share that one call site) still runs at the `Summarization()` defaults. Nothing in `Sources/` constructs a tuned `Summarization`, and no public session API carries the knobs.
+    - verified, not findings: 12 pre-existing call sites unedited and unreordered; AC 3's three tests each observe the knob at the summarizer via `ScriptedSummarizer.receivedMaxTokens`/`receivedPrompts`; defaults 4/2000/0.25 and the 128 floor untouched; the `makeModelAssistedFoldFixture()` extraction preserves both converted tests' assertions; DocC `- Parameter` keys use internal names, the half `check-doc-links.py` cannot see.
+    - next: `/implement` — widen the production path to carry the three knobs, or amend criterion 2 to name `Compactor.compact` as the path it means. Card `^jnd5ktx` does not close this criterion.
+  timestamp: 2026-08-10T23:10:05.387885+00:00
+- actor: claude-code
+  id: 01kzpz6cb4qpvd3pszh94p5wma
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 10 source/test files; decision recorded = GAP; `summarization: Summarization = Summarization()` threaded into Compactor.compact; 3 knob tests added
+    - test: green — ungated swift test 835 tests (786+25+24), 0 failures, 0 warnings; check-doc-links.py 1298 links, 0 stale / 0 unresolved
+    - commit: b9e7e57
+    - review: findings — Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:366
+    - AC#2 judged NOT MET: Compactor.compact is a genuine public entry point, but the card's own words say "the production compaction path" / "every production fold". RoutedSessionActorCompaction.swift:366 — shared by manual compact(prompt:budget:) AND performAutoCompaction — still omits `summarization:`, so 100% of live-session folds still run at 4/2000/0.25. No public RoutedSession.compact overload carries the knobs. Follow-up ^jnd5ktx does not close a criterion this card states.
+    - verified clean: 12 pre-existing call sites unedited (no third source-breaking change); the 3 knob tests observe ScriptedSummarizer.receivedMaxTokens/receivedPrompts and each fail if the parameter is dropped (proved by reverting the wiring — exactly those 3 failed, 6 issues); defaults 4/2000/0.25 + 128 floor untouched; makeModelAssistedFoldFixture() preserves both converted tests' assertions; DocC `- Parameter` keys at Compactor.swift:110-130 are all internal names
+    - 6 engine findings dropped as pre-existing test code (CompactionEvaluation.swift:31,32,33,98; RoutedSessionCompactTests.swift:30,172)
+    - next: wire the knobs through the session path so both manual and automatic folds can carry them, without breaking the public RoutedSession protocol
+  timestamp: 2026-08-10T23:12:45.924186+00:00
+- actor: claude-code
+  id: 01kzpzmtp349j5pkmttpkmty9a
+  text: |-
+    ### Research — round 2 (session path)
+
+    Read the review finding and mapped the session layer before choosing a shape.
+
+    **Where the folds meet.** `RoutedSessionActor.compact(prompt:budget:)` (manual) and `RoutedSessionActor.performAutoCompaction(prompt:budget:)` (automatic, three summarizer tiers) both funnel into one private `fold(prompt:budget:summarizer:)`, and that method holds the single `Compactor.compact` call in `Sources/`. So one value read inside `fold` reaches 100% of live-session folds — manual, and each of auto's flash / own-model / deterministic tiers.
+
+    **Why not a per-call parameter.** `performAutoCompaction` is called from `runTurn`/`runTurnAttempt` inside the turn chokepoint; there is no caller to thread an argument from. And `compact(prompt:budget:)` is a requirement of `public protocol RoutedSession: Actor` — changing its signature, or adding a requirement without a default, breaks every external conformer.
+
+    **Prevailing pattern found.** The session already carries fold configuration this way: `autoCompactionBudget` and `autoCompactionPrompt` are `nonisolated let`s on `RoutedSessionActor`, set from `RoutedModel.makeSession(... budget:compactionPrompt: ...)`, threaded through the shared `makeRoutedSessionActor(...)` factory, and inherited by `fork(workingDirectory:)`. Session-scoped `Summarization` is the same pattern, one step wider: it applies to BOTH folds, where `autoCompactionPrompt` applies to the automatic one only.
+
+    **Restoration.** `restoreSessionTree` documents that a restored node's budget/prompt come back at defaults because `SessionSidecar` records no such thing. The same holds for a summarization, so the doc note gets the third item rather than new plumbing.
+
+    **Conformer count.** `rg ": RoutedSession\b"` over Sources+Tests finds exactly one conformer, `RoutedSessionActor`. The protocol will not be touched at all, so the count that matters is zero conformers needing an edit.
+
+    **Test observation points.** A session's fold summarizer is `BackendCompactionSummarizer`, which calls `backend.replacingTranscript(Transcript(entries: []))` then `respond(to:maxTokens:)`. `LanguageModelSessionBackend` gives `replacingTranscript` a default that forwards to `makeFork()`, so a wrapper backend that re-wraps on both keeps a spy alive across the blank-slate clone. The automatic fold prefers the profile's `flash` slot, so a spy on the flash container sees only summarizer calls — no warm-up traffic to filter out.
+  timestamp: 2026-08-10T23:20:39.363184+00:00
+- actor: claude-code
+  id: 01kzq0er1qmvxr8ebc65xs68fq
+  text: |-
+    ### Implementation — round 2 (the session path)
+
+    **Shape chosen: session-scoped, not per-call.** `RoutedSessionActor` gains `nonisolated let summarization: Summarization`, set at construction and read inside the one private `fold(prompt:budget:summarizer:)` — the single `Compactor.compact` call site in `Sources/`, shared by the caller-driven `compact(prompt:budget:)` and by `performAutoCompaction(prompt:budget:)` (all three of its summarizer tiers). So 100% of live-session folds now carry the knobs, not half of them.
+
+    Weighed against a per-call parameter and rejected, with the reasoning recorded in the property's own doc comment (AC #1): `performAutoCompaction` is driven from inside `runTurn`/`runTurnAttempt` and has no caller to thread an argument from, so a `summarization:` argument on `compact` would have left every automatic fold — the folds a long-running session actually takes — at the defaults. Adding it to the protocol requirement was not available either, so the alternative was not "per-call versus session-scoped" but "session-scoped versus half the folds".
+
+    **The public protocol is untouched.** `git diff Sources/FoundationModelsRouter/Session/RoutedSession.swift` filtered to non-`///` lines is empty: the change there is documentation only (a paragraph on `compact(prompt:budget:)` saying where the stage comes from and why it is not an argument). `rg ": RoutedSession\b"` finds exactly one conformer, `RoutedSessionActor`, and no conformer inside or outside this package needs an edit — there is no new requirement and no re-signed one. That is the third source-breaking rename this deliberately does not make.
+
+    **Where a caller sets it.** `RoutedModel.makeSession(... compactionPrompt:summarization:agentSpawn: ...)` and `makeGuidedSession(... compactionPrompt:summarization:agentSpawn: ...)`, both defaulted to `Summarization()`, threaded through the shared `makeRoutedSessionActor(...)` factory — the same route `budget`/`compactionPrompt` already take. `fork(workingDirectory:)` carries it forward, so a fold on a fork condenses like a fold on its parent. `restoreSessionTree`'s doc now states that a restored node's stage comes back at `Summarization()` for the same reason its budget comes back `nil`: `SessionSidecar` records no fold configuration.
+
+    **Source compatibility.** Every parameter added is defaulted and placed in declaration order, so no call site had to change. 183 `standard.makeSession(`/`flash.makeSession(` sites and 20 `makeGuidedSession(` occurrences compile unedited; the one call-site line this diff touches is `AutoCompactionTests.makeTriggeredSession`, deliberately parameterized to vend the tuned session the new automatic-fold test needs. All 15 `Compactor.compact(` sites are untouched.
+
+    **Coverage (AC #3, at the session level).** Three ungated tests, none of which can pass on a dropped parameter:
+    - `RoutedSessionCompactTests.compactFoldsWithTheSessionsOwnKeepRecentTurns` — a session vended with `keepRecentTurns` halved, folded against the same fixture as a default-vended one; the narrowed run's summarizer prompts carry the rendered line of a turn the default window keeps out, and the default run's do not. Both carry the newest turn the *default* window folds, so the assertion separates two live folds rather than a fold from a no-op.
+    - `RoutedSessionCompactTests.compactFoldsWithTheSessionsOwnSummaryTokenRatio` — over a canned response sized so one turn alone exceeds the default `maxChunkTokens`, which pins every call's ceiling to the stage's own cap exactly; a doubled ratio doubles the ceiling the summarizer was called under, and the default run's ceiling is above `minimumSummaryTokens` so the test reads the ratio and not the floor.
+    - `AutoCompactionTests.autoFoldSummarizesWithTheSessionsOwnKeepRecentTurns` — the same observation on the *automatic* fold, driven with no caller-side `compact()` anywhere. The flash slot is the tier an automatic fold prefers and a warm-up turn never reaches it, so that container's log holds the fold's own calls alone.
+
+    The observation point is new shared test machinery rather than a fourth copy of an existing spy: `StubGenerationLog` (with `StubGenerationCall`) is carried by a `StubSessionBackend` and by every clone it makes, which is what lets a test see the blank-slate backend `BackendCompactionSummarizer` builds through `replacingTranscript(_:)` — a different object from the one the container handed the session, and the reason a per-instance `receivedPrompts` cannot answer this. `renderedLineOfNewestFoldedTurn(turnCount:keepRecentTurns:)` derives each test's needle from the two numbers rather than spelling out a turn index.
+
+    **Proof the tests bite.** The wiring line was removed from `fold` and the full ungated suite re-run: `789 tests ... failed ... with 4 issues (including 1 known issue)` — exactly the three new tests, one issue each, and no other test moved. The wiring was restored and the suite went green again.
+
+    **No default changed.** `Summarization`'s `4 / 2000 / 0.25` and the `minimumSummaryTokens` floor of `128` are untouched; this round is about reachability. The tests express their tuning relative to the defaults (`Summarization().keepRecentTurns / 2`, `Summarization().summaryTokenRatio * 2`) rather than restating them.
+
+    **Follow-up card.** `^jnd5ktx` is now redundant and was closed, with a comment pointing here; its acceptance criteria are ticked against what landed on this card.
+  timestamp: 2026-08-10T23:34:48.631427+00:00
+- actor: claude-code
+  id: 01kzq0f5r87tz2q6p1n5qgewsr
+  text: |-
+    ### implement — changed
+    - evidence: 23 files. Production behavior: `Session/RoutedSessionActor.swift` (new `nonisolated let summarization`, `init`/`makeRoutedSessionActor` parameter), `Session/RoutedSessionActorCompaction.swift` (the shared `fold` hands it to `Compactor.compact`), `Session/RoutedSessionActorForking.swift` (a fork inherits it), `RoutedLLM.swift` (both `makeSession` overloads), `Guided/GuidedGeneration.swift` (`makeGuidedSession`). Docs only: `Session/RoutedSession.swift` (no declaration changed — the public protocol is untouched), `Recording/SessionTreeRestoration.swift`, plus the DocC symbol rename in `Compaction/TokenBudget.swift`, `LanguageModelProfile.swift`, `Recording/RecordingLanguageModel.swift`, `Recording/SessionSidecar.swift`, `Session/DiscoveryPriming.swift`, `Session/SessionEvent.swift`, `Session/ToolOutputCapping.swift`, `Tests/FoundationModelsRouterEvals/Support/CompactionContinuityEvalRealSubjectRunner.swift`, `Tests/FoundationModelsRouterTests/{PerSessionRecordingRootTests,SessionChokepointTests,SessionOutboxToolWiringTests,ToolOutputCappingTests}.swift` — 61 references across 20 files. Tests: `Helpers/StubSessionBackend.swift` (`StubGenerationCall`/`StubGenerationLog`, carried across every clone), new `Helpers/FoldSpanObservation.swift`, `RoutedSessionCompactTests.swift` (2 new tests), `AutoCompactionTests.swift` (1 new test).
+    - verification: ungated `swift test` 838 tests (789 + 25 + 24), 0 failures, 1 pre-existing known issue, 0 compiler warnings; `python3 Scripts/check-doc-links.py` 0 stale, 0 unresolved over 1313 symbol links; `- Parameter` keys checked by hand on every changed signature (all internal names, all in declaration order — the half the checker cannot see). Dropped-wiring check: removing the one `summarization: summarization` line failed exactly the 3 new tests and nothing else. Not run: `FM_ROUTER_INTEGRATION_TESTS=1` and `MULTITOOL_INTEGRATION=1` (27B model, 8-11 min) — no acceptance criterion needs them and the coverage this card asks for is ungated by design. `swift format`/`swiftformat` never run. `FoundationModelsMultitool` and the vendored `mlx-swift-lm` fork untouched.
+    - follow-up card: `^jnd5ktx` closed as redundant (moved to done, acceptance criteria ticked, comment pointing at this work).
+    - next: `/review`
+  timestamp: 2026-08-10T23:35:02.664354+00:00
 position_column: doing
 position_ordinal: '80'
 title: Summarization's three knobs are unreachable from the production compaction path — Compactor.compact hardcodes Summarization()
@@ -108,4 +187,18 @@ Recorded in full in this card's comments. In short: `Summarization` is public wi
 - [x] If a gap: the production path can set all three knobs, with every existing `compact` call site unchanged
 - [x] If a gap: ungated coverage that a non-default knob set through `compact` actually reaches the summarizer call
 - [ ] If intended: the knobs' doc comments say so, so the next reader does not re-open this — not applicable, the decision is "gap"
-#phase-1
+
+
+## Review Findings (2026-08-10 18:05)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:366` — Acceptance criterion 2, "If a gap: the production path can set all three knobs, with every existing `compact` call site unchanged", is marked `[x]` but its first half is not met. The sole production fold still calls `Compactor.compact` with no `summarization:` argument, so every live-session fold — both the manual `RoutedSessionActor.compact(prompt:budget:)` and the automatic `performAutoCompaction(prompt:budget:)`, which share this one call site — still runs at `Summarization()`'s defaults: `keepRecentTurns` 4, `maxChunkTokens` 2000, `summaryTokenRatio` 0.25. `rg "Summarization\(" Sources/` returns only the default argument at `Compactor.swift:146` and two doc-comment mentions, so nothing in `Sources/` constructs a tuned `Summarization` — the same condition this card's own decision comment cited as evidence of the gap, unchanged by this commit. No public session API carries the knobs either: `RoutedSession.compact()`, `compact(prompt:)`, `compact(budget:)` and `compact(prompt:budget:)` expose only `prompt` and `budget`. `Compactor.compact` is a genuine public entry point in its own right — `public enum Compactor`, over public `Transcript`, `TokenBudget` and `Summarization` — so a caller holding a bare transcript can now tune all three; but this card's title and body name "the production compaction path" and "every production fold", and the implementer's own call-site comment labels `RoutedSessionActorCompaction.swift` "the only production call site". Follow-up card `^jnd5ktx` states the same conclusion ("It does not close it for a caller who holds a session ... a live session always folds at the defaults") and does not substitute for a criterion this card states. Resolve by either widening the production path so it can set the three knobs, or amending this criterion to say that `Compactor.compact` alone is the path it means.
+
+Resolved (2026-08-10, round 2) by widening the production path, not by amending the criterion. The session now carries a `Summarization` (`RoutedSessionActor.summarization`, set from `RoutedModel.makeSession(... summarization:)`/`makeGuidedSession`, inherited by `fork`), and the one shared `fold(prompt:budget:summarizer:)` hands it to `Compactor.compact` — so the caller-driven `compact(prompt:budget:)` and the automatic `performAutoCompaction(prompt:budget:)` both carry the knobs. `public protocol RoutedSession` is untouched, so no conformer needs an edit. Three ungated session-path tests cover it, and all three fail when the wiring is dropped.
+
+Verified and not findings, on this pass:
+- The criterion's second half is met: all 12 pre-existing `Compactor.compact` call sites are unedited and unreordered (1 production, 2 evals, 9 unit tests), the 3 added call sites are the new knob tests, and the only non-doc source change in the commit is `Compactor.swift` itself.
+- AC 3 is met: the three new tests each observe the knob at the summarizer, not merely that the parameter is accepted. `ScriptedSummarizer` captures `receivedMaxTokens`, and the ratio test compares that captured ceiling (0.5 → 1000) against the default's (0.25 → 500), well clear of the `minimumSummaryTokens` 128 floor.
+- No default value changed: `keepRecentTurns: Int = 4, maxChunkTokens: Int = 2000, summaryTokenRatio: Double = 0.25` at `Summarization.swift:157`, `minimumSummaryTokens = 128` at `:146`; the commit changed only `///` lines in that file.
+- The `makeModelAssistedFoldFixture()` extraction does not weaken the two pre-existing tests it converted. Their inputs grew (5600 → 8400 chars per field) because each turn's text now names its index, but the budget is derived from the transcript, each old turn still exceeds the default 2000 chunk ceiling so the 2-map-plus-1-reduce call count holds, and the oversized-summary test is sized off `tokensBefore`. Every assertion is preserved; `#expect(entries.first == instructions)` became `#expect(entries.first == TranscriptFixtures.makeInstructions())`, which is value-identical because that fixture is deterministic.
+- DocC is correct on both halves. All 24 symbol links use the external labels `compact(_:prompt:budget:summarizer:summarization:pendingRuns:)` with zero stale references left, and the `- Parameter` keys at `Compactor.swift:110-130` use the internal names in declaration order — including `transcript` for the `_`-labelled first parameter and the new `summarization` key. This is the half `check-doc-links.py` cannot see, and it is right.
+- The engine returned 6 findings, all against test code that pre-dates this commit (`CompactionEvaluation.swift` from `598fc24`/`bda41be`, `RoutedSessionCompactTests.swift` from `5a4a048`); this commit changed only `///` symbol-link lines in both files. #phase-1
