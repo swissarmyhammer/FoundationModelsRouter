@@ -304,12 +304,7 @@ struct HumanWaitGateTests {
     ///   - condition: The observable effect that says the run got there.
     /// - Returns: Whether the run got there inside the bound.
     private static func finished(_ label: String, when condition: @Sendable () async -> Bool) async -> Bool {
-        await BoundedWait.spin(until: condition)
-        guard await condition() else {
-            Issue.record("\(label) never finished: it is still parked, so something it waits on was never released")
-            return false
-        }
-        return true
+        await BoundedWait.conditionReached("the end of \(label)", when: condition)
     }
 
     /// The value `task` produced, awaited only once `condition` shows the run
@@ -394,8 +389,9 @@ struct HumanWaitGateTests {
     }
 
     /// Whether one further ordinary turn on `session` runs to completion,
-    /// observed through `observer` under a bounded spin rather than by awaiting
-    /// the turn.
+    /// observed through `observer` under ``BoundedWait``'s bound rather than by
+    /// awaiting the turn, recording an issue when that turn never reaches the
+    /// model.
     ///
     /// The indirection is the point: a regression that strands a generation permit
     /// parks every later turn over that model forever, so awaiting such a turn
@@ -407,8 +403,10 @@ struct HumanWaitGateTests {
         prompt: String = "after"
     ) async -> Bool {
         let task = Task { try await session.respond(to: prompt) }
-        await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
-        guard await observer.exited.contains(prompt) else {
+        let reachedTheModel = await BoundedWait.conditionReached("the follow-up turn \(prompt) leaving the model") {
+            await observer.exited.contains(prompt)
+        }
+        guard reachedTheModel else {
             // Never admitted to the model at all — parked on a gate. Cancelling
             // will not unpark it (``AsyncSemaphore/wait()`` ignores cancellation
             // by design), but the suite must not await it either.

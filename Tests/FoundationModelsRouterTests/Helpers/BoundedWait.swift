@@ -52,23 +52,41 @@ enum BoundedWait {
         }
     }
 
+    /// Whether `condition` held inside ``spin(until:)``'s bound, recording an
+    /// issue naming `label` when it never did.
+    ///
+    /// The one bounded observation every wait in these tests is built from: spin
+    /// for the condition, read it once more, then report rather than wait on
+    /// something that is never going to happen. Nothing here is specific to a
+    /// semaphore, a task, or a turn, so each of those observes through this.
+    ///
+    /// - Parameters:
+    ///   - label: What should have happened, named in the recorded issue.
+    ///   - condition: The observable effect that says it happened.
+    /// - Returns: Whether the condition held inside the bound.
+    static func conditionReached(_ label: String, when condition: @Sendable () async -> Bool) async -> Bool {
+        await spin(until: condition)
+        guard await condition() else {
+            Issue.record("\(label) was never observed inside the bound, so the code that makes it happen never ran")
+            return false
+        }
+        return true
+    }
+
     /// Whether `semaphore` carried a signal inside the bound, recording an issue
     /// naming `label` when it never did.
     ///
     /// The permit is left where it is, for a caller that only wants to know
-    /// whether the thing it names happened.
+    /// whether the thing it names happened. The observed reading is
+    /// ``AsyncSemaphore/availablePermits``, which does not suspend, so the
+    /// single-consumer precondition above is what a later `wait()` rests on.
     ///
     /// - Parameters:
     ///   - semaphore: A semaphore something else signals to report progress.
     ///   - label: What the signal means, named in the recorded issue.
     /// - Returns: Whether a permit appeared inside the bound.
     static func signalArrived(_ semaphore: AsyncSemaphore, named label: String) async -> Bool {
-        await spin(until: { semaphore.availablePermits > 0 })
-        guard semaphore.availablePermits > 0 else {
-            Issue.record("\(label) was never signalled, so the code that signals it never ran")
-            return false
-        }
-        return true
+        await conditionReached(label, when: { semaphore.availablePermits > 0 })
     }
 
     /// Takes `semaphore`'s signal, once that signal is provably there — the
