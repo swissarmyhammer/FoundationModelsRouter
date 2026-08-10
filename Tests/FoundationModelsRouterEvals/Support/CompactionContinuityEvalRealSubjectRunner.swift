@@ -1,5 +1,4 @@
 import Foundation
-import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -46,11 +45,6 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
     private func container() async throws -> MLXFoundationModelsContainer {
         if let loaded { return loaded }
-        // See `CompactionEvalRealSubjectRunner.container()`: each gated eval
-        // runner installs the metallib symlink at its own GPU entry point,
-        // because `.evaluates(...)` does its work in a `TestScoping` trait
-        // that runs ahead of the `@Test` body.
-        _ = MetalLibraryTestBootstrap.ensureColocatedMetallib
         // Decoding is pinned to greedy. The provider default samples at
         // temperature 0.6 from MLX's process-global PRNG, which seeds itself
         // from the clock, so every run of this evaluation drew different

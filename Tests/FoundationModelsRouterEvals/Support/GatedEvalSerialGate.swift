@@ -1,3 +1,4 @@
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -57,10 +58,12 @@ import Testing
 ///
 /// This permit covers this target only, and the sibling permit covers that one
 /// only — `FoundationModelsRouterEvals` is a separate module in a separate
-/// `swift test` process, so neither gate can see the other. Unlike
-/// `GatedSuiteSerialGate`, this gate's initializer does not run
-/// ``MetalLibraryTestBootstrap``: each eval runner already installs that
-/// symlink at its own GPU entry point, inside the model load itself.
+/// `swift test` process, so neither gate can see the other, and
+/// ``MetalLibraryTestBootstrap`` has to run once in each of them. Both targets
+/// now run it from the same place: the suite-scoped trait every gated suite
+/// carries. See
+/// ``GatedEvalResidencyTrait/provideScope(for:testCase:performing:)``, and
+/// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests`.
 enum GatedEvalSerialGate {
     /// The target-wide permit every gated eval suite holds for its duration.
     static let shared = AsyncSemaphore(value: 1)
@@ -108,9 +111,17 @@ struct GatedEvalResidencyTrait: SuiteTrait, TestScoping {
         test.isSuite ? self : nil
     }
 
-    /// Runs the suite holding ``GatedEvalSerialGate/shared``, evicting
-    /// ``runner``'s model before the permit is released whether the suite
-    /// succeeded or threw.
+    /// Installs the metallib symlink, then runs the suite holding
+    /// ``GatedEvalSerialGate/shared``, evicting ``runner``'s model before the
+    /// permit is released whether the suite succeeded or threw.
+    ///
+    /// This scope is the whole target's single metallib trigger. It is the
+    /// outermost thing a gated eval suite runs, so the symlink is in place
+    /// before `.evaluates(...)` — itself a `TestScoping` trait, which runs the
+    /// entire evaluation, model load included, ahead of the `@Test` body —
+    /// reaches the GPU. Triggering from a runner's own model load worked too,
+    /// but only for the runners that remembered to; this trigger covers a new
+    /// gated eval suite whether or not its author knows the symlink exists.
     ///
     /// - Parameters:
     ///   - test: The suite being run.
@@ -124,6 +135,7 @@ struct GatedEvalResidencyTrait: SuiteTrait, TestScoping {
         testCase: Test.Case?,
         performing function: @Sendable () async throws -> Void
     ) async throws {
+        _ = MetalLibraryTestBootstrap.ensureColocatedMetallib
         try await GatedEvalSerialGate.shared.withPermit {
             let outcome: Result<Void, any Error>
             do {

@@ -206,15 +206,14 @@ private struct DownloadObservingLoader: ModelLoader {
     "Gated real-model integration (milestone 7)",
     .serialized,
     .timeLimit(.minutes(30)),
-    .enabled(if: integrationEnabled)
+    .enabled(if: integrationEnabled),
+    .exclusiveRealModel
 )
 struct IntegrationTests {
     /// Resolves the real profile and asserts every live capability against it.
     @Test("resolve real profile, then generate, embed, guide, fork, and record")
     @MainActor
     func endToEnd() async throws {
-        await GatedSuiteSerialGate.shared.wait()
-        defer { GatedSuiteSerialGate.shared.signal() }
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {

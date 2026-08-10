@@ -48,7 +48,8 @@ private let sessionBackendTinyModel: ModelRef = RealModels.standard
     "Gated real-model coverage: MLXFoundationModelsSessionBackend (milestone 7)",
     .serialized,
     .timeLimit(.minutes(15)),
-    .enabled(if: sessionBackendIntegrationEnabled)
+    .enabled(if: sessionBackendIntegrationEnabled),
+    .exclusiveRealModel
 )
 struct LanguageModelSessionBackendIntegrationTests {
     /// Loads the tiny model directly through a real ``LiveModelLoader`` and
@@ -69,7 +70,6 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("a second respond() call on the same backend sees the first turn's content in context")
     func secondRespondSeesPriorTurn() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -95,12 +95,10 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(backend.session.transcript.count > entriesAfterFirstTurn)
 
         await container.model.evict()
-        }
     }
 
     @Test("makeFork() seeds the child's transcript from the parent's at fork time")
     func makeForkSeedsFromParentTranscript() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let parent = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -138,7 +136,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
 
         await container.model.evict()
-        }
     }
 
     // MARK: - Transcript-seeded factory (task bkhj6ya)
@@ -147,7 +144,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         "makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript"
     )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let prior = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -173,7 +169,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(reply.contains("42"))
 
         await container.model.evict()
-        }
     }
 
     // MARK: - Transcript growth and fork seeding (exact counts)
@@ -182,7 +177,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         "the transcript grows by exactly two entries (prompt + response) per turn across two respond() calls"
     )
     func transcriptGrowsByTwoEntriesPerTurn() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         // No instructions: an instructions-carrying session's transcript opens
         // with an extra `.instructions` entry, which would make the exact
@@ -200,12 +194,10 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(backend.session.transcript.count == 4)
 
         await container.model.evict()
-        }
     }
 
     @Test("a fork taken after one turn begins holding exactly that turn's two transcript entries")
     func forkAfterOneTurnHasExactlyTwoEntries() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let parent = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
@@ -219,14 +211,12 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(child.session.transcript.count == 2)
 
         await container.model.evict()
-        }
     }
 
     // MARK: - transcriptEntries() matches the test-only transcript accessor
 
     @Test("transcriptEntries().count equals session.transcript.count and grows across turns")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
@@ -246,7 +236,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(countAfterSecondTurn > countAfterFirstTurn)
 
         await container.model.evict()
-        }
     }
 
     // MARK: - Chokepoint fidelity: recorded entry kinds match the real transcript
@@ -417,7 +406,6 @@ struct LanguageModelSessionBackendIntegrationTests {
     @Test(
         "recorded entry kinds match the real session.transcript kinds one-for-one after a live turn")
     func recordedEntryKindsMatchSessionTranscriptKinds() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeChokepointHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -440,7 +428,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(!recordedEntryKinds.isEmpty)
 
         await harness.container.model.evict()
-        }
     }
 
     /// Mirrors ``recordedEntryKindsMatchSessionTranscriptKinds()`` but drives
@@ -452,7 +439,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         "recorded entry kinds match the real session.transcript kinds one-for-one after a live streaming turn"
     )
     func recordedEntryKindsMatchSessionTranscriptKindsStreaming() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeChokepointHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -477,7 +463,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(!recordedEntryKinds.isEmpty)
 
         await harness.container.model.evict()
-        }
     }
 
     // MARK: - Token usage metering (task v22nv1g)
@@ -495,7 +480,6 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// counts for a human to read.
     @Test("recorded tokensIn/tokensOut on the turn's response event exactly match the live backend's own usageTokenCounts() delta")
     func recordedTokenUsageMatchesLiveBackendDelta() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeChokepointHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -532,7 +516,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
 
         await harness.container.model.evict()
-        }
     }
 
     // MARK: - KV cache reuse across turns (the hard proof)
@@ -541,7 +524,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2's usage.input.cachedTokenCount is positive and approximates everything turn 1 processed — the KV cache is reused, not recomputed"
     )
     func secondTurnReusesFirstTurnsKVCache() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
@@ -596,7 +578,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
 
         await container.model.evict()
-        }
     }
 
     // MARK: - Timing signal (best-effort, non-fatal)
@@ -605,7 +586,6 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2 tends to be faster than turn 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
     )
     func secondTurnTendsToBeFasterThanFirst() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
         // A long instruction makes the fixed, cacheable prefix turn 2 should
         // reuse a much larger share of the input than a short one would, so a
@@ -639,6 +619,5 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
 
         await container.model.evict()
-        }
     }
 }

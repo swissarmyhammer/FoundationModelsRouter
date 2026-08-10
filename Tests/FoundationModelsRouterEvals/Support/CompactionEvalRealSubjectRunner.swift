@@ -1,6 +1,5 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -91,12 +90,6 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
     private func container() async throws -> MLXFoundationModelsContainer {
         if let loaded { return loaded }
-        // The one point this target's gated eval reaches the GPU, and so where
-        // it installs the metallib symlink `swift test`'s binary layout
-        // otherwise denies mlx-swift. `.evaluates(...)` runs the evaluation in
-        // a `TestScoping` trait, ahead of the `@Test` body, so the body is too
-        // late to be the trigger.
-        _ = MetalLibraryTestBootstrap.ensureColocatedMetallib
         let loader = LiveModelLoader(
             downloader: #hubDownloader(),
             tokenizerLoader: #huggingFaceTokenizerLoader()

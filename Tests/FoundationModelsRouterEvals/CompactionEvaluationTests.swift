@@ -406,7 +406,7 @@ private let compactionEvalRealEvaluation = CompactionEvaluation { entries, promp
 /// load failure that no gated suite in this repository could get past. That
 /// was wrong: the failure was a resource-colocation bug in `swift test`'s
 /// binary layout, which ``MetalLibraryTestBootstrap`` now fixes from inside
-/// ``CompactionEvalRealSubjectRunner``'s own model load.
+/// ``GatedEvalResidencyTrait``, this suite's own trait.
 ///
 /// ``GatedEvalResidencyTrait`` holds this suite's real model exclusive against
 /// the other gated eval suite and evicts it when the suite ends, and

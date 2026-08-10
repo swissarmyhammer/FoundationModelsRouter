@@ -45,10 +45,16 @@ public enum MetalLibraryTestBootstrap {
     /// Reading this property is the trigger — `static let` gives Swift's
     /// once-only, thread-safe initialization, so repeat reads cost nothing. It
     /// must be read before anything in the process evaluates a GPU-device
-    /// `MLXArray`. Each gated target triggers it at the one point every one of
-    /// its model-touching tests passes through: `GatedSuiteSerialGate.shared`
-    /// in `FoundationModelsRouterIntegrationTests`, and each real-subject
-    /// runner's `container()` in `FoundationModelsRouterEvals`.
+    /// `MLXArray`.
+    ///
+    /// Each gated target reads it from exactly one place, and that place is a
+    /// suite-scoped `TestScoping` trait rather than a test body:
+    /// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests`
+    /// and `GatedEvalResidencyTrait` in `FoundationModelsRouterEvals`. A trait
+    /// written once on the `@Suite` line cannot be forgotten by a test the
+    /// suite later gains, and a suite's scope wraps every test-level trait, so
+    /// the symlink is in place even for a trait that reaches the GPU ahead of
+    /// the `@Test` body — which is what `.evaluates(...)` does.
     public static let ensureColocatedMetallib: Void = {
         do {
             try installSymlinkIfNeeded()

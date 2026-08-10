@@ -67,7 +67,8 @@ private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
     "Gated real-model end-to-end coverage: restoreSessionTree(root:registry:) (task zcxnbst)",
     .serialized,
     .timeLimit(.minutes(20)),
-    .enabled(if: sessionTreeRestorationIntegrationEnabled)
+    .enabled(if: sessionTreeRestorationIntegrationEnabled),
+    .exclusiveRealModel
 )
 struct SessionTreeRestorationIntegrationTests {
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
@@ -291,7 +292,6 @@ struct SessionTreeRestorationIntegrationTests {
 
     @Test("a whole fork tree recorded, torn down, and restored by root id in a fresh Router matches on disk and recalls prior context live")
     func restoresWholeTreeAcrossSimulatedProcessBoundary() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionTreeRestorationIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
         let recordingsDir = FileManager.default.temporaryDirectory
@@ -355,7 +355,6 @@ struct SessionTreeRestorationIntegrationTests {
         #expect(reply.contains("42"))
 
         await container2.model.evict()
-        }
     }
 
     // MARK: - Tools threaded through restoration (task jkdae4b)
@@ -372,7 +371,6 @@ struct SessionTreeRestorationIntegrationTests {
     /// threaded to it, not silently ignoring it.
     @Test("restoreSessionTree(tools:) gives a restored session real tool-calling: a new turn on the restored root calls the echo tool")
     func restoredSessionCallsThreadedTool() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionTreeRestorationIntegrationTests-tools-cache-\(UUID().uuidString)", isDirectory: true)
         let recordingsDir = FileManager.default.temporaryDirectory
@@ -412,6 +410,5 @@ struct SessionTreeRestorationIntegrationTests {
         #expect(events.contains { $0.kind == .toolOutput })
 
         await container2.model.evict()
-        }
     }
 }

@@ -67,7 +67,8 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
     "Gated real-model end-to-end coverage: RoutedSession.compact(prompt:budget:) round trip (task rjvrgt9)",
     .serialized,
     .timeLimit(.minutes(20)),
-    .enabled(if: compactionRoundTripIntegrationEnabled)
+    .enabled(if: compactionRoundTripIntegrationEnabled),
+    .exclusiveRealModel
 )
 struct CompactionRoundTripIntegrationTests {
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
@@ -382,113 +383,111 @@ struct CompactionRoundTripIntegrationTests {
         "contextFill climbs, compact() folds at the 0.80 trigger preserving identity, a post-compact turn recalls the folded fact, restore yields the checkpointed window, and a further turn succeeds"
     )
     func compactionRoundTrip() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
-            let cacheDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent(
-                    "CompactionRoundTripIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
-            let recordingsDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent(
-                    "CompactionRoundTripIntegrationTests-recordings-\(UUID().uuidString)", isDirectory: true)
-            defer {
-                try? FileManager.default.removeItem(at: cacheDir)
-                try? FileManager.default.removeItem(at: recordingsDir)
-            }
-
-            let container = try await makeContainer()
-            let (router, profile) = buildProfile(
-                container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
-
-            let session = profile.standard.makeSession(instructions: Self.instructions)
-            let sessionId = session.id
-            let recordingDirectoryBefore = session.recordingDirectory
-
-            // 1. contextFill climbs across scripted turns.
-            var fills: [Double] = []
-            for turn in Self.scriptedTurns {
-                _ = try await session.respond(to: turn, maxTokens: Self.replyMaxTokens)
-                fills.append(await session.contextFill)
-                if fills.last! >= 0.80 { break }
-            }
-            #expect(fills.count > 1, "expected more than one turn before crossing the trigger")
-            #expect(
-                zip(fills, fills.dropFirst()).allSatisfy { $0 <= $1 },
-                "contextFill should never decrease turn over turn before compaction"
-            )
-            let fillBeforeCompaction = try #require(fills.last)
-            #expect(fillBeforeCompaction >= 0.80)
-
-            // 2. Compact at the trigger: shrinks fill, preserves identity.
-            let result = try await session.compact(budget: Self.foldBudget)
-            // Every stage, in order — not merely "something ran". A fold that
-            // stops after the deterministic stages synthesizes no summary
-            // entry, so it records no compaction checkpoint and step 4 below
-            // has nothing to restore; `stagesApplied` non-empty cannot tell
-            // that fold from this one. `Self.foldBudget` is what makes the
-            // full pipeline a property here rather than a coincidence.
-            #expect(
-                result.stagesApplied == [
-                    ToolOutputElision.stageName, TurnTruncation.stageName, Summarization.stageName,
-                ],
-                "expected the full pipeline through the model-assisted stage, got \(result.stagesApplied)"
-            )
-            #expect(result.summary != nil)
-            #expect(result.tokensAfter < result.tokensBefore)
-            // The margin, on the record. This suite is the only place a fold's
-            // saving is measured against a real model, and the bare inequality
-            // above hides how much of one it is — a fold that saved a handful
-            // of tokens passes it exactly as a fold that halved the transcript
-            // does (task zche4zy, where an unbounded summary left the saving
-            // near zero). Reported against `Self.foldBudget`'s 0.25 target,
-            // not the production default of 0.50 — see `foldBudget`.
-            print(
-                "[compactionRoundTrip] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
-                    + "saved=\(result.tokensBefore - result.tokensAfter)"
-            )
-            let fillAfterCompaction = await session.contextFill
-            #expect(fillAfterCompaction < fillBeforeCompaction)
-            #expect(session.id == sessionId)
-            #expect(session.recordingDirectory == recordingDirectoryBefore)
-            #expect(session.routerId == router.id)
-
-            // 3. A turn after compaction succeeds and recalls the folded
-            //    fact — proof the summary, not just the mechanism, worked.
-            let recall = try await session.respond(
-                to: "Without re-reading anything, what is the exact vault code from the project brief?",
-                maxTokens: 32
-            )
-            #expect(!recall.isEmpty)
-            #expect(recall.contains("CRIMSON-77"))
-
-            await container.model.evict()
-
-            // 4. Restore from disk — a fresh Router/profile over the same
-            //    recording root, simulating a new process — yields the
-            //    checkpointed live window: fewer entries than the full
-            //    recorded history.
-            let container2 = try await makeContainer()
-            let (_, profile2) = buildProfile(
-                id: router.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir
-            )
-            let restoredTree = try await profile2.standard.restoreSessionTree(root: sessionId)
-            let restoredSession = restoredTree.root
-            #expect(restoredSession.id == sessionId)
-
-            let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
-            let tree = try TranscriptTree.load(under: routerDirectory)
-            let checkpointedWindow = try tree.effectiveTranscript(forSession: sessionId)
-            let fullHistory = try tree.effectiveTranscript(forSession: sessionId, view: .fullHistory)
-            #expect(
-                checkpointedWindow.count < fullHistory.count,
-                "the checkpointed restore view should be strictly smaller than the full recorded history"
-            )
-
-            // 5. A further turn on the restored session succeeds.
-            let restoredReply = try await restoredSession.respond(
-                to: "Reply with just the word \"restored\".", maxTokens: 16)
-            #expect(!restoredReply.isEmpty)
-
-            await container2.model.evict()
+        let cacheDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "CompactionRoundTripIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
+        let recordingsDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "CompactionRoundTripIntegrationTests-recordings-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
         }
+
+        let container = try await makeContainer()
+        let (router, profile) = buildProfile(
+            container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+
+        let session = profile.standard.makeSession(instructions: Self.instructions)
+        let sessionId = session.id
+        let recordingDirectoryBefore = session.recordingDirectory
+
+        // 1. contextFill climbs across scripted turns.
+        var fills: [Double] = []
+        for turn in Self.scriptedTurns {
+            _ = try await session.respond(to: turn, maxTokens: Self.replyMaxTokens)
+            fills.append(await session.contextFill)
+            if fills.last! >= 0.80 { break }
+        }
+        #expect(fills.count > 1, "expected more than one turn before crossing the trigger")
+        #expect(
+            zip(fills, fills.dropFirst()).allSatisfy { $0 <= $1 },
+            "contextFill should never decrease turn over turn before compaction"
+        )
+        let fillBeforeCompaction = try #require(fills.last)
+        #expect(fillBeforeCompaction >= 0.80)
+
+        // 2. Compact at the trigger: shrinks fill, preserves identity.
+        let result = try await session.compact(budget: Self.foldBudget)
+        // Every stage, in order — not merely "something ran". A fold that
+        // stops after the deterministic stages synthesizes no summary
+        // entry, so it records no compaction checkpoint and step 4 below
+        // has nothing to restore; `stagesApplied` non-empty cannot tell
+        // that fold from this one. `Self.foldBudget` is what makes the
+        // full pipeline a property here rather than a coincidence.
+        #expect(
+            result.stagesApplied == [
+                ToolOutputElision.stageName, TurnTruncation.stageName, Summarization.stageName,
+            ],
+            "expected the full pipeline through the model-assisted stage, got \(result.stagesApplied)"
+        )
+        #expect(result.summary != nil)
+        #expect(result.tokensAfter < result.tokensBefore)
+        // The margin, on the record. This suite is the only place a fold's
+        // saving is measured against a real model, and the bare inequality
+        // above hides how much of one it is — a fold that saved a handful
+        // of tokens passes it exactly as a fold that halved the transcript
+        // does (task zche4zy, where an unbounded summary left the saving
+        // near zero). Reported against `Self.foldBudget`'s 0.25 target,
+        // not the production default of 0.50 — see `foldBudget`.
+        print(
+            "[compactionRoundTrip] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
+                + "saved=\(result.tokensBefore - result.tokensAfter)"
+        )
+        let fillAfterCompaction = await session.contextFill
+        #expect(fillAfterCompaction < fillBeforeCompaction)
+        #expect(session.id == sessionId)
+        #expect(session.recordingDirectory == recordingDirectoryBefore)
+        #expect(session.routerId == router.id)
+
+        // 3. A turn after compaction succeeds and recalls the folded
+        //    fact — proof the summary, not just the mechanism, worked.
+        let recall = try await session.respond(
+            to: "Without re-reading anything, what is the exact vault code from the project brief?",
+            maxTokens: 32
+        )
+        #expect(!recall.isEmpty)
+        #expect(recall.contains("CRIMSON-77"))
+
+        await container.model.evict()
+
+        // 4. Restore from disk — a fresh Router/profile over the same
+        //    recording root, simulating a new process — yields the
+        //    checkpointed live window: fewer entries than the full
+        //    recorded history.
+        let container2 = try await makeContainer()
+        let (_, profile2) = buildProfile(
+            id: router.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir
+        )
+        let restoredTree = try await profile2.standard.restoreSessionTree(root: sessionId)
+        let restoredSession = restoredTree.root
+        #expect(restoredSession.id == sessionId)
+
+        let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
+        let tree = try TranscriptTree.load(under: routerDirectory)
+        let checkpointedWindow = try tree.effectiveTranscript(forSession: sessionId)
+        let fullHistory = try tree.effectiveTranscript(forSession: sessionId, view: .fullHistory)
+        #expect(
+            checkpointedWindow.count < fullHistory.count,
+            "the checkpointed restore view should be strictly smaller than the full recorded history"
+        )
+
+        // 5. A further turn on the restored session succeeds.
+        let restoredReply = try await restoredSession.respond(
+            to: "Reply with just the word \"restored\".", maxTokens: 16)
+        #expect(!restoredReply.isEmpty)
+
+        await container2.model.evict()
     }
 }
 

@@ -51,7 +51,8 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
     "Gated real-model coverage: a rebuilt live LanguageModelSession over synthesized entries (task dws80ms)",
     .serialized,
     .timeLimit(.minutes(15)),
-    .enabled(if: compactionSpikeIntegrationEnabled)
+    .enabled(if: compactionSpikeIntegrationEnabled),
+    .exclusiveRealModel
 )
 struct CompactionSpikeIntegrationTests {
     /// Loads the tiny model directly through a real ``LiveModelLoader`` and
@@ -137,7 +138,6 @@ struct CompactionSpikeIntegrationTests {
     /// see the assertion below and this test's own inline result.
     @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and an elision-placeholder entry completes one turn without error")
     func rebuiltSessionOverSynthesizedTranscriptCompletesATurn() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let container = try await makeContainer()
 
         let synthesizedTranscript = try Self.makeSynthesizedTranscript()
@@ -171,6 +171,5 @@ struct CompactionSpikeIntegrationTests {
         #expect(Array(idsAfterTurn.prefix(synthesizedIds.count)) == synthesizedIds)
 
         await container.model.evict()
-        }
     }
 }

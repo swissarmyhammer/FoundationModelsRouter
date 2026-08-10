@@ -108,7 +108,8 @@ private let propagationProbeToolName = "context_probe"
     "Gated propagation probe: does the ToolContext task local survive respond()? (task c25mpnw)",
     .serialized,
     .timeLimit(.minutes(15)),
-    .enabled(if: propagationProbeIntegrationEnabled)
+    .enabled(if: propagationProbeIntegrationEnabled),
+    .exclusiveRealModel
 )
 struct PropagationProbeIntegrationTests {
     // MARK: - Probe tool
@@ -488,54 +489,50 @@ struct PropagationProbeIntegrationTests {
 
     @Test("MLX path: whether the ToolContext bound around respond() arrives inside call(arguments:)")
     func mlxPathPropagationVerdict() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
-            let container = try await makeUncontaminatedContainer()
-            let log = ProbeObservationLog()
-            let session = LanguageModelSession(
-                model: container.model,
-                tools: [ContextProbeTool(log: log)],
-                instructions: Self.probeInstructions
-            )
+        let container = try await makeUncontaminatedContainer()
+        let log = ProbeObservationLog()
+        let session = LanguageModelSession(
+            model: container.model,
+            tools: [ContextProbeTool(log: log)],
+            instructions: Self.probeInstructions
+        )
 
-            let propagated = try await Self.probeVerdict(
-                session: session, log: log, pathLabel: "MLX")
-            // The observed 2026-08-04 verdict, pinned: the task local
-            // propagates on the MLX path. A future toolchain that starts
-            // dispatching tools on a detached task must break this loudly.
-            #expect(propagated, "MLX path: the ToolContext task local must survive respond()")
+        let propagated = try await Self.probeVerdict(
+            session: session, log: log, pathLabel: "MLX")
+        // The observed 2026-08-04 verdict, pinned: the task local
+        // propagates on the MLX path. A future toolchain that starts
+        // dispatching tools on a detached task must break this loudly.
+        #expect(propagated, "MLX path: the ToolContext task local must survive respond()")
 
-            await container.model.evict()
-        }
+        await container.model.evict()
     }
 
     @Test(
         "system-model path: whether the ToolContext bound around respond() arrives inside call(arguments:)"
     )
     func systemModelPathPropagationVerdict() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
-            let systemModel = SystemLanguageModel.default
-            guard systemModel.isAvailable else {
-                // A hard failure, never a skip-as-pass: an unavailable system
-                // model means no system-path verdict was obtained.
-                Issue.record(
-                    "SystemLanguageModel.default is unavailable on this machine (\(systemModel.availability)) — no system-path verdict was obtained"
-                )
-                return
-            }
-            let log = ProbeObservationLog()
-            let session = LanguageModelSession(
-                model: systemModel,
-                tools: [ContextProbeTool(log: log)],
-                instructions: Self.probeInstructions
+        let systemModel = SystemLanguageModel.default
+        guard systemModel.isAvailable else {
+            // A hard failure, never a skip-as-pass: an unavailable system
+            // model means no system-path verdict was obtained.
+            Issue.record(
+                "SystemLanguageModel.default is unavailable on this machine (\(systemModel.availability)) — no system-path verdict was obtained"
             )
-
-            let propagated = try await Self.probeVerdict(
-                session: session, log: log, pathLabel: "system-model")
-            // The observed 2026-08-04 verdict, pinned: the task local
-            // propagates on the system-model path too.
-            #expect(
-                propagated,
-                "system-model path: the ToolContext task local must survive respond()")
+            return
         }
+        let log = ProbeObservationLog()
+        let session = LanguageModelSession(
+            model: systemModel,
+            tools: [ContextProbeTool(log: log)],
+            instructions: Self.probeInstructions
+        )
+
+        let propagated = try await Self.probeVerdict(
+            session: session, log: log, pathLabel: "system-model")
+        // The observed 2026-08-04 verdict, pinned: the task local
+        // propagates on the system-model path too.
+        #expect(
+            propagated,
+            "system-model path: the ToolContext task local must survive respond()")
     }
 }

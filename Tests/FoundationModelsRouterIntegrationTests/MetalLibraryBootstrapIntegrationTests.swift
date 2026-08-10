@@ -1,0 +1,69 @@
+import Foundation
+import MLX
+import Testing
+
+// MARK: - Gate
+
+/// Reuses the same opt-in gating pattern as the rest of this target: unset
+/// (the default, and on any CI/GPU-less box) this whole suite is skipped, so
+/// `swift test` stays green without network or a GPU. Kept as its own
+/// file-scoped constant rather than sharing another file's — Swift's
+/// top-level `private` is file-scoped, not target-scoped.
+private let metalLibraryBootstrapIntegrationEnvVar = "FM_ROUTER_INTEGRATION_TESTS"
+
+private var metalLibraryBootstrapIntegrationEnabled: Bool {
+    ProcessInfo.processInfo.environment[metalLibraryBootstrapIntegrationEnvVar] != nil
+}
+
+/// The wall-clock ceiling this suite runs under.
+///
+/// One minute rather than the 15 the model-loading suites take: this suite
+/// adds four integers and downloads nothing.
+private let metalLibraryBootstrapTimeLimitMinutes = 1
+
+/// The operands the probe below adds on the GPU.
+///
+/// Their values carry no meaning. Evaluating *any* GPU-device `MLXArray` is
+/// what aborts the process when the metallib symlink is missing, so the
+/// cheapest arithmetic there is makes the point at no cost.
+private let metalLibraryProbeOperands: [Int32] = [1, 2, 3, 4]
+
+// MARK: - Suite
+
+/// The demonstration that ``GatedRealModelSuiteTrait`` really is what installs
+/// the metallib symlink — not the discipline of the test bodies (task
+/// d48rmth).
+///
+/// Every other gated `@Test` in this target used to open by reading
+/// `GatedSuiteSerialGate.shared`, whose initializer ran
+/// ``MetalLibraryTestBootstrap``. Twenty bodies all remembered to; nothing
+/// enforced it, and a body that forgot did not fail an assertion — mlx-swift
+/// cannot find its shader library under a plain `swift test` until the symlink
+/// exists, so the first GPU-device `MLXArray` evaluation aborted the whole test
+/// process with "Failed to load the default metallib", taking every other
+/// suite's results with it.
+///
+/// This suite is that forgetful test, written on purpose. Its body touches no
+/// gate, no bootstrap, and no router type at all; it evaluates a GPU-device
+/// `MLXArray` and nothing else. The only thing standing between it and the
+/// abort is the `.exclusiveRealModel` trait on the `@Suite` line, so the suite
+/// passing is the proof that the trait, on its own, is enough — and the suite
+/// aborting the process is how a regression that removes the trait announces
+/// itself.
+///
+/// Deliberately not a hermetic (ungated) suite: it needs a Metal device, which
+/// is exactly what the gate exists to keep this target off of.
+@Suite(
+    "Gated coverage: a gated @Test with no per-test gate line reaches the GPU safely (task d48rmth)",
+    .serialized,
+    .timeLimit(.minutes(metalLibraryBootstrapTimeLimitMinutes)),
+    .enabled(if: metalLibraryBootstrapIntegrationEnabled),
+    .exclusiveRealModel
+)
+struct MetalLibraryBootstrapIntegrationTests {
+    @Test("a GPU-device MLXArray evaluation completes with no per-test bootstrap call")
+    func gpuEvaluationSucceedsWithoutAPerTestGateLine() {
+        let total = MLXArray(metalLibraryProbeOperands).sum(stream: .gpu)
+        #expect(total.item(Int32.self) == metalLibraryProbeOperands.reduce(0, +))
+    }
+}

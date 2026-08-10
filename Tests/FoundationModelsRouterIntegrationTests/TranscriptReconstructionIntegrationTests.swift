@@ -44,7 +44,8 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
     "Gated real-model coverage: effectiveTranscript reconstruction (task dw0zx8k)",
     .serialized,
     .timeLimit(.minutes(15)),
-    .enabled(if: transcriptReconstructionIntegrationEnabled)
+    .enabled(if: transcriptReconstructionIntegrationEnabled),
+    .exclusiveRealModel
 )
 struct TranscriptReconstructionIntegrationTests {
     /// Loads the tiny model directly through a real ``LiveModelLoader`` and
@@ -211,7 +212,6 @@ struct TranscriptReconstructionIntegrationTests {
         "reconstructed Transcript entry kinds and count match the live session.transcript after one live turn"
     )
     func reconstructedTranscriptMatchesLiveSessionTranscript() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -234,6 +234,5 @@ struct TranscriptReconstructionIntegrationTests {
         #expect(!reconstructedEntries.isEmpty)
 
         await harness.container.model.evict()
-        }
     }
 }

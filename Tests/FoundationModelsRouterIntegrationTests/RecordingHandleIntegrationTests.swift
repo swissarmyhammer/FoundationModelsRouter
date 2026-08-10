@@ -63,7 +63,8 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
     "Gated real-model integration: a tool-using turn over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",
     .serialized,
     .timeLimit(.minutes(15)),
-    .enabled(if: recordingHandleIntegrationEnabled)
+    .enabled(if: recordingHandleIntegrationEnabled),
+    .exclusiveRealModel
 )
 struct RecordingHandleIntegrationTests {
     // MARK: - Test tool
@@ -260,7 +261,6 @@ struct RecordingHandleIntegrationTests {
     /// matches the live session's own transcript kind-for-kind.
     @Test("a tool-using turn over a RecordingLanguageModel handle round-trips to disk: mid-turn back-fill before sync, final response only after sync(session.transcript)")
     func toolUsingTurnRoundTripsToDisk() async throws {
-        try await GatedSuiteSerialGate.shared.withPermit {
         let harness = try await makeHarness()
         defer {
             try? FileManager.default.removeItem(at: harness.recordingsDir)
@@ -335,6 +335,5 @@ struct RecordingHandleIntegrationTests {
         #expect(merged.map(\.kind) == afterSync.map(\.kind))
 
         await harness.container.model.evict()
-        }
     }
 }
