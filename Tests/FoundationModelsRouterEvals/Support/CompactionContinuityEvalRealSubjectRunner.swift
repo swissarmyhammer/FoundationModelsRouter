@@ -23,7 +23,7 @@ import Tokenizers
 /// uses (reimplemented here since that type lives in a different test target
 /// with no dependency in either direction) — so every sample gets its own
 /// isolated recording root without paying for a second model download.
-actor CompactionContinuityEvalRealSubjectRunner {
+actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     private var loaded: MLXFoundationModelsContainer?
 
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
@@ -258,9 +258,9 @@ actor CompactionContinuityEvalRealSubjectRunner {
         )
     }
 
-    /// Evicts the resident model, if one was ever loaded — called once after
-    /// the gated `@Test` has read its ``EvaluationResult``, mirroring
-    /// ``CompactionEvalRealSubjectRunner/evictIfLoaded()``.
+    /// Evicts the resident model, if one was ever loaded — called once by
+    /// ``GatedEvalResidencyTrait`` as the gated suite ends, however it ended,
+    /// mirroring ``CompactionEvalRealSubjectRunner/evictIfLoaded()``.
     func evictIfLoaded() async {
         guard let loaded else { return }
         await loaded.model.evict()

@@ -65,7 +65,7 @@ private actor BlankSlateSummarizer: CompactionSummarizer {
 /// exactly the seam that lets ``CompactionEvaluation`` be constructed
 /// synchronously (as a `.evaluates(...)` trait argument requires) while the
 /// actual load only happens the first time a sample's subject work runs.
-actor CompactionEvalRealSubjectRunner {
+actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     private var loaded: MLXFoundationModelsContainer?
 
     /// Every sample's recorded `FactRetention` evidence, appended by
@@ -173,9 +173,10 @@ actor CompactionEvalRealSubjectRunner {
     /// 24-sample run.
     private static let answerTokenCeiling = 64
 
-    /// Evicts the resident model, if one was ever loaded — called once after
-    /// the gated `@Test` has read its ``EvaluationResult``, mirroring every
-    /// other gated suite's own `container.model.evict()` teardown.
+    /// Evicts the resident model, if one was ever loaded — called once by
+    /// ``GatedEvalResidencyTrait`` as the gated suite ends, however it ended,
+    /// mirroring every other gated suite's own `container.model.evict()`
+    /// teardown.
     func evictIfLoaded() async {
         guard let loaded else { return }
         await loaded.model.evict()

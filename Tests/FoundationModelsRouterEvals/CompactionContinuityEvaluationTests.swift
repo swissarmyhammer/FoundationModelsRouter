@@ -235,7 +235,16 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 /// was wrong: the failure was a resource-colocation bug in `swift test`'s
 /// binary layout, which ``MetalLibraryTestBootstrap`` now fixes from inside
 /// ``CompactionContinuityEvalRealSubjectRunner``'s own model load.
-@Suite(.enabled(if: compactionContinuityIntegrationEnabled))
+///
+/// ``GatedEvalResidencyTrait`` holds this suite's real model exclusive against
+/// the other gated eval suite and evicts it when the suite ends, and
+/// ``gatedEvalSuiteTimeLimitMinutes`` bounds a hung real-model load — see
+/// ``GatedEvalSerialGate`` for why the target needs both.
+@Suite(
+    .enabled(if: compactionContinuityIntegrationEnabled),
+    .exclusiveResidentModel(of: compactionContinuityEvalRealSubjectRunner),
+    .timeLimit(.minutes(gatedEvalSuiteTimeLimitMinutes))
+)
 struct CompactionContinuityEvaluationIntegrationTests {
     @Test(
         "Compaction preserves session continuity across a multi-step task",
@@ -251,6 +260,5 @@ struct CompactionContinuityEvaluationIntegrationTests {
         // held for this actual run, not merely an authoring-time claim.
         #expect(result.aggregateValue(.mean(of: CompactionContinuityMetric.foldOccurred)) == 1.0)
         #expect(result.aggregateValue(.mean(of: CompactionContinuityMetric.answersCorrect)) >= 0.8)
-        await compactionContinuityEvalRealSubjectRunner.evictIfLoaded()
     }
 }

@@ -407,7 +407,16 @@ private let compactionEvalRealEvaluation = CompactionEvaluation { entries, promp
 /// was wrong: the failure was a resource-colocation bug in `swift test`'s
 /// binary layout, which ``MetalLibraryTestBootstrap`` now fixes from inside
 /// ``CompactionEvalRealSubjectRunner``'s own model load.
-@Suite(.enabled(if: compactionEvalsIntegrationEnabled))
+///
+/// ``GatedEvalResidencyTrait`` holds this suite's real model exclusive against
+/// the other gated eval suite and evicts it when the suite ends, and
+/// ``gatedEvalSuiteTimeLimitMinutes`` bounds a hung real-model load — see
+/// ``GatedEvalSerialGate`` for why the target needs both.
+@Suite(
+    .enabled(if: compactionEvalsIntegrationEnabled),
+    .exclusiveResidentModel(of: compactionEvalRealSubjectRunner),
+    .timeLimit(.minutes(gatedEvalSuiteTimeLimitMinutes))
+)
 struct CompactionEvaluationIntegrationTests {
     @Test(
         "Compaction retains pre-fold facts",
@@ -432,6 +441,5 @@ struct CompactionEvaluationIntegrationTests {
         }
 
         #expect(result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention)) >= 0.9)
-        await compactionEvalRealSubjectRunner.evictIfLoaded()
     }
 }
