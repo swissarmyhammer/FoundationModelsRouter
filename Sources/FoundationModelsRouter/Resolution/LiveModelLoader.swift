@@ -235,7 +235,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// `LanguageModelSession(model:tools:transcript:)`, which takes
     /// `some LanguageModel` — and widening it is what lets a deterministic,
     /// weightless `LanguageModel` conformance drive this exact backend, so
-    /// ``pumpStream(prompt:options:into:)`` and ``respond(to:schema:maxTokens:)``
+    /// ``streamResponseFragments(to:maxTokens:)`` and ``respond(to:schema:maxTokens:)``
     /// have coverage that needs no GPU (task ^w8dzvee, AC#5).
     private let model: any FoundationModels.LanguageModel
 
@@ -379,6 +379,18 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// before it, and only the last response is what
     /// ``respond(to:maxTokens:)`` returns.
     ///
+    /// Pull-based, like the protocol's default implementation: an independent
+    /// relay `Task` between ``liveSession``'s snapshot stream and this stream
+    /// is a second, separately-cancellable consumer. A cancellation that
+    /// propagates through `onTermination` can land after that task received a
+    /// snapshot but before it forwarded the fragment, and the delivered text
+    /// is dropped — a violation of "a cancelled stream is truncated, never
+    /// retracted" (the default implementation's doc comment in
+    /// LanguageModelSessionBackend.swift gives the full account). Pulling
+    /// straight from the snapshot stream's own iterator removes that second
+    /// consumer: this stream's only consumer is the same one the SDK stream
+    /// sees.
+    ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The response token ceiling, or `nil` for this backend's
@@ -391,45 +403,61 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ) -> AsyncThrowingStream<ResponseFragment, Error> {
         let options = GenerationOptions(
             samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? defaultMaxTokens)
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                await self.pumpStream(prompt: prompt, options: options, into: continuation)
-            }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
-        }
+        let fragments = SnapshotDeltaIterator(
+            liveSession.streamResponse(to: prompt, options: options)
+        ) { $0.content }
+        return AsyncThrowingStream { try await fragments.next() }
     }
 
-    /// Drives ``liveSession``'s cumulative-snapshot stream to completion.
+    /// Pulls ``liveSession``'s cumulative snapshots and returns the fragment
+    /// each snapshot adds, from whatever task calls ``next()``.
     ///
-    /// Forwards each snapshot's own new text into `continuation` and finishes
-    /// (or fails) it when the underlying stream ends.
+    /// The pull-based replacement for the relay-task pattern
+    /// ``streamResponseFragments(to:maxTokens:)`` removed (see its doc comment
+    /// for why the relay task is a correctness bug). Keeps the delta state
+    /// (``previous``) across calls, so each snapshot is measured against the
+    /// snapshot before it and a repeated snapshot yields no fragment.
     ///
-    /// Extracted out of ``streamResponseFragments(to:maxTokens:)`` so that
-    /// method's `AsyncThrowingStream` closure only has to spawn a `Task` and
-    /// await this helper — the do/catch, for-loop, and delta-check live here
-    /// instead of stacked five levels deep inside the stream-building closure.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to stream a response to.
-    ///   - options: The generation options to run under.
-    ///   - continuation: The continuation each fragment is yielded to.
-    private func pumpStream(
-        prompt: String,
-        options: GenerationOptions,
-        into continuation: AsyncThrowingStream<ResponseFragment, Error>.Continuation
-    ) async {
-        var previous = ""
-        do {
-            for try await snapshot in liveSession.streamResponse(to: prompt, options: options) {
-                let current = snapshot.content
-                if let fragment = Self.fragment(of: current, after: previous) {
-                    continuation.yield(fragment)
-                }
+    /// `@unchecked Sendable`: ``iterator`` and ``previous`` change without a
+    /// lock. This is sound only because an `AsyncThrowingStream` has exactly
+    /// one active reader at a time by contract — the same reasoning the
+    /// protocol extension's private `ChunkIterator` documents.
+    private final class SnapshotDeltaIterator<Snapshots: AsyncSequence>: @unchecked Sendable {
+        /// The snapshot stream's own iterator, driven by ``next()``'s caller.
+        private var iterator: Snapshots.AsyncIterator
+
+        /// Reads a snapshot's cumulative text.
+        private let content: (Snapshots.Element) -> String
+
+        /// The snapshot before the current one, or the empty string at the
+        /// start of the turn.
+        private var previous = ""
+
+        /// Creates an iterator that pulls from `snapshots`.
+        ///
+        /// - Parameters:
+        ///   - snapshots: The cumulative-snapshot stream to pull from.
+        ///   - content: Reads a snapshot's cumulative text.
+        init(_ snapshots: Snapshots, content: @escaping (Snapshots.Element) -> String) {
+            self.iterator = snapshots.makeAsyncIterator()
+            self.content = content
+        }
+
+        /// The next fragment, or `nil` when the snapshot stream ends.
+        ///
+        /// Skips a snapshot that repeats without a change, so a `nil` result
+        /// always means the stream ended.
+        ///
+        /// - Returns: The next fragment, or `nil` at the end of the stream.
+        /// - Throws: If the snapshot stream fails.
+        func next() async throws -> ResponseFragment? {
+            while let snapshot = try await iterator.next() {
+                let current = content(snapshot)
+                let fragment = MLXFoundationModelsSessionBackend.fragment(of: current, after: previous)
                 previous = current
+                if let fragment { return fragment }
             }
-            continuation.finish()
-        } catch {
-            continuation.finish(throwing: error)
+            return nil
         }
     }
 

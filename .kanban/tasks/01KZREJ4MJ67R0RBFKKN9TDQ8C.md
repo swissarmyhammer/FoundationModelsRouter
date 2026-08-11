@@ -106,6 +106,27 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift (each allow-duplication marker moved above its `///` doc block, so the doc attaches to the declaration again). Duplication tool: 0 findings over the 3 related files. `swift test`: 827 + 27 + 24 tests pass, exit 0; accepted noise only (BoundedWait known issue, vendored mlx warning). Both findings flipped to `- [x]`.
     - next: /review
   timestamp: 2026-08-11T17:46:47.243262+00:00
+- actor: claude-code
+  id: 01kzs2dr8jjfkysnjamjd667e5
+  text: 'step: review — the review engine examined the scoped range HEAD~1..HEAD (commit 494ab31). Result: 1 confirmed finding (8 validators, 0 refuted, 0 failed). The MLX override of `streamResponseFragments` (Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:388) keeps the relay-task pattern and thus keeps the cancellation race that commit 494ab31 removed from the protocol default. A new checklist "## Review Findings (2026-08-11 13:43)" is in the description. The task stays in the review column.'
+  timestamp: 2026-08-11T18:47:42.098532+00:00
+- actor: claude-code
+  id: 01kzs2ec3d2hq0sy54b20jxjqy
+  text: |-
+    ### finish iteration 3 — findings
+    - implement: changed — markers moved above the doc blocks (2 files), doc findings resolved
+    - test: green — flaky cancellation test root-caused and fixed in LanguageModelSessionBackend.swift (pull-based ChunkIterator replaces the relay task); proven by an 80,000-trial standalone repro (0 failures) and 40 green full-suite runs. Per user direction, no more soak loops after this.
+    - commit: changed — 494ab31
+    - review: findings — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:388, the MLXFoundationModelsSessionBackend override keeps the relay-task pattern and thus the same cancellation race the default lost. Prior findings sections (12:20, 12:38) stay checked.
+  timestamp: 2026-08-11T18:48:02.413672+00:00
+- actor: claude-code
+  id: 01kzs30cywgpvvpdkghrn0vvdh
+  text: |-
+    step: implement
+    outcome: changed
+    evidence: Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift — the streamResponseFragments override is now pull-based (private nested SnapshotDeltaIterator, AsyncThrowingStream(unfolding:)); the relay Task, its onTermination cancel, and pumpStream are removed; the restartsResponse delta logic (Self.fragment(of:after:), previous-snapshot state) is kept identical; one stale ``pumpStream`` doc link updated. swift build clean (only the accepted vendored mlx-swift "missing creator" warning). One swift test run: 827 tests in 78 suites passed with 1 known issue (accepted BoundedWait), plus 27 tests in 11 suites and 24 tests in 5 suites, all passed, exit code 0.
+    task: ^n9tdq8c
+  timestamp: 2026-08-11T18:57:53.116115+00:00
 position_column: doing
 position_ordinal: '8180'
 title: One SessionConfiguration value drives makeSession
@@ -139,4 +160,8 @@ A plain struct, not a result builder: flat configuration is what structs are for
 ## Review Findings (2026-08-11 12:38)
 
 - [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:259` — public declarations should be documented.
-- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:159` — public declarations should be documented. #api
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:159` — public declarations should be documented.
+
+## Review Findings (2026-08-11 13:43)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:388` — the `MLXFoundationModelsSessionBackend` override of `streamResponseFragments` keeps the relay-task pattern (a `Task` pumps snapshots into a continuation, and `onTermination` cancels the task). Commit 494ab31 changed only the protocol's default implementation (Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift:277-286) to the pull-based `ChunkIterator`. The override has the same cancellation race: when the propagated cancellation lands, a chunk that the relay task received, but did not yet forward, is lost. Apply the same pull-based pattern to the override. #api
