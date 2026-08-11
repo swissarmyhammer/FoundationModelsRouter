@@ -1,6 +1,8 @@
 ---
 assignees:
 - claude-code
+depends_on:
+- 01KZR96MYJ1M1XGB8855AKY6XR
 position_column: todo
 position_ordinal: 8f80
 title: Carry full tool output segments in ToolCallEntry

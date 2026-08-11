@@ -84,7 +84,7 @@ comments:
     - not run: the gated suites (`FM_ROUTER_INTEGRATION_TESTS=1`, `MULTITOOL_INTEGRATION=1`), per the task instruction; `swift format` (never run in this repo); `Scripts/check-doc-links.py` (deleted).
     - next: `/review`.
   timestamp: 2026-08-11T12:14:16.968099+00:00
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: Detached tool runs need a path back into the transcript — today they return as prompt text
 ---

@@ -215,6 +215,54 @@ comments:
        red for exactly this reason. Anyone reading a red `RealToolTurnComparison` run should check the
        printed transcript for `toolCalls` before looking for a Router defect.
   timestamp: 2026-08-11T11:29:50.260181+00:00
+- actor: claude-code
+  id: 01kzr9hhm6f427asxngs61hfxx
+  text: |-
+    ### Hard evidence, replacing the failure-rate approach
+
+    `^w8dzvee`'s diagnosis produced direct observations of the real model that are far more useful than the failure rate I was chasing. Recording them here because they are this card's actual subject.
+
+    **Observed over 8 real turns on a fixed prompt with sampling pinned to `.greedy` (temperature 0, argmax — verified in `SamplingModeMapper.resolveSamplingParameters`):**
+
+    | turn | tool rounds |
+    |------|-------------|
+    | A-respond / A-stream | 2 / 2 — compliant |
+    | B-respond | **11** — rounds 5-10 all repeat the same call |
+    | B-stream | 2 |
+    | C-respond / C-stream | 3 / 2 |
+    | D-respond | **1** — beta only |
+    | D-stream | **1** — alpha only |
+
+    Plus, in a later gated run, a turn where the model dispatched **zero** tools on the respond surface.
+
+    **Three distinct failure modes, none of which is Router's:**
+    1. **Under-calling** — one call when the prompt asks for two.
+    2. **Runaway** — 11 rounds, repeating an identical call six times.
+    3. **Fabrication** — on the two 1-round turns the model answered with `MARKER-9B2C-ONE`/`MARKER-9B2C-TWO`, and in the zero-tool run with `12345`/`67890`. **The scenario's marker prefix is `MARKER-7F3A-`.** The model invented identifiers for tools it never called and presented them as results.
+
+    That third one is this card's original symptom seen directly: a model narrating a tool call it never made. It is not cross-suite prompt-cache contamination — it happens on a fresh turn at temperature 0.
+
+    **Router was clean in every one of those turns**: one `.toolOutput` per announced call, every output resolving to its call, `completed == called` by set and count, no failures, and each surface's answer equal to its own transcript's final `.response`.
+
+    **Consequence for this card's method.** The trajectory is not reproducible under greedy, so "does suite X fail" is not a property of the code — it is a sample from a distribution. Any future work here must measure dispatch reliability as a **rate over many turns**, with the machine otherwise idle, and must not treat a single run as signal. Equally, the 8-in-13 baseline I recorded earlier is not a code property and should not be compared against post-fix runs.
+
+    **Re-scoping.** The card is framed as "suites lose their tool call when they inherit another suite's prompt cache". The prompt-cache hypothesis is now *unsupported* as the primary cause — the same failures occur on isolated fresh turns. What is established is that this model dispatches tools unreliably. Whether the prompt cache makes it *worse* remains open and would need the controlled comparison this card originally described, on a quiet machine.
+
+    Left in `todo`. Not closed, not worked further here.
+  timestamp: 2026-08-11T11:32:51.974332+00:00
+- actor: claude-code
+  id: 01kzr9mawt155r6c4hs9m7w490
+  text: |-
+    ### AC#5 satisfied — both fork items filed on the mlx-swift-lm board
+
+    Filed on `/Users/wballard/github/swissarmyhammer/mlx-swift-lm/.kanban`, not here, per the standing rule that anything needing a change in the vendored fork belongs on that repo's board. Nothing in this repo was modified to do it.
+
+    1. **`^qsv1415` — "Make prompt-cache clearing available without evicting model weights."** `MLXLanguageModel.removePromptCache(modelID:)` (`MLXLanguageModel.swift:843`) is not public; the only public lever is `evictAll()` (`:857`), which also frees model weights. So a suite wanting a clean cache per case must pay a full 27B reload, which makes per-suite cache isolation impractical. Asks for the internal function, or an equivalent, to be exposed.
+
+    2. **"Can a prefix-matched prompt-cache chunk chain leave a session acting as though a tool call already happened?"** — filed deliberately as a **question with evidence, not an asserted defect**. It carries the fabricated-marker observations (`MARKER-9B2C-*` against a `MARKER-7F3A-` prefix; `12345`/`67890` on a zero-tool turn) and the note that this repo's own `removePromptCache` doc already describes untrustworthy entries whose generated content cannot be reconciled with the cache offset. It states plainly that the symptom is equally explained by the model simply being unreliable at dispatch, and that the evidence here cannot separate the two — so someone with visibility into chunk resolution should rule it in or out.
+
+    Both cards record that they were filed from this one. Neither is work for this repo.
+  timestamp: 2026-08-11T11:34:23.386033+00:00
 position_column: todo
 position_ordinal: 8a80
 title: Gated tool-calling suites lose their tool call or their recall when they inherit another suite's prompt cache

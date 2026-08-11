@@ -3,6 +3,7 @@ assignees:
 - claude-code
 depends_on:
 - 01KZR9658E5CEVBK177RT024HY
+- 01KZR96MYJ1M1XGB8855AKY6XR
 position_column: todo
 position_ordinal: '9080'
 title: 'Grouped view: attach adjacent context to a tool call'
