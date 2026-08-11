@@ -110,8 +110,41 @@ comments:
     - next: ready for review/commit
     task: ^h71b8yv
   timestamp: 2026-08-10T14:54:48.352141+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzp3b9rwrt23dpbanv8dhsmv
+  text: |-
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (371d23c), task-mode, iteration 2
+    - evidence: engine returned 1 finding, 1 confirmed, 1 refuted, 9 validators attempted, 0 failed, 0 skipped. The 1 finding is DROPPED under the skill's written exception (see below), so zero recordable new findings; the 1 prior finding item is checked and verified closed.
+
+    **The dropped finding.** `Tests/FoundationModelsRouterTests/HumanWaitGateTests.swift:400` — the doc comment on `followUpTurnCompletes` has no formal `- Parameters:` block and no `- Returns:` line, and the prose does not name `prompt`. Dropped because its subject is test code that already existed: `followUpTurnCompletes` is present in HEAD~1 at line 404, and its doc comment there carries the same missing structure. This delta reworded three lines of prose in that comment; it did not create the gap. The skill's blanket exception names both the act (`re-docstringing`) and the validator class (`missing-docs`). This is the opposite of iteration 1, where `finished()` was absent from HEAD~1 and so was NOT shielded.
+
+    **Prior finding verified closed, not merely claimed.** The `2026-08-10 09:38` item said `finished()` reimplements `signalArrived()`'s spin / re-check / record algorithm. `finished(_:when:)` is now one line: `await BoundedWait.conditionReached("the end of \(label)", when: condition)`. The engine raised no duplication finding against the file this pass.
+
+    **Load-bearing invariant survives.** `enum BoundedWait`'s doc comment still carries the single-consumer precondition word for word ("the semaphore has a single consumer: the test task doing the observing. Nobody else may take the permit between the reading and the `wait()`"). `signalArrived` still observes through the NON-SUSPENDING `availablePermits` read, and that read is still literally in `signalArrived`'s own body one line below the precondition text, so the new indirection does not hide it. `yieldLimit = 100_000` unchanged.
+
+    **The second swept site.** `followUpTurnCompletes` previously spun, re-checked, and returned `false` recording NOTHING — a silent failure. It now records a named issue. The diagnostic is useful: it names the operation, states the bound was exhausted, and concludes the code never ran. One wording observation, NOT a finding, for the author's judgement: all 5 call sites use the default prompt `after`, so the message renders "the follow-up turn after leaving the model was never observed inside the bound…", where the bare interpolated prompt reads as a temporal clause rather than as a value.
+
+    **Waivers.** The acronym-casing waiver (`RAM`/`JSON`/`LLM`/`ULID` stay Swift-idiomatic) was not needed — the engine raised no casing finding this pass. Nothing else waived.
+
+    **Not filed, per scope.** No finding against `AnswerDrivenRun`'s wall-clock poll, the 5 bare `spin(until:)` ordering barriers, or the four other test files still carrying private `spin(until:)` copies. The engine raised none against them either.
+    - next: task advances to `done`
+    task: ^h71b8yv
+  timestamp: 2026-08-10T15:06:07.004424+00:00
+- actor: claude-code
+  id: 01kzp3dqf6tr5n323jjhh8fz73
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files (+33/-17). New `BoundedWait.conditionReached(_:when:)` holds spin-until-condition / re-check / record-and-give-up in one place; `signalArrived` calls it with `{ semaphore.availablePermits > 0 }`; `finished(_:when:)` is now one line through it. **The sweep found two sites, not the one cited**: `followUpTurnCompletes` carried the same algorithm minus the `Issue.record`, so it spun, gave up, and failed SILENTLY — it now records a named issue.
+    - Deliberately NOT unified, with reasons: `AnswerDrivenRun` keeps its wall-clock poll (the answer crosses an actor under load; a scheduler-hop bound is the wrong instrument) — 0-line diff confirmed. The five bare `spin(until:)` calls remain as ordering barriers that duplicate no algorithm.
+    - test: green — swift test 778/72 + 24/9 + 24/5, 0 failures, no new warnings. `git diff -- Sources` empty (both earlier fault injections gone). Invariant verified intact: the `enum BoundedWait` doc comment still states the single-consumer precondition verbatim, `signalArrived` still observes via the NON-SUSPENDING `availablePermits` read rather than a suspending wait, and `yieldLimit = 100_000` is unchanged.
+    - commit: 371d23c — 4 files, +115/-18, local only
+    - review: clean — zero new findings; the prior item verified closed (`finished()` is now a single delegating line). Engine: 9 validators, 0 failed. One finding dropped under the written pre-existing-test rule (HumanWaitGateTests.swift:400 docstring gap — checked against `git show HEAD~1`, present there at line 404 with the identical gap, so this delta did not create it). That is the mirror of iteration 1, where `finished()` was absent from HEAD~1 and therefore was NOT shielded — the exception was applied on evidence in both directions.
+    - Reviewer's judgement on the indirection: it does not hide the invariant, because the `availablePermits` read and the precondition text remain adjacent in the same file.
+    - next: task moved to done. Small future improvement noted, not filed: all five call sites use the default prompt `after`, so the new message reads "the follow-up turn after leaving the model was never observed…" — the bare interpolated prompt parses as a temporal clause; quoting it would disambiguate.
+  timestamp: 2026-08-10T15:07:26.566166+00:00
+position_column: done
+position_ordinal: fd80
 title: SessionOutboxTests and HumanWaitGateTests hang instead of failing when their wakeup path breaks
 ---
 Found while working `^6fszv54`, which bounded every test that awaits a **delivered elicitation answer**. Two further families of unbounded wait sit outside that card's cause and are still live.

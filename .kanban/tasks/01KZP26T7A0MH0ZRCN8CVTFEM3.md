@@ -233,8 +233,37 @@ comments:
     outcome: green
     evidence: swift test — 780/73 + 24/9 + 24/5 suites, 0 failures, only pre-existing baseline warning; numstat 135/0 on the doc file; Sources diff empty; DocC Parameter keys and symbol-link labels verified correct in both directions; check-doc-links.py exit 0 (0 stale, 0 unresolved)
   timestamp: 2026-08-10T16:32:50.202353+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzp8ga0kan0enyyzsbxk1ed1
+  text: |-
+    ### commit — changed
+    - evidence: 4a32675 docs(tests): document remaining ToolOutputFeedbackTests helpers (^cvtfem3); 3 files changed, 275 insertions(+) (Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift 135 ins/0 del, plus the task's own kanban card)
+    - next: none — commit done, not pushed
+  timestamp: 2026-08-10T16:36:13.971910+00:00
+- actor: claude-code
+  id: 01kzp8v4w5cqcm6g0bgmpc2ryx
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (4a32675) — 0 findings, 0 confirmed, 1 refuted, 9 validators attempted, 0 failed, 0 skipped. All 3 prior findings from the 2026-08-10 11:13 section verified closed in the file, not accepted on claim: `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift` now documents `makeFork(tools:)`, `transcriptEntries()`, and `usageTokenCounts()`. The `usageTokenCounts` doc claim "Never `nil`" matches the code — the body returns an unconditional tuple from the non-optional `liveSession.usage`.
+    - scope: documentation only, 135 insertions and 0 deletions, one file plus the task card. No existing line changed, so the test behaviour and assertions stay byte-identical to iteration 1.
+    - waivers: none applied. The engine raised no acronym-casing finding, so the project's `RAM`/`JSON`/`LLM`/`ULID` rule was not needed this pass.
+    - next: task moved to done. No open findings.
+  timestamp: 2026-08-10T16:42:09.157155+00:00
+- actor: claude-code
+  id: 01kzp8wzh0dt34fn98yqgfbvv8
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file, `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift`, 419 → 554 lines. **135 insertions, 0 deletions**, so no existing line was modified and the fault-injection-validated behaviour and assertions are byte-identical to iteration 1.
+    - **The review cited 3 violations; the file had 15.** Beyond `makeFork`, `transcriptEntries`, `usageTokenCounts`, the sweep documented `MarkerEmittingTool.name`/`.description`/`.call(arguments:)`, five more backend methods, and all four `makeSession` overloads. The two `@Test` methods stay bare, which the rule permits.
+    - Rule read before writing, and it mattered: `missing-docs` exempts test functions but has a yield clause — its exemptions give way to stricter language rules, so the "simple getter" carve-out does not shield `name`/`description`. The DocC distinction was applied in BOTH directions: `- Parameter` keys use internal names (`transcript` on `replacingTranscript(_ transcript:)`, `prompt` on `respond(to prompt:)`), symbol links keep external labels (``makeFork(tools:)``, ``RoutedSession/respond(to:)``).
+    - test: green — swift test 780/73 + 24/9 + 24/5, 0 failures, no new warnings. `git diff -- Sources` empty. `numstat` 135/0 confirms documentation-only. `check-doc-links.py` exit 0 — 1283 links scanned, 0 stale, 0 unresolved. Comment quality spot-checked against `LanguageModelSessionBackend.swift` and `ModelLoader.swift`: both protocols' default extensions genuinely DO drop `tools`, so the fixture's note that its overrides exist "rather than left to the protocol's tool-dropping default" documents a real trap — the same class of fixture defect iteration 1 hit once with `LanguageModelCapabilities([])`.
+    - **No lint before/after count is available and none was invented** — this repo has no `.swiftlint.yml`, `.validators/` is empty, and `missing-docs` is the review engine's model-driven validator rather than a static linter.
+    - commit: 4a32675 — 3 files, +275, local only
+    - review: clean — zero new findings; all 3 prior items verified closed rather than accepted. Engine: 9 validators, 0 failed, 1 refuted. Checked specifically for a comment asserting behaviour the code lacks: the one falsifiable claim, `usageTokenCounts`'s "Never `nil`", holds — the body reads the non-optional `liveSession.usage` and returns unconditionally.
+    - next: task moved to done. The diagnostic result stands: the hypothesis is wrong at this level, H4's premise is false on the `RoutedSession` path, H5 is not the cause, H1 is unreachable in this harness, and the test remains as a regression guard on both surfaces.
+  timestamp: 2026-08-10T16:43:09.216232+00:00
+position_column: done
+position_ordinal: fe80
 title: '[Router] TDD: prove streamEvents feeds tool output back into generation'
 ---
 FOR THE ROUTER AGENT. Filed from FoundationModelsMultitool, where a real-model suite scores **0/4 on a `RoutedSession`** and **1/4–3/4 on a plain `LanguageModelSession`** with the same tools, same prompts, same model, same commit.
@@ -401,3 +430,70 @@ Reproduction unchanged: FoundationModelsMultitool, `MULTITOOL_INTEGRATION=1 swif
 - [x] `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift:284` — Public method `makeFork` lacks documentation comment — implements LanguageModelSessionBackend protocol requirement. Add a documentation comment explaining this method's behavior.
 - [x] `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift:296` — Public method `transcriptEntries` lacks documentation comment — implements LanguageModelSessionBackend protocol requirement. Add a documentation comment explaining this method's behavior.
 - [x] `Tests/FoundationModelsRouterTests/ToolOutputFeedbackTests.swift:300` — Public method `usageTokenCounts` lacks documentation comment — implements LanguageModelSessionBackend protocol requirement. Add a documentation comment explaining this method's behavior.
+
+## Two concrete streaming defects, read off the code — fix these to make streaming work
+
+Found after the scripted-model test came back green. Neither needs a live model to see; both need the live backend to *reproduce end to end*, which is why the harness missed them.
+
+### D1 — `.toolStatus(.completed)` is keyed by the wrong id, so completion cannot be correlated to its call
+
+`RoutedSessionActorRecording.swift:365-379`:
+
+```swift
+case .toolCalls:
+    for call in entry.toolCalls ?? [] {
+        onEvent(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON))
+        onEvent(.toolStatus(id: call.id, status: .running, summary: nil))
+    }
+case .toolOutput:
+    onEvent(.toolStatus(id: entry.entryId, status: .completed, summary: partial.text))
+```
+
+`.toolCall` and the `.running` status carry `call.id`. The `.completed` status carries **`entry.entryId`** — a different identifier space. Any consumer that correlates a completion to its call by id (which is the only thing the id is for) never matches, so tool output is unattributable: a client sees N calls start and N unrelated completions.
+
+This is not theoretical — a consumer in FoundationModelsMultitool built exactly that mapping (`callIndexByID` from `.toolCall`, then attach `summary` on `.toolStatus`) and it silently attached nothing.
+
+**Test:** one scripted tool-using turn; assert every `.toolStatus(.completed)` id matches a previously emitted `.toolCall` id, and that the set of completed ids equals the set of called ids. Then the multi-call shape, where mis-keying is invisible with one call.
+
+**Fix:** emit the completion under the originating `call.id`. `completedToolCallIds` and `dispatchedToolCallIds` are already threaded through this function, so the correlation is available.
+
+### D2 — the snapshot delta corrupts text across a tool boundary
+
+`LiveModelLoader.swift:395`:
+
+```swift
+private static func suffix(of current: String, after previous: String) -> String {
+    guard current.hasPrefix(previous) else { return current }
+    return String(current.dropFirst(previous.count))
+}
+```
+
+Its doc calls the non-prefix branch "a defensive fallback for a non-monotonic snapshot, not expected in practice". With tools it is expected: the model produces a first pass, a tool runs, generation resumes on a new answer, and that snapshot does not extend the old text. The guard fails, the **whole** snapshot is returned as if it were a delta, and `streamGeneratingBody`'s `response += chunk` concatenates it. `previous` is also never reset — it is `var previous = ""` for the life of one `pumpStream`.
+
+So a streamed tool-using turn can hand the caller pre-tool text followed by the entire post-tool answer, or repeated snapshots. A caller accumulating fragments gets duplicated prose.
+
+**Test:** feed a snapshot sequence that goes non-monotonic across a tool call and assert the accumulated text equals the final answer exactly — char equality, not `contains`.
+
+### D3 — the live backend cannot be tested, which is why D1 and D2 survived
+
+`MLXFoundationModelsSessionBackend.init` takes a concrete `MLXLanguageModel`, so no scripted model can drive `LiveModelLoader.pumpStream` or the live `respond` path. Every hypothesis has now been eliminated *except* this region, and it is the one region with no test coverage.
+
+**This is the highest-value change on the card.** Widen that initializer to accept the backend protocol (or inject a snapshot source), then D1 and D2 get real tests and the remaining 0/4 becomes diagnosable in one second instead of eleven minutes.
+
+### Status of the consumer
+
+FoundationModelsMultitool is 0/4 on both Router surfaces and 1/4–3/4 on a plain `LanguageModelSession(model:tools:)` over the same MLX model. It builds against Router by local path, so its build is currently broken by the Detach rename — that is expected and being handled on that side, not a Router problem.
+
+## Correction to D3 — "no test can reach it" is wrong, and it is not an excuse
+
+Human ruling: *"i reject the assertion that 'no test can reach it' — if that is true it cannot possibly work — meaning works and tests prove it works."*
+
+That is correct and it retracts the framing above. Untestable is not a property of the code; it is a defect in the seam, and it is the defect to fix first. Three tests reach this region **today**:
+
+1. **Router's own gated suite.** `FM_ROUTER_INTEGRATION_TESTS=1` builds the live backend against a real model. A tool-using turn there exercises `pumpStream` and the live `respond` path directly. If no gated Router test asserts that a streamed tool-using turn returns the correct final answer, that is the first test to write — and it is the one that would have caught D1 and D2.
+2. **The consumer's gated suite.** FoundationModelsMultitool's `SearchThenCallTests` reaches this region every run and has been **failing** on it — 0/4 across five runs on both surfaces. It has been reporting the defect the whole time; what was missing was a Router-side test that localises it.
+3. **A scripted-model test, once the seam is widened.** `MLXFoundationModelsSessionBackend.init` taking a concrete `MLXLanguageModel` is what forces every check into the slow path. Widening it to the backend protocol (or injecting the snapshot source) is a production signature change, and it is the right one: it converts an eleven-minute GPU run into a one-second assertion.
+
+So the order is: **write the slow test that proves it works, then widen the seam so the fast test can prove it too.** Not "cannot be covered."
+
+The standard: streaming works when a test says a streamed tool-using turn returns the same final answer as the same turn through `respond`, and every `.toolStatus(.completed)` correlates to its `.toolCall`. Until such a test exists and passes, streaming is not known to work — and right now the evidence from two independent gated suites is that it does not.

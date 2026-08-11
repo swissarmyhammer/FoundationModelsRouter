@@ -149,6 +149,94 @@ comments:
     - AC#4, AC#5 — met by the earlier pass (`bcd3589`), unchanged.
     - AC#6 — still open, and still corroboration rather than a gate.
   timestamp: 2026-08-11T11:03:55.619173+00:00
+- actor: claude-code
+  id: 01kzr7yhj1ytak13h2659een2t
+  text: |
+    ### implement — changed
+    - evidence: commit `c7b9477`, 3 test files — `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift`, `Tests/FoundationModelsRouterTestSupport/ToolTurnScenario.swift`, `Tests/FoundationModelsRouterTests/ScriptedToolTurnComparisonTests.swift`. Observed real-model shape over 8 turns: tool rounds 11 / 3 / 2 / 2 / 2 / 2 / 1 / 1, one `.toolCalls` entry and one matching `.toolOutput` per round, answers `"MARKER-7F3A-ONE, MARKER-7F3A-TWO"` on the compliant turns and a fabricated `MARKER-9B2C-*` on the two under-calling turns. Classified as a wrong test premise (cross-turn equality over a non-reproducible model) plus model behaviour; not a Router defect — Router recorded every turn faithfully. Gated `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter RealToolTurnComparison`: 5 runs, 5 green. Ungated `swift test`: 796/76, 27/11, 24/5, zero failures, one pre-existing `BoundedWait` known issue. Tool-dispatch residue recorded on `^pw807cp`.
+    - next: `/review`. AC#6 (re-measuring FoundationModelsMultitool) is still open and is corroboration, not a gate.
+  timestamp: 2026-08-11T11:05:00.737668+00:00
+- actor: claude-code
+  id: 01kzr8esrke69gbx6sb1wtzxw8
+  text: |
+    ## Review Findings (2026-08-11) — commit c7b9477, step: review
+
+    ### Verdict: correction, not a weakening
+
+    The change makes the gated suite stronger on D1 and D2. It removes only claims about model
+    repeatability, which are not Router properties. Three findings stay open.
+
+    ### Answers to the review questions
+
+    **1. The "two independent turns" claim is true.** At `c7b9477^`, `respondRun()` and
+    `streamRun()` each made their own container and their own session, then drove their own
+    real-model turn. Two different generations. So `responded.transcript == streamed.transcript`
+    and `streamed.answer == responded.answer` did assert that the model repeats itself. The
+    premise was valid.
+
+    **2. D1 and D2 stay caught.**
+    - D1: `Set(streamed.completedIds) == Set(streamed.calledIds)` is kept. This is the assertion
+      that catches the defect, because `entry.entryId` and `call.id` are different id spaces.
+      Two new assertions were added: `calledIds.count == announcedCallCount` and
+      `completedIds.count == calledIds.count`.
+    - D2: `answer == finalResponseText` is not a tautology. See item 5.
+
+    **3. One replacement cannot fail.** See finding 1 below. Zero tool calls does fail hard,
+    through `!run.deliveredMarkers.isEmpty`.
+
+    **4. The scripted suite keeps the strict claims.** `ScriptedToolTurnComparisonTests` still
+    holds `responded.transcript == streamed.transcript` (two tests),
+    `kinds == [.instructions, .prompt, .toolCalls, .toolOutput, .toolOutput, .response]`,
+    `calledIds.count == 2`, and `streamed.answer == responded.answer`. The diff changed only the
+    initializer argument in that file.
+
+    **5. The tautology check passes.** `answer` and `finalResponseText` come from two independent
+    chains:
+    - `answer` — the consumer adds up `.textDelta` events and applies `.textReset`. The
+      fragments come from `LiveModelLoader.pumpStream`, which subtracts one snapshot from the
+      next. `streamGeneratingBody` throws away its own total, so nothing shares a variable.
+    - `finalResponseText` — read from the SDK's own transcript
+      (`backend.transcriptEntries()` = `Array(liveSession.transcript)`), last `.response` entry.
+
+    If the reset is lost, or the snapshot subtraction breaks again, `answer` holds the
+    superseded pre-tool text and `finalResponseText` does not. The test goes red. D2 stays
+    covered.
+
+    ### Findings
+
+    - [ ] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:433` —
+      `streamed.rawAnswer.hasSuffix(streamed.answer)` cannot fail. The test loop adds each delta
+      to both strings and clears only `answer` on `.textReset`. So `answer` is always a suffix of
+      `rawAnswer`, whatever Router does. If Router stops sending `.textReset`, the two strings
+      become equal and the check still passes. Assert something the stream decides. Example: a run
+      that reported a `.textReset` must have `rawAnswer.count > answer.count`.
+
+    - [ ] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:409` —
+      the comment says "every announced call was answered", but the two assertions do not prove
+      it. `toolOutputCount == announcedCallCount` compares totals only, and
+      `unmatchedToolOutputs.isEmpty` proves each output names *some* announced call. A turn that
+      announces call 0 and call 1, and keys both outputs to call 0, gives 2 == 2 and no
+      `UNMATCHED`. Both checks pass, and call 1 was never answered. Compare the multiset of
+      resolved `callOrdinal` values with the announced ordinals.
+
+    - [ ] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:383` —
+      `!run.deliveredMarkers.isEmpty` fails the suite for a model choice the suite says it does
+      not measure, and gives a wrong reason. `MarkerTool.call` returns
+      `markerPrefix + arguments.step` for any string the model sends, but
+      `ToolTurnScenario.deliveredMarkers` accepts only `MARKER-7F3A-ONE` and `MARKER-7F3A-TWO`.
+      If the model sends `one` or `Step ONE`, the tool ran and Router delivered its output, but
+      `deliveredMarkers` is empty and the suite reports "recorded no tool output, so nothing
+      proves a tool ran". Prove that a tool ran from the count of `.toolOutput` entries. Keep the
+      marker set for the delivery claim only.
+
+    ### Evidence
+
+    - Ungated, this machine, `swift test`: 796/76 passed (1 known issue), 27/11 passed,
+      24/5 passed. Zero failures.
+    - Gated `RealToolTurnComparison` 5/5: as claimed in the commit message. Not run again in this
+      review, because each run needs a GPU and about 30 minutes.
+    - `review sha HEAD~1..HEAD` engine: 9 validators attempted, 0 findings.
+  timestamp: 2026-08-11T11:13:53.427851+00:00
 position_column: doing
 position_ordinal: '8180'
 title: '[Router] Streaming a tool-using turn does not work — fix D1 and D2, prove it end to end'
