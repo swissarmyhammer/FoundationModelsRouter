@@ -53,13 +53,23 @@ private let realToolTurnModel: ModelRef = RealModels.standard
 /// - each surface's answer equals, character for character, the text of the
 ///   last `.response` entry **its own** turn recorded (the property defect D2
 ///   corrupted);
+/// - the turn recorded at least one `.toolOutput`, so a tool really ran;
 /// - the answer carries every marker that turn's own tool outputs delivered;
-/// - the transcript holds one `.toolOutput` per announced call, each resolving
-///   to the call it answers (the property defect D1 was about, on real ids);
+/// - the call ordinals the turn's `.toolOutput` entries resolve to are, as a
+///   multiset, the ordinals its `.toolCalls` entries announced — so a turn that
+///   answers one call twice and leaves another unanswered fails, which equal
+///   totals alone would let through (the property defect D1 was about, on real
+///   ids);
 /// - the streamed completion ids are exactly the streamed call ids.
 ///
-/// A model that calls fewer tools than the scenario asks for is not a Router
-/// defect and is not measured here; it belongs to task ^pw807cp.
+/// Two model choices are not Router defects and are not measured here; both
+/// belong to task ^pw807cp. Calling fewer tools than the scenario asks for is
+/// one. Calling them with an argument the scenario does not name is the other:
+/// ``RealToolTurnComparisonTests/MarkerTool`` answers any argument, so the tool
+/// still runs and Router still delivers its output, but that output carries no
+/// scenario marker and there is nothing left to trace into the answer. Such a
+/// turn is recorded as a known issue rather than failed — recorded, so a turn
+/// this suite could not measure never reads as one it measured.
 ///
 /// See ``NormalizedTranscriptEntry`` for the normalization and its rationale.
 @Suite(
@@ -319,15 +329,26 @@ struct RealToolTurnComparisonTests {
 
     // MARK: - Transcript arithmetic
 
+    /// The ordinal of every tool call a turn announced, over every round, in
+    /// announcement order.
+    ///
+    /// - Parameter transcript: The run's normalized transcript.
+    /// - Returns: One ordinal per call in every `.toolCalls` entry.
+    private static func announcedCallOrdinals(
+        in transcript: [NormalizedTranscriptEntry]
+    ) -> [Int] {
+        transcript.flatMap { entry -> [Int] in
+            guard case .toolCalls(let calls) = entry else { return [] }
+            return calls.map(\.ordinal)
+        }
+    }
+
     /// The number of tool calls a turn announced, summed over every round.
     ///
     /// - Parameter transcript: The run's normalized transcript.
     /// - Returns: The total number of calls in every `.toolCalls` entry.
     private static func announcedCallCount(in transcript: [NormalizedTranscriptEntry]) -> Int {
-        transcript.reduce(0) { total, entry in
-            guard case .toolCalls(let calls) = entry else { return total }
-            return total + calls.count
-        }
+        announcedCallOrdinals(in: transcript).count
     }
 
     /// The number of `.toolOutput` entries a turn recorded.
@@ -338,18 +359,31 @@ struct RealToolTurnComparisonTests {
         transcript.filter { $0.kind == .toolOutput }.count
     }
 
-    /// The `.toolOutput` entries whose id named no call the same transcript
-    /// announced — the shape defect D1 was about, rendered as `UNMATCHED`.
+    /// The call each `.toolOutput` entry answers, in record order, `nil` where
+    /// its id named no call the same transcript announced — the shape defect D1
+    /// was about, rendered as `UNMATCHED`.
     ///
     /// - Parameter transcript: The run's normalized transcript.
-    /// - Returns: The unmatched entries, for a legible failure message.
-    private static func unmatchedToolOutputs(
+    /// - Returns: One resolved call ordinal per tool-output entry.
+    private static func answeredCallOrdinals(
         in transcript: [NormalizedTranscriptEntry]
-    ) -> [NormalizedTranscriptEntry] {
-        transcript.filter { entry in
-            guard case .toolOutput(let callOrdinal, _, _) = entry else { return false }
-            return callOrdinal == nil
+    ) -> [Int?] {
+        transcript.flatMap { entry -> [Int?] in
+            guard case .toolOutput(let callOrdinal, _, _) = entry else { return [] }
+            return [callOrdinal]
         }
+    }
+
+    /// How many times each value occurs.
+    ///
+    /// Comparing two lists as multisets rather than as totals is what makes a
+    /// duplicate and an omission visible: they cancel each other out in a count
+    /// and never in a tally.
+    ///
+    /// - Parameter values: The values to count.
+    /// - Returns: The number of occurrences of each distinct value.
+    private static func tally<Value: Hashable>(_ values: [Value]) -> [Value: Int] {
+        values.reduce(into: [:]) { counts, value in counts[value, default: 0] += 1 }
     }
 
     // MARK: - Tests
@@ -376,13 +410,38 @@ struct RealToolTurnComparisonTests {
             """)
 
         for (surface, run) in [("respond(to:)", responded), ("streamEvents(to:)", streamed)] {
-            // The turn really used its tools. Zero tool calls is a real
-            // failure of this scenario, not a shape the assertions bend
-            // around: every one of the eight turns measured while this suite
-            // was written called at least one.
+            // The turn really used its tools, proved by the tool outputs its
+            // own transcript records. Zero tool calls is a real failure of this
+            // scenario, not a shape the assertions bend around.
+            let recordedToolOutputs = Self.toolOutputCount(in: run.transcript)
             #expect(
-                !run.deliveredMarkers.isEmpty,
+                recordedToolOutputs > 0,
                 "\(surface) recorded no tool output, so nothing proves a tool ran")
+
+            // The markers are how delivery is traced, and they measure only a
+            // turn that called the tools the way the scenario names them.
+            // `MarkerTool` answers any argument, so a model that sends `one`
+            // for `ONE` still runs the tool and still has Router deliver its
+            // output — an output carrying no scenario marker, and so nothing
+            // this claim can follow into the answer. That is the same
+            // model-compliance family as calling too few tools, which this
+            // suite defers to task ^pw807cp, so it is recorded rather than
+            // failed here. Recorded, because a turn the delivery claim could
+            // not measure must never read as a turn it measured. Claimed only
+            // where the turn did record tool output, so a turn that ran no tool
+            // at all is reported once, by the assertion above, and never under
+            // this reason.
+            if recordedToolOutputs > 0 {
+                withKnownIssue(
+                    """
+                    \(surface) called its tools with arguments the scenario does not name, \
+                    so no output carried a marker to trace into the answer (task ^pw807cp)
+                    """,
+                    isIntermittent: true
+                ) {
+                    #expect(!run.deliveredMarkers.isEmpty)
+                }
+            }
 
             // The answer carries every identifier this turn's own tools
             // returned — data the model could only have read back out of the
@@ -404,19 +463,21 @@ struct RealToolTurnComparisonTests {
                 recorded: \(run.finalResponseText.debugDescription)
                 """)
 
-            // Every announced call was answered, and every answer names the
-            // call it answers — the property defect D1 was about, on real ids.
+            // Every announced call was answered exactly once, and every answer
+            // names the call it answers — the property defect D1 was about, on
+            // real ids. Held as a multiset rather than as a total and an
+            // unmatched-output check, because those two pass together on a turn
+            // that keys both of its outputs to call #0 and leaves call #1
+            // unanswered: the totals still match, and neither output is
+            // unmatched. A tally cannot cancel a duplicate against an omission.
+            let announced = Self.announcedCallOrdinals(in: run.transcript)
+            let answered = Self.answeredCallOrdinals(in: run.transcript)
             #expect(
-                Self.toolOutputCount(in: run.transcript)
-                    == Self.announcedCallCount(in: run.transcript),
+                Self.tally(answered) == Self.tally(announced.map { ordinal -> Int? in ordinal }),
                 """
-                \(surface) did not record one tool output per announced call.
-                \(run.transcriptDescription)
-                """)
-            #expect(
-                Self.unmatchedToolOutputs(in: run.transcript).isEmpty,
-                """
-                \(surface) recorded a tool output naming no announced call.
+                \(surface) did not answer each announced call exactly once.
+                announced: \(announced)
+                answered:  \(answered.map { $0.map(String.init) ?? "UNMATCHED" })
                 \(run.transcriptDescription)
                 """)
         }
@@ -428,15 +489,21 @@ struct RealToolTurnComparisonTests {
         #expect(streamed.completedIds.count == streamed.calledIds.count)
         #expect(streamed.failedIds.isEmpty)
 
-        // A consumer that ignores the reset still receives every fragment, and
-        // the answer is the tail of what it received.
-        #expect(
-            streamed.rawAnswer.hasSuffix(streamed.answer),
-            """
-            the streamed answer is not a suffix of everything the stream delivered.
-            answer: \(streamed.answer.debugDescription)
-            raw:    \(streamed.rawAnswer.debugDescription)
-            """)
+        // Nothing here relates `streamed.rawAnswer` to `streamed.answer`.
+        // `streamRun()` accumulates both from the same `.textDelta` events and
+        // clears only `answer` on ``SessionEvent/textReset``, so every relation
+        // between the two holds by that loop's own construction and would hold
+        // just as well if Router stopped reporting the reset at all — coverage
+        // in appearance and nothing in substance. The reset is decidable only
+        // against a model that writes text before its tool call, which is what
+        // makes the snapshot sequence non-monotonic; `MLXLanguageModel`'s
+        // executor buffers its whole output and emits either a tool call or
+        // text, and no live turn measured here has reported a restart — each
+        // one ended with its raw answer equal to its answer. The claim is
+        // held exactly, over a model that does restart, by
+        // `ScriptedToolTurnComparisonTests.supersededTextIsDeliveredButNotTheAnswer`.
+        // The raw answer is printed above, so a live restart stays visible to a
+        // reader even though this suite cannot assert on one.
     }
 
     @Test("the real transcript has the same entry kinds the scripted scenario produces")

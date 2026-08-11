@@ -204,14 +204,14 @@ comments:
 
     ### Findings
 
-    - [ ] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:433` —
+    - [x] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:433` —
       `streamed.rawAnswer.hasSuffix(streamed.answer)` cannot fail. The test loop adds each delta
       to both strings and clears only `answer` on `.textReset`. So `answer` is always a suffix of
       `rawAnswer`, whatever Router does. If Router stops sending `.textReset`, the two strings
       become equal and the check still passes. Assert something the stream decides. Example: a run
       that reported a `.textReset` must have `rawAnswer.count > answer.count`.
 
-    - [ ] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:409` —
+    - [x] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:409` —
       the comment says "every announced call was answered", but the two assertions do not prove
       it. `toolOutputCount == announcedCallCount` compares totals only, and
       `unmatchedToolOutputs.isEmpty` proves each output names *some* announced call. A turn that
@@ -219,7 +219,7 @@ comments:
       `UNMATCHED`. Both checks pass, and call 1 was never answered. Compare the multiset of
       resolved `callOrdinal` values with the announced ordinals.
 
-    - [ ] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:383` —
+    - [x] `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift:383` —
       `!run.deliveredMarkers.isEmpty` fails the suite for a model choice the suite says it does
       not measure, and gives a wrong reason. `MarkerTool.call` returns
       `markerPrefix + arguments.step` for any string the model sends, but
@@ -237,6 +237,101 @@ comments:
       review, because each run needs a GPU and about 30 minutes.
     - `review sha HEAD~1..HEAD` engine: 9 validators attempted, 0 findings.
   timestamp: 2026-08-11T11:13:53.427851+00:00
+- actor: claude-code
+  id: 01kzr9b651hm1xpyf2cd1yzfhj
+  text: |
+    ### Review findings 1–3 fixed — what replaced each, and the proof
+
+    **Finding 1 (`:433`, the tautological suffix check) — deleted, and no reset claim replaces it here.**
+    A relation between `rawAnswer` and `answer` cannot fail in this suite, because `streamRun()` builds
+    both from the same `.textDelta` events and clears only `answer` on `.textReset`. Every such relation
+    is a statement about the test loop, not about Router. A cross-chain replacement is not available
+    either: the only chain `rawAnswer` could be measured against is the transcript, and with no reset in
+    play `rawAnswer == answer`, which `answer == finalResponseText` already holds exactly. So the check
+    is gone, and a comment in its place records why, so the next reader does not re-add a fake one.
+
+    **The reset claim is decidable only where a model writes text before its tool call**, which is what
+    makes the snapshot sequence non-monotonic. `MLXLanguageModel`'s executor buffers its whole output and
+    emits either a tool call or text, so no live turn measured here has ever reported a restart — each
+    run ended with `raw answer == answer`. The claim therefore lives, exactly, in the scripted suite.
+
+    **Proof that the reset check bites (temporary-removal result).** With
+    `RoutedSessionActorGeneration.sessionEvents(for:)` temporarily changed to
+    `fragment.restartsResponse ? [] : []` — the reset signal dropped, nothing else touched —
+    `swift test --filter ScriptedToolTurnComparison` went **red on 2 of 6 tests**:
+    - `superseded pre-tool text is still delivered, and is no longer the answer` —
+      `streamed.answer` came back `"Let me look both of those up. answer: MARKER-7F3A-ONE MARKER-7F3A-TWO"`;
+    - `the streamed answer is the answer respond(to:) returns, character for character` —
+      streamed `"Let me look both of those up. answer: …"` against responded `"answer: …"`.
+    The removal was reverted and the same filter is green again (6/6). The deleted gated assertion would
+    have passed in that same red state — which is the whole point of the finding.
+
+    **Finding 2 (`:409`, totals do not prove every call was answered) — replaced by a multiset equality.**
+    Two new readers, `announcedCallOrdinals(in:)` and `answeredCallOrdinals(in:)`, plus `tally(_:)`, and
+    the claim is now `tally(answered) == tally(announced)`. A turn that keys both outputs to call #0 and
+    leaves call #1 unanswered gives `[0: 2]` against `[0: 1, 1: 1]` and fails, where the old total
+    (2 == 2) and the old `UNMATCHED` check both passed. `toolOutputCount == announcedCallCount` and
+    `unmatchedToolOutputs(in:)` are gone — multiset equality implies both, so keeping them would be two
+    weaker restatements of the same claim. The failure message prints the announced list, the answered
+    list with `UNMATCHED` spelled out, and the transcript.
+
+    **Finding 3 (`:383`, wrong diagnosis on an argument-casing deviation) — split into two claims.**
+    "A tool ran" is now proved from the count of `.toolOutput` entries, which is what that message says.
+    The marker set is kept for the delivery claim only. The deliberate decision the finding asked for: an
+    argument-casing deviation **must not fail this suite**, because it is the same model-compliance family
+    as calling too few tools, which the suite already defers to `^pw807cp`. It is recorded as a
+    `withKnownIssue(isIntermittent: true)` instead — visible in the test report under its own reason,
+    never silently swallowed. That known issue is claimed only when the turn did record tool output, so a
+    turn that ran no tool at all is reported once, by the hard assertion, and never under the wrong reason.
+
+    **Nothing else was weakened.** The scripted suite is untouched — cross-surface transcript equality,
+    the exact `[.instructions, .prompt, .toolCalls, .toolOutput, .toolOutput, .response]` shape, and
+    `calledIds.count == 2` all stand. Zero tool calls still fails the gated suite hard.
+  timestamp: 2026-08-11T11:29:23.617279+00:00
+- actor: claude-code
+  id: 01kzr9bme5ecppe35441nqnvef
+  text: |
+    ### Measured today: the gated suite is intermittently red on a turn that calls NO tool at all
+
+    Three gated runs of `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter RealToolTurnComparison` on this
+    machine, same code, same prompt, greedy sampling pinned:
+
+    | run | respond(to:) rounds | streamEvents(to:) rounds | result |
+    |---|---|---|---|
+    | 1 | 2 (alpha/ONE, beta/TWO) | 1 (alpha/ONE only, then invented `MARKER-9B2C-TWO`) | **passed** |
+    | 2 | **0** — no tool call at all; answered `"The identifier for step ONE is 12345, and the identifier for step TWO is 67890."` | 11 | **failed** |
+    | 3 | 2 | 3 | **passed** |
+
+    Run 2 is not caused by this change: both of its failures are the suite's deliberate hard claims about
+    a turn that used no tool — `toolOutputCount > 0` on the respond surface, and `kinds.contains(.toolCalls)`
+    / `kinds.contains(.toolOutput)` in the shape test — and the previous code failed the same turn through
+    `!deliveredMarkers.isEmpty` and the same two shape assertions. What changed is only the diagnosis: the
+    message now says what actually happened.
+
+    **This is `^pw807cp`'s defect at its extreme** — the real model does not reliably dispatch the tools it
+    is told to, and sometimes dispatches none and fabricates the identifiers. The card's constraint for
+    this pass was not to weaken anything else, and making a zero-tool turn anything softer than a hard
+    failure would be exactly that, so it stays a hard failure and the gated suite stays intermittently red
+    whenever the model under-calls. Recorded on `^pw807cp` as well.
+
+    One line of the suite's own doc was corrected while I was there: it claimed "every one of the eight
+    turns measured while this suite was written called at least one" tool. Run 2 falsifies that as a
+    general statement, so the sentence is gone rather than left standing as a fact that is no longer true.
+  timestamp: 2026-08-11T11:29:38.245650+00:00
+- actor: claude-code
+  id: 01kzr9cc63x4aghzq1hhb2q542
+  text: |
+    ### implement — changed
+    - evidence: 1 file — `Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift`. Finding 1: the tautological `rawAnswer.hasSuffix(answer)` deleted, with a comment recording why no reset claim is decidable against this model; proved the reset signal is load-bearing by temporarily dropping `.textReset` in `RoutedSessionActorGeneration.sessionEvents(for:)` — `ScriptedToolTurnComparison` went red on 2 of 6 tests, and green again (6/6) on revert. Finding 2: totals plus `UNMATCHED` replaced by `tally(answered) == tally(announced)` over resolved call ordinals; `unmatchedToolOutputs(in:)` removed as subsumed. Finding 3: "a tool ran" now proved from `toolOutputCount > 0` with a message that says so; the marker claim kept for delivery only and recorded as `withKnownIssue(isIntermittent: true)` against `^pw807cp`, claimed only when the turn did record tool output. Gated `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter RealToolTurnComparison`: 2/2 green on the final code (a middle run went red on a turn where the model dispatched zero tools — `^pw807cp`, recorded above and on that card). Ungated `swift test`: 796/76, 27/11, 24/5, zero failures, one pre-existing `BoundedWait` known issue.
+    - next: `/review`. AC#6 (re-measuring FoundationModelsMultitool) is still open and is corroboration, not a gate.
+  timestamp: 2026-08-11T11:30:02.563823+00:00
+- actor: claude-code
+  id: 01kzr9ek76x0xxmv6e212qf8a3
+  text: |
+    ### commit — changed
+    - evidence: f6df9c8 test(router): make the gated tool-turn claims able to fail (^w8dzvee) — 5 files, 233 insertions, 44 deletions. Not pushed.
+    - next: `/review`.
+  timestamp: 2026-08-11T11:31:15.302171+00:00
 position_column: doing
 position_ordinal: '8180'
 title: '[Router] Streaming a tool-using turn does not work — fix D1 and D2, prove it end to end'

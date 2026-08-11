@@ -186,6 +186,35 @@ comments:
 
     **What `^w8dzvee` did with this.** Nothing — deliberately. Its gated suite now asserts only what Router owns (each surface's answer equals its own turn's final response character for character; the answer carries every marker *that turn's* tools delivered; one tool output per announced call, each resolving to its call; streamed completion ids equal streamed call ids). A turn that calls one tool instead of two now passes there, correctly, because it is this card's defect and not Router's. Reproduce with `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter RealToolTurnComparison`, which prints both surfaces' full transcripts and answers on every run.
   timestamp: 2026-08-11T11:04:20.338620+00:00
+- actor: claude-code
+  id: 01kzr9c05mfx6htpe32m5cv8tb
+  text: |
+    ### New measurement from `^w8dzvee`'s gated suite: a turn that dispatches ZERO tools
+
+    `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter RealToolTurnComparison`, three runs on one machine,
+    same code, same prompt, sampling pinned to greedy. The scenario mounts two tools and the instructions
+    name both by tool name and by argument.
+
+    - Run 1: `respond(to:)` made 2 rounds (correct); `streamEvents(to:)` made 1 round (`lookup-alpha`/`ONE`
+      only) and then wrote `MARKER-9B2C-TWO` for the tool it never called — a fabricated identifier, since
+      the scenario prefix is `MARKER-7F3A-`.
+    - Run 2: `respond(to:)` made **zero** tool calls. Its whole transcript was
+      `instructions, prompt, response`, and the answer was
+      `"The identifier for step ONE is 12345, and the identifier for step TWO is 67890."` — both values
+      invented. On the same run `streamEvents(to:)` made 11 rounds for the same prompt.
+    - Run 3: 2 rounds and 3 rounds, both surfaces correct.
+
+    Router recorded every one of these faithfully: each announced call had a matching output, each output
+    resolved to the call it answers, completed ids equalled called ids, no failures. The divergence is the
+    model's dispatch decision, which is this card.
+
+    Two consequences worth carrying here:
+    1. The failure is not only "calls fewer tools than asked". It reaches **zero**, and the model then
+       fabricates plausible identifiers rather than saying it has none.
+    2. `^w8dzvee`'s gated suite fails hard on a zero-tool turn by design, so that suite is intermittently
+       red for exactly this reason. Anyone reading a red `RealToolTurnComparison` run should check the
+       printed transcript for `toolCalls` before looking for a Router defect.
+  timestamp: 2026-08-11T11:29:50.260181+00:00
 position_column: todo
 position_ordinal: 8a80
 title: Gated tool-calling suites lose their tool call or their recall when they inherit another suite's prompt cache
