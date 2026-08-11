@@ -127,6 +127,43 @@ comments:
     evidence: Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift — the streamResponseFragments override is now pull-based (private nested SnapshotDeltaIterator, AsyncThrowingStream(unfolding:)); the relay Task, its onTermination cancel, and pumpStream are removed; the restartsResponse delta logic (Self.fragment(of:after:), previous-snapshot state) is kept identical; one stale ``pumpStream`` doc link updated. swift build clean (only the accepted vendored mlx-swift "missing creator" warning). One swift test run: 827 tests in 78 suites passed with 1 known issue (accepted BoundedWait), plus 27 tests in 11 suites and 24 tests in 5 suites, all passed, exit code 0.
     task: ^n9tdq8c
   timestamp: 2026-08-11T18:57:53.116115+00:00
+- actor: claude-code
+  id: 01kzs3espd9m67t40b963n82ye
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 0b639a2) — 3 findings, 3 confirmed, 0 refuted: Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:239, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:477, Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:625 — doc comments contain external task identifiers; remove them and describe the behavior directly.
+    - next: implement removes the task references from the doc comments in LiveModelLoader.swift, then re-review.
+  timestamp: 2026-08-11T19:05:44.909257+00:00
+- actor: claude-code
+  id: 01kzs3fh0kxx4k7ytyp4976a59
+  text: |-
+    ### finish iteration 4 — findings
+    - implement: changed — LiveModelLoader.swift, pull-based MLX override via SnapshotDeltaIterator; relay task and pumpStream removed
+    - test: green — swift build clean, one swift test run 878 tests (827+27+24), 0 failures
+    - commit: changed — 0b639a2
+    - review: findings — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:239, :477, :625 — doc comments contain external task identifiers; remove the references and describe the behavior directly. All prior findings sections stay checked.
+  timestamp: 2026-08-11T19:06:08.787181+00:00
+- actor: claude-code
+  id: 01kzs5k1q5mxm0wrp0k3rp8g0k
+  text: |-
+    Fix for the three review findings (LiveModelLoader.swift:239, :477, :625 — doc comments contain external task identifiers):
+
+    - I read the validator rules first (dump validators, then get validator code-hygiene). The parsed rules do not contain one rule for task identifiers. The finding text states the rule: a doc comment must give the behavior directly, and an external task identifier decays when the tracking system changes.
+    - I examined the full file for each form of a task-id citation (patterns: ^-prefixed short ids, bare 7-char ids, AC#, defect D, kanban, ticket, issue #). The file contains only the three flagged sites. Line 415 says "relay-task pattern"; this is the name of a code pattern, not a task id. No other file changed, and no rewritten doc comment links to an other file.
+    - Line 239: the citation "(task ^w8dzvee, AC#5)" is removed. The line now ends: "have coverage that needs no GPU." The technical statement is complete without the citation.
+    - Line 477: the citation "(task ^w8dzvee, defect D2)" is removed. The line now ends: "of the answer." The SDK-closed-one-Response-entry explanation from the finding's example already is in the sentence before (lines 472-473); a second copy is not added.
+    - Lines 624-625: the citation ", task 070qw7z" and its parentheses are removed. The text now reads: "the gated integration test `LanguageModelSessionBackendIntegrationTests.secondTurnReusesFirstTurnsKVCache` already asserts ...", as the finding gives.
+    - Verification: `swift build` completes with only the accepted vendored mlx-swift "missing creator" warning. One `swift test` run, exit 0: 827 tests in 78 suites pass with the 1 accepted BoundedWait known issue, plus 27 tests in 11 suites and 24 tests in 5 suites, all pass. No repeat runs.
+    - The three finding checkboxes are now `- [x]`. The git diff on the source is 4 doc-comment lines in one file. No commit, as directed. The task stays in `doing`.
+  timestamp: 2026-08-11T19:43:01.349696+00:00
+- actor: claude-code
+  id: 01kzs5k720p501qpb9hf66z5hn
+  text: |-
+    step: implement
+    outcome: changed
+    evidence: 1 file — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift (4 doc-comment lines at :239, :477, :624-625; the three task-id citations removed; a full-file sweep found no other citation). swift build clean (accepted vendored mlx warning only). One swift test run, exit 0: 827 + 27 + 24 tests pass, 1 accepted BoundedWait known issue. All 3 findings in "## Review Findings (2026-08-11 13:59)" flipped to [x].
+    task: ^n9tdq8c
+  timestamp: 2026-08-11T19:43:06.816456+00:00
 position_column: doing
 position_ordinal: '8180'
 title: One SessionConfiguration value drives makeSession
@@ -164,4 +201,10 @@ A plain struct, not a result builder: flat configuration is what structs are for
 
 ## Review Findings (2026-08-11 13:43)
 
-- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:388` — the `MLXFoundationModelsSessionBackend` override of `streamResponseFragments` keeps the relay-task pattern (a `Task` pumps snapshots into a continuation, and `onTermination` cancels the task). Commit 494ab31 changed only the protocol's default implementation (Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift:277-286) to the pull-based `ChunkIterator`. The override has the same cancellation race: when the propagated cancellation lands, a chunk that the relay task received, but did not yet forward, is lost. Apply the same pull-based pattern to the override. #api
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:388` — the `MLXFoundationModelsSessionBackend` override of `streamResponseFragments` keeps the relay-task pattern (a `Task` pumps snapshots into a continuation, and `onTermination` cancels the task). Commit 494ab31 changed only the protocol's default implementation (Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift:277-286) to the pull-based `ChunkIterator`. The override has the same cancellation race: when the propagated cancellation lands, a chunk that the relay task received, but did not yet forward, is lost. Apply the same pull-based pattern to the override.
+
+## Review Findings (2026-08-11 13:59)
+
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:239` — Doc comment references an external task identifier (task ^w8dzvee, AC#5) which belongs in the PR description, not in code comments; such references rot as tracking systems evolve and obscure the code's intrinsic behavior. Remove the task reference. Revise to: `/// have coverage that can be tested without a GPU.` or similar, describing the requirement directly without external tracking IDs.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:477` — Doc comment references an external task identifier (task ^w8dzvee, defect D2) which belongs in the PR description, not in code comments; such references rot as tracking systems evolve and obscure the code's intrinsic behavior. Remove the task reference. Revise to a direct description of the behavior, e.g.: `/// of the answer, because the SDK closed one Transcript.Response entry and opened another.`.
+- [x] `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift:625` — Doc comment references an external task identifier (task 070qw7z) which belongs in the PR description, not in code comments; such references rot as tracking systems evolve and obscure the code's intrinsic behavior. Remove the task reference. Revise to describe the test behavior directly, e.g.: `/// integration test LanguageModelSessionBackendIntegrationTests.secondTurnReusesFirstTurnsKVCache already asserts`. #api

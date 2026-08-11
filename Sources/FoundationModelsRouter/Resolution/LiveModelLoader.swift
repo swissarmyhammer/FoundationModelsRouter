@@ -236,7 +236,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// `some LanguageModel` — and widening it is what lets a deterministic,
     /// weightless `LanguageModel` conformance drive this exact backend, so
     /// ``streamResponseFragments(to:maxTokens:)`` and ``respond(to:schema:maxTokens:)``
-    /// have coverage that needs no GPU (task ^w8dzvee, AC#5).
+    /// have coverage that needs no GPU.
     private let model: any FoundationModels.LanguageModel
 
     /// The live session every call on this backend runs through, accumulating
@@ -474,7 +474,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// whole text is therefore the new response's text so far, carried as a
     /// restarting fragment so an accumulator replaces rather than appends —
     /// appending is what left the superseded pre-tool text as a spurious prefix
-    /// of the answer (task ^w8dzvee, defect D2).
+    /// of the answer.
     ///
     /// - Parameters:
     ///   - current: The snapshot just received.
@@ -621,8 +621,8 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// (`Usage{input: Input{totalTokenCount, cachedTokenCount}, output:
     /// Output{totalTokenCount, reasoningTokenCount}}`) is confirmed present in
     /// the macOS 27 `FoundationModels` swiftinterface, and the gated
-    /// integration suite (`LanguageModelSessionBackendIntegrationTests.secondTurnReusesFirstTurnsKVCache`,
-    /// task 070qw7z) already asserts `usage.input.totalTokenCount > 0` and
+    /// integration test `LanguageModelSessionBackendIntegrationTests.secondTurnReusesFirstTurnsKVCache`
+    /// already asserts `usage.input.totalTokenCount > 0` and
     /// `usage.output.totalTokenCount > 0` against a real model as a hard,
     /// unweakened requirement — but that suite needs a GPU and network access
     /// this sandbox does not have, so it has never actually run here; it only
