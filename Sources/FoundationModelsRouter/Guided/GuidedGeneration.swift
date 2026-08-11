@@ -207,6 +207,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Vends a guided generation session whose every ``RoutedSession/respond(to:)``
     /// is constrained to `grammar`.
     ///
+    /// A deliberate thin alias, kept rather than deprecated (task ^n9tdq8c): it
+    /// builds a ``SessionConfiguration`` carrying `grammar` and forwards to
+    /// ``makeSession(configuration:)``, so a configuration with a grammar and
+    /// this call vend the same session, and the existing guided call sites keep
+    /// compiling with zero warnings.
+    ///
     /// The grammar travels with the session, so a milestone-9 fork inherits it.
     /// The session is otherwise identical to one from
     /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` — it inherits this handle's
@@ -261,10 +267,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
         makeSession(
-            grammar: grammar, instructions: instructions, workingDirectory: workingDirectory,
-            tools: tools, budget: budget, compactionPrompt: compactionPrompt,
-            summarization: summarization, agentSpawn: agentSpawn,
-            discoveryPriming: discoveryPriming)
+            configuration: SessionConfiguration(
+                instructions: instructions,
+                workingDirectory: workingDirectory,
+                tools: tools,
+                budget: budget,
+                compactionPrompt: compactionPrompt,
+                summarization: summarization,
+                agentSpawn: agentSpawn,
+                discoveryPriming: discoveryPriming,
+                grammar: grammar))
     }
 }
 

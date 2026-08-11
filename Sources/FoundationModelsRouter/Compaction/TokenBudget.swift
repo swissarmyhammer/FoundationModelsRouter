@@ -16,7 +16,7 @@ import Foundation
 /// Code's and the Claude platform's own compaction guidance
 /// (compaction_plan.md §2): fold once a session crosses 80% of its context,
 /// back down to 50%.
-public struct TokenBudget: Sendable, Equatable {
+public struct TokenBudget: Sendable, Equatable, Codable {
     /// The working context, in tokens, this budget is measured against —
     /// normally a profile's resolved ``SlotResolution/contextTokens``.
     public var limit: Int

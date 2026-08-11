@@ -69,7 +69,7 @@ public protocol CompactionSummarizer: Sendable {
 /// ``TranscriptTurns``, the same shared partitioning every stage uses) keeps
 /// this stage self-sufficient and keeps the recency window byte-identical to
 /// what the other stages would have kept.
-public struct Summarization: Sendable {
+public struct Summarization: Sendable, Equatable, Codable {
     /// This stage's name, recorded in ``CompactionResult/stagesApplied`` and
     /// ``CompactionSegment/Content/stagesApplied``.
     public static let stageName = "Summarization"

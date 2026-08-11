@@ -22,8 +22,10 @@ private let missingOwningProfileMessageSuffix =
 ///
 /// ``RoutedLLM`` is `RoutedModel<any LoadedLLMContainer>`, so the
 /// generation-only API arrives here as a container-constrained extension — it is
-/// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
-/// is the *only* way to obtain a ``RoutedSession``: the vended session inherits
+/// invisible on the embedding handle ``RoutedEmbedder``. ``makeSession(configuration:)``
+/// — with the nine-parameter
+/// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+/// convenience over it — is the *only* way to obtain a ``RoutedSession``: the vended session inherits
 /// this handle's ``RoutedModel/routerId`` and non-optional
 /// ``RoutedModel/recorder``, retains the owning ``LanguageModelProfile`` so the
 /// resident models stay alive for its lifetime, and runs generation through the
@@ -165,20 +167,62 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         discoveryPriming: DiscoveryPriming? = nil
     ) -> RoutedSession {
         makeSession(
-            grammar: nil, instructions: instructions, workingDirectory: workingDirectory,
-            recordingRoot: recordingRoot, tools: tools,
-            budget: budget, compactionPrompt: compactionPrompt, summarization: summarization,
-            agentSpawn: agentSpawn, discoveryPriming: discoveryPriming)
+            configuration: SessionConfiguration(
+                instructions: instructions,
+                workingDirectory: workingDirectory,
+                recordingRoot: recordingRoot,
+                tools: tools,
+                budget: budget,
+                compactionPrompt: compactionPrompt,
+                summarization: summarization,
+                agentSpawn: agentSpawn,
+                discoveryPriming: discoveryPriming))
+    }
+
+    /// Vends a new session over this resident model, configured by one
+    /// ``SessionConfiguration`` value — the primary session factory.
+    ///
+    /// Every knob rides on `configuration`: the nine-parameter
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+    /// documents each one's semantics, and is itself a convenience that builds
+    /// a configuration and forwards here. A configuration with a
+    /// ``SessionConfiguration/grammar`` vends the same guided session
+    /// ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+    /// vends, so the plain and guided surfaces are one vocabulary.
+    ///
+    /// The disk-write behavior and the precondition are the nine-parameter
+    /// overload's, unchanged: the vended session writes its own write-once
+    /// sidecar synchronously as it is constructed, and the owning
+    /// ``LanguageModelProfile`` must still be alive when this is called.
+    ///
+    /// - Parameter configuration: The value describing everything the session
+    ///   is vended with. `SessionConfiguration()` vends the same session the
+    ///   zero-argument `makeSession()` call vends.
+    /// - Returns: A new ``RoutedSession`` over this model.
+    public func makeSession(configuration: SessionConfiguration) -> RoutedSession {
+        makeSession(
+            grammar: configuration.grammar,
+            instructions: configuration.instructions,
+            workingDirectory: configuration.workingDirectory,
+            recordingRoot: configuration.recordingRoot,
+            tools: configuration.tools,
+            budget: configuration.budget,
+            compactionPrompt: configuration.compactionPrompt,
+            summarization: configuration.summarization,
+            agentSpawn: configuration.agentSpawn,
+            discoveryPriming: configuration.discoveryPriming)
     }
 
     /// The shared builder behind the plain and guided session surfaces.
     ///
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` calls this with
-    /// `grammar` `nil`; ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
-    /// (in GuidedGeneration.swift) calls it with a grammar that then constrains
+    /// ``makeSession(configuration:)`` calls this with every
+    /// ``SessionConfiguration`` field; the nine-parameter
+    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+    /// and ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+    /// (in GuidedGeneration.swift) each build a configuration and forward
+    /// through it. A non-`nil` `grammar` constrains
     /// every `respond` on the vended session and is stamped onto each recorded
-    /// turn. It is `internal` so the guided surface in another file in this
-    /// module can reuse it.
+    /// turn.
     ///
     /// - Parameters:
     ///   - grammar: The grammar constraining the session, or `nil` for an

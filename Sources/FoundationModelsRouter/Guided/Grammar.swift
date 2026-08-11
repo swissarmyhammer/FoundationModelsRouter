@@ -16,7 +16,7 @@ import Foundation
 /// A `Grammar` is a plain value: it travels with a guided ``RoutedSession`` (so a
 /// milestone-9 fork inherits it) and is recorded onto each guided turn's
 /// ``TranscriptEvent/grammar``.
-public enum Grammar: Sendable, Equatable {
+public enum Grammar: Sendable, Equatable, Codable {
     /// A JSON Schema source string constraining the output to schema-valid JSON.
     case jsonSchema(String)
 

@@ -7,7 +7,7 @@
 /// pass their own value to specialize summarization for their domain (e.g. a
 /// coding agent adding "always list test commands") while keeping
 /// ``default`` as the research-backed starting point.
-public struct CompactionPrompt: Sendable, Equatable {
+public struct CompactionPrompt: Sendable, Equatable, Codable {
     /// This prompt's name, recorded verbatim in
     /// ``CompactionSegment/Content/promptName`` — never the prompt's full
     /// text — so evals and browsers can attribute a fold's summary quality to

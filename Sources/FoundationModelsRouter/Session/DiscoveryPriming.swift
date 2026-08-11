@@ -39,7 +39,7 @@ import FoundationModels
 /// Nothing about it is specific to any one tool: it names the mounted tool and
 /// the single string-valued property of that tool's arguments the turn's prompt
 /// is passed as, so any discovery tool of that shape can be primed.
-public struct DiscoveryPriming: Sendable, Equatable {
+public struct DiscoveryPriming: Sendable, Equatable, Codable {
     /// The mounted tool's `name`, as it appears in the session's tool list.
     ///
     /// A name no mounted tool answers to is a
