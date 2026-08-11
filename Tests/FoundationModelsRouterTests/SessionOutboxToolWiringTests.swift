@@ -1248,7 +1248,7 @@ struct SessionOutboxToolWiringTests {
         // completionToken nor the next-step instruction it carries is
         // truncated away.
         #expect(rendered == PendingRunEnvelope(completionToken: envelope.completionToken).rendered)
-        #expect(PendingRunEnvelope.isRendered(text: rendered))
+        #expect(PendingRunEnvelope.isRendered(rendered))
 
         // Settle the parked run so no detached work outlives the test.
         await gate.open()

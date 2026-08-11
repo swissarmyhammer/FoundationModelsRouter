@@ -185,7 +185,7 @@ struct PendingEventInjectionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let posted = Self.event(correlationID: "3", kind: .completed, detail: "exit 0, 2481 lines")
-        await session.outbox.post(event: posted)
+        await session.outbox.post(posted)
 
         _ = try await session.respond(to: "what happened?")
 
@@ -214,7 +214,7 @@ struct PendingEventInjectionTests {
         let (session, dir) = try await Self.makeSession(recorder: recorder)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        await session.outbox.post(event: Self.event(correlationID: "1", kind: .completed, detail: "first"))
+        await session.outbox.post(Self.event(correlationID: "1", kind: .completed, detail: "first"))
         _ = try await session.respond(to: "first turn")
         _ = try await session.respond(to: "second turn")
 
@@ -237,9 +237,9 @@ struct PendingEventInjectionTests {
         // Two .progress posts for the same correlation coalesce to the
         // latest; the interleaved .completed for a different correlation
         // survives alongside it, in post order.
-        await session.outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
-        await session.outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
-        await session.outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "done"))
+        await session.outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
+        await session.outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
+        await session.outbox.post(Self.event(correlationID: "c2", kind: .completed, detail: "done"))
 
         _ = try await session.respond(to: "status?")
 
@@ -322,7 +322,7 @@ struct PendingEventInjectionTests {
         let session = profile.standard.makeSession()
 
         let posted = Self.event(correlationID: "1", kind: .completed, detail: "first")
-        await session.outbox.post(event: posted)
+        await session.outbox.post(posted)
 
         await #expect(throws: (any Error).self) {
             _ = try await session.respond(to: "hi")

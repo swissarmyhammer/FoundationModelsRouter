@@ -145,7 +145,7 @@ final class ThrowingMarkerTool: MarkerRecordingTool, Sendable {
 /// A `FoundationModels.Tool` whose `Output` is not `String`, carrying the same
 /// marker ``MarkerEmittingTool`` does.
 ///
-/// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:configuration:)`` sends a
+/// ``ToolDetachment/wrapping(_:sessionID:mailbox:sink:configuration:)`` sends a
 /// non-`String`-output tool down its other path — the binding-only
 /// ``ContextBindingTool`` rather than ``DetachingTool`` — so a turn calling this
 /// tool exercises a mounting route the `String`-output fixtures never reach.

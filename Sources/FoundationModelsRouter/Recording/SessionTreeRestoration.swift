@@ -368,7 +368,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // This is the only place `.lost` is manufactured outside an MCP
             // transport drop.
             for lostEvent in TranscriptTree.lostRunTerminalEvents(in: effectiveEvents) {
-                await outbox.post(event: lostEvent)
+                await outbox.post(lostEvent)
             }
 
             let session = makeRoutedSessionActor(
@@ -428,7 +428,7 @@ extension TranscriptTree {
     /// The identity of one journaled operation run: the emitting tool's name
     /// plus its tool-assigned `correlationID`. Correlation ids are opaque
     /// and tool-assigned, so they are only unique *within* one tool — this
-    /// is the same pair identity ``SessionOutbox/post(event:)`` coalesces
+    /// is the same pair identity ``SessionOutbox/post(_:)`` coalesces
     /// `.progress` events on, and keying orphan detection on anything less
     /// would let one tool's `.completed` suppress another tool's orphan.
     private struct RunKey: Hashable {

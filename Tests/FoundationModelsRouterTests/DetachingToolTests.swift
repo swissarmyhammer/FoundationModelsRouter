@@ -44,7 +44,7 @@ struct DetachingToolTests {
     private actor RecordingSink: OperationEventSink {
         private(set) var events: [OperationEvent] = []
 
-        func post(event: OperationEvent) {
+        func post(_ event: OperationEvent) {
             events.append(event)
         }
     }
@@ -399,7 +399,7 @@ struct DetachingToolTests {
             let completionToken = ULID.generate().ulidString
             let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
 
-            #expect(PendingRunEnvelope.isRendered(text: rendered))
+            #expect(PendingRunEnvelope.isRendered(rendered))
             let decoded = try Self.decodeEnvelope(rendered)
             #expect(decoded.pending)
             #expect(decoded.completionToken == completionToken)
@@ -456,7 +456,7 @@ struct DetachingToolTests {
         for slot in [firstSlot, lastSlot] {
             let tampered = rendered.replacingCharacters(in: slot, with: other)
             #expect(tampered.count == rendered.count)
-            #expect(!PendingRunEnvelope.isRendered(text: tampered))
+            #expect(!PendingRunEnvelope.isRendered(tampered))
         }
     }
 
@@ -477,7 +477,7 @@ struct DetachingToolTests {
         ]
 
         for text in tampered {
-            #expect(!PendingRunEnvelope.isRendered(text: text))
+            #expect(!PendingRunEnvelope.isRendered(text))
         }
     }
 
@@ -490,7 +490,7 @@ struct DetachingToolTests {
 
         #expect(tampered != rendered)
         #expect(tampered.count == rendered.count)
-        #expect(!PendingRunEnvelope.isRendered(text: tampered))
+        #expect(!PendingRunEnvelope.isRendered(tampered))
     }
 
     @Test("an envelope whose twin slots hold a same-length non-ULID is not recognized")
@@ -502,7 +502,7 @@ struct DetachingToolTests {
         let tampered = rendered.replacingOccurrences(of: completionToken, with: notAToken)
 
         #expect(tampered.count == rendered.count)
-        #expect(!PendingRunEnvelope.isRendered(text: tampered))
+        #expect(!PendingRunEnvelope.isRendered(tampered))
     }
 
     @Test("neither ordinary tool output nor an envelope missing its next instruction is recognized")
@@ -520,7 +520,7 @@ struct DetachingToolTests {
         ]
 
         for text in notEnvelopes {
-            #expect(!PendingRunEnvelope.isRendered(text: text))
+            #expect(!PendingRunEnvelope.isRendered(text))
         }
     }
 
@@ -1093,7 +1093,7 @@ struct DetachingToolTests {
         let mailbox = SessionMailbox()
         let sink = RecordingSink()
         let wrapped = ToolDetachment.wrapping(
-            tool: GatedTool(gate: gate),
+            GatedTool(gate: gate),
             sessionID: ULID.generate(),
             mailbox: mailbox,
             sink: sink,
@@ -1118,7 +1118,7 @@ struct DetachingToolTests {
     func factoryBindsNonStringOutputTool() async throws {
         let sink = RecordingSink()
         let wrapped = ToolDetachment.wrapping(
-            tool: NonStringOutputTool(),
+            NonStringOutputTool(),
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
             sink: sink,
@@ -1140,7 +1140,7 @@ struct DetachingToolTests {
     func nonStringOutputToolAmbientPostsCarryPerCallIdentity() async throws {
         let sink = RecordingSink()
         let wrapped = ToolDetachment.wrapping(
-            tool: AmbientNonStringOutputTool(),
+            AmbientNonStringOutputTool(),
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
             sink: sink,

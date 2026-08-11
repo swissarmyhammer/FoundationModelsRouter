@@ -157,7 +157,7 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// completion again — and the `next` instruction that tells it to collect
     /// with that token instead of answering — so the exemption holds under
     /// any `limit`, however small. Recognition is the exact byte-shape check
-    /// ``PendingRunEnvelope/isRendered(text:)``, so ordinary tool output can
+    /// ``PendingRunEnvelope/isRendered(_:)``, so ordinary tool output can
     /// never ride through it.
     ///
     /// - Parameter arguments: The call's arguments, forwarded to `wrapped`
@@ -167,7 +167,7 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// - Throws: Whatever `wrapped.call(arguments:)` throws, unmodified.
     func call(arguments: Arguments) async throws -> String {
         let output = try await wrapped.call(arguments: arguments)
-        if PendingRunEnvelope.isRendered(text: output) {
+        if PendingRunEnvelope.isRendered(output) {
             return output
         }
         return ToolOutputCapping.capped(text: output, toTokenLimit: limit)
@@ -189,7 +189,7 @@ extension ToolDetachment {
     /// survives any configured limit.
     ///
     /// A non-String-output tool takes a narrower path through the same
-    /// chain (task ^6htgvw2): ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:configuration:)``
+    /// chain (task ^6htgvw2): ``ToolDetachment/wrapping(_:sessionID:mailbox:sink:configuration:)``
     /// mounts it in the binding-only ``ContextBindingTool`` — its ambient
     /// posts still carry the tool's own identity and a fresh per-call
     /// `correlationID` — and the capping layer passes it through unwrapped,
@@ -219,7 +219,7 @@ extension ToolDetachment {
         cappedToTokenLimit tokenLimit: Int?
     ) -> any Tool {
         let detached = wrapping(
-            tool: tool,
+            tool,
             sessionID: sessionID,
             mailbox: mailbox,
             sink: sink,

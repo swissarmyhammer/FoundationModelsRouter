@@ -181,7 +181,7 @@ struct PropagationProbeIntegrationTests {
     /// to Package.swift solely to carry this two-line no-op across test
     /// modules.
     private struct DiscardingSink: OperationEventSink {
-        func post(event: OperationEvent) async {}
+        func post(_ event: OperationEvent) async {}
     }
 
     // MARK: - Shared fixtures

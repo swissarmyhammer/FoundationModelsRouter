@@ -153,7 +153,7 @@ public struct ToolContext: Sendable {
     ///   `outcome`, and `elicitation` survive the re-stamp.
     public func post(_ event: OperationEvent) async {
         await sink.post(
-            event: OperationEvent(
+            OperationEvent(
                 tool: tool,
                 op: op,
                 correlationID: completionToken,
@@ -171,7 +171,7 @@ public struct ToolContext: Sendable {
     /// - Parameter detail: The run's newest progress detail.
     public func progress(_ detail: String) async {
         await sink.post(
-            event: OperationEvent(
+            OperationEvent(
                 tool: tool,
                 op: op,
                 correlationID: completionToken,
@@ -219,7 +219,7 @@ public struct ToolContext: Sendable {
         )
         let sink = self.sink
         return await mailbox.awaitAnswer(to: request) {
-            await sink.post(event: event)
+            await sink.post(event)
         }
     }
 }

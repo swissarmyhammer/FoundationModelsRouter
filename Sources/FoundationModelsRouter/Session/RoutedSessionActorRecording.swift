@@ -129,7 +129,7 @@ extension RoutedSessionActor {
     /// A no-op when `events` is empty, so an empty outbox never touches
     /// ``outbox`` here — preserving byte-identical behavior for the common
     /// case. Re-queued events go back through ``SessionOutbox/requeue(event:)``,
-    /// which applies the same coalescing policy ``SessionOutbox/post(event:)``
+    /// which applies the same coalescing policy ``SessionOutbox/post(_:)``
     /// does and assigns fresh ``SessionOutbox/ItemID``s (the drain that
     /// removed them was already the commit point for their original ids), but
     /// deliberately does *not* journal them a second time: the run reported

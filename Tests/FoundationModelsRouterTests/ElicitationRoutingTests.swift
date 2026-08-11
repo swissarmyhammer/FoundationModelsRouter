@@ -73,7 +73,7 @@ struct ElicitationRoutingTests {
     /// A sink that drops every posted event — these tests observe the
     /// mailbox and the resumed continuation, never the outbound event chain.
     private struct DiscardingSink: OperationEventSink {
-        func post(event: OperationEvent) async {}
+        func post(_ event: OperationEvent) async {}
     }
 
     private static let configJSON = Data("""

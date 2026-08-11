@@ -47,7 +47,7 @@ struct ToolContextTests {
     private actor RecordingSink: OperationEventSink {
         private(set) var events: [OperationEvent] = []
 
-        func post(event: OperationEvent) {
+        func post(_ event: OperationEvent) {
             events.append(event)
         }
     }
@@ -63,7 +63,7 @@ struct ToolContextTests {
             self.response = response
         }
 
-        func post(event: OperationEvent) async {
+        func post(_ event: OperationEvent) async {
             guard let request = event.elicitation else { return }
             await mailbox.respond(elicitationId: request.elicitationId, response)
         }
