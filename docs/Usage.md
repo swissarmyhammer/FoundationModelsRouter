@@ -26,9 +26,17 @@ Captured output:
 answer: answer: NO-TOOL-OUTPUTS
 ```
 
-(The scripted model composes its answer as `answerPrefix` + the tool outputs it
+(The mock model composes its answer as `answerPrefix` + the tool outputs it
 saw. With no tools mounted it emits `NO-TOOL-OUTPUTS`, so the doubled word
 `answer:` is the prefix, not a typo.)
+
+The transcript after that turn — two entries:
+
+```
+entryCount=2
+  (Prompt)   what is the vault code?
+  (Response) answer: NO-TOOL-OUTPUTS
+```
 
 `respond` returns the SDK's final answer verbatim. It derives **no events** —
 the sink is `nil` on this path.
@@ -50,6 +58,15 @@ Captured output:
 ```
 event: textDelta("answer: NO-TOOL-OUTPUTS")
 event: turnEnded(TokenUsage(tokensIn: 0, tokensOut: 1, contextFill: 0.0001220703125))
+```
+
+The transcript after the streamed turn is **identical** to the blocking one —
+same entries, same order. That is the parity the surfaces owe you:
+
+```
+entryCount=2
+  (Prompt)   what is the vault code?
+  (Response) answer: NO-TOOL-OUTPUTS
 ```
 
 Events are **derived from the transcript delta**, not from a separate
