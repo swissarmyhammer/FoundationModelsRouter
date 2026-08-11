@@ -154,6 +154,38 @@ comments:
 
     Suggested verification once `^w8dzvee` lands, on a machine with no other model tests running: repeat the gated suite ~6 times and compare against this 8/13 baseline.
   timestamp: 2026-08-11T02:06:43.436747+00:00
+- actor: claude-code
+  id: 01kzr7xa3jf7ph9tmw04pd6jm9
+  text: |
+    ### Handed over from `^w8dzvee`: measured evidence that the real model does not reliably dispatch every tool
+
+    Found while diagnosing `^w8dzvee`'s gated `RealToolTurnComparisonTests`. Router itself records faithfully on every turn measured, so this residue is model behaviour and belongs here.
+
+    **Setup.** `mlx-community` `.standard` model, two tools (`lookup-alpha`, `lookup-beta`), sampling pinned to greedy, prompt and instructions fixed. Instructions name both tools and both step arguments explicitly and say to reply with both identifiers "exactly as they were returned, and nothing else". Each tool returns `MARKER-7F3A-<STEP>`.
+
+    **Measured over 8 independent turns (4 gated runs, 2 turns each), tool rounds per turn:**
+
+    | turn | rounds | what it called |
+    |---|---|---|
+    | A-respond | 2 | alpha/ONE, beta/TWO — compliant |
+    | A-stream | 2 | alpha/ONE, beta/TWO — compliant |
+    | B-respond | **11** | `#0` alpha/ONE, `#1` beta/TWO, then 9 more; `#5`–`#10` all repeat alpha/ONE |
+    | B-stream | 2 | compliant |
+    | C-respond | 3 | beta/TWO, alpha/ONE, then alpha/ONE again |
+    | C-stream | 2 | compliant |
+    | D-respond | **1** | beta/TWO only |
+    | D-stream | **1** | alpha/ONE only |
+
+    **Two distinct failure shapes, both this card's:**
+
+    1. **Under-calling with a fabricated identifier.** D-respond called only `lookup-beta`, got `MARKER-7F3A-TWO`, and answered `"MARKER-7F3A-TWO, MARKER-9B2C-ONE"`. D-stream called only `lookup-alpha`, got `MARKER-7F3A-ONE`, and answered `"MARKER-7F3A-ONE, MARKER-9B2C-TWO"`. **`MARKER-9B2C-*` is not a real marker** — the scenario's `markerPrefix` is `MARKER-7F3A-`. The model invented a plausible-looking identifier for the tool it never called rather than calling it. That is worse than omitting the answer, because the fabrication is not distinguishable from a real identifier by shape.
+
+    2. **Runaway repetition.** B-respond made 11 rounds, 9 of them re-issuing the identical `lookup-alpha({"step":"ONE"})` and receiving the identical output each time. It did eventually answer correctly. Note the vendored `TranscriptConverter` already anticipates this shape — its `.toolOutput` case comments that an empty tool output is emitted anyway "so a continuation round's prompt always differs from the round that made the call -- dropping empty outputs would make the two rounds' rendered prompts identical and risk the model repeating the same call forever". Here the outputs are non-empty and the prompt does grow each round, so the loop is the model's, not that hazard.
+
+    **Also worth this card's attention: the trajectory is not reproducible.** Same surface, same fixed prompt, cold process each time, sampling pinned to greedy (which `SamplingModeMapper.resolveSamplingParameters` resolves to temperature 0 / argmax) — and `respond(to:)` alone produced 11, 3, 2 and 1 rounds. Two Router-side explanations were checked and ruled out: both session surfaces build the identical `GenerationOptions(samplingMode:maximumResponseTokens:)`, and the tool-call id reaches the converter as `Chat.Message.tool(id:)` structurally rather than as rendered prompt text. So the non-reproducibility is below Router, and any tool-dispatch reliability work on this card has to be measured as a rate over repeated runs, never from a single run.
+
+    **What `^w8dzvee` did with this.** Nothing — deliberately. Its gated suite now asserts only what Router owns (each surface's answer equals its own turn's final response character for character; the answer carries every marker *that turn's* tools delivered; one tool output per announced call, each resolving to its call; streamed completion ids equal streamed call ids). A turn that calls one tool instead of two now passes there, correctly, because it is this card's defect and not Router's. Reproduce with `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter RealToolTurnComparison`, which prints both surfaces' full transcripts and answers on every run.
+  timestamp: 2026-08-11T11:04:20.338620+00:00
 position_column: todo
 position_ordinal: 8a80
 title: Gated tool-calling suites lose their tool call or their recall when they inherit another suite's prompt cache

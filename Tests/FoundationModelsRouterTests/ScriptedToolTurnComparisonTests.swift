@@ -86,8 +86,7 @@ struct ScriptedToolTurnComparisonTests {
             calledIds: [],
             completedIds: [],
             failedIds: [],
-            transcript: .normalizing(
-                fixture.transcriptEntries(), markers: ToolTurnScenario.markers))
+            entries: fixture.transcriptEntries())
     }
 
     /// Runs the scenario once through `streamEvents(to:)`, accumulating the
@@ -132,8 +131,7 @@ struct ScriptedToolTurnComparisonTests {
             calledIds: calledIds,
             completedIds: completedIds,
             failedIds: failedIds,
-            transcript: .normalizing(
-                fixture.transcriptEntries(), markers: ToolTurnScenario.markers))
+            entries: fixture.transcriptEntries())
     }
 
     /// The answer the scenario's turn must produce, composed from the two

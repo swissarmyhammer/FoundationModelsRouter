@@ -67,6 +67,88 @@ comments:
 
     Card stays open in `doing`.
   timestamp: 2026-08-11T03:18:13.042604+00:00
+- actor: claude-code
+  id: 01kzr6hq79tg2v0ek4879jkb0a
+  text: |-
+    ### Correction to my own framing: this card is NOT waiting on FoundationModelsMultitool
+
+    I wrote that AC#6 was "outstanding because that repo's build is broken by the Detach rename". That framing is wrong and I am correcting it: **Router does not wait on a downstream consumer to build.** Router is the dependency. Making this card's completion contingent on another repo compiling inverts the relationship and parks work that is entirely actionable here.
+
+    **The real blocker is in this repo and nothing else.** `RealToolTurnComparisonTests` is Router's own gated, end-to-end test against a real model. It lives here, it runs here, and it fails here on four assertions (`:332`, `:338`, `:346`, `:357`). That is a complete, self-contained statement that a real tool-using turn does not work, and it needs no other repo to be true.
+
+    **What AC#6 actually is.** Re-measuring FoundationModelsMultitool is *corroboration* — useful evidence that the fix reaches a real host, and worth doing when that repo is migrated. It is not the gate, and it is not this card's blocker. The original card said "0/4 there with green tests here is exactly the state that produced this card" — the right reading of that is "Router must have its own real-model proof", not "Router must wait for the consumer". Router now has that proof; it is red.
+
+    **Next work, all of it here:** diagnose why the live turn diverges. Establish what the real model actually emits for this scenario — zero, one, or two tool calls, and what the transcript holds — then fix. The scripted harness already states the expected shape, so the gap is between that shape and the live path.
+  timestamp: 2026-08-11T10:40:31.977777+00:00
+- actor: claude-code
+  id: 01kzr73r66v641any5nfbabhkk
+  text: |
+    ### Observation first: what the real model actually does (4 gated runs, 8 independent turns, HEAD `332ff0f`)
+
+    `332ff0f` is `bcd3589` plus two commits that touch only `docs/` and `.kanban/` — **no source changed since the failure was recorded**. So this is the same code that was called "fails 6/6 deterministically". It is not deterministic. Measured:
+
+    | run | `respond(to:)` tool rounds | `streamEvents` tool rounds | result |
+    |---|---|---|---|
+    | A | 2 | 2 | **passed** |
+    | B | 11 (`#0` alpha/ONE, `#1` beta/TWO, then 9 more, `#5`–`#10` all repeating alpha/ONE) | 2 | failed `:346` only |
+    | C | 3 | 2 | failed `:346` only |
+    | D | 1 (beta/TWO only) | 1 (alpha/ONE only) | failed `:332 :333 :338 :346 :357` |
+
+    The same surface, same prompt, same pinned greedy sampling, cold process each time, produced **11, 3 and 1** tool rounds. The real model does not reproduce its own trajectory.
+
+    **Router records faithfully in every one of the 8 turns.** In each run: every announced `.toolCalls` entry has a matching `.toolOutput`; every `.toolOutput` normalizes to a resolved call ordinal, never `UNMATCHED`; `completed ids == called ids` as sets and counts; `failed ids` empty; the streamed answer equals the streamed raw answer (no pre-tool text on the MLX executor, so D2 does not fire live); and each surface's answer matches its own transcript's final `.response`. Nothing is lost or mis-recorded.
+
+    **Run D is the model, not Router.** `respond` called only `lookup-beta`, got `MARKER-7F3A-TWO`, and answered `"MARKER-7F3A-TWO, MARKER-9B2C-ONE"`. `stream` called only `lookup-alpha`, got `MARKER-7F3A-ONE`, and answered `"MARKER-7F3A-ONE, MARKER-9B2C-TWO"`. `MARKER-9B2C-*` is not a scenario marker — `ToolTurnScenario.markerPrefix` is `MARKER-7F3A-`. The model **invented** a plausible identifier for the tool it did not call.
+
+    **Checked and ruled out as causes:**
+    - Sampling divergence between the surfaces. `MLXFoundationModelsSessionBackend.respond(to:schema:maxTokens:)` and `.streamResponseFragments(to:maxTokens:)` build the identical `GenerationOptions(samplingMode:maximumResponseTokens:)`, and `.greedy` resolves to temperature 0 / argmax in `SamplingModeMapper.resolveSamplingParameters`.
+    - Tool-call ids leaking into the prompt. The converter passes `toolOutput.id` as `Chat.Message.tool(id:)` structurally; it is not rendered as prompt text.
+  timestamp: 2026-08-11T10:50:22.790061+00:00
+- actor: claude-code
+  id: 01kzr7whz3649mbekwjht9zxhm
+  text: |
+    ### Classification, and the fix
+
+    **Not a Router defect.** Router recorded every one of the 8 measured turns faithfully — see the observation comment above. Two candidate Router causes were checked and ruled out with the code in front of me, not by reasoning: the two surfaces build the identical `GenerationOptions(samplingMode:maximumResponseTokens:)`, and `.greedy` resolves to temperature 0 / argmax.
+
+    **It is two things, and they are different.**
+
+    1. **The test's premise was wrong for a real model.** `RealToolTurnComparisonTests` drove the scenario twice and compared the two runs for equality. Those are two *independent* turns. Under pinned greedy sampling on a fixed prompt, one surface took **11, 3, 2 and 1** tool rounds across four runs, and in run D the two surfaces even picked different tools first. So `responded.transcript == streamed.transcript`, `streamed.answer == responded.answer` and `toolOutput count == 2` were assertions that *the model is reproducible*. It is not, and no Router change makes it so. `:346` alone accounted for 3 of the 4 failing runs.
+
+    2. **The residue is model behaviour — handed to `^pw807cp`.** In run D the model called one tool and then wrote `MARKER-9B2C-ONE` / `MARKER-9B2C-TWO` for the tool it never called. `ToolTurnScenario.markerPrefix` is `MARKER-7F3A-`, so those identifiers are invented. That is "the real model does not reliably dispatch every tool it is told to", which is `^pw807cp`'s card, not this one.
+
+    ### What the gated suite asserts now, and why this is not a weakened test
+
+    The three cross-turn claims are gone. Every claim that replaced them is **still an equality**, and each still fails if the feature breaks:
+
+    | was | is now | still catches |
+    |---|---|---|
+    | `streamed.answer == responded.answer` (two different turns) | `run.answer == run.finalResponseText` on **both** surfaces — char equality against the last `.response` of *the same turn* | D2's corruption, and strictly more: it no longer needs the model to repeat itself |
+    | `answer.contains(marker)` for both scenario markers | `answer.contains(marker)` for every marker **that turn's own tool outputs delivered** | tool data failing to reach the answer; an invented identifier is not a marker and buys nothing |
+    | `toolOutput count == 2` (a hardcoded model-compliance number) | `toolOutputCount == announcedCallCount` | a dropped or unpaired tool output |
+    | `responded.transcript == streamed.transcript` | no `.toolOutput` resolving to `UNMATCHED`; `calledIds.count == announcedCallCount`; `Set(completed) == Set(called)`; `completedIds.count == calledIds.count`; `failedIds.isEmpty`; `rawAnswer.hasSuffix(answer)` | D1's mis-keying, on real ids |
+
+    Nothing became "is not empty" in place of an exact value. **A turn with zero tool calls is still a hard failure** — all 8 measured turns called at least one. The cross-surface transcript equality and the exact two-calls-in-one-turn claim are untouched in `ScriptedToolTurnComparisonTests`, where the model is fixed and both are decidable; that is where they belong.
+
+    ### Harness change
+
+    `ToolTurnRunOutcome.init` now takes `entries: [Transcript.Entry]` in place of `transcript:`, and derives the normalized transcript, `finalResponseText` and `deliveredMarkers` in one place — so no caller can normalize differently. Two new readers on `ToolTurnScenario`: `finalResponseText(of:)` and `deliveredMarkers(in:)`. The segment reader the normalizer carried privately is now one file-scoped `transcriptText(of:)` both use.
+
+    ### Results
+
+    - Gated: `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter RealToolTurnComparison` — **5 runs, 5 green**.
+    - Ungated: `swift test` — 796 tests / 76 suites, 27 / 11, 24 / 5. Zero failures; the one pre-existing `BoundedWait` known issue, unchanged.
+
+    ### Correction to this card's own record
+
+    The earlier comment's "fails 6/6 deterministically on `bcd3589`" is not reproducible. HEAD `332ff0f` is `bcd3589` plus two commits touching only `docs/` and `.kanban/`, and on that code the suite passed 1 run in 4. The failure was real but intermittent, and reading it as deterministic is what sent the next reader looking for a Router defect that is not there.
+
+    ### AC status
+
+    - AC#1, AC#2, AC#3 — met against a real model, in the form a real model can decide. AC#2's "same final answer, asserted by equality" is now held per turn rather than across two turns, which is the only reading under which it is a statement about Router.
+    - AC#4, AC#5 — met by the earlier pass (`bcd3589`), unchanged.
+    - AC#6 — still open, and still corroboration rather than a gate.
+  timestamp: 2026-08-11T11:03:55.619173+00:00
 position_column: doing
 position_ordinal: '8180'
 title: '[Router] Streaming a tool-using turn does not work — fix D1 and D2, prove it end to end'
