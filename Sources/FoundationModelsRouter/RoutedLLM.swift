@@ -155,6 +155,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     ``RoutedSession/streamSessionEvents()`` for every turn, whichever
     ///     entry point ran it. A fork inherits its parent's opt-in.
     /// - Returns: A new ``RoutedSession`` over this model.
+    // sah:allow duplication a frozen public convenience (^pckk91c) whose body only forwards its nine parameters into a SessionConfiguration and on to makeSession(configuration:); makeGuidedSession forwards the same nine plus its grammar, and neither body holds logic that can drift
     public func makeSession(
         instructions: String? = nil,
         workingDirectory: URL? = nil,
