@@ -347,7 +347,7 @@ struct PromptQueueTests {
 
         _ = await session.enqueue(prompt: "what happened?")
         let posted = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
-        await session.outbox.post(posted)
+        await session.outbox.post(event: posted)
 
         _ = try await session.dispatchNextPrompt()
 

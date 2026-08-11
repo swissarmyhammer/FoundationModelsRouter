@@ -11,5 +11,5 @@ public protocol OperationEventSink: Sendable {
     /// Receives one posted event.
     ///
     /// - Parameter event: The event to receive.
-    func post(_ event: OperationEvent) async
+    func post(event: OperationEvent) async
 }

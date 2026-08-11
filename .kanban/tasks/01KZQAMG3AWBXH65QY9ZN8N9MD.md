@@ -349,8 +349,63 @@ comments:
     - not run: gated suites (`FM_ROUTER_INTEGRATION_TESTS=1`, `MULTITOOL_INTEGRATION=1`) per `^pw807cp`; `swift format` (never in this repo); `Scripts/check-doc-links.py` (deleted). Nothing pushed. `FoundationModelsMultitool` and the vendored `mlx-swift-lm` fork untouched.
     - next: `/review`.
   timestamp: 2026-08-11T14:17:38.150418+00:00
-position_column: review
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01kzrkybv7rx7xnx2nqfshnbze
+  text: |-
+    ### review — clean
+
+    - scope: `review sha HEAD~1..HEAD`, which resolved to `ca792cb..7210df0` — the commit under review. `HEAD` was `7210df0` when the engine ran. Another session then committed the kanban-only commit `fc0a751` on top. A sha-scoped read uses committed state, so the scope is correct.
+    - engine: 18 validator and file pairs attempted, **0 findings**, 1 candidate refuted, 0 failed, 0 skipped. All 13 findings of the last round are ticked. All 6 acceptance criteria are ticked.
+    - tests: I ran ungated `swift test` 3 times, one after the other, alone. Each run gave **811 tests / 77 suites + 27 / 11 + 24 / 5, zero failures**, and 1 known issue at `BoundedWait.swift:114`. I checked `git status --porcelain -- Sources Tests` before and after each run. It was empty every time. This agrees with the claim. The baseline was 809/77, so the 2 more tests are the 2 new tests. `swift build` is clean, with no compiler warning.
+
+    ### The six checks
+
+    **1. The `Transcript.ToolOutput.id` verdict — the extraction is real.** I read Apple's binary `.swiftdoc` again, without trust in the claim. In `/Applications/Xcode-beta.app/…/FoundationModels.swiftmodule/arm64e-apple-macos.swiftdoc`, the symbol `s:16FoundationModels10TranscriptV10ToolOutputV2idSSvp` is followed by the text `A unique id for this tool output.` The neighbour symbols use the same layout, for example `.segments` gives `Segments of the tool output.` `xcrun swift-demangle` on `$s16FoundationModels10TranscriptV10ToolOutputV2idSSvp` gives `FoundationModels.Transcript.ToolOutput.id : Swift.String`. The `.swiftinterface` holds the declaration but no doc comment, which is usual. So the field is the entry's own identity. Nothing in the framework docs says the id is the id of the call it answers.
+
+    The entry now mints its own id: `RoutedSessionActorRunJournal.swift:150` uses `ULID.generate().description`. The parent reference is in the typed segment at `:152`.
+
+    The parent reference is truly reachable. `OperationEventSegment` is public, its `content` is public, and `OperationEvent.correlationID` is public. `TranscriptReconstruction` defaults to `CustomSegmentRegistry.routerDefault`, which already registers `OperationEventSegment`, so a client needs no setup. `SessionMailboxTests.swift:676-685` walks exactly the path a client walks and reads the `correlationID` back. The rendered text also holds the id in plain words.
+
+    **2. `claimJournalWrite(for:)` stops the duplicate.** There is no gap between the check and the claim, because there is no pair. `Set.insert` does both in one expression at `RoutedSessionActorRunJournal.swift:83-86`. The function is not `async`, so it cannot suspend. It is isolated to `RoutedSessionActor`, and `journaledTerminalCorrelationIDs` is actor state. It has one caller, `record(event:)`, and the guard is the first statement, before both `await`s. A caller that loses the claim returns at once and appends nothing. Both duplicate paths now go through the same `record(event:)`, so one claim covers both. Nothing already appended is changed or removed: every recorder only appends, and the claim only causes an early return.
+
+    **3. The bite-proof is real, and I proved it by experiment.** Both tests use a real parked run in the session's real `SessionMailbox`, and `session.close()` drives the real `sweep()`. Neither test calls `record(event:)`, `append(partial:)`, or `claimJournalWrite` itself. I made the claim always succeed and ran the suite: `DetachedRunTranscriptTests.swift:276` gave `terminals.count → 2`, and `:322` gave `terminals.count → 2`. Both failed, and the other 4 tests still passed. I then tried a wrong fix that keeps the later success: `:323` failed with `terminals.first?.outcome → .succeeded`. So the outcome assertion bites on its own. The suite passed 6 of 6 before and after I put the file back.
+
+    **4. `close()` goes through the chain.** `SessionOutbox.journalWithoutStaging(event:)` calls the same private `enqueueJournalWrite(event:)` that `post(_:)` calls, on the same one `journalChain`. It is not a second chain and not a bare `Task`. Order stays sure: `SerialAsyncChain.enqueue` reads `tail` synchronously before any suspension, and each task first awaits the task before it. `journalWithoutStaging` awaits `.value`, and `close()` awaits each turn of its loop. No event is lost when staging is skipped: every reader of the staged list is next-turn machinery, and after `close()` there is no next turn. The transcript is the record, and restore rebuilds these terminals from it.
+
+    **5. The waivers are all correct.** `isRendered(_:)` at `DetachingTool.swift:230` is `public static` and dates from `13a7048`. `wrapping(_:…)` at `:681` is `public static` and dates from `6cffe80`. Both are older than this batch and this commit does not touch them. `post(_:)` on `SessionOutbox` is `public` and is also an `OperationEventSink` requirement. `post(_:)` on `RunEventFunnel` is an internal member of a file-private actor, so access is not the reason, but the protocol reason is real: Swift matches a requirement by the full selector, so a rename on the conforming side alone breaks the conformance. I checked the way out that would make the waiver wrong, and it is not there: `OperationEventSink` is itself `public`, and `ToolContext.post` is a third public conformer, so a rename of the protocol with all conformers is still a source-breaking change. All 11 fixed and swept sites now carry a label, and every one is internal, private, or file-private. `RaceGate` is file-private, as claimed.
+
+    **6. No public API broke.** `git diff 7210df0^..7210df0 -- '*ToolContext.swift' '*OperationEventSink.swift'` is empty, and neither file is in the commit's file list. Both files still hold their first labels. A search of the whole commit for a changed `public` or `open` declaration returns zero lines. Nothing of the discarded attempt is left.
+
+    ### Two things to know, neither a finding
+
+    - `TranscriptEntryMapper.entry(from:kind:registry:)` defaults to an empty `CustomSegmentRegistry()`, but the public high-level entry points default to `.routerDefault`. The two defaults disagree. A client that calls the low-level API with the default gets a thrown `unregisteredCustomSegmentType`, which is a loud failure, not lost data. This code is older than this commit and this commit does not touch it, so it is out of scope here. Worth a card of its own.
+    - The claim is taken before the append, and `JSONLRecorder.append` drops the write on an I/O failure. So if the first writer fails to write to disk, the `correlationID` is used up and the second writer is refused. This only happens when the disk write already failed, and the record is already incomplete in that case. Not a rule breach, but worth stating.
+
+    ### A note on my own method
+
+    My first test measurement was bad. I ran the test agent at the same time as the agent that neuters the mechanism to prove the bite, so runs 2 and 3 measured a changed tree. That is the same contamination as the last round, and it was my fault. I threw that evidence away and ran the 3 runs again, alone, with a clean-tree check around each one. The numbers above come from the clean runs.
+
+    The failure seen in the bad runs was `TurnCancellationTests.swift:1187`, which is `^79qgjef` exactly — same file, same line, same assertion. That card records 3 failures in 8 runs both with this change and with it stashed. It did not appear in any of my 3 clean runs.
+
+    - next: none. Card moves to `done`.
+  timestamp: 2026-08-11T14:34:37.799540+00:00
+- actor: claude-code
+  id: 01kzrmf6xgxh9q80adjntfw9x5
+  text: |
+    ### Follow-up: the three public label findings were ticked but not applied
+
+    This card ticked ten label findings. The commit `7210df0` applied the seven non-public ones and left the three public ones in the code, with the reason recorded on the card: two source-breaking public renames had already shipped in the batch.
+
+    The user then gave a direct instruction to apply them. That work is on `^pckk91c`, which lands:
+
+    - `PendingRunEnvelope.isRendered(text:)`
+    - `ToolDetachment.wrapping(tool:sessionID:mailbox:sink:configuration:)`
+    - `OperationEventSink.post(event:)`, with its two conformers (`SessionOutbox`, `RunEventFunnel`) and every call site
+
+    Recorded here so a reader of this card does not think the code matches the ticks.
+  timestamp: 2026-08-11T14:43:49.808741+00:00
+position_column: done
+position_ordinal: ff8980
 title: Detached tool runs need a path back into the transcript — today they return as prompt text
 ---
 Router exists so a long-running tool does not block the session: Apple's tools are `async` in signature but the session stalls until they return, so `DetachingTool` parks the run, hands the model `{"pending":true,"completionToken":...}`, and lets the turn finish. The parking works. **The result has no proper way back.**

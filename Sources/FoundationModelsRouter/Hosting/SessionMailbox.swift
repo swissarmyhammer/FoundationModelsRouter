@@ -421,7 +421,7 @@ public actor SessionMailbox {
     /// installed synchronously on this actor first, and only then is
     /// `posting` started (as a separate task), so an answer delivered the
     /// instant a host observes the posted request — even from inside the
-    /// sink's own `post(_:)` — always finds the pending entry instead of
+    /// sink's own `post(event:)` — always finds the pending entry instead of
     /// no-oping against an unregistered id.
     ///
     /// Registering an `elicitationId` that is already pending is a caller

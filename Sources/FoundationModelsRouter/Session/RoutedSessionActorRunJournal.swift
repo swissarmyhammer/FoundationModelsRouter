@@ -15,7 +15,7 @@ import FoundationModels
 extension RoutedSessionActor: OperationEventJournal {
     /// Records one posted ``OperationEvent`` as its own recorded entry.
     ///
-    /// Called by ``SessionOutbox/post(_:)`` for every event it accepts, in
+    /// Called by ``SessionOutbox/post(event:)`` for every event it accepts, in
     /// post order, so the transcript gains the run's report when the run made
     /// it — no further prompt required.
     ///
@@ -41,7 +41,7 @@ extension RoutedSessionActor: OperationEventJournal {
     /// independent routes, and both can fire for the same run:
     ///
     /// 1. The run settles on its own and ``RunEventFunnel`` posts its terminal
-    ///    through ``SessionOutbox/post(_:)``, which journals it live.
+    ///    through ``SessionOutbox/post(event:)``, which journals it live.
     /// 2. ``close()`` sweeps the mailbox and journals what
     ///    ``SessionMailbox/sweep()`` hands back.
     ///
