@@ -1,4 +1,5 @@
 import FoundationModels
+import Synchronization
 
 @testable import FoundationModelsRouter
 
@@ -166,6 +167,10 @@ struct ScriptedToolCallingModel: LanguageModel {
                             tokenCount: Self.emittedTokenCount)))
                 return
             }
+            if let narration = configuration.script.narration {
+                await channel.send(
+                    .response(action: .appendText(narration, tokenCount: Self.emittedTokenCount)))
+            }
             for call in configuration.script.rounds[round] {
                 await channel.send(
                     .toolCalls(
@@ -199,223 +204,21 @@ struct ScriptedToolCallingModel: LanguageModel {
     }
 }
 
-// MARK: - The backend and container the scripted model is mounted behind
+// MARK: - The container the scripted model is mounted behind
 
-/// A ``LanguageModelSessionBackend`` that drives a real, tool-mounted
-/// `LanguageModelSession` over a ``ScriptedToolCallingModel``.
+/// A ``LoadedLLMContainer`` that vends the production
+/// ``MLXFoundationModelsSessionBackend`` over a ``ScriptedToolCallingModel``,
+/// so a `RoutedSession` vended off a stub-resolved profile drives the real
+/// backend — the real `pumpStream`, the real `respond` — with no GPU in the
+/// loop.
 ///
-/// The live `MLXFoundationModelsSessionBackend` cannot stand in here: its
-/// initializer takes a concrete `MLXLanguageModel`, which needs real weights
-/// and a GPU. This backend is the same shape over a scripted model, so the
-/// SDK's own tool loop — not a simulation of it — is what a `RoutedSession`
-/// turn runs through.
-///
-/// `@unchecked Sendable` on the same terms as the live backend it stands in
-/// for: the owning session drives one backend method at a time under its turn
-/// lock, so `liveSession` — a non-`Sendable` class — is never touched
-/// concurrently.
-final class ScriptedToolCallingBackend: LanguageModelSessionBackend, @unchecked Sendable {
-    /// A generation shape this fixture deliberately does not stand in for.
-    enum FixtureError: Error, Equatable {
-        /// Raised by the guided entry point: the scripted model emits plain
-        /// text and tool calls only, so a grammar-constrained turn has nothing
-        /// to constrain here. No scripted suite drives a guided turn.
-        case guidedGenerationUnsupported
-    }
-
-    /// The scripted model every session this backend builds runs over.
-    private let model: ScriptedToolCallingModel
-
-    /// The tools mounted on ``liveSession``, retained so a fork can mount the
-    /// same ones.
-    private let tools: [any Tool]
-
-    /// The real, tool-mounted session this backend drives.
-    private let liveSession: LanguageModelSession
-
-    /// Creates a backend over a fresh session carrying `instructions`.
-    ///
-    /// - Parameters:
-    ///   - model: The scripted model to run the session over.
-    ///   - tools: The tools to mount on the session.
-    ///   - instructions: The session's system instructions, or `nil`.
-    init(model: ScriptedToolCallingModel, tools: [any Tool], instructions: String?) {
-        self.model = model
-        self.tools = tools
-        self.liveSession = LanguageModelSession(model: model, tools: tools, instructions: instructions)
-    }
-
-    /// Creates a backend over a fresh session seeded from `transcript`.
-    ///
-    /// - Parameters:
-    ///   - model: The scripted model to run the session over.
-    ///   - tools: The tools to mount on the session.
-    ///   - transcript: The transcript to seed the session from.
-    init(model: ScriptedToolCallingModel, tools: [any Tool], transcript: Transcript) {
-        self.model = model
-        self.tools = tools
-        self.liveSession = LanguageModelSession(model: model, tools: tools, transcript: transcript)
-    }
-
-    /// Runs one whole-response turn on ``liveSession``.
-    ///
-    /// The SDK drains its own tool loop inside this one call, so the text that
-    /// comes back is already the post-tool answer — the backend surface a
-    /// ``RoutedSession/respond(to:)`` turn ends up driving.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The response token ceiling, or `nil` for the SDK's own.
-    /// - Returns: The turn's final text, after every scripted tool call ran.
-    /// - Throws: Whatever the underlying session throws.
-    func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-        let options = GenerationOptions(maximumResponseTokens: maxTokens)
-        return try await liveSession.respond(to: prompt, options: options).content
-    }
-
-    /// Streams one turn on ``liveSession`` as response fragments — the backend
-    /// surface a ``RoutedSession/streamEvents(to:)`` turn ends up driving.
-    ///
-    /// The SDK yields cumulative snapshots, not fragments, so the conversion
-    /// this protocol requires happens in ``pumpStream(prompt:options:into:)``;
-    /// a consumer that stops reading cancels the pumping task.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The response token ceiling, or `nil` for the SDK's own.
-    /// - Returns: A stream of response fragments, finishing when generation
-    ///   completes or throwing if it fails.
-    func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-        let options = GenerationOptions(maximumResponseTokens: maxTokens)
-        return AsyncThrowingStream { continuation in
-            let task = Task { await self.pumpStream(prompt: prompt, options: options, into: continuation) }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
-        }
-    }
-
-    /// Drives ``liveSession``'s cumulative-snapshot stream to completion,
-    /// yielding each snapshot's new suffix.
-    ///
-    /// `LanguageModelSessionBackend/streamResponse(to:maxTokens:)`'s contract
-    /// is a stream of *fragments* the caller accumulates, while the SDK yields
-    /// cumulative snapshots, so a conformer has to convert — this is the
-    /// conversion, not a copy of production logic under test.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to stream a response to.
-    ///   - options: The generation options to run under.
-    ///   - continuation: The continuation each fragment is yielded to.
-    private func pumpStream(
-        prompt: String,
-        options: GenerationOptions,
-        into continuation: AsyncThrowingStream<String, Error>.Continuation
-    ) async {
-        var previous = ""
-        do {
-            for try await snapshot in liveSession.streamResponse(to: prompt, options: options) {
-                let current = snapshot.content
-                let delta = current.hasPrefix(previous) ? String(current.dropFirst(previous.count)) : current
-                if !delta.isEmpty {
-                    continuation.yield(delta)
-                }
-                previous = current
-            }
-            continuation.finish()
-        } catch {
-            continuation.finish(throwing: error)
-        }
-    }
-
-    /// Refuses a grammar-constrained turn.
-    ///
-    /// The scripted model emits plain text and tool calls only, so a grammar
-    /// has nothing to constrain here and no scripted suite drives a guided
-    /// turn. Failing loudly is what keeps a future guided test from quietly
-    /// reading unconstrained text as if it had been constrained.
-    ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - grammar: The grammar the output would be constrained to.
-    ///   - maxTokens: The response token ceiling, or `nil` for the SDK's own.
-    /// - Returns: Nothing — this entry point never returns a value.
-    /// - Throws: ``FixtureError/guidedGenerationUnsupported``, always.
-    func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-        throw FixtureError.guidedGenerationUnsupported
-    }
-
-    /// Forks this backend, keeping the tools this one already mounts.
-    ///
-    /// Delegates to ``makeFork(tools:)`` with the stored tool list, the way the
-    /// live `MLXFoundationModelsSessionBackend` delegates to its own `tools:`
-    /// overload: a fork of a tool-mounted session has to stay tool-mounted, or
-    /// the child's first turn silently loses tool calling.
-    ///
-    /// - Returns: A new backend that begins from this session's history and
-    ///   then diverges independently, with the same tools mounted.
-    func makeFork() -> any LanguageModelSessionBackend {
-        makeFork(tools: tools)
-    }
-
-    /// Forks this backend over the same scripted model, seeding the child from
-    /// this session's transcript as of now and mounting `tools` on it.
-    ///
-    /// Implemented rather than left to the protocol's tool-dropping default:
-    /// that default exists for stubs whose model cannot call tools at all, and
-    /// this fixture's model can.
-    ///
-    /// - Parameter tools: The tools to mount on the forked session, in place of
-    ///   this backend's own.
-    /// - Returns: A new, independent backend seeded from this session's
-    ///   history.
-    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-        ScriptedToolCallingBackend(model: model, tools: tools, transcript: liveSession.transcript)
-    }
-
-    /// Reseeds a new backend over the same scripted model from `transcript`,
-    /// discarding this backend's own accumulated history.
-    ///
-    /// The seam ``RoutedSessionActor/compact(prompt:budget:)`` swaps a session's
-    /// inner backend through. No scripted suite compacts, but the conformance
-    /// is real rather than the protocol's fork-shaped default, so a later test
-    /// that does compact gets the transcript it asked for instead of this
-    /// backend's.
-    ///
-    /// - Parameter transcript: The transcript to seed the new backend from.
-    /// - Returns: A new, independent backend whose history begins with
-    ///   `transcript`'s entries.
-    func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
-        ScriptedToolCallingBackend(model: model, tools: tools, transcript: transcript)
-    }
-
-    /// Reports ``liveSession``'s transcript so far, in order.
-    ///
-    /// Read straight off the live session, so it holds only under the owning
-    /// session's turn lock — the same discipline the live backend documents.
-    /// The scripted model reads its own copy out of the request the SDK hands
-    /// it, so nothing in the scripted suites depends on this accessor; it is
-    /// here because the protocol requires it.
-    ///
-    /// - Returns: Every entry ``liveSession`` has accumulated so far, in order.
-    func transcriptEntries() -> [Transcript.Entry] {
-        Array(liveSession.transcript)
-    }
-
-    /// Reports ``liveSession``'s cumulative token usage.
-    ///
-    /// Never `nil`: the SDK meters the fragments the scripted model emits, so a
-    /// real pair of counts exists — fixture arithmetic rather than real
-    /// metering, and no scripted assertion reads it.
-    ///
-    /// - Returns: The session's cumulative `(input, output)` token counts.
-    func usageTokenCounts() -> (input: Int, output: Int)? {
-        let usage = liveSession.usage
-        return (usage.input.totalTokenCount, usage.output.totalTokenCount)
-    }
-}
-
-/// A ``LoadedLLMContainer`` that vends ``ScriptedToolCallingBackend``s, so a
-/// `RoutedSession` vended off a stub-resolved profile drives a real,
-/// tool-mounted `LanguageModelSession` with no GPU in the loop.
+/// The backend used to be a hand-written stand-in in this file, and that is
+/// exactly why defects D1 and D2 survived two closed cards (task ^w8dzvee):
+/// the stand-in carried its own copy of the snapshot-to-fragment conversion, so
+/// every scripted suite tested the copy and nothing tested the original.
+/// `MLXFoundationModelsSessionBackend.init` now takes the
+/// `FoundationModels.LanguageModel` existential rather than a concrete
+/// `MLXLanguageModel`, which is what lets the production type stand here.
 ///
 /// It overrides both `tools:` factory overloads rather than taking the
 /// protocol's tool-dropping defaults: mounting the session's tools is exactly
@@ -423,6 +226,16 @@ final class ScriptedToolCallingBackend: LanguageModelSessionBackend, @unchecked 
 struct ScriptedToolCallingContainer: LoadedLLMContainer {
     /// The scripted model every backend this container vends runs over.
     let model: ScriptedToolCallingModel
+
+    /// Every backend this container has vended, in vending order.
+    ///
+    /// A `RoutedSession` exposes no transcript accessor of its own, and a
+    /// comparison of whole transcripts needs one. Reading it off the vended
+    /// backend is the honest route: it is the SDK's own live transcript, the
+    /// same object the turn chokepoint diffs. Only safe to read once the turn
+    /// has returned, which is the turn-lock discipline
+    /// ``LanguageModelSessionBackend/transcriptEntries()`` documents.
+    let vendedBackends = VendedBackendLog()
 
     /// The raw model handle, so a test can build its own session over the very
     /// model the container mounts.
@@ -451,7 +264,14 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     ///   - tools: The tools to mount on the session.
     /// - Returns: A backend a vended `RoutedSession` drives for its lifetime.
     func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        ScriptedToolCallingBackend(model: model, tools: tools, instructions: instructions)
+        vendedBackends.record(
+            MLXFoundationModelsSessionBackend(
+                session: LanguageModelSession(
+                    model: model, tools: tools, instructions: instructions),
+                model: model,
+                instructions: instructions,
+                tools: tools
+            ))
     }
 
     /// Vends a backend over a fresh session seeded from `transcript`, with no
@@ -473,6 +293,37 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
     /// - Returns: A backend whose history begins with `transcript`'s entries,
     ///   with `tools` mounted.
     func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
-        ScriptedToolCallingBackend(model: model, tools: tools, transcript: transcript)
+        vendedBackends.record(
+            MLXFoundationModelsSessionBackend(
+                session: LanguageModelSession(model: model, tools: tools, transcript: transcript),
+                model: model,
+                instructions: TranscriptDiffer.leadingInstructionsText(of: transcript),
+                tools: tools
+            ))
+    }
+}
+
+/// The backends a ``ScriptedToolCallingContainer`` vended, so a test can read
+/// the SDK's own transcript back off the very session a turn ran through.
+///
+/// A class behind a lock because the container is a `struct` a `Sendable`
+/// profile holds, while the recording happens on whatever task built the
+/// session and the reading happens on the task that drove the turn.
+final class VendedBackendLog: Sendable {
+    /// The backends vended so far, in vending order.
+    private let vended: Mutex<[any LanguageModelSessionBackend]> = Mutex([])
+
+    /// The most recently vended backend, or `nil` before any was vended.
+    var latest: (any LanguageModelSessionBackend)? { vended.withLock { $0.last } }
+
+    /// Records a vended backend and hands it straight back, so a factory can
+    /// record and return in one expression.
+    ///
+    /// - Parameter backend: The backend just vended.
+    /// - Returns: `backend`, unchanged.
+    @discardableResult
+    func record(_ backend: any LanguageModelSessionBackend) -> any LanguageModelSessionBackend {
+        vended.withLock { $0.append(backend) }
+        return backend
     }
 }

@@ -145,6 +145,14 @@ public final class SessionProjection {
         case .textDelta(let fragment):
             phase = .generating
             appendTextFragment(fragment)
+        case .textReset:
+            // The model abandoned the response it was writing and began
+            // another (see ``SessionEvent/textReset``). The superseded text
+            // really was produced and really is recorded as its own
+            // `.response` transcript entry, so a faithful mirror keeps it and
+            // closes it: the next fragment opens a new entry beside it rather
+            // than growing the old one into a sentence the model never wrote.
+            closesCurrentTextEntry = true
         case .reasoningDelta(let fragment):
             phase = .generating
             appendReasoningFragment(fragment)
@@ -221,11 +229,25 @@ public final class SessionProjection {
     /// Appends `fragment` to the last entry if it is already a growing
     /// ``TranscriptEntry/Kind/text(_:)`` entry, or starts a new one.
     private func appendTextFragment(_ fragment: String) {
+        let startsNewEntry = closesCurrentTextEntry
+        closesCurrentTextEntry = false
         appendFragment(
             fragment,
-            matching: { if case .text(let existing) = $0 { return existing } else { return nil } },
+            matching: { kind in
+                guard !startsNewEntry, case .text(let existing) = kind else { return nil }
+                return existing
+            },
             makeKind: TranscriptEntry.Kind.text)
     }
+
+    /// Whether the next text fragment opens a new transcript entry instead of
+    /// growing the last one, set by ``SessionEvent/textReset`` and cleared by
+    /// the fragment that consumes it.
+    ///
+    /// Not a projected value a driver reads — the bookkeeping that keeps a
+    /// superseded response and the response that replaced it two entries, the
+    /// way the SDK's own transcript keeps them two `.response` entries.
+    private var closesCurrentTextEntry = false
 
     /// Appends `fragment` to the last entry if it is already a growing
     /// ``TranscriptEntry/Kind/reasoning(_:)`` entry, or starts a new one.

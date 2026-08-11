@@ -20,6 +20,23 @@ struct ScriptedSessionFixture {
     /// The temp directory the router cached into, which the caller must remove.
     let directory: URL
 
+    /// The backends the fixture's container vended, so a test can read the
+    /// SDK's own transcript back off the session its turn ran through.
+    let vendedBackends: VendedBackendLog
+
+    /// The SDK's own transcript for this fixture's session, in order.
+    ///
+    /// Read off the vended backend, so it is the same transcript the turn
+    /// chokepoint diffed. Only call this once the turn has returned — the
+    /// turn-lock discipline ``LanguageModelSessionBackend/transcriptEntries()``
+    /// documents.
+    ///
+    /// - Returns: Every entry the session accumulated, or none when no backend
+    ///   was vended.
+    func transcriptEntries() -> [Transcript.Entry] {
+        vendedBackends.latest?.transcriptEntries() ?? []
+    }
+
     /// Builds a fresh router, resolved profile, and `RoutedSession` over a
     /// ``ScriptedToolCallingContainer`` playing `script`, with `tools` mounted.
     ///
@@ -39,15 +56,18 @@ struct ScriptedSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = ScriptedTurnLog()
         let model = ScriptedToolCallingModel(script: script, log: log)
+        let container = ScriptedToolCallingContainer(model: model)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
             loader: StubModelLoader(
-                container: ScriptedToolCallingContainer(model: model),
-                dimension: RouterTestFixtures.stubDimension)
+                container: container, dimension: RouterTestFixtures.stubDimension)
         )
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         return ScriptedSessionFixture(
-            session: profile.standard.makeSession(tools: tools), log: log, directory: directory)
+            session: profile.standard.makeSession(tools: tools),
+            log: log,
+            directory: directory,
+            vendedBackends: container.vendedBackends)
     }
 }

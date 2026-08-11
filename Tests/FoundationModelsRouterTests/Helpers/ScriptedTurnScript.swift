@@ -1,3 +1,4 @@
+import FoundationModelsRouterTestSupport
 import Synchronization
 
 /// The shared vocabulary of the scripted-tool-turn fixtures: the distinctive
@@ -11,7 +12,7 @@ import Synchronization
 enum ScriptedToolFixture {
     /// The distinctive token every marker output opens with — long enough that
     /// no model prior could produce it and no other fixture collides with it.
-    static let markerPrefix = "MARKER-7F3A-"
+    static let markerPrefix = ToolTurnScenario.markerPrefix
 
     /// The text the scripted model opens its final answer with, before the
     /// marker outputs it read back out of the transcript.
@@ -126,6 +127,20 @@ struct ScriptedTurnScript: Sendable, Hashable {
     /// The tool calls to request, one entry per tool-calling model turn. Empty
     /// for a turn that answers without calling anything.
     let rounds: [[ScriptedToolCall]]
+
+    /// Text the model emits into its `.response` entry before each round's tool
+    /// calls, or `nil` (the default) for a round that emits calls and no prose.
+    ///
+    /// This is what makes a scripted turn's snapshot sequence non-monotonic:
+    /// the SDK closes the narrated `.response` entry at the tool boundary and
+    /// resumes into a new one, so the answer's first snapshot does not extend
+    /// the narration — the shape defect D2 lives in (task ^w8dzvee).
+    ///
+    /// `nil` reproduces `MLXLanguageModel`'s own tool-calling executor, which
+    /// buffers its whole output and emits *either* a tool call *or* text, never
+    /// prose ahead of a call. Both shapes are real: the real model reaches the
+    /// narrated one through its malformed-tool-call text fallback.
+    var narration: String? = nil
 }
 
 // MARK: - What a scripted turn was observed to do

@@ -72,7 +72,7 @@ private let defaultMaxTokens = 8192
 /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
 ///   ``RoutedSession`` drives for its lifetime.
 private func makeSessionBackend(
-    model: MLXLanguageModel,
+    model: any FoundationModels.LanguageModel,
     transcript: FoundationModels.Transcript,
     tools: [any FoundationModels.Tool],
     samplingMode: GenerationOptions.SamplingMode?,
@@ -228,7 +228,16 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
 final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
     /// The `LanguageModel` conformance ``makeFork()`` builds its forked session
     /// over, seeded from this backend's own accumulated transcript.
-    private let model: MLXLanguageModel
+    ///
+    /// Held as the `FoundationModels.LanguageModel` existential rather than as
+    /// the concrete `MLXLanguageModel` the live loader supplies. Nothing here
+    /// needs the concrete type — the session is built through
+    /// `LanguageModelSession(model:tools:transcript:)`, which takes
+    /// `some LanguageModel` — and widening it is what lets a deterministic,
+    /// weightless `LanguageModel` conformance drive this exact backend, so
+    /// ``pumpStream(prompt:options:into:)`` and ``respond(to:schema:maxTokens:)``
+    /// have coverage that needs no GPU (task ^w8dzvee, AC#5).
+    private let model: any FoundationModels.LanguageModel
 
     /// The live session every call on this backend runs through, accumulating
     /// conversation state (the transcript) for this backend's lifetime.
@@ -290,7 +299,7 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     ///     provider's own default in place; see ``samplingMode``.
     init(
         session: LanguageModelSession,
-        model: MLXLanguageModel,
+        model: any FoundationModels.LanguageModel,
         instructions: String? = nil,
         tools: [any FoundationModels.Tool] = [],
         samplingMode: GenerationOptions.SamplingMode? = nil
@@ -344,6 +353,42 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// prior `ChatSession`-backed behavior), so this yields only the new suffix
     /// of each snapshot, computed against the previous one.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+        let fragments = streamResponseFragments(to: prompt, maxTokens: maxTokens)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await fragment in fragments where !fragment.text.isEmpty {
+                        continuation.yield(fragment.text)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    /// Streams ``liveSession``'s response as ``ResponseFragment``s, reporting a
+    /// restart whenever a snapshot abandons the response so far.
+    ///
+    /// The override the protocol's doc comment names: this backend's session
+    /// runs the SDK's own tool loop, which closes the pre-tool
+    /// `Transcript.Response` entry, runs the tool, and resumes generation into
+    /// a new one — so a snapshot after a tool boundary does not extend the one
+    /// before it, and only the last response is what
+    /// ``respond(to:maxTokens:)`` returns.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The response token ceiling, or `nil` for this backend's
+    ///     own default.
+    /// - Returns: A stream of fragments, finishing when generation completes or
+    ///   throwing if it fails.
+    func streamResponseFragments(
+        to prompt: String,
+        maxTokens: Int?
+    ) -> AsyncThrowingStream<ResponseFragment, Error> {
         let options = GenerationOptions(
             samplingMode: samplingMode, maximumResponseTokens: maxTokens ?? defaultMaxTokens)
         return AsyncThrowingStream { continuation in
@@ -356,25 +401,29 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
 
     /// Drives ``liveSession``'s cumulative-snapshot stream to completion.
     ///
-    /// Forwards each snapshot's new suffix into `continuation` and finishes
+    /// Forwards each snapshot's own new text into `continuation` and finishes
     /// (or fails) it when the underlying stream ends.
     ///
-    /// Extracted out of ``streamResponse(to:maxTokens:)`` so that method's
-    /// `AsyncThrowingStream` closure only has to spawn a `Task` and await this
-    /// helper — the do/catch, for-loop, and delta-check live here instead of
-    /// stacked five levels deep inside the stream-building closure.
+    /// Extracted out of ``streamResponseFragments(to:maxTokens:)`` so that
+    /// method's `AsyncThrowingStream` closure only has to spawn a `Task` and
+    /// await this helper — the do/catch, for-loop, and delta-check live here
+    /// instead of stacked five levels deep inside the stream-building closure.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to stream a response to.
+    ///   - options: The generation options to run under.
+    ///   - continuation: The continuation each fragment is yielded to.
     private func pumpStream(
         prompt: String,
         options: GenerationOptions,
-        into continuation: AsyncThrowingStream<String, Error>.Continuation
+        into continuation: AsyncThrowingStream<ResponseFragment, Error>.Continuation
     ) async {
         var previous = ""
         do {
             for try await snapshot in liveSession.streamResponse(to: prompt, options: options) {
                 let current = snapshot.content
-                let delta = Self.suffix(of: current, after: previous)
-                if !delta.isEmpty {
-                    continuation.yield(delta)
+                if let fragment = Self.fragment(of: current, after: previous) {
+                    continuation.yield(fragment)
                 }
                 previous = current
             }
@@ -384,17 +433,33 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
         }
     }
 
-    /// The new suffix `current` has beyond `previous`.
+    /// The fragment `current` adds to `previous`, or `nil` when the snapshot
+    /// repeated without changing.
     ///
-    /// Assumes `current` extends `previous` the way a cumulative streaming
-    /// snapshot does.
+    /// A cumulative snapshot that extends the one before it contributes its new
+    /// suffix, continuing the response. A snapshot that does *not* extend it is
+    /// a new response — measured, not assumed: a tool-using turn against a real
+    /// `LanguageModelSession` yields the snapshot sequence
+    /// `["PRETOOL ", …, "FINAL-ANSWER", …]` while `respond(to:)` on the same
+    /// turn returns `"FINAL-ANSWER"` alone, because the SDK closed one
+    /// `Transcript.Response` entry at the tool boundary and opened another. Its
+    /// whole text is therefore the new response's text so far, carried as a
+    /// restarting fragment so an accumulator replaces rather than appends —
+    /// appending is what left the superseded pre-tool text as a spurious prefix
+    /// of the answer (task ^w8dzvee, defect D2).
     ///
-    /// - Returns: The whole of `current` if it does not have `previous` as a
-    ///   prefix — a defensive fallback for a non-monotonic snapshot, not
-    ///   expected in practice — otherwise just the new suffix.
-    private static func suffix(of current: String, after previous: String) -> String {
-        guard current.hasPrefix(previous) else { return current }
-        return String(current.dropFirst(previous.count))
+    /// - Parameters:
+    ///   - current: The snapshot just received.
+    ///   - previous: The snapshot before it, or the empty string at the start
+    ///     of the turn.
+    /// - Returns: The fragment to deliver, or `nil` when `current` equals
+    ///   `previous` and there is nothing new to say.
+    private static func fragment(of current: String, after previous: String) -> ResponseFragment? {
+        guard current != previous else { return nil }
+        guard current.hasPrefix(previous) else {
+            return ResponseFragment(text: current, restartsResponse: true)
+        }
+        return ResponseFragment(text: String(current.dropFirst(previous.count)))
     }
 
     /// Generates a grammar-constrained response through ``liveSession``.

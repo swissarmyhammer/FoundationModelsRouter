@@ -61,6 +61,13 @@ func runTurn(
         switch event {
         case .textDelta(let fragment):
             reply += fragment
+        case .textReset:
+            // The model abandoned the reply it was writing and began another
+            // (see `SessionEvent.textReset`), which a tool-using turn does at
+            // every tool boundary. Applying the reset is what makes this
+            // accumulation end equal to what `respond(to:)` would have
+            // returned for the same turn.
+            reply = ""
         case .toolCall(let id, let name, let argumentsJSON):
             print("[tool] call \(name) (\(id)): \(argumentsJSON)")
         case .toolStatus(let id, let status, let summary):

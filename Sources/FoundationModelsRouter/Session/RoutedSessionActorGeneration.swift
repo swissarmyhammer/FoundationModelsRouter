@@ -77,9 +77,23 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Runs `backend.streamResponse(to:maxTokens:)`, forwarding each produced
-    /// chunk through `wrapChunk` to `continuation` and accumulating the raw
-    /// text for the chokepoint's close event.
+    /// Runs `backend.streamResponseFragments(to:maxTokens:)`, forwarding each
+    /// produced fragment's text through `wrapChunk` to `continuation` and
+    /// accumulating the raw text for the chokepoint's close event.
+    ///
+    /// The accumulation is restart-aware: a fragment marked
+    /// ``ResponseFragment/restartsResponse`` replaces the text so far rather
+    /// than extending it, so a tool-using turn's accumulated text is the answer
+    /// the SDK actually ends on — the same string
+    /// ``respond(to:maxTokens:)`` returns — instead of that answer with the
+    /// superseded pre-tool text stuck on the front (task ^w8dzvee, defect D2).
+    /// Every fragment's text is still forwarded to `continuation` as it
+    /// arrives, since a delivered chunk cannot be retracted and a live consumer
+    /// is entitled to everything the model said. `wrapFragment` is what turns a
+    /// restart into whatever the calling surface's element type can say about
+    /// it — a ``SessionEvent/textReset`` ahead of the restarting text on the
+    /// event stream, nothing at all on the plain text stream, whose `String`
+    /// element cannot carry the report.
     ///
     /// Shared by ``streamGenerating(prompt:maxTokens:into:)`` and
     /// ``streamEventsGenerating(prompt:maxTokens:into:)``, which differ only in
@@ -92,21 +106,26 @@ extension RoutedSessionActor {
     ///     outbox drained for this turn, to stream a response to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
-    ///   - continuation: The stream continuation each wrapped chunk is yielded to.
-    ///   - wrapChunk: Wraps a raw text chunk into `continuation`'s element type.
+    ///   - continuation: The stream continuation each wrapped element is yielded to.
+    ///   - wrapFragment: Wraps one fragment into zero or more elements of
+    ///     `continuation`'s element type, in yield order.
     /// - Returns: The accumulated, unwrapped response text.
     /// - Throws: Any error thrown by the model, or `CancellationError` when this
     ///   turn's model call was cancelled part-way through the stream.
-    private func streamGeneratingBody<Element>(
+    private func streamGeneratingBody<Element: Sendable>(
         composedPrompt: String,
         maxTokens: Int?,
         into continuation: AsyncThrowingStream<Element, Error>.Continuation,
-        wrapChunk: @Sendable (String) -> Element
+        wrapFragment: @Sendable (ResponseFragment) -> [Element]
     ) async throws -> String {
         var response = ""
-        for try await chunk in backend.streamResponse(to: composedPrompt, maxTokens: maxTokens) {
-            continuation.yield(wrapChunk(chunk))
-            response += chunk
+        for try await fragment in backend.streamResponseFragments(
+            to: composedPrompt, maxTokens: maxTokens)
+        {
+            for element in wrapFragment(fragment) {
+                continuation.yield(element)
+            }
+            response = fragment.restartsResponse ? fragment.text : response + fragment.text
         }
         // An `AsyncThrowingStream` whose consumer is cancelled *ends* — its
         // `next()` returns `nil` rather than throwing — so a cancelled streaming
@@ -149,7 +168,11 @@ extension RoutedSessionActor {
                 composedPrompt: composedPrompt,
                 maxTokens: maxTokens,
                 into: continuation,
-                wrapChunk: { $0 }
+                // A `String` element cannot report a restart, so this surface
+                // delivers the text and nothing else — see
+                // ``SessionEvent/textReset``, which the event stream carries in
+                // its place.
+                wrapFragment: { $0.text.isEmpty ? [] : [$0.text] }
             )
         }
     }
@@ -232,6 +255,26 @@ extension RoutedSessionActor {
         sessionEventSubscriptions.removeAll()
     }
 
+    /// The events one streamed ``ResponseFragment`` implies, in yield order.
+    ///
+    /// A restarting fragment yields ``SessionEvent/textReset`` first, so a
+    /// consumer clears what it accumulated before the new response's text
+    /// arrives and ends the turn holding exactly what
+    /// ``respond(to:maxTokens:)`` returns. The text itself follows as an
+    /// ordinary ``SessionEvent/textDelta(_:)`` either way — superseded text is
+    /// still delivered, never withheld (task ^w8dzvee, defect D2).
+    ///
+    /// An empty-text fragment yields no `.textDelta`: the SDK can open a new
+    /// response before any of its text exists, and an empty delta reports
+    /// nothing while looking like output.
+    ///
+    /// - Parameter fragment: The fragment just received from the backend.
+    /// - Returns: The events to yield for it, in order.
+    private static func sessionEvents(for fragment: ResponseFragment) -> [SessionEvent] {
+        let reset: [SessionEvent] = fragment.restartsResponse ? [.textReset] : []
+        return fragment.text.isEmpty ? reset : reset + [.textDelta(fragment.text)]
+    }
+
     /// Runs the recorder-bracketed streaming generation, forwarding each
     /// text chunk the model produces as a ``SessionEvent/textDelta(_:)`` and,
     /// once the turn's diff runs, every other ``SessionEvent`` it implies —
@@ -269,7 +312,7 @@ extension RoutedSessionActor {
                 composedPrompt: composedPrompt,
                 maxTokens: maxTokens,
                 into: continuation,
-                wrapChunk: SessionEvent.textDelta
+                wrapFragment: Self.sessionEvents(for:)
             )
         }
     }

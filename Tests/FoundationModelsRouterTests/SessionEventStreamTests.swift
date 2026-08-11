@@ -346,6 +346,59 @@ struct SessionEventStreamTests {
         )
     }
 
+    @Test("a completed status names the call it answers even when the entry id does not")
+    @MainActor
+    func completedStatusIsKeyedByCallIdNotEntryId() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        let argumentsA = try GeneratedContent(json: #"{"city":"NYC"}"#)
+        let argumentsB = try GeneratedContent(json: #"{"city":"SF"}"#)
+        // macOS 27 FoundationModels gives a `.toolOutput` entry the id of the
+        // call it answers, so `entry.entryId` normally already is that id. The
+        // invariant is the SDK's, undocumented and unenforced, and the id is
+        // the only thing correlating a completion to its call — so this turn
+        // plants output entries keyed in a different space and holds Router to
+        // reporting the call ids it announced regardless (task ^w8dzvee, D1).
+        // Two calls, because with one the mis-keying is invisible.
+        container.backend.entries = [
+            .toolCalls(
+                Transcript.ToolCalls(
+                    id: "calls-1",
+                    [
+                        Transcript.ToolCall(id: "call-a", toolName: "search", arguments: argumentsA),
+                        Transcript.ToolCall(id: "call-b", toolName: "search", arguments: argumentsB),
+                    ]
+                )
+            ),
+            .toolOutput(
+                Transcript.ToolOutput(
+                    id: "output-entry-1", toolName: "search",
+                    segments: [.text(Transcript.TextSegment(content: "NYC: sunny"))])
+            ),
+            .toolOutput(
+                Transcript.ToolOutput(
+                    id: "output-entry-2", toolName: "search",
+                    segments: [.text(Transcript.TextSegment(content: "SF: foggy"))])
+            ),
+            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "done"))])),
+        ]
+
+        let events = try await Self.collect(session.streamEvents(to: "compare weather"))
+        #expect(
+            events == [
+                .textDelta("ok"),
+                .toolCall(id: "call-a", name: "search", argumentsJSON: argumentsA.jsonString),
+                .toolStatus(id: "call-a", status: .running, summary: nil),
+                .toolCall(id: "call-b", name: "search", argumentsJSON: argumentsB.jsonString),
+                .toolStatus(id: "call-b", status: .running, summary: nil),
+                .toolStatus(id: "call-a", status: .completed, summary: "NYC: sunny"),
+                .toolStatus(id: "call-b", status: .completed, summary: "SF: foggy"),
+            ]
+        )
+    }
+
     @Test("a tool call with no matching toolOutput in this turn's diff is reported failed")
     @MainActor
     func danglingToolCallIsReportedFailed() async throws {

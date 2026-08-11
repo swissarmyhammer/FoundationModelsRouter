@@ -84,7 +84,9 @@ let package = Package(
         ),
         .testTarget(
             name: "\(packageName)Tests",
-            dependencies: [.target(name: packageName)] + mlxProducts,
+            dependencies: [
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+            ] + mlxProducts,
             path: "Tests/\(packageName)Tests"
         ),
         // Test-only support shared by the two gated targets below. It exists
@@ -95,9 +97,14 @@ let package = Package(
         // between two `.testTarget`s directly. A plain `.target` both can
         // depend on is the only way to keep one copy of that code. It is
         // deliberately not part of any `product`, so nothing outside this
-        // package can import it.
+        // package can import it. It also carries `ToolTurnScenario` — the one
+        // tool-using scenario, its transcript normalization, and the outcome
+        // shape — which the ungated scripted suite and the gated real-model
+        // suite each run and then compare against the other (task ^w8dzvee),
+        // so the unit test target depends on it too.
         .target(
             name: "\(packageName)TestSupport",
+            dependencies: [.target(name: packageName)],
             path: "Tests/\(packageName)TestSupport"
         ),
         // Gated, real-model suite (milestone 7): downloads deliberately tiny

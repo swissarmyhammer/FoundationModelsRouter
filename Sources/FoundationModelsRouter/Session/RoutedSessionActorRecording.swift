@@ -342,9 +342,12 @@ extension RoutedSessionActor {
     /// `dispatchedToolCallIds`. A `.toolOutput` partial yields one
     /// ``SessionEvent/toolStatus(id:status:summary:)`` of
     /// ``ToolCallStatus/completed``, carrying the tool's flattened output as
-    /// `summary`, and records its id into `completedToolCallIds` — relying on
-    /// the SDK's own invariant that a `.toolOutput` entry's id matches the
-    /// `.toolCalls` entry's call it answers. A `.reasoning` partial yields one
+    /// `summary`, and records its id into `completedToolCallIds`. That id is
+    /// resolved through ``completedToolCallId(forOutputEntryId:dispatched:completed:)``
+    /// rather than taken from the entry, so the id a completion carries is
+    /// always one this same diff already announced as a
+    /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` — see that helper for
+    /// why the SDK's own invariant is not enough to rely on. A `.reasoning` partial yields one
     /// ``SessionEvent/reasoningDelta(_:)``. Every other kind (`.instructions`,
     /// `.prompt`, `.response`, `.session`, `.embedding`, the legacy
     /// `.toolCall`) yields nothing here — a `.response` partial's text is
@@ -381,13 +384,59 @@ extension RoutedSessionActor {
                 dispatchedToolCallIds.append(call.id)
             }
         case .toolOutput:
-            completedToolCallIds.insert(entry.entryId)
-            onEvent(.toolStatus(id: entry.entryId, status: .completed, summary: partial.text))
+            let callId = completedToolCallId(
+                forOutputEntryId: entry.entryId,
+                dispatched: dispatchedToolCallIds,
+                completed: completedToolCallIds
+            )
+            completedToolCallIds.insert(callId)
+            onEvent(.toolStatus(id: callId, status: .completed, summary: partial.text))
         case .reasoning:
             onEvent(.reasoningDelta(partial.text ?? ""))
         case .session, .instructions, .prompt, .response, .embedding, .toolCall:
             break
         }
+    }
+
+    /// The id of the tool call a `.toolOutput` entry answers, drawn from the
+    /// call ids this same diff already announced.
+    ///
+    /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` and its paired
+    /// ``ToolCallStatus/running`` status both carry
+    /// ``ToolCallPayload/id`` — the model's own id for the call. A completion a
+    /// client cannot map back onto one of those ids is unattributable, and
+    /// mapping it is the only thing the id is for.
+    ///
+    /// Measured against macOS 27 FoundationModels, with two calls in one
+    /// `.toolCalls` entry: `Transcript.ToolOutput.id` is the id of the call it
+    /// answers (`c0` and `c1`, in request order), so `outputEntryId` normally
+    /// already *is* the call id and the first branch below returns it. That
+    /// invariant is the SDK's, undocumented and unenforced, and this router
+    /// does not rely on it: an entry id that names no announced call would
+    /// otherwise be emitted verbatim, leaving a client with a completion it
+    /// cannot attribute *and* — because the same id is what
+    /// ``recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``'s
+    /// closing sweep matches on — the real call reported `.failed` moments
+    /// later. Falling back to the oldest call still outstanding is the correct
+    /// pairing under the SDK's own ordering, which emits one `.toolOutput` per
+    /// call in request order.
+    ///
+    /// - Parameters:
+    ///   - outputEntryId: The `.toolOutput` entry's own id.
+    ///   - dispatched: Every call id this diff has announced, in request order.
+    ///   - completed: The ids already resolved by an earlier `.toolOutput`
+    ///     partial in this same diff.
+    /// - Returns: The announced call id this output completes, or
+    ///   `outputEntryId` unchanged when the diff announced no call still
+    ///   outstanding — a shape with nothing to correlate to, where inventing a
+    ///   pairing would be worse than reporting what the transcript said.
+    private static func completedToolCallId(
+        forOutputEntryId outputEntryId: String,
+        dispatched: [String],
+        completed: Set<String>
+    ) -> String {
+        guard !dispatched.contains(outputEntryId) else { return outputEntryId }
+        return dispatched.first { !completed.contains($0) } ?? outputEntryId
     }
 
     /// Records the session's first-line `session` meta event the first time this

@@ -23,6 +23,29 @@ public enum SessionEvent: Sendable, Equatable {
     /// same fragments ``RoutedSession/streamResponse(to:maxTokens:)`` yields.
     case textDelta(String)
 
+    /// Every ``textDelta(_:)`` so far this turn is superseded: the model
+    /// abandoned the response it was writing and began another.
+    ///
+    /// Emitted immediately before the first ``textDelta(_:)`` of the new
+    /// response, and only when a restart really happened. A tool-using turn is
+    /// where it happens: the SDK closes the pre-tool `Transcript.Response`
+    /// entry, runs the tool, and resumes generation into a new one, so the text
+    /// before the boundary is not part of the answer
+    /// ``RoutedSession/respond(to:maxTokens:)`` returns for the same turn.
+    ///
+    /// **The rule a consumer applies.** Clear the text accumulated so far, then
+    /// keep appending. A consumer that does gets, character for character, the
+    /// string `respond(to:maxTokens:)` returns — that is the invariant this
+    /// case exists to make reachable (task ^w8dzvee, defect D2).
+    ///
+    /// A consumer that ignores it keeps every fragment the model produced,
+    /// which is the prior behavior and a deliberate guarantee: a delivered
+    /// chunk cannot be retracted, and a live consumer is entitled to everything
+    /// the model said. Superseded text is real output, and it is recorded as
+    /// its own `.response` transcript entry either way — this case reports that
+    /// it is no longer part of the answer, and never withholds it.
+    case textReset
+
     /// A fragment of the model's reasoning trace, present only when the
     /// backend recorded a `.reasoning` transcript entry for this turn.
     case reasoningDelta(String)

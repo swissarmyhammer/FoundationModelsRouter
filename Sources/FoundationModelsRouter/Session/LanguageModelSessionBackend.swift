@@ -1,6 +1,41 @@
 import Foundation
 import FoundationModels
 
+/// One piece of a streamed response, and whether it continues the response so
+/// far or begins a new one.
+///
+/// The element type of ``LanguageModelSessionBackend/streamResponseFragments(to:maxTokens:)``.
+/// A plain delta stream can only be appended to, and that is not enough for a
+/// tool-using turn: the SDK closes the pre-tool `Transcript.Response` entry,
+/// runs the tool, and resumes generation into a new one, so a caller
+/// accumulating deltas ends a tool-using turn holding the superseded pre-tool
+/// text as a spurious prefix of the answer that
+/// ``RoutedSession/respond(to:maxTokens:)`` returns (task ^w8dzvee, defect D2).
+/// ``restartsResponse`` is what lets an accumulator drop that prefix instead.
+public struct ResponseFragment: Sendable, Equatable {
+    /// The fragment's own text — new text this fragment adds, never text
+    /// already delivered.
+    public let text: String
+
+    /// Whether this fragment begins a new response, superseding every fragment
+    /// delivered so far this turn, rather than continuing the current one.
+    ///
+    /// `false` for every fragment of an ordinary, single-response turn.
+    public let restartsResponse: Bool
+
+    /// Creates a fragment.
+    ///
+    /// - Parameters:
+    ///   - text: The new text this fragment adds.
+    ///   - restartsResponse: Whether this fragment begins a new response,
+    ///     superseding everything delivered so far this turn. Defaults to
+    ///     `false`, the ordinary continuing case.
+    public init(text: String, restartsResponse: Bool = false) {
+        self.text = text
+        self.restartsResponse = restartsResponse
+    }
+}
+
 /// A live session object vended by a ``LoadedLLMContainer`` factory.
 ///
 /// Where a ``LoadedLLMContainer`` used to expose stateless, one-shot generation
@@ -38,6 +73,36 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
+
+    /// Streams a text response as ``ResponseFragment``s, so a backend whose
+    /// provider abandons one response and begins another mid-turn can say so.
+    ///
+    /// The refinement of ``streamResponse(to:maxTokens:)`` the turn chokepoint
+    /// actually drives. A tool-using turn is the case that needs it: the SDK
+    /// closes the pre-tool `Transcript.Response` entry, runs the tool, and
+    /// resumes generation into a *new* `.response` entry, so the text after the
+    /// tool does not extend the text before it and
+    /// ``RoutedSession/respond(to:maxTokens:)`` returns only the last one. A
+    /// plain append-only delta stream cannot express that, and appending across
+    /// the boundary yields the superseded text as a spurious prefix of the
+    /// answer (task ^w8dzvee, defect D2).
+    ///
+    /// The default implementation maps every chunk of
+    /// ``streamResponse(to:maxTokens:)`` to a non-restarting fragment, which is
+    /// exactly right for a backend that produces one response per turn. Only a
+    /// backend that can restart — one driving a real `LanguageModelSession`
+    /// through the SDK's own tool loop — needs to override it.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the backend's own default ceiling.
+    /// - Returns: A stream of response fragments, finishing when generation
+    ///   completes or throwing if it fails.
+    func streamResponseFragments(
+        to prompt: String,
+        maxTokens: Int?
+    ) -> AsyncThrowingStream<ResponseFragment, Error>
 
     /// Generates a complete, grammar-constrained text response.
     ///
@@ -154,6 +219,40 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
 }
 
 extension LanguageModelSessionBackend {
+    /// Default ``streamResponseFragments(to:maxTokens:)``: every chunk of
+    /// ``streamResponse(to:maxTokens:)`` becomes a continuing fragment.
+    ///
+    /// Correct for any backend that produces exactly one response per turn,
+    /// which is every stub conformer in the unit suite and every backend whose
+    /// model cannot call tools. ``MLXFoundationModelsSessionBackend`` — whose
+    /// session runs the SDK's own tool loop, and so can close one response and
+    /// open another mid-turn — is the one conformer that overrides this.
+    ///
+    /// - Parameters:
+    ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
+    ///     the backend's own default ceiling.
+    /// - Returns: A stream of continuing fragments, one per underlying chunk.
+    func streamResponseFragments(
+        to prompt: String,
+        maxTokens: Int?
+    ) -> AsyncThrowingStream<ResponseFragment, Error> {
+        let chunks = streamResponse(to: prompt, maxTokens: maxTokens)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await chunk in chunks {
+                        continuation.yield(ResponseFragment(text: chunk))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
     /// Default ``makeFork(tools:)``: ignores `tools` and forwards to
     /// ``makeFork()`` unchanged.
     ///
