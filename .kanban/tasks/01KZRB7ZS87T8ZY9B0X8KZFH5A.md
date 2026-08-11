@@ -38,6 +38,57 @@ comments:
     - evidence: 4 files — Sources/FoundationModelsRouter/Recording/Sinks.swift, Sources/FoundationModelsRouter/Recording/JSONLAppend.swift, Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift; swift build clean; one full swift test run: 830 tests in 79 suites passed (1 accepted BoundedWait known issue)
     - next: /review
   timestamp: 2026-08-11T21:27:11.753961+00:00
+- actor: claude-code
+  id: 01kzsc1m6w7487n9e3td8ykynj
+  text: |-
+    ### review — findings
+    - evidence: 3 findings — Sources/FoundationModelsRouter/Recording/JSONLAppend.swift:102, Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:480, Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift:34 (scope: review sha HEAD~1..HEAD, commit ebfcd18)
+    - next: /implement the checklist in the "Review Findings (2026-08-11 16:28)" section, then /review again
+  timestamp: 2026-08-11T21:35:50.492996+00:00
+- actor: claude-code
+  id: 01kzsc2aks5bcs64z4hg51c91b
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 4 files, turn-close fsync policy + torn-tail tolerance + typed mid-file error, test-first (red then green)
+    - test: green — one full swift test run, 881 tests (830+27+24), 0 failures
+    - commit: changed — ebfcd18
+    - review: findings — Sources/FoundationModelsRouter/Recording/JSONLAppend.swift:102 (magic number), Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:480 (MergedTranscript clone-sibling must get the same torn-tail tolerance), Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift:34 (assignOnly directory property)
+  timestamp: 2026-08-11T21:36:13.433820+00:00
+- actor: claude-code
+  id: 01kzscbmmy7mnffrzbkwprb8ga
+  text: |-
+    Research for the three review findings:
+
+    1. JSONLAppend.swift has one unnamed numeric literal: the newline byte 0x0A in appendJSONLine. This is the only unnamed literal in the file. Fix: declare one internal named constant jsonlNewlineByte in JSONLAppend.swift. The writer and the shared reader will use it. The private newlineByte in TranscriptTree.swift moves out with the extraction (item 2), so the module keeps one definition.
+
+    2. MergedTranscript.merged(under:) reads the same transcript.jsonl files that JSONLRecorder writes. Tests confirm this: MergedAndRedactionTests and RecordingHandleResumeTests write through JSONLRecorder and read through merged(under:). Thus the finding applies. MergedTranscript cannot throw TranscriptTreeError.transcriptLineCorrupt, because that case needs a session ULID, and MergedTranscript reads directories that do not have ULID names (TranscriptEventSchemaTests uses "v1session" and "v2session"). Design: extract the shared decode loop into a new internal type TranscriptLineDecoding (new file). It drops a torn final line with a warning that names the file and the byte offset, and it throws a caller-supplied error for mid-file corruption. TranscriptTree maps that to TranscriptTreeError.transcriptLineCorrupt(session:file:). MergedTranscript gets a new public MergedTranscriptError.transcriptLineCorrupt(file:). All merged(under:) callers are tests, and no caller catches DecodingError, so the typed error is an addition, not a break.
+
+    3. SessionFixture.directory in RecordingDurabilityTests.swift is written and never read. SessionFixture declares no Equatable or Hashable conformance, so the synthesized-conformance waiver does not apply. Fix: remove the member. A sweep of the file finds no other assign-only member.
+
+    TDD plan: two new RED tests in RecordingDurabilityTests — merged(under:) drops a torn final line, and merged(under:) throws the typed error on mid-file corruption. The mutation blocks shared with the existing TranscriptTree tests move into fixture helpers, so the new tests do not copy them.
+  timestamp: 2026-08-11T21:41:18.622745+00:00
+- actor: claude-code
+  id: 01kzsfgvx03bkhxtzfktdzz4j3
+  text: |-
+    All three review findings are fixed. The work was test-first: the two new tests failed with the raw DecodingError before the change, and passed after.
+
+    1. Magic number (JSONLAppend.swift): the literal 0x0A is now the named internal constant `jsonlNewlineByte`, declared with a doc comment in JSONLAppend.swift. The writer (`appendJSONLine`) and the shared reader use the one constant. This was the only unnamed numeric literal in the file.
+
+    2. MergedTranscript clone sibling (TranscriptTree.swift): the shared decode loop now lives in the new internal type `TranscriptLineDecoding` (Sources/FoundationModelsRouter/Recording/TranscriptLineDecoding.swift), so the two readers cannot drift. It drops a torn final line with a warning that names the file and the byte offset, and it throws a caller-supplied error for a corrupt non-final line. `TranscriptTree.decodeEvents` maps that to `TranscriptTreeError.transcriptLineCorrupt(session:file:)` and keeps its seq sort and its missing-file tolerance. `MergedTranscript.merged(under:)` maps it to the new public `MergedTranscriptError.transcriptLineCorrupt(file:)` (file only, no session id — MergedTranscript also reads directories that do not have ULID names, see TranscriptEventSchemaTests). `TranscriptTree` lost its private `newlineByte`, its private line splitter, and its now-unused logger and `import os`. The typed error is a public addition, not a break; every `merged(under:)` caller is a test and none catches DecodingError.
+
+    3. Assign-only `directory` (RecordingDurabilityTests.swift): the member is removed from `SessionFixture`. The file has no other assign-only member. The two file-mutation blocks the new tests would have copied moved into the fixture helpers `tearFinalLine(of:keeping:)` and `corruptFirstTurnClose(of:)`, used by the old and the new tests.
+
+    New tests: `merged(under:)` drops a torn final line (parameterized over kept-byte counts 1, 24, 60) and throws the typed error, naming the file, on mid-file corruption.
+
+    Verification: `swift build` clean (only the accepted vendored mlx-swift "missing creator" warning). One full ungated `swift test` run: 832 tests in 79 suites passed with the one accepted BoundedWait known issue; the two hermetic gated-target wiring runs (27 and 24 tests) also passed; the env-gated real-model suites skipped by design.
+  timestamp: 2026-08-11T22:36:35.616667+00:00
+- actor: claude-code
+  id: 01kzsfh183qfq0ftacck6pngbz
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Sources/FoundationModelsRouter/Recording/JSONLAppend.swift, Sources/FoundationModelsRouter/Recording/TranscriptLineDecoding.swift (new), Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Sources/FoundationModelsRouter/Recording/MergedTranscript.swift, Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift; all 3 findings flipped to [x]; swift build clean; one full swift test run: 832 tests in 79 suites passed (1 accepted BoundedWait known issue) plus the 27- and 24-test hermetic runs
+    - next: /review
+  timestamp: 2026-08-11T22:36:41.091830+00:00
 position_column: doing
 position_ordinal: '8180'
 title: Define and test the recording durability policy
@@ -61,4 +112,10 @@ The JSONL recorder appends through cached `FileHandle`s (Sources/FoundationModel
 
 - A truncated final line never fails a tree load; the loss is one event, reported in a warning.
 - A corrupt mid-file line fails loudly with the session id and file path.
-- The sync point is documented on `JSONLRecorder` and exercised by a test that kills nothing but asserts the sync call happens at the documented point. #transcript
+- The sync point is documented on `JSONLRecorder` and exercised by a test that kills nothing but asserts the sync call happens at the documented point.
+
+## Review Findings (2026-08-11 16:28)
+
+- [x] `Sources/FoundationModelsRouter/Recording/JSONLAppend.swift:102` — Magic numbers should be replaced by named constants.
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:480` — The change adds torn-final-line tolerance and mid-file corruption detection to `decodeEvents`, but per clone-siblings probe, a 0.90-similar transcript-reading implementation in MergedTranscript was left unchanged. If MergedTranscript reads the same transcript files that JSONLRecorder now produces with torn final lines, it must apply the same tolerance and error-handling logic to avoid inconsistent behavior — one reader tolerates torn lines, the other crashes. Verify whether MergedTranscript.decodeEvents or equivalent reads transcripts produced by JSONLRecorder; if so, apply the same torn-final-line drop (with warning) and mid-file corruption throw logic.
+- [x] `Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift:34` — var.instance `directory` is assignOnlyProperty. #transcript

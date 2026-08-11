@@ -1,5 +1,29 @@
 import Foundation
 
+/// A failure reading the recorded transcripts a merge covers.
+public enum MergedTranscriptError: Error, Equatable, LocalizedError {
+    /// A line of the transcript at `file` that is NOT the file's last line
+    /// failed to decode.
+    ///
+    /// A torn *final* line is the expected crash artifact of
+    /// ``JSONLRecorder``'s durability policy and is dropped with a warning
+    /// instead; corruption anywhere before it means the log was damaged after
+    /// it was written, which no policy expects, so it is reported loudly with
+    /// the file it names.
+    case transcriptLineCorrupt(file: URL)
+
+    /// A localized message describing what error occurred.
+    public var errorDescription: String? {
+        switch self {
+        case .transcriptLineCorrupt(let file):
+            return """
+                Transcript \(file.path) holds a corrupt line before its last one, so the recorded \
+                log cannot be trusted.
+                """
+        }
+    }
+}
+
 /// Merges the per-session `transcript.jsonl` files a run left under a router's
 /// recording root into the single "what did this whole Router do" event stream.
 ///
@@ -17,19 +41,24 @@ public enum MergedTranscript {
     /// Merges every nested `transcript.jsonl` under `routerDirectory` into one
     /// stream totally ordered by `(ts, seq)`.
     ///
+    /// Line decoding is shared with ``TranscriptTree`` so the two readers
+    /// cannot drift: a torn FINAL line in any one file — the crash artifact
+    /// ``JSONLRecorder``'s durability policy expects — is dropped with a
+    /// warning naming the file and byte offset, rather than failing the merge.
+    ///
     /// - Parameter routerDirectory: The router's recording root —
     ///   `recordings/<routerId>/` — under which the session transcript files are
     ///   nested.
     /// - Returns: Every recorded event across all sessions and forks, ordered by
     ///   `(ts, seq)`.
-    /// - Throws: If a transcript file cannot be read or a line cannot be decoded.
+    /// - Throws: ``MergedTranscriptError/transcriptLineCorrupt(file:)`` when a
+    ///   file holds a corrupt line before its last one; otherwise if a
+    ///   transcript file cannot be read.
     public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
-        let decoder = JSONDecoder()
         var events: [TranscriptEvent] = []
         for file in transcriptFiles(under: routerDirectory) {
-            let text = try String(contentsOf: file, encoding: .utf8)
-            for line in text.split(separator: "\n") {
-                events.append(try decoder.decode(TranscriptEvent.self, from: Data(line.utf8)))
+            events += try TranscriptLineDecoding.decodeEvents(at: file) { file in
+                MergedTranscriptError.transcriptLineCorrupt(file: file)
             }
         }
         return events.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }

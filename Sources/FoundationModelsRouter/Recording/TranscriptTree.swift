@@ -1,14 +1,7 @@
 import Foundation
-import os
 
 /// The per-session transcript filename under a session's recording directory.
 private let transcriptFileName = "transcript.jsonl"
-
-/// The newline byte that terminates every line of a `transcript.jsonl`.
-private let newlineByte: UInt8 = 0x0A
-
-/// The logger torn-tail recovery reports each dropped final line to.
-private let transcriptTreeLogger = makeModuleLogger(category: "TranscriptTree")
 
 /// A failure looking up or reconstructing data from a ``TranscriptTree``.
 public enum TranscriptTreeError: Error, Equatable, LocalizedError {
@@ -451,23 +444,14 @@ public struct TranscriptTree: Sendable {
 
     // MARK: - Event decoding
 
-    /// One raw line of a `transcript.jsonl`: its byte offset within the file
-    /// and its bytes, without the terminating newline.
-    private struct TranscriptLine {
-        let byteOffset: Int
-        let bytes: Data
-    }
-
     /// Decodes every line of `directory`'s `transcript.jsonl`, or an empty
     /// array if that file was never created (see ``events(forSession:)``).
     ///
-    /// The FINAL line is allowed to be torn: ``JSONLRecorder``'s durability
-    /// policy syncs at turn close, so a crash mid-append tears at most the
-    /// file's last line, and that torn tail is the expected crash artifact.
-    /// A final line that fails to decode is therefore dropped, with a warning
-    /// naming the file and the line's byte offset. A line that fails to
-    /// decode anywhere BEFORE the final one is damage no policy expects, and
-    /// throws.
+    /// Line decoding is shared with ``MergedTranscript`` through
+    /// ``TranscriptLineDecoding`` so the two readers cannot drift: a torn
+    /// FINAL line — the crash artifact ``JSONLRecorder``'s durability policy
+    /// expects — is dropped with a warning naming the file and byte offset,
+    /// and a line that fails to decode anywhere before it throws.
     ///
     /// - Parameters:
     ///   - directory: The session's recording directory.
@@ -480,49 +464,10 @@ public struct TranscriptTree: Sendable {
     private static func decodeEvents(in directory: URL, forSession session: ULID) throws -> [TranscriptEvent] {
         let fileURL = directory.appendingPathComponent(transcriptFileName, isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
-        let lines = nonEmptyLines(in: try Data(contentsOf: fileURL))
-        let decoder = JSONDecoder()
-        var events: [TranscriptEvent] = []
-        for (index, line) in lines.enumerated() {
-            do {
-                events.append(try decoder.decode(TranscriptEvent.self, from: line.bytes))
-            } catch {
-                guard index == lines.indices.last else {
-                    throw TranscriptTreeError.transcriptLineCorrupt(session: session, file: fileURL)
-                }
-                transcriptTreeLogger.warning(
-                    """
-                    dropping torn final line of \(fileURL.path, privacy: .public) at byte offset \
-                    \(line.byteOffset, privacy: .public): \(error.localizedDescription, privacy: .public)
-                    """
-                )
-            }
+        let events = try TranscriptLineDecoding.decodeEvents(at: fileURL) { file in
+            TranscriptTreeError.transcriptLineCorrupt(session: session, file: file)
         }
         return events.sorted { $0.seq < $1.seq }
-    }
-
-    /// Splits `data` into its non-empty lines, keeping each line's byte
-    /// offset so a torn final line can be reported by position.
-    ///
-    /// - Parameter data: A whole `transcript.jsonl`'s bytes.
-    /// - Returns: Each non-empty line, in file order.
-    private static func nonEmptyLines(in data: Data) -> [TranscriptLine] {
-        var lines: [TranscriptLine] = []
-        var lineStart = data.startIndex
-        for index in data.indices where data[index] == newlineByte {
-            if index > lineStart {
-                lines.append(
-                    TranscriptLine(byteOffset: lineStart - data.startIndex, bytes: data[lineStart..<index])
-                )
-            }
-            lineStart = data.index(after: index)
-        }
-        if lineStart < data.endIndex {
-            lines.append(
-                TranscriptLine(byteOffset: lineStart - data.startIndex, bytes: data[lineStart...])
-            )
-        }
-        return lines
     }
 
     // MARK: - Tree construction

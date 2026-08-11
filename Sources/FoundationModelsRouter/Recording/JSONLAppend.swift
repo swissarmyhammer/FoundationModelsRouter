@@ -1,6 +1,11 @@
 import Foundation
 import os
 
+/// The newline byte (`\n`) that terminates every JSONL line this module
+/// writes (``appendJSONLine(_:encoder:logger:handle:describeFailure:)``) and
+/// splits on when reading (``TranscriptLineDecoding``).
+let jsonlNewlineByte: UInt8 = 0x0A
+
 /// A failure validating or opening a JSONL sink's append target.
 public enum JSONLAppendError: Error, Equatable, LocalizedError {
     /// `fileName` is not a plain, single-component file name — it contains a
@@ -99,7 +104,7 @@ func appendJSONLine<Value: Encodable>(
     do {
         let handle = try handle()
         var line = try encoder.encode(value)
-        line.append(0x0A)
+        line.append(jsonlNewlineByte)
         try handle.write(contentsOf: line)
     } catch {
         let message = describeFailure(error)
