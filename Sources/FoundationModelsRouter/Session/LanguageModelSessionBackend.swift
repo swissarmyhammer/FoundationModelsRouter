@@ -218,6 +218,29 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
 }
 
+/// Drives an `AsyncThrowingStream<String, Error>`'s own iterator from
+/// whatever task calls ``next()``, so ``streamResponseFragments(to:maxTokens:)``
+/// can relay its chunks without spawning a second, independently-cancellable
+/// consumer task in between (see that method's own doc comment for why that
+/// extra task is a correctness bug, not just an inefficiency).
+///
+/// `@unchecked Sendable`: `iterator` is mutated without a lock, which is
+/// only sound because an `AsyncThrowingStream` has exactly one active reader
+/// at a time by contract — the same "naturally serialized, never actually
+/// concurrent" reasoning ``OwningProfileBox`` documents for its own
+/// unlocked mutation.
+private final class ChunkIterator: @unchecked Sendable {
+    private var iterator: AsyncThrowingStream<String, Error>.Iterator
+
+    init(_ stream: AsyncThrowingStream<String, Error>) {
+        self.iterator = stream.makeAsyncIterator()
+    }
+
+    func next() async throws -> String? {
+        try await iterator.next()
+    }
+}
+
 extension LanguageModelSessionBackend {
     /// Default ``streamResponseFragments(to:maxTokens:)``: every chunk of
     /// ``streamResponse(to:maxTokens:)`` becomes a continuing fragment.
@@ -228,6 +251,24 @@ extension LanguageModelSessionBackend {
     /// session runs the SDK's own tool loop, and so can close one response and
     /// open another mid-turn — is the one conformer that overrides this.
     ///
+    /// Pull-based (``AsyncThrowingStream/init(unfolding:onCancel:)``), not a
+    /// continuation fed by an independent relay `Task`: a relay task is a
+    /// second, separately-cancellable consumer sitting between
+    /// ``streamResponse(to:maxTokens:)``'s stream and this one, and cancelling
+    /// *this* stream's consumer (as ``RoutedSession/cancelCurrentTurn()``
+    /// does, via the model-call `Task` it owns) only ever cancels that
+    /// consumer — the relay task is a bystander it reaches solely through
+    /// `onTermination` propagation. That leaves a window where the relay task
+    /// has already had a chunk delivered to it (queued for the *next* run
+    /// loop turn, per ordinary `Task` scheduling) but has not yet forwarded it
+    /// when the propagated cancellation lands, and the chunk is dropped —
+    /// silently violating "a cancelled stream is truncated, never retracted"
+    /// (see ``RoutedSessionActorGeneration/streamGeneratingBody(composedPrompt:maxTokens:into:wrapFragment:)``).
+    /// Pulling straight from `chunks`' own iterator removes the extra task
+    /// entirely: this stream's only consumer is the same one
+    /// ``streamResponse(to:maxTokens:)``'s stream sees, so there is no second
+    /// party for a propagated cancellation to race against.
+    ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
@@ -237,19 +278,10 @@ extension LanguageModelSessionBackend {
         to prompt: String,
         maxTokens: Int?
     ) -> AsyncThrowingStream<ResponseFragment, Error> {
-        let chunks = streamResponse(to: prompt, maxTokens: maxTokens)
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    for try await chunk in chunks {
-                        continuation.yield(ResponseFragment(text: chunk))
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
+        let chunks = ChunkIterator(streamResponse(to: prompt, maxTokens: maxTokens))
+        return AsyncThrowingStream {
+            guard let chunk = try await chunks.next() else { return nil }
+            return ResponseFragment(text: chunk)
         }
     }
 

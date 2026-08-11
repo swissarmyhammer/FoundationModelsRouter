@@ -71,6 +71,41 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift (one `// sah:allow duplication <reason>` marker each). Duplication tool: 1 finding before, 0 after. `swift test`: 827 + 27 + 24 tests pass, exit 0; accepted noise only (BoundedWait known issue, vendored mlx warning). Finding flipped to `- [x]`.
     - next: /review
   timestamp: 2026-08-11T17:36:00.885821+00:00
+- actor: claude-code
+  id: 01kzryrgthgxk8wjqgndsvjpm8
+  text: |-
+    ### review — findings
+    - evidence: 2 findings — Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:259, Sources/FoundationModelsRouter/RoutedLLM.swift:159 (public declarations should be documented). Engine: review sha HEAD~1..HEAD, counts {findings: 2, confirmed: 2, refuted: 1, attempted: 8, failed: 0}. The prior duplication finding (2026-08-11 12:20) is resolved and checked.
+    - next: /implement — resolve the two checklist items in the "## Review Findings (2026-08-11 12:38)" section, then /review again. Note: the allow-duplication markers sit at these lines; make sure each `///` doc block attaches to its public declaration.
+  timestamp: 2026-08-11T17:43:40.625639+00:00
+- actor: claude-code
+  id: 01kzrys6q0rkabt1b1f67ydc6q
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 2 files, allow-duplication marker above each of the frozen pair; duplication tool 1 finding before, 0 after
+    - test: green — swift test, 878 tests (827+27+24), 0 failures; accepted noise only
+    - commit: changed — 625feec
+    - review: findings — Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:259 and Sources/FoundationModelsRouter/RoutedLLM.swift:159, public declarations should be documented (the plain marker line between the /// doc block and the declaration detaches the documentation). Prior duplication finding stays resolved.
+  timestamp: 2026-08-11T17:44:03.040424+00:00
+- actor: claude-code
+  id: 01kzryy2dzxwqsrfv1hwsbwpx8
+  text: |-
+    Fix for the two review findings (GuidedGeneration.swift:259 and RoutedLLM.swift:159, public declarations should be documented):
+
+    - Cause: the previous iteration put the plain `// sah:allow duplication <reason>` marker line between the `///` doc block and its declaration. This detached the documentation from the declaration.
+    - I read the parsed duplication rule first (`get validator`). The rule says: write the marker on the line above the definition, and the marker covers the next item, past a doc comment and past the attributes. Thus a marker above the `///` doc block keeps its effect.
+    - Fix: in each of the two files, I moved the marker line to the position above the `///` doc block. The doc block now attaches to its public declaration again. No other change.
+    - Verification 1 (duplication): `sah tool code_context duplication find` over RoutedLLM.swift, GuidedGeneration.swift and SessionConfiguration.swift reports zero findings — the markers keep their effect at the new position.
+    - Verification 2 (tests): `swift test` is green, exit 0 — 827 + 27 + 24 tests pass. Accepted noise only: the BoundedWait known issue, and the vendored mlx-swift "missing creator" warning.
+    - The two finding checkboxes are now `- [x]`. The task stays in `doing` for /review. No commit, as directed.
+  timestamp: 2026-08-11T17:46:42.495469+00:00
+- actor: claude-code
+  id: 01kzryy72bskmdvxnhba38xj9c
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift (each allow-duplication marker moved above its `///` doc block, so the doc attaches to the declaration again). Duplication tool: 0 findings over the 3 related files. `swift test`: 827 + 27 + 24 tests pass, exit 0; accepted noise only (BoundedWait known issue, vendored mlx warning). Both findings flipped to `- [x]`.
+    - next: /review
+  timestamp: 2026-08-11T17:46:47.243262+00:00
 position_column: doing
 position_ordinal: '8180'
 title: One SessionConfiguration value drives makeSession
@@ -99,4 +134,9 @@ A plain struct, not a result builder: flat configuration is what structs are for
 
 ## Review Findings (2026-08-11 12:20)
 
-- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:158` — func `makeSession` is a near-duplicate of `makeGuidedSession` at Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:258 (45 tokens, 100% alike). #api
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:158` — func `makeSession` is a near-duplicate of `makeGuidedSession` at Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:258 (45 tokens, 100% alike).
+
+## Review Findings (2026-08-11 12:38)
+
+- [x] `Sources/FoundationModelsRouter/Guided/GuidedGeneration.swift:259` — public declarations should be documented.
+- [x] `Sources/FoundationModelsRouter/RoutedLLM.swift:159` — public declarations should be documented. #api
