@@ -297,6 +297,19 @@ actor RoutedSessionActor: RoutedSession {
     /// cannot attach twice.
     var didAttachOutboxJournal = false
 
+    /// The `correlationID` of every detached run whose ending this session has
+    /// already journaled.
+    ///
+    /// A run's ending reaches the journal from two independent writers — the
+    /// run's own terminal, posted through ``outbox``, and the one
+    /// ``SessionMailbox/sweep()`` produces at ``close()`` — and they can both
+    /// fire for one run, with contradicting outcomes. This is what makes the
+    /// second write a no-op instead of a second recorded ending. Guarded by the
+    /// actor's isolation and claimed before any suspension, so the two writers
+    /// cannot both claim one run. See ``claimJournalWrite(for:)`` for the races
+    /// and for why the set is deliberately unbounded.
+    var journaledTerminalCorrelationIDs: Set<String> = []
+
     /// How many of ``backend``'s ``LanguageModelSessionBackend/transcriptEntries()``
     /// have already been persisted, so each turn's post-generation snapshot can
     /// diff against it to find only what the SDK appended *this* turn.

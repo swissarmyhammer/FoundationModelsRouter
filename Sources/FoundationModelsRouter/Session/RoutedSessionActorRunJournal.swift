@@ -28,9 +28,61 @@ extension RoutedSessionActor: OperationEventJournal {
     /// grouped groups by the parent id every one of them carries.
     ///
     /// - Parameter event: The event the outbox has just accepted.
-    func record(_ event: OperationEvent) async {
+    func record(event: OperationEvent) async {
+        guard claimJournalWrite(for: event) else { return }
         await recordSessionMetaIfNeeded()
         await append(partial: makeRunEventPartial(for: event))
+    }
+
+    /// Whether `event` may be journaled, claiming a run's one recorded ending
+    /// when it is a terminal.
+    ///
+    /// **Two writers, one ending.** A run's ending reaches this journal by two
+    /// independent routes, and both can fire for the same run:
+    ///
+    /// 1. The run settles on its own and ``RunEventFunnel`` posts its terminal
+    ///    through ``SessionOutbox/post(_:)``, which journals it live.
+    /// 2. ``close()`` sweeps the mailbox and journals what
+    ///    ``SessionMailbox/sweep()`` hands back.
+    ///
+    /// They collide two ways. `sweep()` awaits each run's canceler, which
+    /// suspends the mailbox actor; a run that settles naturally inside that
+    /// window journals its own terminal through route 1, and the sweep then
+    /// returns that same retained event through route 2. And because
+    /// cancelling a ``SessionMailbox/RunKind/swiftTask`` run is only
+    /// *cooperative*, a run whose terminal the sweep already synthesized can
+    /// still finish afterwards and post its own — with a **different
+    /// outcome**, so the transcript would hold two contradictory endings for
+    /// one call and a parent-grouping view would draw both.
+    /// ``RunEventFunnel``'s own single-terminal guard cannot help: it sees only
+    /// what one run posts, never what the sweep synthesized beside it.
+    ///
+    /// First write wins, and nothing already appended is ever rewritten or
+    /// removed. The record is append-only, so hiding a contradiction by
+    /// editing history would be worse than the contradiction; refusing the
+    /// second write is the only resolution that keeps the log truthful.
+    ///
+    /// Only `.completed` is claimed, because only `.completed` is terminal
+    /// (see ``OperationEventKind``). Progress and elicitation events are a
+    /// run's running commentary — many per run, by design — so they are always
+    /// admitted.
+    ///
+    /// The claim is taken synchronously, before this method returns and so
+    /// before any suspension, which is what makes it safe against the two
+    /// routes racing on this actor.
+    ///
+    /// The claimed set grows by one token per run that ever reported an
+    /// ending, and is deliberately unbounded: the transcript it guards already
+    /// holds at least one entry per such run, so the guard is strictly smaller
+    /// than the record it protects, and bounding it would trade the guarantee
+    /// away for no measurable saving.
+    ///
+    /// - Parameter event: The event about to be journaled.
+    /// - Returns: `false` when `event` is a terminal for a run whose ending is
+    ///   already recorded; `true` otherwise.
+    func claimJournalWrite(for event: OperationEvent) -> Bool {
+        guard event.kind == .completed else { return true }
+        return journaledTerminalCorrelationIDs.insert(event.correlationID).inserted
     }
 
     /// Builds the recorded partial one ``OperationEvent`` is journaled as: a
@@ -51,20 +103,35 @@ extension RoutedSessionActor: OperationEventJournal {
     /// ``close()``'s swept terminals do not: the run was detached, not
     /// model-invoked at this instant.
     ///
-    /// **Parent identity.** The entry's id is the event's `correlationID`,
-    /// which for every run this router parks *is* the `completionToken`
-    /// ``DetachingTool`` handed the model (``ToolContext`` stamps the two
-    /// from one value). Apple's own convention for a `Transcript.ToolOutput`
-    /// is that its `id` names the call it answers, so the transcript's parent
-    /// reference and the model's own reference are one identity space rather
-    /// than two — the distinction that makes a completion attributable
-    /// instead of merely present.
+    /// **Identity and parent reference are two different things, in two
+    /// different places.** The entry's `id` is the entry's *own* identity, and
+    /// nothing else: Apple documents `Transcript.ToolOutput.id` as "A unique
+    /// id for this tool output", so a fresh ULID is minted per entry. The
+    /// *parent* reference — the `completionToken` ``DetachingTool`` handed the
+    /// model, which ``ToolContext`` stamps as the same run's `correlationID`
+    /// — travels in the typed payload, where the whole ``OperationEvent``
+    /// already carries it. A view groups a run's entries by that
+    /// `correlationID`.
+    ///
+    /// Writing the token into the `id` instead would put one identity space's
+    /// value into a field that names another's — the ``SessionEvent`` trap
+    /// this design already refuses elsewhere, one field over. It is also what
+    /// made the id unusable *as* an identity: every report of one run would
+    /// share the entry id of every other, so a lifecycle of many entries would
+    /// be indistinguishable from one entry appended repeatedly.
+    ///
+    /// A model-invoked `.toolOutput`'s id does arrive equal to the id of the
+    /// call it answers, but that is the SDK's own undocumented and unenforced
+    /// behaviour, and this router does not rely on it anywhere — see
+    /// ``completedToolCallId(forOutputEntryId:dispatched:completed:)``, which
+    /// resolves a completion's call id from the calls the same diff announced
+    /// rather than from the entry.
     ///
     /// **Nothing is mutated.** Every report of a run — each progress update,
-    /// each elicitation, the one terminal — is appended as its own entry
-    /// carrying that same parent id. A lifecycle is many entries, never one
-    /// entry rewritten, which is what keeps the record replayable and
-    /// diffable.
+    /// each elicitation, the one terminal — is appended as its own entry, with
+    /// its own id, carrying that same parent reference. A lifecycle is many
+    /// entries, never one entry rewritten, which is what keeps the record
+    /// replayable and diffable.
     ///
     /// **The body text.** The entry's only segment is the typed one, so the
     /// mapper's own flattening has nothing to flatten and would leave the
@@ -80,7 +147,7 @@ extension RoutedSessionActor: OperationEventJournal {
     func makeRunEventPartial(for event: OperationEvent) -> TranscriptEvent.Partial {
         let entry = Transcript.Entry.toolOutput(
             Transcript.ToolOutput(
-                id: event.correlationID,
+                id: ULID.generate().description,
                 toolName: event.tool,
                 segments: [.custom(OperationEventSegment(content: event))]
             )

@@ -179,15 +179,35 @@ extension RoutedSessionActor {
     /// See ``RoutedSession/close()``.
     ///
     /// Runs ``mailbox``'s ``SessionMailbox/sweep()``, then journals each
-    /// terminal event it produced through ``makeRunEventPartial(for:)`` —
-    /// the same shape, and the same code, a run's own reports take when they
-    /// are journaled live (see ``record(_:)``). The journal is complete
-    /// before this method returns: exactly one terminal event per parked
-    /// run, no orphans, no holes.
+    /// terminal event it produced through
+    /// ``SessionOutbox/journalWithoutStaging(event:)`` — reaching the same
+    /// ``record(event:)``, and so the same ``makeRunEventPartial(for:)``, a
+    /// run's own reports take when they are journaled live. The journal is
+    /// complete before this method returns: exactly one terminal event per
+    /// parked run, no orphans, no holes.
     ///
-    /// A sweep only ever produces terminals for runs still parked, and a run
-    /// that settled on its own already journaled its own terminal at that
-    /// moment, so the two paths never record one run's ending twice.
+    /// **Why through the outbox rather than straight to the recorder.**
+    /// Every other journal write is ordered by ``SessionOutbox``'s one FIFO
+    /// chain, and position in the transcript is the record. Appending a swept
+    /// terminal directly would put it outside that order, so it could land
+    /// ahead of an earlier posted event still draining on the chain — the
+    /// transcript would then say a run ended before it reported the progress
+    /// it in fact reported first. Routing through the outbox puts the
+    /// teardown write in the same queue as everything else; it stages
+    /// nothing, because there is no next turn for a teardown terminal to
+    /// ride.
+    ///
+    /// **A run's ending is recorded once, even though two writers can produce
+    /// it.** A sweep synthesizes a terminal only for runs still parked, but
+    /// that does not make one writer per run: `sweep()` suspends across each
+    /// run's canceler, so a run can settle naturally in that window and
+    /// journal its own terminal live before the sweep hands the same retained
+    /// event back; and cancelling a ``SessionMailbox/RunKind/swiftTask`` run
+    /// is cooperative, so a run swept here can still finish afterwards and
+    /// post its own terminal with a *different* outcome. Both are refused by
+    /// ``claimJournalWrite(for:)``, which lets the first write of a run's
+    /// ending stand and appends no second one — the record is append-only, so
+    /// nothing already written is ever revised away.
     ///
     /// **Restore-time decision, stated deliberately:** these `.toolOutput`
     /// events are entry-kind, so ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
@@ -215,9 +235,13 @@ extension RoutedSessionActor {
 
         let terminalEvents = await mailbox.sweep()
         guard !terminalEvents.isEmpty else { return }
-        await recordSessionMetaIfNeeded()
+        // A run can only be parked from inside a turn, so by here the journal
+        // is normally attached already; attaching is idempotent, and doing it
+        // unconditionally means this path never depends on that reasoning
+        // holding for every future caller.
+        await attachOutboxJournalIfNeeded()
         for event in terminalEvents {
-            await append(partial: makeRunEventPartial(for: event))
+            await outbox.journalWithoutStaging(event: event)
         }
     }
 }

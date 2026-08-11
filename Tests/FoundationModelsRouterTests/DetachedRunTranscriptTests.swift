@@ -86,7 +86,7 @@ struct DetachedRunTranscriptTests {
 
     // MARK: - The completion lands without another prompt
 
-    @Test("a settled run's .completed event becomes a .toolOutput entry keyed by its completion token, with no further prompt")
+    @Test("a settled run's .completed event becomes a .toolOutput entry carrying its completion token as a parent reference, with no further prompt")
     @MainActor
     func settledRunLandsAsCorrelatedToolOutputEntry() async throws {
         let recorder = InMemoryRecorder()
@@ -107,7 +107,14 @@ struct DetachedRunTranscriptTests {
         // outcome.
         let journaled = Self.journaledRunEvents(in: await recorder.events)
         #expect(journaled.count == 1)
-        #expect(journaled.first?.entryId == token)
+        // The entry id is the entry's own identity, which Apple documents
+        // `Transcript.ToolOutput.id` as ("A unique id for this tool output"),
+        // so it is never the run's completion token. The parent reference —
+        // the token the model was handed — travels in the typed payload.
+        let entryId = try #require(journaled.first?.entryId)
+        #expect(entryId != token)
+        #expect(!entryId.isEmpty)
+        #expect(journaled.first?.event.correlationID == token)
         #expect(journaled.first?.event == terminal)
 
         let toolOutput = try #require((await recorder.events).first { $0.kind == .toolOutput })
@@ -140,7 +147,12 @@ struct DetachedRunTranscriptTests {
         // policy over still-pending items, never a rewrite of what was appended.
         let pending = await session.outbox.pending()
         #expect(pending.events.count == 2)
-        #expect(Self.journaledRunEvents(in: await recorder.events).map(\.event) == posted)
+        let journaled = Self.journaledRunEvents(in: await recorder.events)
+        #expect(journaled.map(\.event) == posted)
+        // One lifecycle is many entries, each with its own identity: the three
+        // reports share one parent reference but never one entry id.
+        #expect(Set(journaled.map(\.entryId)).count == posted.count)
+        #expect(Set(journaled.map(\.event.correlationID)).count == 1)
     }
 
     // MARK: - The model still receives the outcome
@@ -188,5 +200,126 @@ struct DetachedRunTranscriptTests {
         #expect(Self.journaledRunEvents(in: await recorder.events).isEmpty)
         let promptEvent = try #require((await recorder.events).first { $0.kind == .prompt })
         #expect(promptEvent.entry?.segments?.count == 2)
+    }
+
+    // MARK: - One run, one recorded ending
+
+    /// How long a test canceler waits for the run it just cancelled to settle.
+    ///
+    /// Generous, because it bounds a handshake the test itself drives to
+    /// completion rather than a real cancellation: the wait resolves as soon as
+    /// the mailbox marks the run settled, and the ceiling only exists so a
+    /// broken handshake ends the test instead of hanging the suite.
+    private static let settlementWaitSeconds: Double = 5
+
+    /// Every journaled terminal (`.completed`) event recorded for one run.
+    ///
+    /// - Parameters:
+    ///   - token: The run's completion token, which is its events' correlation
+    ///     id.
+    ///   - events: The recorded events to scan.
+    /// - Returns: The run's journaled terminal events, in recorded order.
+    private static func journaledTerminals(
+        forRun token: String, in events: [TranscriptEvent]
+    ) -> [OperationEvent] {
+        journaledRunEvents(in: events)
+            .map(\.event)
+            .filter { $0.correlationID == token && $0.kind == .completed }
+    }
+
+    @Test("a run that settles inside sweep()'s canceler window is journaled once, not once live and again at close")
+    @MainActor
+    func aRunSettlingInsideTheCancelerWindowIsJournaledOnce() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await session.respond(to: "start the long job")
+
+        let token = SessionMailbox.makeCompletionToken()
+        let natural = OperationEvent(
+            tool: "shell", op: "run command", correlationID: token, kind: .completed,
+            detail: "exit 0, 2481 lines", outcome: .succeeded)
+
+        // The run's body ends only once cancellation is requested, and posts its
+        // own terminal through the outbox — journaling it live — before it ends.
+        let cancelRequested = AsyncSemaphore(value: 0)
+        let outbox = session.outbox
+        let mailbox = session.mailbox
+        let settling = Task { () -> OperationEvent in
+            await cancelRequested.wait()
+            await outbox.post(natural)
+            return natural
+        }
+        await mailbox.park(
+            tool: "shell",
+            op: "run command",
+            kind: .swiftTask,
+            completionToken: token,
+            settling: settling,
+            canceler: {
+                cancelRequested.signal()
+                // Returning only once the mailbox has retained the natural
+                // terminal is what holds `sweep()` inside the window it
+                // suspends across, so the race is run rather than hoped for.
+                _ = await mailbox.wait(
+                    completionToken: token, seconds: Self.settlementWaitSeconds)
+                return .cancelled
+            })
+
+        await session.close()
+
+        // `sweep()` hands back the natural terminal it found retained, which is
+        // the very event already journaled at post time. Recording it again
+        // would say one run ended twice.
+        let terminals = Self.journaledTerminals(forRun: token, in: await recorder.events)
+        #expect(terminals.count == 1)
+        #expect(terminals.first?.outcome == .succeeded)
+    }
+
+    @Test("a swept run that finishes cooperatively afterwards does not journal a second, contradicting terminal")
+    @MainActor
+    func aSweptRunFinishingAfterwardsJournalsNoSecondTerminal() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = try await session.respond(to: "start the long job")
+
+        let token = SessionMailbox.makeCompletionToken()
+        // Cancelling a `.swiftTask` run is cooperative: the canceler only
+        // requests it, so the body is still running when the sweep synthesizes
+        // its terminal.
+        let bodyMayEnd = AsyncSemaphore(value: 0)
+        let settling = Task { () -> OperationEvent in
+            await bodyMayEnd.wait()
+            return OperationEvent(
+                tool: "shell", op: "run command", correlationID: token, kind: .completed,
+                detail: "exit 0", outcome: .succeeded)
+        }
+        await session.mailbox.park(
+            tool: "shell",
+            op: "run command",
+            kind: .swiftTask,
+            completionToken: token,
+            settling: settling,
+            canceler: { .cancelled })
+
+        await session.close()
+
+        // The run finishes after the sweep and reports success — the opposite
+        // outcome to the `.cancelled` terminal the sweep already recorded. Two
+        // contradictory endings for one call is what a parent-grouping view
+        // would draw, so the second report must not reach the transcript.
+        await session.outbox.post(
+            OperationEvent(
+                tool: "shell", op: "run command", correlationID: token, kind: .completed,
+                detail: "exit 0", outcome: .succeeded))
+        bodyMayEnd.signal()
+        _ = await settling.value
+
+        let terminals = Self.journaledTerminals(forRun: token, in: await recorder.events)
+        #expect(terminals.count == 1)
+        #expect(terminals.first?.outcome == .cancelled)
     }
 }

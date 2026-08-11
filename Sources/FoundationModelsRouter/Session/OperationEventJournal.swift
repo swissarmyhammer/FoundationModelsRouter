@@ -19,6 +19,13 @@ protocol OperationEventJournal: AnyObject, Sendable {
     /// Records one posted event in this session's transcript, as its own
     /// entry, in the order it was posted.
     ///
+    /// Idempotent per run *ending*: a run reports exactly one terminal
+    /// (`.completed`) event, so a second terminal for a `correlationID` whose
+    /// ending is already recorded is refused rather than appended. Nothing
+    /// already appended is ever mutated or removed to achieve that — see
+    /// ``RoutedSessionActor/claimJournalWrite(for:)`` for the two independent
+    /// writers this exists to reconcile.
+    ///
     /// - Parameter event: The event the outbox has just accepted.
-    func record(_ event: OperationEvent) async
+    func record(event: OperationEvent) async
 }

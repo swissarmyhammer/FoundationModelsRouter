@@ -150,7 +150,7 @@ public actor SessionOutbox: OperationEventSink {
     private weak var journal: (any OperationEventJournal)?
 
     /// The FIFO chain every journal write is enqueued onto — see
-    /// ``enqueueJournalWrite(_:)``.
+    /// ``enqueueJournalWrite(event:)``.
     private var journalChain = SerialAsyncChain()
 
     /// Creates an empty outbox.
@@ -160,7 +160,7 @@ public actor SessionOutbox: OperationEventSink {
     /// the session's tool-side event route posts through.
     ///
     /// Two things happen to every posted event, and they are independent: it
-    /// is staged for the next prompt under ``stage(_:)``'s coalescing policy,
+    /// is staged for the next prompt under ``stage(event:)``'s coalescing policy,
     /// and it is recorded in this session's transcript through the attached
     /// ``OperationEventJournal`` — so a run that finishes long after its own
     /// turn ended has a recorded outcome the moment it reports one, instead
@@ -179,16 +179,36 @@ public actor SessionOutbox: OperationEventSink {
     public func post(_ event: OperationEvent) async {
         // Enqueued before the staging decision and before any suspension, so
         // the journal's order is exactly this outbox's post order.
-        let journalWrite = enqueueJournalWrite(event)
-        stage(event)
+        let journalWrite = enqueueJournalWrite(event: event)
+        stage(event: event)
         wakeUp()
         await journalWrite?.value
+    }
+
+    /// Records one event in the session's transcript without staging it for a
+    /// future prompt.
+    ///
+    /// ``RoutedSessionActor/close()``'s route in. A terminal the mailbox sweep
+    /// synthesized at teardown is a report that must be recorded, but there is
+    /// no next turn for it to ride, so staging it would leave an item pending
+    /// on an outbox nothing will ever drain.
+    ///
+    /// It reaches the journal through this outbox rather than the session
+    /// directly so it takes its place on the one ``journalChain`` every other
+    /// journal write is ordered by. Position in the transcript is the record:
+    /// appending a teardown terminal outside that chain lets it land ahead of
+    /// an earlier posted event still draining on it, which would state that a
+    /// run ended before it reported the progress it reported first.
+    ///
+    /// - Parameter event: The event to record.
+    func journalWithoutStaging(event: OperationEvent) async {
+        await enqueueJournalWrite(event: event)?.value
     }
 
     /// Restages an event a turn drained but never delivered, without
     /// journaling it a second time.
     ///
-    /// ``RoutedSessionActor/requeueUnattachedPendingEvents(_:)`` reaches here
+    /// ``RoutedSessionActor/requeueUnattachedPendingEvents(events:)`` reaches here
     /// rather than ``post(_:)`` because a re-stage is not a new report: the
     /// run reported once, the journal already recorded that one report at the
     /// moment it happened, and recording it again would claim the run
@@ -198,8 +218,8 @@ public actor SessionOutbox: OperationEventSink {
     ///
     /// - Parameter event: The event to restage, under the same coalescing
     ///   policy ``post(_:)`` applies.
-    func requeue(_ event: OperationEvent) {
-        stage(event)
+    func requeue(event: OperationEvent) {
+        stage(event: event)
         wakeUp()
     }
 
@@ -214,10 +234,10 @@ public actor SessionOutbox: OperationEventSink {
     /// when none is pending yet for that pair.
     ///
     /// - Parameter event: The event to stage.
-    private func stage(_ event: OperationEvent) {
+    private func stage(event: OperationEvent) {
         switch event.kind {
         case .completed, .elicitation:
-            appendNewPendingEvent(event)
+            appendNewPendingEvent(event: event)
         case .progress:
             if let index = events.firstIndex(where: {
                 $0.event.kind == .progress && $0.event.tool == event.tool
@@ -225,7 +245,7 @@ public actor SessionOutbox: OperationEventSink {
             }) {
                 events[index] = PendingEvent(id: events[index].id, event: event)
             } else {
-                appendNewPendingEvent(event)
+                appendNewPendingEvent(event: event)
             }
         }
     }
@@ -258,9 +278,9 @@ public actor SessionOutbox: OperationEventSink {
     /// - Returns: The chained write, or `nil` when no journal is attached —
     ///   the pre-first-turn case, which stays exactly as costly as it was
     ///   before a journal existed.
-    private func enqueueJournalWrite(_ event: OperationEvent) -> Task<Void, Never>? {
+    private func enqueueJournalWrite(event: OperationEvent) -> Task<Void, Never>? {
         guard let journal else { return nil }
-        return journalChain.enqueue { await journal.record(event) }
+        return journalChain.enqueue { await journal.record(event: event) }
     }
 
     /// Appends `event` onto ``events`` as a brand-new pending item with a
@@ -271,7 +291,7 @@ public actor SessionOutbox: OperationEventSink {
     /// yet).
     ///
     /// - Parameter event: The event to append as a new pending item.
-    private func appendNewPendingEvent(_ event: OperationEvent) {
+    private func appendNewPendingEvent(event: OperationEvent) {
         events.append(PendingEvent(id: ItemID(), event: event))
     }
 

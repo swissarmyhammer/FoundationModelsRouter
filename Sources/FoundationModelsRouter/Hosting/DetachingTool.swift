@@ -530,7 +530,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
                 gate.resume(with: .timedOut)
             }
         }
-        let outcome = await withCheckedContinuation { gate.register($0) }
+        let outcome = await withCheckedContinuation { gate.register(continuation: $0) }
         watcher.cancel()
         switch outcome {
         case .finished(let result):
@@ -623,7 +623,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             gate.resume(with: .deadlineElapsed)
         }
         let outcome = await withTaskCancellationHandler {
-            await withCheckedContinuation { gate.register($0) }
+            await withCheckedContinuation { gate.register(continuation: $0) }
         } onCancel: {
             gate.resume(with: .deadlineElapsed)
         }
@@ -886,16 +886,16 @@ private final class CancellationRequestFlag: Sendable {
 /// racer's own cancellation — can arrive in any order, including before the
 /// continuation racing them exists (the ported `CancellationGate`).
 ///
-/// Whichever of ``register(_:)``'s continuation or the first
+/// Whichever of ``register(continuation:)``'s continuation or the first
 /// ``resume(with:)`` happens first, the other's eventual call is what
 /// actually resumes the continuation; every later resume is a no-op.
 private final class RaceGate<Value: Sendable>: Sendable {
     /// This gate's state machine.
     private enum State {
-        /// Neither ``register(_:)`` nor ``resume(with:)`` has run yet.
+        /// Neither ``register(continuation:)`` nor ``resume(with:)`` has run yet.
         case awaitingContinuation
 
-        /// ``register(_:)`` ran first; this is the continuation it
+        /// ``register(continuation:)`` ran first; this is the continuation it
         /// recorded.
         case continuationRegistered(CheckedContinuation<Value, Never>)
 
@@ -915,7 +915,7 @@ private final class RaceGate<Value: Sendable>: Sendable {
     /// competitor already resolved the race.
     ///
     /// - Parameter continuation: The continuation to resume exactly once.
-    func register(_ continuation: CheckedContinuation<Value, Never>) {
+    func register(continuation: CheckedContinuation<Value, Never>) {
         let immediateValue: Value? = state.withLock { current in
             switch current {
             case .awaitingContinuation:
@@ -1054,7 +1054,7 @@ private actor RunEventFunnel: OperationEventSink {
             }
         }
         hasDeliveredAnyEvent = true
-        let delivery = enqueueUpstream(event)
+        let delivery = enqueueUpstream(event: event)
         if event.kind == .progress {
             await mailbox.updateProgress(completionToken: completionToken, detail: event.detail)
         }
@@ -1078,7 +1078,7 @@ private actor RunEventFunnel: OperationEventSink {
             return true
         }
         hasDeliveredAnyEvent = true
-        await enqueueUpstream(progress).value
+        await enqueueUpstream(event: progress).value
         return true
     }
 
@@ -1102,7 +1102,7 @@ private actor RunEventFunnel: OperationEventSink {
         }
         hasDeliveredTerminal = true
         hasDeliveredAnyEvent = true
-        await enqueueUpstream(terminal).value
+        await enqueueUpstream(event: terminal).value
     }
 
     /// One timeout-loop observation, reconciling tracked elicitations
@@ -1128,7 +1128,7 @@ private actor RunEventFunnel: OperationEventSink {
     /// Chains one upstream delivery onto ``deliveryChain`` and returns it for
     /// the caller to await, so a run's own events reach the sink in the order
     /// the run posted them.
-    private func enqueueUpstream(_ event: OperationEvent) -> Task<Void, Never> {
+    private func enqueueUpstream(event: OperationEvent) -> Task<Void, Never> {
         let upstream = self.upstream
         return deliveryChain.enqueue { await upstream.post(event) }
     }

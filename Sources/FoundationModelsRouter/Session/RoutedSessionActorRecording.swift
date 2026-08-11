@@ -118,7 +118,7 @@ extension RoutedSessionActor {
         // gets another chance, instead of the drain silently destroying state
         // a failed turn never got to deliver.
         if !pendingEventsAttached {
-            await requeueUnattachedPendingEvents(pendingEvents)
+            await requeueUnattachedPendingEvents(events: pendingEvents)
         }
         return (diffIncludedResponse, usage)
     }
@@ -128,7 +128,7 @@ extension RoutedSessionActor {
     ///
     /// A no-op when `events` is empty, so an empty outbox never touches
     /// ``outbox`` here — preserving byte-identical behavior for the common
-    /// case. Re-queued events go back through ``SessionOutbox/requeue(_:)``,
+    /// case. Re-queued events go back through ``SessionOutbox/requeue(event:)``,
     /// which applies the same coalescing policy ``SessionOutbox/post(_:)``
     /// does and assigns fresh ``SessionOutbox/ItemID``s (the drain that
     /// removed them was already the commit point for their original ids), but
@@ -138,9 +138,9 @@ extension RoutedSessionActor {
     /// with is ever silently destroyed.
     ///
     /// - Parameter events: The events to re-queue, in outbox order.
-    func requeueUnattachedPendingEvents(_ events: [OperationEvent]) async {
+    func requeueUnattachedPendingEvents(events: [OperationEvent]) async {
         for event in events {
-            await outbox.requeue(event)
+            await outbox.requeue(event: event)
         }
     }
 
@@ -206,7 +206,7 @@ extension RoutedSessionActor {
     ///     event, or `nil` to leave both unset on every appended event.
     ///   - pendingEvents: The events this turn drained from the outbox, in
     ///     outbox order. When non-empty, one ``OperationEventSegment`` per
-    ///     event is appended (via ``appendingOperationEventSegments(_:to:)``)
+    ///     event is appended (via ``appendingOperationEventSegments(events:to:)``)
     ///     onto the turn's `.prompt`-kind diff partial — the first one, since
     ///     a turn submits exactly one prompt — before it is persisted; the
     ///     SDK's own live transcript is never touched. Empty means no
@@ -282,7 +282,7 @@ extension RoutedSessionActor {
             let stampSince = (since != nil && isTurnClose) ? since : nil
             let stampUsage = (usage != nil && isTurnClose) ? usage : nil
             let recordedPartial = (index == promptIndexToAugment)
-                ? Self.appendingOperationEventSegments(pendingEvents, to: diffPartial)
+                ? Self.appendingOperationEventSegments(events: pendingEvents, to: diffPartial)
                 : diffPartial
             await append(
                 partial: makePartialEvent(
@@ -323,7 +323,7 @@ extension RoutedSessionActor {
     ///   (nothing to attach a segment to); otherwise a copy with the segments
     ///   appended.
     private static func appendingOperationEventSegments(
-        _ events: [OperationEvent],
+        events: [OperationEvent],
         to partial: TranscriptEvent.Partial
     ) -> TranscriptEvent.Partial {
         guard let entry = partial.entry else { return partial }

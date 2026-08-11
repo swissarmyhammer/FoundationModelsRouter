@@ -7,7 +7,7 @@
 /// its completion does, and a transcript's order is the record of when things
 /// happened — the order has to be fixed before the first suspension.
 ///
-/// This does that: ``enqueue(_:)`` decides a delivery's place in the queue
+/// This does that: ``enqueue(body:)`` decides a delivery's place in the queue
 /// synchronously, on the owning actor, and hands back a task that will not
 /// start its own work until every earlier one has finished. The caller may
 /// await that task, so a delivery can still be observed to have completed
@@ -25,7 +25,7 @@ struct SerialAsyncChain {
     ///   finished.
     /// - Returns: The chained delivery, for the caller to await when it needs
     ///   the work observed as done before it returns.
-    mutating func enqueue(_ body: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
+    mutating func enqueue(body: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
         let previous = tail
         let chained = Task {
             await previous?.value

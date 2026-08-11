@@ -70,7 +70,7 @@ extension RoutedSessionActor {
     /// turn's diff produced no `.prompt`-kind partial for the drained events
     /// to attach to — nothing was durably delivered, so the events never
     /// actually rode any turn — they are re-queued onto ``outbox`` (see
-    /// ``requeueUnattachedPendingEvents(_:)``) rather than lost, since
+    /// ``requeueUnattachedPendingEvents(events:)``) rather than lost, since
     /// ``SessionOutbox/drainForDispatch()`` already destructively removed
     /// them up front. Every event is routed to this session's
     /// ``recordingDirectory``, so the on-disk transcript tree mirrors the fork
@@ -116,7 +116,7 @@ extension RoutedSessionActor {
         // exactly where it is rather than silently dequeued and discarded by
         // an unrelated ad hoc turn. An empty outbox drains to an empty
         // `pendingEvents`, so ``composedPrompt(pendingEvents:prompt:)`` returns
-        // `prompt` unchanged and ``appendingOperationEventSegments(_:to:)`` is
+        // `prompt` unchanged and ``appendingOperationEventSegments(events:to:)`` is
         // never invoked below — byte-identical to a session that never used
         // an outbox.
         let pendingEvents = await outbox.drainPendingEvents().map(\.event)
@@ -743,7 +743,7 @@ extension RoutedSessionActor {
             // `outbox.nextEvent()`-then-dispatch loop can reach this guard
             // on a wakeup caused by a plain posted event with no prompt
             // queued at all, so this must stay a true no-op.
-            await requeueUnattachedPendingEvents(pendingEvents)
+            await requeueUnattachedPendingEvents(events: pendingEvents)
             await outbox.finishDispatch()
             return nil
         }
