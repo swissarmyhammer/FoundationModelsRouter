@@ -126,7 +126,7 @@ extension RoutedSessionActor {
     }
 
     /// Composes a turn's own event sink with this session's session-scoped
-    /// fan-out, so everything one turn derives reaches both routes.
+    /// fan-out, so every event delivered through this sink reaches both routes.
     ///
     /// `onEvent` is the per-turn stream only ``streamEvents(to:maxTokens:)``
     /// hands its caller; the session-scoped route reaches a
@@ -134,9 +134,17 @@ extension RoutedSessionActor {
     /// ran the turn — including ``respond(to:maxTokens:)`` and
     /// ``dispatchNextPrompt()``, which hand their caller a response rather than
     /// a stream. Composing the two here is what makes the session-scoped stream
-    /// one merged feed of everything a session does, and it is why the returned
-    /// sink is never `nil`: every turn derives its events now, whoever started
-    /// it.
+    /// one merged feed of a session's lifecycle events, and it is why the
+    /// returned sink is never `nil`: every turn derives its events now, whoever
+    /// started it.
+    ///
+    /// The live text increments — ``SessionEvent/textDelta(_:)`` and
+    /// ``SessionEvent/textReset`` — do **not** travel through this sink. They
+    /// are yielded straight to the per-turn continuation by
+    /// ``streamGeneratingBody(composedPrompt:maxTokens:into:wrapFragment:)``
+    /// and deliberately never reach the session-scoped feed — see
+    /// ``RoutedSession/streamSessionEvents()`` for that exclusion and its
+    /// reason.
     ///
     /// - Parameter onEvent: This turn's own sink, or `nil` when the entry point
     ///   that started the turn has no stream of its own.
@@ -188,8 +196,10 @@ extension RoutedSessionActor {
     ///   - onEvent: This turn's own sink for the ``SessionEvent``s it derives,
     ///     including ``SessionEvent/compaction(_:)`` for any auto-compaction
     ///     fold it triggers, or `nil` when the entry point that started the turn
-    ///     has no stream of its own. Either way every derived event also reaches
-    ///     ``RoutedSession/streamSessionEvents()`` — see ``turnEventSink(_:)``.
+    ///     has no stream of its own. Either way every event delivered through
+    ///     this sink also reaches ``RoutedSession/streamSessionEvents()`` — see
+    ///     ``turnEventSink(_:)``, including the text-increment exclusion that
+    ///     sink documents.
     ///   - body: The model work to run inside the bracket, given this turn's
     ///     composed prompt and returning the response text callers receive.
     /// - Returns: The response text `body` produced.
@@ -558,7 +568,7 @@ extension RoutedSessionActor {
     ///   observed a cancellation — or `CancellationError` directly when this turn
     ///   had already been cancelled, by either route, before its model call
     ///   started.
-    func runCancellableModelCall(
+    internal func runCancellableModelCall(
         composedPrompt: String,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
@@ -766,6 +776,16 @@ extension RoutedSessionActor {
         } catch {
             outcome = .failure(error)
         }
+        // This cross-actor release suspends after the turn's outcome is
+        // decided and before the `defer { endTurn() }` clears `currentTurnId`.
+        // A `RoutedSession/cancelPrompt(id:)` scheduled into that suspension
+        // still finds the id in the dispatched slot and a turn in flight, so
+        // it reports turn-cancelled for a turn whose response is returned
+        // below regardless — the completed-turn window documented on
+        // ``RoutedSession/cancelPrompt(id:)``. Releasing the slot before
+        // `endTurn()` is still the right order: the slot is emptied while
+        // this turn holds the lock, so it can never name a finished prompt
+        // while a later, unrelated turn runs.
         await outbox.finishDispatch()
         return try outcome.get()
     }

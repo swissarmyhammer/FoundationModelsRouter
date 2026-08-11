@@ -268,6 +268,12 @@ extension RoutedSessionActor {
     /// response before any of its text exists, and an empty delta reports
     /// nothing while looking like output.
     ///
+    /// The events built here are yielded straight to the per-turn stream's
+    /// continuation and deliberately bypass
+    /// ``RoutedSessionActor/emitSessionScopedEvent(_:)`` — the
+    /// ``RoutedSession/streamSessionEvents()`` feed excludes the per-token
+    /// text increments by contract; see that method for the reason.
+    ///
     /// - Parameter fragment: The fragment just received from the backend.
     /// - Returns: The events to yield for it, in order.
     private static func sessionEvents(for fragment: ResponseFragment) -> [SessionEvent] {

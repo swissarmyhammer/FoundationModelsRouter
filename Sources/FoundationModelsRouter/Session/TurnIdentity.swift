@@ -20,8 +20,11 @@ public struct TurnID: Hashable, Sendable, CustomStringConvertible {
 
     /// Wraps one raw turn number.
     ///
+    /// `internal`, deliberately: only ``RoutedSessionActor/beginTurn()`` mints
+    /// these, which is what keeps the handle opaque to clients.
+    ///
     /// - Parameter value: The session's own monotonic turn number.
-    init(_ value: UInt64) {
+    internal init(_ value: UInt64) {
         self.value = value
     }
 

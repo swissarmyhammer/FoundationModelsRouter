@@ -349,8 +349,25 @@ comments:
     - not run: gated suites (`FM_ROUTER_INTEGRATION_TESTS=1`, `MULTITOOL_INTEGRATION=1`) per `^pw807cp`; `swift format` (never in this repo); `Scripts/check-doc-links.py` (deleted). Nothing pushed. `FoundationModelsMultitool` and the vendored `mlx-swift-lm` fork untouched.
     - next: `/review`.
   timestamp: 2026-08-11T14:17:38.150418+00:00
-position_column: review
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01kzrpnjbjnswk67ggj6673pvm
+  text: |-
+    ### review — clean
+    - evidence: review sha ca792cb..7210df0 — 0 findings (16 attempted, 4 refuted, 0 confirmed); all 13 prior findings checked
+    - next: none — task moved to done
+  timestamp: 2026-08-11T15:22:15.282312+00:00
+- actor: claude-code
+  id: 01kzrppdxdvyc8bm96zncrdcfn
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — commit 7210df0 (recorded on the card before this session)
+    - test: green — swift test, 862 tests (811+27+24) in 93 suites, 0 failures, 1 pre-existing known issue (BoundedWait)
+    - commit: no-change — the work was already committed as 7210df0
+    - review: clean — review sha ca792cb..7210df0, 0 new findings (16 attempted, 4 refuted); all 13 prior findings checked
+    - task moved to done by /review
+  timestamp: 2026-08-11T15:22:43.501912+00:00
+position_column: done
+position_ordinal: ff8980
 title: Detached tool runs need a path back into the transcript — today they return as prompt text
 ---
 Router exists so a long-running tool does not block the session: Apple's tools are `async` in signature but the session stalls until they return, so `DetachingTool` parks the run, hands the model `{"pending":true,"completionToken":...}`, and lets the turn finish. The parking works. **The result has no proper way back.**

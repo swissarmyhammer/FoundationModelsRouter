@@ -325,14 +325,25 @@ public protocol RoutedSession: Actor {
     /// is vended, and observe every such event whichever entry point ran the
     /// turn that produced it.
     ///
-    /// **Every event a turn derives travels here**, whichever entry point ran
+    /// **Every turn-lifecycle event travels here**, whichever entry point ran
     /// the turn — the correlation frame ``SessionEvent/turnStarted(_:)`` that
-    /// opens it, the text/reasoning/tool-lifecycle events its diff derives, any
-    /// ``SessionEvent/compaction(_:)`` it folds, the
-    /// ``SessionEvent/discoveryPrimingFailed(_:)`` report that its pre-discovery
-    /// seeding could not run (see ``DiscoveryPriming``), and its closing
-    /// ``SessionEvent/turnEnded(_:)``. This is the one merged feed of everything
-    /// happening on a session.
+    /// opens it, the ``SessionEvent/reasoningDelta(_:)`` and tool-lifecycle
+    /// events its diff derives, any ``SessionEvent/compaction(_:)`` it folds,
+    /// the ``SessionEvent/discoveryPrimingFailed(_:)`` report that its
+    /// pre-discovery seeding could not run (see ``DiscoveryPriming``), and its
+    /// closing ``SessionEvent/turnEnded(_:)``.
+    ///
+    /// **Excluded, deliberately: the live text increments.**
+    /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel
+    /// only on the turn's own ``streamEvents(to:maxTokens:)`` stream, never
+    /// here. This feed buffers every subscription without bound so a slow
+    /// consumer drops nothing, and that guarantee is affordable precisely
+    /// because a turn contributes a handful of lifecycle events here rather
+    /// than its per-token text. A consumer that needs the response text live
+    /// starts the turn with ``streamEvents(to:maxTokens:)`` (or
+    /// ``streamResponse(to:maxTokens:)``); a turn run through
+    /// ``respond(to:maxTokens:)`` or ``dispatchNextPrompt()`` hands its full
+    /// text to its own caller as the return value.
     ///
     /// Attribution is by frame, not by a repeated id: a session runs one turn at
     /// a time, so every event here belongs to the turn named by the most recent
@@ -799,8 +810,9 @@ extension RoutedSession {
         await outbox.queueDepth()
     }
 
-    /// Cancels a submitted prompt at any point before its turn generates —
-    /// whether it is still queued or already drained for dispatch.
+    /// Cancels a submitted prompt, whether it is still queued or already
+    /// drained for dispatch — withdrawal is guaranteed while it is queued, and
+    /// best-effort cooperative cancellation covers its turn after that.
     ///
     /// ``cancel(id:)`` covers only the first half of a prompt's life: once
     /// ``dispatchNextPrompt()`` has drained the prompt it reports
@@ -811,8 +823,9 @@ extension RoutedSession {
     /// - **Still queued** — withdrawn through ``cancel(id:)``. It never produces
     ///   a turn. This is also what a prompt whose ``dispatchNextPrompt()`` is
     ///   parked behind another turn reports, because a dispatch drains the queue
-    ///   only *after* it holds the turn lock: the parked call then finds nothing
-    ///   to dispatch and returns `nil`.
+    ///   only *after* it holds the turn lock: the parked call never touches the
+    ///   withdrawn prompt — it dispatches the next queued prompt instead, or
+    ///   returns `nil` when the withdrawn prompt was the only one queued.
     /// - **Already dispatched** — its turn is the one in flight (a session runs
     ///   one turn at a time), so ``cancelCurrentTurn()`` is asked to cancel it.
     ///   A turn cancelled before its model call started never calls the model,
@@ -826,6 +839,17 @@ extension RoutedSession {
     /// therefore have that next turn cancelled instead — the same hazard
     /// ``cancelCurrentTurn()`` carries on its own, and the reason a driver
     /// cancels from a task that knows what it dispatched.
+    ///
+    /// ``PromptCancellationResult/turnCancelled`` is a *request* report, not an
+    /// outcome — exactly ``TurnCancellationResult/requested``'s semantics. One
+    /// window makes that concrete: a dispatched turn's response is decided
+    /// before ``dispatchNextPrompt()`` releases the outbox's dispatched slot,
+    /// and that release is a suspension. A cancellation landing inside it still
+    /// finds the id dispatched and a turn in flight, so this reports
+    /// `turnCancelled` while the turn's response is nonetheless returned to its
+    /// caller. So a `turnCancelled` report says the request was recorded
+    /// against the prompt's turn — never that the turn failed, which only its
+    /// own caller observes.
     ///
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
     /// - Returns: Which of the three ``PromptCancellationResult`` states applied.

@@ -7,8 +7,19 @@ import Foundation
 /// Identity travels in the frame, not on each event: ``turnStarted(_:)`` opens a
 /// turn and every event up to the next one belongs to it, since a session runs
 /// one turn at a time. That is also how ``RoutedSession/streamSessionEvents()``
-/// — the merged, session-wide feed of everything a session does, whichever
-/// entry point ran the turn — stays attributable.
+/// — the merged, session-wide feed of a session's turn-lifecycle events,
+/// whichever entry point ran the turn — stays attributable. That feed carries
+/// every case except ``textDelta(_:)`` and ``textReset``, which travel only on
+/// the turn's own ``RoutedSession/streamEvents(to:maxTokens:)`` stream — see
+/// ``RoutedSession/streamSessionEvents()`` for the exclusion and its reason.
+///
+/// **Source compatibility.** This is a public enum without library evolution,
+/// so adding a case is a source-breaking change for any *exhaustive* `switch`
+/// over it outside this package (the compiler neither requires nor accepts an
+/// `@unknown default` there). ``turnStarted(_:)`` was added this way: a
+/// consumer switching exhaustively adds the new case when updating. A consumer
+/// that wants to absorb future cases without a source break writes a `default`
+/// arm instead.
 ///
 /// The session event stream: this is
 /// the general session-event vocabulary a driver — or ``SessionProjection``,

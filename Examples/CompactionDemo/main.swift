@@ -117,16 +117,22 @@ let router = Router(
 // ever runs against `standard`), but `Router.resolve` co-resides all three
 // slots from one profile, so they're the same small placeholders
 // `MultiModelGeneration` already uses.
+// The deliberately small working context the section comment above explains.
+let demoContextTokens = 2048
+
 let demo = ProfileDefinition(
     name: "compaction-demo",
     description: "One resident model with a small working context, folded in place once scripted turns fill it.",
     standard: ["mlx-community/Qwen2.5-3B-Instruct-4bit"],
     flash: ["mlx-community/SmolLM-135M-Instruct-4bit"],
     embedding: ["mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"],
-    context: 2048
+    context: demoContextTokens
 )
 
 // MARK: - Resolve once, watching progress
+
+// How long the progress poller sleeps between phase checks.
+let progressPollMilliseconds = 200
 
 let progress = ResolutionProgress()
 
@@ -142,7 +148,7 @@ let progressTask = Task { @MainActor in
         case .ready, .failed:
             return
         default:
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(progressPollMilliseconds))
         }
     }
 }
@@ -166,7 +172,17 @@ let tools: [any FoundationModels.Tool] = [
 // 8213x39's convention: normally a profile's resolved `contextTokens`) so
 // auto-compaction folds proactively, with no caller-side `compact()` call
 // anywhere in this demo, once a turn's measured fill crosses `trigger`.
-let budget = TokenBudget(limit: profile.standard.resolution.contextTokens, trigger: 0.80, target: 0.30)
+
+// The fill fraction at which the budget folds, and the fraction a fold aims
+// to land under — the same 0.80 trigger the demo's own doc comment names.
+let compactionTriggerFill = 0.80
+let compactionTargetFill = 0.30
+
+let budget = TokenBudget(
+    limit: profile.standard.resolution.contextTokens,
+    trigger: compactionTriggerFill,
+    target: compactionTargetFill
+)
 
 let session = profile.standard.makeSession(
     instructions: "You are a terse assistant reviewing project documents one at a time. Use the tools you are given exactly when asked to.",
@@ -187,6 +203,9 @@ print("[turn] recorded fact via tool — reply=\"\(recordAck)\"")
 
 var observedCompactions: [CompactionResult] = []
 
+// Read by the `observedCompactions` accumulation and the print two lines down;
+// periphery cannot see reads of top-level bindings in a script target.
+// periphery:ignore
 let (docReply, docFill, docCompactions) = try await runTurn(
     session,
     prompt: """

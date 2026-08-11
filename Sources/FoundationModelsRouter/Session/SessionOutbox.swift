@@ -114,14 +114,18 @@ public actor SessionOutbox: OperationEventSink {
     /// What ``drainForDispatch()`` hands to the injection task: every pending
     /// event (now committed and removed from the outbox), plus — when at
     /// least one was queued — the single next prompt in FIFO order.
-    public struct Drained: Sendable {
+    ///
+    /// Internal like ``drainForDispatch()``, its only producer: it exists for
+    /// the dispatch machinery alone, so it is not part of the outbox's public
+    /// surface.
+    internal struct Drained: Sendable {
         /// Every event that was pending at drain time, in outbox order. Empty
         /// when nothing was pending.
-        public let events: [PendingEvent]
+        let events: [PendingEvent]
 
         /// The next queued prompt in FIFO order, or `nil` when none was
         /// queued.
-        public let prompt: PendingPrompt?
+        let prompt: PendingPrompt?
     }
 
     /// Pending turn-riding events, in outbox order (post order, with
@@ -201,7 +205,7 @@ public actor SessionOutbox: OperationEventSink {
     /// run ended before it reported the progress it reported first.
     ///
     /// - Parameter event: The event to record.
-    func journalWithoutStaging(event: OperationEvent) async {
+    internal func journalWithoutStaging(event: OperationEvent) async {
         await enqueueJournalWrite(event: event)?.value
     }
 
@@ -218,7 +222,7 @@ public actor SessionOutbox: OperationEventSink {
     ///
     /// - Parameter event: The event to restage, under the same coalescing
     ///   policy ``post(_:)`` applies.
-    func requeue(event: OperationEvent) {
+    internal func requeue(event: OperationEvent) {
         stage(event: event)
         wakeUp()
     }
@@ -262,7 +266,7 @@ public actor SessionOutbox: OperationEventSink {
     /// have always had, reaching the transcript on the turn that drains them.
     ///
     /// - Parameter journal: The journal to install.
-    func attach(journal: any OperationEventJournal) {
+    internal func attach(journal: any OperationEventJournal) {
         self.journal = journal
     }
 
@@ -428,17 +432,31 @@ public actor SessionOutbox: OperationEventSink {
     /// pending prompt — atomically committing (removing) exactly what is
     /// returned.
     ///
-    /// Meant to be called from inside the session's serial-gated chokepoint,
+    /// Called only from inside the session's serial-gated chokepoint,
     /// so a drain never races a concurrent turn; being an actor method, it
     /// also never interleaves with a concurrent ``post(_:)``/
     /// ``enqueue(prompt:)`` from a background tool.
+    ///
+    /// **The contract that binds a drain to a turn.** Every drain happens
+    /// inside ``RoutedSession/dispatchNextPrompt()``'s turn bracket — after
+    /// ``RoutedSessionActor/beginTurn()`` and before its matching
+    /// ``RoutedSessionActor/endTurn()`` — and is released by exactly one
+    /// ``finishDispatch()`` on every exit that bracket has. `internal`,
+    /// symmetric with ``finishDispatch()``, deliberately: were this public
+    /// while its releasing partner is not, an external caller could drain a
+    /// prompt with no turn in flight and strand it — gone from ``pending()``
+    /// so ``cancel(id:)`` reports already-sent, owned by no turn so
+    /// ``RoutedSession/cancelCurrentTurn()`` reports nothing in flight, and
+    /// counted by ``queueDepth()`` forever with no way to release the slot.
+    /// Keeping the pair internal is what makes that drained-but-not-started
+    /// state unreachable from outside the package.
     ///
     /// - Returns: Every event pending at the moment of the call, plus the
     ///   next queued prompt (or `nil` if none was queued) — both now
     ///   committed and no longer reported by ``pending()`` but, for the
     ///   prompt, still reported by ``queueDepth()`` until
     ///   ``finishDispatch()``.
-    public func drainForDispatch() -> Drained {
+    internal func drainForDispatch() -> Drained {
         let drainedEvents = events
         events = []
         let drainedPrompt = prompts.isEmpty ? nil : prompts.removeFirst()
@@ -451,8 +469,9 @@ public actor SessionOutbox: OperationEventSink {
     /// Called by ``RoutedSession/dispatchNextPrompt()`` on every exit its turn
     /// has — returned response, thrown error, cancellation — so a prompt is
     /// counted by ``queueDepth()`` for exactly as long as this session still
-    /// owes it a turn, and never after.
-    func finishDispatch() {
+    /// owes it a turn, and never after. `internal`, symmetric with
+    /// ``drainForDispatch()`` — see the drain-to-turn contract stated there.
+    internal func finishDispatch() {
         dispatched = nil
     }
 
