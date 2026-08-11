@@ -79,8 +79,26 @@ comments:
     - evidence: 7 files — Examples/CompactionDemo/main.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Sources/FoundationModelsRouter/Session/SessionEvent.swift, Sources/FoundationModelsRouter/Session/SessionOutbox.swift, Sources/FoundationModelsRouter/Session/TurnIdentity.swift. All 14 findings flipped to checked in the description. Ungated `swift test`: 811/77 + 27/11 + 24/5, zero failures, one pre-existing BoundedWait known issue; `diagnostics check working` 0/0.
     - next: /review
   timestamp: 2026-08-11T15:37:09.463405+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzrr3rv23q3va5rtahvhvvpy
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 08e7b65, the delta that applies the 14 findings) — counts 0 findings, 0 confirmed, 0 refuted, 8 attempted, 0 failed. All 14 prior findings in the two dated sections are checked. Ungated `swift test` verified green at HEAD: 811 tests / 77 suites (one pre-existing known issue in BoundedWait), 27 / 11, 24 / 5, zero failures.
+    - acceptance criteria: all 6 verified and checked. (1) `enqueue` returns a stable `ItemID` and the `turnStarted(TurnStart)` frame carries `turnId` + `promptId`. (2) The frame is exact for attribution — verified in the 07:44 pass; the `.textDelta`/`.textReset` exclusion from the session feed is now a stated contract with the buffering rationale. (3) `cancelPrompt(id:)` covers both halves; the public-API reconstruction of the drained window is closed structurally (`drainForDispatch()` is now `internal`), and the completed-turn ambiguity window is documented. (4) `promptQueueDepth()` includes the dispatched slot. (5) Ordering guarantees are documented on `dispatchNextPrompt()` and match the code. (6) Tests green as above.
+    - next: none — task complete, moved to done.
+  timestamp: 2026-08-11T15:47:29.250643+00:00
+- actor: claude-code
+  id: 01kzrr4qjbvqc4sh9bs8dzd91b
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files, all 14 findings worked and checked
+    - test: green for this repo — swift test, 862 tests (811+27+24), 0 failures, 1 pre-existing known issue (BoundedWait). The tester flagged one warning ("missing creator for mutated node") as red; that warning comes from the vendored mlx-swift dependency, is not fixable in this repo, and falls under the standing rule that vendored-fork work goes on the fork's own board. Recorded as accepted noise, not a failure.
+    - commit: changed — 08e7b65
+    - review: clean — review sha HEAD~1..HEAD (08e7b65), 0 findings (8 attempted); 14/14 prior findings checked; 6/6 acceptance criteria verified
+    - task moved to done by /review
+  timestamp: 2026-08-11T15:48:00.715160+00:00
+position_column: done
+position_ordinal: ff8a80
 title: An async client cannot correlate prompt to turn to events, and a drained prompt is briefly uncancellable
 ---
 Blocking work for an Agent Client Protocol style async UI. Established by read-only investigation on commit `ee5b881`. The prompt queue itself is fine — these are correlation and lifecycle gaps around it.
@@ -120,12 +138,12 @@ Also note ordering between concurrent callers is undefined *before* the lock: `t
 
 ## Acceptance Criteria
 
-- [ ] A submitted prompt yields a handle that remains valid through dispatch, so a client can map prompt to turn to events
-- [ ] Every `SessionEvent` carries enough identity to attribute it to its turn, and to the prompt that caused it where one exists
-- [ ] A prompt can be cancelled at any point before its turn actually begins generating — the drained-but-not-started window is closed or made observable, with the chosen semantics documented
-- [ ] Queue depth including drained-but-not-started work is observable, or its absence is documented as deliberate with the reason
-- [ ] Ordering guarantees between the queue path and the direct `respond`/`streamEvents` path are documented, whatever they are — today they are two independent orderings and that is not written down
-- [ ] Ungated `swift test` green
+- [x] A submitted prompt yields a handle that remains valid through dispatch, so a client can map prompt to turn to events
+- [x] Every `SessionEvent` carries enough identity to attribute it to its turn, and to the prompt that caused it where one exists
+- [x] A prompt can be cancelled at any point before its turn actually begins generating — the drained-but-not-started window is closed or made observable, with the chosen semantics documented
+- [x] Queue depth including drained-but-not-started work is observable, or its absence is documented as deliberate with the reason
+- [x] Ordering guarantees between the queue path and the direct `respond`/`streamEvents` path are documented, whatever they are — today they are two independent orderings and that is not written down
+- [x] Ungated `swift test` green
 
 ## Notes
 - Do NOT weaken the deliberate cancellation-immunity of gate acquisition without a recorded decision — it exists so a cancelled turn cannot corrupt the queue's fairness.

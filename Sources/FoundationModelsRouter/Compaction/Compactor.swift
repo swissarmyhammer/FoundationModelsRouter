@@ -12,6 +12,18 @@ import FoundationModels
 /// a later build-order step) supplies its own measured counts instead — the
 /// next real turn always re-measures exactly, so an estimate here is safe.
 public struct CompactionResult: Sendable, Equatable {
+    /// This fold's own identity — generated once when the result is created,
+    /// and stable for the result's whole life.
+    ///
+    /// A fold has no SDK-given id of its own, so this is a generated ``ULID``
+    /// string rather than a source-derived one. It rides inside the
+    /// ``SessionEvent/compaction(_:)`` payload, so every consumer of one fold
+    /// — two ``SessionProjection``s replaying the same event sequence
+    /// included — reads the same id and can key a row on it directly. It is
+    /// never a transcript entry id; the synthesized summary entry's id, when
+    /// one exists, travels separately as ``summaryEntryId``.
+    public let id: String
+
     /// The synthesized fold summary, or `nil` when no ``Summarization``
     /// ran — either no `summarizer` was supplied to
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` (the model-free
@@ -20,6 +32,12 @@ public struct CompactionResult: Sendable, Equatable {
     /// oversized-tail case), or the fold's own summary left the transcript no
     /// smaller than it was and so was discarded unapplied.
     public let summary: String?
+
+    /// The synthesized summary entry's own `Transcript.Entry.id`, or `nil`
+    /// when no summary entry was applied — the join key from this fold back
+    /// to the raw transcript and the recording, present exactly when
+    /// ``summary`` is.
+    public let summaryEntryId: String?
 
     /// The transcript's estimated size, in tokens, before this pipeline ran.
     public let tokensBefore: Int
@@ -39,12 +57,27 @@ public struct CompactionResult: Sendable, Equatable {
     /// Creates a compaction result.
     ///
     /// - Parameters:
+    ///   - id: This fold's own identity. Defaults to a freshly generated
+    ///     ``ULID`` string — see ``id`` for why a fold's identity is
+    ///     generated rather than source-derived.
     ///   - summary: The synthesized fold summary, or `nil`.
+    ///   - summaryEntryId: The synthesized summary entry's own
+    ///     `Transcript.Entry.id`, or `nil` when no summary entry was applied.
+    ///     Defaults to `nil`.
     ///   - tokensBefore: The estimated pre-fold size, in tokens.
     ///   - tokensAfter: The estimated post-fold size, in tokens.
     ///   - stagesApplied: The stages that ran, in order.
-    public init(summary: String?, tokensBefore: Int, tokensAfter: Int, stagesApplied: [String]) {
+    public init(
+        id: String = ULID.generate().description,
+        summary: String?,
+        summaryEntryId: String? = nil,
+        tokensBefore: Int,
+        tokensAfter: Int,
+        stagesApplied: [String]
+    ) {
+        self.id = id
         self.summary = summary
+        self.summaryEntryId = summaryEntryId
         self.tokensBefore = tokensBefore
         self.tokensAfter = tokensAfter
         self.stagesApplied = stagesApplied
@@ -207,6 +240,7 @@ public enum Compactor {
                     folded.transcript,
                     CompactionResult(
                         summary: folded.summary,
+                        summaryEntryId: folded.summaryEntryId,
                         tokensBefore: tokensBefore,
                         tokensAfter: tokensAfter,
                         stagesApplied: stagesApplied + [Summarization.stageName]

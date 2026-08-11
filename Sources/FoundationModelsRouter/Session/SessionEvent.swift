@@ -116,6 +116,39 @@ public enum SessionEvent: Sendable, Equatable {
     ///     or `nil` for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
     case toolStatus(id: String, status: ToolCallStatus, summary: String?)
 
+    /// The turn's snapshot diff recorded one SDK transcript entry, closing it
+    /// under its durable id.
+    ///
+    /// This is what gives a live consumer a stable, source-derived identity
+    /// for the state it accumulated from deltas: the ``textDelta(_:)`` and
+    /// ``reasoningDelta(_:)`` fragments stream without an entry id, because
+    /// the SDK entry does not exist until generation finishes and the turn's
+    /// diff runs. This event delivers that id the moment the entry is known.
+    /// ``SessionProjection`` uses it to adopt the SDK id onto the oldest
+    /// still-open row of the matching kind, and to stamp
+    /// ``SessionProjection/TranscriptEntry/sourceEntryId`` onto a `.toolCalls`
+    /// entry's call rows.
+    ///
+    /// Emitted once per recorded `.response`/`.reasoning`/`.toolCalls` entry,
+    /// in diff order, after that entry's own derived events (the
+    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:)``
+    /// pairs of a `.toolCalls` entry, the ``reasoningDelta(_:)`` of a
+    /// `.reasoning` entry). A `.response` entry emits exactly this one event —
+    /// its text already streamed live as ``textDelta(_:)`` fragments. It
+    /// travels on both routes: the turn's own
+    /// ``RoutedSession/streamEvents(to:maxTokens:)`` stream and
+    /// ``RoutedSession/streamSessionEvents()``.
+    ///
+    /// - Parameters:
+    ///   - id: Apple's own `Transcript.Entry.id` for the recorded entry — the
+    ///     same id ``TranscriptEntryPayload/entryId`` persists, so a consumer
+    ///     can join live state back to the raw transcript and the recording.
+    ///     This is *never* a `Transcript.ToolCall.id`: a `.toolCalls` entry's
+    ///     close carries the entry's id, while its individual calls' ids
+    ///     travel on their own ``toolCall(id:name:argumentsJSON:)`` events.
+    ///   - kind: Which entry kind was recorded.
+    case entryRecorded(id: String, kind: RecordedEntryKind)
+
     /// An auto-compaction fold completed against this session, mid-turn. See
     /// this type's own documentation for when this is emitted.
     case compaction(CompactionResult)
@@ -154,6 +187,26 @@ public enum SessionEvent: Sendable, Equatable {
     /// that moment. This is what feeds a live context meter *during* a turn
     /// rather than only once the whole (possibly retried) turn finishes.
     case turnEnded(TokenUsage)
+}
+
+/// The kind of SDK transcript entry a ``SessionEvent/entryRecorded(id:kind:)``
+/// names.
+///
+/// Only the three kinds a live consumer mirrors as its own rows are named
+/// here. A `.prompt`, `.instructions`, or `.toolOutput` entry gets no
+/// ``SessionEvent/entryRecorded(id:kind:)``: a prompt and instructions are
+/// inputs a consumer already holds, and a tool output's content reaches a
+/// consumer as the ``ToolCallStatus/completed`` status of the call it answers.
+public enum RecordedEntryKind: Sendable, Equatable {
+    /// A `.response` entry — the model's answer text.
+    case response
+
+    /// A `.reasoning` entry — the model's reasoning trace.
+    case reasoning
+
+    /// A `.toolCalls` entry — one batch of tool invocations the model
+    /// requested.
+    case toolCalls
 }
 
 /// The lifecycle of one tool invocation a model requested, as observed

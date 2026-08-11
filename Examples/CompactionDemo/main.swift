@@ -86,7 +86,10 @@ func runTurn(
                 """)
         case .discoveryPrimingFailed(let failure):
             print("[priming] could not seed this turn: \(failure)")
-        case .reasoningDelta:
+        case .reasoningDelta, .entryRecorded:
+            // This demo prints content and lifecycle, not identity: the
+            // recorded-entry closes exist for consumers (like
+            // `SessionProjection`) that key rows on durable SDK entry ids.
             break
         case .turnEnded(let usage):
             fill = usage.contextFill

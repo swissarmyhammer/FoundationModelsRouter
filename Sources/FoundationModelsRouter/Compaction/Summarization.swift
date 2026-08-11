@@ -171,6 +171,11 @@ public struct Summarization: Sendable {
         /// The synthesized summary text, alone — the same text the
         /// transcript's summary entry carries in its `.text` segment.
         public let summary: String
+
+        /// The synthesized summary entry's own `Transcript.Entry.id` — the
+        /// join key ``CompactionResult/summaryEntryId`` carries from the fold
+        /// back to the raw transcript and the recording.
+        public let summaryEntryId: String
     }
 
     /// Folds `transcript`'s old span (everything but the header and the
@@ -279,7 +284,7 @@ public struct Summarization: Sendable {
         let tokensAfter = Compactor.estimatedTokenCount(of: provisional)
         let finalTranscript = Transcript(entries: header + [makeSummaryEntry(tokensAfter: tokensAfter)] + recentEntries)
 
-        return Folded(transcript: finalTranscript, summary: summaryText)
+        return Folded(transcript: finalTranscript, summary: summaryText, summaryEntryId: entryId)
     }
 
     // MARK: - Map-reduce summarization

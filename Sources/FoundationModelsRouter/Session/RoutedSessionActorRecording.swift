@@ -345,7 +345,9 @@ extension RoutedSessionActor {
     /// A `.toolCalls` partial yields one ``SessionEvent/toolCall(id:name:argumentsJSON:)``
     /// plus a paired ``SessionEvent/toolStatus(id:status:summary:)`` of
     /// ``ToolCallStatus/running`` per requested call, recording each id into
-    /// `dispatchedToolCallIds`. A `.toolOutput` partial yields one
+    /// `dispatchedToolCallIds`, then closes itself with one
+    /// ``SessionEvent/entryRecorded(id:kind:)`` carrying the `.toolCalls`
+    /// entry's own id. A `.toolOutput` partial yields one
     /// ``SessionEvent/toolStatus(id:status:summary:)`` of
     /// ``ToolCallStatus/completed``, carrying the tool's flattened output as
     /// `summary`, and records its id into `completedToolCallIds`. That id is
@@ -353,13 +355,16 @@ extension RoutedSessionActor {
     /// rather than taken from the entry, so the id a completion carries is
     /// always one this same diff already announced as a
     /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` — see that helper for
-    /// why the SDK's own invariant is not enough to rely on. A `.reasoning` partial yields one
-    /// ``SessionEvent/reasoningDelta(_:)``. Every other kind (`.instructions`,
-    /// `.prompt`, `.response`, `.session`, `.embedding`, the legacy
-    /// `.toolCall`) yields nothing here — a `.response` partial's text is
-    /// already covered by the live ``SessionEvent/textDelta(_:)`` fragments
-    /// ``streamEventsGenerating(prompt:maxTokens:into:)`` yields during
-    /// generation, so re-emitting it here would duplicate it.
+    /// why the SDK's own invariant is not enough to rely on. A `.reasoning`
+    /// partial yields one ``SessionEvent/reasoningDelta(_:)`` followed by its
+    /// own ``SessionEvent/entryRecorded(id:kind:)``. A `.response` partial
+    /// yields exactly one ``SessionEvent/entryRecorded(id:kind:)`` — its text
+    /// is already covered by the live ``SessionEvent/textDelta(_:)``
+    /// fragments ``streamEventsGenerating(prompt:maxTokens:into:)`` yields
+    /// during generation, so the close delivers the durable entry id and
+    /// nothing else. Every other kind (`.instructions`, `.prompt`,
+    /// `.session`, `.embedding`, the legacy `.toolCall`) yields nothing here
+    /// (see ``RecordedEntryKind`` for why those kinds carry no close).
     ///
     /// A no-op — including no mutation of either tracking array — whenever
     /// `onEvent` is `nil`. That is no longer the ``respond(to:maxTokens:)``/
@@ -392,6 +397,7 @@ extension RoutedSessionActor {
                 onEvent(.toolStatus(id: call.id, status: .running, summary: nil))
                 dispatchedToolCallIds.append(call.id)
             }
+            onEvent(.entryRecorded(id: entry.entryId, kind: .toolCalls))
         case .toolOutput:
             let callId = completedToolCallId(
                 forOutputEntryId: entry.entryId,
@@ -402,7 +408,10 @@ extension RoutedSessionActor {
             onEvent(.toolStatus(id: callId, status: .completed, summary: partial.text))
         case .reasoning:
             onEvent(.reasoningDelta(partial.text ?? ""))
-        case .session, .instructions, .prompt, .response, .embedding, .toolCall:
+            onEvent(.entryRecorded(id: entry.entryId, kind: .reasoning))
+        case .response:
+            onEvent(.entryRecorded(id: entry.entryId, kind: .response))
+        case .session, .instructions, .prompt, .embedding, .toolCall:
             break
         }
     }

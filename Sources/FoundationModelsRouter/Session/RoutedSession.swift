@@ -284,8 +284,11 @@ public protocol RoutedSession: Actor {
     /// order), a ``SessionEvent/toolStatus(id:status:summary:)`` of
     /// ``ToolCallStatus/completed`` as each call's output lands (or
     /// ``ToolCallStatus/failed`` for a call whose matching `.toolOutput`
-    /// never arrived within this turn's diff), and any
-    /// ``SessionEvent/reasoningDelta(_:)`` the backend recorded; finally
+    /// never arrived within this turn's diff), any
+    /// ``SessionEvent/reasoningDelta(_:)`` the backend recorded, and one
+    /// ``SessionEvent/entryRecorded(id:kind:)`` per recorded
+    /// `.response`/`.reasoning`/`.toolCalls` entry, right after that entry's
+    /// own derived events, carrying its durable SDK id; finally
     /// ``SessionEvent/turnEnded(_:)`` once the turn's own usage delta is
     /// known. ``SessionEvent/compaction(_:)`` is emitted whenever this
     /// session auto-compacts itself mid-turn (only possible when it was
@@ -327,8 +330,9 @@ public protocol RoutedSession: Actor {
     ///
     /// **Every turn-lifecycle event travels here**, whichever entry point ran
     /// the turn — the correlation frame ``SessionEvent/turnStarted(_:)`` that
-    /// opens it, the ``SessionEvent/reasoningDelta(_:)`` and tool-lifecycle
-    /// events its diff derives, any ``SessionEvent/compaction(_:)`` it folds,
+    /// opens it, the ``SessionEvent/reasoningDelta(_:)``, tool-lifecycle, and
+    /// ``SessionEvent/entryRecorded(id:kind:)`` events its diff derives, any
+    /// ``SessionEvent/compaction(_:)`` it folds,
     /// the ``SessionEvent/discoveryPrimingFailed(_:)`` report that its
     /// pre-discovery seeding could not run (see ``DiscoveryPriming``), and its
     /// closing ``SessionEvent/turnEnded(_:)``.

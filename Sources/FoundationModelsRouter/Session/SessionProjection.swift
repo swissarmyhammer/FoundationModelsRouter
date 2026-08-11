@@ -39,8 +39,10 @@ public final class SessionProjection {
     /// ``SessionEvent/toolStatus(id:status:summary:)`` (no prior matching
     /// ``SessionEvent/toolCall(id:name:argumentsJSON:)``) leaves it
     /// unchanged rather than reporting ``Phase/runningTool`` for nothing (see
-    /// ``updateToolCall(id:status:summary:)``). Also not a perfectly
-    /// real-time signal — ``RoutedSession/streamEvents(to:maxTokens:)``
+    /// ``updateToolCall(id:status:summary:)``), and
+    /// ``SessionEvent/entryRecorded(id:kind:)`` is identity bookkeeping that
+    /// never touches it. Also not a perfectly real-time signal —
+    /// ``RoutedSession/streamEvents(to:maxTokens:)``
     /// only synthesizes ``SessionEvent/toolCall(id:name:argumentsJSON:)``/
     /// ``SessionEvent/toolStatus(id:status:summary:)``/``SessionEvent/reasoningDelta(_:)``
     /// once generation finishes and the turn's own diff runs (see that
@@ -92,22 +94,59 @@ public final class SessionProjection {
             case compaction(CompactionResult)
         }
 
-        /// A stable identity for this entry, independent of its (possibly
-        /// still-growing) content — usable directly as a SwiftUI `ForEach` id.
-        public let id: ULID
+        /// This row's identity, derived from the source data — usable
+        /// directly as a SwiftUI `ForEach` id, and equal across any two
+        /// projections built from the same event sequence.
+        ///
+        /// Which source datum it is depends on the row's kind:
+        ///
+        /// - A ``Kind/toolCall(_:)`` row carries the SDK
+        ///   `Transcript.ToolCall.id` its
+        ///   ``SessionEvent/toolCall(id:name:argumentsJSON:)`` announced.
+        /// - A ``Kind/compaction(_:)`` row carries ``CompactionResult/id``.
+        /// - A ``Kind/text(_:)``/``Kind/reasoning(_:)`` row starts with a
+        ///   deterministic provisional id (`"provisional-<n>"`, a
+        ///   per-projection counter) while its deltas stream, then adopts the
+        ///   SDK `Transcript.Entry.id` when the turn's
+        ///   ``SessionEvent/entryRecorded(id:kind:)`` closes the entry.
+        ///
+        /// **The one adopt-id transition.** A text or reasoning row
+        /// re-identifies exactly once, at the end of its turn, when the SDK
+        /// id becomes known. SwiftUI treats that as removing the provisional
+        /// row and inserting the adopted one — a single-row transition
+        /// confined to the turn boundary, after which the id never changes
+        /// again. A row that never receives its close (a turn that failed
+        /// before the SDK recorded the entry) keeps its provisional id, which
+        /// is still deterministic across projections of the same events.
+        public let id: String
 
         /// This entry's current content.
         public var kind: Kind
 
+        /// The SDK `Transcript.Entry.id` this row joins back to in the raw
+        /// transcript and the recording (``TranscriptEntryPayload/entryId``),
+        /// or `nil` while none is known.
+        ///
+        /// For a ``Kind/text(_:)``/``Kind/reasoning(_:)`` row this equals
+        /// ``id`` once the row adopted its entry's id — `nil` means the row
+        /// is still open (its deltas may still be coalescing). For a
+        /// ``Kind/toolCall(_:)`` row it names the `.toolCalls` entry the call
+        /// belongs to, distinct from the row's own call ``id``. For a
+        /// ``Kind/compaction(_:)`` row it is
+        /// ``CompactionResult/summaryEntryId``.
+        public let sourceEntryId: String?
+
         /// Creates a transcript entry.
         ///
         /// - Parameters:
-        ///   - id: A stable identity for this entry. Defaults to a freshly
-        ///     generated ``ULID``.
+        ///   - id: This row's identity — see ``id`` for the forms it takes.
         ///   - kind: This entry's content.
-        public init(id: ULID = .generate(), kind: Kind) {
+        ///   - sourceEntryId: The SDK entry id this row joins back to, or
+        ///     `nil` while none is known. Defaults to `nil`.
+        public init(id: String, kind: Kind, sourceEntryId: String? = nil) {
             self.id = id
             self.kind = kind
+            self.sourceEntryId = sourceEntryId
         }
     }
 
@@ -175,14 +214,21 @@ public final class SessionProjection {
             phase = .runningTool
             transcript.append(
                 TranscriptEntry(
+                    id: id,
                     kind: .toolCall(ToolCallEntry(id: id, name: name, argumentsJSON: argumentsJSON, status: .running, summary: nil))))
         case .toolStatus(let id, let status, let summary):
             if updateToolCall(id: id, status: status, summary: summary) {
                 phase = .runningTool
             }
+        case .entryRecorded(let id, let kind):
+            // Bookkeeping only, deliberately no phase change: the close
+            // arrives at diff time, alongside events that already set the
+            // phase they report, and closing an entry is not itself a phase.
+            adoptRecordedEntry(id: id, kind: kind)
         case .compaction(let result):
             phase = .compacting
-            transcript.append(TranscriptEntry(kind: .compaction(result)))
+            transcript.append(
+                TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
         case .discoveryPrimingFailed:
             // Handled explicitly, and deliberately changes nothing: a turn whose
             // discovery priming could not seed generates exactly as an unprimed
@@ -217,11 +263,16 @@ public final class SessionProjection {
         }
     }
 
-    /// Appends `fragment` to the last entry if it is already a growing entry
-    /// of the same kind, or starts a new one — the shared coalescing logic
-    /// behind ``appendTextFragment(_:)`` and ``appendReasoningFragment(_:)``,
-    /// which differ only in which ``TranscriptEntry/Kind`` case they read and
-    /// construct.
+    /// Appends `fragment` to the last entry if it is still a growing, open
+    /// entry of the same kind, or starts a new one under a fresh provisional
+    /// id — the shared coalescing logic behind ``appendTextFragment(_:)`` and
+    /// ``appendReasoningFragment(_:)``, which differ only in which
+    /// ``TranscriptEntry/Kind`` case they read and construct.
+    ///
+    /// An entry stops coalescing the moment it adopts its SDK id
+    /// (``TranscriptEntry/sourceEntryId`` becomes non-`nil`): the SDK closed
+    /// that entry, so a later fragment belongs to a new one — which is also
+    /// what keeps one projection row per SDK entry across turns.
     ///
     /// - Parameters:
     ///   - fragment: The new text to append.
@@ -234,10 +285,10 @@ public final class SessionProjection {
         matching: (TranscriptEntry.Kind) -> String?,
         makeKind: (String) -> TranscriptEntry.Kind
     ) {
-        if let last = transcript.last, let existing = matching(last.kind) {
+        if let last = transcript.last, last.sourceEntryId == nil, let existing = matching(last.kind) {
             transcript[transcript.count - 1].kind = makeKind(existing + fragment)
         } else {
-            transcript.append(TranscriptEntry(kind: makeKind(fragment)))
+            transcript.append(TranscriptEntry(id: makeProvisionalId(), kind: makeKind(fragment)))
         }
     }
 
@@ -298,5 +349,91 @@ public final class SessionProjection {
         call.summary = summary
         transcript[index].kind = .toolCall(call)
         return true
+    }
+
+    /// The prefix every provisional row id carries, keeping the provisional
+    /// space visibly distinct from every SDK id a row can adopt.
+    private static let provisionalIdPrefix = "provisional-"
+
+    /// How many provisional ids this projection has handed out — the counter
+    /// behind ``makeProvisionalId()``.
+    private var provisionalEntryCount = 0
+
+    /// Returns the next provisional row id.
+    ///
+    /// Deterministic by construction: the id is this projection's running
+    /// count of provisional rows, so two projections fed the same event
+    /// sequence hand out identical provisional ids — the property that makes
+    /// row identity reproducible even before adoption (see
+    /// ``TranscriptEntry/id``).
+    private func makeProvisionalId() -> String {
+        provisionalEntryCount += 1
+        return "\(Self.provisionalIdPrefix)\(provisionalEntryCount)"
+    }
+
+    /// Applies one ``SessionEvent/entryRecorded(id:kind:)`` to the transcript:
+    /// a `.response`/`.reasoning` close makes the oldest still-open row of the
+    /// matching kind adopt the SDK entry id, and a `.toolCalls` close stamps
+    /// ``TranscriptEntry/sourceEntryId`` onto that entry's call rows.
+    ///
+    /// Oldest-first adoption is what pairs rows with entries correctly when a
+    /// turn produced more than one of a kind: the diff closes entries in the
+    /// order the SDK appended them, and this projection opened its rows in
+    /// that same order (``SessionEvent/textReset`` split the superseded text
+    /// into its own still-open row), so the first unadopted row is the first
+    /// closed entry's.
+    ///
+    /// A close with no open row of its kind is a no-op — the normal case for
+    /// a consumer of ``RoutedSession/streamSessionEvents()``, which never
+    /// receives the ``SessionEvent/textDelta(_:)`` fragments that would have
+    /// opened a text row.
+    ///
+    /// - Parameters:
+    ///   - id: The recorded entry's SDK `Transcript.Entry.id`.
+    ///   - kind: Which entry kind was recorded.
+    private func adoptRecordedEntry(id: String, kind: RecordedEntryKind) {
+        switch kind {
+        case .response:
+            adopt(entryId: id, ontoOldestOpenRowWhere: { if case .text = $0 { return true } else { return false } })
+        case .reasoning:
+            adopt(
+                entryId: id, ontoOldestOpenRowWhere: { if case .reasoning = $0 { return true } else { return false } })
+        case .toolCalls:
+            stampToolCallRows(sourceEntryId: id)
+        }
+    }
+
+    /// Re-identifies the oldest row that satisfies `isKind` and has not yet
+    /// adopted an entry id, giving it `entryId` as both its row identity and
+    /// its ``TranscriptEntry/sourceEntryId`` — the one adopt-id transition
+    /// ``TranscriptEntry/id`` documents. A no-op when no such row exists.
+    ///
+    /// - Parameters:
+    ///   - entryId: The SDK entry id to adopt.
+    ///   - isKind: Whether a row's kind is the one this close names.
+    private func adopt(entryId: String, ontoOldestOpenRowWhere isKind: (TranscriptEntry.Kind) -> Bool) {
+        guard let index = transcript.firstIndex(where: { $0.sourceEntryId == nil && isKind($0.kind) }) else {
+            return
+        }
+        transcript[index] = TranscriptEntry(id: entryId, kind: transcript[index].kind, sourceEntryId: entryId)
+    }
+
+    /// Stamps `sourceEntryId` onto every ``TranscriptEntry/Kind/toolCall(_:)``
+    /// row not yet joined to its `.toolCalls` entry, keeping each row's own
+    /// call id as its identity.
+    ///
+    /// Event order makes this correct without carrying per-call data on the
+    /// close: a `.toolCalls` entry's ``SessionEvent/toolCall(id:name:argumentsJSON:)``
+    /// events all precede its own close, and the previous entry's close
+    /// already stamped *its* rows, so the unstamped call rows at this moment
+    /// are exactly this entry's.
+    ///
+    /// - Parameter sourceEntryId: The recorded `.toolCalls` entry's SDK id.
+    private func stampToolCallRows(sourceEntryId: String) {
+        for index in transcript.indices {
+            guard transcript[index].sourceEntryId == nil, case .toolCall = transcript[index].kind else { continue }
+            transcript[index] = TranscriptEntry(
+                id: transcript[index].id, kind: transcript[index].kind, sourceEntryId: sourceEntryId)
+        }
     }
 }

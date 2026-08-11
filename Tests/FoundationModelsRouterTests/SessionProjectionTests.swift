@@ -195,6 +195,138 @@ struct SessionProjectionTests {
         #expect(projection.phase == .idle)
     }
 
+    // MARK: - Source-derived row identity (task ^rt024hy)
+
+    @Test("a toolCall row uses the SDK Transcript.ToolCall.id as its row id")
+    @MainActor
+    func toolCallRowUsesTheCallIdAsItsRowId() {
+        let projection = SessionProjection()
+        projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
+
+        #expect(projection.transcript.map(\.id) == ["call-1"])
+        #expect(projection.transcript.map(\.sourceEntryId) == [nil])
+    }
+
+    @Test("an entryRecorded(.toolCalls) stamps sourceEntryId on that entry's call rows, keeping each row's own id")
+    @MainActor
+    func entryRecordedToolCallsStampsSourceEntryIdOnCallRows() {
+        let projection = SessionProjection()
+        projection.apply(.toolCall(id: "call-a", name: "search", argumentsJSON: "{}"))
+        projection.apply(.toolCall(id: "call-b", name: "search", argumentsJSON: "{}"))
+        projection.apply(.entryRecorded(id: "calls-1", kind: .toolCalls))
+
+        #expect(projection.transcript.map(\.id) == ["call-a", "call-b"])
+        #expect(projection.transcript.map(\.sourceEntryId) == ["calls-1", "calls-1"])
+    }
+
+    @Test("a streaming text row adopts the SDK .response entry id when the entry is recorded")
+    @MainActor
+    func textRowAdoptsTheResponseEntryIdWhenRecorded() {
+        let projection = SessionProjection()
+        projection.apply(.textDelta("hello "))
+        projection.apply(.textDelta("world"))
+        projection.apply(.entryRecorded(id: "resp-1", kind: .response))
+
+        #expect(projection.transcript.map(\.id) == ["resp-1"])
+        #expect(projection.transcript.map(\.sourceEntryId) == ["resp-1"])
+        #expect(projection.transcript.map(\.kind) == [.text("hello world")])
+    }
+
+    @Test("a textDelta after adoption opens a new row instead of growing the adopted one")
+    @MainActor
+    func textDeltaAfterAdoptionOpensANewRow() {
+        let projection = SessionProjection()
+        projection.apply(.textDelta("first turn"))
+        projection.apply(.entryRecorded(id: "resp-1", kind: .response))
+        projection.apply(.textDelta("second turn"))
+
+        #expect(projection.transcript.map(\.kind) == [.text("first turn"), .text("second turn")])
+        #expect(projection.transcript[0].id == "resp-1")
+        #expect(projection.transcript[1].id != "resp-1")
+        #expect(projection.transcript[1].sourceEntryId == nil)
+    }
+
+    @Test("a reasoning row adopts the SDK .reasoning entry id when the entry is recorded")
+    @MainActor
+    func reasoningRowAdoptsTheReasoningEntryIdWhenRecorded() {
+        let projection = SessionProjection()
+        projection.apply(.reasoningDelta("the user wants the weather"))
+        projection.apply(.entryRecorded(id: "reasoning-1", kind: .reasoning))
+
+        #expect(projection.transcript.map(\.id) == ["reasoning-1"])
+        #expect(projection.transcript.map(\.sourceEntryId) == ["reasoning-1"])
+    }
+
+    @Test("textReset-split rows adopt two .response entry ids oldest-first")
+    @MainActor
+    func textResetSplitRowsAdoptResponseIdsOldestFirst() {
+        let projection = SessionProjection()
+        projection.apply(.textDelta("draft before the tool ran"))
+        projection.apply(.textReset)
+        projection.apply(.textDelta("the final answer"))
+        projection.apply(.entryRecorded(id: "resp-pre-tool", kind: .response))
+        projection.apply(.entryRecorded(id: "resp-final", kind: .response))
+
+        #expect(projection.transcript.map(\.id) == ["resp-pre-tool", "resp-final"])
+        #expect(
+            projection.transcript.map(\.kind) == [
+                .text("draft before the tool ran"), .text("the final answer"),
+            ]
+        )
+    }
+
+    @Test("an entryRecorded with no open row of its kind is a no-op, not a crash and not a phase change")
+    @MainActor
+    func entryRecordedWithNoOpenRowIsANoOp() {
+        let projection = SessionProjection()
+        projection.apply(.entryRecorded(id: "resp-1", kind: .response))
+
+        #expect(projection.transcript.isEmpty)
+        #expect(projection.phase == .idle)
+    }
+
+    @Test("two projections given the same event sequence produce equal row ids, adopted and provisional alike")
+    @MainActor
+    func twoProjectionsGivenTheSameEventsProduceEqualRowIds() {
+        let compaction = CompactionResult(
+            summary: "folded", summaryEntryId: "compaction-summary-1", tokensBefore: 1000, tokensAfter: 400,
+            stagesApplied: ["Summarization"])
+        let events: [SessionEvent] = [
+            .reasoningDelta("thinking"),
+            .entryRecorded(id: "reasoning-1", kind: .reasoning),
+            .textDelta("hello "),
+            .textDelta("world"),
+            .toolCall(id: "call-1", name: "search", argumentsJSON: "{}"),
+            .compaction(compaction),
+            .textDelta("still streaming, never adopted"),
+        ]
+
+        let first = SessionProjection()
+        let second = SessionProjection()
+        for event in events {
+            first.apply(event)
+            second.apply(event)
+        }
+
+        #expect(first.transcript.map(\.id) == second.transcript.map(\.id))
+        #expect(first.transcript.map(\.sourceEntryId) == second.transcript.map(\.sourceEntryId))
+    }
+
+    @Test("a compaction row is keyed by the result's own id and joins through summaryEntryId")
+    @MainActor
+    func compactionRowIsKeyedByTheResultId() {
+        let projection = SessionProjection()
+        let folded = CompactionResult(
+            summary: "folded", summaryEntryId: "compaction-summary-1", tokensBefore: 1000, tokensAfter: 400,
+            stagesApplied: ["Summarization"])
+        let unfolded = CompactionResult(summary: nil, tokensBefore: 500, tokensAfter: 500, stagesApplied: [])
+        projection.apply(.compaction(folded))
+        projection.apply(.compaction(unfolded))
+
+        #expect(projection.transcript.map(\.id) == [folded.id, unfolded.id])
+        #expect(projection.transcript.map(\.sourceEntryId) == ["compaction-summary-1", nil])
+    }
+
     @Test("apply(eventsFrom:) applies events yielded before a throw, then rethrows, still resetting to .idle")
     @MainActor
     func applyEventsFromAppliesPriorEventsThenRethrowsAndResetsIdle() async throws {

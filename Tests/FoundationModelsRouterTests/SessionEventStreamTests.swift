@@ -247,7 +247,7 @@ struct SessionEventStreamTests {
 
     // MARK: - Plain text: textDelta only
 
-    @Test("a plain-text turn with no tool calls or reasoning yields only textDelta fragments, in order")
+    @Test("a plain-text turn yields textDelta fragments in order, then the recorded .response entry's id")
     @MainActor
     func plainTextTurnYieldsOnlyTextDeltas() async throws {
         let dir = Self.makeTempDir()
@@ -257,11 +257,18 @@ struct SessionEventStreamTests {
         container.backend.responseChunks = ["hello ", "world"]
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "hi"))])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "hello world"))])),
+            .response(
+                Transcript.Response(
+                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "hello world"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "hi"))
-        #expect(eventsAfterTurnFrame(events) == [.textDelta("hello "), .textDelta("world")])
+        #expect(
+            eventsAfterTurnFrame(events) == [
+                .textDelta("hello "), .textDelta("world"),
+                .entryRecorded(id: "resp-1", kind: .response),
+            ]
+        )
     }
 
     // MARK: - Tool calls: toolCall + toolStatus(.running) then .completed
@@ -290,7 +297,9 @@ struct SessionEventStreamTests {
                     segments: [.text(Transcript.TextSegment(content: "72F and sunny"))]
                 )
             ),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "it's sunny"))])),
+            .response(
+                Transcript.Response(
+                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "it's sunny"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "weather?"))
@@ -299,7 +308,9 @@ struct SessionEventStreamTests {
                 .textDelta("it's sunny"),
                 .toolCall(id: "call-1", name: "search", argumentsJSON: arguments.jsonString),
                 .toolStatus(id: "call-1", status: .running, summary: nil),
+                .entryRecorded(id: "calls-1", kind: .toolCalls),
                 .toolStatus(id: "call-1", status: .completed, summary: "72F and sunny"),
+                .entryRecorded(id: "resp-1", kind: .response),
             ]
         )
     }
@@ -329,7 +340,9 @@ struct SessionEventStreamTests {
             .toolOutput(
                 Transcript.ToolOutput(id: "call-b", toolName: "search", segments: [.text(Transcript.TextSegment(content: "SF: foggy"))])
             ),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "done"))])),
+            .response(
+                Transcript.Response(
+                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "done"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "compare weather"))
@@ -340,8 +353,10 @@ struct SessionEventStreamTests {
                 .toolStatus(id: "call-a", status: .running, summary: nil),
                 .toolCall(id: "call-b", name: "search", argumentsJSON: argumentsB.jsonString),
                 .toolStatus(id: "call-b", status: .running, summary: nil),
+                .entryRecorded(id: "calls-1", kind: .toolCalls),
                 .toolStatus(id: "call-a", status: .completed, summary: "NYC: sunny"),
                 .toolStatus(id: "call-b", status: .completed, summary: "SF: foggy"),
+                .entryRecorded(id: "resp-1", kind: .response),
             ]
         )
     }
@@ -382,7 +397,9 @@ struct SessionEventStreamTests {
                     id: "output-entry-2", toolName: "search",
                     segments: [.text(Transcript.TextSegment(content: "SF: foggy"))])
             ),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "done"))])),
+            .response(
+                Transcript.Response(
+                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "done"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "compare weather"))
@@ -393,8 +410,10 @@ struct SessionEventStreamTests {
                 .toolStatus(id: "call-a", status: .running, summary: nil),
                 .toolCall(id: "call-b", name: "search", argumentsJSON: argumentsB.jsonString),
                 .toolStatus(id: "call-b", status: .running, summary: nil),
+                .entryRecorded(id: "calls-1", kind: .toolCalls),
                 .toolStatus(id: "call-a", status: .completed, summary: "NYC: sunny"),
                 .toolStatus(id: "call-b", status: .completed, summary: "SF: foggy"),
+                .entryRecorded(id: "resp-1", kind: .response),
             ]
         )
     }
@@ -448,6 +467,7 @@ struct SessionEventStreamTests {
 
         let events = try await Self.collect(session.streamEvents(to: "weather?"))
         #expect(events.contains(.reasoningDelta("the user wants the weather")))
+        #expect(events.contains(.entryRecorded(id: "reasoning-1", kind: .reasoning)))
     }
 
     // MARK: - turnEnded: emitted iff the backend reports usage
@@ -506,7 +526,9 @@ struct SessionEventStreamTests {
             .toolOutput(
                 Transcript.ToolOutput(id: "call-1", toolName: "search", segments: [.text(Transcript.TextSegment(content: "result"))])
             ),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))])),
+            .response(
+                Transcript.Response(
+                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))])),
         ]
 
         var collected: [SessionEvent] = []
@@ -524,7 +546,9 @@ struct SessionEventStreamTests {
             eventsAfterTurnFrame(collected) == [
                 .toolCall(id: "call-1", name: "search", argumentsJSON: "{}"),
                 .toolStatus(id: "call-1", status: .running, summary: nil),
+                .entryRecorded(id: "calls-1", kind: .toolCalls),
                 .toolStatus(id: "call-1", status: .completed, summary: "result"),
+                .entryRecorded(id: "resp-1", kind: .response),
             ]
         )
     }
