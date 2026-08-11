@@ -15,6 +15,19 @@ private let recordingLogger = makeModuleLogger(category: "Recording")
 /// recorder's own ``directory`` when the caller passes `nil`); the open handle
 /// per directory is created lazily and reused. Writing is best-effort: any I/O
 /// failure is logged and the event dropped — ``append(_:to:)`` never throws.
+///
+/// ## Durability
+///
+/// Each appended event is one `write` call: a whole line, written once. The
+/// sync point is the turn close — after appending a `.response`-kind event
+/// (the turn-final event both diff paths stamp the turn's usage onto), the
+/// target directory's handle is synchronized (fsync), so a completed turn is
+/// durable the moment its closing event lands. Between turn closes the window
+/// is the OS's: a power cut or a kill can lose the open turn's events and can
+/// tear at most the final line of a `transcript.jsonl`. That torn tail is the
+/// policy's expected crash artifact, and ``TranscriptTree`` tolerates it on
+/// load by dropping the torn line with a warning. Synchronization is
+/// best-effort like the writes: a failed sync is logged, never thrown.
 public actor JSONLRecorder: TranscriptRecorder {
     /// The default directory `transcript.jsonl` is written into when an append
     /// carries no explicit session directory.
@@ -28,7 +41,11 @@ public actor JSONLRecorder: TranscriptRecorder {
     private var seq = 0
     /// The append handles, one per directory, opened lazily and reused across
     /// appends and keyed by the directory's standardized path.
-    private var handles: [String: FileHandle] = [:]
+    private var handles: [String: any TranscriptAppendHandle] = [:]
+    /// Opens the append handle for a directory on first use. The production
+    /// opener creates the directory and its `transcript.jsonl` on disk; tests
+    /// inject a spy here to observe writes and syncs without disk I/O.
+    private let openHandle: @Sendable (URL) throws -> any TranscriptAppendHandle
 
     /// Creates a JSONL recorder whose default directory is `directory`.
     ///
@@ -38,13 +55,36 @@ public actor JSONLRecorder: TranscriptRecorder {
     ///     append. Per-session appends are written under their own directory.
     ///   - now: The clock used to stamp each event's `ts`.
     public init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
+        self.init(
+            directory: directory,
+            now: now,
+            openHandle: { try openHandleForAppending(fileName: "transcript.jsonl", in: $0) }
+        )
+    }
+
+    /// Creates a JSONL recorder with an injected handle opener, so a test can
+    /// observe exactly when this recorder writes and synchronizes.
+    ///
+    /// - Parameters:
+    ///   - directory: The default directory for appends that carry no explicit
+    ///     session directory.
+    ///   - now: The clock used to stamp each event's `ts`.
+    ///   - openHandle: Opens the append handle for a directory on first use.
+    init(
+        directory: URL,
+        now: @escaping @Sendable () -> Date = { Date() },
+        openHandle: @escaping @Sendable (URL) throws -> any TranscriptAppendHandle
+    ) {
         self.directory = directory
         self.now = now
+        self.openHandle = openHandle
     }
 
     /// Stamps and appends an event as one JSON line into `directory`'s
     /// `transcript.jsonl` (or the recorder's default directory when `nil`); logs
-    /// and drops it on any I/O failure.
+    /// and drops it on any I/O failure. A `.response`-kind event is a turn
+    /// close, so it additionally synchronizes the target's handle (see the
+    /// type's Durability section).
     public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
@@ -58,20 +98,56 @@ public actor JSONLRecorder: TranscriptRecorder {
                 "dropping transcript event seq \(event.seq): \(error.localizedDescription)"
             }
         )
+        guard event.kind == .response else { return }
+        synchronizeHandle(in: target, afterSeq: event.seq)
     }
 
-    /// Returns the reusable append handle for a directory, creating the directory
-    /// and its `transcript.jsonl` and seeking to the end on first use.
+    /// Best-effort fsync of `directory`'s cached append handle, called after
+    /// a turn-close (`.response`-kind) append so the completed turn is durable
+    /// (see the type's Durability section). A directory with no cached handle
+    /// recorded nothing — the append itself already failed and was logged —
+    /// so there is nothing to synchronize. A sync failure is logged, matching
+    /// the best-effort write policy.
+    ///
+    /// - Parameters:
+    ///   - directory: The directory whose append handle to synchronize.
+    ///   - eventSeq: The just-appended turn-close event's sequence number,
+    ///     named by the log when the sync fails.
+    private func synchronizeHandle(in directory: URL, afterSeq eventSeq: Int) {
+        guard let handle = handles[handleKey(for: directory)] else { return }
+        do {
+            try handle.synchronize()
+        } catch {
+            recordingLogger.error(
+                """
+                transcript sync after turn-close seq \(eventSeq, privacy: .public) failed: \
+                \(error.localizedDescription, privacy: .public)
+                """
+            )
+        }
+    }
+
+    /// Returns the reusable append handle for a directory, opening it (via
+    /// ``openHandle``, which creates the directory and its `transcript.jsonl`
+    /// in production) on first use.
     ///
     /// - Parameter directory: The directory whose `transcript.jsonl` to append to.
     /// - Returns: A handle positioned at the end of that file.
     /// - Throws: If the directory or file cannot be created or opened.
-    private func handleForAppending(in directory: URL) throws -> FileHandle {
-        let key = directory.standardizedFileURL.path
+    private func handleForAppending(in directory: URL) throws -> any TranscriptAppendHandle {
+        let key = handleKey(for: directory)
         if let handle = handles[key] { return handle }
-        let handle = try openHandleForAppending(fileName: "transcript.jsonl", in: directory)
+        let handle = try openHandle(directory)
         handles[key] = handle
         return handle
+    }
+
+    /// The ``handles`` key for a directory: its standardized path.
+    ///
+    /// - Parameter directory: The directory to key.
+    /// - Returns: The standardized path that identifies its cached handle.
+    private func handleKey(for directory: URL) -> String {
+        directory.standardizedFileURL.path
     }
 }
 

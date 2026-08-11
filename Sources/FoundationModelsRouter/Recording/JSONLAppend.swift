@@ -18,6 +18,27 @@ public enum JSONLAppendError: Error, Equatable, LocalizedError {
     }
 }
 
+/// The two operations a JSONL sink performs on an open append target: write
+/// one encoded line, and synchronize (fsync) what was written to durable
+/// storage.
+///
+/// `FileHandle` is the production conformer; tests conform a spy to observe
+/// exactly when ``JSONLRecorder`` writes and synchronizes, without disk I/O.
+protocol TranscriptAppendHandle {
+    /// Appends `data` at the handle's current position.
+    ///
+    /// - Parameter data: The bytes to append — one complete JSONL line.
+    /// - Throws: If the bytes cannot be written.
+    func write(contentsOf data: Data) throws
+
+    /// Forces every written byte to durable storage (fsync).
+    ///
+    /// - Throws: If the synchronization fails.
+    func synchronize() throws
+}
+
+extension FileHandle: TranscriptAppendHandle {}
+
 /// Whether `fileName` is a plain single path component: non-empty, free of
 /// path separators, and not a `.`/`..` navigation token that would resolve
 /// outside `directory` when appended.
@@ -72,7 +93,7 @@ func appendJSONLine<Value: Encodable>(
     _ value: Value,
     encoder: JSONEncoder,
     logger: Logger,
-    handle: () throws -> FileHandle,
+    handle: () throws -> any TranscriptAppendHandle,
     describeFailure: (Error) -> String
 ) {
     do {

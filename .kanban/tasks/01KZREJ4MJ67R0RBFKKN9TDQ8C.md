@@ -164,8 +164,25 @@ comments:
     evidence: 1 file — Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift (4 doc-comment lines at :239, :477, :624-625; the three task-id citations removed; a full-file sweep found no other citation). swift build clean (accepted vendored mlx warning only). One swift test run, exit 0: 827 + 27 + 24 tests pass, 1 accepted BoundedWait known issue. All 3 findings in "## Review Findings (2026-08-11 13:59)" flipped to [x].
     task: ^n9tdq8c
   timestamp: 2026-08-11T19:43:06.816456+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzs5tqwva4e2cfewv66ncn5s
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (95a51e4) — 0 findings, 8 attempted, 1 refuted. All prior findings in the four `## Review Findings` sections are checked. Acceptance points verified: configuration-based makeSession behavior (emptyConfigurationMatchesZeroArgumentMakeSession, configuredValueMatchesNineParameterCall), call sites compile through the convenience overload, grammar configuration matches makeGuidedSession (grammarConfigurationMatchesMakeGuidedSession), Codable slice round-trips (persistableSliceRoundTrips, emptyPersistableSliceRoundTrips) in Tests/FoundationModelsRouterTests/SessionConfigurationTests.swift, commits bff2202/625feec.
+    - next: task moves to done.
+  timestamp: 2026-08-11T19:47:13.435788+00:00
+- actor: claude-code
+  id: 01kzs5vv0hvmzbdfwf6gm8yz92
+  text: |-
+    ### finish iteration 5 — clean
+    - implement: changed — 3 task-id citations removed from doc comments in LiveModelLoader.swift; full-file sweep found no others
+    - test: green — swift build clean, one swift test run 878 tests (827+27+24), 0 failures
+    - commit: changed — 95a51e4
+    - review: clean — review sha HEAD~1..HEAD (95a51e4), 0 findings; 7/7 prior findings checked; 4/4 acceptance points verified via SessionConfigurationTests
+    - task moved to done by review
+  timestamp: 2026-08-11T19:47:49.393109+00:00
+position_column: done
+position_ordinal: ff8c80
 title: One SessionConfiguration value drives makeSession
 ---
 ## Problem

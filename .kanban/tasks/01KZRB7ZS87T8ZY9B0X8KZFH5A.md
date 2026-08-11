@@ -1,8 +1,45 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: 9a80
+comments:
+- actor: claude-code
+  id: 01kzs793vk2zgt2tjwqexbwjaj
+  text: |-
+    Research findings:
+
+    - JSONLRecorder (Sources/FoundationModelsRouter/Recording/Sinks.swift) appends through cached FileHandles keyed by directory path. Each event becomes one write call in appendJSONLine (Sources/FoundationModelsRouter/Recording/JSONLAppend.swift). No sync call exists.
+    - The codebase already has a "turn close" vocabulary: both diff paths (RecordingLanguageModel.diffAndRecord and RoutedSessionActor.recordTranscriptDelta) stamp the turn's token usage onto the LAST `.response`-kind event of a diff — the docs call it "the turn-final `.response`-kind event". The sync point will be: synchronize (fsync) the target directory's handle after each append whose kind is `.response`.
+    - Test seam for the sync assertion: JSONLRecorder gets an internal init that injects the handle opener. A small internal protocol with `write(contentsOf:)` and `synchronize()` lets FileHandle conform unchanged and lets a test spy record the call order. The public init keeps its exact signature and delegates.
+    - TranscriptTree.decodeEvents (TranscriptTree.swift) decodes each line with a raw `try decoder.decode` — one bad byte fails the whole load with an error that names no file. It is called from three places, all with the session ULID in scope: rawNode (load path, for compactionCount), events(forSession:), and entryKindEvents. Plan: decode from Data with byte-offset tracking; a decode failure on the LAST non-empty line logs a warning (file path + byte offset) and drops the line; a failure on any earlier line throws a new `TranscriptTreeError.transcriptLineCorrupt(session:file:)`.
+    - MergedTranscript.swift has its own decode loop; the card names TranscriptTree only, so that loop stays as is.
+    - Fixtures: SessionSidecar.write + JSONLRecorder produce a valid on-disk session; ModelRef is ExpressibleByStringLiteral; ULID() for ids (board rule: ULID over UUID for generated ids — the directory-name id IS a ULID here).
+
+    Plan (test-first): torn-tail tests parameterized over several truncation byte offsets; a mid-file corruption test expecting the typed error (TranscriptTreeError is Equatable, so #expect(throws:) works); a sync-order test with a spy handle asserting synchronize fires exactly after the `.response` append and never after the others.
+  timestamp: 2026-08-11T20:12:33.011175+00:00
+- actor: claude-code
+  id: 01kzsbhkna33qsy2dx6kfsd1cg
+  text: |-
+    Implementation is complete. All work was test-first (RED, then GREEN).
+
+    What changed:
+    1. Sync policy, defined and applied on JSONLRecorder (Sources/FoundationModelsRouter/Recording/Sinks.swift). The doc comment has a new "Durability" section. Each event is one write call. After each `.response`-kind append (the turn-close event), the recorder synchronizes (fsync) the target directory's handle. A sync failure is logged, not thrown — the same best-effort policy as the writes.
+    2. Test seam: a new internal protocol `TranscriptAppendHandle` (write + synchronize) in Sources/FoundationModelsRouter/Recording/JSONLAppend.swift. FileHandle conforms with no change. JSONLRecorder has a new internal init that injects the handle opener; the public init is unchanged and delegates to it.
+    3. Torn-tail tolerance in Sources/FoundationModelsRouter/Recording/TranscriptTree.swift: `decodeEvents(in:forSession:)` now reads the file as bytes, tracks each line's byte offset, drops a final line that does not decode, and writes a warning that names the file path and the byte offset. A corrupt line that is NOT the last one throws the new `TranscriptTreeError.transcriptLineCorrupt(session:file:)`, which names the session and the file. All three call sites (load path, events(forSession:), entryKindEvents) pass the session id. Doc comments on load, rawNode, and events(forSession:) state the new contract.
+    4. Tests in Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift: (a) torn final line, parameterized over three kept-byte counts (1, 24, 60) — the tree loads and events(forSession:) returns the turn-before state; (b) mid-file corruption — load throws the typed error with the correct session id and file; (c) a spy handle asserts the exact call order [write, write, write, sync, write, write, sync] for the kinds [session, prompt, response, prompt, response] — no kill needed.
+
+    Verification: `swift build` clean (only the accepted vendored mlx-swift "missing creator" warning). One full ungated `swift test` run: 830 tests in 79 suites passed with the one accepted BoundedWait known issue; the two hermetic gated-target wiring runs (27 and 24 tests) also passed.
+
+    Out of scope, noted for a possible follow-up: MergedTranscript.swift keeps its own raw decode loop; the card names TranscriptTree only.
+  timestamp: 2026-08-11T21:27:05.642651+00:00
+- actor: claude-code
+  id: 01kzsbhsm9j027heek067m0s8c
+  text: |-
+    ### implement — changed
+    - evidence: 4 files — Sources/FoundationModelsRouter/Recording/Sinks.swift, Sources/FoundationModelsRouter/Recording/JSONLAppend.swift, Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift; swift build clean; one full swift test run: 830 tests in 79 suites passed (1 accepted BoundedWait known issue)
+    - next: /review
+  timestamp: 2026-08-11T21:27:11.753961+00:00
+position_column: doing
+position_ordinal: '8180'
 title: Define and test the recording durability policy
 ---
 ## Problem
