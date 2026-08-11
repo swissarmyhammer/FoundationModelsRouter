@@ -56,30 +56,15 @@ public enum MergedTranscript {
     ///   transcript file cannot be read.
     public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
         var events: [TranscriptEvent] = []
-        for file in transcriptFiles(under: routerDirectory) {
+        // Discovery is shared with ``TranscriptTree`` through
+        // ``TranscriptFileDiscovery``; the files come back in no particular
+        // order, and the decoded events — not the files — are sorted below.
+        let files = TranscriptFileDiscovery.fileURLs(named: "transcript.jsonl", under: routerDirectory)
+        for file in files {
             events += try TranscriptLineDecoding.decodeEvents(at: file) { file in
                 MergedTranscriptError.transcriptLineCorrupt(file: file)
             }
         }
         return events.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
-    }
-
-    /// Finds every `transcript.jsonl` nested at any depth under `routerDirectory`.
-    ///
-    /// - Parameter routerDirectory: The recording root to search.
-    /// - Returns: The URLs of the discovered transcript files, in no particular
-    ///   order — ``merged(under:)`` sorts the decoded events, not the files.
-    private static func transcriptFiles(under routerDirectory: URL) -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: routerDirectory,
-            includingPropertiesForKeys: nil
-        ) else {
-            return []
-        }
-        var files: [URL] = []
-        for case let url as URL in enumerator where url.lastPathComponent == "transcript.jsonl" {
-            files.append(url)
-        }
-        return files
     }
 }

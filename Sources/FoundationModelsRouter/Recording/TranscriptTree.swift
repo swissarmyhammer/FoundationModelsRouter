@@ -177,13 +177,14 @@ public struct TranscriptTree: Sendable {
     ///   final line is dropped with a warning instead — see
     ///   ``events(forSession:)``).
     public static func load(under routerDirectory: URL) throws -> TranscriptTree {
-        let sessionDirectories = fileURLs(named: sessionSidecarFileName, under: routerDirectory)
+        let sessionDirectories = TranscriptFileDiscovery
+            .fileURLs(named: sessionSidecarFileName, under: routerDirectory)
             .map { $0.deletingLastPathComponent() }
         let sessionDirectoryPaths = Set(sessionDirectories.map(\.standardizedPath))
 
         // A transcript with no sidecar beside it is a session that was
         // recorded but cannot be interpreted — loud, not skipped.
-        for transcriptURL in fileURLs(named: transcriptFileName, under: routerDirectory) {
+        for transcriptURL in TranscriptFileDiscovery.fileURLs(named: transcriptFileName, under: routerDirectory) {
             let directory = transcriptURL.deletingLastPathComponent()
             guard sessionDirectoryPaths.contains(directory.standardizedPath) else {
                 throw TranscriptTreeError.sidecarMissing(directory: directory)
@@ -520,32 +521,6 @@ public struct TranscriptTree: Sendable {
 
         let roots = rootIds.sorted().compactMap(build)
         return (roots, nodesById)
-    }
-
-    // MARK: - Discovery
-
-    /// Finds every file named `fileName` nested at any depth under
-    /// `directory` — the same enumeration ``MergedTranscript`` performs, kept
-    /// file-local here rather than shared, matching this module's existing
-    /// precedent (each JSONL sink/reader hardcodes its own filename; see
-    /// `Sinks.swift` and `MergedTranscript.swift`).
-    ///
-    /// - Parameters:
-    ///   - fileName: The file name to match.
-    ///   - directory: The recording root to search.
-    /// - Returns: The discovered file URLs, in no particular order.
-    private static func fileURLs(named fileName: String, under directory: URL) -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) else {
-            return []
-        }
-        var files: [URL] = []
-        for case let url as URL in enumerator where url.lastPathComponent == fileName {
-            files.append(url)
-        }
-        return files
     }
 }
 

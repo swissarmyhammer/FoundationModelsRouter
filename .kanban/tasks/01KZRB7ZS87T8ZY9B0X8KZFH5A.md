@@ -89,6 +89,52 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Recording/JSONLAppend.swift, Sources/FoundationModelsRouter/Recording/TranscriptLineDecoding.swift (new), Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Sources/FoundationModelsRouter/Recording/MergedTranscript.swift, Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift; all 3 findings flipped to [x]; swift build clean; one full swift test run: 832 tests in 79 suites passed (1 accepted BoundedWait known issue) plus the 27- and 24-test hermetic runs
     - next: /review
   timestamp: 2026-08-11T22:36:41.091830+00:00
+- actor: claude-code
+  id: 01kzsfs5jc8ecxqeb4fn1bn0pr
+  text: |-
+    ### review — findings
+    - evidence: 1 finding — Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:537 near-duplicate of Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:72 (scope: review sha HEAD~1..HEAD, commit ea3856d)
+    - next: /implement the checklist in the "Review Findings (2026-08-11 17:37)" section, then /review again
+  timestamp: 2026-08-11T22:41:07.660403+00:00
+- actor: claude-code
+  id: 01kzsfsv0jwqb82y6pd78ax5k2
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 5 files; jsonlNewlineByte constant, shared TranscriptLineDecoding for both readers, MergedTranscriptError.transcriptLineCorrupt(file:), assign-only member removed; test-first
+    - test: green — one full swift test run, 883 tests (832+27+24), 0 failures
+    - commit: changed — ea3856d
+    - review: findings — Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:537, func fileURLs is a near-duplicate of transcriptFiles at Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:72 (57 tokens, 96% alike). Prior 3 findings stay checked.
+  timestamp: 2026-08-11T22:41:29.618401+00:00
+- actor: claude-code
+  id: 01kzsfxjp9pck48mmfyjv36r8q
+  text: |-
+    Research for the open finding (TranscriptTree.swift fileURLs vs MergedTranscript.swift transcriptFiles):
+
+    - I read the duplication validator rule. The rule compares whole definitions. The fix is one shared function. A marker comment is not the correct fix here, because the two functions do the same thing for the same files.
+    - `TranscriptTree.fileURLs(named:under:)` has two call sites, both in `load(under:)`. It is the only member under the `// MARK: - Discovery` section, so the MARK goes with it.
+    - `MergedTranscript.transcriptFiles(under:)` has one call site, in `merged(under:)`. It hardcodes the name "transcript.jsonl"; TranscriptTree passes its private `transcriptFileName` constant. The shared function keeps the `fileName` parameter, so both call sites keep their own name source.
+    - The doc comment on `fileURLs` claims the copy is deliberate and "matches this module's existing precedent". That claim is outdated. It is removed with the function. A grep shows no other file repeats the claim.
+    - Home for the shared function: a new small file `TranscriptFileDiscovery.swift` in the Recording module. This mirrors the `TranscriptLineDecoding.swift` extraction from the previous finding. `TranscriptLineDecoding` documents itself as the line-decoding path only, so file discovery does not belong in that type.
+    - This is a pure refactor with no behavior change. The tests that cover discovery (TranscriptTree load tests, MergedTranscript tests) stay green and are the verification.
+  timestamp: 2026-08-11T22:43:32.169451+00:00
+- actor: claude-code
+  id: 01kzshc64xahxqvshsm1msgwt5
+  text: |-
+    The open finding is fixed. The two directory-enumeration functions are now one shared function.
+
+    1. New file Sources/FoundationModelsRouter/Recording/TranscriptFileDiscovery.swift: the internal enum `TranscriptFileDiscovery` with the one function `fileURLs(named:under:)`. Its doc comment says the two readers share it so the enumerations cannot drift, in the same way `TranscriptLineDecoding` shares line decoding.
+    2. TranscriptTree.swift: the private `fileURLs(named:under:)` is deleted, together with its now-empty `// MARK: - Discovery` section and the outdated doc claim that the file-local copy "matches this module's existing precedent". Both call sites in `load(under:)` now call `TranscriptFileDiscovery.fileURLs`.
+    3. MergedTranscript.swift: the private `transcriptFiles(under:)` is deleted. `merged(under:)` calls `TranscriptFileDiscovery.fileURLs(named: "transcript.jsonl", under:)`, with a comment that keeps the old note: the files come back unordered and the decoded events are what get sorted.
+
+    This is a pure refactor with no behavior change and no public API change, so no new test was necessary; the existing discovery-covering tests are the verification. `swift build` is clean (only the accepted vendored mlx-swift "missing creator" warning). One full ungated `swift test` run: 832 tests in 79 suites passed with the one accepted BoundedWait known issue, plus the 27- and 24-test hermetic gated-target wiring runs.
+  timestamp: 2026-08-11T23:08:59.421338+00:00
+- actor: claude-code
+  id: 01kzshcacew0wm219k9rt5bgbn
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Recording/TranscriptFileDiscovery.swift (new), Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Sources/FoundationModelsRouter/Recording/MergedTranscript.swift; 1 finding flipped to [x]; swift build clean; one full swift test run: 832 tests in 79 suites passed (1 accepted BoundedWait known issue) plus the 27- and 24-test hermetic runs
+    - next: /review
+  timestamp: 2026-08-11T23:09:03.758537+00:00
 position_column: doing
 position_ordinal: '8180'
 title: Define and test the recording durability policy
@@ -118,4 +164,8 @@ The JSONL recorder appends through cached `FileHandle`s (Sources/FoundationModel
 
 - [x] `Sources/FoundationModelsRouter/Recording/JSONLAppend.swift:102` — Magic numbers should be replaced by named constants.
 - [x] `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:480` — The change adds torn-final-line tolerance and mid-file corruption detection to `decodeEvents`, but per clone-siblings probe, a 0.90-similar transcript-reading implementation in MergedTranscript was left unchanged. If MergedTranscript reads the same transcript files that JSONLRecorder now produces with torn final lines, it must apply the same tolerance and error-handling logic to avoid inconsistent behavior — one reader tolerates torn lines, the other crashes. Verify whether MergedTranscript.decodeEvents or equivalent reads transcripts produced by JSONLRecorder; if so, apply the same torn-final-line drop (with warning) and mid-file corruption throw logic.
-- [x] `Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift:34` — var.instance `directory` is assignOnlyProperty. #transcript
+- [x] `Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift:34` — var.instance `directory` is assignOnlyProperty.
+
+## Review Findings (2026-08-11 17:37)
+
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:537` — func `fileURLs` is a near-duplicate of `transcriptFiles` at Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:72 (57 tokens, 96% alike). #transcript
