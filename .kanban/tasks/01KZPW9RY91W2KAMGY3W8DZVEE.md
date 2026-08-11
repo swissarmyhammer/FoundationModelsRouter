@@ -537,6 +537,38 @@ comments:
 
     The end state this is for: a gated scenario whose snippet takes longer than the wait window reaches a correct, grounded answer, while the stream shows the call going to `.running`, reporting progress more than once, and reaching `.completed` — with **no model-authored collect call anywhere in the turn**. That is the whole product goal in one measurable run, and it is what `^w8dzvee`'s consumer criterion should ultimately be read against.
   timestamp: 2026-08-11T12:09:58.588228+00:00
+- actor: wballard
+  id: 01kzrcche2dq513r29ty62pnya
+  text: |-
+    ## D5 follow-up: `.running` events do flow — and carry nothing
+
+    New measurement, now that the consumer records `.toolStatus(.running)` instead of swallowing it. Gated run against Router `81d5142`, `--filter singleCallWeather`, 244s, 16 tool calls, 0 failed.
+
+    **Every one of the 16 calls emitted a `.running` event.** `progress=16` on the RESULT line, and each traced line reads:
+
+    ```
+    RUN  searchTools progress=
+    RUN  runCode     progress=
+    ```
+
+    That is the whole event: an empty (or nil) `summary`. So half the streaming contract is already working — a client is told a call went long, on the right call id, without polling. The other half is missing: it is told nothing about what the call is doing.
+
+    Against the expectation written in the previous comment:
+
+    ```
+    .toolStatus(id, .running, "in process")      ← arrives, but blank
+    .toolStatus(id, .running, "3 of 8 cities")   ← never arrives
+    ```
+
+    Two things worth separating, because they may have different causes:
+
+    1. **The detach notice carries no detail.** When a call outlives the wait window, the `.running` event announcing that could carry a fixed statement — "in process" — and does not. This is presentational and cheap.
+    2. **Snippet-emitted progress does not appear.** `SessionMailbox` holds `latestProgressDetail`, `SessionOutbox.events` coalesces `.progress` (`Session/SessionOutbox.swift:149-164`), and the consumer's producer is live: the ambient `progress()` global enqueues `.progress(detail)` on the run's outbox (`MultiTool+SandboxGlobals.swift:652`). So both ends exist and the middle is not connected — or is connected and drops the detail.
+
+    Caveat on what this run proves about (2): **no snippet in this scenario called `progress()`**, because the model never got as far as writing real work — every snippet was a `wait(…)` collect. So this run shows the notice is blank; it does **not** show that snippet-emitted progress is lost. A scenario with a deliberately slow snippet that calls `progress()` is needed to separate them, and that is on the consumer to write.
+
+    What this does establish: the `.running` channel is live and correctly keyed, so carrying detail on it is a smaller change than building a channel.
+  timestamp: 2026-08-11T12:22:33.666494+00:00
 position_column: done
 position_ordinal: ff8880
 title: '[Router] Streaming a tool-using turn does not work — fix D1 and D2, prove it end to end'
@@ -635,3 +667,44 @@ Then find the unfinished continuation. Every `AsyncThrowingStream` built in `Rou
 ### Housekeeping
 
 Those four orphans were killed by PID after confirming `ppid == 1` and 0% CPU — orphans with nothing waiting on them. Live runs with real parents were left alone.
+
+## D5 — two requirements from the consumer, after `a3c2e4c`
+
+Added to the description rather than as a comment because the `sah` rebuild at 07:24 removed comment support from the kanban tool entirely (`sah tool kanban` no longer has a `comment` noun, and `activity list` is read-only). Same rebuild dropped `ralph`, which is why Stop hooks are erroring.
+
+The consumer's design is now settled, and it changes what Router must provide. Human ruling:
+
+> so streaming waiting -- wait tool calls. respond block drains
+
+- **streaming** — no tool holds the turn. Slow work backgrounds, events flow, results arrive.
+- **`respond(to:)`** — blocks and drains. Unchanged, and deliberately so.
+- **waiting is a mounted `wait(timeout)` tool** — the model's explicit join, when it cannot proceed without a result. `timeout` is a *bound*, never a predicted duration.
+- **nothing inside a snippet ever waits.** The consumer is removing the `wait()` sandbox global and both model-facing clocks from `runCode`'s schema (consumer task `^h773bed`).
+
+That much is buildable on the consumer side with no Router change — `ToolContext.current` is ambient, so a mounted tool reaches the mailbox. Two things are Router's.
+
+### 1. The envelope must stop prescribing a wait — now a sequencing problem
+
+Unchanged as of `ca792cb`: `followUpWaitSeconds = 60` at `DetachingTool.swift:155`, and `:177` still tells the model `return await wait("…", 60)`.
+
+Once the consumer removes the sandbox global, that instruction names a function that **does not exist**. The host will be telling the model to call something the sandbox rejects as an unknown identifier — a worse failure than today's, and one that arrives on the consumer's next commit rather than eventually.
+
+What it should say instead: the run is going, do not answer yet, do not invent a result — the existing copy already says the last two — and nothing more. No snippet to copy, no seconds. A model that must block calls the `wait` tool; a model that need not block does nothing, and the result reaches it.
+
+### 2. Journal everything; project only outputs into model context
+
+`a3c2e4c` records every posted `OperationEvent` as a `Transcript.Entry.toolOutput`, and the doc is explicit that this includes "each progress update, each elicitation, the one terminal" (`RoutedSessionActorRunJournal.swift:63-67`).
+
+Right record, wrong channel. Human ruling:
+
+> as events come in from running tools - these really do need to be 'in' the transcript to drive UI -- but may not need to be in the model context -- really only outputs - not just status needs to be told to the model
+
+`.toolOutput` is what feeds the model's context on replay, so as written every "3 of 8 cities" becomes context the model must read past. A turn reporting progress ten times pays for it in tokens and in attention, for information that changes nothing about what the model should do.
+
+The distinction is **transcript ⊇ model context**, not a new entry kind — this card's own reasoning already rules the kind out, since `TranscriptEntryMapper` rejects the two router-only kinds that exist and a third would journal but never rebuild. So the filter belongs where the model's prompt is assembled from the record. `SessionProjection` is the natural home, and it is new enough to take this before anything depends on current behaviour.
+
+Testable invariant: a session that journals N progress reports and one terminal presents **one** tool output to the model, and N+1 entries to a renderer.
+
+### Why these are one item
+
+Both say the same thing from opposite ends: **status is for the client, results are for the model.** The envelope pushes status into the model's control flow; the journal pushes status into its context. Neither is something the model can act on.

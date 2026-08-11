@@ -349,8 +349,8 @@ comments:
     - not run: gated suites (`FM_ROUTER_INTEGRATION_TESTS=1`, `MULTITOOL_INTEGRATION=1`) per `^pw807cp`; `swift format` (never in this repo); `Scripts/check-doc-links.py` (deleted). Nothing pushed. `FoundationModelsMultitool` and the vendored `mlx-swift-lm` fork untouched.
     - next: `/review`.
   timestamp: 2026-08-11T14:17:38.150418+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: review
+position_ordinal: '8280'
 title: Detached tool runs need a path back into the transcript — today they return as prompt text
 ---
 Router exists so a long-running tool does not block the session: Apple's tools are `async` in signature but the session stalls until they return, so `DetachingTool` parks the run, hands the model `{"pending":true,"completionToken":...}`, and lets the turn finish. The parking works. **The result has no proper way back.**

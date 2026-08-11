@@ -15,14 +15,17 @@ This is about WHEN events arrive. Task ^w8dzvee is about WHAT the stream says (t
 
 ## Proposed solution
 
-1. Add a mid-turn observation seam to `LanguageModelSessionBackend`. Two candidate mechanisms — pick after a spike:
-   - Poll the SDK session's `transcript` during generation (the SDK appends `.toolCalls`/`.toolOutput`/`.reasoning` entries as the turn runs); diff on a short interval and emit events as entries appear.
-   - Or widen `ResponseFragment` into a typed mid-turn event (text delta, restart, tool call announced, tool output landed, reasoning delta) for backends that can report these directly.
-2. Route the live observations through the existing `SessionEvent` vocabulary — same cases, same ids (`Transcript.ToolCall.id`), earlier delivery. The post-turn diff stays the authority for what is RECORDED; the live seam only accelerates delivery. If the diff and the live observations disagree, the diff wins.
-3. Emission-order guarantee: a `.toolCall` event must arrive before its `.toolStatus(completed)`, and both before `turnEnded`. Consumers must not need changes — `SessionProjection.apply(_:)` already handles the vocabulary.
+The tool half needs no polling: the per-call `ToolContext` binding layers already observe the true invocation moment. `DetachingTool` (String-output tools) and `ContextBindingTool` (the rest) bind a stamped context — tool name, op, sessionID, per-call correlationID — around each call and hold the session's event sink (Sources/FoundationModelsRouter/Hosting/DetachingTool.swift:361-372, :811-822).
+
+1. Emit a typed invocation record from the binding layer: opened-at when the binding opens, closed-at and duration when the wrapped call returns, carrying tool, op, correlationID, and sessionID. Post it through the sink the binding already holds — the same route operation events take.
+2. The session actor translates those records into live `SessionEvent.toolCall` / `.toolStatus` deliveries on the current turn's stream, using the same ids the post-turn diff will confirm. The diff stays the authority for what is RECORDED; the live records only accelerate delivery. If the diff and the live records disagree, the diff wins.
+3. Reasoning and text-restart liveness stays on the fragment stream (`ResponseFragment`); widen it only if the backend can report reasoning deltas directly.
+4. Emission-order guarantee: a `.toolCall` event arrives before its `.toolStatus(completed)`, and both before `turnEnded`. Consumers need no changes — `SessionProjection.apply(_:)` already handles the vocabulary.
+5. Surface the invocation records (with timing) to `TurnOutcome` (task ^1s8p8qt), so a caller gets per-call durations without touching the event stream.
 
 ## Acceptance
 
 - A scripted tool-using turn delivers `.toolCall` before the tool's own work completes (test with a slow scripted tool: assert the event arrives while the tool is still running).
 - The recorded transcript for that turn is byte-identical to what the post-turn diff alone would have recorded.
+- Each invocation record carries opened-at, closed-at, and duration, and reaches `TurnOutcome`.
 - The stub-backend default (text-only) keeps working unchanged. #streaming

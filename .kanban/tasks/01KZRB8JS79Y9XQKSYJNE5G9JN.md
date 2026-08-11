@@ -3,6 +3,7 @@ assignees:
 - claude-code
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
+- 01KZREJ4MJ67R0RBFKKN9TDQ8C
 position_column: todo
 position_ordinal: 9c80
 title: Make restore configuration a re-application story, not a loss list
