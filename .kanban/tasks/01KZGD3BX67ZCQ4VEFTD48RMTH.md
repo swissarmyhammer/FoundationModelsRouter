@@ -124,8 +124,51 @@ comments:
     - not run, and not claimed: full `FM_ROUTER_INTEGRATION_TESTS=1 swift test` and any `MULTITOOL_INTEGRATION=1` run (27B model, 8-11 min). AC #4 and the Tests line stay unticked as not-run.
     - next: /review
   timestamp: 2026-08-10T22:03:11.641959+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzpx81nr88ewxymt5gg4nx0c
+  text: |-
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (080a401), 4 source files.
+    - engine counts: 0 findings, 0 confirmed, 0 refuted, 9 attempted, 0 failed, 0 skipped. Round 1's single finding (`MetalLibraryBootstrapIntegrationTests.swift:29`) stays checked; no new finding replaces it.
+
+    Four targeted confirmations, all VERIFIED.
+
+    1. Operands unchanged. `metalLibraryProbeFirstOperand: Int32 = 1` and `metalLibraryProbeLastOperand: Int32 = 4` build `Array(1...4)` = `[1, 2, 3, 4]` — the same four values in the same order. The commit touches only the constant declarations and their doc comments; the `@Suite` line and the test body are not in the diff.
+
+    2. The probe still forces a GPU-device evaluation — the risk that mattered. `MLXArray(metalLibraryProbeOperands).sum(stream: .gpu)` selects the GPU stream, so the Metal kernel and therefore the metallib load stay necessary. `total.item(Int32.self)` materializes the lazy array, and its result is an operand of `#expect`, so the compiler cannot remove it. Nothing moved to `.cpu` and no materialization was dropped. Empirical: `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter 'MetalLibraryBootstrapIntegrationTests'` exits 0 — 1 test in 1 suite passed after 0.081s, test body 0.077s, Testing library 2074. The symlink beside the integration test binary points at `Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib`. The negative control (delete the symlink, watch the abort) was not repeated this round; it stands on the round-1 record.
+
+    3. The documented ordering rule is correct, measured a second time and independently. swift-testing's implementation source is NOT on this machine — the toolchain ships `Testing.framework` with `.swiftinterface` files only, which carry public declarations and no bodies, and `Runner._runStep` / `_applyScopingTraits` are internal. `Runner.swift` is absent from `.build/checkouts`, `~/.swiftpm`, the SwiftPM repository cache, and every toolchain directory. So this round did not quote the source; it re-measured on the same toolchain and the same Testing 2074 with a probe package built OUTSIDE the repository, using two suite-scoped markers `S1`,`S2` written in that order and two test-scoped markers `T1`,`T2`:
+
+        PROBE enter S1 / PROBE enter S2 / Suite started / PROBE enter T1 / PROBE enter T2 / body
+        / PROBE exit T2 / PROBE exit T1 / PROBE exit S2 / PROBE exit S1
+
+        Both halves hold. Suite scopes open before the suite step and close after it, and `S2` — the LAST suite trait written — still encloses `T1` and `T2`, so position among the suite's own traits does not change the suite/test relation. Within one declaration `S1` encloses `S2` and `T1` encloses `T2`, so the first written is the outermost. This reproduces the implementer's throwaway-probe result on a separate probe package.
+
+        All four doc sites state exactly that and overstate nothing: `Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift:51-53` and `:60-64`; `Tests/FoundationModelsRouterEvals/Support/GatedEvalSerialGate.swift:45-50` (type doc) and `:120-128` (`provideScope`); `Tests/FoundationModelsRouterTestSupport/MetalLibraryTestBootstrap.swift:55-61`. The `provideScope` clause "this trait is outermost against test-level traits, not against a suite trait written before it" is exactly the limit the probe shows. No reversal at any site.
+
+    4. No scratch file survived. `080a401` adds no probe file. `git log --all --diff-filter=A` finds no `ZZTraitOrderProbe` or `TraitOrder` file ever added in history. The only `*probe*` files in the tree are the long-standing `Tests/FoundationModelsRouterTests/LanguageModelBoundaryProbeTests.swift` and `Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift`. `git status` shows no untracked source file — only kanban cards. Remaining: 7 gitignored build products under `.build/` (`ZZTraitOrderProbe.o-*`, `.swiftdeps`) and stale symbols in `.code-context/index.db`; `.gitignore:13` covers `.build/`, so they cannot be committed and the ungated target builds without them.
+
+    5. Nothing from `46a56ae` regressed. All 9 gated suites still carry `.exclusiveRealModel`: IntegrationTests.swift:210, SessionTreeRestorationIntegrationTests.swift:71, CompactionSpikeIntegrationTests.swift:55, LanguageModelSessionBackendTests.swift:52, TranscriptReconstructionIntegrationTests.swift:48, CompactionRoundTripIntegrationTests.swift:71, RecordingHandleIntegrationTests.swift:67, PropagationProbeIntegrationTests.swift:112, MetalLibraryBootstrapIntegrationTests.swift:73. The tenth suite, CompactionRoundTripIntegrationTests.swift:507, is ungated by name and carries no `.enabled(if:)`. Both eval suites keep `.exclusiveResidentModel(of:)` (CompactionEvaluationTests.swift:417, CompactionContinuityEvaluationTests.swift:245). The permit is taken in exactly two places, both inside `provideScope` — GatedSuiteSerialGate.swift:99 and GatedEvalSerialGate.swift:145; the only other `withPermit` calls are AsyncSemaphoreTests.swift:50,77,138,146 on locally created semaphores. `ensureColocatedMetallib` is read only from GatedSuiteSerialGate.swift:98 and GatedEvalSerialGate.swift:144. Evict-before-release is intact: GatedEvalSerialGate.swift:153 `await runner.evictIfLoaded()` runs after the success and failure paths converge into `outcome` and before the rethrow at :154, with the permit released only when the closure returns at :155 — no error path can skip the eviction.
+
+    Not run, per instruction and unchanged: full `FM_ROUTER_INTEGRATION_TESTS=1 swift test` and any `MULTITOOL_INTEGRATION=1` run. AC #4 and the Tests line stay unticked as not-run, which is an environment limit rather than a finding.
+
+    - next: none — task moved to done.
+  timestamp: 2026-08-10T22:38:43.384818+00:00
+- actor: claude-code
+  id: 01kzpxb0t1kn1f0cc9envyzynq
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 4 files; named probe operands (metalLibraryProbeFirstOperand/LastOperand), corrected the overstated trait-ordering doc claim in 4 sites
+    - test: green — ungated swift test 783/75 + 25/10 + 24/5; check-doc-links.py 1295 links, 0 stale / 0 unresolved; filtered gated probe passes with symlink deleted first
+    - commit: 080a401
+    - review: clean — 0 findings, 9 validators attempted; card moved to done
+    - AC#1 DEMONSTRATED both directions (round 1): with the symlink deleted, the deliberately forgetful gated test passed and reinstalled it; with .exclusiveRealModel temporarily removed, the same run aborted with "MLX error: Failed to load the default metallib ... array.cpp:232". No 27B model needed — mlx aborts on any GPU-device MLXArray evaluation.
+    - ordering rule re-measured independently by the reviewer on Testing 2074 (swift-testing implementation sources are NOT on this machine; the toolchain ships .swiftinterface only): a probe package built outside the repo produced enter S1 -> enter S2 -> enter T1 -> enter T2 -> body -> exit T2 -> exit T1 -> exit S2 -> exit S1. Both halves of the documented rule hold.
+    - coverage: all 9 gated suites carry .exclusiveRealModel; the 10th (CompactionRoundTripIntegrationTests.swift:507) is ungated and MLX-free. Permit taken only at GatedSuiteSerialGate.swift:99 and GatedEvalSerialGate.swift:145.
+    - AC#4 + Tests line NOT SATISFIED (environment limit, not a defect): full `FM_ROUTER_INTEGRATION_TESTS=1 swift test` was NOT RUN. Left unticked deliberately.
+  timestamp: 2026-08-10T22:40:20.801919+00:00
+position_column: done
+position_ordinal: ff8480
 title: Make the metallib bootstrap trigger structural, not per-test discipline
 ---
 Follow-up to `^ce4hb6n`, which ported `MetalLibraryTestBootstrap` and wired it in. The wiring works today — audited, all 22 gated live tests reach `ensureColocatedMetallib` before any model resolution — but it rests on convention, and the failure mode when convention breaks is severe.

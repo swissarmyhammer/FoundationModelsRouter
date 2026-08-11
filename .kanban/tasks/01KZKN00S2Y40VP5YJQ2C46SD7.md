@@ -155,8 +155,50 @@ comments:
     - follow-up card: `^jnd5ktx` closed as redundant (moved to done, acceptance criteria ticked, comment pointing at this work).
     - next: `/review`
   timestamp: 2026-08-10T23:35:02.664354+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzq1y3kbfzn8s0d5ysrdvxbh
+  text: |-
+    ### review — clean (round 2)
+
+    - scope: `review sha HEAD~1..HEAD` (commit `ee5b881`, 27 files). Two engine runs: 16 findings, then 7 findings. Every finding names test code that is older than this commit (`git blame`: `10955be`, `c5a6223`, `6f7bf86`, `272b295`, all 2026-07-22/24), and this commit changes only `///` lines in those four files. All are dropped by the review skill's rule against refactoring test code that already existed. Zero findings against the 14 source files, on both runs.
+    - caveat: both runs report `2/36 review tasks failed — results are INCOMPLETE`. The two runs agree on the source half.
+    - prior finding (2026-08-10 18:05) is `[x]` and is now correct. Acceptance criterion 2 is met.
+
+    Judgment on acceptance criterion 2 — the production path can set all three knobs:
+    - One fold, one call site. `Compactor.compact(` has exactly one call site in `Sources/`: `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift:366`, which passes `summarization: summarization` at `:379`. `Summarization.apply(` has no other caller in `Sources/` than `Compaction/Compactor.swift:186`. There is no bypass.
+    - Both folds reach it. `compact(prompt:budget:)` calls `fold` at `RoutedSessionActorCompaction.swift:143`. `performAutoCompaction(prompt:budget:)` calls it in all three tiers: flash slot `:195`, own model `:205`, deterministic `:210`.
+    - End to end. `nonisolated let summarization: Summarization` at `Session/RoutedSessionActor.swift:376`; `init` parameter `:458`, assigned `:487`; `makeRoutedSessionActor` parameter `:47`, passed `:77`; `RoutedModel.makeSession` parameter `RoutedLLM.swift:163`, forwarded `:170`, shared builder `:221` to `:302`; `makeGuidedSession` parameter `Guided/GuidedGeneration.swift:259`, forwarded `:266`.
+
+    Other checks on this pass:
+    - No source break. The non-comment content of `Session/RoutedSession.swift` is byte-identical to `ee5b881^`; the public protocol has no new, removed, or re-signed requirement. Every added parameter is `summarization: Summarization = Summarization()`, in position 7 of 9, and the relative order of all earlier parameters is kept, so every existing argument list stays legal. `git show -M --summary` reports no rename, and no `public`/`open` declaration line is added or removed. Of the 6 edited call expressions, 5 are internal pass-through wiring (`RoutedLLM.swift:167-170`, `:302`, `GuidedGeneration.swift:263-266`, `RoutedSessionActorForking.swift:171`, `RoutedSessionActorCompaction.swift:379`) and 1 is the pre-existing consumer call `AutoCompactionTests.swift:243`, changed by choice; its old line still compiles.
+    - Scope. 4 kanban files, 14 source files (9 changed only in `///` lines, 5 with about 19 lines of new code), 9 test files (5 changed only in `///` lines, 4 with the new helper and the new tests). No unrelated refactoring rode along.
+    - The three tests bite. `RoutedSessionCompactTests.swift:843` fails without the wiring because `User: turn 3` leaves the folded span; `:875` fails because the ceiling stays 500 instead of 1000, and the guard at `:878` shows 500 is above the 128 floor, so the numbers are ratio-driven; `AutoCompactionTests.swift:792` fails the same way for the automatic fold, which the test drives only by `streamEvents` on a session at contextFill 0.9 — the test calls no `compact()`. All three are ungated.
+    - Defaults unchanged. `Compaction/Summarization.swift` is not in the commit: 4 / 2000 / 0.25 at `:157`, `minimumSummaryTokens` 128 at `:146`.
+    - `fork` inherits the stage (`RoutedSessionActorForking.swift:171`). `restoreSessionTree` restores at `Summarization()` (`Recording/SessionTreeRestoration.swift:374` passes no `summarization`) and documents it at `:219-225`, together with the budget, as the doc claims.
+    - DocC is correct on both halves. Every symbol link uses the external labels of the current signature, and no pre-rename form is left anywhere in `Sources/`, `Tests/`, or `docs/`. The `- Parameter` keys use the internal names in declaration order, with the new `summarization` key in place: `RoutedLLM.swift:87-140` (9 of 9), `RoutedLLM.swift:184-208` (10 of 10), `GuidedGeneration.swift:219-245` (9 of 9, correctly without `recordingRoot`).
+    - `^jnd5ktx` is correctly closed. Everything it asks for is delivered here: the session carries the stage, both folds use it, `fork` inherits it, three ungated tests cover it, and `public protocol RoutedSession` is untouched. Nothing it describes is still open.
+
+    - next: none. Card moves to done.
+  timestamp: 2026-08-11T00:00:40.555072+00:00
+- actor: claude-code
+  id: 01kzq239fdkm9nf7nd4e0dyxea
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — session-scoped `RoutedSessionActor.summarization`, read in the single shared private fold(prompt:budget:summarizer:)
+    - test: green — ungated swift test 838 tests (789+25+24), 0 failures, 0 warnings; check-doc-links.py 1313 links, 0 stale / 0 unresolved
+    - commit: ee5b881
+    - review: clean — 0 findings on all 14 source files across TWO independent engine runs; card moved to done
+    - AC#2 NOW MET: Compactor.compact has exactly one Sources/ call site (RoutedSessionActorCompaction.swift:366), which passes `summarization:` at :379 from RoutedSessionActor.swift:376. Reached by compact(prompt:budget:) (:143) and by all three performAutoCompaction tiers (:195, :205, :210). No bypass: Summarization.apply has only Compactor.swift:186 as caller. Settable end to end via RoutedLLM.swift:163->170->221->302 and GuidedGeneration.swift:259->266.
+    - shape rationale (AC#1), in the property doc: session-scoped rather than per-call, because performAutoCompaction runs inside the turn chokepoint with no caller to thread an argument from — a `compact` parameter would have covered only the manual half of the folds.
+    - NO source break: RoutedSession.swift non-comment content is byte-identical to ee5b881^; no requirement added or re-signed; new parameter defaulted at position 7 of 9. Deliberately NOT a third source-breaking change.
+    - CORRECTION to the commit message: 6 call expressions were edited, not 1 — five are internal pass-through wiring (RoutedLLM.swift:167-170, :302, GuidedGeneration.swift:263-266, RoutedSessionActorForking.swift:171, RoutedSessionActorCompaction.swift:379); only AutoCompactionTests.swift:243 is a pre-existing consumer call, changed by choice since its old line still compiled.
+    - tests bite: RoutedSessionCompactTests.swift:843, :875 (floor guard at :878 proves the compared numbers are ratio-driven, not clamped by the 128 floor), AutoCompactionTests.swift:792 (automatic fold, driven only by streamEvents at contextFill 0.9, no compact() anywhere in the test). Dropping the wiring failed exactly these three and nothing else.
+    - fork inherits the stage (RoutedSessionActorForking.swift:171); restoreSessionTree deliberately restores at the default and documents it (SessionTreeRestoration.swift:374, :219-225) — code and doc agree.
+    - ^jnd5ktx correctly closed as redundant; nothing it describes remains open.
+    - CAVEAT: both engine runs reported "2/36 review tasks failed — results are INCOMPLETE". The two independent runs agree on the source half.
+  timestamp: 2026-08-11T00:03:30.413316+00:00
+position_column: done
+position_ordinal: ff8680
 title: Summarization's three knobs are unreachable from the production compaction path — Compactor.compact hardcodes Summarization()
 ---
 Split out of `^zche4zy` (its review recorded this and ruled it out of scope for that card).

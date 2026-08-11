@@ -156,8 +156,57 @@ comments:
     - behaviour: unchanged. No threshold, clock, JSON envelope key, or mailbox semantic moved; the pending envelope stays `{"pending":true,"completionToken":"…"}`.
     - next: /review
   timestamp: 2026-08-10T20:36:09.502428+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzpps4qw4e47kpcyx6wz0w0g
+  text: |-
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (commit `237961f`), 2 Swift files + this card's own 2 kanban files.
+    - engine: 0 findings, 0 confirmed, 0 refuted, 9 attempted, 0 failed, 0 skipped.
+    - prior findings: all 3 of the `## Review Findings (2026-08-10 15:07)` section are checked.
+
+    #### Each round-1 fix confirmed at the code, not taken on faith
+
+    **Finding 1 — `ParkedRun.settling` deleted.** The claim holds.
+    - `SessionMailbox.swift:192` is `private struct ParkedRun {` with no conformance clause. No `extension ParkedRun` exists. So there is no synthesized `Equatable`/`Hashable`, and the project waiver for synthesized conformances does not apply. Deletion was the correct action, not suppression.
+    - The background observer reads the **local parameter**. In `park(...)` the body is `Task { [weak self] in let terminal = await settling.value; await self?.markSettled(...) }` at `SessionMailbox.swift:320`. `settling` there resolves to the function parameter declared at `SessionMailbox.swift:305`; `self` is captured weakly and is used only for `markSettled`. The commit did not touch line 320. Had the observer read the stored property, that line would have had to change — it did not, so behaviour could not have moved.
+    - No remaining `.settling` property access exists anywhere: the only `settling` occurrences in tracked Swift are the doc mentions, the `park` parameter, the observer's read of that parameter, and callers passing the argument.
+    - Public signature unchanged: `public func park(tool:op:kind:completionToken:settling:canceler:)` still takes `settling: Task<OperationEvent, Never>` in position 5. The commit touched 2 Swift files, neither of them a caller — `DetachingTool.swift:460`, `RoutedSessionCompactTests.swift:620`, `SessionMailboxTests.swift:85` and `:271` are all unmoved.
+
+    **Finding 2 — named nanosecond constant.** Value and arithmetic identical.
+    - `SessionMailbox.swift:175` `private static let nanosecondsPerSecond: Double = 1_000_000_000` — same digits as the deleted literal.
+    - `boundedNanoseconds(clamping:)` went from `UInt64(clamped * 1_000_000_000)` to `UInt64(clamped * nanosecondsPerSecond)`. `clamped` is `Double` and the constant is `Double`, which is the type the bare literal already took in that expression. Same operation, same operand types, same result. The `isNaN` guard and the `min(max(seconds, 0), waitSecondsCeiling)` clamp are untouched, and `waitSecondsCeiling` is still `86_400`.
+
+    **Finding 3 — 6 DocC `- Parameter` keys.** Each new key matches the internal name of the declaration that follows its doc block, in `ToolOutputCapping.swift`:
+    - `text`, `limit` -> `static func capped(text: String, toTokenLimit limit: Int)` at :35.
+    - `text`, `maxBytes` -> `private static func prefix(of text: String, keepingAtMostUTF8Bytes maxBytes: Int)` at :63.
+    - `limit` -> `static func wrapping(tool: any Tool, toTokenLimit limit: Int)` at :95.
+    - `limit` -> `static func optionallyCapped(tool: any Tool, toTokenLimit limit: Int?)` at :117.
+    - `tokenLimit` -> `static func sessionMounted(...)` at :214, whose parameter is `cappedToTokenLimit tokenLimit: Int?` at :219. Its other keys `tool`, `sessionID`, `mailbox`, `sink` have no separate external label, so they were already correct.
+    - Prose and symbol links that still read `toTokenLimit`, `keepingAtMostUTF8Bytes`, `cappedToTokenLimit` are correct as they stand: the rule binds the `- Parameter <name>:` key only.
+
+    #### No new problem introduced
+    - The commit is 4 files: `Hosting/SessionMailbox.swift`, `Session/ToolOutputCapping.swift`, and this card's own `01KZP287R4XRJTCBY45N59EB1K.jsonl` / `.md`. No other session's cards are in it.
+    - The detach envelope is untouched — `DetachingTool.swift` is not in the commit at all, and `DetachingTool.swift:169` still holds `private static let renderedPrefix = "{\"pending\":true,\"completionToken\":\""`.
+    - No threshold, clock, JSON key, mailbox rule, or default value moved. Every non-doc line in the commit is one of: the added named constant, the deleted dead property and its initializer argument, and the one multiplication that now names its factor.
+
+    #### Still not run
+    `FM_ROUTER_INTEGRATION_TESTS=1` and `MULTITOOL_INTEGRATION=1` remain **not run** (27B model, 8–11 minutes). Report them as not run, never as passed. The acceptance-criteria line that needs them is unsatisfied in this environment.
+
+    - next: none for review. Somebody must run the integration suites, and FoundationModelsMultitool must be migrated with the old -> new symbol table on this card.
+  timestamp: 2026-08-10T20:45:43.548339+00:00
+- actor: claude-code
+  id: 01kzppvby0e8bvx0ps3qpjt95a
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files; dead `ParkedRun.settling` deleted, `nanosecondsPerSecond` named, 6 DocC `- Parameter` keys corrected to internal names
+    - test: green — swift test 783 tests / 75 suites + 24 + 24, 0 failures; check-doc-links.py 1292 links, 0 stale / 0 unresolved
+    - commit: 237961f
+    - review: clean — 0 findings, 9 attempted; card moved to done
+    - CONSUMER ACTION OUTSTANDING: FoundationModelsMultitool is not migrated and will not build. Its migration guide is the old->new symbol table on this card. It carries MultiTool+Elevation.swift and ElevationTests and depends on Router by local path.
+    - AC NOT SATISFIED: `FM_ROUTER_INTEGRATION_TESTS=1 green` was not run (27B model, 8-11 min, out of scope for this environment) — not-run, not passed.
+  timestamp: 2026-08-10T20:46:56.448426+00:00
+position_column: done
+position_ordinal: ff8280
 title: '[Router] Rename "elevation" — a call that may detach is not being elevated'
 ---
 FOR THE ROUTER AGENT. Naming only, no behaviour change. Human-directed 2026-08-10: *"elevation is an aweful name — it isn't 'elevating' to make it async."*

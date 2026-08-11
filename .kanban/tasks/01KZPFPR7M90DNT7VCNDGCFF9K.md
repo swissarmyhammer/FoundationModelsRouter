@@ -47,8 +47,34 @@ comments:
     - untracked file: `Tests/FoundationModelsRouterTests/BoundedWaitTests.swift` — needs `git add` at commit.
     - TurnCancellationTests: `git diff` shows the private `spinYieldLimit`/`spin(until:)` deletion and 7 mechanical call-site renames to `BoundedWait.spin(until:)`, with identical surrounding guard/`Issue.record`/`#expect` logic at each site — confirmed no rewrite.
   timestamp: 2026-08-10T19:22:28.592008+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzpjeen0vpw1e2kj0z5j7abn
+  text: |
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (sha 7534466), task-mode
+    - evidence: zero new findings; 9 validators attempted, 0 failed, 0 skipped; 0 prior findings items to check
+    - no acronym-casing findings appeared, thus no waiver was necessary
+    - next: none. Task moves to `done`.
+  timestamp: 2026-08-10T19:29:58.944469+00:00
+- actor: claude-code
+  id: 01kzpjjpp0p3npfy9k5g00t5zv
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files, no production code (`git diff -- Sources` empty). `BoundedWait.spin(until:)`'s bound is now a `ContinuousClock` deadline of `ceilingNanoseconds` (5 s): it yields for the first `yieldsBeforePolling` (1000) hops so a change behind a few suspensions still costs microseconds, then sleeps `pollIntervalNanoseconds` (5 ms) between readings until the deadline. `spin` returns `Bool` (`@discardableResult`), so `conditionReached` no longer re-reads the condition.
+    - **Three copies became one.** `AnswerDeliveryBound` deleted — `AnswerDrivenRun.finishesWithinDeliveryBound()` now calls `BoundedWait.spin(until:)` with its 5 s / 5 ms behaviour unchanged and its give-up path still not awaiting the run. `TurnCancellationTests`' private `spinYieldLimit = 100_000` and `spin(until:)` deleted across 7 sites — that was the duplication noted as out-of-scope in `^h71b8yv`, removed here because it is the same cause. Net −4 lines across three files while adding the deadline.
+    - New `Tests/FoundationModelsRouterTests/BoundedWaitTests.swift` tests the bound itself.
+    - **Why the old bound was backwards**, per the review: a yield is cheap for the waiter, so 100,000 hops burned a near-fixed amount of the *waiter's own* CPU while the task that had to make the change queued for a core — more load meant a tighter effective wall-clock budget. Two mechanisms fix it, not one: the change of unit, and sleeping rather than yielding past hop 1000, which surrenders the slice to the task that must act. The second is independent of the unit and matters most under load.
+    - **Proven under real load**, as the card demanded: 96 busy processes on 32 cores, load average 101. Old bound expired at 0.121 s and failed; new bound saw the late signal at 0.410 s and ended a genuinely false condition at 5.001 s with the named issue. Red-first established idle too — the old hop budget expired after 0.087 s. Under load the 9 `HumanWaitGate` tests, including the 3 named, pass in 0.015 s.
+    - The observed 3.0–3.7 s failures were the time to burn the hop budget while spinning, NOT the time the change needed — so the real margin under the 5 s ceiling is wider than that ratio suggests.
+    - test: green — 783/75 in 5.022 s (the deliberate give-up test registers as a known issue, not a failure), plus 24/9 and 24/5, 0 failures, no new warnings. The three load-bearing properties confirmed by code read: the wait always ends (a cancelled `Task.sleep` falls back to `Task.yield()` so the loop still reaches the deadline check — the ceiling is binding, not advisory); `conditionReached` records an issue naming the label; `awaitSignal`'s non-suspending `availablePermits` read stays strictly before `wait()`, with the single-consumer precondition still documented.
+    - **Two deliberate accepted costs**: the suite is now 783/75 (was 781/74) from the two new tests, and the main target goes ~2.776 s → ~5.04 s because the give-up test waits out the SHIPPED 5 s ceiling. A test-only ceiling parameter was considered and rejected: it would prove that *some* bound terminates, not that the shipped one does, and the shipped value is what would hang CI.
+    - commit: 7534466 — 6 files, +175/-88, local only. `BoundedWaitTests.swift` confirmed via `create mode 100644`.
+    - review: clean — zero new findings. Engine: 9 validators, 0 failed.
+    - **Two things named by the review, not filed, for a future call:** (1) the rejection of the test-only ceiling parameter is recorded here and in the commit message but NOT in `BoundedWaitTests.swift`, so a reader opening that file to trim suite time will not see it — one sentence in the file would fix that; (2) neither new test asserts an *upper* bound on elapsed time, so a deadline that never fired would hang rather than fail. That is not fixable in this repo: the test target sets no `.timeLimit` trait and SwiftPM offers no manifest-level way to add one, which is the reason `BoundedWait` exists. The suite completing at ~5.04 s demonstrates the deadline fires on every run.
+    - next: task moved to done.
+  timestamp: 2026-08-10T19:32:18.240930+00:00
+position_column: done
+position_ordinal: ff8180
 title: '[Router] BoundedWait''s yield-count bound makes HumanWaitGateTests fail under machine load'
 ---
 ## What happened

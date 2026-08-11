@@ -65,8 +65,97 @@ comments:
 
     That summarizer-to-answerer leak inside one sample is also the strongest evidence yet for escalating to option (2): two sessions constructed blank-slate over disjoint transcripts on the same model should not be able to see each other's KV state at all. If that reproduces after isolation, it is a `PromptCache` prefix-resolution question in `mlx-swift-lm` and belongs on the fork's board, not here.
   timestamp: 2026-08-08T15:39:30.565287+00:00
+- actor: claude-code
+  id: 01kzq79926g0vq0dnyeph1qqfp
+  text: |-
+    ### Measurement log — baseline (before any change), commit ee5b881
+
+    USER EXPLICITLY AUTHORIZED gated runs for this card.
+
+    Scope note: measured `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter FoundationModelsRouterIntegrationTests`. The contamination under study is *within* that target's process (one shared per-model PromptCache across its suites) and every failure the card names lives there. Running the whole `swift test` would additionally spin up the two Evals suites in separate processes at ~5-9 min each with no measurement value. Runs are ~2.5 min each, so repetition is cheap.
+
+    Baseline, 3 full runs, by position among gated suites:
+
+    | run | RecordingHandle | PropagationProbe | other |
+    |-----|-----------------|------------------|-------|
+    | 1 | pos 1 — FAIL (2 issues, 9.888s) | pos 8 — pass (17.5s) | CompactionRoundTrip pass |
+    | 2 | pos 3 — FAIL (2 issues, 9.889s) | pos 4 — FAIL (1 issue, 14.3s) | CompactionRoundTrip pass |
+    | 3 | pos 6 — pass (24.8s) | pos 1 — FAIL (1 issue, 14.4s) | CompactionRoundTrip pass |
+
+    Exact signatures, both the card's predicted ones:
+    - `RecordingHandleIntegrationTests.swift:290` / `:309` — `isInOrderSubsequence([.session, .instructions, .prompt, .toolCalls, .toolOutput], of: beforeSync.map(\.kind))` failed. The turn produced NO `.toolCalls` entry.
+    - `PropagationProbeIntegrationTests.swift:446` — `turn.recordedCallCount > 0` failed. Zero tool call.
+
+    Note the duration tell: RecordingHandle fails in 9.89s and passes in 24.8s — the failing runs are FASTER, consistent with no tool call being dispatched.
+
+    ISOLATION CONTROLS (decisive):
+    - `--filter PropagationProbeIntegrationTests` alone: PASSES, recordedCallCount=1. Confirms the card's "run alone called the tool every time".
+    - `--filter RecordingHandleIntegrationTests` alone: PASSES (16.2s).
+
+    So both suites are correct in isolation and fail only when sharing a process with other suites. This is a genuine cross-suite interaction, not a defect in either test.
+
+    CAUTION on the position correlation: with n=3 the "early fails / late passes" pattern is suggestive but NOT established — do not act on it. The solid result is the isolation control: empty cache passes, inherited cache fails.
+
+    AC#1 (does ^f9zt7c5's mid-run eviction help or hurt siblings?): the probe carries that eviction and STILL failed in 2 of 3 runs, so that per-suite fix is NOT sufficient even for its own suite. Measurement of the shared mechanism follows.
+
+    AC#4: `CompactionRoundTripIntegrationTests` recall PASSED in all 3 baseline runs (`recall.contains("CRIMSON-77")` never failed; tokensBefore=2074 tokensAfter=1379 saved=695 each time). Its recall half is therefore NOT reproducing on this commit — the four failures the card recorded on 2026-08-08 predate ^5m97h14's sizing fix, which is the more likely attribution. Not attributed to this class on current evidence.
+  timestamp: 2026-08-11T01:34:09.478429+00:00
+- actor: claude-code
+  id: 01kzq8ze0djnbtbvtarxb0nqmz
+  text: |-
+    ### Stopped chasing a failure rate — redirected to ^w8dzvee (human direction)
+
+    Repeated gated runs were the wrong approach to this card, and I stopped them. Recording why, and what the runs did establish, so the next reader does not restart the same loop.
+
+    **The likely misattribution.** This card frames the failures as prompt-cache contamination between suites. But the failure signature in `RecordingHandleIntegrationTests` is that the transcript never gains a `.toolCalls` entry — that is the recording/streaming path, which is exactly where `^w8dzvee`'s two defects live:
+    - D1 — `RoutedSessionActorRecording.swift:365-379` emits `.toolStatus(.completed)` keyed by `entry.entryId` while `.toolCall`/`.running` use `call.id`.
+    - D2 — `LiveModelLoader.swift:395` returns the whole snapshot as a delta when the prefix guard fails, which happens on every tool boundary.
+
+    Tool calling being broken on the streaming/recording path is a simpler and better-supported explanation of "the tool call went missing" than cross-suite chunk reuse. Fix the tool-call logic first; re-examine this card only if failures survive that.
+
+    **What the 13 runs did establish (keep this, it was not free):**
+    - Both suites PASS when run alone — `--filter PropagationProbeIntegrationTests` (recordedCallCount=1) and `--filter RecordingHandleIntegrationTests`.
+    - Runs 1-3 failed; runs 4-7 were completely clean; 8-13 were spoiled by concurrent load. The failing window coincided with ~50 parallel sessions on the machine (load ~10), so the baseline is confounded and no failure rate from it is trustworthy.
+    - Exact signatures seen: `RecordingHandleIntegrationTests.swift:290`/`:309` (`isInOrderSubsequence`, no `.toolCalls`) and `PropagationProbeIntegrationTests.swift:446` (`recordedCallCount > 0`).
+    - Measurement here needs exclusive GPU. Three repos were running model-loading tests simultaneously (Router, FoundationModelsMultitool `SearchThenCallTests`, mlx-swift-lm `MLXLMTests`) at ~14GB each. Any future run-to-run comparison on a shared machine is worthless.
+
+    **AC#4 — attribution.** `CompactionRoundTripIntegrationTests` recall passed every single run (`recall.contains("CRIMSON-77")` never failed; tokensBefore=2074 tokensAfter=1379 saved=695). Its recall half is NOT reproducing on this commit, so it attributes to `^5m97h14`'s sizing work rather than to this class.
+
+    **AC#5 — fork items (must be filed on the mlx-swift-lm board, never fixed in this repo):**
+    1. `MLXLanguageModel.removePromptCache(modelID:)` is not `public`. The only public lever that clears a prompt cache is `evictAll()`, which also frees model weights — so test isolation cannot get a clean cache without paying a full model reload. Request a public prompt-cache-only clear.
+    2. Its own doc records that an entry is dropped when "a round's actual generated content can't be reconciled with `cache`'s own `offset` … the entry is untrustworthy". Chunks are shared across every conversation on a model. Open question, NOT proven: can a prefix-matched chunk chain leave a fresh session in a state where a tool call appears already made? Evidence is the observed narration of a call that was never dispatched. File as a question with this evidence; the load confounder means it is not established.
+
+    Card stays open and is NOT done. It is parked behind `^w8dzvee`.
+  timestamp: 2026-08-11T02:03:44.013081+00:00
+- actor: claude-code
+  id: 01kzq94x7cs7p5phteqpp9pv6p
+  text: |-
+    ### Correction: the failure DOES reproduce — runs 8-13 landed after the stop
+
+    Runs 8-13 completed after I had already stopped this work, and they overturn the "clean, does not reproduce" reading in my earlier comment. Recording the correction rather than leaving the wrong conclusion standing.
+
+    | run | load (1-min) | result |
+    |-----|--------------|--------|
+    | 8 | 8.61 | FAILED |
+    | 9 | 10.68 | FAILED |
+    | 10 | 10.21 | FAILED |
+    | 11 | 10.91 | passed |
+    | 12 | 11.78 | FAILED |
+    | 13 | 11.73 | FAILED |
+
+    Full tally across all 13 runs on commit `ee5b881`: **8 failed, 5 passed**. Runs 4-7 passing consecutively was a streak, not evidence of absence — I over-read it.
+
+    Two things this changes:
+
+    1. **The phenomenon is common, not rare.** ~60% of gated runs fail. That is a real defect worth fixing, and it is frequent enough that a handful of post-fix runs is a genuine verification signal.
+    2. **It does not exonerate the load confounder, but it no longer needs it.** Every run 8-13 sat at load 8.6-11.8, so these are all "loaded machine" samples and cannot separate load from cause. What they do establish is that the failure is reliably reachable, which is all that is needed to verify a fix.
+
+    The redirection still stands: fix the tool-call logic in `^w8dzvee` (D1 keyed-by-wrong-id in `RoutedSessionActorRecording.swift:365-379`, D2 snapshot-delta corruption in `LiveModelLoader.swift:395`) before treating this as a prompt-cache problem. The `RecordingHandleIntegrationTests` signature — no `.toolCalls` entry ever appearing — is a recording-path symptom, and this failure rate is high enough that if D1/D2 are the cause, fixing them should visibly move it.
+
+    Suggested verification once `^w8dzvee` lands, on a machine with no other model tests running: repeat the gated suite ~6 times and compare against this 8/13 baseline.
+  timestamp: 2026-08-11T02:06:43.436747+00:00
 position_column: todo
-position_ordinal: '8680'
+position_ordinal: 8a80
 title: Gated tool-calling suites lose their tool call or their recall when they inherit another suite's prompt cache
 ---
 Discovered while working `^f9zt7c5`, which proved the mechanism for one suite and fixed only that suite.

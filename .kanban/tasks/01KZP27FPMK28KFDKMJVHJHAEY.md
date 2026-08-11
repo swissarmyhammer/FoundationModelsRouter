@@ -166,8 +166,35 @@ comments:
     - periphery: ran `periphery scan --quiet --format json --skip-build --index-store-path .build/index-build/arm64-apple-macosx/debug/index/store --retain-public --retain-objc-accessible --retain-swift-ui-previews --retain-codable-properties --disable-update-check --relative-results`. The JSON list has no entry for `SurfaceParityTests.swift` or `ScriptedTurnScript.swift`. 0 findings stay in the two changed files.
     - next: none. Ready for the caller to record the outcome and move the task.
   timestamp: 2026-08-10T18:47:23.909437+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzpgkzfvc54kpxxtfg0hz8f0
+  text: |-
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (sha `ee92543`), iteration 2.
+    - counts: 0 findings, 0 confirmed, 0 refuted. 9 validators attempted, 0 failed, 0 skipped.
+    - prior findings: all 8 `assignOnlyProperty` items of the 2026-08-10 12:19 section are checked and closed. The engine reports the two changed files clean, thus no prior item stays open.
+    - the corrected rule: I read the section "`assignOnlyProperty` and the reads periphery cannot see" in `swissarmyhammer/builtin/validators/code-hygiene/rules/dead-code-swift.md`. The delta obeys it. Each marker is a bare `// periphery:ignore` line. The reason is on its own comment line above the marker. No property is deleted. The flag `--retain-assign-only-properties` is not set.
+    - the comments as new code: each of the 8 reason lines names the synthesized conformance that reads its property. The claim is true for both types. `SurfaceTurnOutcome` declares `Equatable` and writes no `==`. `ScriptedCallRecord` declares `Hashable` and writes neither `==` nor `hash(into:)`. Periphery flagged all 8 properties as assign-only at `fe0a645`, which shows that no direct reader exists, thus "only the synthesized body reads this property" is correct in each case. Both type docs also record what the deletion of the properties would cause, thus a later reader has the reason not to delete them.
+    - delta shape: comment lines only. 20 added lines in `SurfaceParityTests.swift`, 12 added lines in `Helpers/ScriptedTurnScript.swift`, 0 deleted lines. `git diff -- Sources` is empty.
+    - waivers: none. No acronym-casing finding came from this review.
+    - out of scope, not filed here: `^dgcff9k` (BoundedWait yield-count bound) and `^vwj46fx` (a thrown tool error never reaches the model).
+    - next: none. The card moves to `done`.
+  timestamp: 2026-08-10T18:58:02.875602+00:00
+- actor: claude-code
+  id: 01kzpgnbajxgce4v298ff4t7rb
+  text: |-
+    ### finish iteration 2 — clean (unstuck)
+    - **Unblocked by a human decision plus an upstream rule fix.** Iteration 1 ended `stuck`: 8 findings, all `var.instance … is assignOnlyProperty`, which could not be obeyed — the sites are `let` constants read only by compiler-synthesized `==`/`hash(into:)`, so deleting them does not compile (`SurfaceParityTests.swift:329` builds a `SurfaceTurnOutcome` from all six) and an emptied struct makes `responded == streamed` true for every row, leaving the harness asserting nothing while still passing. The rule now documents this case: `swissarmyhammer/builtin/validators/code-hygiene/rules/dead-code-swift.md`, section "`assignOnlyProperty` and the reads periphery cannot see", commit `0518f2c96` (branch `review`, local, unpushed).
+    - **Periphery's blanket `--retain-assign-only-properties` was deliberately rejected**, not overlooked: it would also retain a property nothing reads at all — the `deadCount` case that rule's own failing fixture exists to catch — so it would lose real dead-code signal and break the fixture.
+    - implement: changed — 2 files, **32 insertions, 0 deletions**, comment lines only. A bare `// periphery:ignore` above each of `SurfaceTurnOutcome`'s six properties and `ScriptedCallRecord`'s two, each with its reason on its own comment line above the marker naming the synthesized conformance that reads it. Both type docs gained a paragraph stating both consequences of deleting the properties. File-wide sweep found nothing more: `ScriptedToolCall`, `ScriptedTurnScript`, `Executor.Configuration` and `CallFailure` have direct readers; `ScriptedCallArgument` and `FixtureError` are enumerations; `ScriptedTurnLog` writes its own `==` and `hash(into:)`.
+    - test: green — swift test 781/74 + 24/9 + 24/5, 0 failures, no new warnings. `git diff --numstat` = `12 0` and `20 0` (insertions only, the decisive check that no property was deleted and no assertion touched). `git diff -- Sources` empty. All 8 markers confirmed in the bare form periphery honours — a marker with trailing text does not suppress. Periphery re-run with the rule's exact flags: **0 findings in the two changed files**.
+    - commit: ee92543 — 6 files, +228/-1, local only
+    - review: clean — zero new findings; all 8 prior items verified closed rather than accepted. Engine: 9 validators, 0 failed. The reviewer also checked the comments' truth: "Only the synthesized `Equatable` `==` reads this property" is correct because periphery flagged all 8 at `fe0a645`, which is itself evidence no direct reader exists, and this delta adds no code.
+    - **Found during this work, filed separately:** `^dgcff9k` — `BoundedWait.spin(until:)`'s bound counts 100,000 cooperative yields rather than wall-clock time, so under machine load a correct test can fail. Three `HumanWaitGateTests` failed once at 3.0–3.7 s each against a normal suite time of 0.077 s, with green runs immediately before and after. Not caused by this card (comment lines only, `Sources` untouched throughout).
+    - next: task moved to done, `stuck` tag cleared. Both discoveries from this card are on the board: `^vwj46fx` (a thrown tool error reaches the model on neither surface) and `^dgcff9k` (the load-sensitive bound).
+  timestamp: 2026-08-10T18:58:47.762590+00:00
+position_column: done
+position_ordinal: ff80
 title: '[Router] TDD: parity harness — respond(to:) and streamEvents must behave identically on a tool-using turn'
 ---
 FOR THE ROUTER AGENT. The guard that stops the defect in `^cvtfem3` from recurring in a different shape.

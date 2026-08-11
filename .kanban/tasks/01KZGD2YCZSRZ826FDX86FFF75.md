@@ -45,8 +45,39 @@ comments:
     - evidence: 5 files — Tests/FoundationModelsRouterEvals/Support/GatedEvalSerialGate.swift (new), Tests/FoundationModelsRouterEvals/Support/CompactionEvalRealSubjectRunner.swift, Tests/FoundationModelsRouterEvals/Support/CompactionContinuityEvalRealSubjectRunner.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift, Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift. `swift build --build-tests` clean, 0 compiler warnings. Ungated `swift test`: 783 tests in 75 suites + 24 tests in 9 suites + 24 tests in 5 suites, all passed, exit 0; the 1 known issue is the pre-existing `withKnownIssue` at BoundedWait.swift:114. `Scripts/check-doc-links.py`: 0 stale, 0 unresolved. NOT RUN: the gated eval suites (FM_ROUTER_INTEGRATION_TESTS).
     - next: /review
   timestamp: 2026-08-10T20:59:13.047474+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzpr39rrc7g4y66heypednqf
+  text: |-
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (commit 70ca94b), 9 validators attempted, 0 failed, 0 skipped
+    - engine counts: 1 finding, 1 confirmed, 0 refuted. The one finding — `Tests/FoundationModelsRouterEvals/Support/CompactionContinuityEvalRealSubjectRunner.swift:212` "Magic numbers should be replaced by named constants" (`maxTokens: 64`) — is DROPPED under the review skill's blanket exception on existing test code. `git blame` puts that line at 10955bea (2026-07-24); this commit touched only line 26 (protocol conformance) and the `evictIfLoaded()` doc comment in that file. No recordable findings.
+    - structural verification (the gated path cannot run here; a gated suite loads a 27B model for 8-11 minutes):
+      - eviction precedes permit release: `GatedEvalSerialGate.swift:127-137` catches `try await function()` into `Result`, calls `await runner.evictIfLoaded()` unconditionally after the do/catch, then `try outcome.get()` rethrows. No early return or rethrow sits between the catch and the eviction. `AsyncSemaphore.withPermit` (`Sources/FoundationModelsRouter/Concurrency/AsyncSemaphore.swift:98-102`) is `await wait()` / `defer { signal() }` / `try await body()`, so the permit is handed back after the body, that is after the eviction.
+      - no deadlock: `scopeProvider(for:testCase:)` is stated, not inherited, at `GatedEvalSerialGate.swift:107-109` — `test.isSuite ? self : nil`. No per-test-case scope, so the value-1 permit is taken once.
+      - eviction on the trap path: `evictIfLoaded` appears in the Evals target only as the protocol requirement (`GatedEvalSerialGate.swift:82`), the two actor definitions (`CompactionEvalRealSubjectRunner.swift:180`, `CompactionContinuityEvalRealSubjectRunner.swift:264`), and the single call site `GatedEvalSerialGate.swift:135`. Neither `@Test` body calls it. The trait receives the same file-scope runner instance each `@Test` body reads.
+      - cancellation: `AsyncSemaphore` waits on `CheckedContinuation<Void, Never>` (`AsyncSemaphore.swift:38,58,79`), so `wait()` cannot throw and the `defer { signal() }` is always installed after a real acquire. The release path holds under cancellation.
+      - time limit: `gatedEvalSuiteTimeLimitMinutes = 20` (`GatedEvalSerialGate.swift:77`) matches `.timeLimit(.minutes(20))` at `Tests/FoundationModelsRouterIntegrationTests/CompactionRoundTripIntegrationTests.swift:69`. The limit applies per test case, so permit wait time is not charged against it.
+      - both gated eval suites covered: `CompactionEvaluationTests.swift:415-418` and `CompactionContinuityEvaluationTests.swift:243-246` each carry `.exclusiveResidentModel(of:)` and `.timeLimit(.minutes(gatedEvalSuiteTimeLimitMinutes))`. Both runners conform to `GatedEvalRealModelRunner` (`CompactionEvalRealSubjectRunner.swift:68`, `CompactionContinuityEvalRealSubjectRunner.swift:26`).
+      - rationale recorded in code (AC #2): `GatedEvalSerialGate.swift:8-38` carries both arguments in the doc comment — `samplingMode` is stored on the container and the continuity runner pins `.greedy` against the provider default, so one shared container would silently re-measure one eval; `.serialized` serializes within a suite only.
+    - DocC checked by hand, not by `Scripts/check-doc-links.py`: `- Parameter`/`- Parameters` keys use internal names throughout `GatedEvalSerialGate.swift` (`test`, `testCase`, `function`, and `runner` for `exclusiveResidentModel(of runner:)`). Symbol links use external labels (`scopeProvider(for:testCase:)`). `` ``MetalLibraryTestBootstrap`` `` resolves — the Evals target depends on `FoundationModelsRouterTestSupport` (`Package.swift:167`), where it is defined. `GatedSuiteSerialGate` correctly uses single backticks as a cross-target reference.
+    - The Tests line stays unticked as not-run by design: a gated run costs 8-11 minutes per suite and was not spent. Not treated as a finding.
+    - next: none — task advanced to done.
+  timestamp: 2026-08-10T21:08:44.952755+00:00
+- actor: claude-code
+  id: 01kzpr7397d6jhzk8v8ebk2hef
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 test files; new GatedEvalSerialGate.swift (target-wide value-1 permit + GatedEvalResidencyTrait + gatedEvalSuiteTimeLimitMinutes=20 + GatedEvalRealModelRunner)
+    - test: green — ungated swift test exit 0: 783/75 + 24/9 + 24/5, 0 warnings; 1 pre-existing known issue at BoundedWait.swift:114; check-doc-links.py 0 stale / 0 unresolved
+    - commit: 70ca94b
+    - review: clean — 1 engine finding dropped under the existing-test exception (CompactionContinuityEvalRealSubjectRunner.swift:212, blame 10955bea, untouched by this commit); card moved to done
+    - mechanism rationale (AC#2), recorded in GatedEvalSerialGate.swift:8-38: a permit was chosen over ONE SHARED CONTAINER because samplingMode is stored on the container and the two runners deliberately differ (continuity runner pins .greedy; the other keeps the provider default), so sharing would silently re-measure one eval. `.serialized` was rejected because it serializes within a suite only, not across two distinct suites.
+    - eviction on the trap path proved structurally at GatedEvalSerialGate.swift:127-137 — function() is caught into a Result, evictIfLoaded() runs unconditionally, then the Result is rethrown; withPermit's `defer { signal() }` releases after, so eviction always precedes release
+    - deadlock avoided at GatedEvalSerialGate.swift:107-109 — scopeProvider is stated, not inherited, returning self only when test.isSuite, so the value-1 permit is taken once
+    - AC NOT SATISFIED (environment limit, not a defect): the Tests line "Gated run shows the two eval suites no longer overlapping their model residency" was NOT RUN — 27B model, 8-11 min per suite. Left unticked deliberately. The residency argument above is structural, not empirical; a gated run is still the only empirical confirmation.
+  timestamp: 2026-08-10T21:10:49.383591+00:00
+position_column: done
+position_ordinal: ff8380
 title: FoundationModelsRouterEvals gated suites are unserialized — two resident 27B models possible
 ---
 Found during the `^ce4hb6n` audit of which gated suites reach the metallib bootstrap. Not a metallib defect — a RAM-exhaustion risk that only became reachable now that the Evals target can actually load real models.
