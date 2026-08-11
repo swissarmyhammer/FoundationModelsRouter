@@ -1,8 +1,14 @@
 import Foundation
 
 /// One element of the richer event stream ``RoutedSession/streamEvents(to:maxTokens:)``
-/// produces — text/reasoning increments, tool-call lifecycle, and the turn's
-/// own closing usage, all correlated by id where applicable.
+/// produces — the turn's opening correlation frame, text/reasoning increments,
+/// tool-call lifecycle, and the turn's own closing usage.
+///
+/// Identity travels in the frame, not on each event: ``turnStarted(_:)`` opens a
+/// turn and every event up to the next one belongs to it, since a session runs
+/// one turn at a time. That is also how ``RoutedSession/streamSessionEvents()``
+/// — the merged, session-wide feed of everything a session does, whichever
+/// entry point ran the turn — stays attributable.
 ///
 /// The session event stream: this is
 /// the general session-event vocabulary a driver — or ``SessionProjection``,
@@ -19,6 +25,33 @@ import Foundation
 /// caller-driven fold — still returns its ``CompactionResult`` directly to
 /// its own caller instead, exactly as before.
 public enum SessionEvent: Sendable, Equatable {
+    /// A turn began, naming itself and — when the turn came off the prompt
+    /// queue — the prompt that caused it.
+    ///
+    /// **This is the correlation frame.** A session runs one turn at a time
+    /// (``RoutedSessionActor/turnLock`` is held for the whole of every turn), so
+    /// every event that follows this one, up to the next ``turnStarted(_:)``,
+    /// belongs to the turn this names. That is what lets a client map prompt to
+    /// turn to events without an id repeated on each event — and it is why no
+    /// turn identity is stamped into
+    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:)``,
+    /// whose `id` is documented as Apple's `Transcript.ToolCall.id` and belongs
+    /// to that identity space alone.
+    ///
+    /// Emitted once per *logical* turn, before any work that turn does —
+    /// including a proactive auto-compaction fold and this turn's discovery
+    /// priming — and on both routes: a turn started by
+    /// ``RoutedSession/streamEvents(to:maxTokens:)`` yields it on that turn's own
+    /// stream, and *every* turn yields it on
+    /// ``RoutedSession/streamSessionEvents()``. A turn that retries after a
+    /// recovered context overflow is still one logical turn and still reports
+    /// one of these, though it closes two ``turnEnded(_:)``.
+    ///
+    /// ``RoutedSession/compact(prompt:budget:)`` holds the same turn lock but
+    /// runs no generation and derives no events, so it opens no frame; its turn
+    /// id is simply never reported.
+    case turnStarted(TurnStart)
+
     /// A fragment of the model's response text, in production order — the
     /// same fragments ``RoutedSession/streamResponse(to:maxTokens:)`` yields.
     case textDelta(String)

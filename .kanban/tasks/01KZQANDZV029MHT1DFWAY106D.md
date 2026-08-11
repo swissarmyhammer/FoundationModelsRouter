@@ -1,8 +1,31 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: 8c80
+comments:
+- actor: claude-code
+  id: 01kzrdgprwm3asvtxnxfetwbd0
+  text: |-
+    Research: the card's Gap 3 premise is inverted against the code at `ee5b881` and at HEAD. `dispatchNextPrompt()` calls `beginTurn()` BEFORE `drainForDispatch()`, so a prompt is never "drained but not yet the in-flight turn": while its dispatch is parked on the turn lock the prompt is still queued (`cancel(id:)` applies), and the moment it is drained `currentTurnId` is already set (`cancelCurrentTurn()` reports `.requested`). `runCancellableModelCall` also throws `CancellationError` before calling the model when `isTurnCancelled`, so a cancel landing after the drain and before generation stops the turn without a model call. The real gap was that no single call covered both halves and the drained prompt was invisible — both closed here.
+
+    Design: reuses `^zn8n9md`'s scheme rather than inventing a second one. Prompt identity is the `SessionOutbox.ItemID` `enqueue` already returns. Turn identity is the session's existing monotonic turn counter, wrapped as a public opaque `TurnID` (no second counter). Attribution travels as a frame — a new `SessionEvent.turnStarted(TurnStart)` case carrying `turnId` + `promptId` — not as an id stamped onto existing cases, so nothing is put into `toolCall`/`toolStatus`'s `id`, which stays documented as Apple's `Transcript.ToolCall.id`. The frame is exact because a session holds `turnLock` for the whole of every turn, so events never interleave between turns.
+
+    What did not work / was rejected: adding `streamAttributedSessionEvents()` or an envelope element type. Both need a new requirement on the public `RoutedSession` protocol (the only conformer, `RoutedSessionActor`, is internal, and a protocol extension cannot reach actor state), which the constraint forbids. Adding defaulted associated values to existing enum cases also fails — Swift allows the defaults but every `case .textDelta(let x)` pattern then stops compiling. A frame case is additive for construction and breaks only exhaustive switches.
+
+    Known flake, pre-existing, unrelated to the change: `cancellingAStreamingTurnFinishesTheStreamWithCancellationError` (TurnCancellationTests) failed once in one full run and passed in the five runs before and after, and passes in isolation. It waits on a wall clock through `BoundedWait.spin`.
+  timestamp: 2026-08-11T12:42:18.780828+00:00
+- actor: claude-code
+  id: 01kzrdh28echf4nk57wavsps6p
+  text: |-
+    ### implement — changed
+    - evidence: 12 source files, 9 test/example files. New: `Session/TurnIdentity.swift` (`TurnID`, `TurnStart`), `Tests/.../Helpers/TurnFrameAssertions.swift`. `SessionEvent` gains `turnStarted(TurnStart)`; `SessionOutbox` gains a dispatched-prompt slot, `finishDispatch()` and `queueDepth()`/`QueueDepth`; `beginTurn()` returns the `TurnID`; `runTurn` opens the frame through a new `turnEventSink(_:)` that fans every derived event to the turn's own stream AND `streamSessionEvents()`; `dispatchNextPrompt()` passes the drained prompt's id and releases the dispatched slot on every exit; `RoutedSession` extension gains `promptQueueDepth()` and `cancelPrompt(id:)` + `PromptCancellationResult`; `SessionProjection` gains `currentTurn`.
+    - AsyncSemaphore was NOT touched: its cancellation-immunity is unchanged, and the ordering documentation on `dispatchNextPrompt()` now states why (a cancelled turn still takes its place in line, then throws without calling the model).
+    - No new requirement on the public `RoutedSession` protocol — both new methods are non-requirement extension members. 121 of 125 `SessionEvent` case sites unchanged; the 4 that changed are exhaustive `switch`es (SessionProjection, ScriptedToolTurnComparisonTests, RealToolTurnComparisonTests, CompactionDemo). 516 call sites of the public session surface unchanged.
+    - tests: `swift test` green — 809 + 27 + 24 tests, 0 failures, 1 pre-existing known issue. Run 6 times.
+    - NOT run: gated suites (`^pw807cp`), `swift format`, `Scripts/check-doc-links.py`. Nothing pushed.
+    - next: `/review`
+  timestamp: 2026-08-11T12:42:30.542099+00:00
+position_column: doing
+position_ordinal: '80'
 title: An async client cannot correlate prompt to turn to events, and a drained prompt is briefly uncancellable
 ---
 Blocking work for an Agent Client Protocol style async UI. Established by read-only investigation on commit `ee5b881`. The prompt queue itself is fine — these are correlation and lifecycle gaps around it.

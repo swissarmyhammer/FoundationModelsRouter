@@ -6,7 +6,7 @@ import Testing
 
 /// Exercises task 8213x39 (auto-compaction opt-in): ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``'s
 /// `budget`/`compactionPrompt` parameters, the proactive fold
-/// ``RoutedSessionActor/runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
+/// ``RoutedSessionActor/runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``
 /// runs before a turn once measured fill reaches the budget's trigger, the
 /// reactive compact-and-retry-once recovery
 /// ``RoutedSessionActor/runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
@@ -298,7 +298,7 @@ struct AutoCompactionTests {
         // runs, with no caller-side compact() call anywhere in this test.
         #expect(await session.contextFill == 0.9)
 
-        let events = try await Self.collectEvents(session, prompt: "turn 6")
+        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -326,7 +326,7 @@ struct AutoCompactionTests {
         // is untouched, so the own-model fallback tier succeeds.
         #expect(standard.lastBackend?.shouldThrow == false)
 
-        let events = try await Self.collectEvents(session, prompt: "turn 6")
+        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")
@@ -368,7 +368,7 @@ struct AutoCompactionTests {
         // proactively before running, with no warm-up of its own.
         #expect(await forked.contextFill == 0.9)
 
-        let events = try await Self.collectEvents(forked, prompt: "fork turn")
+        let events = eventsAfterTurnFrame(try await Self.collectEvents(forked, prompt: "fork turn"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the fork's first event to be .compaction, got \(String(describing: events.first))")
@@ -617,7 +617,7 @@ struct AutoCompactionTests {
         // mid-turn rather than only once the whole turn finished.
         standard.lastBackend?.usageIncrement = (input: 1_000, output: 0)
 
-        let events = try await Self.collectEvents(session, prompt: "turn 6")
+        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
 
         guard case .turnEnded(let blockedUsage) = events.first else {
             Issue.record(
@@ -750,7 +750,7 @@ struct AutoCompactionTests {
         // not change fold-triggering behavior at all.
         #expect(await session.contextFill == 0.9)
 
-        let events = try await Self.collectEvents(session, prompt: "turn 6")
+        let events = eventsAfterTurnFrame(try await Self.collectEvents(session, prompt: "turn 6"))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")

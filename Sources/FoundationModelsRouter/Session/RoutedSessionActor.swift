@@ -336,7 +336,7 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The auto-compaction opt-in (the "session manages its own
     /// window", task 8213x39), or `nil` for the default manual-only
-    /// behavior. When set, ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
+    /// behavior. When set, ``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``
     /// checks measured context usage against ``TokenBudget/triggerTokens``
     /// before every turn and folds automatically once it has been reached, and a
     /// turn that still overflows mid-generation
@@ -364,7 +364,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Session-scoped rather than per-call, and deliberately so. A `summarization:`
     /// argument on ``RoutedSession/compact(prompt:budget:)`` would reach the
     /// caller-driven fold alone: an automatic fold is driven from inside
-    /// ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``, which has no
+    /// ``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``, which has no
     /// caller to thread one from, so the folds a long-running session actually
     /// takes — its automatic ones — would go on running at ``Summarization``'s
     /// own defaults however carefully the manual path was tuned. Widening the
@@ -387,11 +387,11 @@ actor RoutedSessionActor: RoutedSession {
     /// The pre-discovery seeding opt-in (`^s4405wc`), or `nil` (the default)
     /// for a session whose transcript construction is untouched.
     ///
-    /// When set, ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)`` runs
+    /// When set, ``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)`` runs
     /// the named mounted tool host-side over the turn's own prompt and reseeds
     /// ``backend`` from its current transcript plus the real call it made,
     /// before the turn's own generate call ever submits (see
-    /// ``primeDiscoveryIfConfigured(prompt:onEvent:)``). Set at construction
+    /// ``primeDiscoveryIfConfigured(prompt:emit:)``). Set at construction
     /// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``)
     /// and carried forward by ``fork(workingDirectory:)`` — a fork primes its
     /// turns exactly like its parent.

@@ -21,6 +21,24 @@ public enum TurnCancellationResult: Sendable, Equatable {
     case noTurnInFlight
 }
 
+/// The outcome of ``RoutedSession/cancelPrompt(id:)``.
+public enum PromptCancellationResult: Sendable, Equatable {
+    /// The prompt was still waiting in the queue and was withdrawn. It never
+    /// produced a turn and never will.
+    case withdrawn
+
+    /// The prompt had already been drained for dispatch, so its turn was
+    /// cancelled instead — ``RoutedSession/cancelCurrentTurn()``'s outcome, with
+    /// everything that method documents about it. A turn cancelled before its
+    /// model call started never calls the model at all; one cancelled after is
+    /// cut short cooperatively.
+    case turnCancelled
+
+    /// Nothing was left to cancel: the id's turn had already finished, or the id
+    /// never named a queued prompt on this session at all.
+    case alreadyFinished
+}
+
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
@@ -254,7 +272,11 @@ public protocol RoutedSession: Actor {
     /// interleaved with the same live text fragments as
     /// ``streamResponse(to:maxTokens:)``.
     ///
-    /// Emission order within one turn: ``SessionEvent/textDelta(_:)``
+    /// Emission order within one turn: ``SessionEvent/turnStarted(_:)`` first,
+    /// before any of this turn's work — the correlation frame every later event
+    /// of the turn belongs to, naming no queued prompt because this turn's
+    /// prompt came straight from its caller; then
+    /// ``SessionEvent/textDelta(_:)``
     /// fragments as the model produces them; then, once generation finishes
     /// and the turn's diff runs, ``SessionEvent/toolCall(id:name:argumentsJSON:)``
     /// paired with a ``SessionEvent/toolStatus(id:status:summary:)`` of
@@ -303,11 +325,21 @@ public protocol RoutedSession: Actor {
     /// is vended, and observe every such event whichever entry point ran the
     /// turn that produced it.
     ///
-    /// Exactly one event travels here today:
-    /// ``SessionEvent/discoveryPrimingFailed(_:)``, the report that a turn's
-    /// pre-discovery seeding could not run and the turn therefore generated
-    /// unseeded (see ``DiscoveryPriming``). Priming happens on every turn a
-    /// primed session runs, so its failure has to be observable on every one.
+    /// **Every event a turn derives travels here**, whichever entry point ran
+    /// the turn — the correlation frame ``SessionEvent/turnStarted(_:)`` that
+    /// opens it, the text/reasoning/tool-lifecycle events its diff derives, any
+    /// ``SessionEvent/compaction(_:)`` it folds, the
+    /// ``SessionEvent/discoveryPrimingFailed(_:)`` report that its pre-discovery
+    /// seeding could not run (see ``DiscoveryPriming``), and its closing
+    /// ``SessionEvent/turnEnded(_:)``. This is the one merged feed of everything
+    /// happening on a session.
+    ///
+    /// Attribution is by frame, not by a repeated id: a session runs one turn at
+    /// a time, so every event here belongs to the turn named by the most recent
+    /// ``SessionEvent/turnStarted(_:)`` — and, through
+    /// ``TurnStart/promptId``, to the queued prompt that caused it where there
+    /// was one. See that case for why no turn id is stamped onto the tool
+    /// events.
     ///
     /// Each call vends its own independent subscription, buffered without bound
     /// so a slow consumer drops nothing, and every subscription sees every
@@ -572,6 +604,40 @@ public protocol RoutedSession: Actor {
     /// An opt-in mode that runs this loop automatically inside the session is
     /// a recorded non-goal for now.
     ///
+    /// ## Ordering against the direct path
+    ///
+    /// A session has two submission paths, and they are deliberately
+    /// independent: this queue, and the direct
+    /// ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)``/``streamEvents(to:maxTokens:)``
+    /// calls, which never touch the queue (``SessionOutbox/drainPendingEvents()``,
+    /// not ``SessionOutbox/drainForDispatch()``). What is and is not guaranteed:
+    ///
+    /// - **Within the queue, order is total.** Prompts dispatch strictly in
+    ///   enqueue order, one turn each, however many dispatch calls are in
+    ///   flight — each drains the FIFO front under the turn lock.
+    /// - **Between the two paths, there is no order.** A direct turn never
+    ///   dequeues a waiting prompt and a dispatch never absorbs a direct
+    ///   caller's prompt, so neither path can starve or reorder the other's
+    ///   work; but which of two concurrent callers reaches the turn lock first
+    ///   is the actor executor's scheduling decision, not a rule this package
+    ///   states. A client that needs "this queued prompt runs before that direct
+    ///   prompt" must sequence the two calls itself, by awaiting the first.
+    /// - **Once a caller reaches the turn lock, order is total and fair.** The
+    ///   lock is a strict FIFO ``AsyncSemaphore``, so turns run in the order
+    ///   they parked on it and no caller can be starved by later arrivals.
+    /// - **``streamEvents(to:maxTokens:)`` and ``streamResponse(to:maxTokens:)``
+    ///   reach that lock from a task of their own**, spawned when the stream is
+    ///   created rather than when it is first iterated. Their position in line
+    ///   is therefore taken at creation, and is not ordered against a
+    ///   ``respond(to:maxTokens:)`` or ``dispatchNextPrompt()`` call the same
+    ///   client makes around it.
+    /// - **Cancelling a caller's own `Task` does not surrender its place in
+    ///   line.** Gate acquisition is deliberately cancellation-immune (see
+    ///   ``AsyncSemaphore``), so a cancelled turn still reaches the lock — and
+    ///   then throws `CancellationError` without calling the model. That is what
+    ///   keeps the queue's fairness intact rather than letting a cancelled turn
+    ///   corrupt the count.
+    ///
     /// - Returns: The model's response text, or `nil` if no prompt was queued
     ///   at the moment this call drained the outbox (including a prompt
     ///   ``RoutedSession/cancel(id:)``-ed just before the drain) — any pending
@@ -696,7 +762,8 @@ extension RoutedSession {
     ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
     ///   A cancelled prompt never produces a turn. For the in-flight
     ///   counterpart — stopping a turn already handed to the model — see
-    ///   ``cancelCurrentTurn()``.
+    ///   ``cancelCurrentTurn()``, and for the two composed into one call that
+    ///   covers a prompt's whole life before it generates, ``cancelPrompt(id:)``.
     @discardableResult
     public func cancel(id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult {
         await outbox.cancel(id: id)
@@ -716,6 +783,61 @@ extension RoutedSession {
     @discardableResult
     public func replace(id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult {
         await outbox.replace(id: id, prompt: prompt)
+    }
+
+    /// How much queued user-prompt work this session is carrying — the prompts
+    /// still waiting *and* the one whose turn is already running.
+    ///
+    /// ``pendingPrompts()`` reports only what is still waiting. Between
+    /// ``SessionOutbox/drainForDispatch()`` and the end of the turn it started, a
+    /// prompt is in neither the queue nor the transcript, and this is the surface
+    /// that names it there — so a driver's backlog reading never dips by one for
+    /// the length of every turn.
+    ///
+    /// - Returns: The current ``SessionOutbox/QueueDepth``.
+    public func promptQueueDepth() async -> SessionOutbox.QueueDepth {
+        await outbox.queueDepth()
+    }
+
+    /// Cancels a submitted prompt at any point before its turn generates —
+    /// whether it is still queued or already drained for dispatch.
+    ///
+    /// ``cancel(id:)`` covers only the first half of a prompt's life: once
+    /// ``dispatchNextPrompt()`` has drained the prompt it reports
+    /// ``SessionOutbox/PromptQueueMutationResult/alreadySent``, which is honest
+    /// but leaves a client with no way to stop work it just asked for. This
+    /// composes the two primitives that together cover the whole life:
+    ///
+    /// - **Still queued** — withdrawn through ``cancel(id:)``. It never produces
+    ///   a turn. This is also what a prompt whose ``dispatchNextPrompt()`` is
+    ///   parked behind another turn reports, because a dispatch drains the queue
+    ///   only *after* it holds the turn lock: the parked call then finds nothing
+    ///   to dispatch and returns `nil`.
+    /// - **Already dispatched** — its turn is the one in flight (a session runs
+    ///   one turn at a time), so ``cancelCurrentTurn()`` is asked to cancel it.
+    ///   A turn cancelled before its model call started never calls the model,
+    ///   which is what closes the drained-but-not-yet-generating window.
+    /// - **Neither** — the turn already finished, or the id never named a prompt
+    ///   here.
+    ///
+    /// It inherits ``cancelCurrentTurn()``'s aim as well as its semantics: this
+    /// cancels the turn that is in flight at the moment it asks. A driver that
+    /// lets the *next* dispatch start between this call's two steps can
+    /// therefore have that next turn cancelled instead — the same hazard
+    /// ``cancelCurrentTurn()`` carries on its own, and the reason a driver
+    /// cancels from a task that knows what it dispatched.
+    ///
+    /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
+    /// - Returns: Which of the three ``PromptCancellationResult`` states applied.
+    @discardableResult
+    public func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
+        if await outbox.cancel(id: id) == .applied {
+            return .withdrawn
+        }
+        guard await outbox.queueDepth().dispatched == id else {
+            return .alreadyFinished
+        }
+        return await cancelCurrentTurn() == .requested ? .turnCancelled : .alreadyFinished
     }
 
     /// Delivers the user's answer to a pending elicitation raised by a run on

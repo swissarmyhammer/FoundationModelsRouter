@@ -4,7 +4,7 @@ import Synchronization
 import os
 
 /// The logger ``RoutedSessionActor`` reports a turn's failed pre-discovery
-/// seeding to (see ``RoutedSessionActor/primeDiscoveryIfConfigured(prompt:onEvent:)``).
+/// seeding to (see ``RoutedSessionActor/primeDiscoveryIfConfigured(prompt:emit:)``).
 ///
 /// Its own category rather than ``sessionRecordingLogger``'s, for the same
 /// reason ``sessionCompactionLogger`` has one: what it reports is a priming
@@ -101,7 +101,7 @@ extension RoutedSessionActor {
         // region, so the gated work is not sent across an isolation boundary as a
         // `withPermit` closure would be). `beginTurn()`/`endTurn()` pair exactly
         // like `withPermit`, so no permit can leak.
-        await beginTurn()
+        let turnId = await beginTurn()
         defer { endTurn() }
 
         await recordSessionMetaIfNeeded()
@@ -121,7 +121,32 @@ extension RoutedSessionActor {
         // an outbox.
         let pendingEvents = await outbox.drainPendingEvents().map(\.event)
         return try await runTurn(
-            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: prompt, onEvent: onEvent, body)
+            grammar: grammar, turnId: turnId, promptId: nil, pendingEvents: pendingEvents,
+            ownPrompt: prompt, onEvent: onEvent, body)
+    }
+
+    /// Composes a turn's own event sink with this session's session-scoped
+    /// fan-out, so everything one turn derives reaches both routes.
+    ///
+    /// `onEvent` is the per-turn stream only ``streamEvents(to:maxTokens:)``
+    /// hands its caller; the session-scoped route reaches a
+    /// ``RoutedSession/streamSessionEvents()`` subscriber whichever entry point
+    /// ran the turn — including ``respond(to:maxTokens:)`` and
+    /// ``dispatchNextPrompt()``, which hand their caller a response rather than
+    /// a stream. Composing the two here is what makes the session-scoped stream
+    /// one merged feed of everything a session does, and it is why the returned
+    /// sink is never `nil`: every turn derives its events now, whoever started
+    /// it.
+    ///
+    /// - Parameter onEvent: This turn's own sink, or `nil` when the entry point
+    ///   that started the turn has no stream of its own.
+    /// - Returns: A sink that delivers to `onEvent` when there is one, and to
+    ///   every live session-scoped subscription always.
+    private func turnEventSink(_ onEvent: ((SessionEvent) -> Void)?) -> (SessionEvent) -> Void {
+        { [self] event in
+            onEvent?(event)
+            emitSessionScopedEvent(event)
+        }
     }
 
     /// Runs one turn's model work and recording, given its already-resolved
@@ -152,13 +177,19 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn,
     ///     stamped onto every event this turn appends.
+    ///   - turnId: This turn's identity, minted by ``beginTurn()`` and reported
+    ///     as ``SessionEvent/turnStarted(_:)`` before any work runs.
+    ///   - promptId: The queued prompt this turn dispatched, or `nil` for a turn
+    ///     whose prompt came straight from its caller.
     ///   - pendingEvents: The events already drained from the outbox for this
     ///     turn, in outbox order.
     ///   - ownPrompt: This turn's own prompt text, before composing in
     ///     `pendingEvents`.
-    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s,
+    ///   - onEvent: This turn's own sink for the ``SessionEvent``s it derives,
     ///     including ``SessionEvent/compaction(_:)`` for any auto-compaction
-    ///     fold this turn triggers, or `nil` to skip event derivation.
+    ///     fold it triggers, or `nil` when the entry point that started the turn
+    ///     has no stream of its own. Either way every derived event also reaches
+    ///     ``RoutedSession/streamSessionEvents()`` — see ``turnEventSink(_:)``.
     ///   - body: The model work to run inside the bracket, given this turn's
     ///     composed prompt and returning the response text callers receive.
     /// - Returns: The response text `body` produced.
@@ -168,11 +199,19 @@ extension RoutedSessionActor {
     ///   way.
     private func runTurn(
         grammar: Grammar?,
+        turnId: TurnID,
+        promptId: SessionOutbox.ItemID?,
         pendingEvents: [OperationEvent],
         ownPrompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
     ) async throws -> String {
+        // The correlation frame, opened before anything this turn does — the
+        // proactive fold below included — so every event a consumer sees after
+        // it belongs to this turn. See ``SessionEvent/turnStarted(_:)``.
+        let emit = turnEventSink(onEvent)
+        emit(.turnStarted(TurnStart(turnId: turnId, promptId: promptId)))
+
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
         // `contextFill >= budget.trigger` — see the matching note on the
         // hard-ceiling pre-check in
@@ -187,7 +226,7 @@ extension RoutedSessionActor {
             let usageBefore = backend.usageTokenCounts()
             do {
                 let result = try await performAutoCompaction(prompt: autoCompactionPrompt, budget: budget)
-                onEvent?(.compaction(result))
+                emit(.compaction(result))
             } catch {
                 // A fold can now throw — a stop landing inside its summarizer call
                 // unwinds it (see ``CancellableCompactionSummarizer``) — and this
@@ -201,15 +240,15 @@ extension RoutedSessionActor {
                 // re-queues them, and the synthetic bodyless close is the trace.
                 await recordFailedTurn(
                     grammar: grammar, since: started, usageBefore: usageBefore, pendingEvents: pendingEvents,
-                    onEvent: onEvent)
+                    onEvent: emit)
                 throw error
             }
         }
 
-        await primeDiscoveryIfConfigured(prompt: ownPrompt, onEvent: onEvent)
+        await primeDiscoveryIfConfigured(prompt: ownPrompt, emit: emit)
 
         return try await runTurnAttempt(
-            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt, onEvent: onEvent,
+            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt, onEvent: emit,
             allowOverflowRetry: autoCompactionBudget != nil, body)
     }
 
@@ -226,7 +265,7 @@ extension RoutedSessionActor {
     /// session through. The turn's own prompt is left untouched: seeding happens
     /// through the transcript, never by rewriting what the caller asked.
     ///
-    /// Called from ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``,
+    /// Called from ``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``,
     /// deliberately *before* ``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``
     /// rather than inside it, for the two reasons the proactive auto-compaction
     /// fold sits in the same position: a reseeded backend reports its own usage
@@ -247,11 +286,12 @@ extension RoutedSessionActor {
     /// - Parameters:
     ///   - prompt: This turn's own prompt, passed to the discovery tool as its
     ///     query and recorded as the seeded `.prompt` entry.
-    ///   - onEvent: A sink for this turn's derived ``SessionEvent``s, or `nil` to
-    ///     skip event derivation.
+    ///   - emit: This turn's composed event sink (``turnEventSink(_:)``), which
+    ///     already reaches both this turn's own stream and every session-scoped
+    ///     subscription.
     private func primeDiscoveryIfConfigured(
         prompt: String,
-        onEvent: ((SessionEvent) -> Void)?
+        emit: (SessionEvent) -> Void
     ) async {
         guard let discoveryPriming else { return }
         do {
@@ -263,22 +303,20 @@ extension RoutedSessionActor {
             sessionPrimingLogger.warning(
                 "generating unseeded: discovery priming failed for session \(self.id.description, privacy: .public): \(String(describing: error), privacy: .public)"
             )
-            // Two routes, because priming runs on every turn but only some turns
-            // have a stream of their own: `onEvent` is this turn's own sink when
-            // the caller started the turn through
-            // ``streamEvents(to:maxTokens:)``, and the session-scoped route
-            // reaches a subscriber whichever entry point ran the turn — including
+            // One call, two routes: `emit` is this turn's composed sink, which
+            // already fans out to this turn's own stream (when the caller
+            // started the turn through ``streamEvents(to:maxTokens:)``) *and* to
+            // every session-scoped subscription — the route that reaches a
+            // subscriber whichever entry point ran the turn, including
             // ``respond(to:maxTokens:)`` and ``dispatchNextPrompt()``, which hand
             // their caller a response rather than a stream (see
-            // ``RoutedSession/streamSessionEvents()``).
-            let failed = SessionEvent.discoveryPrimingFailed(error)
-            onEvent?(failed)
-            emitSessionScopedEvent(failed)
+            // ``turnEventSink(_:)`` and ``RoutedSession/streamSessionEvents()``).
+            emit(.discoveryPrimingFailed(error))
         }
     }
 
     /// One physical attempt at a turn's model work and recording — the whole
-    /// original body of ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``
+    /// original body of ``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``
     /// before auto-compaction's reactive retry was added, now callable
     /// recursively for that retry (task 8213x39).
     ///
@@ -409,7 +447,7 @@ extension RoutedSessionActor {
     /// recording a different shape than the other: a physical attempt that threw
     /// (``runTurnAttempt(grammar:pendingEvents:ownPrompt:onEvent:allowOverflowRetry:_:)``'s
     /// catch) and a turn cut short inside the proactive fold it runs *before* its
-    /// first attempt (``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``).
+    /// first attempt (``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``).
     ///
     /// - Parameters:
     ///   - grammar: The guided-generation grammar in force for this turn.
@@ -667,13 +705,20 @@ extension RoutedSessionActor {
     /// Honors ``grammar`` exactly like ``respond(to:maxTokens:)``: a guided
     /// session constrains this turn's response too.
     ///
+    /// The dispatched prompt's id is reported as this turn's
+    /// ``SessionEvent/turnStarted(_:)`` frame, so a client that enqueued it can
+    /// tie it to the turn it caused and to every event that turn produces; the
+    /// same id stays visible in ``SessionOutbox/queueDepth()`` for as long as
+    /// the turn runs, which is what makes a drained-but-unfinished prompt
+    /// observable instead of falling between the queue and the transcript.
+    ///
     /// - Returns: The response text the dispatched turn produced, or `nil` when
     ///   nothing was queued to dispatch — including the case where a concurrent
     ///   ``cancel(id:)`` won the race for the only queued prompt.
     /// - Throws: Whatever the dispatched turn throws, recorded exactly as any
     ///   other failed turn is.
     func dispatchNextPrompt() async throws -> String? {
-        await beginTurn()
+        let turnId = await beginTurn()
         defer { endTurn() }
 
         let drained = await outbox.drainForDispatch()
@@ -699,6 +744,7 @@ extension RoutedSessionActor {
             // on a wakeup caused by a plain posted event with no prompt
             // queued at all, so this must stay a true no-op.
             await requeueUnattachedPendingEvents(pendingEvents)
+            await outbox.finishDispatch()
             return nil
         }
 
@@ -707,10 +753,21 @@ extension RoutedSessionActor {
         await recordSessionMetaIfNeeded()
         let ownPrompt = TranscriptEntryMapper.flattenedText(queued.prompt)
 
-        return try await runTurn(
-            grammar: grammar, pendingEvents: pendingEvents, ownPrompt: ownPrompt,
-            respondBody(grammar: grammar, maxTokens: nil)
-        )
+        // The turn's outcome is captured rather than returned directly so the
+        // outbox's dispatched slot is released on every exit — a `defer` cannot,
+        // because releasing it is an `await` on another actor.
+        let outcome: Result<String, any Error>
+        do {
+            outcome = .success(
+                try await runTurn(
+                    grammar: grammar, turnId: turnId, promptId: queued.id, pendingEvents: pendingEvents,
+                    ownPrompt: ownPrompt, respondBody(grammar: grammar, maxTokens: nil)
+                ))
+        } catch {
+            outcome = .failure(error)
+        }
+        await outbox.finishDispatch()
+        return try outcome.get()
     }
 
     /// Composes this turn's actual model-visible prompt: `pendingEvents`

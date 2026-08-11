@@ -59,12 +59,19 @@ extension RoutedSessionActor {
     /// and a tool is only ever invoked from inside a turn's model call, so
     /// every event a run of this session posts is journaled the moment it is
     /// posted.
-    func beginTurn() async {
+    ///
+    /// - Returns: The identity of the turn that just began — the same monotonic
+    ///   id ``currentTurnId`` now holds, handed back so a caller can correlate
+    ///   what the turn produces without re-reading actor state after an
+    ///   `await`. See ``TurnID``.
+    @discardableResult
+    func beginTurn() async -> TurnID {
         await turnLock.wait()
         lastTurnId += 1
         currentTurnId = lastTurnId
         await attachOutboxJournalIfNeeded()
         await acquireGenerationPermit()
+        return TurnID(lastTurnId)
     }
 
     /// Releases what ``beginTurn()`` acquired, innermost first.

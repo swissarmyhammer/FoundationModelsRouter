@@ -114,7 +114,7 @@ extension RoutedSessionActor {
     /// (see the `await session.contextFill` example on
     /// ``RoutedSession/contextFill``), so isolation is never bypassed. There
     /// is no data race: every read or write of ``usageState`` — `init`, here,
-    /// ``compact(prompt:budget:)``, ``fork(workingDirectory:)``, the trigger and ceiling checks in ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``,
+    /// ``compact(prompt:budget:)``, ``fork(workingDirectory:)``, the trigger and ceiling checks in ``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``,
     /// and ``finishTurn(grammar:since:usageBefore:pendingEvents:onEvent:)`` — executes
     /// inside this actor's isolation domain.
     var contextFill: Double {
@@ -145,7 +145,7 @@ extension RoutedSessionActor {
 
     /// Auto-compaction's own fold entry point (task 8213x39,
     /// ``autoCompactionBudget``): called from inside
-    /// ``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``, which already
+    /// ``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``, which already
     /// holds ``turnLock`` and a ``generationGate`` permit for the whole turn, so
     /// this deliberately never acquires either itself — unlike
     /// ``compact(prompt:budget:)``, doing so here would deadlock against the
@@ -320,7 +320,7 @@ extension RoutedSessionActor {
     ///
     /// Assumes both gates are already held by the caller — this method never
     /// acquires or releases either, so it is safe to call from inside the turn
-    /// chokepoint (``runTurn(grammar:pendingEvents:ownPrompt:onEvent:_:)``),
+    /// chokepoint (``runTurn(grammar:turnId:promptId:pendingEvents:ownPrompt:onEvent:_:)``),
     /// which holds them for the whole turn, as well as from
     /// ``compact(prompt:budget:)``, which takes them itself first.
     ///

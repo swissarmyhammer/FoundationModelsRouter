@@ -59,6 +59,11 @@ func runTurn(
     let stream = await session.streamEvents(to: prompt)
     for try await event in stream {
         switch event {
+        case .turnStarted(let start):
+            // The correlation frame every later event of this turn belongs to.
+            // This turn's prompt came straight from the caller, so it names no
+            // queued prompt.
+            print("[turn] \(start.turnId) started")
         case .textDelta(let fragment):
             reply += fragment
         case .textReset:

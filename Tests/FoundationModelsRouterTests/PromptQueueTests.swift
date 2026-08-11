@@ -18,11 +18,20 @@ struct PromptQueueTests {
 
     private final class BasicLLMContainer: PlainTranscriptStubContainer {
         let responseText: String
-        init(responseText: String = "stub response") {
+
+        /// The per-turn token counts the vended backend meters, or `nil` to
+        /// meter nothing — a session whose backend meters nothing derives no
+        /// ``SessionEvent/turnEnded(_:)``, so a test that wants one sets this.
+        let usageIncrement: (input: Int, output: Int)?
+
+        init(responseText: String = "stub response", usageIncrement: (input: Int, output: Int)? = nil) {
             self.responseText = responseText
+            self.usageIncrement = usageIncrement
         }
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend(responseText: responseText)
+            let backend = StubSessionBackend(responseText: responseText)
+            backend.usageIncrement = usageIncrement
+            return backend
         }
     }
 
@@ -456,5 +465,242 @@ struct PromptQueueTests {
         // still pending, ready for the next dispatch.
         let pending = await session.pendingPrompts()
         #expect(pending.map(\.id) == [secondId])
+    }
+
+    // MARK: - Prompt to turn to event correlation
+
+    /// Drains a session-scoped event stream into an array.
+    ///
+    /// The stream is finished by ``RoutedSession/close()``, so a caller drains
+    /// it after closing the session it came from.
+    ///
+    /// - Parameter stream: The stream to drain.
+    /// - Returns: Every event it yielded, in order.
+    private static func collect(_ stream: AsyncStream<SessionEvent>) async -> [SessionEvent] {
+        var events: [SessionEvent] = []
+        for await event in stream {
+            events.append(event)
+        }
+        return events
+    }
+
+    /// The turn-start records among `events`, in order.
+    ///
+    /// - Parameter events: The events to filter.
+    /// - Returns: Each ``SessionEvent/turnStarted(_:)`` payload.
+    private static func turnStarts(in events: [SessionEvent]) -> [TurnStart] {
+        events.compactMap { event in
+            guard case .turnStarted(let start) = event else { return nil }
+            return start
+        }
+    }
+
+    @Test("a dispatched prompt's turn opens a frame naming the prompt that caused it")
+    @MainActor
+    func dispatchedTurnFrameNamesItsPrompt() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let stream = await session.streamSessionEvents()
+        let id = await session.enqueue(prompt: "queued prompt")
+        _ = try await session.dispatchNextPrompt()
+        await session.close()
+
+        let starts = Self.turnStarts(in: await Self.collect(stream))
+        #expect(starts.count == 1)
+        #expect(starts.first?.promptId == id)
+    }
+
+    @Test("a turn whose prompt came straight from its caller opens a frame with no prompt id")
+    @MainActor
+    func directTurnFrameNamesNoPrompt() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let stream = await session.streamSessionEvents()
+        _ = try await session.respond(to: "direct prompt")
+        await session.close()
+
+        let starts = Self.turnStarts(in: await Self.collect(stream))
+        #expect(starts.count == 1)
+        #expect(starts.first?.promptId == nil)
+    }
+
+    @Test("two turns on one session take distinct turn ids")
+    @MainActor
+    func consecutiveTurnsTakeDistinctIds() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let stream = await session.streamSessionEvents()
+        _ = try await session.respond(to: "first")
+        _ = try await session.respond(to: "second")
+        await session.close()
+
+        let starts = Self.turnStarts(in: await Self.collect(stream))
+        #expect(starts.count == Self.consecutiveTurnCount)
+        #expect(starts.first?.turnId != starts.last?.turnId)
+    }
+
+    /// How many turns ``consecutiveTurnsTakeDistinctIds()`` drives.
+    private static let consecutiveTurnCount = 2
+
+    @Test("the session-scoped stream carries the derived events of a turn that hands its caller a response")
+    @MainActor
+    func sessionStreamCarriesRespondTurnEvents() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(
+            recorder: recorder,
+            container: BasicLLMContainer(usageIncrement: (input: Self.meteredInput, output: Self.meteredOutput))
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let stream = await session.streamSessionEvents()
+        _ = try await session.respond(to: "direct prompt")
+        await session.close()
+
+        // `respond(to:)` hands its caller a response, not a stream, so before
+        // the fan-in this turn derived no events at all. The closing usage is
+        // the proof it now does.
+        let events = await Self.collect(stream)
+        let usages = events.compactMap { event -> TokenUsage? in
+            guard case .turnEnded(let usage) = event else { return nil }
+            return usage
+        }
+        #expect(usages.map(\.tokensIn) == [Self.meteredInput])
+        #expect(usages.map(\.tokensOut) == [Self.meteredOutput])
+    }
+
+    /// The input tokens ``sessionStreamCarriesRespondTurnEvents()``'s backend
+    /// meters for its one turn.
+    private static let meteredInput = 11
+
+    /// The output tokens ``sessionStreamCarriesRespondTurnEvents()``'s backend
+    /// meters for its one turn.
+    private static let meteredOutput = 5
+
+    // MARK: - Queue depth
+
+    @Test("queue depth counts the waiting prompts and the one whose turn is already running")
+    @MainActor
+    func queueDepthCountsDispatchedWork() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let firstId = await session.enqueue(prompt: "first")
+        _ = await session.enqueue(prompt: "second")
+
+        let queuedOnly = await session.promptQueueDepth()
+        #expect(queuedOnly.queued == Self.enqueuedPromptCount)
+        #expect(queuedOnly.dispatched == nil)
+        #expect(queuedOnly.total == Self.enqueuedPromptCount)
+
+        let dispatchTask = Task { try await session.dispatchNextPrompt() }
+        await backend.started.wait()
+
+        // The dispatched prompt has left the queue but the session still owes
+        // it a turn, so the total is unchanged while `queued` drops by one.
+        let midFlight = await session.promptQueueDepth()
+        #expect(midFlight.queued == Self.enqueuedPromptCount - 1)
+        #expect(midFlight.dispatched == firstId)
+        #expect(midFlight.total == Self.enqueuedPromptCount)
+
+        backend.proceed.signal()
+        _ = try await dispatchTask.value
+
+        let afterTurn = await session.promptQueueDepth()
+        #expect(afterTurn.queued == Self.enqueuedPromptCount - 1)
+        #expect(afterTurn.dispatched == nil)
+        #expect(afterTurn.total == Self.enqueuedPromptCount - 1)
+    }
+
+    /// How many prompts ``queueDepthCountsDispatchedWork()`` enqueues before it
+    /// dispatches the first of them.
+    private static let enqueuedPromptCount = 2
+
+    // MARK: - Cancelling a prompt at every point before it generates
+
+    @Test("cancelPrompt withdraws a prompt still waiting in the queue")
+    @MainActor
+    func cancelPromptWithdrawsQueuedPrompt() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let id = await session.enqueue(prompt: "withdraw me")
+        let result = await session.cancelPrompt(id: id)
+
+        #expect(result == .withdrawn)
+        #expect(await session.pendingPrompts().isEmpty)
+    }
+
+    @Test("a prompt whose dispatch is parked behind another turn is still withdrawable, and its dispatch then runs no turn")
+    @MainActor
+    func cancelPromptWithdrawsAPromptParkedOnTheTurnLock() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Occupy the turn lock with a direct turn.
+        let blockingTurn = Task { try await session.respond(to: "blocking turn") }
+        await backend.started.wait()
+
+        // A dispatch for this prompt now parks on the turn lock: its drain has
+        // not run, so the prompt is still in the queue and still withdrawable.
+        let id = await session.enqueue(prompt: "parked prompt")
+        let parkedDispatch = Task { try await session.dispatchNextPrompt() }
+
+        let result = await session.cancelPrompt(id: id)
+        #expect(result == .withdrawn)
+
+        backend.proceed.signal()
+        _ = try await blockingTurn.value
+        // The parked dispatch never reaches the backend: its drain finds the
+        // withdrawn prompt gone and it runs no turn at all.
+        #expect(try await parkedDispatch.value == nil)
+
+        let promptTexts = await recorder.events.filter { $0.kind == .prompt }.map(\.text)
+        #expect(promptTexts == ["blocking turn"])
+    }
+
+    @Test("cancelPrompt cancels the turn of a prompt the drain already committed")
+    @MainActor
+    func cancelPromptCancelsDispatchedPromptsTurn() async throws {
+        let recorder = InMemoryRecorder()
+        let backend = GatedStubBackend(responseText: "gated response")
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let id = await session.enqueue(prompt: "racing prompt")
+        let dispatchTask = Task { try await session.dispatchNextPrompt() }
+        await backend.started.wait()
+
+        // Past the drain, `cancel(id:)` alone can only report `alreadySent`.
+        #expect(await session.cancel(id: id) == .alreadySent)
+
+        let result = await session.cancelPrompt(id: id)
+        #expect(result == .turnCancelled)
+
+        backend.proceed.signal()
+        _ = try? await dispatchTask.value
+    }
+
+    @Test("cancelPrompt reports alreadyFinished for an id that names no queued or dispatched prompt")
+    @MainActor
+    func cancelPromptReportsAlreadyFinishedForFinishedPrompt() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let id = await session.enqueue(prompt: "one and done")
+        _ = try await session.dispatchNextPrompt()
+
+        #expect(await session.cancelPrompt(id: id) == .alreadyFinished)
     }
 }

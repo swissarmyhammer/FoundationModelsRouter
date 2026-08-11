@@ -1919,10 +1919,11 @@ struct TurnCancellationTests {
         // No hook installed, and none needed: this fold makes no model call at all,
         // which is exactly what must stay true — a cheap fold gained no cancellation
         // check of its own.
-        var events: [SessionEvent] = []
+        var collected: [SessionEvent] = []
         for try await event in await session.streamEvents(to: "folds-deterministically") {
-            events.append(event)
+            collected.append(event)
         }
+        let events = eventsAfterTurnFrame(collected)
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the turn's first event to be .compaction, got \(String(describing: events.first))")

@@ -115,6 +115,19 @@ public final class SessionProjection {
     /// ``apply(_:)`` does and does not refresh it.
     public private(set) var phase: Phase = .idle
 
+    /// The turn whose events this projection is currently mirroring, and the
+    /// queued prompt that caused it where there was one — the most recent
+    /// ``SessionEvent/turnStarted(_:)``, or `nil` before the first one arrives.
+    ///
+    /// This is what attributes everything below to a turn, and through
+    /// ``TurnStart/promptId`` to the prompt a client submitted: a session runs
+    /// one turn at a time, so every event applied after a frame belongs to that
+    /// frame's turn. Deliberately *not* cleared by
+    /// ``SessionEvent/turnEnded(_:)``: a turn that retries after a recovered
+    /// context overflow closes two of those inside one frame, so clearing on the
+    /// first would drop the identity of events still to come.
+    public private(set) var currentTurn: TurnStart?
+
     /// The running transcript observed so far, oldest first.
     public private(set) var transcript: [TranscriptEntry] = []
 
@@ -142,6 +155,8 @@ public final class SessionProjection {
     /// - Parameter event: The event to apply.
     public func apply(_ event: SessionEvent) {
         switch event {
+        case .turnStarted(let start):
+            currentTurn = start
         case .textDelta(let fragment):
             phase = .generating
             appendTextFragment(fragment)

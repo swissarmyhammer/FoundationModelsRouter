@@ -581,7 +581,7 @@ struct GuidedGenerationTests {
         // same proof `AutoCompactionTests.proactiveFoldPrefersFlashSummarizer()`
         // gives for the unguided path, now for a session vended through
         // `makeGuidedSession`.
-        let events = try await Self.collect(session.streamEvents(to: "turn 6", maxTokens: nil))
+        let events = eventsAfterTurnFrame(try await Self.collect(session.streamEvents(to: "turn 6", maxTokens: nil)))
 
         guard case .compaction(let result) = events.first else {
             Issue.record("expected the first event to be .compaction, got \(String(describing: events.first))")

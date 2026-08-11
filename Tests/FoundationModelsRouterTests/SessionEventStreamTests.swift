@@ -261,7 +261,7 @@ struct SessionEventStreamTests {
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "hi"))
-        #expect(events == [.textDelta("hello "), .textDelta("world")])
+        #expect(eventsAfterTurnFrame(events) == [.textDelta("hello "), .textDelta("world")])
     }
 
     // MARK: - Tool calls: toolCall + toolStatus(.running) then .completed
@@ -295,7 +295,7 @@ struct SessionEventStreamTests {
 
         let events = try await Self.collect(session.streamEvents(to: "weather?"))
         #expect(
-            events == [
+            eventsAfterTurnFrame(events) == [
                 .textDelta("it's sunny"),
                 .toolCall(id: "call-1", name: "search", argumentsJSON: arguments.jsonString),
                 .toolStatus(id: "call-1", status: .running, summary: nil),
@@ -334,7 +334,7 @@ struct SessionEventStreamTests {
 
         let events = try await Self.collect(session.streamEvents(to: "compare weather"))
         #expect(
-            events == [
+            eventsAfterTurnFrame(events) == [
                 .textDelta("ok"),
                 .toolCall(id: "call-a", name: "search", argumentsJSON: argumentsA.jsonString),
                 .toolStatus(id: "call-a", status: .running, summary: nil),
@@ -387,7 +387,7 @@ struct SessionEventStreamTests {
 
         let events = try await Self.collect(session.streamEvents(to: "compare weather"))
         #expect(
-            events == [
+            eventsAfterTurnFrame(events) == [
                 .textDelta("ok"),
                 .toolCall(id: "call-a", name: "search", argumentsJSON: argumentsA.jsonString),
                 .toolStatus(id: "call-a", status: .running, summary: nil),
@@ -521,7 +521,7 @@ struct SessionEventStreamTests {
 
         #expect(thrown as? ScriptedTranscriptBackend.StubError == .boom)
         #expect(
-            collected == [
+            eventsAfterTurnFrame(collected) == [
                 .toolCall(id: "call-1", name: "search", argumentsJSON: "{}"),
                 .toolStatus(id: "call-1", status: .running, summary: nil),
                 .toolStatus(id: "call-1", status: .completed, summary: "result"),

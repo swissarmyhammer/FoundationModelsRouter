@@ -314,7 +314,7 @@ struct RealToolTurnComparisonTests {
                 completedIds.append(id)
             case .toolStatus(let id, .failed, _):
                 failedIds.append(id)
-            case .toolStatus, .reasoningDelta, .compaction, .discoveryPrimingFailed, .turnEnded:
+            case .turnStarted, .toolStatus, .reasoningDelta, .compaction, .discoveryPrimingFailed, .turnEnded:
                 break
             }
         }

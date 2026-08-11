@@ -131,6 +131,15 @@ public actor SessionOutbox: OperationEventSink {
     /// Pending turn-starting prompts, in enqueue (FIFO) order.
     private var prompts: [PendingPrompt] = []
 
+    /// The prompt ``drainForDispatch()`` last committed, for as long as its turn
+    /// is still running — the queue's drained-but-not-finished slot.
+    ///
+    /// Filled by ``drainForDispatch()`` and emptied by ``finishDispatch()``, so
+    /// ``queueDepth()`` can report the work a session still owes a turn *and*
+    /// the work whose turn is already under way. Without it that second prompt
+    /// is invisible: it has left ``prompts`` and no other surface names it.
+    private var dispatched: PendingPrompt?
+
     /// Continuations parked by ``nextEvent()`` while the outbox is empty,
     /// resumed the next time either kind gains an item.
     private var wakeups: [CheckedContinuation<Void, Never>] = []
@@ -406,12 +415,63 @@ public actor SessionOutbox: OperationEventSink {
     ///
     /// - Returns: Every event pending at the moment of the call, plus the
     ///   next queued prompt (or `nil` if none was queued) — both now
-    ///   committed and no longer reported by ``pending()``.
+    ///   committed and no longer reported by ``pending()`` but, for the
+    ///   prompt, still reported by ``queueDepth()`` until
+    ///   ``finishDispatch()``.
     public func drainForDispatch() -> Drained {
         let drainedEvents = events
         events = []
         let drainedPrompt = prompts.isEmpty ? nil : prompts.removeFirst()
+        dispatched = drainedPrompt
         return Drained(events: drainedEvents, prompt: drainedPrompt)
+    }
+
+    /// Empties the drained-but-not-finished slot ``drainForDispatch()`` filled.
+    ///
+    /// Called by ``RoutedSession/dispatchNextPrompt()`` on every exit its turn
+    /// has — returned response, thrown error, cancellation — so a prompt is
+    /// counted by ``queueDepth()`` for exactly as long as this session still
+    /// owes it a turn, and never after.
+    func finishDispatch() {
+        dispatched = nil
+    }
+
+    /// How much queued user-prompt work a session is carrying, counting the
+    /// prompt whose turn is already running.
+    ///
+    /// ``pending()`` reports only what is still waiting; between
+    /// ``drainForDispatch()`` and ``finishDispatch()`` a prompt is in neither
+    /// place, and this is what names it there.
+    public struct QueueDepth: Sendable, Equatable {
+        /// How many prompts are still waiting in the queue.
+        public let queued: Int
+
+        /// The prompt ``drainForDispatch()`` committed whose turn has not
+        /// finished, or `nil` when no dispatched prompt is outstanding.
+        public let dispatched: ItemID?
+
+        /// Every prompt this session still owes a turn, waiting and dispatched
+        /// together.
+        public var total: Int { queued + (dispatched == nil ? 0 : 1) }
+
+        /// Creates a queue-depth snapshot.
+        ///
+        /// - Parameters:
+        ///   - queued: How many prompts are still waiting in the queue.
+        ///   - dispatched: The dispatched prompt's id, or `nil` when none is
+        ///     outstanding.
+        public init(queued: Int, dispatched: ItemID?) {
+            self.queued = queued
+            self.dispatched = dispatched
+        }
+    }
+
+    /// A snapshot of this outbox's prompt-queue depth, including the prompt
+    /// whose turn is already running.
+    ///
+    /// - Returns: The current ``QueueDepth``.
+    public func queueDepth() -> QueueDepth {
+        QueueDepth(queued: prompts.count, dispatched: dispatched?.id)
     }
 
     /// Suspends while the outbox is empty (no pending events, no pending

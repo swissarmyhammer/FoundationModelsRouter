@@ -214,10 +214,12 @@ extension RoutedSessionActor {
     ///     before this feature existed.
     ///   - onEvent: A sink this diff's derived ``SessionEvent``s (tool
     ///     calls/status, reasoning) are emitted to as each diff partial is
-    ///     recorded, or `nil` to skip derivation entirely — the cost of a
-    ///     `nil` sink is exactly the branch in
+    ///     recorded, or `nil` to skip derivation entirely. Every turn now
+    ///     supplies one — ``RoutedSessionActor/turnEventSink(_:)`` composes the
+    ///     turn's own stream with the session-scoped fan-out and is never
+    ///     `nil` — so the `nil` branch in
     ///     ``emitSessionEvents(for:dispatchedToolCallIds:completedToolCallIds:onEvent:)``
-    ///     that returns immediately.
+    ///     is reached only by a caller of this method that supplies none.
     /// - Returns: Whether this diff included a `.response`-kind entry — the
     ///   throwing path in ``generate(grammar:prompt:onEvent:_:)`` uses this to
     ///   decide whether a synthetic bodyless close is still needed, so a turn
@@ -270,7 +272,8 @@ extension RoutedSessionActor {
         // (`.toolOutput`), in request order — consulted once the loop finishes
         // to report any call whose output never arrived within this same
         // diff as ``SessionEvent/toolStatus(id:status:summary:)`` `.failed`.
-        // Stay empty (and cost nothing further) when `onEvent` is `nil`.
+        // Stay empty (and cost nothing further) when `onEvent` is `nil`, which
+        // no turn's own sink is.
         var dispatchedToolCallIds: [String] = []
         var completedToolCallIds: Set<String> = []
 
@@ -359,8 +362,11 @@ extension RoutedSessionActor {
     /// generation, so re-emitting it here would duplicate it.
     ///
     /// A no-op — including no mutation of either tracking array — whenever
-    /// `onEvent` is `nil`, so this costs nothing on the ``respond(to:maxTokens:)``/
-    /// ``dispatchNextPrompt()`` paths, which never supply one.
+    /// `onEvent` is `nil`. That is no longer the ``respond(to:maxTokens:)``/
+    /// ``dispatchNextPrompt()`` case: those turns derive their events too now,
+    /// through the composed sink ``RoutedSessionActor/turnEventSink(_:)`` builds,
+    /// so a ``RoutedSession/streamSessionEvents()`` subscriber sees them
+    /// whichever entry point ran the turn.
     ///
     /// - Parameters:
     ///   - partial: The diff partial just recorded.
