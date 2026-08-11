@@ -128,16 +128,19 @@ extension RoutedSessionActor {
     ///
     /// A no-op when `events` is empty, so an empty outbox never touches
     /// ``outbox`` here — preserving byte-identical behavior for the common
-    /// case. Re-posted events go back through ``SessionOutbox/post(_:)``'s
-    /// normal coalescing policy and are assigned fresh ``SessionOutbox/ItemID``s
-    /// (the drain that removed them was already the commit point for their
-    /// original ids); what matters is that no event this method is reached
+    /// case. Re-queued events go back through ``SessionOutbox/requeue(_:)``,
+    /// which applies the same coalescing policy ``SessionOutbox/post(_:)``
+    /// does and assigns fresh ``SessionOutbox/ItemID``s (the drain that
+    /// removed them was already the commit point for their original ids), but
+    /// deliberately does *not* journal them a second time: the run reported
+    /// once, and the transcript already recorded that one report at the moment
+    /// it happened. What matters here is that no event this method is reached
     /// with is ever silently destroyed.
     ///
     /// - Parameter events: The events to re-queue, in outbox order.
     func requeueUnattachedPendingEvents(_ events: [OperationEvent]) async {
         for event in events {
-            await outbox.post(event)
+            await outbox.requeue(event)
         }
     }
 

@@ -179,13 +179,15 @@ extension RoutedSessionActor {
     /// See ``RoutedSession/close()``.
     ///
     /// Runs ``mailbox``'s ``SessionMailbox/sweep()``, then journals each
-    /// terminal event it produced as a `.toolOutput`-kind recorded event
-    /// whose entry is a real `Transcript.Entry.toolOutput` carrying the
-    /// event as a typed ``OperationEventSegment`` — the same durable shape a
-    /// turn-drained event takes on a recorded `.prompt` entry (see
-    /// ``appendingOperationEventSegments(_:to:)``). The journal is complete
+    /// terminal event it produced through ``makeRunEventPartial(for:)`` —
+    /// the same shape, and the same code, a run's own reports take when they
+    /// are journaled live (see ``record(_:)``). The journal is complete
     /// before this method returns: exactly one terminal event per parked
     /// run, no orphans, no holes.
+    ///
+    /// A sweep only ever produces terminals for runs still parked, and a run
+    /// that settled on its own already journaled its own terminal at that
+    /// moment, so the two paths never record one run's ending twice.
     ///
     /// **Restore-time decision, stated deliberately:** these `.toolOutput`
     /// events are entry-kind, so ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
@@ -215,15 +217,7 @@ extension RoutedSessionActor {
         guard !terminalEvents.isEmpty else { return }
         await recordSessionMetaIfNeeded()
         for event in terminalEvents {
-            let entry = Transcript.Entry.toolOutput(
-                Transcript.ToolOutput(
-                    id: event.correlationID,
-                    toolName: event.tool,
-                    segments: [.custom(OperationEventSegment(content: event))]
-                )
-            )
-            let (kind, payload, text) = TranscriptEntryMapper.event(from: entry)
-            await append(partial: makePartialEvent(kind: kind, text: text, entry: payload))
+            await append(partial: makeRunEventPartial(for: event))
         }
     }
 }

@@ -24,7 +24,11 @@ import FoundationModels
 ///   ``OperationEventKind/completed`` and every
 ///   ``OperationEventKind/elicitation`` event is kept, in post order — each
 ///   elicitation is its own question, never a newer revision of an older
-///   one.
+///   one. Independently of all that staging, every posted event is also
+///   recorded in the session's transcript as it arrives, through the
+///   ``OperationEventJournal`` ``attach(journal:)`` installs — see
+///   ``post(_:)`` for why the transcript keeps what the prompt coalesces
+///   away.
 /// - **Turn-starting prompts** (``PendingPrompt``) — full `Transcript.Prompt`s
 ///   (queued user messages), never coalesced, dispatched strictly in enqueue
 ///   order, one turn each. This actor owns the storage, kinds, ids, and the
@@ -131,11 +135,66 @@ public actor SessionOutbox: OperationEventSink {
     /// resumed the next time either kind gains an item.
     private var wakeups: [CheckedContinuation<Void, Never>] = []
 
+    /// Where every ``post(_:)`` also records its event as it arrives, or `nil`
+    /// until ``attach(journal:)`` installs one — see ``OperationEventJournal``
+    /// for why this reference is weak.
+    private weak var journal: (any OperationEventJournal)?
+
+    /// The FIFO chain every journal write is enqueued onto — see
+    /// ``enqueueJournalWrite(_:)``.
+    private var journalChain = SerialAsyncChain()
+
     /// Creates an empty outbox.
     public init() {}
 
     /// Posts one ``OperationEvent`` — the ``OperationEventSink`` conformance
     /// the session's tool-side event route posts through.
+    ///
+    /// Two things happen to every posted event, and they are independent: it
+    /// is staged for the next prompt under ``stage(_:)``'s coalescing policy,
+    /// and it is recorded in this session's transcript through the attached
+    /// ``OperationEventJournal`` — so a run that finishes long after its own
+    /// turn ended has a recorded outcome the moment it reports one, instead
+    /// of only once some later prompt drains it.
+    ///
+    /// Coalescing is a *prompt-composition* policy, and it applies only to
+    /// what is still pending. The ``journal`` sees every posted event,
+    /// uncoalesced, in post order: the transcript is the record of what the
+    /// run reported, so dropping a superseded `.progress` there would delete
+    /// history rather than shorten a prompt. Both statements stay true at
+    /// once — the transcript holds every progress report, and the next prompt
+    /// carries only the latest one per run — and neither ever rewrites what
+    /// has already been appended.
+    ///
+    /// - Parameter event: The event to post.
+    public func post(_ event: OperationEvent) async {
+        // Enqueued before the staging decision and before any suspension, so
+        // the journal's order is exactly this outbox's post order.
+        let journalWrite = enqueueJournalWrite(event)
+        stage(event)
+        wakeUp()
+        await journalWrite?.value
+    }
+
+    /// Restages an event a turn drained but never delivered, without
+    /// journaling it a second time.
+    ///
+    /// ``RoutedSessionActor/requeueUnattachedPendingEvents(_:)`` reaches here
+    /// rather than ``post(_:)`` because a re-stage is not a new report: the
+    /// run reported once, the journal already recorded that one report at the
+    /// moment it happened, and recording it again would claim the run
+    /// reported twice. An event that was never journaled at all — one posted
+    /// before this outbox had a journal — is likewise unaffected, and still
+    /// reaches the transcript on the turn it eventually rides.
+    ///
+    /// - Parameter event: The event to restage, under the same coalescing
+    ///   policy ``post(_:)`` applies.
+    func requeue(_ event: OperationEvent) {
+        stage(event)
+        wakeUp()
+    }
+
+    /// Stages one event as pending, applying this outbox's coalescing policy.
     ///
     /// A `.completed` or `.elicitation` event is always appended, never
     /// coalesced — each elicitation is its own question, so a newer one never
@@ -145,8 +204,8 @@ public actor SessionOutbox: OperationEventSink {
     /// item's original id and position), or is appended as a new pending item
     /// when none is pending yet for that pair.
     ///
-    /// - Parameter event: The event to post.
-    public func post(_ event: OperationEvent) async {
+    /// - Parameter event: The event to stage.
+    private func stage(_ event: OperationEvent) {
         switch event.kind {
         case .completed, .elicitation:
             appendNewPendingEvent(event)
@@ -160,7 +219,39 @@ public actor SessionOutbox: OperationEventSink {
                 appendNewPendingEvent(event)
             }
         }
-        wakeUp()
+    }
+
+    /// Installs `journal` as the destination every subsequently posted event
+    /// is recorded into.
+    ///
+    /// Called from ``RoutedSessionActor/attachOutboxJournalIfNeeded()`` at the
+    /// top of every turn, which is the earliest moment the owning session
+    /// exists *and* a tool of its own could post: a tool only ever runs inside
+    /// a turn, so no run's own event can be posted before its journal is in
+    /// place. Events staged before then — the `.lost` terminals a restore
+    /// manufactures onto a fresh outbox — deliberately keep the behavior they
+    /// have always had, reaching the transcript on the turn that drains them.
+    ///
+    /// - Parameter journal: The journal to install.
+    func attach(journal: any OperationEventJournal) {
+        self.journal = journal
+    }
+
+    /// Chains one journal write onto ``journalChain`` and returns it for the
+    /// caller to await.
+    ///
+    /// The chain is what makes the transcript's order of journaled events
+    /// exactly this outbox's post order. Awaiting the journal inline instead
+    /// would suspend ``post(_:)`` on this actor, letting a concurrent post of
+    /// another run overtake it, and position in the transcript is the record.
+    ///
+    /// - Parameter event: The event to record.
+    /// - Returns: The chained write, or `nil` when no journal is attached —
+    ///   the pre-first-turn case, which stays exactly as costly as it was
+    ///   before a journal existed.
+    private func enqueueJournalWrite(_ event: OperationEvent) -> Task<Void, Never>? {
+        guard let journal else { return nil }
+        return journalChain.enqueue { await journal.record(event) }
     }
 
     /// Appends `event` onto ``events`` as a brand-new pending item with a

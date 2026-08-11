@@ -1022,8 +1022,8 @@ private actor RunEventFunnel: OperationEventSink {
     /// reconciliation.
     private var trackedElicitationIds: Set<ULID> = []
 
-    /// The tail of the FIFO upstream-delivery chain.
-    private var latestDelivery: Task<Void, Never>?
+    /// The FIFO chain every upstream delivery is enqueued onto.
+    private var deliveryChain = SerialAsyncChain()
 
     /// Creates the funnel for one run.
     ///
@@ -1125,17 +1125,11 @@ private actor RunEventFunnel: OperationEventSink {
         )
     }
 
-    /// Chains one upstream delivery behind whatever is already in flight —
-    /// strict FIFO, decided synchronously on this actor — and returns the
-    /// delivery for the caller to await.
+    /// Chains one upstream delivery onto ``deliveryChain`` and returns it for
+    /// the caller to await, so a run's own events reach the sink in the order
+    /// the run posted them.
     private func enqueueUpstream(_ event: OperationEvent) -> Task<Void, Never> {
-        let previous = latestDelivery
         let upstream = self.upstream
-        let delivery = Task {
-            await previous?.value
-            await upstream.post(event)
-        }
-        latestDelivery = delivery
-        return delivery
+        return deliveryChain.enqueue { await upstream.post(event) }
     }
 }

@@ -53,10 +53,17 @@ extension RoutedSessionActor {
     /// turn lock (``fork(workingDirectory:)``) takes it without ever wanting the
     /// generation gate, so a single acquisition order is what keeps the pair
     /// deadlock-free. Paired with exactly one ``endTurn()``.
+    ///
+    /// Also where this session installs itself as ``outbox``'s run journal
+    /// (``attachOutboxJournalIfNeeded()``): both turn entry points reach here,
+    /// and a tool is only ever invoked from inside a turn's model call, so
+    /// every event a run of this session posts is journaled the moment it is
+    /// posted.
     func beginTurn() async {
         await turnLock.wait()
         lastTurnId += 1
         currentTurnId = lastTurnId
+        await attachOutboxJournalIfNeeded()
         await acquireGenerationPermit()
     }
 

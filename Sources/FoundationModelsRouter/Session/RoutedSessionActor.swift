@@ -288,6 +288,15 @@ actor RoutedSessionActor: RoutedSession {
     /// can emit it twice.
     var didRecordSessionMeta = false
 
+    /// Whether this session has installed itself as ``outbox``'s
+    /// ``OperationEventJournal``.
+    ///
+    /// Flipped by ``attachOutboxJournalIfNeeded()`` at the top of the first
+    /// turn — the earliest point at which a tool of this session's own could
+    /// post a run event. Guarded by the actor's isolation, so a reentrant turn
+    /// cannot attach twice.
+    var didAttachOutboxJournal = false
+
     /// How many of ``backend``'s ``LanguageModelSessionBackend/transcriptEntries()``
     /// have already been persisted, so each turn's post-generation snapshot can
     /// diff against it to find only what the SDK appended *this* turn.
