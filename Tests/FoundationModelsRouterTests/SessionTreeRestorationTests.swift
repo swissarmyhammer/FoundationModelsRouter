@@ -156,15 +156,10 @@ struct SessionTreeRestorationTests {
         )
     }
 
-    /// A router id's recording root.
-    private func routerDirectory(routerId: ULID, recordingsDir: URL) -> URL {
-        recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
-    }
-
     /// The id of every session recorded under a router id's recording root.
     private func recordedSessionIds(routerId: ULID, recordingsDir: URL) throws -> Set<ULID> {
         let tree = try TranscriptTree.load(
-            under: routerDirectory(routerId: routerId, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: routerId, recordingsDir: recordingsDir))
         func ids(_ node: SessionNode) -> [ULID] { [node.id] + node.children.flatMap(ids) }
         return Set(tree.roots.flatMap(ids))
     }
@@ -251,8 +246,8 @@ struct SessionTreeRestorationTests {
         // forkA: root's 2 inherited + its own 1 turn == 4.
         // forkB: root's 2 inherited + no own turn == 2.
         // grandfork: forkA's 4 inherited + its own 1 turn == 6.
-        let routerDirectory = recordingsDir.appendingPathComponent(
-            router1.id.description, isDirectory: true)
+        let routerDirectory = RouterTestFixtures.routerDirectory(
+            routerId: router1.id, recordingsDir: recordingsDir)
         let tree = try TranscriptTree.load(under: routerDirectory)
         #expect(try tree.effectiveEntryEvents(forSession: root.id).count == 2)
         #expect(try tree.effectiveEntryEvents(forSession: forkA.id).count == 4)
@@ -331,7 +326,7 @@ struct SessionTreeRestorationTests {
 
         // A sidecar is write-once, so restoring a session must not touch the
         // one already sitting in its directory — byte-for-byte.
-        let rootSidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let rootSidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent("session.json", isDirectory: false)
         let bytesBeforeRestore = try Data(contentsOf: rootSidecarURL)
@@ -356,7 +351,7 @@ struct SessionTreeRestorationTests {
         )
         let newForkNode = try #require(
             try TranscriptTree.load(
-                under: routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+                under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             )
             .session(newFork.id)
         )
@@ -406,7 +401,7 @@ struct SessionTreeRestorationTests {
         // Restamp the recorded root sidecar with a version this reader does
         // not know — the fabricated future-version recording of the
         // acceptance criteria.
-        let sidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent("session.json", isDirectory: false)
         let futureVersion = RecordingSchemaVersion.current + 1
@@ -475,7 +470,7 @@ struct SessionTreeRestorationTests {
         // bypassing the normal makeSession/fork vending paths, with a slot no
         // generation handle exists for.
         let fabricatedId = ULID.generate()
-        let fabricatedDirectory = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let fabricatedDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             .appendingPathComponent(fabricatedId.description, isDirectory: true)
         try SessionSidecar.write(
             SessionSidecar(
@@ -605,7 +600,7 @@ struct SessionTreeRestorationTests {
         // compaction checkpoint referencing them directly onto the session's
         // own transcript.jsonl — the exact shape `RoutedSession.compact(prompt:budget:)`
         // itself appends, without driving the whole pipeline through a stub.
-        let routerDir = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let routerDir = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let treeBeforeCheckpoint = try TranscriptTree.load(under: routerDir)
         let rawEvents = try treeBeforeCheckpoint.events(forSession: root.id)
         let prompts = rawEvents.filter { $0.kind == .prompt }
@@ -911,7 +906,7 @@ struct SessionTreeRestorationTests {
         // pre-envelope recording carries (the additive-schema acceptance:
         // an absent key must decode as nil and restore with today's
         // defaults, never fail).
-        let sidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent("session.json", isDirectory: false)
         var json = try #require(
@@ -965,7 +960,7 @@ struct SessionTreeRestorationTests {
         // stays on disk and stays readable from the loaded tree (both the
         // sidecar's own field and the configuration envelope carry it).
         let tree = try TranscriptTree.load(
-            under: routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
         let sidecar = try #require(tree.session(root.id)?.sidecar)
         #expect(sidecar.agentSpawn == spawn)
         #expect(sidecar.configuration?.agentSpawn == spawn)
@@ -998,7 +993,7 @@ struct SessionTreeRestorationTests {
         // Rewrite the recorded context to a figure the live resolution does
         // not match — the on-disk stand-in for a recording made on a machine
         // whose context ladder settled on a different rung.
-        let sidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let sidecarURL = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
             .appendingPathComponent(root.id.description, isDirectory: true)
             .appendingPathComponent("session.json", isDirectory: false)
         var json = try #require(
@@ -1074,7 +1069,7 @@ struct SessionTreeRestorationTests {
         let root = profile1.standard.makeSession()
         _ = try await root.respond(to: "hello")
 
-        let routerDir = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let routerDir = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let recordedEvents = try TranscriptTree.load(under: routerDir).events(forSession: root.id)
         let corruptSeq = recordedEvents.count
         let corruptEvent = Self.corruptCustomSegmentEvent(

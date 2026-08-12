@@ -86,11 +86,6 @@ struct ForkAfterCompactionRestorationTests {
         )
     }
 
-    /// A router id's recording root under `recordingsDir`.
-    private static func routerDirectory(routerId: ULID, recordingsDir: URL) -> URL {
-        recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
-    }
-
     /// Decodes a fork's `session.json` as a raw JSON object, so a test can
     /// assert on the literal keys a sidecar carries.
     private static func sidecarJSON(at sidecarURL: URL) throws -> [String: Any] {
@@ -144,7 +139,7 @@ struct ForkAfterCompactionRestorationTests {
         // The fork's cut in history coordinates: how many entry-kind events
         // the parent's recorded history holds at fork time — the raw,
         // unfolded count, boundary entry included.
-        let routerDirectory = Self.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let entryEventCountAtFork = try TranscriptTree.load(under: routerDirectory)
             .effectiveEntryEvents(forSession: root.id).count
 
@@ -229,7 +224,7 @@ struct ForkAfterCompactionRestorationTests {
         // What the restored root was seeded with — the checkpoint's live
         // window plus everything recorded after it. The fork taken next
         // inherits exactly this conversation.
-        let routerDirectory = Self.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let restoredRootIds = try TranscriptTree.load(under: routerDirectory)
             .effectiveTranscript(forSession: root.id).map(\.id)
 
@@ -285,7 +280,7 @@ struct ForkAfterCompactionRestorationTests {
 
         // Rewrite the fork's sidecar without the new key, simulating a
         // recording written before the field existed.
-        let routerDirectory = Self.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let sidecarURL = Self.forkSidecarURL(
             routerDirectory: routerDirectory, rootId: root.id, forkId: fork.id)
         var json = try Self.sidecarJSON(at: sidecarURL)

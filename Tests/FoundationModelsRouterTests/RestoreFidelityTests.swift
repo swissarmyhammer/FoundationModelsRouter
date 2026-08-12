@@ -25,6 +25,12 @@ import Testing
 /// 3. **Driven restored forks.** A restored fork answers a new turn with
 ///    content that exists only in an entry it inherited from its parent, so
 ///    semantic continuity is proven without the integration gate.
+///
+/// The warm-up turns and the fold-budget floor come from the shared fold
+/// fixtures in `Helpers/CompactionFoldFixtures.swift` — ``driveTurns(_:on:)``
+/// and ``recencyWindowOnlyEstimate(_:)`` — and the recording root comes from
+/// ``RouterTestFixtures/routerDirectory(routerId:recordingsDir:)``, so the
+/// path rule and the fold math live in exactly one place each.
 @Suite("Restore fidelity: rich content, multi-fold, driven forks (task ^810gdjj)")
 struct RestoreFidelityTests {
     // MARK: - Fixtures
@@ -93,16 +99,6 @@ struct RestoreFidelityTests {
             StubSessionBackend(
                 responseText: responseText, entries: Array(transcript), registry: registry)
         }
-    }
-
-    /// A router's recording root under `recordingsDir`.
-    ///
-    /// - Parameters:
-    ///   - router: The router whose root to name.
-    ///   - recordingsDir: The durable transcripts root.
-    /// - Returns: The directory ``TranscriptTree/load(under:)`` reads.
-    private static func routerDirectory(router: Router, recordingsDir: URL) -> URL {
-        recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
     }
 
     /// `entries` in record-time canonical form: each mapped to its on-disk
@@ -219,7 +215,7 @@ struct RestoreFidelityTests {
         // ``canonicalized(_:)`` for the three live-only facets no persisted
         // form can keep, and task ^ja94kb6 for the two fixable ones.
         let tree = try TranscriptTree.load(
-            under: Self.routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let reconstructed = try tree.effectiveTranscript(forSession: session.id)
         #expect(Array(reconstructed) == (try Self.canonicalized(live)))
     }
@@ -280,7 +276,7 @@ struct RestoreFidelityTests {
 
         // Restore path 1: the reconstructed transcript equals the live one,
         // entry for entry.
-        let routerDirectory = Self.routerDirectory(router: router1, recordingsDir: recordingsDir)
+        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let tree = try TranscriptTree.load(under: routerDirectory)
         #expect(Array(try tree.effectiveTranscript(forSession: root.id)) == live)
 
@@ -353,7 +349,7 @@ struct RestoreFidelityTests {
         // The marker lives only in the parent's recorded span: the fork's
         // own file records no tool output at all, so a reply carrying the
         // marker can only come from inherited entries.
-        let routerDirectory = Self.routerDirectory(router: router1, recordingsDir: recordingsDir)
+        let routerDirectory = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let forkOwnEvents = try TranscriptTree.load(under: routerDirectory)
             .events(forSession: fork.id)
         #expect(!forkOwnEvents.contains { $0.kind == .toolOutput })

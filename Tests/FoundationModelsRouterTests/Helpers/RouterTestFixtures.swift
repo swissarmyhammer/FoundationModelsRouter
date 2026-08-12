@@ -160,4 +160,18 @@ enum RouterTestFixtures {
             loader: loader
         )
     }
+
+    /// A router id's recording root under `recordingsDir` — the directory
+    /// ``TranscriptTree/load(under:)`` reads.
+    ///
+    /// The one shared implementation of this path rule for every suite that
+    /// reads a recording root back from disk.
+    ///
+    /// - Parameters:
+    ///   - routerId: The id of the router that owns the recording root.
+    ///   - recordingsDir: The durable transcripts root.
+    /// - Returns: The recording root directory.
+    static func routerDirectory(routerId: ULID, recordingsDir: URL) -> URL {
+        recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
+    }
 }

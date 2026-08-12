@@ -374,10 +374,6 @@ struct TranscriptReconstructionTests {
         )
     }
 
-    private func routerDirectory(router: Router, recordingsDir: URL) -> URL {
-        recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
-    }
-
     // MARK: - Root session round trip
 
     @Test("effectiveTranscript reconstructs a root session's Transcript equal to its stub backend's own transcriptEntries()")
@@ -405,7 +401,7 @@ struct TranscriptReconstructionTests {
         _ = try await root.respond(to: "turn 2")
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let reconstructed = try tree.effectiveTranscript(forSession: root.id)
 
         let backend = try #require(registry.created.first)
@@ -451,7 +447,7 @@ struct TranscriptReconstructionTests {
         _ = try await forkB.respond(to: "forkB-turn-1")
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
         for (session, backend) in [
             (root, rootBackend), (forkA, forkABackend), (forkB, forkBBackend),
@@ -490,7 +486,7 @@ struct TranscriptReconstructionTests {
         _ = try await root.respond(to: "turn 1")
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
         var segmentRegistry = CustomSegmentRegistry()
         segmentRegistry.register(NoteSegment.self)
@@ -542,7 +538,7 @@ struct TranscriptReconstructionTests {
         _ = try await root.respond(to: "turn 1")
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let events = try tree.events(forSession: root.id)
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         #expect(promptEvent.entry?.contentRemoved == true)
@@ -651,7 +647,7 @@ struct TranscriptReconstructionTests {
         _ = try await root.respond(to: "turn 1")
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let node = try #require(tree.session(root.id))
         let originalEvents = try tree.events(forSession: root.id)
         let promptEvent = try #require(originalEvents.first { $0.kind == .prompt })
@@ -693,7 +689,7 @@ struct TranscriptReconstructionTests {
             encoding: .utf8
         )
 
-        let reloadedTree = try TranscriptTree.load(under: routerDirectory(router: router, recordingsDir: recordingsDir))
+        let reloadedTree = try TranscriptTree.load(under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         #expect(throws: TranscriptReconstructionError.entryReconstructionFailed(
             session: root.id,
             seq: promptEvent.seq,
@@ -735,7 +731,7 @@ struct TranscriptReconstructionTests {
         }
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let rawEvents = try tree.events(forSession: root.id)
         let closeEvent = try #require(rawEvents.last)
         #expect(closeEvent.kind == .response)
@@ -791,7 +787,7 @@ struct TranscriptReconstructionTests {
         #expect(backend.transcriptEntries().isEmpty)
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let rawEvents = try tree.events(forSession: root.id)
         // Only the session meta line and the synthetic bodyless close were
         // ever recorded — no `.prompt`/`.instructions` at all.
@@ -997,7 +993,7 @@ struct TranscriptReconstructionTests {
         _ = try await root.respond(to: "turn 2")
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let backend = try #require(registry.created.first)
 
         #expect(Array(try tree.effectiveTranscript(forSession: root.id)) == backend.transcriptEntries())

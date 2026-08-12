@@ -194,6 +194,7 @@ final class StructuredMarkerTool: MarkerRecordingTool, Sendable {
     }
 }
 
+// sah:allow duplication shares its recording shape with StructuredMarkerTool, but the two outputs are different types with different field lists — NonStringToolOutput(text:) is PromptRepresentable, StructuredMarkerOutput(marker:) is @Generable — and each tool exercises a different mounting route, so no shared function can hold the two bodies
 /// A `FoundationModels.Tool` whose `Output` is not `String`, carrying the same
 /// marker ``MarkerEmittingTool`` does.
 ///

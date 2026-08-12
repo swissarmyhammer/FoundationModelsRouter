@@ -147,12 +147,6 @@ struct TranscriptTreeTests {
         )
     }
 
-    /// This router's recording root — `recordings/<routerId>/` — the same
-    /// directory ``TranscriptTree/load(under:)`` reads.
-    private func routerDirectory(router: Router, recordingsDir: URL) -> URL {
-        recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
-    }
-
     // MARK: - Reusable branching-tree fixture
 
     /// Builds a 3-level branching tree on disk: a root session, two of its
@@ -258,7 +252,7 @@ struct TranscriptTreeTests {
         let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
         #expect(tree.session(root.id)?.id == root.id)
         #expect(tree.session(forkA.id)?.id == forkA.id)
@@ -288,7 +282,7 @@ struct TranscriptTreeTests {
         let (root, forkA, forkB, grandfork) = try await Self.buildBranchingTree(profile: profile)
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
         #expect(tree.roots.map(\.id) == [root.id])
         let rootNode = try #require(tree.roots.first)
@@ -337,7 +331,7 @@ struct TranscriptTreeTests {
         let (root, forkA, _, grandfork) = try await Self.buildBranchingTree(profile: profile)
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
         let forkAEvents = try tree.events(forSession: forkA.id)
         // forkA's own file: one session-meta line, plus one prompt/response
@@ -385,7 +379,7 @@ struct TranscriptTreeTests {
         )
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
         // Uninstructed turns: one prompt + one response entry each, so
         // forkA's baseline is 2 (root's one prior turn) and grandfork's
@@ -428,7 +422,7 @@ struct TranscriptTreeTests {
         let (root, _, _, _) = try await Self.buildBranchingTree(profile: profile)
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let effective = try tree.effectiveEntryEvents(forSession: root.id)
         #expect(effective.map(\.kind) == [.prompt, .response])
         #expect(effective.first?.text == "root-turn-1")
@@ -462,7 +456,7 @@ struct TranscriptTreeTests {
         _ = try await fork.respond(to: "fork-turn-1")
 
         let tree = try TranscriptTree.load(
-            under: routerDirectory(router: router, recordingsDir: recordingsDir))
+            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
         let rootNode = try #require(tree.session(root.id))
         #expect(rootNode.parentId == nil)
@@ -500,7 +494,7 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let (root, forkA, _, _) = try await Self.buildBranchingTree(profile: profile)
 
-        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         // Sanity: the tree loads, with the shape we expect, before the delete.
         #expect(try TranscriptTree.load(under: routerDir).roots.map(\.id) == [root.id])
 
@@ -539,7 +533,7 @@ struct TranscriptTreeTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let (root, forkA, forkB, _) = try await Self.buildBranchingTree(profile: profile)
 
-        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         // Sanity: both forks load, and the root reconstructs, before the delete.
         let before = try TranscriptTree.load(under: routerDir)
         // The *set* of children, not their order: two forks minted in the
@@ -585,7 +579,7 @@ struct TranscriptTreeTests {
         let root = profile.standard.makeSession()
         _ = try await root.respond(to: "root-turn-1")
 
-        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         let rootDirectory = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
         let sidecarURL = rootDirectory.appendingPathComponent("session.json", isDirectory: false)
         try FileManager.default.removeItem(at: sidecarURL)
@@ -619,7 +613,7 @@ struct TranscriptTreeTests {
 
         // Restamp the recorded sidecar with a version this reader does not
         // know, the way a recording written by a newer router would carry it.
-        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         let rootDirectory = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
         let sidecarURL = rootDirectory.appendingPathComponent("session.json", isDirectory: false)
         let futureVersion = RecordingSchemaVersion.current + 1
@@ -809,7 +803,7 @@ struct TranscriptTreeTests {
         let root = profile.standard.makeSession()
         _ = try await root.respond(to: "root-turn-1")
 
-        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        let routerDir = RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir)
         let tree = try TranscriptTree.load(under: routerDir)
         let rootDirectory = try #require(tree.session(root.id)).directory
 

@@ -38,6 +38,50 @@ comments:
     - evidence: 7 files — Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift (new), Tests/FoundationModelsRouterTests/TranscriptEntryMapperTests.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedTurnScript.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedToolCallingModel.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedMarkerTools.swift, Tests/FoundationModelsRouterTests/Helpers/StubSessionBackend.swift, Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift. One ungated `swift test`: 942 tests (891 + 27 + 24), 0 failures. Follow-up product task ^ja94kb6 filed for the two fixable mapper fidelity degradations.
     - next: review the task (/review), then implement ^ja94kb6 to tighten group 1's canonical-form comparison.
   timestamp: 2026-08-12T18:00:00.878198+00:00
+- actor: claude-code
+  id: 01kzvjmjwh4kd6hx909v2ctfx4
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 4b8e883); engine gave 6 findings; 2 dropped by the written waiver for tests that existed before this commit (RouterTestFixtures.swift:28, ScriptedToolCallingModel.swift:43); 4 findings stay — ScriptedMarkerTools.swift:204, RestoreFidelityTests.swift:71, RestoreFidelityTests.swift:104, RestoreFidelityTests.swift:255
+    - next: obey the 4 findings in the new "## Review Findings (2026-08-12 13:01)" section, then request a new review pass
+  timestamp: 2026-08-12T18:09:32.049511+00:00
+- actor: claude-code
+  id: 01kzvjnmm26sec9er5g8cnsdk8
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 7 files; four ungated test groups (rich tool turn via full disk path, mapper full-entry round trips, two live folds then restore, driven restored fork); follow-up ^ja94kb6 filed for two fixable mapper losses
+    - test: green — swift test, 942 tests (891 + 27 + 24), 0 failures (the one implement run is the test evidence)
+    - commit: 4b8e883
+    - review: findings — 4 open: ScriptedMarkerTools.swift:204, RestoreFidelityTests.swift:71, :104, :255 (2 waived, pre-existing tests)
+  timestamp: 2026-08-12T18:10:06.594173+00:00
+- actor: claude-code
+  id: 01kzvk35srexq6tfkseb1v27cz
+  text: |-
+    Research for the four open findings:
+    - ScriptedMarkerTools.swift:204 — `NonStringMarkerTool` and the new `StructuredMarkerTool` build outputs of different types with different field lists (`NonStringToolOutput(text:)` is `PromptRepresentable`; `StructuredMarkerOutput(marker:)` is `@Generable`). The two tools also test different mounting routes. No shared function can hold the two bodies. The repo precedent for this case is the `// sah:allow duplication <reason>` marker (see Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift and RoutedLLM.swift). The duplication rule text says: put the marker on the line above the flagged definition and write the reason.
+    - RestoreFidelityTests.swift:71 and :255 — `recencyWindowOnlyEstimate` and `driveTurns` ARE defined: they are the shared free functions in Tests/FoundationModelsRouterTests/Helpers/CompactionFoldFixtures.swift (lines 46 and 27). The suite compiles and all tests pass, so the "not defined / uncompilable" premise is not correct. The finding's requirement sentence is: "The pattern ... should be consistent: either imported as a shared helper or defined locally like peer test files do." A local copy would break the reuse rule ("call the existing one") and the duplication rule. The correct fix is the first branch: make the shared-helper pattern consistent. Two private clones of `recencyWindowOnlyEstimate` exist: AutoCompactionTests.swift:169 (literal 4 == defaultKeepRecentTurns) and GuidedGenerationTests.swift `autoCompactionRecencyWindowOnlyEstimate`. Remove them and call the shared helper. `driveTurns` has exactly one definition already. Add a pointer to the shared fixtures in the RestoreFidelityTests suite doc so a reader finds the definitions.
+    - RestoreFidelityTests.swift:104 — six private copies of `routerDirectory` exist (RestoreFidelityTests, SessionTreeRestorationTests, TranscriptReconstructionTests, CompactionSegmentTests, TranscriptTreeTests, ForkAfterCompactionRestorationTests). Extract one shared `RouterTestFixtures.routerDirectory(routerId:recordingsDir:)` and make all six files call it, as the finding asks.
+  timestamp: 2026-08-12T18:17:30.168269+00:00
+- actor: claude-code
+  id: 01kzvm38xtq6j5ksestzy0xtyj
+  text: |-
+    All four findings are fixed. What changed, and why:
+
+    1. ScriptedMarkerTools.swift:204 — added `// sah:allow duplication <reason>` on the line above `NonStringMarkerTool`. The two tools build outputs of different types with different field lists (`NonStringToolOutput(text:)` vs `@Generable StructuredMarkerOutput(marker:)`) and each exercises a different mounting route, so no shared function can hold the two bodies. This is the repo's written pattern for that case (TranscriptEvent.swift, RoutedLLM.swift).
+    2. RestoreFidelityTests.swift:104 — extracted the shared `RouterTestFixtures.routerDirectory(routerId:recordingsDir:)` and made ALL six files that had a private copy call it: RestoreFidelityTests, SessionTreeRestorationTests (also one inline `appendingPathComponent` construction), TranscriptReconstructionTests, CompactionSegmentTests, TranscriptTreeTests, ForkAfterCompactionRestorationTests. The six private definitions are gone.
+    3. RestoreFidelityTests.swift:71 and :255 — the two helpers ARE defined: they are the shared free functions in Helpers/CompactionFoldFixtures.swift (`recencyWindowOnlyEstimate` line 46, `driveTurns` line 27), so the suite compiled and passed before this fix. The finding's requirement sentence gives two consistent patterns; a local copy would break the reuse rule ("call the existing one, not duplicate the capability") and the duplication rule, so the shared-helper branch is the correct one. To make that pattern consistent, the two private clones of `recencyWindowOnlyEstimate` are removed (AutoCompactionTests.swift:169 and GuidedGenerationTests' `autoCompactionRecencyWindowOnlyEstimate`; both used the literal 4, equal to `defaultKeepRecentTurns`, so behavior is identical) and their call sites now use the shared helper. The RestoreFidelityTests suite doc now names the shared fixtures so a reader finds the definitions.
+
+    Sweep of the task's other files (ScriptedTurnScript, ScriptedToolCallingModel, StubSessionBackend, TranscriptEntryMapperTests): `driveTurns` has exactly one definition, no other `routerDirectory` or estimate clones exist, and no new near-duplicate pairs were added.
+
+    Verification: `swift build --build-tests` clean; ONE ungated `swift test`: 942 tests (891 + 27 + 24), 0 failures; the 1 known issue is the pre-existing deliberate withKnownIssue in BoundedWait. Behavior unchanged — no test body changed, only helper consolidation.
+  timestamp: 2026-08-12T18:35:01.946209+00:00
+- actor: claude-code
+  id: 01kzvm3nyf3ty84b2a8svwtcfj
+  text: |-
+    ### implement — changed
+    - evidence: 10 files — Tests/FoundationModelsRouterTests/Helpers/ScriptedMarkerTools.swift (sah:allow duplication marker on NonStringMarkerTool), Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift (new shared routerDirectory(routerId:recordingsDir:)), Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift, SessionTreeRestorationTests.swift, TranscriptReconstructionTests.swift, CompactionSegmentTests.swift, TranscriptTreeTests.swift, ForkAfterCompactionRestorationTests.swift (private routerDirectory copies removed, call sites moved to the shared helper), AutoCompactionTests.swift, GuidedGenerationTests.swift (private recencyWindowOnlyEstimate clones removed, call sites moved to the shared CompactionFoldFixtures helper). One ungated `swift test`: 942 tests (891 + 27 + 24), 0 failures.
+    - next: run /review for a fresh pass over the fixes; the task stays in doing.
+  timestamp: 2026-08-12T18:35:15.279213+00:00
 depends_on:
 - 01KZR9YPHRGDCZ26R5BH1008KB
 - 01KZR9Z6QH9WVXVSX9T6Z1MSG1
@@ -67,4 +111,16 @@ Add always-run tests (stub/scripted backends, no GPU):
 ## Acceptance
 
 - All four test groups run in the default (ungated) suite and pass.
-- At least one test asserts full entry-array equality for a transcript containing all six entry kinds. #transcript
+- At least one test asserts full entry-array equality for a transcript containing all six entry kinds.
+
+## Review Findings (2026-08-12 13:01)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/ScriptedMarkerTools.swift:204` — type `NonStringMarkerTool` is a near-duplicate of `StructuredMarkerTool` at Tests/FoundationModelsRouterTests/Helpers/ScriptedMarkerTools.swift:165 (63 tokens, 95% alike).
+- [x] `Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift:71` — Function `recencyWindowOnlyEstimate` is called but not defined in RestoreFidelityTests, while clone-siblings evidence shows this helper is defined locally in other test suites (e.g., AutoCompactionTests.swift:168). The pattern of computing transcript size estimates should be consistent: either imported as a shared helper or defined locally like peer test files do. Define `recencyWindowOnlyEstimate` as a static method in RestoreFidelityTests, mirroring the implementation in AutoCompactionTests and other similar test suites.
+- [x] `Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift:104` — The `routerDirectory` function reimplements directory path construction that already exists in multiple other test files (0.97–0.98 similarity), instead of calling or extending a shared utility. Extract `routerDirectory` to a shared test utility location (e.g., RouterTestFixtures.swift or CompactionFoldFixtures.swift) so all test files that need to construct router recording directories call the same shared implementation rather than duplicating it.
+- [x] `Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift:255` — Function `driveTurns` is called but not defined anywhere in RestoreFidelityTests. This test helper is needed to execute warm-up turns before fold operations, but the implementation is missing, making the test uncompilable. Define `driveTurns` as a static helper method in RestoreFidelityTests that drives N turns on a session (similar to patterns in other fold-testing suites).
+
+### Waived findings (2026-08-12 13:01)
+
+- Dropped: `Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:28` (magic numbers). The line is from commit 3b0f756 (2026-08-04). This commit did not change the line. The written waiver for tests that existed before this commit applies.
+- Dropped: `Tests/FoundationModelsRouterTests/Helpers/ScriptedToolCallingModel.swift:43` (`Executor` near-duplicate of `ScriptedToolCallingModel`). The two types are from commit fe0a645 (2026-08-10). This commit did not change the anchor lines, and the duplication existed before this commit. The written waiver for tests that existed before this commit applies. #transcript

@@ -360,10 +360,6 @@ struct CompactionSegmentTests {
         )
     }
 
-    private func routerDirectory(routerId: ULID, recordingsDir: URL) -> URL {
-        recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
-    }
-
     // MARK: - Recording-mirror round trip, all-default arguments (effectiveTranscript)
 
     @Test("a synthesized transcript carrying a CompactionSegment records through the mirror and reconstructs identically through effectiveTranscript's default (routerDefault) registry")
@@ -391,7 +387,7 @@ struct CompactionSegmentTests {
         let session = profile.standard.makeSession()
         _ = try await session.respond(to: "irrelevant — this turn exists only to trigger the recording chokepoint")
 
-        let tree = try TranscriptTree.load(under: routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
+        let tree = try TranscriptTree.load(under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         // No registry argument: exercises effectiveTranscript's default,
         // CustomSegmentRegistry.routerDefault.
         let reconstructed = Array(try tree.effectiveTranscript(forSession: session.id))
@@ -458,7 +454,7 @@ struct CompactionSegmentTests {
 
         #expect(restored.root.id == root.id)
         let restoredTranscript = Array(
-            try TranscriptTree.load(under: routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
+            try TranscriptTree.load(under: RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
                 .effectiveTranscript(forSession: root.id)
         )
         #expect(restoredTranscript == synthesized)

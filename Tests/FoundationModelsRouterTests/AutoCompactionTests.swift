@@ -161,17 +161,6 @@ struct AutoCompactionTests {
         }
     }
 
-    /// The estimated token size of just the warm-up entries' un-foldable
-    /// recency window (the newest 4 turns) — the floor no deterministic
-    /// stage can fold below, so a `budget.target` under this forces the
-    /// model-assisted ``Summarization`` stage (and therefore a real
-    /// summarizer call) to run. Mirrors `RoutedSessionCompactTests.recencyWindowOnlyEstimate(_:)`.
-    private static func recencyWindowOnlyEstimate(_ entries: [Transcript.Entry]) -> Int {
-        let (header, turns) = TranscriptTurns.split(entries)
-        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
-        return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
-    }
-
     /// The working context every session this suite vends resolves at — the
     /// denominator of both ``RoutedSession/contextFill`` and, deliberately,
     /// ``fixedBudget``'s own ``TokenBudget/limit``.

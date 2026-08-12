@@ -496,17 +496,6 @@ struct GuidedGenerationTests {
         }
     }
 
-    /// The estimated token size of just the warm-up entries' un-foldable
-    /// recency window (the newest 4 turns) — the floor no deterministic
-    /// stage can fold below, so a `budget.target` under this forces the
-    /// model-assisted ``Summarization`` stage (and therefore a real
-    /// summarizer call) to run. Mirrors `AutoCompactionTests.recencyWindowOnlyEstimate(_:)`.
-    private static func autoCompactionRecencyWindowOnlyEstimate(_ entries: [Transcript.Entry]) -> Int {
-        let (header, turns) = TranscriptTurns.split(entries)
-        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
-        return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
-    }
-
     /// The working context the guided trigger test's session resolves at, and
     /// deliberately also ``autoCompactionFixedBudget``'s own
     /// ``TokenBudget/limit`` — mirrors `AutoCompactionTests.warmUpContextTokens`,
@@ -517,7 +506,7 @@ struct GuidedGenerationTests {
     /// recency-window floor — forcing the triggering fold to need the
     /// model-assisted ``Summarization`` stage. Mirrors `AutoCompactionTests.fixedBudget`.
     private static let autoCompactionFixedBudget: TokenBudget = {
-        let recencyOnly = autoCompactionRecencyWindowOnlyEstimate(autoCompactionWarmUpEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(autoCompactionWarmUpEntries())
         return TokenBudget(
             limit: autoCompactionContextTokens,
             trigger: 0.8,
