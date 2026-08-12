@@ -93,11 +93,29 @@ func makeRoutedSessionActor(
 /// handle; the `backend`, `slot`, and `model` are what the single
 /// ``generate(grammar:prompt:onEvent:_:)`` chokepoint runs the model with.
 actor RoutedSessionActor: RoutedSession {
+    /// The resolved profile this session runs against, retained so its
+    /// resident models stay alive for the session's lifetime — see
+    /// ``RoutedSession/profile``.
     nonisolated let profile: LanguageModelProfile
+
+    /// The recording root id — the router instance that owns this transcript
+    /// (see ``RoutedSession/routerId``).
     nonisolated let routerId: ULID
+
+    /// This session's span id — see ``RoutedSession/id``.
     nonisolated let id: ULID
+
+    /// The span id of the session that forked this one, or `nil` for a root
+    /// session — see ``RoutedSession/parentId``.
     nonisolated let parentId: ULID?
+
+    /// The directory this session's transcript is recorded under — see
+    /// ``RoutedSession/recordingDirectory``.
     nonisolated let recordingDirectory: URL
+
+    /// The directory model/tool work runs relative to; defaults to
+    /// ``recordingDirectory`` and is overridable at creation — see
+    /// ``RoutedSession/workingDirectory``.
     nonisolated let workingDirectory: URL
 
     /// The persistent backend this session drives every generation and fork

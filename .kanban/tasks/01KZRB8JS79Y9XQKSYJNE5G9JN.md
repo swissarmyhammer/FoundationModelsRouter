@@ -100,6 +100,31 @@ comments:
     - evidence: 1 file — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift; swift test: 908 tests passed, 0 failures, 1 accepted known issue
     - next: /review
   timestamp: 2026-08-12T05:37:47.515948+00:00
+- actor: claude-code
+  id: 01kzt81k046afn3vy785d25ky8
+  text: |-
+    ### review — findings
+    - evidence: 1 confirmed finding on scope HEAD~1..HEAD (b58ff8a) — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:478
+    - next: apply the finding. Give the initializer a `- Parameters:` block, or give a doc comment to each stored property that the doc comment points to.
+  timestamp: 2026-08-12T05:45:09.380318+00:00
+- actor: claude-code
+  id: 01kzt827g1jrz0bw5853wk81bg
+  text: |-
+    ### finish iteration 3 — findings
+    - implement: changed — 1 file, the entry-less `- Parameters:` marker removed
+    - test: green — swift test, 857 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: b58ff8a
+    - review: findings — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:478 (the initializer doc points to stored properties, but profile, routerId, id, parentId, recordingDirectory, workingDirectory, and slot have no doc comments). Each round finds a different defect, so the stuck guardrail does not apply.
+  timestamp: 2026-08-12T05:45:30.369253+00:00
+- actor: claude-code
+  id: 01kzt8h0njqc148pkm2d6zqdj2
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift. `swift build` completed. One `swift test` run: 857 + 27 + 24 tests passed, 0 failures, 1 known issue (BoundedWait, accepted).
+    - fix: We used option 2 of the finding. We added doc comments to the six stored properties that had none: `profile`, `routerId`, `id`, `parentId`, `recordingDirectory`, `workingDirectory`. Each doc comment points to its `RoutedSession` protocol requirement. The claim in the initializer doc comment is now true. Note: `slot` and `originalTools` already had doc comments before this change.
+    - sweep: We examined all 40 stored properties in the file. All other properties have doc comments. The one-for-one claim on `makeRoutedSessionActor` agrees with the initializer's 29 parameters. No other doc comment in the file makes a claim that its targets do not honor.
+    - next: The task is ready for /review.
+  timestamp: 2026-08-12T05:53:34.898834+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
 - 01KZREJ4MJ67R0RBFKKN9TDQ8C
@@ -131,4 +156,8 @@ A restored session silently loses its behavioral configuration: compaction budge
 
 ## Review Findings (2026-08-12 00:22)
 
-- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18` — The `- Parameters:` documentation block should list each parameter with its name and description using nested entries, not reference another symbol with prose. Either (1) list each parameter explicitly with nested entries (e.g., `- profile: ...`, `- routerId: ...`), or (2) remove the `- Parameters:` block entirely and describe the relationship in prose without the parameter documentation marker. Since this function forwards all parameters unchanged to the init, option (2) might be cleaner: replace lines 18-19 with prose like `/// Each parameter corresponds one-to-one with a parameter of ``RoutedSessionActor/init(...)`` — see that initializer's documentation for details.` #transcript
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18` — The `- Parameters:` documentation block should list each parameter with its name and description using nested entries, not reference another symbol with prose. Either (1) list each parameter explicitly with nested entries (e.g., `- profile: ...`, `- routerId: ...`), or (2) remove the `- Parameters:` block entirely and describe the relationship in prose without the parameter documentation marker. Since this function forwards all parameters unchanged to the init, option (2) might be cleaner: replace lines 18-19 with prose like `/// Each parameter corresponds one-to-one with a parameter of ``RoutedSessionActor/init(...)`` — see that initializer's documentation for details.`
+
+## Review Findings (2026-08-12 00:39)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:478` — The initializer claims in its doc comment (lines 460–461) that 'Every parameter here is documented on the stored property it initializes, above', but several stored properties that correspond to initializer parameters lack doc comments themselves (profile, routerId, id, parentId, recordingDirectory, workingDirectory, slot). Per the documentation rule, parameters with 2+ count must be documented either via a `- Parameters:` block or each via a `- Parameter name:` entry; indirect documentation through undocumented properties does not satisfy this requirement. Add a formal `- Parameters:` block to the initializer documenting all 32 parameters, using internal parameter names per the documentation rule. Alternatively, add doc comments to each of the undocumented properties (profile, routerId, id, parentId, recordingDirectory, workingDirectory, slot, originalTools, etc.) so the claim in the doc comment becomes accurate. #transcript
