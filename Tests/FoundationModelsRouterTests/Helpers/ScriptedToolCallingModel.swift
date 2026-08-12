@@ -136,6 +136,10 @@ struct ScriptedToolCallingModel: LanguageModel {
             "scripted-round-\(round)"
         }
 
+        /// The transcript entry id the script's `.reasoning` entry is emitted
+        /// under (see ``ScriptedTurnScript/reasoning``).
+        private static let reasoningEntryID = "scripted-reasoning"
+
         /// Emits one scripted round of tool calls, or the final answer once
         /// every round has been played out.
         ///
@@ -160,6 +164,12 @@ struct ScriptedToolCallingModel: LanguageModel {
                 configuration.log.recordAnswer(
                     requestedCalls: Self.requestedCalls(in: transcript),
                     deliveredToolOutputs: toolOutputs)
+                if let reasoning = configuration.script.reasoning {
+                    await channel.send(
+                        .reasoning(
+                            entryID: Self.reasoningEntryID,
+                            action: .appendText(reasoning, tokenCount: Self.emittedTokenCount)))
+                }
                 await channel.send(
                     .response(
                         action: .appendText(

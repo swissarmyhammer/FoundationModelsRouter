@@ -142,6 +142,58 @@ final class ThrowingMarkerTool: MarkerRecordingTool, Sendable {
     }
 }
 
+/// The `@Generable` output ``StructuredMarkerTool`` returns, carrying one
+/// step's marker as a structured value.
+///
+/// A `@Generable` output is what makes the SDK record the tool's
+/// `.toolOutput` entry with a `.structure` segment instead of a `.text` one —
+/// the segment shape the restore-fidelity suite must push through the full
+/// disk round trip.
+@Generable
+struct StructuredMarkerOutput: Equatable {
+    @Guide(description: "The distinctive marker for the step this call named.")
+    var marker: String
+}
+
+/// A `FoundationModels.Tool` whose `Output` is a `@Generable` value, so its
+/// `.toolOutput` entry carries a `.structure` segment.
+///
+/// The structured counterpart of ``MarkerEmittingTool``: same marker
+/// vocabulary, but the output enters the transcript as structured content
+/// rather than text, which is the shape the restore-fidelity tests need on
+/// the full recorder -> disk -> reconstruction path.
+final class StructuredMarkerTool: MarkerRecordingTool, Sendable {
+    /// The model-facing tool name a scripted call names to reach this tool.
+    static let toolName = "marker-structured"
+
+    /// The `Tool` name requirement, bound to ``toolName``.
+    let name = StructuredMarkerTool.toolName
+
+    /// The `Tool` description requirement — see ``MarkerEmittingTool/description``
+    /// for why a scripted fixture still carries one.
+    let description = "test-only tool that returns a distinctive marker as structured output"
+
+    /// Backing store for ``calledSteps``.
+    private let callLog = MarkerToolCallLog()
+
+    /// Every step this tool was called for, in call order.
+    var calledSteps: [String] { callLog.calls }
+
+    /// Records the step this call names and returns that step's marker as a
+    /// structured output.
+    ///
+    /// - Parameter arguments: The call's decoded arguments; `value` is the step
+    ///   name.
+    /// - Returns: A ``StructuredMarkerOutput`` carrying
+    ///   ``ScriptedToolFixture/marker(for:)`` for the named step.
+    /// - Throws: Never — the tool cannot fail; `throws` comes from the `Tool`
+    ///   requirement.
+    func call(arguments: AmbientToolArguments) async throws -> StructuredMarkerOutput {
+        callLog.record(arguments.value)
+        return StructuredMarkerOutput(marker: ScriptedToolFixture.marker(for: arguments.value))
+    }
+}
+
 /// A `FoundationModels.Tool` whose `Output` is not `String`, carrying the same
 /// marker ``MarkerEmittingTool`` does.
 ///

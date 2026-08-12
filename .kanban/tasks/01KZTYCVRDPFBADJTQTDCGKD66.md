@@ -31,8 +31,24 @@ comments:
     - evidence: 4 files — Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift, Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift, Tests/FoundationModelsRouterTests/NoteCompactionTests.swift. `swift build --build-tests` clean (zero errors, zero warnings). One ungated `swift test` run: 886 + 27 + 24 tests passed across the three test products, zero failures (the one "known issue" is the pre-existing deliberate `withKnownIssue` in the BoundedWait suite). Both acceptance tests pass.
     - next: run /review; the task stays in doing.
   timestamp: 2026-08-12T15:46:53.300822+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzvarfzvrjdv8v96g454dz4m
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 2d7578c); 0 findings, 8 validators attempted, 0 failed, 0 skipped; no waiver was necessary
+    - next: none — the task moved doing → review → done
+  timestamp: 2026-08-12T15:51:51.547005+00:00
+- actor: claude-code
+  id: 01kzvasj96533bbn0kas2vmpbk
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files; additive noteCompaction(_:result:) overload records one boundary entry for a deterministic-only fold; shared appendingDeterministicBoundary moved into CompactionSegment
+    - test: green — swift test, 886 + 27 + 24 tests passed, 0 failures (the one implement run is the test evidence)
+    - commit: 2d7578c
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-12T15:52:26.662724+00:00
+position_column: done
+position_ordinal: ff9a80
 title: noteCompaction records no checkpoint for a deterministic-only fold
 ---
 ## Problem

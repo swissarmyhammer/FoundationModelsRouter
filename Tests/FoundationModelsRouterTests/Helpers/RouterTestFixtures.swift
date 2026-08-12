@@ -133,18 +133,27 @@ enum RouterTestFixtures {
     /// needs.
     ///
     /// - Parameters:
+    ///   - id: The router's recording root id. Pass a prior router's `id` to
+    ///     simulate a fresh process continuing the same recording root.
+    ///     Defaults to a fresh ULID.
     ///   - cacheDir: The router's cache directory (a per-test temp dir).
+    ///   - recordingsDir: The durable transcripts root, or `nil` (the
+    ///     default) for a router with no durable root.
     ///   - recorder: The transcript recorder. Defaults to a fresh
     ///     ``InMemoryRecorder``.
     ///   - loader: The model loader vending the test's stub containers.
     /// - Returns: The router.
     static func makeRouter(
+        id: ULID = .generate(),
         cacheDir: URL,
+        recordingsDir: URL? = nil,
         recorder: any TranscriptRecorder = InMemoryRecorder(),
         loader: any ModelLoader
     ) -> Router {
         Router(
+            id: id,
             cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
             recorder: recorder,
             probe: stubProbe,
             metadataSource: StubMetadataSource(raw: rawMetadata),

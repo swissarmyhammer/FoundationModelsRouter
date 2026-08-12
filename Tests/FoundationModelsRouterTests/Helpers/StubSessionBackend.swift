@@ -100,6 +100,36 @@ final class StubGenerationLog: @unchecked Sendable {
     }
 }
 
+/// A registry of every ``StubSessionBackend`` one lineage creates — the
+/// initial backend a container vends, plus every clone born through
+/// ``StubSessionBackend/makeFork(tools:)`` and
+/// ``StubSessionBackend/replacingTranscript(_:)``.
+///
+/// A fold swaps a session's backend through `replacingTranscript(_:)`
+/// directly on the backend (see `RoutedSessionActor`'s fold), so a container
+/// that only retains what *it* vended cannot see the session's live
+/// post-fold backend. Backends registered here can: the fold's swap clone is
+/// the last backend the fold creates, so ``created``'s last element after a
+/// `compact()` returns is the session's live backend.
+///
+/// `@unchecked Sendable` invariant: ``record(_:)`` runs either from direct
+/// test-code construction between turns or from backend calls
+/// (`makeFork`/`replacingTranscript`) that `RoutedSessionActor` serializes
+/// one at a time under the owning session's turn lock — the same invariant
+/// ``StubSessionBackend`` documents for its own mutable state. Nothing ever
+/// touches an instance concurrently.
+final class StubBackendRegistry: @unchecked Sendable {
+    /// Every backend recorded so far, in creation order.
+    private(set) var created: [StubSessionBackend] = []
+
+    /// Records one backend.
+    ///
+    /// - Parameter backend: The backend just created.
+    func record(_ backend: StubSessionBackend) {
+        created.append(backend)
+    }
+}
+
 final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
     /// A failure ``respond(to:maxTokens:)``/``streamResponse(to:maxTokens:)``/
     /// the guided `respond` raise when ``shouldThrow`` is `true`.
@@ -153,6 +183,11 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// ``StubGenerationLog``.
     let generationLog: StubGenerationLog?
 
+    /// The registry this backend and every clone it produces record
+    /// themselves into at creation, or `nil` (the default) to register
+    /// nowhere. See ``StubBackendRegistry``.
+    let registry: StubBackendRegistry?
+
     /// The tools most recently passed to ``makeFork(tools:)``, or empty if
     /// never called with any.
     ///
@@ -185,6 +220,9 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     ///   - generationLog: The shared log to record every call into, or `nil`
     ///     (the default) to record nowhere. Carried by every clone this
     ///     backend produces. See ``StubGenerationLog``.
+    ///   - registry: The shared registry to record this backend and every
+    ///     clone into at creation, or `nil` (the default) to register
+    ///     nowhere. See ``StubBackendRegistry``.
     init(
         responseText: String = "stub response",
         shouldThrow: Bool = false,
@@ -192,13 +230,15 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
         instructions: String? = nil,
         entries: [Transcript.Entry]? = nil,
         usageIncrement: (input: Int, output: Int)? = nil,
-        generationLog: StubGenerationLog? = nil
+        generationLog: StubGenerationLog? = nil,
+        registry: StubBackendRegistry? = nil
     ) {
         self.responseText = responseText
         self.shouldThrow = shouldThrow
         self.receivedPrompts = receivedPrompts
         self.usageIncrement = usageIncrement
         self.generationLog = generationLog
+        self.registry = registry
         if let entries {
             self.entries = entries
         } else if let instructions {
@@ -206,6 +246,7 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
         } else {
             self.entries = []
         }
+        registry?.record(self)
     }
 
     /// Records the call and returns ``responseText``, or throws
@@ -271,7 +312,8 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
             receivedPrompts: receivedPrompts,
             entries: entries,
             usageIncrement: usageIncrement,
-            generationLog: generationLog
+            generationLog: generationLog,
+            registry: registry
         )
         fork.cumulativeUsage = cumulativeUsage
         return fork
@@ -290,7 +332,8 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
             shouldThrow: shouldThrow,
             entries: Array(transcript),
             usageIncrement: usageIncrement,
-            generationLog: generationLog
+            generationLog: generationLog,
+            registry: registry
         )
     }
 

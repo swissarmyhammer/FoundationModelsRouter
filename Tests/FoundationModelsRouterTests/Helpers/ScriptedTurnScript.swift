@@ -146,6 +146,14 @@ struct ScriptedTurnScript: Sendable, Hashable {
     /// prose ahead of a call. Both shapes are real: the real model reaches the
     /// narrated one through its malformed-tool-call text fallback.
     var narration: String? = nil
+
+    /// Text the model emits as a `.reasoning` entry immediately before its
+    /// final answer, or `nil` (the default) for a turn with no reasoning.
+    ///
+    /// This is what puts a `.reasoning` entry into a scripted turn's
+    /// transcript, so a restore-fidelity test can prove that entry kind
+    /// survives the recorder -> disk -> reconstruction round trip.
+    var reasoning: String? = nil
 }
 
 // MARK: - What a scripted turn was observed to do

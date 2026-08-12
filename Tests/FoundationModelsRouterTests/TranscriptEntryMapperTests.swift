@@ -150,6 +150,32 @@ struct TranscriptEntryMapperTests {
         try assertRoundTrips(original, kind: .toolCalls)
     }
 
+    @Test("a multi-call .toolCalls entry round-trips with full entry equality, keeping both calls in order")
+    func multiCallToolCallsRoundTrips() throws {
+        // Two calls in one entry — the shape a model produces when it asks
+        // for two independent calls at once. Distinct ids, names, and
+        // arguments, so a rebuild that dropped, reordered, or merged calls
+        // cannot pass.
+        let original = Transcript.Entry.toolCalls(
+            Transcript.ToolCalls(
+                id: "calls-1",
+                [
+                    Transcript.ToolCall(
+                        id: "call-1",
+                        toolName: "search",
+                        arguments: try GeneratedContent(json: #"{"query":"weather"}"#)
+                    ),
+                    Transcript.ToolCall(
+                        id: "call-2",
+                        toolName: "lookup",
+                        arguments: try GeneratedContent(json: #"{"value":"ONE"}"#)
+                    ),
+                ]
+            )
+        )
+        try assertRoundTrips(original, kind: .toolCalls)
+    }
+
     @Test("a .toolOutput entry round-trips through event(from:) and entry(from:kind:)")
     func toolOutputRoundTrips() throws {
         let original = Transcript.Entry.toolOutput(
@@ -254,6 +280,35 @@ struct TranscriptEntryMapperTests {
         #expect(originalValue == rebuiltValue)
     }
 
+    @Test("a .response entry with mixed segments (text and structure) round-trips with full entry equality")
+    func mixedSegmentEntryRoundTrips() throws {
+        // Two different segment kinds inside one entry, so a rebuild that
+        // dropped a segment, reordered them, or degraded one kind into
+        // another cannot pass. An `.attachment` segment is deliberately not
+        // in the mix: `Transcript.ImageAttachment`'s `==` compares the
+        // identity of the per-instance image buffer it decodes into, so no
+        // rebuilt attachment can ever equal its original —
+        // ``urlBackedAttachmentRoundTrips()`` holds that segment kind to
+        // every representable field instead.
+        let original = Transcript.Entry.response(
+            Transcript.Response(
+                id: "response-1",
+                assetIDs: [],
+                segments: [
+                    .text(Transcript.TextSegment(id: "s1", content: "here is the weather")),
+                    .structure(
+                        Transcript.StructuredSegment(
+                            id: "s2",
+                            schemaName: "Weather",
+                            content: try GeneratedContent(json: #"{"temperature":72}"#)
+                        )
+                    ),
+                ]
+            )
+        )
+        try assertRoundTrips(original, kind: .response)
+    }
+
     // MARK: - Custom segments: registered round-trip
 
     @Test("event(from:) encodes a custom segment without needing a registry")
@@ -274,18 +329,24 @@ struct TranscriptEntryMapperTests {
         #expect(decodedContent == Note(body: "hello"))
     }
 
-    @Test("a registered custom segment round-trips to an equal .custom segment")
+    @Test("a registered custom segment round-trips with full entry equality, to the same concrete type")
     func registeredCustomSegmentRoundTrips() throws {
         let segment = NoteSegment(id: "n1", content: Note(body: "hello"))
         let entry = Transcript.Entry.response(
             Transcript.Response(assetIDs: [], segments: [.custom(segment)])
         )
-        let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
-
         var registry = CustomSegmentRegistry()
         registry.register(NoteSegment.self)
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: registry)
 
+        // Full `Transcript.Entry` equality, not a cherry-picked field
+        // comparison, so the entry's id, asset ids, and segment list are all
+        // held to the round trip too.
+        try assertRoundTrips(entry, kind: .response, registry: registry)
+
+        // And the rebuilt segment really is the registered concrete type,
+        // not merely something that compares equal.
+        let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: registry)
         guard case .response(let rebuiltResponse) = rebuilt,
             case .custom(let rebuiltSegment) = rebuiltResponse.segments.first,
             let rebuiltNote = rebuiltSegment as? NoteSegment
@@ -566,8 +627,15 @@ struct TranscriptEntryMapperTests {
         #expect(textSegment.content == "a red pixel")
     }
 
-    @Test("an attachment with a non-nil ImageAttachment.url round-trips as an attachment segment")
+    @Test("an attachment with a non-nil ImageAttachment.url round-trips on every representable field")
     func urlBackedAttachmentRoundTrips() throws {
+        // Full `Transcript.Entry` equality is not reachable for an
+        // attachment: `Transcript.ImageAttachment`'s `==` compares the
+        // identity of the per-instance image buffer it decodes into, so two
+        // attachments built from the same URL — the original here and the
+        // mapper's rebuild — are never equal. Every field a rebuild can
+        // reproduce is compared instead: the entry's own id and asset ids,
+        // the segment count, and the attachment's id, label, and URL.
         let url = URL(fileURLWithPath: "/tmp/photo.png")
         let original = Transcript.Entry.response(
             Transcript.Response(
@@ -584,15 +652,22 @@ struct TranscriptEntryMapperTests {
             )
         )
         let (kind, payload, _) = TranscriptEntryMapper.event(from: original)
+        #expect(kind == .response)
         let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
 
-        guard case .response(let rebuiltResponse) = rebuilt, case .attachment(let attachmentSegment) = rebuiltResponse.segments.first
+        guard case .response(let originalResponse) = original,
+            case .response(let rebuiltResponse) = rebuilt,
+            case .attachment(let rebuiltSegment) = rebuiltResponse.segments.first
         else {
             Issue.record("expected the rebuilt segment to stay an .attachment")
             return
         }
-        #expect(attachmentSegment.label == "photo")
-        guard case .image(let rebuiltImage) = attachmentSegment.content else {
+        #expect(rebuiltResponse.id == originalResponse.id)
+        #expect(rebuiltResponse.assetIDs == originalResponse.assetIDs)
+        #expect(rebuiltResponse.segments.count == originalResponse.segments.count)
+        #expect(rebuiltSegment.id == "a1")
+        #expect(rebuiltSegment.label == "photo")
+        guard case .image(let rebuiltImage) = rebuiltSegment.content else {
             Issue.record("expected an .image attachment")
             return
         }
@@ -739,13 +814,23 @@ struct TranscriptEntryMapperTests {
     // MARK: - Helpers
 
     /// Maps `original` through `event(from:)` then rebuilds it through
-    /// `entry(from:kind:)`, asserting the rebuilt entry equals the original —
-    /// the round-trip contract every non-degraded field combination must
-    /// satisfy.
-    private func assertRoundTrips(_ original: Transcript.Entry, kind: TranscriptEvent.Kind) throws {
+    /// `entry(from:kind:registry:)`, asserting the rebuilt entry equals the
+    /// original — the round-trip contract every non-degraded field
+    /// combination must satisfy.
+    ///
+    /// - Parameters:
+    ///   - original: The entry to round-trip.
+    ///   - kind: The event kind `event(from:)` must map `original` to.
+    ///   - registry: The registry the rebuild runs against. Defaults to an
+    ///     empty registry, which every non-`.custom` entry rebuilds under.
+    private func assertRoundTrips(
+        _ original: Transcript.Entry,
+        kind: TranscriptEvent.Kind,
+        registry: CustomSegmentRegistry = CustomSegmentRegistry()
+    ) throws {
         let (mappedKind, payload, _) = TranscriptEntryMapper.event(from: original)
         #expect(mappedKind == kind)
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: mappedKind)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: mappedKind, registry: registry)
         #expect(rebuilt == original)
     }
 
