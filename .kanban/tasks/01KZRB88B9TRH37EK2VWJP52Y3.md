@@ -43,6 +43,33 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Recording/RecordingRootLock.swift (new), Sources/FoundationModelsRouter/Recording/Sinks.swift, Tests/FoundationModelsRouterTests/RecordingRootLockTests.swift (new), Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationLostRunTests.swift. Final `swift test`: 870 + 27 + 24 tests passed, 0 failures, 0 warnings, 1 known issue (accepted BoundedWait).
     - next: /review
   timestamp: 2026-08-12T08:56:47.783860+00:00
+- actor: claude-code
+  id: 01kztkhs2gacqd0gsfya7y0hfh
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD; engine gave 4 findings; the standing waiver for tests that existed before this commit removed 3; 1 finding is open — Tests/FoundationModelsRouterTests/RecordingRootLockTests.swift:15
+    - next: /implement must correct the open finding, then a new /review pass must run
+  timestamp: 2026-08-12T09:06:14.224692+00:00
+- actor: claude-code
+  id: 01kztkjhaq83jkzwkr0eyr7z22
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 5 files (2 new), the root lock with typed error, in-process registry, stale takeover, RAII release
+    - test: green — swift test, 870 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: df852dd
+    - review: findings — Tests/FoundationModelsRouterTests/RecordingRootLockTests.swift:15 (makeTempDirectory duplicates the temp-directory helper in two other suites; extract a shared test helper). 3 more engine findings were waived per the written rule: they asked for refactors of test code that existed before this commit.
+  timestamp: 2026-08-12T09:06:39.063193+00:00
+- actor: claude-code
+  id: 01kztmdfw5tzcbgm56ymmm8zrk
+  text: 'Research for the open review finding. A shared helper already exists: RouterTestFixtures.makeTempDir(prefix:) in Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift. It keeps the per-suite prefix, so a leaked directory stays attributable. Six other suites call it directly with the suite name as the prefix literal (for example SessionConfigurationTests and DetachedRunTranscriptTests). Thus no new helper is necessary. Fix: remove the private makeTempDirectory/makeTempDir copies from the three suites the finding names and call the shared helper at each call site. The sweep found many more suites with the same private copy, but they are pre-existing files this task did not touch, so the written waiver keeps them out of scope.'
+  timestamp: 2026-08-12T09:21:22.309848+00:00
+- actor: claude-code
+  id: 01kztmgaggwxw85d108cgcb54n
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/RecordingRootLockTests.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationLostRunTests.swift. Each private temp-directory copy is removed; each call site now calls the existing shared RouterTestFixtures.makeTempDir(prefix:) with its own suite name, so the per-suite prefix stays. swift build --build-tests: complete, only the accepted mlx-swift "missing creator" warning. One swift test run: 870 + 27 + 24 tests passed, 0 failures, 1 known issue (accepted BoundedWait). The finding checkbox is flipped to done; tags re-supplied and verified.
+    - next: /review
+  timestamp: 2026-08-12T09:22:55.120053+00:00
 position_column: doing
 position_ordinal: '8180'
 title: Guard a recording root against a second writer
@@ -63,4 +90,10 @@ Nothing stops two `Router` instances — in one process or in two processes — 
 
 - Two live routers can never both write one recording root.
 - The failure is a typed error at open time, not corruption at restore time.
-- A crashed owner does not permanently brick its recording root. #transcript
+- A crashed owner does not permanently brick its recording root.
+
+## Review Findings (2026-08-12 03:58)
+
+- [x] `Tests/FoundationModelsRouterTests/RecordingRootLockTests.swift:15` — makeTempDirectory reinvents the temporary directory creation pattern that is already implemented identically in SessionTreeRestorationTests.makeTempDir (line 126) and SessionTreeRestorationLostRunTests.makeTempDir (line 115). Should extract to a shared test utility instead of duplicating the implementation across test suites. Extract makeTempDirectory to a shared test helper module or utility function and call it from all three test suites rather than reimplementing it in each.
+
+Note: The engine gave three more findings. Each of them tells us to refactor stub code in SessionTreeRestorationLostRunTests.swift that this commit did not add. The standing waiver for tests that existed before this commit removes them. #transcript

@@ -123,13 +123,6 @@ struct SessionTreeRestorationTests {
     private static let stubDimension = 8
     private static let cannedText = "canned response"
 
-    private static func makeTempDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SessionTreeRestorationTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
     /// Builds a router wired with the stubs and a durable recordings root, so
     /// vended sessions nest their transcripts and index under it.
     ///
@@ -212,8 +205,8 @@ struct SessionTreeRestorationTests {
         "restoring a 4-node tree by root id reproduces its shape and per-node effective entry counts")
     @MainActor
     func restoringReproducesTreeShapeAndEntryCounts() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -286,9 +279,9 @@ struct SessionTreeRestorationTests {
     )
     @MainActor
     func restoredSessionReassemblesItsRecordedWorkingDirectoryOverride() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        let overrideDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let overrideDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -321,8 +314,8 @@ struct SessionTreeRestorationTests {
     @Test("restoreSessionTree writes no sidecar of its own; a later fork of a restored session writes exactly one")
     @MainActor
     func restorationWritesNoSidecarButLaterForkWritesOne() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -375,8 +368,8 @@ struct SessionTreeRestorationTests {
     @Test("restoring by a non-root session id throws notARootSession")
     @MainActor
     func restoringNonRootIdThrowsNotARootSession() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -398,8 +391,8 @@ struct SessionTreeRestorationTests {
     @Test("restoring a tree whose sidecar carries a future schema version throws the typed newer-router error")
     @MainActor
     func restoringAFutureVersionSidecarThrowsTheTypedError() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -434,8 +427,8 @@ struct SessionTreeRestorationTests {
     @Test("restoring against a profile whose resident model differs from the recorded one throws modelMismatch")
     @MainActor
     func restoringAgainstMismatchedModelThrowsModelMismatch() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -468,8 +461,8 @@ struct SessionTreeRestorationTests {
     @Test("a session sidecar recorded against a non-generation slot throws slotNotInProfile")
     @MainActor
     func recordedEmbeddingSlotThrowsSlotNotInProfile() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -517,8 +510,8 @@ struct SessionTreeRestorationTests {
         "a restored guided session's next turn runs through the guided path with its recorded grammar")
     @MainActor
     func restoredGuidedSessionUsesRecordedGrammar() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -564,8 +557,8 @@ struct SessionTreeRestorationTests {
     @Test("a restored session originally guided by .ebnf reconstructs its grammar as .jsonSchema, preserving only the source text")
     @MainActor
     func restoredEbnfGrammarReconstructsAsJSONSchema() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -593,8 +586,8 @@ struct SessionTreeRestorationTests {
     )
     @MainActor
     func restoringACompactedSessionYieldsCheckpointedWindowAndCompactionCount() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -819,8 +812,8 @@ struct SessionTreeRestorationTests {
     )
     @MainActor
     func restoredTreeReappliesRecordedConfiguration() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -869,8 +862,8 @@ struct SessionTreeRestorationTests {
     @Test("the restore result names every recorded tool the caller did not supply")
     @MainActor
     func restoreReportsRecordedToolsTheCallerDidNotSupply() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -901,8 +894,8 @@ struct SessionTreeRestorationTests {
     )
     @MainActor
     func preEnvelopeSidecarRestoresWithDefaultsAndEmptyReport() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)

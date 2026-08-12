@@ -112,13 +112,6 @@ struct SessionTreeRestorationLostRunTests {
 
     private static let stubDimension = 8
 
-    private static func makeTempDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SessionTreeRestorationLostRunTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
     /// Builds a router wired with the stubs and a durable recordings root.
     ///
     /// - Parameters:
@@ -215,8 +208,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("a transcript carrying OperationEventSegments restores with the default registry — no unregisteredCustomSegmentType")
     @MainActor
     func defaultRegistryRestoresTranscriptWithEventSegments() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -241,8 +234,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("an orphaned .progress run manufactures exactly one .completed/.lost on the restored session's outbox")
     @MainActor
     func orphanedProgressRunManufacturesOneLostEvent() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -267,8 +260,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("an orphaned .elicitation run manufactures a .completed/.lost carrying the question as its detail")
     @MainActor
     func orphanedElicitationRunManufacturesLostEvent() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -299,8 +292,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("a run whose .completed is journaled manufactures nothing on restore")
     @MainActor
     func completedRunManufacturesNothing() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -324,8 +317,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("two orphaned runs manufacture two .lost events with distinct correlationIDs")
     @MainActor
     func twoOrphanedRunsManufactureTwoLostEvents() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -352,8 +345,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("one tool's .completed does not suppress another tool's orphan sharing the same correlationID")
     @MainActor
     func completedRunOfOneToolDoesNotSuppressAnotherToolsOrphan() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -390,8 +383,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("an ancestor's orphaned run manufactures one .lost on every restored node whose inherited prefix carries it")
     @MainActor
     func parentOrphanManufacturesLostOnParentAndFork() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -424,8 +417,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("a run completed by the parent after the fork cut point is .lost only from the fork's own view")
     @MainActor
     func runCompletedAfterForkCutIsLostOnlyFromForksView() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -463,8 +456,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("a manufactured .lost detail is truncated to the trailing terminalDetailTailLimit characters")
     @MainActor
     func manufacturedDetailIsBoundedToTerminalDetailTailLimit() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)
@@ -507,8 +500,8 @@ struct SessionTreeRestorationLostRunTests {
     @Test("a manufactured .lost drained by respond() is journaled and persisted for a second restore")
     @MainActor
     func manufacturedLostSurvivesJournalingIntoSecondRestore() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)

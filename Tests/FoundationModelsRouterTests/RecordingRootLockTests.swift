@@ -11,14 +11,6 @@ import Testing
 /// down cleanly releases the root.
 @Suite("Recording root lock: one live writer per root")
 struct RecordingRootLockTests {
-    /// A fresh temporary directory to use as a router recording root.
-    private static func makeTempDirectory() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RecordingRootLockTests-\(ULID().description)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
     /// The lock marker's URL inside `root`.
     private static func lockFileURL(under root: URL) -> URL {
         root.appendingPathComponent(recordingRootLockFileName, isDirectory: false)
@@ -47,7 +39,7 @@ struct RecordingRootLockTests {
 
     @Test("a second owning recorder on the same root throws a typed error naming the live owner")
     func secondOwnerThrowsTypedErrorNamingOwner() throws {
-        let root = Self.makeTempDirectory()
+        let root = RouterTestFixtures.makeTempDir(prefix: "RecordingRootLockTests")
         defer { try? FileManager.default.removeItem(at: root) }
         let first = try JSONLRecorder(owningDirectory: root)
 
@@ -64,7 +56,7 @@ struct RecordingRootLockTests {
 
     @Test("a recorder that acquired the root lazily at first write also blocks a later owning recorder")
     func lazyFirstWriterBlocksLaterOwner() async throws {
-        let root = Self.makeTempDirectory()
+        let root = RouterTestFixtures.makeTempDir(prefix: "RecordingRootLockTests")
         defer { try? FileManager.default.removeItem(at: root) }
         let firstWriter = JSONLRecorder(directory: root)
         await Self.appendEvent(.session, on: firstWriter)
@@ -81,7 +73,7 @@ struct RecordingRootLockTests {
 
     @Test("a second non-owning recorder drops its events instead of interleaving into the owned root")
     func secondWriterDropsInsteadOfInterleaving() async throws {
-        let root = Self.makeTempDirectory()
+        let root = RouterTestFixtures.makeTempDir(prefix: "RecordingRootLockTests")
         defer { try? FileManager.default.removeItem(at: root) }
         let firstWriter = JSONLRecorder(directory: root)
         await Self.appendEvent(.session, on: firstWriter)
@@ -100,7 +92,7 @@ struct RecordingRootLockTests {
 
     @Test("a stale lock marker left by a dead process is taken over")
     func staleLockFromDeadProcessIsTakenOver() async throws {
-        let root = Self.makeTempDirectory()
+        let root = RouterTestFixtures.makeTempDir(prefix: "RecordingRootLockTests")
         defer { try? FileManager.default.removeItem(at: root) }
 
         let exited = Process()
@@ -124,7 +116,7 @@ struct RecordingRootLockTests {
 
     @Test("a torn, undecodable lock marker is treated as stale and taken over")
     func tornLockMarkerIsTakenOver() throws {
-        let root = Self.makeTempDirectory()
+        let root = RouterTestFixtures.makeTempDir(prefix: "RecordingRootLockTests")
         defer { try? FileManager.default.removeItem(at: root) }
         try Data("not json".utf8).write(to: Self.lockFileURL(under: root))
 
@@ -139,7 +131,7 @@ struct RecordingRootLockTests {
 
     @Test("clean shutdown releases the root: the marker is removed and a new owner succeeds")
     func cleanShutdownReleasesTheRoot() async throws {
-        let root = Self.makeTempDirectory()
+        let root = RouterTestFixtures.makeTempDir(prefix: "RecordingRootLockTests")
         defer { try? FileManager.default.removeItem(at: root) }
 
         var recorder: JSONLRecorder? = try JSONLRecorder(owningDirectory: root)
