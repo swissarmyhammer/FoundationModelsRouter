@@ -33,6 +33,38 @@ comments:
     - evidence: 8 files — Sources/FoundationModelsRouter/Recording/{TranscriptEvent,TranscriptEntryPayload,TranscriptEntryMapper,TranscriptTree,RecordingSchemaVersion}.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift, Tests/FoundationModelsRouterTests/{TranscriptEventSchemaTests,TranscriptEntryMapperTests}.swift, plus plan.md; `swift test` = 863+27+24 tests passed, 0 failures (1 known issue: the accepted BoundedWait one)
     - next: /review
   timestamp: 2026-08-12T07:21:45.607706+00:00
+- actor: claude-code
+  id: 01kzte26rvtt0rgjmxg8cd9nzb
+  text: |-
+    ### review — findings
+    - evidence: 1 confirmed finding — Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift:356 (review sha HEAD~1..HEAD; counts: 1 finding, 1 confirmed, 0 refuted)
+    - next: put the .unknown kind into the array in newKindCasesRoundTrip, remove the unknownKindRoundTrips function, and check the item in the findings list
+  timestamp: 2026-08-12T07:30:21.083653+00:00
+- actor: claude-code
+  id: 01kzte3dj3c0gay8vb8d4wkjex
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 9 files, both fatalError arms replaced with unknown-case carriers
+    - test: green — swift test, 863 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 2818890
+    - review: findings — Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift:356 (unknownKindRoundTrips duplicates newKindCasesRoundTrip; add .unknown to the kind array and remove the new function)
+  timestamp: 2026-08-12T07:31:00.803739+00:00
+- actor: claude-code
+  id: 01kztfhb0hz62wr0byy5nmzqqd
+  text: |-
+    Finding fixed. The kind array in newKindCasesRoundTrip now contains .unknown, and the test name gives the four kinds. The duplicate function unknownKindRoundTrips is removed.
+
+    Sweep for the same cause: the schema test file has only one parameterized test (newKindCasesRoundTrip). The three other new tests in that file (carrier decode, carrier round trip, strip and redact) have no parameterized counterpart and follow the one-function-for-each-segment-kind pattern of the file. The mapper test file has no parameterized test, so the two new mapper tests cannot be duplicates. No other duplicate found.
+
+    The finding item is set to done. The tags stay [transcript] and the description keeps its structure (verified after the update).
+  timestamp: 2026-08-12T07:56:05.521182+00:00
+- actor: claude-code
+  id: 01kztfhjq8nf5bg0mjferqbpjt
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift; swift build --build-tests OK; swift test = 862 + 27 + 24 tests passed, 0 failures (1 known issue: the accepted BoundedWait one; the accepted missing-creator warning)
+    - next: /review
+  timestamp: 2026-08-12T07:56:13.416802+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
 position_column: doing
@@ -54,4 +86,8 @@ Both `@unknown default` arms in the entry mapper call `fatalError` — one for a
 
 - No `fatalError` remains in the mapper.
 - A test simulates an unknown segment (via the carrier's own decode path, since a real unknown SDK case cannot be constructed) and asserts: recorded without crash, rebuilt as the documented text degradation, warning logged.
-- Old recordings still decode (additive schema rule holds). #transcript
+- Old recordings still decode (additive schema rule holds).
+
+## Review Findings (2026-08-12 02:23)
+
+- [x] `Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift:356` — unknownKindRoundTrips duplicates the test logic from newKindCasesRoundTrip (line 18-32). Both create a TranscriptEvent, encode/decode it through Codable, and assert roundtrip equality. The .unknown kind should have been added to the array at line 20 rather than creating a parallel test function. Add `.unknown` to the kind array in newKindCasesRoundTrip at line 20: `for kind: TranscriptEvent.Kind in [.instructions, .toolCalls, .reasoning, .unknown]`, update the test comment to reflect this, and remove the new unknownKindRoundTrips test function entirely (lines 356-369). #transcript

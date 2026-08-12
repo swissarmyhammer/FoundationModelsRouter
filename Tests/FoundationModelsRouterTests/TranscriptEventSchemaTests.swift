@@ -15,9 +15,9 @@ struct TranscriptEventSchemaTests {
 
     // MARK: - New Kind cases
 
-    @Test("instructions, toolCalls, and reasoning kinds round-trip through Codable")
+    @Test("instructions, toolCalls, reasoning, and unknown kinds round-trip through Codable")
     func newKindCasesRoundTrip() throws {
-        for kind: TranscriptEvent.Kind in [.instructions, .toolCalls, .reasoning] {
+        for kind: TranscriptEvent.Kind in [.instructions, .toolCalls, .reasoning, .unknown] {
             let event = TranscriptEvent(
                 routerId: .generate(),
                 sessionId: .generate(),
@@ -351,21 +351,6 @@ struct TranscriptEventSchemaTests {
         let segment = SegmentPayload.unknown(id: "s1", description: "secret future content")
         #expect(segment.strippingContent() == .unknown(id: "s1", description: ""))
         #expect(segment.redacted(with: { _ in "[gone]" }) == .unknown(id: "s1", description: "[gone]"))
-    }
-
-    @Test("an unknown-kind event line round-trips through Codable")
-    func unknownKindRoundTrips() throws {
-        let event = TranscriptEvent(
-            routerId: .generate(),
-            sessionId: .generate(),
-            seq: 1,
-            ts: Self.fixedInstant,
-            kind: .unknown
-        )
-        let data = try JSONEncoder().encode(event)
-        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: data)
-        #expect(decoded == event)
-        #expect(decoded.kind == .unknown)
     }
 
     // MARK: - MergedTranscript over mixed v1/v2 files
