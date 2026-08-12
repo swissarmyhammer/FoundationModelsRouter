@@ -520,6 +520,48 @@ struct TranscriptTreeTests {
     }
 
     @Test(
+        "deleting a whole child session directory is invisible: the tree loads clean without it, unlike a deleted parent sidecar, which is loud"
+    )
+    @MainActor
+    func deletingAChildDirectoryLoadsCleanWithoutIt() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let (root, forkA, forkB, _) = try await Self.buildBranchingTree(profile: profile)
+
+        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        // Sanity: both forks load, and the root reconstructs, before the delete.
+        let before = try TranscriptTree.load(under: routerDir)
+        #expect(before.children(of: root.id).map(\.id) == [forkA.id, forkB.id])
+        let rootEntryCountBefore = try before.effectiveEntryEvents(forSession: root.id).count
+
+        // Delete forkB's whole directory. The layout is the only structure
+        // on disk, so a deleted child directory is byte-identical to a child
+        // that never existed — nothing detectable remains, and the load has
+        // nothing to be loud about (contrast
+        // `deletingAParentSidecarThrowsNamingItsDirectory`, where the
+        // orphaned child's own directory still points at the gone parent).
+        let forkBDirectory = try #require(before.session(forkB.id)).directory
+        try FileManager.default.removeItem(at: forkBDirectory)
+
+        let after = try TranscriptTree.load(under: routerDir)
+        #expect(after.session(forkB.id) == nil)
+        #expect(after.children(of: root.id).map(\.id) == [forkA.id])
+        // The parent is untouched: its own conversation reconstructs whole.
+        #expect(try after.effectiveEntryEvents(forSession: root.id).count == rootEntryCountBefore)
+    }
+
+    @Test(
         "a session directory holding an undecodable session.json throws sidecarUnreadable naming it")
     @MainActor
     func undecodableSidecarThrowsNamingItsDirectory() async throws {

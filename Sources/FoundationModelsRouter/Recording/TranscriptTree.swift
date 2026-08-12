@@ -163,6 +163,18 @@ public struct TranscriptTree: Sendable {
     /// or a write was dropped (see ``SessionSidecarWriter``'s best-effort
     /// policy).
     ///
+    /// **A deleted child directory is invisible — and cannot be otherwise
+    /// (task ^xky3j8w).** The layout is the only structure this load reads:
+    /// no file records which children a session once had, so a child
+    /// directory deleted wholesale is byte-identical to a child that never
+    /// existed, and the tree loads clean without it. This is the deliberate
+    /// asymmetry with a missing *parent*, which IS detectable — the orphaned
+    /// child's own directory still nests under the gone parent's — and
+    /// fails loudly (``TranscriptTreeError/sidecarMissing(directory:)``): a
+    /// missing parent corrupts the surviving child's reconstructed
+    /// conversation, while a deleted child leaves every surviving session's
+    /// conversation whole.
+    ///
     /// - Parameter routerDirectory: The router's recording root —
     ///   `recordings/<routerId>/` — the same directory
     ///   ``MergedTranscript/merged(under:)`` reads.

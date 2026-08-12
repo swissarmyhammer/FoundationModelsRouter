@@ -47,10 +47,27 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Recording/TranscriptEntryMapper.swift, Sources/FoundationModelsRouter/Recording/TranscriptEntryPayload.swift, Sources/FoundationModelsRouter/Recording/RecordingSchemaVersion.swift, Tests/FoundationModelsRouterTests/TranscriptEntryMapperTests.swift, plan.md; `swift test` passed 926 tests with zero failures (875 + 27 + 24)
     - next: review
   timestamp: 2026-08-12T10:42:09.185565+00:00
+- actor: claude-code
+  id: 01kztsazx2ek1sjxv8pn2qqwy5
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings (8 validators attempted, 0 failed)
+    - next: none. The task moved to done.
+  timestamp: 2026-08-12T10:47:23.298994+00:00
+- actor: claude-code
+  id: 01kztsbrf53m9we6g272qy5448
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files: toolCallingMode round-trips, responseFormatName is read at rebuild, description authority and metadata synthesis pinned, typed encode error with best-effort sentinel seam
+    - test: green — swift test, 875 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: fdc8b1b
+    - review: clean — 0 findings, scope HEAD~1..HEAD
+    - result: the task is in done
+  timestamp: 2026-08-12T10:47:48.453712+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9680
 title: Close the undocumented field gaps in the transcript entry mapping
 ---
 ## Problem

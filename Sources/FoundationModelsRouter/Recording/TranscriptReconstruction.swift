@@ -159,6 +159,20 @@ extension TranscriptTree {
     /// through ``TranscriptEntryMapper/entry(from:kind:registry:)`` still
     /// throws ``TranscriptReconstructionError/contentRemoved(session:seq:)``
     /// for its stripped payload, exactly as it would without this fallback.
+    ///
+    /// The `try?` below extends the same decided stance to a *corrupt*
+    /// checkpoint (task ^xky3j8w) — content damaged on disk at
+    /// ``RecordingLevel/full``, not stripped: the decode fails, no
+    /// checkpoint governs the restore filter, the checkpoint event is
+    /// included unfiltered, and mapping its `.custom` segment through the
+    /// registry throws
+    /// ``TranscriptReconstructionError/entryReconstructionFailed(session:seq:underlying:)``
+    /// — so a corrupt checkpoint can never silently restore a session as
+    /// uncompacted with its full pre-fold history. Only the non-throwing
+    /// conveniences degrade quietly: ``SessionSidecar/compactionCount``
+    /// counts the corrupt checkpoint as absent, and ``restoredUsageState(in:)``
+    /// falls back to its no-checkpoint tier — both moot on the restore
+    /// path, which throws at mapping first.
     private static func compactionSegmentContent(in event: TranscriptEvent) -> CompactionSegment.Content? {
         guard event.kind == .response, let segments = event.entry?.segments else { return nil }
         for segment in segments {

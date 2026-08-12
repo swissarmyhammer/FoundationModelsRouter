@@ -103,12 +103,44 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 /// Mirrors ``TranscriptTree``'s own shape (``session(_:)``, ``children(of:)``),
 /// but over live, driveable sessions instead of value-typed nodes.
 public struct RestoredSessionTree: Sendable {
+    /// One restored session whose recorded working context differs from the
+    /// context the restoring profile resolved (task ^xky3j8w).
+    ///
+    /// A restored session always runs against ``resolved`` — the physical
+    /// window the live backend was actually loaded with — so
+    /// ``RoutedSession/contextFill``'s denominator is the live figure, not
+    /// the recorded one. This row is the typed warning that the denominator
+    /// changed across the restore: a session recorded near-full against a
+    /// larger window may overflow (or fold) sooner than it did originally.
+    /// It is deliberately a report row rather than an error like
+    /// ``SessionTreeRestorationError/modelMismatch(session:slot:recorded:resident:)``:
+    /// the same model legitimately resolves a different context on a machine
+    /// whose RAM ladder settled on another rung, and refusing the restore
+    /// would block a session that still works.
+    public struct ContextMismatch: Sendable, Equatable {
+        /// The restored session whose ``SessionSidecar/context`` differs.
+        public let session: ULID
+
+        /// The working context, in tokens, the session was recorded at.
+        public let recorded: Int
+
+        /// The working context, in tokens, the restoring profile resolved —
+        /// the figure the restored session actually runs against.
+        public let resolved: Int
+    }
+
     /// The restored root session.
     public let root: RoutedSession
 
     /// What the restore could not re-apply from the recorded configuration
     /// envelopes — see ``SessionConfigurationRestorationReport``.
     public let configurationReport: SessionConfigurationRestorationReport
+
+    /// Every restored session whose recorded working context differs from
+    /// the live resolution's, in restoration walk order (each parent before
+    /// its children) — or empty when every node's recorded context matches.
+    /// See ``ContextMismatch`` for why this is a warning, not an error.
+    public let contextMismatches: [ContextMismatch]
 
     /// Every restored session (the root and all its descendants), keyed by id.
     private let sessionsById: [ULID: RoutedSession]
@@ -122,12 +154,14 @@ public struct RestoredSessionTree: Sendable {
         root: RoutedSession,
         sessionsById: [ULID: RoutedSession],
         tree: TranscriptTree,
-        configurationReport: SessionConfigurationRestorationReport
+        configurationReport: SessionConfigurationRestorationReport,
+        contextMismatches: [ContextMismatch]
     ) {
         self.root = root
         self.sessionsById = sessionsById
         self.tree = tree
         self.configurationReport = configurationReport
+        self.contextMismatches = contextMismatches
     }
 
     /// Looks up a restored session anywhere in the tree by its id.
@@ -231,6 +265,41 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// never entered its conversation. See
     /// ``TranscriptTree/lostRunTerminalEvents(in:)``.
     ///
+    /// **Decided restore losses and loud failures (task ^xky3j8w).** Each of
+    /// these was examined and decided, so none of them is silent by
+    /// accident:
+    ///
+    /// - ``SessionSidecar/agentSpawn`` is **not re-applied**, because there
+    ///   is nothing to re-apply it to: the spawn context is write-once
+    ///   creation metadata that ``RoutedSessionActor``'s initializer
+    ///   consumes for the sidecar write and never stores, and
+    ///   ``RoutedSession`` exposes no such live state. The recorded fact
+    ///   stays on disk and stays readable from the loaded tree
+    ///   (``SessionNode/sidecar``).
+    /// - ``SessionSidecar/context`` is compared against the live
+    ///   resolution's context and every difference is reported in
+    ///   ``RestoredSessionTree/contextMismatches`` — see
+    ///   ``RestoredSessionTree/ContextMismatch`` for why the live figure
+    ///   always wins and why a difference is a warning, not an error.
+    /// - A **deleted child directory** cannot be detected: the layout is the
+    ///   only structure on disk, so a deleted child is byte-identical to a
+    ///   child that never existed. The tree loads clean without it (a
+    ///   missing *parent* is loud — see ``TranscriptTree/load(under:)``).
+    /// - A **corrupt custom segment** — a ``CompactionSegment`` checkpoint
+    ///   or an ``OperationEventSegment`` whose recorded content no longer
+    ///   decodes — fails the restore loudly with
+    ///   ``TranscriptReconstructionError/entryReconstructionFailed(session:seq:underlying:)``
+    ///   from the entry mapping, never a silent partial restore: the
+    ///   nil-not-throw fallbacks in `compactionSegmentContent(in:)` and
+    ///   `operationEvents(in:)` only affect pre-mapping filtering and the
+    ///   orphan scan, both of which run at or after the mapping that
+    ///   throws.
+    /// - A **corrupt transcript line** before the file's last is the typed
+    ///   ``TranscriptTreeError/transcriptLineCorrupt(session:file:)``,
+    ///   naming the session and file; a torn FINAL line — the expected
+    ///   crash artifact — is dropped with a logged warning instead (see
+    ///   `TranscriptLineDecoding`).
+    ///
     /// - Parameters:
     ///   - rootId: The root session's span id to restore the whole tree from.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
@@ -289,7 +358,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// ``CompactionPrompt/default``, `Summarization()`, `nil` priming, and
     /// an empty report.
     /// - Returns: The restored tree, rooted at the session named by `rootId`,
-    ///   carrying ``RestoredSessionTree/configurationReport``.
+    ///   carrying ``RestoredSessionTree/configurationReport`` and
+    ///   ``RestoredSessionTree/contextMismatches``.
     /// - Throws: ``SessionTreeRestorationError`` for every documented
     ///   restoration-specific failure; ``TranscriptTreeError`` /
     ///   ``TranscriptReconstructionError`` for anything
@@ -339,6 +409,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // ``SessionConfigurationRestorationReport``.
         let suppliedToolNames = Set(tools.map(\.name))
         var missingTools: [SessionConfigurationRestorationReport.MissingTool] = []
+        // The recorded-context check (task ^xky3j8w): a node whose recorded
+        // ``SessionSidecar/context`` differs from the live resolution's is
+        // collected here — one row per node, in walk order — for the
+        // returned ``RestoredSessionTree/contextMismatches``. See
+        // ``RestoredSessionTree/ContextMismatch`` for why this is a typed
+        // warning rather than a `modelMismatch`-style error.
+        var contextMismatches: [RestoredSessionTree.ContextMismatch] = []
         func restore(_ node: SessionNode) async throws -> RoutedSession {
             let slot = node.sidecar.slot
             let model = node.sidecar.model
@@ -358,6 +435,22 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                     recorded: model,
                     resident: routedLLM.chosen
                 )
+            }
+
+            // The restored session runs against the live resolution's
+            // context — the physical window `routedLLM`'s backend was
+            // actually loaded with — never the recorded figure. A recorded
+            // context the live figure no longer matches is reported, not
+            // silently adopted and not an error (task ^xky3j8w; see
+            // ``RestoredSessionTree/ContextMismatch``).
+            let resolvedContextTokens = routedLLM.resolution.contextTokens
+            if node.sidecar.context != resolvedContextTokens {
+                contextMismatches.append(
+                    RestoredSessionTree.ContextMismatch(
+                        session: node.id,
+                        recorded: node.sidecar.context,
+                        resolved: resolvedContextTokens
+                    ))
             }
 
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
@@ -483,7 +576,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // read from disk just above, never rewritten. The writer travels
                 // only for forks taken from the restored session.
                 sidecarOrigin: SessionSidecarOrigin.restored(under: routedLLM.durableRecording),
-                contextTokens: routedLLM.resolution.contextTokens,
+                contextTokens: resolvedContextTokens,
                 usageState: usageState,
                 // The recorded configuration envelope re-applied (task
                 // ^ne5g9jn): the budget, its prompt, the summarization
@@ -507,7 +600,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             root: root,
             sessionsById: sessionsById,
             tree: tree,
-            configurationReport: SessionConfigurationRestorationReport(missingTools: missingTools)
+            configurationReport: SessionConfigurationRestorationReport(missingTools: missingTools),
+            contextMismatches: contextMismatches
         )
     }
 }
@@ -614,6 +708,20 @@ extension TranscriptTree {
     /// so no entry-kind filter is applied; the segment discriminator alone
     /// identifies them. A stripped or undecodable segment yields nothing
     /// rather than throwing, mirroring `compactionSegmentContent(in:)`.
+    ///
+    /// The `try?` below is a decided behavior, not a swallowed error (task
+    /// ^xky3j8w): on the restore path it can never silently hide a corrupt
+    /// segment, because ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+    /// maps every node's transcript — rebuilding the very same segments
+    /// through ``CustomSegmentRegistry`` (which registers
+    /// ``OperationEventSegment`` in its `routerDefault`) — *before* this
+    /// orphan scan ever runs, and a corrupt segment throws
+    /// ``TranscriptReconstructionError/entryReconstructionFailed(session:seq:underlying:)``
+    /// there. What remains for the `nil` branch is the stripped
+    /// ``RecordingLevel/metadataOnly`` segment, which reconstruction also
+    /// refuses first (``TranscriptReconstructionError/contentRemoved(session:seq:)``),
+    /// so an orphaned run can never silently miss its manufactured `.lost`
+    /// event.
     private static func operationEvents(in event: TranscriptEvent) -> [OperationEvent] {
         (event.entry?.segments ?? []).compactMap { segment in
             guard case .custom(_, let discriminator, let contentJSON, _) = segment,

@@ -931,4 +931,178 @@ struct SessionTreeRestorationTests {
         #expect(restoredRoot.discoveryPriming == nil)
         #expect(restored.configurationReport.missingTools.isEmpty)
     }
+
+    // MARK: - Decided restore losses (task ^xky3j8w)
+
+    @Test(
+        "a recorded agent-spawn context survives a restore on disk: restore re-applies nothing because a live session holds no such state"
+    )
+    @MainActor
+    func recordedAgentSpawnStaysReadableFromTheRestoredTreesSidecar() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let spawn = SessionSidecar.AgentSpawn(
+            parentSessionId: ULID.generate(), parentToolCallId: "call-1")
+        let root = profile1.standard.makeSession(agentSpawn: spawn)
+        _ = try await root.respond(to: "hello")
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        #expect(restored.root.id == root.id)
+
+        // The spawn context is write-once creation metadata: neither
+        // `RoutedSessionActor` nor `RoutedSession` retains it as live state,
+        // so there is nothing for a restore to re-apply — the recorded fact
+        // stays on disk and stays readable from the loaded tree (both the
+        // sidecar's own field and the configuration envelope carry it).
+        let tree = try TranscriptTree.load(
+            under: routerDirectory(routerId: router1.id, recordingsDir: recordingsDir))
+        let sidecar = try #require(tree.session(root.id)?.sidecar)
+        #expect(sidecar.agentSpawn == spawn)
+        #expect(sidecar.configuration?.agentSpawn == spawn)
+    }
+
+    @Test(
+        "a recorded context the live resolution no longer matches is reported per session in contextMismatches, never silently adopted"
+    )
+    @MainActor
+    func restoreReportsARecordedContextTheLiveResolutionNoLongerMatches() async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // Recorded and live contexts match: nothing to report.
+        let matching = try await profile2.standard.restoreSessionTree(root: root.id)
+        #expect(matching.contextMismatches.isEmpty)
+
+        // Rewrite the recorded context to a figure the live resolution does
+        // not match — the on-disk stand-in for a recording made on a machine
+        // whose context ladder settled on a different rung.
+        let sidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+            .appendingPathComponent(root.id.description, isDirectory: true)
+            .appendingPathComponent("session.json", isDirectory: false)
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
+        let resolvedContext = try #require(json["context"] as? Int)
+        let recordedContext = resolvedContext + 1_024
+        json["context"] = recordedContext
+        try FileManager.default.removeItem(at: sidecarURL)
+        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+        #expect(
+            restored.contextMismatches == [
+                RestoredSessionTree.ContextMismatch(
+                    session: root.id, recorded: recordedContext, resolved: resolvedContext)
+            ])
+    }
+
+    /// Builds an entry-kind event whose `.custom` segment carries content
+    /// that is not JSON — the fabricated corruption
+    /// `corruptCustomSegmentFailsRestoreLoudly` appends to a recorded
+    /// transcript.
+    private static func corruptCustomSegmentEvent(
+        seq: Int,
+        sessionId: ULID,
+        routerId: ULID,
+        kind: TranscriptEvent.Kind,
+        typeDiscriminator: String
+    ) -> TranscriptEvent {
+        TranscriptEvent(
+            routerId: routerId,
+            sessionId: sessionId,
+            seq: seq,
+            ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+            kind: kind,
+            text: "corrupt",
+            entry: TranscriptEntryPayload(
+                entryId: "corrupt-1",
+                segments: [
+                    .text(id: "corrupt-1-text", content: "corrupt"),
+                    .custom(
+                        id: "corrupt-1-segment",
+                        typeDiscriminator: typeDiscriminator,
+                        contentJSON: "{ not json",
+                        description: nil
+                    ),
+                ],
+                assetIds: []
+            )
+        )
+    }
+
+    @Test(
+        "a corrupt custom segment fails the restore loudly with entryReconstructionFailed naming the session and seq — never a silent partial restore",
+        arguments: [
+            (CompactionSegment.typeDiscriminator, TranscriptEvent.Kind.response),
+            (OperationEventSegment.typeDiscriminator, TranscriptEvent.Kind.prompt),
+        ]
+    )
+    @MainActor
+    func corruptCustomSegmentFailsRestoreLoudly(
+        discriminator: String, kind: TranscriptEvent.Kind
+    ) async throws {
+        let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        let routerDir = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+        let recordedEvents = try TranscriptTree.load(under: routerDir).events(forSession: root.id)
+        let corruptSeq = recordedEvents.count
+        let corruptEvent = Self.corruptCustomSegmentEvent(
+            seq: corruptSeq,
+            sessionId: root.id,
+            routerId: router1.id,
+            kind: kind,
+            typeDiscriminator: discriminator
+        )
+        let transcriptURL = routerDir
+            .appendingPathComponent(root.id.description, isDirectory: true)
+            .appendingPathComponent("transcript.jsonl", isDirectory: false)
+        let existing = try String(contentsOf: transcriptURL, encoding: .utf8)
+        let corruptLine = String(data: try JSONEncoder().encode(corruptEvent), encoding: .utf8)!
+        try (existing + corruptLine + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        do {
+            _ = try await profile2.standard.restoreSessionTree(root: root.id)
+            Issue.record("restoring a corrupt \(discriminator) segment must throw, not restore silently")
+        } catch let error as TranscriptReconstructionError {
+            guard case .entryReconstructionFailed(let session, let seq, _) = error else {
+                Issue.record("expected entryReconstructionFailed, got \(error)")
+                return
+            }
+            #expect(session == root.id)
+            #expect(seq == corruptSeq)
+        }
+    }
 }
