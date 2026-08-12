@@ -3,6 +3,17 @@ import FoundationModels
 
 @testable import FoundationModelsRouter
 
+/// The `keepRecentTurns` recency window the estimates in this file key on —
+/// the same count of newest turns each fold stage (``ToolOutputElision``,
+/// ``TurnTruncation``, ``Summarization``) keeps un-foldable by default, so
+/// the fixture floor and the fold pipeline agree on which turns cannot fold.
+let defaultKeepRecentTurns = 4
+
+/// The divisor that puts ``deterministicFoldBudget(for:)``'s target token
+/// count at the midpoint of its two bounds — the recency-window-only floor
+/// and the full pre-fold estimate — strictly between them.
+let foldTargetMidpointDivisor = 2
+
 /// Drives `count` sequential `respond(to:)` turns on `session`, each with the
 /// prompt `"turn <index>"` — the warm-up shape every fold-exercising suite
 /// uses, kept in one place so the prompts (which fold assertions such as
@@ -20,8 +31,8 @@ func driveTurns(_ count: Int, on session: RoutedSession) async throws {
 }
 
 /// The estimated token size of just `entries`' un-foldable recency window
-/// (the header plus the newest 4 turns) — the floor no deterministic stage
-/// can fold below.
+/// (the header plus the newest `defaultKeepRecentTurns` turns) — the floor
+/// no deterministic stage can fold below.
 ///
 /// A `TokenBudget` whose target sits strictly between this floor and the
 /// full pre-fold estimate is what forces a *deterministic* fold: low enough
@@ -34,7 +45,7 @@ func driveTurns(_ count: Int, on session: RoutedSession) async throws {
 /// - Returns: The recency-window-only token estimate.
 func recencyWindowOnlyEstimate(_ entries: [Transcript.Entry]) -> Int {
     let (header, turns) = TranscriptTurns.split(entries)
-    let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
+    let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: defaultKeepRecentTurns)
     return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
 }
 
@@ -48,6 +59,6 @@ func recencyWindowOnlyEstimate(_ entries: [Transcript.Entry]) -> Int {
 /// - Returns: The budget to pass to `compact(budget:)`.
 func deterministicFoldBudget(for entries: [Transcript.Entry]) -> TokenBudget {
     let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: entries))
-    let targetTokens = (recencyWindowOnlyEstimate(entries) + preFoldTokens) / 2
+    let targetTokens = (recencyWindowOnlyEstimate(entries) + preFoldTokens) / foldTargetMidpointDivisor
     return TokenBudget(limit: preFoldTokens, target: Double(targetTokens) / Double(preFoldTokens))
 }

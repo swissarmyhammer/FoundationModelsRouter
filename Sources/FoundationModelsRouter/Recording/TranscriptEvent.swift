@@ -362,6 +362,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             )
         }
 
+        // sah:allow duplication forwards a Partial's fields plus the recorder-stamped seq and ts into a TranscriptEvent's memberwise initializer; withCompactionCount in SessionSidecar.swift copies a SessionSidecar, a different type with a different field list, so the two bodies share shape only and a change to one never applies to the other
         /// Stamps this partial with a recorder-assigned `seq` and `ts`, yielding
         /// a finished ``TranscriptEvent``.
         ///

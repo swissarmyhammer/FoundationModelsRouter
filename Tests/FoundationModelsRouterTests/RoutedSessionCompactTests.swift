@@ -881,16 +881,6 @@ struct RoutedSessionCompactTests {
     /// measured per-turn delta above reports a mid-scale `contextFill`.
     private static let checkpointTestContext = 100_000
 
-    /// A budget whose target sits strictly between `entries`' recency-window-only
-    /// floor and its full pre-fold estimate: low enough that the pipeline folds
-    /// something, high enough that the deterministic ``TurnTruncation`` stage
-    /// alone lands under it — the fold shape that synthesizes no summary entry.
-    private static func deterministicShrinkBudget(for entries: [Transcript.Entry]) -> TokenBudget {
-        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: entries))
-        let targetTokens = (recencyWindowOnlyEstimate(entries) + preFoldTokens) / 2
-        return TokenBudget(limit: preFoldTokens, target: Double(targetTokens) / Double(preFoldTokens))
-    }
-
     @Test(
         "a deterministic-only fold records exactly one new entry carrying a decodable CompactionSegment checkpoint on the measured scale"
     )
@@ -911,7 +901,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let budget = Self.deterministicShrinkBudget(for: backend.transcriptEntries())
+        let budget = deterministicFoldBudget(for: backend.transcriptEntries())
 
         let beforeEvents = await recorder.events
         let result = try await session.compact(budget: budget)
@@ -972,7 +962,7 @@ struct RoutedSessionCompactTests {
 
         let backend = try #require(container.lastBackend)
         let preFoldEntries = backend.transcriptEntries()
-        let result = try await session.compact(budget: Self.deterministicShrinkBudget(for: preFoldEntries))
+        let result = try await session.compact(budget: deterministicFoldBudget(for: preFoldEntries))
         #expect(result.summary == nil)
         let postFoldFill = await session.contextFill
 

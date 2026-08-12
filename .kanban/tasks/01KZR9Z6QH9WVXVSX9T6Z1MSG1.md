@@ -35,6 +35,42 @@ comments:
     - evidence: 14 files changed + 2 new test files. Sources: TranscriptEvent.swift (Kind.isEntryKind), TranscriptTree.swift (cut fallback), SessionSidecar.swift (forkedAtHistoryOrdinal), RecordingSchemaVersion.swift (v2 doc), SessionTreeRestoration.swift, RoutedSessionActor.swift (historyOrdinal), RoutedSessionActorRecording/Forking/Compaction.swift, RoutedLLM.swift, RecordingLanguageModel.swift. Tests: new ForkAfterCompactionRestorationTests.swift (3 tests, red first then green) and Helpers/CompactionFoldFixtures.swift; updated RoutedSessionCompactTests, TranscriptTreeTests, SessionSidecarTests, 2 integration test files. `swift build --build-tests` clean; one full `swift test`: 884 tests in 83 suites passed (1 pre-existing known issue), 27 in 11 suites passed, 24 in 5 suites passed, 0 failures.
     - next: /review
   timestamp: 2026-08-12T14:33:31.080776+00:00
+- actor: claude-code
+  id: 01kzv7cbtcmvaf3z57w3rhj5j0
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 282a598); engine reported 11 findings; 8 findings removed by the standing written rule for test code that existed before this commit; 3 findings stay open — Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift:372, Tests/FoundationModelsRouterTests/Helpers/CompactionFoldFixtures.swift:37, Tests/FoundationModelsRouterTests/Helpers/CompactionFoldFixtures.swift:51
+    - next: correct the 3 open findings in the checklist, then run the review again
+  timestamp: 2026-08-12T14:52:48.332495+00:00
+- actor: claude-code
+  id: 01kzv7d83syfa6ccnv5bmq6aj3
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 20+ files; split persistedEntryCount into the backend baseline and the monotonic historyOrdinal; fork records forkedAtHistoryOrdinal; restore cuts with the ordinal
+    - test: green — swift test, 884 tests in 83 suites passed + 27 + 24, 0 failures (the one implement run is the test evidence)
+    - commit: 282a598
+    - review: findings — 3 open: TranscriptEvent.swift:372, CompactionFoldFixtures.swift:37, CompactionFoldFixtures.swift:51 (8 waived, pre-existing tests)
+  timestamp: 2026-08-12T14:53:17.305738+00:00
+- actor: claude-code
+  id: 01kzv8gbyps1a5wff2j8jrtfvd
+  text: |-
+    Fixed the three open review findings.
+
+    1. TranscriptEvent.swift `stamped` near-duplicate of `withCompactionCount`: the two functions construct two different types with two different field lists. No shared function can hold both bodies, and a change to one never applies to the other. The duplication-parsed rule gives the marker `// sah:allow duplication <reason>` for a deliberate fork in a different domain. The repository already carries this marker three times (RoutedLLM.swift, GuidedGeneration.swift, SessionConfiguration.swift) for the same shape. Applied the marker with the reason above `stamped`.
+
+    2. CompactionFoldFixtures.swift magic numbers: read the Swift rule first (swiftlint `no_magic_numbers`, allowed values [0, 1, -1, 100]; a `let` declaration names its value). Added two named file-scope constants: `defaultKeepRecentTurns = 4` (the recency window each fold stage keeps by default) and `foldTargetMidpointDivisor = 2` (sets the deterministic budget target at the midpoint of the floor and the full estimate). Swept the whole file: no other unnamed literal remains (`0` and `1` are allowed values).
+
+    3. Sweep for hand-built copies of the extracted fixtures: RoutedSessionCompactTests still held `deterministicShrinkBudget(for:)`, a body-identical private twin of the shared `deterministicFoldBudget(for:)` fixture that commit 282a598 extracted. Deleted the twin and pointed its two call sites at the shared fixture. Behavior is identical because the bodies were identical. The private `recencyWindowOnlyEstimate` copies in AutoCompactionTests and GuidedGenerationTests stay untouched: they are test code from before commit 282a598, which the standing waiver rule covers, and this change set does not touch those files.
+
+    Verification: `swift build --build-tests` clean; one ungated `swift test` run: 884 tests in 83 suites passed (1 pre-existing known issue in the BoundedWait suite, same as the prior recorded run), 27 tests in 11 suites passed, 24 tests in 5 suites passed. Zero failures.
+  timestamp: 2026-08-12T15:12:28.118985+00:00
+- actor: claude-code
+  id: 01kzv8gnprf3az1sb63f98ecb3
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift (sah:allow duplication marker on `stamped`), Tests/FoundationModelsRouterTests/Helpers/CompactionFoldFixtures.swift (named constants `defaultKeepRecentTurns`, `foldTargetMidpointDivisor`), Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift (removed the `deterministicShrinkBudget` twin of the shared fixture). One `swift test` run: 884 tests in 83 suites passed (1 pre-existing known issue), 27 in 11 suites passed, 24 in 5 suites passed, 0 failures. All three review-finding boxes checked on the card.
+    - next: /review
+  timestamp: 2026-08-12T15:12:38.104076+00:00
 depends_on:
 - 01KZR9YPHRGDCZ26R5BH1008KB
 position_column: doing
@@ -67,4 +103,12 @@ Depends on the checkpoint task ^h1008kb: "rebuild context from the checkpoint" o
 
 - Live test: parent records N turns, folds, forks, both continue. Restore the tree. Assert the fork's effective transcript equals the fork's live transcript entry for entry — the fold's live window plus the fork's own entries, no resurrected pre-fold span.
 - Same shape from a restored-then-forked previously-compacted root.
-- Existing fork tests (cut pinned at fork time, grandfork counts) stay green. #transcript
+- Existing fork tests (cut pinned at fork time, grandfork counts) stay green.
+
+## Review Findings (2026-08-12 09:35)
+
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift:372` — func `stamped` is a near-duplicate of `withCompactionCount` at Sources/FoundationModelsRouter/Recording/SessionSidecar.swift:430 (60 tokens, 90% alike).
+- [x] `Tests/FoundationModelsRouterTests/Helpers/CompactionFoldFixtures.swift:37` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/CompactionFoldFixtures.swift:51` — Magic numbers should be replaced by named constants.
+
+Waiver note: The engine reported eleven findings. We removed eight findings by the standing written rule that removes findings which ask us to refactor test code that existed before commit 282a598. The removed findings were in RoutedSessionCompactTests.swift (lines 130, 141, 159), SessionSidecarTests.swift (lines 99, 114), and TranscriptTreeTests.swift (lines 184, 671, 756). This commit did not add or change those symbols. The two CompactionFoldFixtures.swift findings stay because this commit added that file. #transcript
