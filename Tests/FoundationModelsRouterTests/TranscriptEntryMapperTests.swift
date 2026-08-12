@@ -51,6 +51,24 @@ struct TranscriptEntryMapperTests {
         var description: String { "Note: \(content.body)" }
     }
 
+    /// Content that always fails a `JSONEncoder` encode: `Double.infinity`
+    /// is rejected by the default non-conforming-float strategy.
+    private struct Unencodable: Codable, Equatable, Sendable {
+        var value: Double
+    }
+
+    private struct UnencodableSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+        let id: String
+        let content: Unencodable
+
+        init(id: String, content: Unencodable) {
+            self.id = id
+            self.content = content
+        }
+
+        var description: String { "Unencodable: \(content.value)" }
+    }
+
     // MARK: - Per-kind round trips
 
     @Test("an .instructions entry round-trips through event(from:) and entry(from:kind:)")
@@ -77,11 +95,42 @@ struct TranscriptEntryMapperTests {
             Transcript.Prompt(
                 id: "prompt-1",
                 segments: [.text(Transcript.TextSegment(id: "s1", content: "what's the weather"))],
-                options: GenerationOptions(temperature: 0.7, maximumResponseTokens: 512),
+                options: GenerationOptions(
+                    temperature: 0.7,
+                    maximumResponseTokens: 512,
+                    toolCallingMode: .required
+                ),
                 responseFormat: Transcript.ResponseFormat(schema: Weather.generationSchema)
             )
         )
         try assertRoundTrips(original, kind: .prompt)
+    }
+
+    @Test("GenerationOptions.toolCallingMode persists in the payload and rebuilds, for every mode kind")
+    func toolCallingModePersistsAndRebuilds() throws {
+        let modes: [(GenerationOptions.ToolCallingMode, ToolCallingModePayload)] = [
+            (.allowed, .allowed),
+            (.required, .required),
+            (.disallowed, .disallowed),
+        ]
+        for (mode, expectedPayloadMode) in modes {
+            let original = Transcript.Entry.prompt(
+                Transcript.Prompt(
+                    id: "prompt-1",
+                    segments: [.text(Transcript.TextSegment(content: "hi"))],
+                    options: GenerationOptions(toolCallingMode: mode)
+                )
+            )
+            let (kind, payload, _) = TranscriptEntryMapper.event(from: original)
+            #expect(payload.options?.toolCallingMode == expectedPayloadMode)
+
+            let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
+            guard case .prompt(let rebuiltPrompt) = rebuilt else {
+                Issue.record("expected a rebuilt .prompt entry")
+                return
+            }
+            #expect(rebuiltPrompt.options.toolCallingMode == mode)
+        }
     }
 
     @Test("a .toolCalls entry round-trips through event(from:) and entry(from:kind:)")
@@ -265,6 +314,39 @@ struct TranscriptEntryMapperTests {
         #expect(NoteSegment.typeDiscriminator == String(reflecting: NoteSegment.self))
     }
 
+    @Test("a .custom segment's persisted description is not read at rebuild — the type's own description is authoritative")
+    func customSegmentRebuildsWithTheTypesOwnDescription() throws {
+        let original = NoteSegment(id: "n1", content: Note(body: "hello"))
+        // A payload whose persisted description disagrees with what the
+        // conforming type computes for the same content — the rebuilt segment
+        // must carry the type's description, proving the persisted copy is a
+        // reader convenience the rebuild never consumes.
+        let doctored = TranscriptEntryPayload(
+            entryId: "e1",
+            segments: [
+                .custom(
+                    id: original.id,
+                    typeDiscriminator: NoteSegment.typeDiscriminator,
+                    contentJSON: #"{"body":"hello"}"#,
+                    description: "a doctored description the type never produced"
+                )
+            ],
+            assetIds: []
+        )
+        var registry = CustomSegmentRegistry()
+        registry.register(NoteSegment.self)
+
+        let rebuilt = try TranscriptEntryMapper.entry(from: doctored, kind: .response, registry: registry)
+
+        guard case .response(let response) = rebuilt,
+            case .custom(let rebuiltSegment) = response.segments.first
+        else {
+            Issue.record("expected a rebuilt .response entry with a .custom segment")
+            return
+        }
+        #expect(rebuiltSegment.description == original.description)
+    }
+
     // MARK: - Documented degradations
 
     @Test("GenerationOptions.sampling is dropped on rebuild")
@@ -305,10 +387,12 @@ struct TranscriptEntryMapperTests {
         }
         // The rebuilder uses the assetIDs-based initializer (there is no
         // public initializer that accepts both `assetIDs:` and `metadata:`
-        // together), so `.metadata` synthesizes an `"assetIDs"` entry rather
-        // than reporting truly empty — the assertion that matters is that the
-        // *original's own* custom metadata key never survives the round trip.
+        // together), so the rebuild synthesizes a `metadata["assetIDs"]` key
+        // the original never carried. Both halves of that documented contract
+        // are pinned here: the original's own custom metadata key never
+        // survives the round trip, and the synthesized key is present.
         #expect(rebuiltResponse.metadata["k"] == nil)
+        #expect(rebuiltResponse.metadata["assetIDs"] != nil)
     }
 
     @Test("a Prompt's metadata dictionary is dropped on rebuild")
@@ -408,8 +492,12 @@ struct TranscriptEntryMapperTests {
             Issue.record("expected a rebuilt .prompt entry with a responseFormat")
             return
         }
-        // The name still round-trips...
+        // The name still round-trips — recovered from the rebuilt schema, and
+        // equal to the `responseFormatName` the payload persisted alongside
+        // it (the persisted name is the reader-facing copy; the schema is the
+        // fidelity carrier the rebuild reads).
         #expect(rebuiltFormat.name == Transcript.ResponseFormat(type: Weather.self).name)
+        #expect(rebuiltFormat.name == payload.responseFormatName)
         // ...and the schema JSON the mapper persisted structurally matches a
         // fresh encode of the rebuilt format's own schema (schema-form, not
         // the original type-built form) — compared as parsed JSON values
@@ -425,6 +513,29 @@ struct TranscriptEntryMapperTests {
         let persistedValue = try JSONDecoder().decode(JSONValue.self, from: Data(persistedSchemaJSON.utf8))
         let rebuiltValue = try JSONDecoder().decode(JSONValue.self, from: rebuiltSchemaJSON)
         #expect(persistedValue == rebuiltValue)
+    }
+
+    @Test("a payload with a response-format name but no schema rebuilds without a responseFormat and logs a warning naming it")
+    func nameOnlyResponseFormatDegradesToNilAndWarns() throws {
+        // The shape a future ResponseFormat.Kind case would record: the
+        // format's name persists, but there is no schema JSON to rebuild
+        // from, so the rebuilt prompt carries no response format and the loss
+        // is logged by name rather than passing silently.
+        let payload = TranscriptEntryPayload(
+            entryId: "e1",
+            segments: [.text(id: "s1", content: "hi")],
+            responseFormatName: "Weather"
+        )
+        let logStart = Date()
+
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: .prompt)
+
+        guard case .prompt(let rebuiltPrompt) = rebuilt else {
+            Issue.record("expected a rebuilt .prompt entry")
+            return
+        }
+        #expect(rebuiltPrompt.responseFormat == nil)
+        try assertLogged(containing: "response-format name \"Weather\"", since: logStart)
     }
 
     @Test("an attachment with a nil ImageAttachment.url degrades on rebuild to a labeled text segment")
@@ -512,7 +623,7 @@ struct TranscriptEntryMapperTests {
         }
         #expect(textSegment.id == "s9")
         #expect(textSegment.content == "future segment content")
-        try assertWarningLogged(containing: "unknown segment carrier", since: logStart)
+        try assertLogged(containing: "unknown segment carrier", since: logStart)
     }
 
     @Test("an unknown-kind payload rebuilds as a text-only entry and logs a warning")
@@ -537,7 +648,34 @@ struct TranscriptEntryMapperTests {
         #expect(response.assetIDs.isEmpty)
         #expect(response.segments.count == 1)
         #expect(textSegment.content == "future entry content")
-        try assertWarningLogged(containing: "unknown entry kind", since: logStart)
+        try assertLogged(containing: "unknown entry kind", since: logStart)
+    }
+
+    // MARK: - Record-time encode failures
+
+    @Test("jsonString(for:context:) throws a typed encode error for an unencodable value")
+    func jsonStringThrowsATypedEncodeError() {
+        // Double.infinity is unencodable under JSONEncoder's default
+        // non-conforming-float strategy, so the encode fails at the cause
+        // with the typed record-time error rather than a silent sentinel.
+        #expect(throws: TranscriptEntryEncodingError.self) {
+            try TranscriptEntryMapper.jsonString(for: Double.infinity, context: "test value")
+        }
+    }
+
+    @Test("an unencodable custom-segment content records the empty-string sentinel and logs the failure")
+    func unencodableCustomContentRecordsSentinelAndLogs() throws {
+        let segment = UnencodableSegment(id: "u1", content: Unencodable(value: .infinity))
+        let logStart = Date()
+
+        let payload = TranscriptEntryMapper.segmentPayload(.custom(segment))
+
+        guard case .custom(_, _, let contentJSON, _) = payload else {
+            Issue.record("expected a .custom segment payload")
+            return
+        }
+        #expect(contentJSON.isEmpty)
+        try assertLogged(containing: "persisting the empty-string sentinel", since: logStart)
     }
 
     // MARK: - Reconstruction failures
@@ -612,10 +750,10 @@ struct TranscriptEntryMapperTests {
     }
 
     /// Asserts this process logged, since `start`, a message under this
-    /// module's subsystem containing `fragment` — proof the unknown-case
-    /// degradation warning actually reached the log, read back through
+    /// module's subsystem containing `fragment` — proof a degradation warning
+    /// or an encode-failure fault actually reached the log, read back through
     /// `OSLogStore(scope: .currentProcessIdentifier)`.
-    private func assertWarningLogged(containing fragment: String, since start: Date) throws {
+    private func assertLogged(containing fragment: String, since start: Date) throws {
         let store = try OSLogStore(scope: .currentProcessIdentifier)
         let entries = try store.getEntries(at: store.position(date: start))
             .compactMap { $0 as? OSLogEntryLog }

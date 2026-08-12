@@ -70,8 +70,25 @@ comments:
     - evidence: 3 files — Tests/FoundationModelsRouterTests/RecordingRootLockTests.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationLostRunTests.swift. Each private temp-directory copy is removed; each call site now calls the existing shared RouterTestFixtures.makeTempDir(prefix:) with its own suite name, so the per-suite prefix stays. swift build --build-tests: complete, only the accepted mlx-swift "missing creator" warning. One swift test run: 870 + 27 + 24 tests passed, 0 failures, 1 known issue (accepted BoundedWait). The finding checkbox is flipped to done; tags re-supplied and verified.
     - next: /review
   timestamp: 2026-08-12T09:22:55.120053+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kztmp22490aekwykgryjj6sv
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD gave 0 findings (8 validators, 0 confirmed). All items in the prior checklist show a check.
+    - next: none. The task is done.
+  timestamp: 2026-08-12T09:26:03.076121+00:00
+- actor: claude-code
+  id: 01kztmpxp8621b45n064yae1dp
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 test files now call the shared RouterTestFixtures.makeTempDir(prefix:)
+    - test: green — swift test, 870 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 547e7f3
+    - review: clean — 0 findings, scope HEAD~1..HEAD; the prior finding is checked
+    - result: the task is in done
+  timestamp: 2026-08-12T09:26:31.368279+00:00
+position_column: done
+position_ordinal: ff9580
 title: Guard a recording root against a second writer
 ---
 ## Problem

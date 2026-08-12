@@ -44,6 +44,22 @@ public enum TranscriptEntryReconstructionError: Error, Equatable {
     case unsupportedKind(TranscriptEvent.Kind)
 }
 
+/// A failure encoding a value for persistence — the record-time counterpart
+/// of ``TranscriptEntryReconstructionError``.
+///
+/// Thrown by ``TranscriptEntryMapper``'s `jsonString(for:context:)` when a
+/// value cannot be encoded to JSON (realistically, a custom segment's
+/// user-provided `content`; the SDK's own `Codable` values are expected to
+/// always encode). ``TranscriptEntryMapper/event(from:)`` and
+/// ``TranscriptEntryMapper/segmentPayload(_:)`` never propagate it — they
+/// catch it, log it at fault level, and persist the documented empty-string
+/// sentinel — so the failure is loud at record time without breaking the
+/// best-effort record path.
+enum TranscriptEntryEncodingError: Error, Equatable {
+    /// Encoding the value described by `context` failed with `underlying`.
+    case encodingFailed(context: String, underlying: String)
+}
+
 /// Maps a real `FoundationModels.Transcript.Entry` to and from the on-disk
 /// ``TranscriptEntryPayload`` mirror — the single place SDK entries are
 /// converted to/from what ``TranscriptRecorder`` persists.
@@ -58,19 +74,43 @@ public enum TranscriptEntryReconstructionError: Error, Equatable {
 /// than silently assumed): `GenerationOptions.sampling` is dropped — not
 /// because it lacks public introspection (`SamplingMode.kind` *is* public
 /// and `Equatable` at macOS 27+), but because ``TranscriptEntryPayload``'s
-/// already-landed schema (``GenerationOptionsPayload``) only carries
-/// `temperature`/`maximumResponseTokens`, with no field for it; the same is
-/// true of `Prompt.contextOptions` (27+), which has no corresponding payload
-/// field either. The existential `metadata` dictionaries on
+/// already-landed schema (``GenerationOptionsPayload``) carries only
+/// `temperature`/`maximumResponseTokens`/`toolCallingMode`, with no field
+/// for it; the same is true of `Prompt.contextOptions` (27+), which has no
+/// corresponding payload field either. `GenerationOptions.toolCallingMode`
+/// round-trips through its public `kind` (``ToolCallingModePayload``); a
+/// `kind` case a future SDK adds records as *no* mode, with a logged
+/// warning. The existential `metadata` dictionaries on
 /// `Prompt`/`ToolCall`/`Response`/`Reasoning` are dropped for the same
-/// payload-schema reason. A `Transcript.ResponseFormat` originally built from
-/// a `Generable` *type* (`ResponseFormat(type:)`) rebuilds in schema form
-/// (`ResponseFormat(schema:)` is the only rebuildable initializer); an
-/// attachment whose `ImageAttachment.url` is `nil` (an in-memory image with
-/// no backing file — the only URL-based rebuild path is
-/// `ImageAttachment(imageURL:)`) degrades on rebuild to a text segment
-/// carrying the attachment's label, never a throw. `.custom` segments are
-/// **not** on this list — they round-trip via ``CustomSegmentRegistry``.
+/// payload-schema reason — and a rebuilt `.response` entry can *gain* one:
+/// `Transcript.Response(id:assetIDs:segments:)`, the only rebuildable
+/// initializer, synthesizes a `metadata["assetIDs"]` key the original entry
+/// may never have carried; that synthesis is contract, pinned by test. A
+/// `Transcript.ResponseFormat` originally built from a `Generable` *type*
+/// (`ResponseFormat(type:)`) rebuilds in schema form
+/// (`ResponseFormat(schema:)` is the only rebuildable initializer, and its
+/// `name` derives from the schema — the persisted
+/// ``TranscriptEntryPayload/responseFormatName`` is the reader-facing copy,
+/// the one response-format fact that survives `metadataOnly` stripping); a
+/// payload carrying a format *name* but no schema JSON (the shape a future
+/// `ResponseFormat.Kind` case would record) rebuilds without a response
+/// format, with a logged warning naming the lost format. An attachment whose
+/// `ImageAttachment.url` is `nil` (an in-memory image with no backing file —
+/// the only URL-based rebuild path is `ImageAttachment(imageURL:)`) degrades
+/// on rebuild to a text segment carrying the attachment's label, never a
+/// throw. `.custom` segments are **not** on this list — they round-trip via
+/// ``CustomSegmentRegistry``; only their persisted *description* is a reader
+/// convenience the rebuild never consumes, because the conforming type's own
+/// computed `description` is authoritative (pinned by test).
+///
+/// **Record-time encode failure** is loud, not silent: `jsonString(for:context:)`
+/// throws the typed ``TranscriptEntryEncodingError`` at the cause, and the
+/// never-throwing record path (``event(from:)``, ``segmentPayload(_:)``)
+/// catches it, logs it at fault level, and persists the empty-string
+/// sentinel in the affected JSON field. The empty string can never decode as
+/// valid content, so restoring that field always throws
+/// ``TranscriptEntryReconstructionError/invalidJSON(context:underlying:)``
+/// instead of silently rebuilding wrong content.
 ///
 /// **Unknown future SDK cases** are the last documented degradation: an entry
 /// or segment case a future SDK adds after this mapper was written records as
@@ -87,10 +127,14 @@ public enum TranscriptEntryMapper {
     /// Maps a real transcript entry to its on-disk payload.
     ///
     /// Never throws: every persisted field is either read directly off the
-    /// SDK value or produced by a `Codable`/`jsonString` conversion the SDK
-    /// itself guarantees succeeds for a value it just handed back (a
-    /// `GenerationSchema` or `GeneratedContent` the SDK produced, or a
-    /// `CustomSegment.Content` the protocol guarantees is `Encodable`).
+    /// SDK value or produced by a `Codable`/`jsonString` conversion. When a
+    /// conversion *does* fail — realistically only a custom segment's
+    /// user-provided `content`, since the SDK's own `Codable` values encode
+    /// reliably — the typed ``TranscriptEntryEncodingError`` is caught here,
+    /// logged at fault level, and the affected JSON field persists the
+    /// documented empty-string sentinel (see the type doc's "Record-time
+    /// encode failure" contract) rather than propagating a throw onto the
+    /// best-effort record path.
     ///
     /// - Parameter entry: The real transcript entry to persist.
     /// - Returns: The event ``TranscriptEvent/Kind`` this entry mirrors, its
@@ -114,7 +158,8 @@ public enum TranscriptEntryMapper {
             let segments = prompt.segments.map(segmentPayload)
             let options = GenerationOptionsPayload(
                 temperature: prompt.options.temperature,
-                maximumResponseTokens: prompt.options.maximumResponseTokens
+                maximumResponseTokens: prompt.options.maximumResponseTokens,
+                toolCallingMode: toolCallingModePayload(prompt.options.toolCallingMode)
             )
             let payload = TranscriptEntryPayload(
                 entryId: prompt.id,
@@ -261,7 +306,8 @@ public enum TranscriptEntryMapper {
         let options = GenerationOptions(
             samplingMode: nil,
             temperature: payload.options?.temperature,
-            maximumResponseTokens: payload.options?.maximumResponseTokens
+            maximumResponseTokens: payload.options?.maximumResponseTokens,
+            toolCallingMode: toolCallingMode(from: payload.options?.toolCallingMode)
         )
         var responseFormat: Transcript.ResponseFormat?
         if let schemaJSON = payload.responseFormatSchemaJSON {
@@ -270,6 +316,16 @@ public enum TranscriptEntryMapper {
                 context: "prompt \(payload.entryId) responseFormat schema"
             )
             responseFormat = Transcript.ResponseFormat(schema: schema)
+        } else if let formatName = payload.responseFormatName {
+            // The documented name-only degradation: the schema JSON is the
+            // fidelity carrier `ResponseFormat(schema:)` needs, and no
+            // initializer accepts a bare name. A payload carrying only the
+            // name (the shape a future ResponseFormat.Kind case would
+            // record) rebuilds without a response format, and the loss is
+            // logged by name instead of passing silently.
+            transcriptEntryMapperLogger.warning(
+                "TranscriptEntryMapper.rebuildPrompt: prompt \(payload.entryId, privacy: .public) carries a response-format name \"\(formatName, privacy: .public)\" but no persisted schema; rebuilding without a response format"
+            )
         }
         return Transcript.Prompt(
             id: payload.entryId,
@@ -436,7 +492,7 @@ public enum TranscriptEntryMapper {
         return .custom(
             id: segment.id,
             typeDiscriminator: discriminator,
-            contentJSON: jsonString(for: segment.content),
+            contentJSON: jsonStringOrSentinel(for: segment.content, context: "custom segment \(segment.id) content"),
             description: segment.description
         )
     }
@@ -466,6 +522,10 @@ public enum TranscriptEntryMapper {
             return .text(Transcript.TextSegment(id: id, content: label ?? ""))
 
         case .custom(let id, let typeDiscriminator, let contentJSON, _):
+            // The persisted description is deliberately not read here: the
+            // conforming type's own computed `description` is authoritative,
+            // and the registry rebuilds the segment from its `id` and
+            // `contentJSON` alone (see the documented degradations above).
             return try registry.rebuildSegment(discriminator: typeDiscriminator, id: id, contentJSON: contentJSON)
 
         case .unknown(let id, let description):
@@ -485,12 +545,66 @@ public enum TranscriptEntryMapper {
         ToolDefinitionPayload(
             name: definition.name,
             description: definition.description,
-            parametersSchemaJSON: jsonString(for: definition.parameters)
+            parametersSchemaJSON: jsonStringOrSentinel(
+                for: definition.parameters,
+                context: "tool \"\(definition.name)\" parameters schema"
+            )
         )
     }
 
     private static func toolCallPayload(_ call: Transcript.ToolCall) -> ToolCallPayload {
         ToolCallPayload(id: call.id, toolName: call.toolName, argumentsJSON: call.arguments.jsonString)
+    }
+
+    // MARK: - Tool-calling mode
+
+    /// Maps a live `GenerationOptions.ToolCallingMode` to its on-disk mirror
+    /// via its public `kind` — the documented `toolCallingMode` round-trip's
+    /// encode side.
+    ///
+    /// A `kind` case a future SDK adds records as `nil` (no mode), with a
+    /// logged warning naming the degradation — the same never-crash rule as
+    /// the unknown entry/segment carriers.
+    ///
+    /// - Parameter mode: The live tool-calling mode, or `nil`.
+    /// - Returns: The mode's on-disk mirror, or `nil`.
+    private static func toolCallingModePayload(
+        _ mode: GenerationOptions.ToolCallingMode?
+    ) -> ToolCallingModePayload? {
+        guard let mode else { return nil }
+        switch mode.kind {
+        case .allowed:
+            return .allowed
+        case .required:
+            return .required
+        case .disallowed:
+            return .disallowed
+        @unknown default:
+            transcriptEntryMapperLogger.warning(
+                "TranscriptEntryMapper: unrecognized GenerationOptions.ToolCallingMode kind; recording no tool-calling mode"
+            )
+            return nil
+        }
+    }
+
+    /// Maps a persisted tool-calling mode back to the live SDK value — the
+    /// documented `toolCallingMode` round-trip's rebuild side.
+    ///
+    /// - Parameter payload: The persisted mode, or `nil` (also what a
+    ///   recording written before the field existed decodes as).
+    /// - Returns: The live tool-calling mode, or `nil`.
+    private static func toolCallingMode(
+        from payload: ToolCallingModePayload?
+    ) -> GenerationOptions.ToolCallingMode? {
+        guard let payload else { return nil }
+        switch payload {
+        case .allowed:
+            return .allowed
+        case .required:
+            return .required
+        case .disallowed:
+            return .disallowed
+        }
     }
 
     // MARK: - Response format
@@ -501,7 +615,7 @@ public enum TranscriptEntryMapper {
     /// both constructors converge on the same representation here.
     private static func responseFormatSchemaJSON(_ format: Transcript.ResponseFormat) -> String? {
         guard case .schema(let schema) = format.kind else { return nil }
-        return jsonString(for: schema)
+        return jsonStringOrSentinel(for: schema, context: "response format schema")
     }
 
     // MARK: - Text flattening
@@ -560,13 +674,59 @@ public enum TranscriptEntryMapper {
 
     // MARK: - JSON helpers
 
-    /// Encodes `value` to a JSON string, or `""` on the near-impossible
-    /// failure of encoding a value the SDK itself just produced.
-    private static func jsonString<T: Encodable>(for value: T) -> String {
-        guard let data = try? JSONEncoder().encode(value), let string = String(data: data, encoding: .utf8) else {
-            return ""
+    /// Encodes `value` to a JSON string.
+    ///
+    /// - Parameters:
+    ///   - value: The value to encode.
+    ///   - context: What `value` is, named in the thrown error.
+    /// - Returns: The encoded JSON string.
+    /// - Throws: ``TranscriptEntryEncodingError/encodingFailed(context:underlying:)``
+    ///   when the encode fails — the typed record-time error, thrown at the
+    ///   cause instead of a silent sentinel.
+    static func jsonString<T: Encodable>(for value: T, context: String) throws -> String {
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(value)
+        } catch {
+            throw TranscriptEntryEncodingError.encodingFailed(
+                context: context,
+                underlying: String(describing: error)
+            )
+        }
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw TranscriptEntryEncodingError.encodingFailed(
+                context: context,
+                underlying: "encoded data is not valid UTF-8"
+            )
         }
         return string
+    }
+
+    /// Encodes `value` to a JSON string on the never-throwing record path,
+    /// degrading to the documented empty-string sentinel on failure.
+    ///
+    /// The seam between the throwing `jsonString(for:context:)` and the
+    /// best-effort record path (``event(from:)``, ``segmentPayload(_:)``):
+    /// the typed ``TranscriptEntryEncodingError`` is caught here and logged
+    /// at fault level, at record time, and the field persists `""` — a value
+    /// that can never decode as valid content, so restore refuses it with
+    /// ``TranscriptEntryReconstructionError/invalidJSON(context:underlying:)``
+    /// instead of rebuilding wrong content (see the type doc's "Record-time
+    /// encode failure" contract).
+    ///
+    /// - Parameters:
+    ///   - value: The value to encode.
+    ///   - context: What `value` is, named in the fault log.
+    /// - Returns: The encoded JSON string, or `""` on encode failure.
+    private static func jsonStringOrSentinel<T: Encodable>(for value: T, context: String) -> String {
+        do {
+            return try jsonString(for: value, context: context)
+        } catch {
+            transcriptEntryMapperLogger.fault(
+                "TranscriptEntryMapper: \(String(describing: error), privacy: .public); persisting the empty-string sentinel for \(context, privacy: .public)"
+            )
+            return ""
+        }
     }
 
     private static func decodeSchema(_ json: String, context: String) throws -> GenerationSchema {

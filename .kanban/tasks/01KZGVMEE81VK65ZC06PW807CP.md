@@ -263,6 +263,12 @@ comments:
 
     Both cards record that they were filed from this one. Neither is work for this repo.
   timestamp: 2026-08-11T11:34:23.386033+00:00
+- actor: claude-code
+  id: 01kztmrb103b8htsnfpyj2e8cv
+  text: |-
+    ### Orchestrator note — skipped in this finish batch
+    This card's acceptance requires repeated full gated runs (`FM_ROUTER_INTEGRATION_TESTS=1`) as the proof. This finish batch runs under two standing constraints that forbid that evidence: no gated suites, and no repeated test runs. The card stays in `todo`, untouched. Work it in a session that permits gated runs on the real model.
+  timestamp: 2026-08-12T09:27:17.792671+00:00
 position_column: todo
 position_ordinal: 8a80
 title: Gated tool-calling suites lose their tool call or their recall when they inherit another suite's prompt cache

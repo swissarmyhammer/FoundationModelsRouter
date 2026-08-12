@@ -41,6 +41,11 @@ public enum RecordingSchemaVersion {
     /// `nil`, and a `nil` envelope restores with the pre-envelope defaults —
     /// so no version bump was needed.
     ///
+    /// The optional ``GenerationOptionsPayload/toolCallingMode`` key (task
+    /// ^xsgjney) landed *within* v2 by the same additive rule: old readers
+    /// never look for it, an absent key decodes as `nil`, and a `nil` mode
+    /// rebuilds exactly as before the field existed.
+    ///
     /// The unknown-case carriers (task ^9n7fna4) also landed within v2:
     /// ``TranscriptEvent/Kind/unknown`` and
     /// ``SegmentPayload/unknown(id:description:)``, which record a

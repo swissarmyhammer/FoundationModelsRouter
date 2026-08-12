@@ -1147,14 +1147,29 @@ exactly as an never-torn-down session would.
 `metadataOnly` intentionally discards content (reconstruction yields shape, not a usable
 seed) and `off` discards everything — that is the levels' contract, not a bug. Within
 `full`, the known, deliberate losses — each degraded explicitly rather than silently:
-`GenerationOptions.sampling` (no public introspection; dropped), the
+`GenerationOptions.sampling` (the payload schema has no field for it; dropped), the
 `Prompt`/`ToolCall`/`Response`/`Reasoning` `metadata` dictionaries (existential-typed;
-dropped), image attachment *bytes* (label/URL persisted; pixels not — and an in-memory
-attachment whose `ImageAttachment.url` is `nil` cannot be rebuilt at all, so it degrades to
-a labeled text segment), and a `Prompt.responseFormat`, which round-trips through its
-persisted `GenerationSchema` (Codable) via `ResponseFormat(schema:)` — there is no
-`init(name:)` — so a format originally built from a `Generable` *type* rebuilds in schema
-form.
+dropped — and a rebuilt `.response` entry can *gain* a synthesized `metadata["assetIDs"]`
+key, because `Response(id:assetIDs:segments:)` is the only rebuildable initializer; that
+synthesis is documented contract, pinned by test), image attachment *bytes* (label/URL
+persisted; pixels not — and an in-memory attachment whose `ImageAttachment.url` is `nil`
+cannot be rebuilt at all, so it degrades to a labeled text segment), and a
+`Prompt.responseFormat`, which round-trips through its persisted `GenerationSchema`
+(Codable) via `ResponseFormat(schema:)` — there is no `init(name:)` — so a format
+originally built from a `Generable` *type* rebuilds in schema form; the persisted
+`responseFormatName` is the reader-facing copy (the one format fact `metadataOnly` keeps),
+and a payload carrying a format name with no schema JSON rebuilds without a response
+format, with a logged warning naming the loss.
+`GenerationOptions.toolCallingMode` is *not* a loss: it round-trips through its public
+`kind` (a three-case enum at macOS 27+, mirrored by `ToolCallingModePayload`, an additive
+v2 key); a `kind` case a future SDK adds records as no mode, with a logged warning. A
+`.custom` segment's persisted `description` is a reader convenience only — the conforming
+type's own computed `description` is authoritative at rebuild (pinned by test). A
+record-time encode failure (realistically, a custom segment's user-provided content) is
+loud, never silent: the mapper's `jsonString(for:context:)` throws a typed
+`TranscriptEntryEncodingError` at the cause; the never-throwing record path catches it,
+logs it at fault level, and persists the empty-string sentinel, which restore always
+refuses with a typed `invalidJSON` error instead of rebuilding wrong content.
 
 `.custom` segments are **not** on that list — they round-trip. The `CustomSegment` protocol
 guarantees `content: Content` with `Content : Codable`, so *persisting* is unconditional

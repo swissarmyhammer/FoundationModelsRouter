@@ -332,28 +332,56 @@ public struct ToolCallPayload: Sendable, Codable, Equatable {
     }
 }
 
+/// The on-disk mirror of one `GenerationOptions.ToolCallingMode.Kind` — the
+/// three mode kinds the macOS 27 SDK declares, carried as stable strings.
+///
+/// `ToolCallingMode` itself is not `Codable`, but its public `kind` is a
+/// three-case enum, so the mode round-trips through this mirror. A recording
+/// written before this field existed decodes it as absent (`nil` on
+/// ``GenerationOptionsPayload/toolCallingMode``) by the additive rule.
+public enum ToolCallingModePayload: String, Sendable, Codable, Equatable {
+    /// Mirrors `GenerationOptions.ToolCallingMode.Kind.allowed`.
+    case allowed
+    /// Mirrors `GenerationOptions.ToolCallingMode.Kind.required`.
+    case required
+    /// Mirrors `GenerationOptions.ToolCallingMode.Kind.disallowed`.
+    case disallowed
+}
+
 /// The introspectable slice of a `.prompt` entry's `GenerationOptions`.
 ///
 /// `GenerationOptions` is not itself `Codable`, so this payload carries only
-/// `temperature` and `maximumResponseTokens`. `sampling: SamplingMode?` is
-/// omitted too — not because it lacks public introspection (`SamplingMode.kind`
-/// is public and `Equatable` at macOS 27+), but because this schema has no
-/// field for it; the loss is documented and deliberate (see plan.md "Honest
-/// fidelity scope" and ``TranscriptEntryMapper``).
+/// `temperature`, `maximumResponseTokens`, and `toolCallingMode` (via its
+/// public `kind`, mirrored by ``ToolCallingModePayload``).
+/// `sampling: SamplingMode?` is omitted — not because it lacks public
+/// introspection (`SamplingMode.kind` is public and `Equatable` at macOS
+/// 27+), but because this schema has no field for it; the loss is documented
+/// and deliberate (see plan.md "Honest fidelity scope" and
+/// ``TranscriptEntryMapper``).
 public struct GenerationOptionsPayload: Sendable, Codable, Equatable {
     /// The sampling temperature, when set.
     public let temperature: Double?
     /// The maximum number of response tokens, when set.
     public let maximumResponseTokens: Int?
+    /// The tool-calling mode, when set — `nil` both when the recorded
+    /// options carried none and when the recording predates this field
+    /// (an additive v2 key; see ``RecordingSchemaVersion/v2``).
+    public let toolCallingMode: ToolCallingModePayload?
 
     /// Creates a generation options payload.
     ///
     /// - Parameters:
     ///   - temperature: The sampling temperature, or `nil`.
     ///   - maximumResponseTokens: The maximum response tokens, or `nil`.
-    public init(temperature: Double? = nil, maximumResponseTokens: Int? = nil) {
+    ///   - toolCallingMode: The tool-calling mode, or `nil`.
+    public init(
+        temperature: Double? = nil,
+        maximumResponseTokens: Int? = nil,
+        toolCallingMode: ToolCallingModePayload? = nil
+    ) {
         self.temperature = temperature
         self.maximumResponseTokens = maximumResponseTokens
+        self.toolCallingMode = toolCallingMode
     }
 }
 
