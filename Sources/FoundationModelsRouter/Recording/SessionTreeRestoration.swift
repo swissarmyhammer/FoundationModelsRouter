@@ -58,6 +58,44 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     }
 }
 
+/// What ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+/// could not re-apply from the recorded configuration envelopes (task
+/// ^ne5g9jn) — the typed report that replaces silence about a restored
+/// tree's missing parts.
+///
+/// The value-typed configuration a ``SessionSidecar/configuration`` envelope
+/// records — the auto-compaction budget and prompt, the summarization stage,
+/// and the discovery-priming opt-in — always re-applies, so it never appears
+/// here. The tool instances are the one part a recording cannot carry: the
+/// envelope records their names, the caller supplies live instances through
+/// the restore call's `tools:` parameter, and every recorded name no
+/// supplied tool answers to lands in ``missingTools`` — one row per session
+/// and name, so the caller learns exactly what to re-supply. A recording
+/// made before the envelope existed records no names, so it reports nothing
+/// (today's behavior, unchanged).
+public struct SessionConfigurationRestorationReport: Sendable, Equatable {
+    /// One recorded tool name no supplied tool answered to, on one restored
+    /// session.
+    public struct MissingTool: Sendable, Equatable {
+        /// The restored session whose envelope recorded the name.
+        public let session: ULID
+
+        /// The recorded ``FoundationModels/Tool/name`` the caller did not
+        /// supply an instance for.
+        public let toolName: String
+    }
+
+    /// Every recorded tool name that no supplied tool answered to, in
+    /// restoration walk order (each parent before its children), or empty
+    /// when every recorded name matched — including when nothing was
+    /// recorded at all.
+    public let missingTools: [MissingTool]
+
+    /// Whether every recorded configuration item came back — `true` exactly
+    /// when ``missingTools`` is empty.
+    public var isComplete: Bool { missingTools.isEmpty }
+}
+
 /// A restored fork tree: every session that was live under a router's
 /// recorded root, reconstructed by ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
 /// as live, usable ``RoutedSession``s synced with what is on disk.
@@ -68,6 +106,10 @@ public struct RestoredSessionTree: Sendable {
     /// The restored root session.
     public let root: RoutedSession
 
+    /// What the restore could not re-apply from the recorded configuration
+    /// envelopes — see ``SessionConfigurationRestorationReport``.
+    public let configurationReport: SessionConfigurationRestorationReport
+
     /// Every restored session (the root and all its descendants), keyed by id.
     private let sessionsById: [ULID: RoutedSession]
 
@@ -76,10 +118,16 @@ public struct RestoredSessionTree: Sendable {
     private let tree: TranscriptTree
 
     /// Creates a restored session tree.
-    init(root: RoutedSession, sessionsById: [ULID: RoutedSession], tree: TranscriptTree) {
+    init(
+        root: RoutedSession,
+        sessionsById: [ULID: RoutedSession],
+        tree: TranscriptTree,
+        configurationReport: SessionConfigurationRestorationReport
+    ) {
         self.root = root
         self.sessionsById = sessionsById
         self.tree = tree
+        self.configurationReport = configurationReport
     }
 
     /// Looks up a restored session anywhere in the tree by its id.
@@ -191,11 +239,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     (pre-seeded with ``CompactionSegment``), so a tree containing a
     ///     compacted session restores with no caller setup.
     ///   - tools: The tools every restored node's model can call, applied
-    ///     uniformly across the whole tree — there is no per-node recorded
-    ///     tool list to rehydrate (a sidecar records slot/model/instructions/
-    ///     grammar, never tool definitions), so this is the caller's chance to
-    ///     hand the restored tree the same live tool package the original
-    ///     conversation ran with. Each restored node gets its own fresh
+    ///     uniformly across the whole tree — a tool instance cannot be
+    ///     recorded, so this is how the caller re-supplies the live tool
+    ///     package the original conversation ran with. Each node's recorded
+    ///     ``SessionConfiguration/Persistable/toolNames`` (task ^ne5g9jn)
+    ///     are matched against these instances' ``FoundationModels/Tool/name``s,
+    ///     and every recorded name with no supplied instance is reported in
+    ///     ``RestoredSessionTree/configurationReport`` — so a missing tool is
+    ///     named, never silent. Each restored node gets its own fresh
     ///     ``RoutedSession/outbox``, with every String-output tool wrapped
     ///     in its own per-node detachment layer posting there (a
     ///     non-String-output tool gets the binding-only
@@ -218,24 +269,27 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     produces — with no dependency on this handle's own recordings
     ///     root at all.
     ///
-    /// Every restored node's ``RoutedSessionActor/autoCompactionBudget``/
+    /// **Configuration re-application (task ^ne5g9jn).** Each node's recorded
+    /// ``SessionSidecar/configuration`` envelope is re-applied onto its
+    /// restored actor: ``RoutedSessionActor/autoCompactionBudget`` and
     /// ``RoutedSessionActor/autoCompactionPrompt`` (task 8213x39) come back
-    /// `nil`/``CompactionPrompt/default``, and its
-    /// ``RoutedSessionActor/summarization`` comes back `Summarization()`,
-    /// regardless of what the original
-    /// session was vended with: `SessionSidecar` records slot/model/
-    /// instructions/grammar, never a budget or a fold configuration, so there
-    /// is nothing to rehydrate them from. A caller that wants the restored tree to keep
-    /// managing its own window calls ``RoutedSession/compact(prompt:budget:)``
-    /// manually, or re-opts-in on a fresh fork from the restored root.
-    ///
-    /// Every restored node's ``RoutedSessionActor/discoveryPriming`` (`^s4405wc`)
-    /// comes back `nil` for exactly the same reason: a `SessionSidecar` records
-    /// no priming opt-in either, so a restored session's turns are unprimed
-    /// until a caller opens a fresh session — or a fresh fork from the restored
-    /// root, which does inherit whatever that fork's parent carries — with
-    /// `discoveryPriming:` set.
-    /// - Returns: The restored tree, rooted at the session named by `rootId`.
+    /// as recorded — a budget also re-wires its
+    /// ``TokenBudget/toolOutputLimit`` capping into the node's instanced
+    /// tool chain, exactly as at vend time — and
+    /// ``RoutedSessionActor/summarization`` and
+    /// ``RoutedSessionActor/discoveryPriming`` (`^s4405wc`) come back as
+    /// recorded too, so a session saved with a budget folds where the
+    /// original folded instead of overflowing. Auto-compaction needs no
+    /// re-supplied summarizer: its folds pick one at fold time (the
+    /// profile's flash slot, then the node's own model, then the
+    /// deterministic stages). The recorded tool *names* are matched against
+    /// the supplied `tools` and the misses reported — see `tools` above.
+    /// A recording made before the envelope existed carries none, and
+    /// restores exactly as it always has: `nil` budget,
+    /// ``CompactionPrompt/default``, `Summarization()`, `nil` priming, and
+    /// an empty report.
+    /// - Returns: The restored tree, rooted at the session named by `rootId`,
+    ///   carrying ``RestoredSessionTree/configurationReport``.
     /// - Throws: ``SessionTreeRestorationError`` for every documented
     ///   restoration-specific failure; ``TranscriptTreeError`` /
     ///   ``TranscriptReconstructionError`` for anything
@@ -278,6 +332,13 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         }
 
         var sessionsById: [ULID: RoutedSession] = [:]
+        // The rehydration match (task ^ne5g9jn): each node's recorded tool
+        // names are checked against the supplied instances' names, and every
+        // recorded name with no supplied instance is collected here — one
+        // row per node and name, in walk order — for the returned
+        // ``SessionConfigurationRestorationReport``.
+        let suppliedToolNames = Set(tools.map(\.name))
+        var missingTools: [SessionConfigurationRestorationReport.MissingTool] = []
         func restore(_ node: SessionNode) async throws -> RoutedSession {
             let slot = node.sidecar.slot
             let model = node.sidecar.model
@@ -301,25 +362,38 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
             let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
 
+            // The node's recorded configuration envelope (task ^ne5g9jn),
+            // or `nil` for a recording made before the envelope existed —
+            // which restores with the pre-envelope defaults below, exactly
+            // as it always has (see ``SessionSidecar/configuration``).
+            let configuration = node.sidecar.configuration
+            // The rehydration match: every recorded tool name with no
+            // supplied instance is reported, never silently dropped.
+            for toolName in configuration?.toolNames ?? []
+            where !suppliedToolNames.contains(toolName) {
+                missingTools.append(
+                    SessionConfigurationRestorationReport.MissingTool(
+                        session: node.id, toolName: toolName))
+            }
+
             // Per-node event wiring plus per-session tool instancing —
             // the shared helper mints every restored node its own fresh
             // outbox and mailbox, so a tool's events post to *this* node's
             // own outbox rather than a sibling or ancestor's, and parked
             // runs and pending elicitations never survive a restore (see
             // ``RoutedSession/mailbox``).
-            // This site's chain is detach only — deliberately no fork
-            // (restoration re-instances from the caller's originals, it
-            // never derives one live session from another) and no capping
-            // (no budget travels through restoration, so the shared helper
-            // gets a `nil` token limit) — distinct from the root site's
-            // detach → cap and the fork site's
-            // fork → detach → cap (task ^k4nygqa; see
+            // This site's chain is detach only, plus capping when the
+            // node's recorded budget carries a `toolOutputLimit` —
+            // deliberately no fork (restoration re-instances from the
+            // caller's originals, it never derives one live session from
+            // another) — mirroring the root site's detach → cap; the fork
+            // site is fork → detach → cap (task ^k4nygqa; see
             // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
                 tools,
                 sessionID: node.id,
-                cappedToTokenLimit: nil
+                cappedToTokenLimit: configuration?.budget?.toolOutputLimit
             )
             let backend = routedLLM.container.makeSession(transcript: transcript, tools: instancedTools)
             // ``RoutedSession/contextFill``'s restored numerator
@@ -410,7 +484,16 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // only for forks taken from the restored session.
                 sidecarOrigin: SessionSidecarOrigin.restored(under: routedLLM.durableRecording),
                 contextTokens: routedLLM.resolution.contextTokens,
-                usageState: usageState
+                usageState: usageState,
+                // The recorded configuration envelope re-applied (task
+                // ^ne5g9jn): the budget, its prompt, the summarization
+                // stage, and the priming opt-in come back as the node was
+                // vended with them. A pre-envelope recording carries `nil`
+                // and gets the same defaults it always restored with.
+                autoCompactionBudget: configuration?.budget,
+                autoCompactionPrompt: configuration?.compactionPrompt ?? .default,
+                summarization: configuration?.summarization ?? Summarization(),
+                discoveryPriming: configuration?.discoveryPriming
             )
             sessionsById[node.id] = session
             for child in node.children {
@@ -420,7 +503,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         }
 
         let root = try await restore(rootNode)
-        return RestoredSessionTree(root: root, sessionsById: sessionsById, tree: tree)
+        return RestoredSessionTree(
+            root: root,
+            sessionsById: sessionsById,
+            tree: tree,
+            configurationReport: SessionConfigurationRestorationReport(missingTools: missingTools)
+        )
     }
 }
 

@@ -227,6 +227,28 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// never silently misread.
     public let schemaVersion: Int
 
+    /// The configuration envelope this session was vended with — the
+    /// `Codable` slice of its ``SessionConfiguration`` (task ^ne5g9jn) —
+    /// or `nil` for a recording made before the envelope existed.
+    ///
+    /// Recorded on every sidecar, root and fork alike, since each node
+    /// carries its own effective configuration (a fork inherits its
+    /// parent's at fork time and records the inherited values as its own).
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+    /// re-applies the value-typed fields — the auto-compaction budget and
+    /// prompt, the summarization stage, and the discovery-priming opt-in —
+    /// onto each restored node, and matches
+    /// ``SessionConfiguration/Persistable/toolNames`` against the tool
+    /// instances the caller supplies, reporting the names that did not come
+    /// back in ``SessionConfigurationRestorationReport``.
+    ///
+    /// **Additive within schema v2.** An optional key old readers never look
+    /// for and old recordings never carry: an absent key decodes as `nil`,
+    /// and a `nil` envelope restores with the pre-envelope defaults — so no
+    /// ``RecordingSchemaVersion`` bump is needed (see that registry's v2
+    /// entry).
+    public let configuration: SessionConfiguration.Persistable?
+
     /// Creates a session sidecar.
     ///
     /// - Parameters:
@@ -253,6 +275,9 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///     ``RecordingSchemaVersion/current``, the only value a writer ever
     ///     stamps — an explicit value exists for tests fabricating other
     ///     versions.
+    ///   - configuration: The configuration envelope this session was vended
+    ///     with, or `nil` for a recording made before the envelope existed
+    ///     (task ^ne5g9jn). Defaults to `nil`.
     public init(
         slot: ModelSlot,
         model: ModelRef,
@@ -266,7 +291,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         agentSpawn: AgentSpawn? = nil,
         compactionCount: Int? = nil,
         routerId: ULID? = nil,
-        schemaVersion: Int = RecordingSchemaVersion.current
+        schemaVersion: Int = RecordingSchemaVersion.current,
+        configuration: SessionConfiguration.Persistable? = nil
     ) {
         self.slot = slot
         self.model = model
@@ -281,6 +307,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.compactionCount = compactionCount
         self.routerId = routerId
         self.schemaVersion = schemaVersion
+        self.configuration = configuration
     }
 
     /// The key ``read(in:)`` sets on its `JSONDecoder.userInfo` to the
@@ -293,7 +320,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case slot, model, context, instructions, grammar, recordingLevel, forkedAtEntryCount,
-            profile, compactionCount, workingDirectory, agentSpawn, routerId, schemaVersion
+            profile, compactionCount, workingDirectory, agentSpawn, routerId, schemaVersion,
+            configuration
     }
 
     /// Decodes a sidecar, defaulting an absent ``workingDirectory`` key to
@@ -323,6 +351,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         compactionCount = try container.decodeIfPresent(Int.self, forKey: .compactionCount)
         agentSpawn = try container.decodeIfPresent(AgentSpawn.self, forKey: .agentSpawn)
         routerId = try container.decodeIfPresent(ULID.self, forKey: .routerId)
+        configuration = try container.decodeIfPresent(
+            SessionConfiguration.Persistable.self, forKey: .configuration)
         schemaVersion =
             try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
             ?? RecordingSchemaVersion.implicit
@@ -367,7 +397,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
             agentSpawn: agentSpawn,
             compactionCount: count,
             routerId: routerId,
-            schemaVersion: schemaVersion
+            schemaVersion: schemaVersion,
+            configuration: configuration
         )
     }
 
@@ -563,6 +594,9 @@ public struct SessionSidecarWriter: Sendable {
     ///     from, or `nil`. Recorded only when `forkedAtEntryCount` is `nil`
     ///     (a root session), mirroring ``profile``'s own root-only rule —
     ///     see ``SessionSidecar/agentSpawn``.
+    ///   - configuration: The configuration envelope this session was vended
+    ///     with, or `nil`. Recorded on roots and forks alike — see
+    ///     ``SessionSidecar/configuration``.
     ///   - directory: The session's own recording directory.
     func write(
         instructions: String?,
@@ -570,6 +604,7 @@ public struct SessionSidecarWriter: Sendable {
         forkedAtEntryCount: Int?,
         workingDirectory: URL,
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        configuration: SessionConfiguration.Persistable? = nil,
         to directory: URL
     ) {
         // Nothing durable is recorded at `.off` — not a sidecar, and not a
@@ -590,7 +625,8 @@ public struct SessionSidecarWriter: Sendable {
             profile: forkedAtEntryCount == nil ? profile : nil,
             workingDirectory: workingDirectory,
             agentSpawn: forkedAtEntryCount == nil ? agentSpawn : nil,
-            routerId: routerId
+            routerId: routerId,
+            configuration: configuration
         )
         do {
             try SessionSidecar.write(sidecar, to: directory)
@@ -708,6 +744,8 @@ enum SessionSidecarOrigin: Sendable {
     ///   - workingDirectory: The session's own working directory.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
     ///     from, or `nil`. See ``SessionSidecar/agentSpawn``.
+    ///   - configuration: The configuration envelope the session was vended
+    ///     with, or `nil`. See ``SessionSidecar/configuration``.
     ///   - directory: The session's own recording directory.
     func writeSidecarIfNew(
         instructions: String?,
@@ -715,6 +753,7 @@ enum SessionSidecarOrigin: Sendable {
         forkedAtEntryCount: Int?,
         workingDirectory: URL,
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
+        configuration: SessionConfiguration.Persistable? = nil,
         to directory: URL
     ) {
         guard case .new(let writer) = self else { return }
@@ -724,6 +763,7 @@ enum SessionSidecarOrigin: Sendable {
             forkedAtEntryCount: forkedAtEntryCount,
             workingDirectory: workingDirectory,
             agentSpawn: agentSpawn,
+            configuration: configuration,
             to: directory
         )
     }

@@ -798,4 +798,131 @@ struct SessionTreeRestorationTests {
         let state = TranscriptTree.restoredUsageState(in: [checkpointEventWithOwnStamp])
         #expect(state == .measured(input: 300, output: 0))
     }
+
+    // MARK: - Configuration envelope re-application (task ^ne5g9jn)
+
+    @Test(
+        "a session saved with a budget, prompt, summarization, and priming restores with that same configuration applied to every node"
+    )
+    @MainActor
+    func restoredTreeReappliesRecordedConfiguration() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let budget = TokenBudget(limit: 100_000, toolOutputLimit: 512)
+        let prompt = CompactionPrompt(name: "custom", text: "Condense the conversation.")
+        let summarization = Summarization(keepRecentTurns: 2, maxChunkTokens: 500, summaryTokenRatio: 0.5)
+        let priming = DiscoveryPriming(tool: "ambient-emitter", queryProperty: "value")
+        let root = profile1.standard.makeSession(
+            tools: [AmbientEventPostingTool()],
+            budget: budget,
+            compactionPrompt: prompt,
+            summarization: summarization,
+            discoveryPriming: priming
+        )
+        _ = try await root.respond(to: "hello")
+        let fork = try await root.fork(workingDirectory: nil)
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(
+            root: root.id, tools: [AmbientEventPostingTool()])
+
+        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
+        #expect(restoredRoot.autoCompactionBudget == budget)
+        #expect(restoredRoot.autoCompactionPrompt == prompt)
+        #expect(restoredRoot.summarization == summarization)
+        #expect(restoredRoot.discoveryPriming == priming)
+
+        // A fork's own sidecar carries its own envelope — the configuration a
+        // fork inherits at fork time — so a restored fork re-applies it too.
+        let restoredFork = try #require(restored.session(fork.id) as? RoutedSessionActor)
+        #expect(restoredFork.autoCompactionBudget == budget)
+        #expect(restoredFork.discoveryPriming == priming)
+
+        // Every recorded tool name matched a supplied tool, so nothing is
+        // reported missing.
+        #expect(restored.configurationReport.missingTools.isEmpty)
+        #expect(restored.configurationReport.isComplete)
+    }
+
+    @Test("the restore result names every recorded tool the caller did not supply")
+    @MainActor
+    func restoreReportsRecordedToolsTheCallerDidNotSupply() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession(tools: [AmbientEventPostingTool()])
+        _ = try await root.respond(to: "hello")
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        // Deliberately restored with no tools at all: the recorded name has
+        // no supplied instance to match, and the report must say so.
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+
+        #expect(
+            restored.configurationReport.missingTools == [
+                SessionConfigurationRestorationReport.MissingTool(
+                    session: root.id, toolName: "ambient-emitter")
+            ])
+        #expect(!restored.configurationReport.isComplete)
+    }
+
+    @Test(
+        "a sidecar recorded before the configuration envelope existed restores with today's defaults and an empty report"
+    )
+    @MainActor
+    func preEnvelopeSidecarRestoresWithDefaultsAndEmptyReport() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let root = profile1.standard.makeSession(budget: TokenBudget(limit: 100_000))
+        _ = try await root.respond(to: "hello")
+
+        // Strip the envelope from the recorded sidecar — the exact bytes a
+        // pre-envelope recording carries (the additive-schema acceptance:
+        // an absent key must decode as nil and restore with today's
+        // defaults, never fail).
+        let sidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+            .appendingPathComponent(root.id.description, isDirectory: true)
+            .appendingPathComponent("session.json", isDirectory: false)
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
+        json.removeValue(forKey: "configuration")
+        try FileManager.default.removeItem(at: sidecarURL)
+        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let restored = try await profile2.standard.restoreSessionTree(root: root.id)
+
+        let restoredRoot = try #require(restored.root as? RoutedSessionActor)
+        #expect(restoredRoot.autoCompactionBudget == nil)
+        #expect(restoredRoot.autoCompactionPrompt == .default)
+        #expect(restoredRoot.summarization == Summarization())
+        #expect(restoredRoot.discoveryPriming == nil)
+        #expect(restored.configurationReport.missingTools.isEmpty)
+    }
 }

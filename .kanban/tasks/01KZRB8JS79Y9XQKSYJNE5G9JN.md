@@ -1,11 +1,48 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kzt2pfw8wkxhzh5cw8nsappt
+  text: |-
+    Research complete. Design decisions:
+
+    1. The envelope reuses `SessionConfiguration.Persistable` (task ^9tdq8c made it for this card). A new optional field `configuration` goes on `SessionSidecar`. Old sidecars have no key and decode as nil.
+    2. Schema decision: the envelope is additive inside schema v2. An optional field does not change how old readers or old recordings work. No v3 registry entry is necessary. I will add a note to the `RecordingSchemaVersion` registry docs.
+    3. `RoutedSessionActor.init` builds the envelope from its own parameters and writes it through `writeSidecarIfNew`. Root sessions and forks both get correct envelopes from this one path. A restored session writes no sidecar, so the restored origin ignores it.
+    4. Summarizer hook: the code base does not keep a summarizer on a session. Auto-compaction selects its summarizer at fold time (flash slot first, then the session's own model, then the deterministic stages). Thus a restored budget applies with no summarizer supply. The acceptance condition "given the app supplied a summarizer" is satisfied in a stronger form.
+    5. Agent-spawn hook: `agentSpawn` is a Codable value (`SessionSidecar.AgentSpawn`), not a closure. It folds into the envelope per card item 4. No hook is necessary.
+    6. Rehydration hook: the existing `tools:` parameter on `restoreSessionTree` supplies the tool instances. The restore matches each node's recorded tool names against the supplied tool names. Tool mounting stays uniform across the tree (the documented contract of `tools:` does not change).
+    7. Strictness decision: the recommended option. Missing parts produce a typed report (`missingTools`, one row per session and tool name) on `RestoredSessionTree`. No error option.
+    8. Budget re-application also wires `toolOutputLimit` capping at the restore site, so a restored budget caps tool outputs the same way `makeSession` does.
+  timestamp: 2026-08-12T04:11:42.856432+00:00
+- actor: claude-code
+  id: 01kzt5gbbjnxjx5b99qy897jfh
+  text: |-
+    Implementation complete, TDD (RED first, then GREEN). What changed:
+
+    1. `SessionSidecar` got the optional field `configuration: SessionConfiguration.Persistable?`. New sidecars for roots and forks record it. Old sidecars have no key and decode as nil. The field travels through `withCompactionCount`, the writer, and `writeSidecarIfNew`. Schema stays at v2 (additive rule); the `RecordingSchemaVersion` v2 registry entry documents the decision.
+    2. `RoutedSessionActor.init` assembles the envelope from its own effective values through `SessionConfiguration(...).persistable`, so a root and a fork record what they run with. A new `recordingRoot` parameter (default nil) travels only into the envelope; `makeSession` supplies it.
+    3. `restoreSessionTree` re-applies each node's envelope: `autoCompactionBudget`, `autoCompactionPrompt`, `summarization`, and `discoveryPriming` come back as recorded, and a recorded budget re-wires `toolOutputLimit` capping into the node's tool chain (the restore site was `cappedToTokenLimit: nil` before).
+    4. New public type `SessionConfigurationRestorationReport` with `missingTools` (session id + tool name rows) and `isComplete`. `RestoredSessionTree` carries it as `configurationReport`. The restore matches each node's recorded tool names against the supplied `tools` and reports every miss. No API break: the `restoreSessionTree` signature is unchanged, and the report rides the result.
+    5. The stale "loss list" doc on `restoreSessionTree` is now the re-application story.
+
+    Tests (in SessionTreeRestorationTests.swift, watched RED first as compile failures on the new API):
+    - restoredTreeReappliesRecordedConfiguration — budget, prompt, summarization, and priming come back on the root and on a fork; empty report.
+    - restoreReportsRecordedToolsTheCallerDidNotSupply — the report names the session and the tool name.
+    - preEnvelopeSidecarRestoresWithDefaultsAndEmptyReport — the configuration key is stripped from the sidecar JSON; restore gives today's defaults and an empty report.
+
+    Verification: one full `swift test` run — 857 + 27 + 24 tests passed, 0 failures, 1 pre-existing BoundedWait known issue, only the accepted mlx-swift build warning.
+
+    ### implement — changed
+    - evidence: 6 files — Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, Sources/FoundationModelsRouter/Recording/RecordingSchemaVersion.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift; swift test: 908 tests passed, 0 failures
+    - next: /review
+  timestamp: 2026-08-12T05:00:47.346753+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
 - 01KZREJ4MJ67R0RBFKKN9TDQ8C
-position_column: todo
-position_ordinal: 9c80
+position_column: doing
+position_ordinal: '8180'
 title: Make restore configuration a re-application story, not a loss list
 ---
 ## Problem

@@ -346,7 +346,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             autoCompactionPrompt: compactionPrompt,
             summarization: summarization,
             agentSpawn: agentSpawn,
-            discoveryPriming: discoveryPriming
+            discoveryPriming: discoveryPriming,
+            // Threaded only into the sidecar's configuration envelope (task
+            // ^ne5g9jn), so the recorded configuration names the recording
+            // root the session was actually vended with.
+            recordingRoot: recordingRoot
         )
     }
 

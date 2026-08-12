@@ -46,7 +46,8 @@ func makeRoutedSessionActor(
     autoCompactionPrompt: CompactionPrompt = .default,
     summarization: Summarization = Summarization(),
     agentSpawn: SessionSidecar.AgentSpawn? = nil,
-    discoveryPriming: DiscoveryPriming? = nil
+    discoveryPriming: DiscoveryPriming? = nil,
+    recordingRoot: URL? = nil
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -76,7 +77,8 @@ func makeRoutedSessionActor(
         autoCompactionPrompt: autoCompactionPrompt,
         summarization: summarization,
         agentSpawn: agentSpawn,
-        discoveryPriming: discoveryPriming
+        discoveryPriming: discoveryPriming,
+        recordingRoot: recordingRoot
     )
 }
 
@@ -466,6 +468,10 @@ actor RoutedSessionActor: RoutedSession {
     /// three read directly in the sidecar write below rather than stored:
     /// nothing after construction needs any of them again, unlike
     /// ``instructions``/``grammar``, which a fork also carries forward.
+    /// `recordingRoot` (a root session's per-session recording root override,
+    /// or `nil` — a fork never carries one) is read the same way: it exists
+    /// only so the sidecar's configuration envelope records the override the
+    /// session was vended with (see ``SessionSidecar/configuration``).
     init(
         profile: LanguageModelProfile,
         routerId: ULID,
@@ -494,7 +500,8 @@ actor RoutedSessionActor: RoutedSession {
         autoCompactionPrompt: CompactionPrompt = .default,
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
-        discoveryPriming: DiscoveryPriming? = nil
+        discoveryPriming: DiscoveryPriming? = nil,
+        recordingRoot: URL? = nil
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -536,6 +543,24 @@ actor RoutedSessionActor: RoutedSession {
             forkedAtEntryCount: parentId == nil ? nil : persistedEntryCount,
             workingDirectory: workingDirectory,
             agentSpawn: agentSpawn,
+            // The configuration envelope (task ^ne5g9jn), assembled here from
+            // this session's own effective values so a root and a fork alike
+            // record what they actually run with — `originalTools` supplies
+            // the by-name tool list, never the instanced wrappers. Built
+            // through `SessionConfiguration` so create time and restore time
+            // share one vocabulary (see ``SessionSidecar/configuration``).
+            configuration: SessionConfiguration(
+                instructions: instructions,
+                workingDirectory: workingDirectory,
+                recordingRoot: recordingRoot,
+                tools: originalTools,
+                budget: autoCompactionBudget,
+                compactionPrompt: autoCompactionPrompt,
+                summarization: summarization,
+                agentSpawn: agentSpawn,
+                discoveryPriming: discoveryPriming,
+                grammar: grammar
+            ).persistable,
             to: recordingDirectory
         )
     }

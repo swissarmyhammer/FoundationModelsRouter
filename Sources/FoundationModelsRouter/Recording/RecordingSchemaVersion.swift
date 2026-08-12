@@ -34,6 +34,12 @@ public enum RecordingSchemaVersion {
     /// ``TranscriptEvent/Kind/toolCalls``,
     /// ``TranscriptEvent/Kind/reasoning``), and
     /// ``TranscriptEntryPayload/contentRemoved``.
+    ///
+    /// The optional ``SessionSidecar/configuration`` envelope (task
+    /// ^ne5g9jn) landed *within* v2 by the additive rule: it is a new
+    /// optional key old readers never look for, an absent key decodes as
+    /// `nil`, and a `nil` envelope restores with the pre-envelope defaults —
+    /// so no version bump was needed.
     public static let v2 = 2
 
     /// The version writers stamp on every new sidecar
