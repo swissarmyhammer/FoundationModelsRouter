@@ -65,10 +65,27 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/TranscriptEventSchemaTests.swift; swift build --build-tests OK; swift test = 862 + 27 + 24 tests passed, 0 failures (1 known issue: the accepted BoundedWait one; the accepted missing-creator warning)
     - next: /review
   timestamp: 2026-08-12T07:56:13.416802+00:00
+- actor: claude-code
+  id: 01kztfqfcz5w8xyew4nx7cdd43
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings (8 validators, 0 failed); the one prior finding is checked and fixed in commit 4566993
+    - next: none; the task is done
+  timestamp: 2026-08-12T07:59:26.623485+00:00
+- actor: claude-code
+  id: 01kztfr8q1csky8pcqadkbsm11
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file, the duplicate test folded into the parameterized round-trip test
+    - test: green — swift test, 862 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 4566993
+    - review: clean — 0 findings, scope HEAD~1..HEAD; the prior finding is checked
+    - result: the task is in done
+  timestamp: 2026-08-12T07:59:52.545162+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9380
 title: Replace the mapper's fatalError arms with typed degradation for unknown SDK cases
 ---
 ## Problem

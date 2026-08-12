@@ -337,6 +337,30 @@ struct PendingEventInjectionTests {
         #expect(pendingAfterThrow.events.map(\.event) == [posted])
     }
 
+    // MARK: - A .prompt partial with no entry payload cannot be augmented
+
+    @Test("a .prompt partial carrying no entry payload reports the events unattached, so the turn re-queues them instead of dropping them")
+    func promptPartialWithoutEntryReportsUnattached() {
+        let posted = Self.event(correlationID: "1", kind: .completed, detail: "first")
+        // The differ always populates `entry` today, so this shape is built by
+        // hand — the guard exists so a future partial source without one
+        // triggers a re-queue rather than a silent drop.
+        let entrylessPrompt = TranscriptEvent.Partial(
+            routerId: .generate(), sessionId: .generate(), kind: .prompt, text: "hello")
+
+        let (partials, attached) = RoutedSessionActor.attachingPendingEventSegments(
+            events: [posted], to: [entrylessPrompt])
+
+        // Unattached AND untouched: the events are neither embedded in the
+        // recorded partial nor claimed attached, so the chokepoint's
+        // attach-or-requeue rule (`finishTurnAndRequeueIfUnattached`) re-posts
+        // them onto the outbox — the path
+        // `pendingEventSurvivesThrowBeforeAnyTranscriptAppend` proves end to
+        // end.
+        #expect(!attached)
+        #expect(partials == [entrylessPrompt])
+    }
+
     // MARK: - Registry round-trip
 
     @Test("OperationEventSegment round-trips through CustomSegmentRegistry")

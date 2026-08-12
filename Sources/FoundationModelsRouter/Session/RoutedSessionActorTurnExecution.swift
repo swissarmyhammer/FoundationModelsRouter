@@ -116,9 +116,9 @@ extension RoutedSessionActor {
         // exactly where it is rather than silently dequeued and discarded by
         // an unrelated ad hoc turn. An empty outbox drains to an empty
         // `pendingEvents`, so ``composedPrompt(pendingEvents:prompt:)`` returns
-        // `prompt` unchanged and ``appendingOperationEventSegments(events:to:)`` is
-        // never invoked below — byte-identical to a session that never used
-        // an outbox.
+        // `prompt` unchanged and ``attachingPendingEventSegments(events:to:)``
+        // attaches nothing below — byte-identical to a session that never
+        // used an outbox.
         let pendingEvents = await outbox.drainPendingEvents().map(\.event)
         return try await runTurn(
             grammar: grammar, turnId: turnId, promptId: nil, pendingEvents: pendingEvents,

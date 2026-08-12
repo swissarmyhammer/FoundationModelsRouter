@@ -559,6 +559,56 @@ struct DiscoveryPrimingTests {
         #expect(kinds == [.prompt, .toolCalls, .toolOutput, .prompt, .response, .prompt, .toolCalls, .toolOutput])
     }
 
+    @Test("a primed turn with a non-empty outbox attaches the drained events' segments to the turn's own prompt entry")
+    @MainActor
+    func primedTurnAttachesPendingEventSegmentsToTheRealPrompt() async throws {
+        let tool = RecordingDiscoveryTool(output: Self.discoveryOutput)
+        let fixture = try await Self.makeFixture(
+            tools: [tool],
+            priming: DiscoveryPriming(tool: "findAPIs", queryProperty: "query")
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+
+        let posted = OperationEvent(
+            tool: "shell", op: "run command", correlationID: "7", kind: .completed, detail: "exit 0")
+        await fixture.session.outbox.post(posted)
+
+        _ = try await fixture.session.respond(to: Self.prompt)
+
+        // Two recorded prompts: the synthetic discovery seed first, then the
+        // turn's own prompt — the one the composed preamble was delivered on.
+        let events = await fixture.recorder.events
+        let promptEvents = events.filter { $0.kind == .prompt }
+        #expect(promptEvents.count == 2)
+        let seedPrompt = try #require(promptEvents.first)
+        let realPrompt = try #require(promptEvents.last)
+
+        // The real prompt carries the flattened preamble text...
+        let expectedLine = OperationEventSegment.renderedLine(for: posted)
+        #expect(realPrompt.text == expectedLine + "\n\n" + Self.prompt)
+
+        // ...and the drained event's structured segment sits on that SAME
+        // entry, so the two views of one drained event never drift apart
+        // (see ``OperationEventSegment/description``).
+        let segments = try #require(realPrompt.entry?.segments)
+        guard case .custom(_, let discriminator, let contentJSON, let description) = segments.last else {
+            Issue.record("expected the real prompt entry to end with the drained event's .custom segment")
+            return
+        }
+        #expect(discriminator == OperationEventSegment.typeDiscriminator)
+        #expect(description == expectedLine)
+        let decoded = try JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
+        #expect(decoded == posted)
+
+        // The synthetic discovery prompt carries no custom segment.
+        let seedSegments = seedPrompt.entry?.segments ?? []
+        let seedCarriesCustomSegment = seedSegments.contains { segment in
+            if case .custom = segment { return true }
+            return false
+        }
+        #expect(!seedCarriesCustomSegment)
+    }
+
     @Test("a fork inherits its parent's priming opt-in")
     @MainActor
     func forkInheritsPriming() async throws {

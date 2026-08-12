@@ -206,12 +206,13 @@ extension RoutedSessionActor {
     ///     event, or `nil` to leave both unset on every appended event.
     ///   - pendingEvents: The events this turn drained from the outbox, in
     ///     outbox order. When non-empty, one ``OperationEventSegment`` per
-    ///     event is appended (via ``appendingOperationEventSegments(events:to:)``)
-    ///     onto the turn's `.prompt`-kind diff partial — the first one, since
-    ///     a turn submits exactly one prompt — before it is persisted; the
-    ///     SDK's own live transcript is never touched. Empty means no
-    ///     augmentation at all, so this method's output is byte-identical to
-    ///     before this feature existed.
+    ///     event is appended (via ``attachingPendingEventSegments(events:to:)``)
+    ///     onto the turn's own `.prompt`-kind diff partial — the *last* one,
+    ///     since a discovery-priming seed's synthetic `.prompt` precedes the
+    ///     turn's own prompt in the same diff (see that helper for the full
+    ///     rule) — before it is persisted; the SDK's own live transcript is
+    ///     never touched. Empty means no augmentation at all, so this
+    ///     method's output is byte-identical to before this feature existed.
     ///   - onEvent: A sink this diff's derived ``SessionEvent``s (tool
     ///     calls/status, reasoning) are emitted to as each diff partial is
     ///     recorded, or `nil` to skip derivation entirely. Every turn now
@@ -225,12 +226,14 @@ extension RoutedSessionActor {
     ///   decide whether a synthetic bodyless close is still needed, so a turn
     ///   whose SDK transcript already gained a real `.response` entry before
     ///   failing never gets two `.response` events — and whether
-    ///   `pendingEvents` (when non-empty) actually found a `.prompt`-kind
-    ///   partial to attach to. The latter is `true` whenever `pendingEvents`
+    ///   `pendingEvents` (when non-empty) were actually attached to a
+    ///   `.prompt`-kind partial. The latter is `true` whenever `pendingEvents`
     ///   is empty (nothing to attach, so nothing was missed) and `false`
-    ///   whenever it is non-empty but no `.prompt`-kind partial existed —
-    ///   e.g. the shrink guard below, or a backend (like an `.ebnf`-guided
-    ///   one) that throws before appending anything at all — so the caller
+    ///   whenever it is non-empty but the attachment did not happen — no
+    ///   `.prompt`-kind partial existed (e.g. the shrink guard below, or a
+    ///   backend like an `.ebnf`-guided one that throws before appending
+    ///   anything at all), or the selected partial carried no entry payload
+    ///   (see ``attachingPendingEventSegments(events:to:)``) — so the caller
     ///   knows to re-queue them rather than let the drain silently destroy
     ///   them.
     private func recordTranscriptDelta(
@@ -266,7 +269,8 @@ extension RoutedSessionActor {
         guard !diffPartials.isEmpty else { return (false, pendingEvents.isEmpty) }
 
         let lastResponseIndex = diffPartials.lastIndex { $0.kind == .response }
-        let promptIndexToAugment = pendingEvents.isEmpty ? nil : diffPartials.firstIndex { $0.kind == .prompt }
+        let (recordedPartials, pendingEventsAttached) = Self.attachingPendingEventSegments(
+            events: pendingEvents, to: diffPartials)
 
         // Tool-call ids this diff has announced (`.toolCalls`) versus resolved
         // (`.toolOutput`), in request order — consulted once the loop finishes
@@ -277,13 +281,10 @@ extension RoutedSessionActor {
         var dispatchedToolCallIds: [String] = []
         var completedToolCallIds: Set<String> = []
 
-        for (index, diffPartial) in diffPartials.enumerated() {
+        for (index, recordedPartial) in recordedPartials.enumerated() {
             let isTurnClose = index == lastResponseIndex
             let stampSince = (since != nil && isTurnClose) ? since : nil
             let stampUsage = (usage != nil && isTurnClose) ? usage : nil
-            let recordedPartial = (index == promptIndexToAugment)
-                ? Self.appendingOperationEventSegments(events: pendingEvents, to: diffPartial)
-                : diffPartial
             await append(
                 partial: makePartialEvent(
                     kind: recordedPartial.kind,
@@ -306,31 +307,55 @@ extension RoutedSessionActor {
             onEvent?(.toolStatus(id: id, status: .failed, summary: nil))
         }
         persistedEntryCount = entries.count
-        let pendingEventsAttached = pendingEvents.isEmpty || promptIndexToAugment != nil
         return (lastResponseIndex != nil, pendingEventsAttached)
     }
 
-    /// Returns a copy of `partial` with one ``OperationEventSegment`` appended
-    /// to its recorded entry per event in `events`, in outbox order — the
-    /// durable counterpart to ``composedPrompt(pendingEvents:prompt:)``'s text
-    /// preamble, attached only to what gets persisted, never to the SDK's own
-    /// live transcript.
+    /// Returns `diffPartials` with one ``OperationEventSegment`` per event in
+    /// `events` appended, in outbox order, onto the turn's own `.prompt`-kind
+    /// partial — the durable counterpart to
+    /// ``composedPrompt(pendingEvents:prompt:)``'s text preamble, attached
+    /// only to what gets persisted, never to the SDK's own live transcript —
+    /// together with whether that attachment actually happened.
+    ///
+    /// The augmentation target is the **last** `.prompt`-kind partial: a turn
+    /// submits exactly one prompt of its own, and every earlier `.prompt` in
+    /// the same diff is a synthetic one seeded *before* it — discovery
+    /// priming's `.prompt` → `.toolCalls` → `.toolOutput` triple (see
+    /// ``primeDiscoveryIfConfigured(prompt:emit:)``). The last `.prompt` is
+    /// therefore always the entry whose flattened text carries the composed
+    /// preamble, and attaching there is what keeps the segment view and the
+    /// text view of one drained event from drifting apart (the
+    /// ``OperationEventSegment/description`` contract).
     ///
     /// - Parameters:
     ///   - events: The events to attach, in outbox order.
-    ///   - partial: The turn's `.prompt`-kind partial to augment.
-    /// - Returns: `partial` unchanged if it carries no ``TranscriptEvent/Partial/entry``
-    ///   (nothing to attach a segment to); otherwise a copy with the segments
-    ///   appended.
-    private static func appendingOperationEventSegments(
+    ///   - diffPartials: The turn's diff, in transcript order.
+    /// - Returns: The partials to record, and whether the segments were
+    ///   actually attached. `diffPartials` unchanged with `attached` `true`
+    ///   when `events` is empty (nothing to attach, so nothing was missed);
+    ///   unchanged with `attached` `false` when no `.prompt`-kind partial
+    ///   exists, or the selected one carries no
+    ///   ``TranscriptEvent/Partial/entry`` to append segments to — either
+    ///   way the caller re-queues the events rather than let the drain
+    ///   silently destroy them.
+    static func attachingPendingEventSegments(
         events: [OperationEvent],
-        to partial: TranscriptEvent.Partial
-    ) -> TranscriptEvent.Partial {
-        guard let entry = partial.entry else { return partial }
+        to diffPartials: [TranscriptEvent.Partial]
+    ) -> (partials: [TranscriptEvent.Partial], attached: Bool) {
+        guard !events.isEmpty else { return (diffPartials, true) }
+        guard let promptIndex = diffPartials.lastIndex(where: { $0.kind == .prompt }),
+            let entry = diffPartials[promptIndex].entry
+        else {
+            return (diffPartials, false)
+        }
         let segments = events.map { event in
             TranscriptEntryMapper.segmentPayload(.custom(OperationEventSegment(content: event)))
         }
-        return partial.mapBody { text, _ in (text, entry.appendingSegments(segments)) }
+        var partials = diffPartials
+        partials[promptIndex] = partials[promptIndex].mapBody { text, _ in
+            (text, entry.appendingSegments(segments))
+        }
+        return (partials, true)
     }
 
     /// Derives and emits the ``SessionEvent``s one recorded diff partial
