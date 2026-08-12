@@ -25,6 +25,29 @@ comments:
     - test run: one ungated `swift test` — 900 + 27 + 24 = 951 tests, 84 + 11 + 5 suites, 0 failures, exit 0. The one "known issue" is the pre-existing deliberate `withKnownIssue` inside BoundedWait's own test. No new compiler warnings.
     - next: review (/review). The task stays in `doing`.
   timestamp: 2026-08-12T23:29:22.918602+00:00
+- actor: claude-code
+  id: 01kzw5ppdm6v7j7qzegw1nv7ea
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 1922b94); 5 findings — Tests/FoundationModelsRouterTests/Helpers/UndrivenLanguageModel.swift:12, :25, :40, :44 (documentation missing on public items), Tests/FoundationModelsRouterTests/TranscriptReconstructionTests.swift:1050 (local helper makes a copy of the shared `textEntryEvent` helper). No waiver applies: all 5 findings point to lines that this commit added.
+    - next: correct the 5 open items in the "Review Findings (2026-08-12 18:30)" section, then run the review again.
+  timestamp: 2026-08-12T23:42:44.148350+00:00
+- actor: claude-code
+  id: 01kzw5qd4apxzkgza0qjjm0548
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 17 files; TranscriptDiffer Baseline/Divergence detection, persistedBaseline on the session path, guard on the handle path, new divergence event kind, restore prefers the newest duplicated entry id with a logged warning
+    - test: green — swift test, 951 tests (900 + 27 + 24), 0 failures (the one implement run is the test evidence)
+    - commit: 1922b94
+    - review: findings — 5 open: Helpers/UndrivenLanguageModel.swift:12, :25, :40, :44; TranscriptReconstructionTests.swift:1050 (all on lines this commit added; no waivers apply)
+  timestamp: 2026-08-12T23:43:07.402877+00:00
+- actor: claude-code
+  id: 01kzw6n4nmkz2vj3g4z5jfwbec
+  text: |-
+    ### implement — changed
+    - evidence: 2 files changed. Tests/FoundationModelsRouterTests/Helpers/UndrivenLanguageModel.swift — added doc comments to all seven declarations that had none: `capabilities`, `executorConfiguration`, `typealias Model`, `init(configuration:)`, `respond`, `makeSession`, `languageModel` (the findings named four; the sweep of the file found three more with the same cause). Tests/FoundationModelsRouterTests/TranscriptReconstructionTests.swift — removed the local `responseEvent` helper and replaced its two calls with direct `Self.textEntryEvent(...)` calls (kind `.response`, entryId "dup-1"), the fix the finding names. A sweep of the other files this task changed (LogAssertions.swift, CompactionSegmentTests.swift, TranscriptEntryMapperTests.swift, TranscriptFidelityTests.swift, and the nine Sources files in commit 1922b94) found no other undocumented declaration and no other copied helper. Behavior did not change: the test assertions are unchanged. Build: `swift build --build-tests` — complete. Test: one ungated `swift test` — 900 + 27 + 24 = 951 tests in 84 + 11 + 5 = 100 suites, 0 failures, exit 0. The one known issue is the pre-existing deliberate `withKnownIssue` in the BoundedWait test. All five items in "Review Findings (2026-08-12 18:30)" are checked; tags re-supplied as ["transcript"] and verified.
+    - next: review (/review). The task stays in `doing`.
+  timestamp: 2026-08-12T23:59:21.780463+00:00
 depends_on:
 - 01KZR9Z6QH9WVXVSX9T6Z1MSG1
 position_column: doing
@@ -52,4 +75,12 @@ title: Make the transcript differ loud on non-append backend changes
 - A stub backend that rewrites an entry in place produces the loud signal and never silently persists a wrong diff.
 - A stub backend that inserts mid-transcript produces the loud signal; the record does not duplicate the tail.
 - A recording with a duplicated entry id restores loudly, with the documented winner.
-- The existing shrink behavior and its test stay as they are. #transcript
+- The existing shrink behavior and its test stay as they are.
+
+## Review Findings (2026-08-12 18:30)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/UndrivenLanguageModel.swift:12` — Public property `capabilities` lacks documentation; Swift convention requires documentation on all public items. Add a doc comment explaining the purpose of this property, e.g. `/// Returns empty capabilities since this model is never driven.`.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/UndrivenLanguageModel.swift:25` — Public method `respond` lacks documentation; particularly important as it deliberately traps with `fatalError` to signal incorrect usage. Add a doc comment explaining why this method traps, e.g. `/// Traps unconditionally — this model conformer is a stub and should never be driven.`.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/UndrivenLanguageModel.swift:40` — Public method `makeSession` lacks documentation; Swift convention requires documentation on all public items. Add a doc comment explaining the method's purpose, e.g. `/// Creates a stub session backend.`.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/UndrivenLanguageModel.swift:44` — Public property `languageModel` lacks documentation; Swift convention requires documentation on all public items. Add a doc comment explaining the property, e.g. `/// Returns an undriven stub language model.`.
+- [x] `Tests/FoundationModelsRouterTests/TranscriptReconstructionTests.swift:1050` — The local `responseEvent` helper function (lines 1050–1064) reinvents logic that closely mirrors the existing `textEntryEvent` shared helper (lines 321–343). Both functions construct a `TranscriptEvent` with nearly identical structure. Rather than defining a new helper that captures `routerId` and `sessionId` from enclosing scope and hardcodes `entryId`, the code should reuse or extend the existing shared helper to avoid duplication. Call `textEntryEvent` directly with explicit parameters (e.g., `textEntryEvent(seq: 0, sessionId: sessionId, routerId: routerId, kind: .response, entryId: "dup-1", text: "superseded content")`), or refactor `textEntryEvent` to accept optional or defaulted parameters to reduce verbosity and keep a single canonical implementation. #transcript

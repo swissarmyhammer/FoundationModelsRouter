@@ -1047,23 +1047,12 @@ struct TranscriptReconstructionTests {
         // Two `.response` events carrying the SAME entry id — the shape an
         // SDK entry-id reuse (or an in-place rewrite recorded twice) leaves
         // on disk. The later event is the later write.
-        func responseEvent(seq: Int, text: String) -> TranscriptEvent {
-            TranscriptEvent(
-                routerId: routerId,
-                sessionId: sessionId,
-                seq: seq,
-                ts: Date(timeIntervalSince1970: TimeInterval(seq)),
-                kind: .response,
-                text: text,
-                entry: TranscriptEntryPayload(
-                    entryId: "dup-1",
-                    segments: [.text(id: "dup-1-text-\(seq)", content: text)],
-                    assetIds: []
-                )
-            )
-        }
-        let superseded = responseEvent(seq: 0, text: "superseded content")
-        let newest = responseEvent(seq: 1, text: "current content")
+        let superseded = Self.textEntryEvent(
+            seq: 0, sessionId: sessionId, routerId: routerId, kind: .response,
+            entryId: "dup-1", text: "superseded content")
+        let newest = Self.textEntryEvent(
+            seq: 1, sessionId: sessionId, routerId: routerId, kind: .response,
+            entryId: "dup-1", text: "current content")
         let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
             seq: 2, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
             content: CompactionSegment.Content(
