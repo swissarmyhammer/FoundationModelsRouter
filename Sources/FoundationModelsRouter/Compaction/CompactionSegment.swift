@@ -260,4 +260,72 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
             Transcript.Response(id: entryId, assetIDs: [], segments: segments)
         )
     }
+
+    /// The ``Content/promptName`` a deterministic-only fold's checkpoint
+    /// carries: empty, because no summarizer read any compaction prompt —
+    /// recording the prompt the fold *would* have used would attribute
+    /// summary quality to a prompt that produced nothing.
+    internal static let deterministicFoldPromptName = ""
+
+    /// Returns `folded` with one synthesized boundary entry appended — the
+    /// checkpoint a deterministic-only fold must still leave (tasks
+    /// ^h1008kb, ^dcgkd66).
+    ///
+    /// The deterministic stages add no new entry ids of their own
+    /// (``ToolOutputElision`` rewrites segments under the entry's original
+    /// id, ``TurnTruncation`` only removes entries), so an id-diff over
+    /// `folded` alone would record no checkpoint and a restore would rebuild
+    /// the whole pre-fold history. Both fold paths — `RoutedSessionActor`'s
+    /// in-place `compact()` swap and the bare-recipe
+    /// ``RecordingLanguageModel/noteCompaction(_:result:)`` — append their
+    /// deterministic boundary through this one construction, built on
+    /// ``boundaryEntry(id:summaryText:content:)`` with an empty summary
+    /// (there is no summary to show the model) and
+    /// ``deterministicFoldPromptName``, so the two recorded boundary shapes
+    /// cannot drift apart.
+    ///
+    /// - Parameters:
+    ///   - folded: The transcript the deterministic pipeline produced.
+    ///   - preFoldEntryIds: The entry ids of the transcript before the fold
+    ///     ran; the ones absent from `folded` become
+    ///     ``Content/foldedEntryIds``.
+    ///   - tokensBefore: The pre-fold transcript size written to the
+    ///     checkpoint — measured where the caller holds a measurement (the
+    ///     session path), else the pipeline's estimate (the bare recipe).
+    ///   - tokensAfter: The post-fold transcript size written to the
+    ///     checkpoint, on the same scale as `tokensBefore`.
+    ///   - stagesApplied: The pipeline stages the fold applied, in order.
+    ///   - pendingRuns: The run-plane summaries of the runs still parked
+    ///     when the boundary was written, or `nil` when there were none.
+    /// - Returns: `folded` plus the boundary entry, in that order — the
+    ///   boundary names itself last in its own live window.
+    internal static func appendingDeterministicBoundary(
+        to folded: Transcript,
+        preFoldEntryIds: [String],
+        tokensBefore: Int,
+        tokensAfter: Int,
+        stagesApplied: [String],
+        pendingRuns: [PendingRunSummary]?
+    ) -> Transcript {
+        let entryId = "compaction-boundary-\(UUID().uuidString)"
+        let liveEntryIds = folded.map(\.id)
+        let liveIdSet = Set(liveEntryIds)
+        let boundary = boundaryEntry(
+            id: entryId,
+            // Empty deliberately: a deterministic fold synthesizes no summary
+            // text, and the boundary's job for the model is only to exist —
+            // "a boundary entry whose text part is empty or minimal".
+            summaryText: "",
+            content: Content(
+                liveWindowEntryIds: liveEntryIds + [entryId],
+                foldedEntryIds: preFoldEntryIds.filter { !liveIdSet.contains($0) },
+                tokensBefore: tokensBefore,
+                tokensAfter: tokensAfter,
+                stagesApplied: stagesApplied,
+                promptName: deterministicFoldPromptName,
+                pendingRuns: pendingRuns
+            )
+        )
+        return Transcript(entries: Array(folded) + [boundary])
+    }
 }

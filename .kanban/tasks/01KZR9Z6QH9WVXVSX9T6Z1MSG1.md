@@ -71,10 +71,26 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Recording/TranscriptEvent.swift (sah:allow duplication marker on `stamped`), Tests/FoundationModelsRouterTests/Helpers/CompactionFoldFixtures.swift (named constants `defaultKeepRecentTurns`, `foldTargetMidpointDivisor`), Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift (removed the `deterministicShrinkBudget` twin of the shared fixture). One `swift test` run: 884 tests in 83 suites passed (1 pre-existing known issue), 27 in 11 suites passed, 24 in 5 suites passed, 0 failures. All three review-finding boxes checked on the card.
     - next: /review
   timestamp: 2026-08-12T15:12:38.104076+00:00
+- actor: claude-code
+  id: 01kzv90xpmgv6w2nx4hp98eyx7
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 5166317). The engine gave 2 findings. The standing written rule removed both, because each finding asks for a change to test code that existed before this commit. Finding 1: RoutedSessionCompactTests.swift:30 asks for a comment on the @unchecked Sendable class; this commit did not change that class. Finding 2: RoutedSessionCompactTests.swift:972 asks for the defaultKeepRecentTurns constant; commit 78338d0 wrote that line, and this commit did not change it. All three items in the section "## Review Findings (2026-08-12 09:35)" show a check. Zero findings stay open.
+    - next: none. The task moved doing → review → done.
+  timestamp: 2026-08-12T15:21:30.580652+00:00
+- actor: claude-code
+  id: 01kzv920zz5bbmbdxd21kbvxmg
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files; sah:allow duplication marker on stamped(seq:ts:), named constants in CompactionFoldFixtures.swift, duplicated deterministicShrinkBudget helper removed
+    - test: green — swift test, 884 tests in 83 suites passed + 27 + 24, 0 failures (the one implement run is the test evidence)
+    - commit: 5166317
+    - review: clean — 2 findings, both waived as pre-existing-test refactors; 3 prior findings checked; task moved to done
+  timestamp: 2026-08-12T15:22:06.719374+00:00
 depends_on:
 - 01KZR9YPHRGDCZ26R5BH1008KB
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9980
 title: Record fork cuts and diff baselines in append-only history coordinates
 ---
 ## Design rule

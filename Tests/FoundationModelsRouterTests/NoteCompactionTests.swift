@@ -210,12 +210,12 @@ struct NoteCompactionTests {
         )
     }
 
-    // MARK: - Two-turn fixture
+    // MARK: - Driven-turn fixture
 
-    /// One handle, driven through two turns ("first"/"second"), each synced
-    /// at turn end — the pre-fold history every test in this suite folds.
-    /// `entries` is the resulting transcript: instructions, prompt1,
-    /// response1, prompt2, response2.
+    /// One handle, driven through `turnCount` turns (prompts `"turn 0"`,
+    /// `"turn 1"`, …), each synced at turn end — the pre-fold history every
+    /// test in this suite folds. `entries` is the resulting transcript:
+    /// instructions, then one prompt/response pair per turn.
     private struct Fixture {
         let handle: RecordingLanguageModel
         let recorder: InMemoryRecorder
@@ -224,7 +224,7 @@ struct NoteCompactionTests {
     }
 
     @MainActor
-    private static func makeTwoTurnFixture() async throws -> Fixture {
+    private static func makeFixture(turnCount: Int) async throws -> Fixture {
         let dir = makeTempDir()
         let recorder = InMemoryRecorder()
         let model = StubUnderlyingModel(responseText: "reply")
@@ -237,10 +237,10 @@ struct NoteCompactionTests {
 
         let handle = profile.standard.makeLanguageModel()
         let session = LanguageModelSession(model: handle, tools: [], instructions: "be terse")
-        _ = try await session.respond(to: "first")
-        await handle.sync(session.transcript)
-        _ = try await session.respond(to: "second")
-        await handle.sync(session.transcript)
+        for index in 0..<turnCount {
+            _ = try await session.respond(to: "turn \(index)")
+            await handle.sync(session.transcript)
+        }
 
         return Fixture(handle: handle, recorder: recorder, entries: Array(session.transcript), dir: dir)
     }
@@ -250,7 +250,7 @@ struct NoteCompactionTests {
     @Test("noteCompaction appends exactly the unseen summary entry; retained tail entries are not re-recorded")
     @MainActor
     func appendsOnlyUnseenSummaryEntry() async throws {
-        let fixture = try await Self.makeTwoTurnFixture()
+        let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
@@ -300,7 +300,7 @@ struct NoteCompactionTests {
     @Test("pre-fold events remain byte-identical in the recorder after noteCompaction")
     @MainActor
     func preFoldEventsRemainIntact() async throws {
-        let fixture = try await Self.makeTwoTurnFixture()
+        let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let beforeEvents = await fixture.recorder.events
@@ -331,7 +331,7 @@ struct NoteCompactionTests {
     @Test("after noteCompaction, a follow-up turn over the same handle records as an ordinary append with no duplicates")
     @MainActor
     func followUpTurnAfterFoldRecordsAsOrdinaryAppend() async throws {
-        let fixture = try await Self.makeTwoTurnFixture()
+        let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let instructions = fixture.entries[0]
@@ -375,7 +375,7 @@ struct NoteCompactionTests {
     @Test("noteCompaction is idempotent: calling it twice with the identical compacted transcript appends nothing the second time")
     @MainActor
     func noteCompactionIsIdempotentForIdenticalTranscript() async throws {
-        let fixture = try await Self.makeTwoTurnFixture()
+        let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let instructions = fixture.entries[0]
@@ -400,7 +400,7 @@ struct NoteCompactionTests {
     @Test("a second, later compaction folds only its own new span — nested compactions never re-record an earlier fold's summary")
     @MainActor
     func secondLaterCompactionFoldsOnlyNewSpan() async throws {
-        let fixture = try await Self.makeTwoTurnFixture()
+        let fixture = try await Self.makeFixture(turnCount: 2)
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
 
         let instructions = fixture.entries[0]
@@ -442,5 +442,95 @@ struct NoteCompactionTests {
         let appended = try #require(afterSecondFold.last)
         #expect(appended.kind == .response)
         #expect(appended.text == "Summary: everything through turn 2 folded again.")
+    }
+
+    // MARK: - Deterministic-only folds (task ^dcgkd66)
+
+    /// Enough driven turns that ``TurnTruncation`` (default recency window
+    /// `defaultKeepRecentTurns`) has old turns to fold away.
+    private static let deterministicFoldTurnCount = 6
+
+    /// Scales a pre-fold estimate up to a `TokenBudget` limit whose target
+    /// sits far above the estimate, so ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// applies no stage and returns the transcript unchanged.
+    private static let noOpBudgetLimitMultiplier = 4
+
+    @Test("a deterministic-only fold noted with its result records exactly one boundary entry carrying a decodable CompactionSegment checkpoint")
+    @MainActor
+    func deterministicOnlyFoldRecordsOneDecodableCheckpoint() async throws {
+        let fixture = try await Self.makeFixture(turnCount: Self.deterministicFoldTurnCount)
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+
+        let beforeEvents = await fixture.recorder.events
+
+        // A real deterministic-only fold: no summarizer, and a budget whose
+        // target the deterministic stages alone land under.
+        let (folded, result) = try await Compactor.compact(
+            Transcript(entries: fixture.entries),
+            budget: deterministicFoldBudget(for: fixture.entries)
+        )
+        #expect(result.summaryEntryId == nil)
+        #expect(!result.stagesApplied.isEmpty)
+        // The fold added no new entry ids of its own — exactly the gap this
+        // overload closes: an id-diff alone would record nothing.
+        let preFoldIds = Set(fixture.entries.map(\.id))
+        #expect(folded.allSatisfy { preFoldIds.contains($0.id) })
+
+        let applied = await fixture.handle.noteCompaction(folded, result: result)
+
+        // Exactly one new recorded event: the synthesized boundary.
+        let afterEvents = await fixture.recorder.events
+        #expect(afterEvents.count == beforeEvents.count + 1)
+        #expect(Array(afterEvents.prefix(beforeEvents.count)) == beforeEvents)
+
+        // The boundary's checkpoint decodes, and restore finds it newest.
+        let checkpoint = try #require(TranscriptTree.newestCompactionCheckpoint(in: afterEvents))
+        #expect(checkpoint.index == afterEvents.count - 1)
+        #expect(checkpoint.content.stagesApplied == result.stagesApplied)
+        // The bare recipe has no measured usage, so the checkpoint carries
+        // the pipeline's estimated token counts.
+        #expect(checkpoint.content.tokensBefore == result.tokensBefore)
+        #expect(checkpoint.content.tokensAfter == result.tokensAfter)
+        // No summarizer read any compaction prompt, and no session mailbox
+        // exists on the bare path.
+        #expect(checkpoint.content.promptName.isEmpty)
+        #expect(checkpoint.content.pendingRuns == nil)
+
+        // The returned transcript is the folded window plus the boundary, in
+        // that order — the boundary names itself last in its own live window.
+        #expect(applied.count == folded.count + 1)
+        #expect(Array(applied.prefix(folded.count)).map(\.id) == folded.map(\.id))
+        let boundaryId = try #require(applied.last?.id)
+        #expect(checkpoint.content.liveWindowEntryIds == folded.map(\.id) + [boundaryId])
+        // The folded ids name exactly the pre-fold entries the window dropped.
+        let liveIds = Set(checkpoint.content.liveWindowEntryIds)
+        #expect(checkpoint.content.foldedEntryIds == fixture.entries.map(\.id).filter { !liveIds.contains($0) })
+        #expect(!checkpoint.content.foldedEntryIds.isEmpty)
+    }
+
+    @Test("a no-op fold result records nothing and returns the transcript unchanged")
+    @MainActor
+    func noOpFoldResultRecordsNothing() async throws {
+        let fixture = try await Self.makeFixture(turnCount: 2)
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+
+        let beforeEvents = await fixture.recorder.events
+
+        // A budget the transcript is already under: the pipeline returns the
+        // transcript unchanged and reports no stage applied.
+        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: fixture.entries))
+        let (folded, result) = try await Compactor.compact(
+            Transcript(entries: fixture.entries),
+            budget: TokenBudget(limit: preFoldTokens * Self.noOpBudgetLimitMultiplier)
+        )
+        #expect(result.stagesApplied.isEmpty)
+
+        let applied = await fixture.handle.noteCompaction(folded, result: result)
+
+        // Every entry was already recorded and no fold applied: nothing new
+        // is recorded, and no boundary is synthesized.
+        let afterEvents = await fixture.recorder.events
+        #expect(afterEvents == beforeEvents)
+        #expect(applied.map(\.id) == fixture.entries.map(\.id))
     }
 }

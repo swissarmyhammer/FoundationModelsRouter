@@ -112,11 +112,67 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
     /// `compacted` transcript already fully reflected in the last fold (e.g.
     /// the same fold noted twice) appends nothing.
     ///
+    /// A deterministic-only fold (`Compactor.compact` run without a
+    /// summarizer, landed by `ToolOutputElision`/`TurnTruncation` alone)
+    /// hands this method a `compacted` transcript with no new entry ids, so
+    /// the id-diff records nothing and no ``CompactionSegment`` checkpoint
+    /// reaches disk. Note such a fold through ``noteCompaction(_:result:)``
+    /// instead, which synthesizes the boundary entry the checkpoint rides
+    /// on (task ^dcgkd66).
+    ///
     /// - Parameter compacted: The transcript compaction produced —
     ///   instructions verbatim, the synthesized summary entry, and whatever
     ///   recent tail survived the fold.
     public func noteCompaction(_ compacted: Transcript) async {
-        await state.noteCompaction(compacted)
+        _ = await state.noteCompaction(compacted)
+    }
+
+    /// Folds this handle's recording forward across a compaction, like
+    /// ``noteCompaction(_:)``, and additionally guarantees the fold's
+    /// ``CompactionSegment`` checkpoint reaches disk when the fold was
+    /// deterministic-only (task ^dcgkd66).
+    ///
+    /// ``noteCompaction(_:)``'s id-diff appends only entries never before
+    /// recorded, and a deterministic-only fold — `Compactor.compact` run
+    /// without a summarizer, landed by `ToolOutputElision`/`TurnTruncation`
+    /// alone — produces no new entry ids: `ToolOutputElision` rewrites
+    /// segments under the entry's original id, and `TurnTruncation` only
+    /// removes entries. The diff would record nothing, and
+    /// `TranscriptTree.newestCompactionCheckpoint` would find nothing on
+    /// restore. When `result` reports such a fold
+    /// (``CompactionResult/summaryEntryId`` is `nil` and
+    /// ``CompactionResult/stagesApplied`` is non-empty), one boundary entry
+    /// is synthesized through the shared construction
+    /// ``CompactionSegment/appendingDeterministicBoundary(to:preFoldEntryIds:tokensBefore:tokensAfter:stagesApplied:pendingRuns:)``
+    /// — the same one `RoutedSessionActor`'s session fold path appends — and
+    /// recorded with the diff. A summarized fold's own summary entry is
+    /// already the boundary, and a no-op `result` (no stage applied)
+    /// synthesizes nothing, so both record exactly as through
+    /// ``noteCompaction(_:)``.
+    ///
+    /// The bare recipe has no session and no measured usage, so the
+    /// synthesized checkpoint carries the pipeline's estimated token counts
+    /// (``CompactionResult/tokensBefore``/``CompactionResult/tokensAfter``)
+    /// — and, with no session mailbox on this path, no pending runs.
+    ///
+    /// **Caller contract**: rebuild `LanguageModelSession(model: <this same
+    /// handle>, tools:, transcript: <the RETURNED transcript>)`. For a
+    /// deterministic-only fold the returned transcript includes the
+    /// synthesized boundary, so what the model sees live is exactly what a
+    /// restore rebuilds from the checkpoint's live window; seeding with
+    /// `compacted` instead would desynchronize this handle's differ
+    /// baseline.
+    ///
+    /// - Parameters:
+    ///   - compacted: The transcript compaction produced.
+    ///   - result: What the fold did — `Compactor.compact`'s own report,
+    ///     deciding whether a boundary entry must be synthesized and
+    ///     carrying the estimated token counts the checkpoint records.
+    /// - Returns: The transcript to seed the rebuilt session with:
+    ///   `compacted` plus the synthesized boundary entry for a
+    ///   deterministic-only fold, or `compacted` verbatim otherwise.
+    public func noteCompaction(_ compacted: Transcript, result: CompactionResult) async -> Transcript {
+        await state.noteCompaction(compacted, result: result)
     }
 
     /// The executor conformance every ``FoundationModels/LanguageModelSession``
@@ -373,24 +429,77 @@ actor RecordingLanguageModelState {
     }
 
     /// Folds this handle's recording forward across a compaction (see
-    /// ``RecordingLanguageModel/noteCompaction(_:)``): writes the sidecar and
-    /// records the session meta event lazily (via ``enterGateAndRecordMeta(_:)``,
-    /// shared with ``enterGateAndDiff(_:usage:)``), then appends `compacted`'s
+    /// ``RecordingLanguageModel/noteCompaction(_:)`` and
+    /// ``RecordingLanguageModel/noteCompaction(_:result:)``): writes the
+    /// sidecar and records the session meta event lazily (via
+    /// ``enterGateAndRecordMeta(_:)``, shared with
+    /// ``enterGateAndDiff(_:usage:)``), then appends the fold's
     /// never-before-recorded entries — by `Transcript.Entry.id`, via
     /// ``diffAndRecordCompaction(compacted:)`` — and resets ``lastSeen`` to
-    /// `compacted`, so post-fold turns record as ordinary (count-based)
+    /// what it recorded, so post-fold turns record as ordinary (count-based)
     /// appends again.
     ///
-    /// - Parameter compacted: The transcript compaction produced.
-    func noteCompaction(_ compacted: Transcript) async {
+    /// When `result` reports a deterministic-only applied fold, what is
+    /// recorded is `compacted` plus one synthesized boundary entry — see
+    /// ``appliedTranscript(for:result:)`` — so the fold's
+    /// ``CompactionSegment`` checkpoint reaches disk even though the fold
+    /// itself added no new entry ids (task ^dcgkd66).
+    ///
+    /// - Parameters:
+    ///   - compacted: The transcript compaction produced.
+    ///   - result: What the fold did, or `nil` (the default) to record
+    ///     `compacted` as-is with no boundary synthesis — the
+    ///     ``RecordingLanguageModel/noteCompaction(_:)`` path.
+    /// - Returns: The transcript recorded and set as the new ``lastSeen``
+    ///   baseline — the one the caller must seed the rebuilt session with.
+    func noteCompaction(_ compacted: Transcript, result: CompactionResult? = nil) async -> Transcript {
         await enterGateAndRecordMeta(compacted)
-        await diffAndRecordCompaction(compacted: compacted)
+        let applied = appliedTranscript(for: compacted, result: result)
+        await diffAndRecordCompaction(compacted: applied)
         generationGate.signal()
+        return applied
+    }
+
+    /// Returns the transcript ``noteCompaction(_:result:)`` records and
+    /// resets ``lastSeen`` to: `compacted` plus one synthesized
+    /// deterministic boundary entry when `result` reports an applied fold
+    /// with no summary entry of its own, or `compacted` verbatim otherwise
+    /// (no `result` supplied, a no-op fold that applied no stage, or a
+    /// summarized fold whose summary entry is already the boundary).
+    ///
+    /// The boundary is built by the shared construction
+    /// ``CompactionSegment/appendingDeterministicBoundary(to:preFoldEntryIds:tokensBefore:tokensAfter:stagesApplied:pendingRuns:)``,
+    /// with ``lastSeen`` — the pre-fold transcript this handle last saw —
+    /// naming what the fold replaced. The bare recipe has no session and no
+    /// measured usage, so the checkpoint carries the pipeline's estimated
+    /// token counts, and no mailbox exists below the session, so
+    /// `pendingRuns` is `nil`.
+    ///
+    /// Must run inside the generation gate, after
+    /// ``enterGateAndRecordMeta(_:)``: it reads ``lastSeen``, which every
+    /// other reader and writer touches only while holding the gate.
+    ///
+    /// - Parameters:
+    ///   - compacted: The transcript compaction produced.
+    ///   - result: What the fold did, or `nil` for no boundary synthesis.
+    /// - Returns: The transcript to record and reset ``lastSeen`` to.
+    private func appliedTranscript(for compacted: Transcript, result: CompactionResult?) -> Transcript {
+        guard let result, result.summaryEntryId == nil, !result.stagesApplied.isEmpty else {
+            return compacted
+        }
+        return CompactionSegment.appendingDeterministicBoundary(
+            to: compacted,
+            preFoldEntryIds: lastSeen.map(\.id),
+            tokensBefore: result.tokensBefore,
+            tokensAfter: result.tokensAfter,
+            stagesApplied: result.stagesApplied,
+            pendingRuns: nil
+        )
     }
 
     /// Writes this handle's sidecar on first use, acquires the shared serial
     /// gate, and records the session meta event lazily — the prep sequence
-    /// shared by ``enterGateAndDiff(_:usage:)`` and ``noteCompaction(_:)``,
+    /// shared by ``enterGateAndDiff(_:usage:)`` and ``noteCompaction(_:result:)``,
     /// which differ only in what they do with `transcript` once this
     /// returns (and how they release the gate afterward).
     ///
@@ -586,7 +695,7 @@ actor RecordingLanguageModelState {
     /// non-generic.
     ///
     /// Labeled — unlike this file's unlabeled verb+direct-object methods
-    /// (``RecordingLanguageModel/sync(_:usage:)``, ``noteCompaction(_:)``,
+    /// (``RecordingLanguageModel/sync(_:usage:)``, ``noteCompaction(_:result:)``,
     /// ``enterGateAndDiff(_:usage:)``) — because this is a `make`-prefixed
     /// factory, not an action performed on `wrapped`: every other `make*`
     /// factory in this codebase labels its parameters, and the sibling
