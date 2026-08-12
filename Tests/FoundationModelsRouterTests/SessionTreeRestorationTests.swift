@@ -382,6 +382,42 @@ struct SessionTreeRestorationTests {
         }
     }
 
+    @Test("restoring a tree whose sidecar carries a future schema version throws the typed newer-router error")
+    @MainActor
+    func restoringAFutureVersionSidecarThrowsTheTypedError() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile1.standard.makeSession()
+        _ = try await root.respond(to: "hello")
+
+        // Restamp the recorded root sidecar with a version this reader does
+        // not know — the fabricated future-version recording of the
+        // acceptance criteria.
+        let sidecarURL = routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
+            .appendingPathComponent(root.id.description, isDirectory: true)
+            .appendingPathComponent("session.json", isDirectory: false)
+        let futureVersion = RecordingSchemaVersion.current + 1
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
+        json["schemaVersion"] = futureVersion
+        try FileManager.default.removeItem(at: sidecarURL)
+        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+
+        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        await #expect(throws: RecordingSchemaVersionError.self) {
+            _ = try await profile2.standard.restoreSessionTree(root: root.id)
+        }
+    }
+
     @Test("restoring against a profile whose resident model differs from the recorded one throws modelMismatch")
     @MainActor
     func restoringAgainstMismatchedModelThrowsModelMismatch() async throws {

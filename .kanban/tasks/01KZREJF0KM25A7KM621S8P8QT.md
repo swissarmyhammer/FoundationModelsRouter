@@ -44,10 +44,27 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Session/ResponseTextFold.swift (new), Sources/FoundationModelsRouter/Session/TurnOutcome.swift (new), Sources/FoundationModelsRouter/Session/SessionProjection.swift, Examples/CompactionDemo/main.swift, Tests/FoundationModelsRouterTests/TurnOutcomeTests.swift (new); `swift test` passed: 848 + 27 + 24 tests, 0 failures, 1 accepted known issue (BoundedWait)
     - next: /review
   timestamp: 2026-08-12T02:38:31.765766+00:00
+- actor: claude-code
+  id: 01kzsxz540kfd9zv3wbz5a649h
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (local backend); 8 validators ran; 0 findings, 0 confirmed
+    - next: none — the task moved to done
+  timestamp: 2026-08-12T02:49:03.872310+00:00
+- actor: claude-code
+  id: 01kzsxzk0h2kqb64gr0cme0wqd
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 code files (3 new), RED to GREEN
+    - test: green — swift test, 848 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 6a740fe
+    - review: clean — 0 findings, scope HEAD~1..HEAD
+    - result: the task is in done
+  timestamp: 2026-08-12T02:49:18.097560+00:00
 depends_on:
 - 01KZPW9RY91W2KAMGY3W8DZVEE
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9080
 title: Ship a turn-outcome API so callers stop re-implementing the event fold
 ---
 ## Problem

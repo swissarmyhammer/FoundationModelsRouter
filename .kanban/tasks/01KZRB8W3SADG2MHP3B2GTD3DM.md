@@ -1,8 +1,45 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: 9d80
+comments:
+- actor: claude-code
+  id: 01kzsybsqnthhfnmjthh1wddmr
+  text: |-
+    Research complete. Findings:
+
+    - Only TranscriptTree decodes SessionSidecar today (rawNode, through SessionSidecar.read(in:)). MergedTranscript does not read sidecars. To make both readers gate, MergedTranscript must read the sidecar in each transcript file's directory before it decodes that file.
+    - Design: a new file Recording/RecordingSchemaVersion.swift holds the version registry (v1, v2, current, implicit) and the typed error RecordingSchemaVersionError.recordingFromNewerRouter(directory:version:supported:).
+    - The gate lives in SessionSidecar.read(in:). Every reader that decodes a sidecar goes through it. TranscriptTree.rawNode must rethrow the typed error. It must not map the typed error to sidecarUnreadable. Restore goes through TranscriptTree.load, so restore fails with the typed error.
+    - Version meanings: v1 = initial event shape (flat text, toolCall kind, no entry payload). v2 = additive entry payloads, contentRemoved, and the SDK-mirror kinds. current = v2. A sidecar with no schemaVersion key decodes as implicit = v2. The implicit constant is frozen: a future bump of current must not move it.
+    - Writers stamp through the SessionSidecar memberwise init default (schemaVersion = current). SessionSidecarWriter needs no change. withCompactionCount must carry schemaVersion through, or enrichment would reset it.
+    - MergedTranscript keeps its tolerance for a transcript with no sidecar (existing tests build such trees by hand). The gate applies only when a sidecar decodes.
+  timestamp: 2026-08-12T02:55:58.197857+00:00
+- actor: claude-code
+  id: 01kzt1hv4wse1mmwrxb6tqwb0k
+  text: |-
+    Implementation landed, TDD sequence complete.
+
+    RED: six new tests, written first. The test build failed with "cannot find RecordingSchemaVersion in scope" — the correct failure for missing API.
+
+    GREEN: all six tests pass in a filtered run.
+
+    Changes:
+    - New Sources/FoundationModelsRouter/Recording/RecordingSchemaVersion.swift: the version registry (v1, v2, current = v2, implicit = v2 frozen) and the typed error RecordingSchemaVersionError.recordingFromNewerRouter(directory:version:supported:). Each version constant documents what it added.
+    - SessionSidecar: new schemaVersion Int field. The memberwise init defaults it to RecordingSchemaVersion.current, so every writer stamps it with no writer change. The decoder maps an absent key to implicit. withCompactionCount carries it through. The gate lives in SessionSidecar.read(in:): a decoded version newer than current throws the typed error.
+    - TranscriptTree.rawNode: rethrows RecordingSchemaVersionError. It does not fold the typed error into sidecarUnreadable. Load and restore both reject a newer recording with the typed error.
+    - MergedTranscript: new private checkSchemaVersion(besideTranscript:) consults the sidecar beside each transcript file before decode. A missing sidecar keeps the old tolerant behavior. An undecodable sidecar states no version, so the merge keeps its historical sidecar-free contract for that file (comment in code explains why).
+
+    One test fix during GREEN: the merge test must canonicalize its temp directory (/var vs /private/var), because the typed error names the directory as file discovery spells it. TranscriptTreeTests already documents this same trap.
+  timestamp: 2026-08-12T03:51:41.980747+00:00
+- actor: claude-code
+  id: 01kzt1jvkmh2e50p7zcfc23v2y
+  text: |-
+    ### implement — changed
+    - evidence: 8 files — Sources/FoundationModelsRouter/Recording/RecordingSchemaVersion.swift (new), Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Sources/FoundationModelsRouter/Recording/MergedTranscript.swift, Tests/FoundationModelsRouterTests/SessionSidecarTests.swift, Tests/FoundationModelsRouterTests/TranscriptTreeTests.swift, Tests/FoundationModelsRouterTests/MergedAndRedactionTests.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift. One full `swift test` run: 854 tests in 81 suites passed (1 accepted known issue), 27 in 11 suites passed, 24 in 5 suites passed, zero failures.
+    - next: /review
+  timestamp: 2026-08-12T03:52:15.220975+00:00
+position_column: doing
+position_ordinal: '8180'
 title: Stamp an explicit schema version on the sidecar and the event log
 ---
 ## Problem

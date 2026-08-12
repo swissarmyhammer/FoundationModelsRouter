@@ -52,7 +52,11 @@ public enum MergedTranscript {
     /// - Returns: Every recorded event across all sessions and forks, ordered by
     ///   `(ts, seq)`.
     /// - Throws: ``MergedTranscriptError/transcriptLineCorrupt(file:)`` when a
-    ///   file holds a corrupt line before its last one; otherwise if a
+    ///   file holds a corrupt line before its last one;
+    ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
+    ///   when a session's sidecar carries a schema version newer than
+    ///   ``RecordingSchemaVersion/current`` (see
+    ///   ``checkSchemaVersion(besideTranscript:)``); otherwise if a
     ///   transcript file cannot be read.
     public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
         var events: [TranscriptEvent] = []
@@ -61,10 +65,44 @@ public enum MergedTranscript {
         // order, and the decoded events — not the files — are sorted below.
         let files = TranscriptFileDiscovery.fileURLs(named: "transcript.jsonl", under: routerDirectory)
         for file in files {
+            try checkSchemaVersion(besideTranscript: file)
             events += try TranscriptLineDecoding.decodeEvents(at: file) { file in
                 MergedTranscriptError.transcriptLineCorrupt(file: file)
             }
         }
         return events.sorted { ($0.ts, $0.seq) < ($1.ts, $1.seq) }
+    }
+
+    /// Refuses a transcript whose session sidecar carries a schema version
+    /// newer than this reader knows, before any of its lines are decoded.
+    ///
+    /// The version is stamped once per session, on the `session.json` beside
+    /// the transcript (see ``SessionSidecar/schemaVersion``), so the merge
+    /// consults that sidecar for each file it is about to read — the same
+    /// gate ``TranscriptTree/load(under:)`` reaches through
+    /// ``SessionSidecar/read(in:)``, so the two readers cannot drift.
+    ///
+    /// The merge's own contract stays otherwise sidecar-free: a transcript
+    /// with no `session.json` beside it merges as it always has (there is no
+    /// stamped version to gate on), and a sidecar that fails to decode states
+    /// no version either — ``TranscriptTree`` is the reader that reports
+    /// sidecar absence and corruption loudly.
+    ///
+    /// - Parameter file: The `transcript.jsonl` about to be decoded.
+    /// - Throws: ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
+    ///   when the sidecar beside `file` names a version newer than
+    ///   ``RecordingSchemaVersion/current``.
+    private static func checkSchemaVersion(besideTranscript file: URL) throws {
+        do {
+            _ = try SessionSidecar.read(in: file.deletingLastPathComponent())
+        } catch let error as RecordingSchemaVersionError {
+            throw error
+        } catch {
+            // An absent sidecar returns nil (no throw); reaching here means
+            // one exists but cannot be decoded, so it states no version to
+            // gate on. The merge keeps its historical sidecar-free contract
+            // for that file rather than adopting TranscriptTree's loud
+            // corruption reporting.
+        }
     }
 }

@@ -96,6 +96,54 @@ struct MergedAndRedactionTests {
         #expect(merged.allSatisfy { $0.text == "body" })
     }
 
+    @Test(
+        "the merge refuses a session whose sidecar carries a future schema version, with the typed newer-router error"
+    )
+    func mergeRefusesAFutureVersionSidecarWithTheTypedError() async throws {
+        let uncanonicalDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MergedTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: uncanonicalDir, withIntermediateDirectories: true)
+        // Canonicalized (symlinks resolved, `/var` → `/private/var`) because the
+        // typed error names the directory as ``TranscriptFileDiscovery``'s
+        // enumeration spells it — canonically — and this test asserts on the
+        // exact error value.
+        let canonicalPath = try #require(
+            try uncanonicalDir.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath)
+        let routerDir = URL(fileURLWithPath: canonicalPath, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: routerDir) }
+
+        // One session directory holding a recorded transcript beside a sidecar
+        // stamped with a version this reader does not know — the shape a
+        // recording written by a newer router leaves on disk.
+        let recorder: JSONLRecorder = .jsonl(directory: routerDir, now: { Self.fixedInstant })
+        let sessionDir = routerDir.appendingPathComponent(ULID.generate().description, isDirectory: true)
+        await recorder.append(samplePartial(kind: .prompt, text: "body"), to: sessionDir)
+
+        let futureVersion = RecordingSchemaVersion.current + 1
+        let futureJSON = Data(
+            """
+            {
+                "slot": "standard",
+                "model": "org/model-a",
+                "context": 8192,
+                "recordingLevel": "full",
+                "schemaVersion": \(futureVersion)
+            }
+            """.utf8)
+        try futureJSON.write(
+            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+
+        #expect(
+            throws: RecordingSchemaVersionError.recordingFromNewerRouter(
+                directory: sessionDir,
+                version: futureVersion,
+                supported: RecordingSchemaVersion.current
+            )
+        ) {
+            _ = try MergedTranscript.merged(under: routerDir)
+        }
+    }
+
     // MARK: - Level gating (unit)
 
     @Test("level off writes nothing")

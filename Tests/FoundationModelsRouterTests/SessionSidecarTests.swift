@@ -283,6 +283,85 @@ struct SessionSidecarTests {
         #expect(throws: (any Error).self) { try SessionSidecar.read(in: dir) }
     }
 
+    // MARK: - Schema version (task 2gtd3dm)
+
+    @Test("a freshly written sidecar carries the current schema version, on disk and after decode")
+    func freshlyWrittenSidecarCarriesTheCurrentSchemaVersion() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sessionDir = dir.appendingPathComponent(ULID.generate().description, isDirectory: true)
+        try SessionSidecar.write(Self.sampleSidecar(forkedAtEntryCount: nil), to: sessionDir)
+
+        // The stamp is real bytes on disk, not only an in-memory default: a
+        // future reader learns the version from the file alone.
+        let onDisk = try Data(
+            contentsOf: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+        let json = try #require(try JSONSerialization.jsonObject(with: onDisk) as? [String: Any])
+        #expect(json["schemaVersion"] as? Int == RecordingSchemaVersion.current)
+
+        let decoded = try #require(try SessionSidecar.read(in: sessionDir))
+        #expect(decoded.schemaVersion == RecordingSchemaVersion.current)
+    }
+
+    @Test("a recording with no schemaVersion key decodes as the implicit version")
+    func recordingWithNoSchemaVersionKeyDecodesAsTheImplicitVersion() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sessionDir = dir.appendingPathComponent(ULID.generate().description, isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+
+        // Hand-authored bytes mirroring a recording written before the stamp
+        // existed: no `schemaVersion` key at all (not `null`).
+        let unstampedJSON = Data(
+            """
+            {
+                "slot": "standard",
+                "model": "org/model-a",
+                "context": 8192,
+                "recordingLevel": "full"
+            }
+            """.utf8)
+        try unstampedJSON.write(
+            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+
+        let decoded = try #require(try SessionSidecar.read(in: sessionDir))
+        #expect(decoded.schemaVersion == RecordingSchemaVersion.implicit)
+        #expect(decoded.schemaVersion == RecordingSchemaVersion.v2)
+    }
+
+    @Test("a sidecar stamped with a future schema version fails to read with the typed error")
+    func futureVersionSidecarFailsToReadWithTheTypedError() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sessionDir = dir.appendingPathComponent(ULID.generate().description, isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+
+        let futureVersion = RecordingSchemaVersion.current + 1
+        let futureJSON = Data(
+            """
+            {
+                "slot": "standard",
+                "model": "org/model-a",
+                "context": 8192,
+                "recordingLevel": "full",
+                "schemaVersion": \(futureVersion)
+            }
+            """.utf8)
+        try futureJSON.write(
+            to: sessionDir.appendingPathComponent("session.json", isDirectory: false))
+
+        #expect(
+            throws: RecordingSchemaVersionError.recordingFromNewerRouter(
+                directory: sessionDir,
+                version: futureVersion,
+                supported: RecordingSchemaVersion.current
+            )
+        ) { try SessionSidecar.read(in: sessionDir) }
+    }
+
     // MARK: - Atomic creation & write-once
 
     @Test("writing a sidecar creates the session's own directory along with it")

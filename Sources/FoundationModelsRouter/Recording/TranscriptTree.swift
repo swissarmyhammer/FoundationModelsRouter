@@ -172,6 +172,9 @@ public struct TranscriptTree: Sendable {
     ///   ``TranscriptTreeError/sidecarUnreadable(directory:)`` if one cannot be
     ///   decoded; ``TranscriptTreeError/sessionDirectoryNotIdentified(directory:)``
     ///   if a sidecar sits in a directory not named for a session id;
+    ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
+    ///   if a sidecar carries a schema version newer than
+    ///   ``RecordingSchemaVersion/current`` (see ``SessionSidecar/read(in:)``);
     ///   ``TranscriptTreeError/transcriptLineCorrupt(session:file:)`` if a
     ///   `transcript.jsonl` holds a corrupt line before its last one (a torn
     ///   final line is dropped with a warning instead — see
@@ -254,6 +257,12 @@ public struct TranscriptTree: Sendable {
         let decoded: SessionSidecar?
         do {
             decoded = try SessionSidecar.read(in: directory)
+        } catch let error as RecordingSchemaVersionError {
+            // Not corruption: the bytes decoded fine and name a schema version
+            // newer than this reader knows. Rethrown typed rather than folded
+            // into `sidecarUnreadable`, so a caller can tell "written by a
+            // newer router" apart from "damaged on disk".
+            throw error
         } catch {
             throw TranscriptTreeError.sidecarUnreadable(directory: directory)
         }

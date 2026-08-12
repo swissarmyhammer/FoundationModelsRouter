@@ -550,6 +550,53 @@ struct TranscriptTreeTests {
         }
     }
 
+    @Test(
+        "a sidecar stamped with a future schema version fails the load with the typed newer-router error, not sidecarUnreadable"
+    )
+    @MainActor
+    func futureVersionSidecarFailsTheLoadWithTheTypedError() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let router = Self.makeRouter(
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+        let root = profile.standard.makeSession()
+        _ = try await root.respond(to: "root-turn-1")
+
+        // Restamp the recorded sidecar with a version this reader does not
+        // know, the way a recording written by a newer router would carry it.
+        let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
+        let rootDirectory = routerDir.appendingPathComponent(root.id.description, isDirectory: true)
+        let sidecarURL = rootDirectory.appendingPathComponent("session.json", isDirectory: false)
+        let futureVersion = RecordingSchemaVersion.current + 1
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
+        json["schemaVersion"] = futureVersion
+        try FileManager.default.removeItem(at: sidecarURL)
+        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+
+        // The bytes decode fine and name a newer version: that is not
+        // corruption, so the load must surface the version refusal typed,
+        // never folded into `sidecarUnreadable`.
+        #expect(
+            throws: RecordingSchemaVersionError.recordingFromNewerRouter(
+                directory: rootDirectory,
+                version: futureVersion,
+                supported: RecordingSchemaVersion.current
+            )
+        ) {
+            _ = try TranscriptTree.load(under: routerDir)
+        }
+    }
+
     @Test("a transcript.jsonl with no session.json beside it throws sidecarMissing rather than being skipped")
     func transcriptWithNoSidecarThrows() throws {
         let dir = Self.makeTempDir()

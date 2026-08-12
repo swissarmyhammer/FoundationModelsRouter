@@ -214,6 +214,19 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// here on carries it, nested layout or flat.
     public let routerId: ULID?
 
+    /// The recording schema version this session's on-disk data — this
+    /// sidecar and the `transcript.jsonl` beside it — was written under
+    /// (see ``RecordingSchemaVersion``'s registry of versions).
+    ///
+    /// Stamped as ``RecordingSchemaVersion/current`` on every new sidecar. A
+    /// recording with no `schemaVersion` key decodes as
+    /// ``RecordingSchemaVersion/implicit``, the newest shape ever written
+    /// before the stamp existed. ``read(in:)`` refuses a version newer than
+    /// ``RecordingSchemaVersion/current`` with the typed
+    /// ``RecordingSchemaVersionError``, so a recording from a newer router is
+    /// never silently misread.
+    public let schemaVersion: Int
+
     /// Creates a session sidecar.
     ///
     /// - Parameters:
@@ -236,6 +249,10 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///   - routerId: The recording root id of the router that created this
     ///     session, or `nil` for a recording made before this field existed.
     ///     Defaults to `nil`.
+    ///   - schemaVersion: The recording schema version to stamp. Defaults to
+    ///     ``RecordingSchemaVersion/current``, the only value a writer ever
+    ///     stamps — an explicit value exists for tests fabricating other
+    ///     versions.
     public init(
         slot: ModelSlot,
         model: ModelRef,
@@ -248,7 +265,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         workingDirectory: URL,
         agentSpawn: AgentSpawn? = nil,
         compactionCount: Int? = nil,
-        routerId: ULID? = nil
+        routerId: ULID? = nil,
+        schemaVersion: Int = RecordingSchemaVersion.current
     ) {
         self.slot = slot
         self.model = model
@@ -262,6 +280,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.agentSpawn = agentSpawn
         self.compactionCount = compactionCount
         self.routerId = routerId
+        self.schemaVersion = schemaVersion
     }
 
     /// The key ``read(in:)`` sets on its `JSONDecoder.userInfo` to the
@@ -274,15 +293,16 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case slot, model, context, instructions, grammar, recordingLevel, forkedAtEntryCount,
-            profile, compactionCount, workingDirectory, agentSpawn, routerId
+            profile, compactionCount, workingDirectory, agentSpawn, routerId, schemaVersion
     }
 
     /// Decodes a sidecar, defaulting an absent ``workingDirectory`` key to
     /// the directory named by ``sidecarDirectoryUserInfoKey`` in the
     /// decoder's `userInfo` — the fallback a pre-task-6j4bven recording (one
     /// written before this field existed) needs, since its `session.json`
-    /// carries no such key at all. Every other field decodes exactly as
-    /// synthesis would; only ``workingDirectory`` needs this custom handling.
+    /// carries no such key at all. An absent ``schemaVersion`` key decodes as
+    /// ``RecordingSchemaVersion/implicit`` — see that field's own doc
+    /// comment. Every other field decodes exactly as synthesis would.
     ///
     /// - Parameter decoder: The decoder, whose `userInfo` supplies the
     ///   fallback directory when ``read(in:)`` set one.
@@ -303,6 +323,9 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         compactionCount = try container.decodeIfPresent(Int.self, forKey: .compactionCount)
         agentSpawn = try container.decodeIfPresent(AgentSpawn.self, forKey: .agentSpawn)
         routerId = try container.decodeIfPresent(ULID.self, forKey: .routerId)
+        schemaVersion =
+            try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
+            ?? RecordingSchemaVersion.implicit
         if let recorded = try container.decodeIfPresent(URL.self, forKey: .workingDirectory) {
             workingDirectory = recorded
         } else if let fallback = decoder.userInfo[Self.sidecarDirectoryUserInfoKey] as? URL {
@@ -343,7 +366,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
             workingDirectory: workingDirectory,
             agentSpawn: agentSpawn,
             compactionCount: count,
-            routerId: routerId
+            routerId: routerId,
+            schemaVersion: schemaVersion
         )
     }
 
@@ -382,18 +406,35 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// same `directory`, the default a live session used for its working
     /// directory before that field existed to override it.
     ///
+    /// This is the one place every reader's sidecar decode goes through, so
+    /// the ``RecordingSchemaVersion`` gate lives here: a decoded sidecar
+    /// stamped with a version newer than ``RecordingSchemaVersion/current``
+    /// is refused with the typed
+    /// ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``,
+    /// never returned for the caller to misread.
+    ///
     /// - Parameter directory: The session's recording directory.
     /// - Returns: The decoded sidecar, or `nil` when `directory` holds no
     ///   `session.json` at all — the caller decides whether an absent sidecar is
     ///   benign (a directory that is not a session's) or an error (a session
     ///   directory whose sidecar was deleted).
-    /// - Throws: If a `session.json` exists but cannot be read or decoded.
+    /// - Throws: ``RecordingSchemaVersionError`` when the decoded sidecar's
+    ///   ``schemaVersion`` is newer than ``RecordingSchemaVersion/current``;
+    ///   otherwise if a `session.json` exists but cannot be read or decoded.
     public static func read(in directory: URL) throws -> SessionSidecar? {
         let fileURL = directory.appendingPathComponent(sessionSidecarFileName, isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let decoder = JSONDecoder()
         decoder.userInfo[sidecarDirectoryUserInfoKey] = directory
-        return try decoder.decode(SessionSidecar.self, from: try Data(contentsOf: fileURL))
+        let sidecar = try decoder.decode(SessionSidecar.self, from: try Data(contentsOf: fileURL))
+        guard sidecar.schemaVersion <= RecordingSchemaVersion.current else {
+            throw RecordingSchemaVersionError.recordingFromNewerRouter(
+                directory: directory,
+                version: sidecar.schemaVersion,
+                supported: RecordingSchemaVersion.current
+            )
+        }
+        return sidecar
     }
 }
 
