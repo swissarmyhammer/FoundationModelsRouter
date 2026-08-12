@@ -37,6 +37,11 @@ enum ScriptedToolFixture {
     /// wording serves every turn shape.
     static let prompt = "call whatever tools you need, then tell me what you were told"
 
+    /// The step name a one-call scripted turn names — one source of truth, so
+    /// the script's call argument and the assertion on the tool's recorded
+    /// steps cannot drift apart.
+    static let firstStepName = "ONE"
+
     /// The tool output text a call naming `step` produces.
     ///
     /// - Parameter step: The `value` argument the call named.

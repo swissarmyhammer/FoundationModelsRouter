@@ -153,6 +153,11 @@ public actor SessionOutbox: OperationEventSink {
     /// for why this reference is weak.
     private weak var journal: (any OperationEventJournal)?
 
+    /// Where every ``post(invocation:)`` forwards its record, or `nil` until
+    /// ``attach(invocationObserver:)`` installs one — weak for the same
+    /// reference-cycle reason ``journal`` is.
+    private weak var invocationObserver: (any ToolInvocationObserver)?
+
     /// The FIFO chain every journal write is enqueued onto — see
     /// ``enqueueJournalWrite(event:)``.
     private var journalChain = SerialAsyncChain()
@@ -268,6 +273,35 @@ public actor SessionOutbox: OperationEventSink {
     /// - Parameter journal: The journal to install.
     internal func attach(journal: any OperationEventJournal) {
         self.journal = journal
+    }
+
+    /// Installs `invocationObserver` as the live destination every
+    /// subsequently posted ``ToolInvocationRecord`` is forwarded to.
+    ///
+    /// Called from ``RoutedSessionActor/attachOutboxJournalIfNeeded()``,
+    /// beside ``attach(journal:)`` — the same top-of-turn attach point, for
+    /// the same reason: a tool only ever runs inside a turn, so no run's own
+    /// record can be posted before its observer is in place.
+    ///
+    /// - Parameter invocationObserver: The observer to install.
+    internal func attach(invocationObserver: any ToolInvocationObserver) {
+        self.invocationObserver = invocationObserver
+    }
+
+    /// Posts one ``ToolInvocationRecord`` — the ``OperationEventSink``
+    /// invocation route the per-call binding layers post through.
+    ///
+    /// Delivery-only, and deliberately nothing like ``post(_:)``: the record
+    /// is forwarded to the attached ``ToolInvocationObserver`` for live
+    /// ``SessionEvent/toolInvocation(_:)`` delivery, and to nothing else. It
+    /// is never staged as a pending item and never journaled, so the
+    /// post-turn diff stays the one authority for what is recorded. Before an
+    /// observer is attached — no turn has ever begun, so no tool of this
+    /// session's own can be running — the record is dropped.
+    ///
+    /// - Parameter record: The record to forward.
+    public func post(invocation record: ToolInvocationRecord) async {
+        await invocationObserver?.deliver(invocation: record)
     }
 
     /// Chains one journal write onto ``journalChain`` and returns it for the

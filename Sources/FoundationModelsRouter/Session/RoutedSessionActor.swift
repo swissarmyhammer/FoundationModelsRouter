@@ -297,6 +297,21 @@ actor RoutedSessionActor: RoutedSession {
     /// cannot attach twice.
     var didAttachOutboxJournal = false
 
+    /// The in-flight turn's composed event sink — the ``turnEventSink(_:)``
+    /// closure `runTurn` builds, which reaches the turn's own stream (when the
+    /// turn has one) and every session-scoped subscription — or `nil` between
+    /// turns.
+    ///
+    /// Installed by `runTurn` for exactly the turn's duration and cleared by
+    /// its `defer`, so ``deliver(invocation:)`` can hand a live
+    /// ``SessionEvent/toolInvocation(_:)`` to the current turn the moment a
+    /// binding layer posts its record: the actor is free while the turn
+    /// awaits its model call, so the delivery interleaves mid-turn by actor
+    /// reentrancy. Guarded by the actor's isolation, and a session runs one
+    /// turn at a time (``turnLock``), so the sink can never belong to any
+    /// turn but the current one.
+    var currentTurnEventSink: ((SessionEvent) -> Void)?
+
     /// The `correlationID` of every detached run whose ending this session has
     /// already journaled.
     ///

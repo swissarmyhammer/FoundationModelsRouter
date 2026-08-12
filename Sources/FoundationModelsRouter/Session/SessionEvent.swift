@@ -16,10 +16,10 @@ import Foundation
 /// **Source compatibility.** This is a public enum without library evolution,
 /// so adding a case is a source-breaking change for any *exhaustive* `switch`
 /// over it outside this package (the compiler neither requires nor accepts an
-/// `@unknown default` there). ``turnStarted(_:)`` was added this way: a
-/// consumer switching exhaustively adds the new case when updating. A consumer
-/// that wants to absorb future cases without a source break writes a `default`
-/// arm instead.
+/// `@unknown default` there). ``turnStarted(_:)`` was added this way, and so
+/// was ``toolInvocation(_:)``: a consumer switching exhaustively adds the new
+/// case when updating. A consumer that wants to absorb future cases without a
+/// source break writes a `default` arm instead.
 ///
 /// The session event stream: this is
 /// the general session-event vocabulary a driver — or ``SessionProjection``,
@@ -115,6 +115,42 @@ public enum SessionEvent: Sendable, Equatable {
     ///   - summary: The tool's output text once ``ToolCallStatus/completed``,
     ///     or `nil` for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
     case toolStatus(id: String, status: ToolCallStatus, summary: String?)
+
+    /// A live ``ToolInvocationRecord`` from this session's own per-call
+    /// binding layers: an open record (``ToolInvocationRecord/closedAt``
+    /// `nil`) immediately before a wrapped tool call starts, and a close
+    /// record when that call returns — including when it throws.
+    ///
+    /// **This is the mid-turn tool liveness signal** (task ^zfd8e69). The
+    /// open record arrives while the tool's own work is still running —
+    /// unlike ``toolCall(id:name:argumentsJSON:)`` and
+    /// ``toolStatus(id:status:summary:)``, which the post-turn diff
+    /// synthesizes once generation finishes. It travels on both routes: the
+    /// turn's own ``RoutedSession/streamEvents(to:maxTokens:)`` stream and
+    /// ``RoutedSession/streamSessionEvents()``. A detached run's close
+    /// arrives late, when the work really ends — possibly after this turn's
+    /// ``turnEnded(_:)``, on the session-scoped feed — self-attributed by
+    /// the record's ``ToolInvocationRecord/correlationID``.
+    ///
+    /// **Delivery-only.** The record is never staged in the session's outbox
+    /// and never recorded to the transcript; the post-turn diff stays the
+    /// recording authority, and its ``toolCall(id:name:argumentsJSON:)``/
+    /// ``toolStatus(id:status:summary:)`` events keep arriving unchanged.
+    ///
+    /// **The identity rule.** The record's
+    /// ``ToolInvocationRecord/correlationID`` is the run's `completionToken`
+    /// — `OperationEvent.correlationID`'s space — and never an SDK
+    /// `Transcript.ToolCall.id`; neither id is ever stamped into the other.
+    /// A consumer joins the two views explicitly: the live record identifies
+    /// the run (its `correlationID`, tool name, and open order inside the
+    /// turn frame), the diff's ``toolCall(id:name:argumentsJSON:)``
+    /// identifies the SDK call.
+    ///
+    /// Ordering, within one turn's in-band calls: the open record precedes
+    /// its close record, and both precede the diff's
+    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:)``
+    /// for the same turn and that turn's ``turnEnded(_:)``.
+    case toolInvocation(ToolInvocationRecord)
 
     /// The turn's snapshot diff recorded one SDK transcript entry, closing it
     /// under its durable id.

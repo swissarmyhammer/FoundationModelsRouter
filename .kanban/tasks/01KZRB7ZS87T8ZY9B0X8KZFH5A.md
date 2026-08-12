@@ -135,8 +135,25 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Recording/TranscriptFileDiscovery.swift (new), Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Sources/FoundationModelsRouter/Recording/MergedTranscript.swift; 1 finding flipped to [x]; swift build clean; one full swift test run: 832 tests in 79 suites passed (1 accepted BoundedWait known issue) plus the 27- and 24-test hermetic runs
     - next: /review
   timestamp: 2026-08-11T23:09:03.758537+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzshkgfzdesyckazabq8tf6z
+  text: |-
+    ### review — clean
+    - evidence: 0 findings (scope: review sha HEAD~1..HEAD, commit 134257e); all 4 prior findings checked; acceptance verified — torn-final-line tolerance (tornFinalLineIsDroppedOnLoad, kept bytes 1/24/60), mid-file corruption typed error with session id and file (midFileCorruptionThrowsTypedError), documented turn-close sync on JSONLRecorder exercised by synchronizesAtTurnClose — all in Tests/FoundationModelsRouterTests/RecordingDurabilityTests.swift across ebfcd18, ea3856d, 134257e
+    - next: none — task moved to done
+  timestamp: 2026-08-11T23:12:59.391211+00:00
+- actor: claude-code
+  id: 01kzshm7jz3p3b4q9670re3vr4
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — 3 files; shared TranscriptFileDiscovery.fileURLs(named:under:) replaces the two private copies; outdated file-local-precedent doc claim removed
+    - test: green — one full swift test run, 883 tests (832+27+24), 0 failures
+    - commit: changed — 134257e
+    - review: clean — review sha HEAD~1..HEAD (134257e), 0 findings; 4/4 prior findings checked; 3/3 acceptance points verified
+    - task moved to done by /review
+  timestamp: 2026-08-11T23:13:23.039333+00:00
+position_column: done
+position_ordinal: ff8e80
 title: Define and test the recording durability policy
 ---
 ## Problem
@@ -156,9 +173,9 @@ The JSONL recorder appends through cached `FileHandle`s (Sources/FoundationModel
 
 ## Acceptance
 
-- A truncated final line never fails a tree load; the loss is one event, reported in a warning.
-- A corrupt mid-file line fails loudly with the session id and file path.
-- The sync point is documented on `JSONLRecorder` and exercised by a test that kills nothing but asserts the sync call happens at the documented point.
+- [x] A truncated final line never fails a tree load; the loss is one event, reported in a warning.
+- [x] A corrupt mid-file line fails loudly with the session id and file path.
+- [x] The sync point is documented on `JSONLRecorder` and exercised by a test that kills nothing but asserts the sync call happens at the documented point.
 
 ## Review Findings (2026-08-11 16:28)
 
@@ -168,4 +185,8 @@ The JSONL recorder appends through cached `FileHandle`s (Sources/FoundationModel
 
 ## Review Findings (2026-08-11 17:37)
 
-- [x] `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:537` — func `fileURLs` is a near-duplicate of `transcriptFiles` at Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:72 (57 tokens, 96% alike). #transcript
+- [x] `Sources/FoundationModelsRouter/Recording/TranscriptTree.swift:537` — func `fileURLs` is a near-duplicate of `transcriptFiles` at Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:72 (57 tokens, 96% alike).
+
+## Review Findings (2026-08-11 18:10)
+
+No new findings — clean pass over HEAD~1..HEAD (commit 134257e). #transcript

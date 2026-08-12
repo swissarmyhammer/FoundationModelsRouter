@@ -24,6 +24,10 @@ struct ScriptedSessionFixture {
     /// SDK's own transcript back off the session its turn ran through.
     let vendedBackends: VendedBackendLog
 
+    /// The recorder the fixture's router persists every transcript event
+    /// into, so a test can assert on exactly what a turn recorded.
+    let recorder: InMemoryRecorder
+
     /// The SDK's own transcript for this fixture's session, in order.
     ///
     /// Read off the vended backend, so it is the same transcript the turn
@@ -55,10 +59,12 @@ struct ScriptedSessionFixture {
     ) async throws -> ScriptedSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = ScriptedTurnLog()
+        let recorder = InMemoryRecorder()
         let model = ScriptedToolCallingModel(script: script, log: log)
         let container = ScriptedToolCallingContainer(model: model)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: directory,
+            recorder: recorder,
             loader: StubModelLoader(
                 container: container, dimension: RouterTestFixtures.stubDimension)
         )
@@ -68,6 +74,7 @@ struct ScriptedSessionFixture {
             session: profile.standard.makeSession(tools: tools),
             log: log,
             directory: directory,
-            vendedBackends: container.vendedBackends)
+            vendedBackends: container.vendedBackends,
+            recorder: recorder)
     }
 }

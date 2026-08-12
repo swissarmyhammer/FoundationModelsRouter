@@ -12,4 +12,26 @@ public protocol OperationEventSink: Sendable {
     ///
     /// - Parameter event: The event to receive.
     func post(_ event: OperationEvent) async
+
+    /// Receives one posted ``ToolInvocationRecord`` — the binding layers post
+    /// an open record immediately before each wrapped call and a close record
+    /// when it returns (also on throw).
+    ///
+    /// Delivery-only, unlike ``post(_:)``'s events: a record is never staged
+    /// for a future turn and never recorded to the transcript — the post-turn
+    /// diff stays the recording authority. ``SessionOutbox`` forwards it to
+    /// the session actor for live ``SessionEvent/toolInvocation(_:)``
+    /// delivery; a sink with no live consumer keeps the default, which
+    /// ignores the record.
+    ///
+    /// - Parameter record: The record to receive.
+    func post(invocation record: ToolInvocationRecord) async
+}
+
+extension OperationEventSink {
+    /// Ignores the record — the default, so a conformer that only consumes
+    /// ``OperationEvent``s keeps compiling and keeps its behavior unchanged.
+    ///
+    /// - Parameter record: The record to ignore.
+    public func post(invocation record: ToolInvocationRecord) async {}
 }

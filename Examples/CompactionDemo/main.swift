@@ -77,6 +77,13 @@ func runTurn(
             print("[tool] call \(name) (\(id)): \(argumentsJSON)")
         case .toolStatus(let id, let status, let summary):
             print("[tool] \(id) -> \(status)\(summary.map { ": \($0)" } ?? "")")
+        case .toolInvocation(let record):
+            // The live signal: the open record arrives while the tool still
+            // runs, the close record when its call returned — before the
+            // diff-derived `.toolCall`/`.toolStatus` above (see
+            // `SessionEvent.toolInvocation(_:)`).
+            let state = record.closedAt == nil ? "running" : "finished"
+            print("[tool] \(record.tool) \(state) (run \(record.correlationID))")
         case .compaction(let result):
             compactions.append(result)
             print(

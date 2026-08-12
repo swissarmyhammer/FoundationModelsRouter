@@ -29,3 +29,25 @@ protocol OperationEventJournal: AnyObject, Sendable {
     /// - Parameter event: The event the outbox has just accepted.
     func record(event: OperationEvent) async
 }
+
+/// A live destination a session's ``SessionOutbox`` forwards every posted
+/// ``ToolInvocationRecord`` to, at the moment it is posted.
+///
+/// The delivery-only counterpart of ``OperationEventJournal``, and installed
+/// at the same attach point (``RoutedSessionActor/attachOutboxJournalIfNeeded()``,
+/// at the top of every turn): where the journal *records* an event in the
+/// transcript, this observer only *delivers* the record live, as
+/// ``SessionEvent/toolInvocation(_:)`` — the record is never staged and never
+/// recorded, so the post-turn diff stays the one recording authority.
+///
+/// Class-bound because ``SessionOutbox`` holds its observer *weakly*, for the
+/// same reference-cycle reason ``OperationEventJournal`` documents: the only
+/// implementation is the ``RoutedSessionActor`` that owns the outbox for its
+/// whole life.
+protocol ToolInvocationObserver: AnyObject, Sendable {
+    /// Delivers one posted invocation record live to this session's event
+    /// consumers.
+    ///
+    /// - Parameter record: The record the outbox has just received.
+    func deliver(invocation record: ToolInvocationRecord) async
+}

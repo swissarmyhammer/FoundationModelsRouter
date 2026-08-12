@@ -340,6 +340,12 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// Runs one call through the engine — see the type doc for the full
     /// behavior.
     ///
+    /// Around the wrapped call this also posts a ``ToolInvocationRecord``
+    /// pair to ``sink``: the open record is awaited to delivery before the
+    /// work starts, and the close record is posted when the wrapped call
+    /// returns — before this method returns for an in-band settlement, or
+    /// late (self-attributed by its `correlationID`) for a detached run.
+    ///
     /// - Parameter arguments: The call's arguments, forwarded to the
     ///   wrapped tool untouched.
     /// - Returns: The wrapped tool's rendered output when the call settles
@@ -367,9 +373,24 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             isCancelled: { cancellationFlag.isRequested }
         )
 
+        // The open record, awaited to delivery before the work starts, so a
+        // live consumer sees the invocation while the tool still runs. Posted
+        // straight to the upstream sink, never through the funnel: invocation
+        // records are delivery-only and take no part in the funnel's
+        // staging/terminal synthesis.
+        let openRecord = ToolInvocationRecord(
+            tool: context.tool,
+            op: context.op,
+            correlationID: completionToken,
+            sessionID: sessionID,
+            openedAt: Date()
+        )
+        await sink.post(invocation: openRecord)
+
         let wrapped = self.wrapped
+        let sink = self.sink
         let workTask = Task { () async -> RunSettlement in
-            await ToolContext.$current.withValue(context) {
+            let settlement = await ToolContext.$current.withValue(context) {
                 await Self.settle(
                     calling: wrapped,
                     arguments: arguments,
@@ -379,6 +400,12 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
                     cancellationFlag: cancellationFlag
                 )
             }
+            // The close record: awaited before this task's value resolves, so
+            // an in-band settlement delivers it before `call` returns. A
+            // detached run posts it late, when its work really ends —
+            // self-attributed by the record's `correlationID`.
+            await sink.post(invocation: openRecord.closed(at: Date()))
+            return settlement
         }
 
         switch configuration.mode {
@@ -802,6 +829,12 @@ public struct ContextBindingTool<
     /// Runs one call under a fresh per-call ``ToolContext`` binding — see
     /// the type doc for the full behavior.
     ///
+    /// Around the wrapped call this also posts a ``ToolInvocationRecord``
+    /// pair to ``sink``: the open record is awaited to delivery before the
+    /// call starts, and the close record before this method returns — on the
+    /// success path and the throwing path alike, since a call always runs
+    /// in-band here.
+    ///
     /// - Parameter arguments: The call's arguments, forwarded to the
     ///   wrapped tool untouched.
     /// - Returns: The wrapped tool's own output, unchanged.
@@ -816,10 +849,29 @@ public struct ContextBindingTool<
             completionToken: SessionMailbox.makeCompletionToken(),
             isCancelled: { cancellationFlag.isRequested }
         )
+        let openRecord = ToolInvocationRecord(
+            tool: context.tool,
+            op: context.op,
+            correlationID: context.completionToken,
+            sessionID: sessionID,
+            openedAt: Date()
+        )
+        await sink.post(invocation: openRecord)
         return try await withTaskCancellationHandler {
-            try await ToolContext.$current.withValue(context) {
-                try await wrapped.call(arguments: arguments)
+            // Captured as a `Result` rather than rethrown directly so the
+            // close record is posted on the throwing path too — `defer`
+            // cannot await.
+            let outcome: Result<Output, any Error>
+            do {
+                outcome = .success(
+                    try await ToolContext.$current.withValue(context) {
+                        try await wrapped.call(arguments: arguments)
+                    })
+            } catch {
+                outcome = .failure(error)
             }
+            await sink.post(invocation: openRecord.closed(at: Date()))
+            return try outcome.get()
         } onCancel: {
             cancellationFlag.request()
         }

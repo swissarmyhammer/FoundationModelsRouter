@@ -168,5 +168,35 @@ extension RoutedSessionActor: OperationEventJournal {
         guard !didAttachOutboxJournal else { return }
         didAttachOutboxJournal = true
         await outbox.attach(journal: self)
+        await outbox.attach(invocationObserver: self)
+    }
+}
+
+/// ``RoutedSessionActor``'s live invocation delivery: how a per-call binding
+/// layer's ``ToolInvocationRecord`` becomes a
+/// ``SessionEvent/toolInvocation(_:)`` on the current turn's stream the moment
+/// it is posted — during the turn, not after it (task ^zfd8e69).
+///
+/// Delivery-only, the deliberate opposite of the ``OperationEventJournal``
+/// conformance above: a record is never staged and never journaled, so the
+/// post-turn diff stays the one authority for what is recorded.
+extension RoutedSessionActor: ToolInvocationObserver {
+    /// Delivers one live ``ToolInvocationRecord`` as
+    /// ``SessionEvent/toolInvocation(_:)``.
+    ///
+    /// During a turn the record goes through ``currentTurnEventSink`` — the
+    /// turn's composed sink, which reaches the turn's own stream and every
+    /// session-scoped subscription. Between turns — a detached run's late
+    /// close, self-attributed by the record's `correlationID` — it reaches
+    /// the session-scoped feed alone.
+    ///
+    /// - Parameter record: The record the outbox forwarded.
+    func deliver(invocation record: ToolInvocationRecord) {
+        let event = SessionEvent.toolInvocation(record)
+        if let currentTurnEventSink {
+            currentTurnEventSink(event)
+        } else {
+            emitSessionScopedEvent(event)
+        }
     }
 }

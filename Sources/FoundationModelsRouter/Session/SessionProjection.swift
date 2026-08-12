@@ -41,13 +41,18 @@ public final class SessionProjection {
     /// unchanged rather than reporting ``Phase/runningTool`` for nothing (see
     /// ``updateToolCall(id:status:summary:)``), and
     /// ``SessionEvent/entryRecorded(id:kind:)`` is identity bookkeeping that
-    /// never touches it. Also not a perfectly real-time signal —
-    /// ``RoutedSession/streamEvents(to:maxTokens:)``
-    /// only synthesizes ``SessionEvent/toolCall(id:name:argumentsJSON:)``/
-    /// ``SessionEvent/toolStatus(id:status:summary:)``/``SessionEvent/reasoningDelta(_:)``
-    /// once generation finishes and the turn's own diff runs (see that
-    /// method's doc comment on emission order) — but accurate enough to drive
-    /// a UI label.
+    /// never touches it.
+    ///
+    /// ``Phase/runningTool`` is a *live* signal: a
+    /// ``SessionEvent/toolInvocation(_:)`` open record arrives while the
+    /// tool's own work still runs and sets it, and the matching close record
+    /// returns it to ``Phase/generating`` once the last open invocation
+    /// closed (see ``applyToolInvocation(_:)``). The diff-time
+    /// ``SessionEvent/toolCall(id:name:argumentsJSON:)``/
+    /// ``SessionEvent/toolStatus(id:status:summary:)``/
+    /// ``SessionEvent/reasoningDelta(_:)`` events — synthesized only once
+    /// generation finishes and the turn's own diff runs — still set it too,
+    /// as they always did.
     public enum Phase: Sendable, Equatable {
         /// No turn is currently being observed.
         case idle
@@ -220,6 +225,8 @@ public final class SessionProjection {
             if updateToolCall(id: id, status: status, summary: summary) {
                 phase = .runningTool
             }
+        case .toolInvocation(let record):
+            applyToolInvocation(record)
         case .entryRecorded(let id, let kind):
             // Bookkeeping only, deliberately no phase change: the close
             // arrives at diff time, alongside events that already set the
@@ -241,6 +248,12 @@ public final class SessionProjection {
             tokensIn += usage.tokensIn
             tokensOut += usage.tokensOut
             contextFill = usage.contextFill
+            // A run that detached never closes inside its own turn, so its
+            // open invocation is cleared here — a stale open must never pin a
+            // later turn's phase to ``Phase/runningTool``. Its late close
+            // then finds nothing tracked and changes nothing (see
+            // ``applyToolInvocation(_:)``).
+            openInvocationCorrelationIDs.removeAll()
             phase = .idle
         }
     }
@@ -349,6 +362,39 @@ public final class SessionProjection {
         call.summary = summary
         transcript[index].kind = .toolCall(call)
         return true
+    }
+
+    /// The `correlationID` of every ``SessionEvent/toolInvocation(_:)`` open
+    /// record whose close has not yet arrived this turn — the live set behind
+    /// ``Phase/runningTool``, cleared at ``SessionEvent/turnEnded(_:)`` so a
+    /// detached run's never-closing open cannot pin a later turn.
+    ///
+    /// Not a projected value a driver reads: transcript rows stay diff-driven
+    /// (``SessionEvent/toolCall(id:name:argumentsJSON:)`` opens them), and
+    /// these ids live in the run's `completionToken` space, never in the SDK
+    /// call-id space those rows carry.
+    private var openInvocationCorrelationIDs: Set<String> = []
+
+    /// Applies one ``SessionEvent/toolInvocation(_:)`` to ``phase``.
+    ///
+    /// An open record tracks its `correlationID` and reports
+    /// ``Phase/runningTool``. A close record for a tracked open stops
+    /// tracking it and, once no invocation remains open, returns the phase to
+    /// ``Phase/generating`` — the tool finished but its turn is still
+    /// producing. An untracked close — a detached run's late close after its
+    /// turn ended, whose open ``SessionEvent/turnEnded(_:)`` already
+    /// cleared — changes nothing, the same defensive posture
+    /// ``updateToolCall(id:status:summary:)`` takes for an untracked status.
+    ///
+    /// - Parameter record: The record to apply.
+    private func applyToolInvocation(_ record: ToolInvocationRecord) {
+        guard record.closedAt != nil else {
+            openInvocationCorrelationIDs.insert(record.correlationID)
+            phase = .runningTool
+            return
+        }
+        guard openInvocationCorrelationIDs.remove(record.correlationID) != nil else { return }
+        phase = openInvocationCorrelationIDs.isEmpty ? .generating : .runningTool
     }
 
     /// The prefix every provisional row id carries, keeping the provisional

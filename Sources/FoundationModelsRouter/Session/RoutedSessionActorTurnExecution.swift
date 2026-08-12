@@ -220,6 +220,14 @@ extension RoutedSessionActor {
         // proactive fold below included — so every event a consumer sees after
         // it belongs to this turn. See ``SessionEvent/turnStarted(_:)``.
         let emit = turnEventSink(onEvent)
+
+        // Installed for exactly this turn's duration so a live
+        // ``ToolInvocationRecord`` posted mid-turn reaches this turn's own
+        // stream — see ``deliver(invocation:)`` and
+        // ``RoutedSessionActor/currentTurnEventSink``.
+        currentTurnEventSink = emit
+        defer { currentTurnEventSink = nil }
+
         emit(.turnStarted(TurnStart(turnId: turnId, promptId: promptId)))
 
         // Compared in tokens against ``TokenBudget/triggerTokens``, never as
