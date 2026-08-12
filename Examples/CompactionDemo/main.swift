@@ -32,77 +32,51 @@ import Tokenizers
 /// Run with `swift run CompactionDemo`. It downloads real weights on first
 /// run and needs Apple silicon + network — see `README.md`.
 
-// MARK: - Event-driven turn helper
+// MARK: - Live event printing
 
-/// Drives one turn through `session.streamEvents(to:)`, printing tool calls
-/// and any auto-compaction folds the session's budget triggers along the
-/// way, and returning the assembled reply text, the resulting `contextFill`,
-/// and every `CompactionResult` this turn's fold(s) produced.
+/// Prints one raw `SessionEvent` as the turn produces it — the `observing`
+/// callback every demo turn passes to `session.respond(to:observing:)`.
 ///
-/// A plain `session.respond(to:)` can't observe this: auto-compaction folds
-/// silently *inside* a turn (task 8213x39) rather than returning a
-/// `CompactionResult` its caller can inspect directly — `streamEvents`'s
-/// `SessionEvent/compaction(_:)` case is the only way to see it happen live.
-///
-/// - Parameters:
-///   - session: The session to drive.
-///   - prompt: The user turn to send.
-/// - Returns: The assembled reply text, the contextFill measured as this
-///   turn closed, and every compaction this turn's own fold(s) produced (in
-///   order; empty if the budget never triggered during this turn).
-func runTurn(
-    _ session: RoutedSession, prompt: String
-) async throws -> (reply: String, fill: Double, compactions: [CompactionResult]) {
-    var reply = ""
-    var fill: Double = 0
-    var compactions: [CompactionResult] = []
-    let stream = await session.streamEvents(to: prompt)
-    for try await event in stream {
-        switch event {
-        case .turnStarted(let start):
-            // The correlation frame every later event of this turn belongs to.
-            // This turn's prompt came straight from the caller, so it names no
-            // queued prompt.
-            print("[turn] \(start.turnId) started")
-        case .textDelta(let fragment):
-            reply += fragment
-        case .textReset:
-            // The model abandoned the reply it was writing and began another
-            // (see `SessionEvent.textReset`), which a tool-using turn does at
-            // every tool boundary. Applying the reset is what makes this
-            // accumulation end equal to what `respond(to:)` would have
-            // returned for the same turn.
-            reply = ""
-        case .toolCall(let id, let name, let argumentsJSON):
-            print("[tool] call \(name) (\(id)): \(argumentsJSON)")
-        case .toolStatus(let id, let status, let summary):
-            print("[tool] \(id) -> \(status)\(summary.map { ": \($0)" } ?? "")")
-        case .toolInvocation(let record):
-            // The live signal: the open record arrives while the tool still
-            // runs, the close record when its call returned — before the
-            // diff-derived `.toolCall`/`.toolStatus` above (see
-            // `SessionEvent.toolInvocation(_:)`).
-            let state = record.closedAt == nil ? "running" : "finished"
-            print("[tool] \(record.tool) \(state) (run \(record.correlationID))")
-        case .compaction(let result):
-            compactions.append(result)
-            print(
-                """
-                [auto-compact] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) \
-                stagesApplied=\(result.stagesApplied)
-                """)
-        case .discoveryPrimingFailed(let failure):
-            print("[priming] could not seed this turn: \(failure)")
-        case .reasoningDelta, .entryRecorded:
-            // This demo prints content and lifecycle, not identity: the
-            // recorded-entry closes exist for consumers (like
-            // `SessionProjection`) that key rows on durable SDK entry ids.
-            break
-        case .turnEnded(let usage):
-            fill = usage.contextFill
-        }
+/// The demo folds nothing itself: `respond(to:observing:)` owns the event
+/// fold (task ^1s8p8qt) — the reply assembly with the `textReset` rule, the
+/// compactions the turn folded, and the closing usage all come back on its
+/// `TurnOutcome`. What remains here is only what a person reading the
+/// terminal wants to see live: the turn frame, tool traffic (both the live
+/// invocation records and the diff-derived calls), any auto-compaction fold
+/// the session's budget triggers, and a priming report.
+@Sendable func printLiveEvent(_ event: SessionEvent) {
+    switch event {
+    case .turnStarted(let start):
+        // The correlation frame every later event of this turn belongs to.
+        // This turn's prompt came straight from the caller, so it names no
+        // queued prompt.
+        print("[turn] \(start.turnId) started")
+    case .toolCall(let id, let name, let argumentsJSON):
+        print("[tool] call \(name) (\(id)): \(argumentsJSON)")
+    case .toolStatus(let id, let status, let summary):
+        print("[tool] \(id) -> \(status)\(summary.map { ": \($0)" } ?? "")")
+    case .toolInvocation(let record):
+        // The live signal: the open record arrives while the tool still
+        // runs, the close record when its call returned — before the
+        // diff-derived `.toolCall`/`.toolStatus` above (see
+        // `SessionEvent.toolInvocation(_:)`).
+        let state = record.closedAt == nil ? "running" : "finished"
+        print("[tool] \(record.tool) \(state) (run \(record.correlationID))")
+    case .compaction(let result):
+        print(
+            """
+            [auto-compact] tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) \
+            stagesApplied=\(result.stagesApplied)
+            """)
+    case .discoveryPrimingFailed(let failure):
+        print("[priming] could not seed this turn: \(failure)")
+    case .textDelta, .textReset, .reasoningDelta, .entryRecorded, .turnEnded:
+        // Already folded into the returned `TurnOutcome` (the reply text and
+        // closing usage), or identity bookkeeping this demo does not print:
+        // the recorded-entry closes exist for consumers (like
+        // `SessionProjection`) that key rows on durable SDK entry ids.
+        break
     }
-    return (reply, fill, compactions)
 }
 
 // MARK: - Live router
@@ -202,13 +176,14 @@ let session = profile.standard.makeSession(
 
 // MARK: - 2. Plant a fact via a tool call, then generate on-demand pressure, then read fixture documents
 
-let (recordAck, _, _) = try await runTurn(
-    session,
-    prompt: """
+let recordAck = try await session.respond(
+    to: """
         Call the record_fact tool with key "project-codename" and value "CRIMSON-77" to remember this \
         project's internal code name, then reply with a one-sentence acknowledgement.
-        """
+        """,
+    observing: printLiveEvent
 )
+.reply
 print("[turn] recorded fact via tool — reply=\"\(recordAck)\"")
 
 var observedCompactions: [CompactionResult] = []
@@ -216,15 +191,17 @@ var observedCompactions: [CompactionResult] = []
 // Read by the `observedCompactions` accumulation and the print two lines down;
 // periphery cannot see reads of top-level bindings in a script target.
 // periphery:ignore
-let (docReply, docFill, docCompactions) = try await runTurn(
-    session,
-    prompt: """
+let docOutcome = try await session.respond(
+    to: """
         Call the generate_document tool with topic "appendix" and paragraphs 6 to fetch some background \
         material, then reply with a one-sentence summary of it.
-        """
+        """,
+    observing: printLiveEvent
 )
-observedCompactions += docCompactions
-print("[turn] generated appendix document via tool — contextFill=\(String(format: "%.2f", docFill)) reply=\"\(docReply)\"")
+observedCompactions += docOutcome.compactions
+print(
+    "[turn] generated appendix document via tool — contextFill=\(String(format: "%.2f", docOutcome.contextFill ?? 0)) reply=\"\(docOutcome.reply)\""
+)
 
 // The fixture documents live beside this source file (excluded from the
 // target's compiled sources in Package.swift, exactly like README.md), so
@@ -242,11 +219,11 @@ precondition(!fixtureURLs.isEmpty, "expected fixture documents under \(fixturesD
 
 for fixtureURL in fixtureURLs {
     let contents = try String(contentsOf: fixtureURL, encoding: .utf8)
-    let (reply, fill, compactions) = try await runTurn(
-        session, prompt: "Here is \(fixtureURL.lastPathComponent):\n\n\(contents)")
-    observedCompactions += compactions
+    let outcome = try await session.respond(
+        to: "Here is \(fixtureURL.lastPathComponent):\n\n\(contents)", observing: printLiveEvent)
+    observedCompactions += outcome.compactions
     print(
-        "[turn] read \(fixtureURL.lastPathComponent) — contextFill=\(String(format: "%.2f", fill)) reply=\"\(reply)\""
+        "[turn] read \(fixtureURL.lastPathComponent) — contextFill=\(String(format: "%.2f", outcome.contextFill ?? 0)) reply=\"\(outcome.reply)\""
     )
 }
 
@@ -278,19 +255,21 @@ print(
 // MARK: - 4. Continue the conversation: pre-fold facts survive, both conversationally and via tool; session.id is unchanged
 
 let sessionIdBeforeContinuation = session.id
-let (recall, _, _) = try await runTurn(
-    session,
-    prompt: "Without re-reading anything, what is this project's internal code name?"
+let recall = try await session.respond(
+    to: "Without re-reading anything, what is this project's internal code name?",
+    observing: printLiveEvent
 )
+.reply
 print("[post-compact] recall: \"\(recall)\"")
 
-let (toolRecall, _, _) = try await runTurn(
-    session,
-    prompt: """
+let toolRecall = try await session.respond(
+    to: """
         Without re-reading anything, call the recall_fact tool with key "project-codename", then reply \
         with just its value.
-        """
+        """,
+    observing: printLiveEvent
 )
+.reply
 print("[post-compact] recall via tool: \"\(toolRecall)\"")
 print("[identity] session.id unchanged: \(session.id == sessionIdBeforeContinuation)")
 

@@ -1,6 +1,32 @@
 import Foundation
 import Observation
 
+/// One tool invocation's lifecycle, correlated by ``id`` across its
+/// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` and
+/// ``SessionEvent/toolStatus(id:status:summary:)`` events — load-bearing
+/// for distinguishing two concurrent same-name tool calls, exactly like
+/// the events it is built from.
+///
+/// Shared by the two event-fold consumers: a ``SessionProjection`` transcript
+/// row carries one (``SessionProjection/TranscriptEntry/Kind/toolCall(_:)``),
+/// and ``TurnOutcome/toolCalls`` lists a turn's own. Top-level rather than
+/// nested in ``SessionProjection`` so it carries no `@MainActor` isolation;
+/// ``SessionProjection/ToolCallEntry`` remains as a typealias for source
+/// compatibility.
+public struct ToolCallEntry: Sendable, Equatable, Identifiable {
+    /// The invocation's own id — Apple's `Transcript.ToolCall.id`.
+    public let id: String
+    /// The tool's name.
+    public let name: String
+    /// The call's arguments, as `GeneratedContent.jsonString`.
+    public let argumentsJSON: String
+    /// The invocation's current status.
+    public var status: ToolCallStatus
+    /// The tool's output text once ``ToolCallStatus/completed``, or `nil`
+    /// for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
+    public var summary: String?
+}
+
 /// The `@MainActor`/`@Observable` mirror of one ``RoutedSession``'s live
 /// state — SwiftUI's binding surface for a session (absorbs the
 /// FoundationModelsAgents plan §10 observable-state ask, the "observable
@@ -64,24 +90,11 @@ public final class SessionProjection {
         case compacting
     }
 
-    /// One tool invocation's live lifecycle, correlated by ``id`` across its
-    /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` and
-    /// ``SessionEvent/toolStatus(id:status:summary:)`` events — load-bearing
-    /// for distinguishing two concurrent same-name tool calls, exactly like
-    /// the events it is built from.
-    public struct ToolCallEntry: Sendable, Equatable, Identifiable {
-        /// The invocation's own id.
-        public let id: String
-        /// The tool's name.
-        public let name: String
-        /// The call's arguments, as `GeneratedContent.jsonString`.
-        public let argumentsJSON: String
-        /// The invocation's current status.
-        public var status: ToolCallStatus
-        /// The tool's output text once ``ToolCallStatus/completed``, or `nil`
-        /// for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
-        public var summary: String?
-    }
+    /// The tool-call payload a ``TranscriptEntry/Kind/toolCall(_:)`` row
+    /// carries — the top-level ``FoundationModelsRouter/ToolCallEntry``, kept
+    /// reachable under this name for source compatibility with code written
+    /// while the type was nested here.
+    public typealias ToolCallEntry = FoundationModelsRouter.ToolCallEntry
 
     /// One entry in ``transcript``, identifiable for direct SwiftUI `ForEach` use.
     public struct TranscriptEntry: Sendable, Equatable, Identifiable {
@@ -211,7 +224,8 @@ public final class SessionProjection {
             // `.response` transcript entry, so a faithful mirror keeps it and
             // closes it: the next fragment opens a new entry beside it rather
             // than growing the old one into a sentence the model never wrote.
-            closesCurrentTextEntry = true
+            // The rule itself lives in the shared ``ResponseTextFold``.
+            responseTextFold.reset()
         case .reasoningDelta(let fragment):
             phase = .generating
             appendReasoningFragment(fragment)
@@ -306,10 +320,12 @@ public final class SessionProjection {
     }
 
     /// Appends `fragment` to the last entry if it is already a growing
-    /// ``TranscriptEntry/Kind/text(_:)`` entry, or starts a new one.
+    /// ``TranscriptEntry/Kind/text(_:)`` entry, or starts a new one — a
+    /// fragment that begins a new response (a ``SessionEvent/textReset``
+    /// preceded it, as ``responseTextFold`` reports) always starts a new
+    /// entry, leaving the superseded text its own row.
     private func appendTextFragment(_ fragment: String) {
-        let startsNewEntry = closesCurrentTextEntry
-        closesCurrentTextEntry = false
+        let startsNewEntry = responseTextFold.append(fragment)
         appendFragment(
             fragment,
             matching: { kind in
@@ -319,14 +335,15 @@ public final class SessionProjection {
             makeKind: TranscriptEntry.Kind.text)
     }
 
-    /// Whether the next text fragment opens a new transcript entry instead of
-    /// growing the last one, set by ``SessionEvent/textReset`` and cleared by
-    /// the fragment that consumes it.
+    /// The shared ``ResponseTextFold`` this projection folds response text
+    /// through — the one home of the ``SessionEvent/textReset`` rule, shared
+    /// with ``TurnOutcomeFold`` so the rule cannot drift between the two
+    /// consumers.
     ///
     /// Not a projected value a driver reads — the bookkeeping that keeps a
     /// superseded response and the response that replaced it two entries, the
     /// way the SDK's own transcript keeps them two `.response` entries.
-    private var closesCurrentTextEntry = false
+    private var responseTextFold = ResponseTextFold()
 
     /// Appends `fragment` to the last entry if it is already a growing
     /// ``TranscriptEntry/Kind/reasoning(_:)`` entry, or starts a new one.

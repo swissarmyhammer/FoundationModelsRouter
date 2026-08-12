@@ -91,10 +91,27 @@ comments:
     - evidence: 16 files — 2 new (Sources/FoundationModelsRouter/Hosting/ToolInvocationRecord.swift, Tests/FoundationModelsRouterTests/ToolInvocationLivenessTests.swift), 14 edited (Sources/FoundationModelsRouter/Hosting/OperationEventSink.swift, Sources/FoundationModelsRouter/Hosting/DetachingTool.swift, Sources/FoundationModelsRouter/Session/SessionEvent.swift, Sources/FoundationModelsRouter/Session/OperationEventJournal.swift, Sources/FoundationModelsRouter/Session/SessionOutbox.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Sources/FoundationModelsRouter/Session/SessionProjection.swift, Examples/CompactionDemo/main.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedTurnScript.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedSessionFixture.swift, Tests/FoundationModelsRouterTests/ScriptedToolTurnComparisonTests.swift, Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift); `swift test` 841/841 + 27 + 24 passed, 1 accepted known issue (BoundedWait)
     - next: `/review`
   timestamp: 2026-08-12T01:49:28.529562+00:00
+- actor: claude-code
+  id: 01kzstygpbvcx6yqf5fysyh2fy
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings, 16 validator runs, 0 failed
+    - next: none. The task is complete and is in the done column.
+  timestamp: 2026-08-12T01:56:17.227293+00:00
+- actor: claude-code
+  id: 01kzstz6q0r31emgx22x1xbc46
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 16 files (2 new), RED to GREEN
+    - test: green — swift test, 841 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 14ae079
+    - review: clean — 0 findings, scope HEAD~1..HEAD
+    - result: the task is in done
+  timestamp: 2026-08-12T01:56:39.776294+00:00
 depends_on:
 - 01KZPW9RY91W2KAMGY3W8DZVEE
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff8f80
 title: Stream tool and reasoning events live during the turn, not after it
 ---
 ## Problem
