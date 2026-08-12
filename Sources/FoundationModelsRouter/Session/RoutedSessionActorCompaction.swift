@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModels
 import os
 
@@ -313,6 +314,11 @@ extension RoutedSessionActor {
     /// what came before it and a positional diff cannot say what is new —
     /// and ``backend`` is swapped for a fresh one seeded from the folded
     /// transcript (``LanguageModelSessionBackend/replacingTranscript(_:)``).
+    /// Every applied fold records exactly one boundary entry carrying its
+    /// ``CompactionSegment`` checkpoint: ``Summarization``'s own summary
+    /// entry when that stage ran, or the synthesized deterministic boundary
+    /// (``appendingDeterministicBoundary(to:preFoldEntries:result:measuredTokensAfter:pendingRuns:)``)
+    /// when the deterministic stages alone landed the fold.
     /// When the transcript was already under target, or every stage ran and
     /// still couldn't land it (the oversized-tail case), the pipeline
     /// returns the original transcript unchanged and this method leaves
@@ -388,17 +394,51 @@ extension RoutedSessionActor {
 
         await recordSessionMetaIfNeeded()
 
+        // What `backend` will hold, reported as `contextFill`'s numerator
+        // immediately — the same way a restored session whose newest event is
+        // a compaction checkpoint reports its segment's own `tokensAfter`
+        // (compaction_plan.md §1.5); the next live turn re-measures exactly
+        // and replaces it, same as any other measured state. Rescaled onto the
+        // measured scale first, because `result.tokensAfter` is not measured at
+        // all — see `foldedUsage(tokensBefore:tokensAfter:)`. Computed before
+        // `usageState` is overwritten below, since the rescale calibrates
+        // against the pre-fold measurement.
+        let measuredTokensAfter = foldedUsage(tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter)
+
+        // Every applied fold appends exactly one boundary entry carrying its
+        // ``CompactionSegment`` checkpoint (task ^h1008kb). ``Summarization``
+        // synthesizes its own (the summary entry, identified by
+        // `result.summaryEntryId`); a deterministic-only fold produces none —
+        // ``ToolOutputElision`` rewrites segments under the entry's original
+        // id and ``TurnTruncation`` only removes entries, so the id-diff
+        // below would otherwise see nothing new, record no checkpoint, and a
+        // restore would rebuild the whole pre-fold history — so one is
+        // synthesized here, carrying the fold's *measured* token counts so a
+        // restore reports this fold's own post-fold fill.
+        let applied: Transcript
+        if result.summaryEntryId == nil {
+            applied = appendingDeterministicBoundary(
+                to: folded,
+                preFoldEntries: entries,
+                result: result,
+                measuredTokensAfter: measuredTokensAfter,
+                pendingRuns: pendingRuns
+            )
+        } else {
+            applied = folded
+        }
+
         // `entries.prefix(persistedEntryCount)` is exactly what this
         // session has already recorded to `transcript.jsonl` — the same
         // baseline `recordTranscriptDelta(grammar:since:usage:pendingEvents:)`
         // diffs an ordinary turn's positional growth against. A fold is not
-        // a mere extension of it (`folded` is typically shorter and
+        // a mere extension of it (`applied` is typically shorter and
         // reorders entries relative to it), so the diff here is by entry id
         // rather than position — see ``TranscriptDiffer/diffByEntryId(lastSeen:current:routerId:sessionId:parentId:slot:model:)``.
         let alreadyRecorded = Transcript(entries: entries.prefix(persistedEntryCount))
         let diffPartials = TranscriptDiffer.diffByEntryId(
             lastSeen: alreadyRecorded,
-            current: folded,
+            current: applied,
             routerId: routerId,
             sessionId: id,
             parentId: parentId,
@@ -419,22 +459,109 @@ extension RoutedSessionActor {
         // Swap the inner session in place: same actor, same nonisolated
         // `id`, same `recorder`, same `recordingDirectory` — only the
         // backend driving generation changes (compaction_plan.md
-        // requirement 4).
-        backend = backend.replacingTranscript(folded)
-        persistedEntryCount = folded.count
-        // What `backend` now holds, reported as `contextFill`'s numerator
-        // immediately — the same way a restored session whose newest event is
-        // a compaction checkpoint reports its segment's own `tokensAfter`
-        // (compaction_plan.md §1.5); the next live turn re-measures exactly
-        // and replaces it, same as any other measured state. Rescaled onto the
-        // measured scale first, because `result.tokensAfter` is not measured at
-        // all — see `foldedUsage(tokensBefore:tokensAfter:)`.
-        usageState = .measured(
-            input: foldedUsage(tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter),
-            output: 0
-        )
+        // requirement 4). Seeded with the boundary entry included, so what
+        // the model sees live is exactly what a restore rebuilds from the
+        // checkpoint's live window.
+        backend = backend.replacingTranscript(applied)
+        persistedEntryCount = applied.count
+        usageState = .measured(input: measuredTokensAfter, output: 0)
 
         return result
+    }
+
+    /// The ``CompactionSegment/Content/promptName`` a deterministic-only
+    /// fold's checkpoint carries: empty, because no summarizer read any
+    /// compaction prompt — recording the prompt the fold *would* have used
+    /// would attribute summary quality to a prompt that produced nothing.
+    private static let deterministicFoldPromptName = ""
+
+    /// Returns `folded` with one synthesized boundary entry appended — the
+    /// checkpoint a deterministic-only fold must still leave (task ^h1008kb).
+    ///
+    /// Compaction is append-only: every applied fold appends exactly one
+    /// boundary entry to the conversation history, and the engine rebuilds a
+    /// restored context "from" the newest checkpoint. ``Summarization``'s
+    /// summary entry is that boundary for a model-assisted fold; this is its
+    /// deterministic counterpart — a `.response` whose text segment is empty
+    /// (there is no summary to show the model), plus the same optional
+    /// pending-run rendering a summarized boundary carries, plus the
+    /// `.custom` ``CompactionSegment`` manifest. Recording it through the
+    /// ordinary id-diff is what puts the checkpoint on disk, since the
+    /// deterministic stages themselves add no new entry ids
+    /// (``ToolOutputElision`` rewrites in place, ``TurnTruncation`` only
+    /// removes).
+    ///
+    /// Unlike ``Summarization``'s checkpoint, whose token counts are the
+    /// pipeline's character-ratio estimates, this one is written where the
+    /// session's measured usage is in hand, so it carries measured-scale
+    /// counts: ``TranscriptTree/restoredUsageState(in:)`` reads
+    /// ``CompactionSegment/Content/tokensAfter`` straight into a restored
+    /// session's ``ContextUsageState``, and this fold has just computed the
+    /// same number for its own live ``RoutedSession/contextFill``.
+    ///
+    /// - Parameters:
+    ///   - folded: The transcript the deterministic pipeline produced.
+    ///   - preFoldEntries: The backend's entries before the fold ran, used to
+    ///     name what the fold removed
+    ///     (``CompactionSegment/Content/foldedEntryIds``).
+    ///   - result: What the fold did — its stages and estimate-scale counts.
+    ///   - measuredTokensAfter: The fold's post-fold size on the measured
+    ///     scale (see `foldedUsage(tokensBefore:tokensAfter:)`), written to
+    ///     the checkpoint and to ``usageState`` as one value so live and
+    ///     restored fill cannot drift.
+    ///   - pendingRuns: The run-plane summaries of the runs still parked in
+    ///     this session's mailbox, in park order — carried on the manifest
+    ///     and rendered model-visibly exactly as a summarized boundary
+    ///     carries them.
+    /// - Returns: `folded` plus the boundary entry, in that order — the
+    ///   boundary names itself last in its own live window.
+    private func appendingDeterministicBoundary(
+        to folded: Transcript,
+        preFoldEntries: [Transcript.Entry],
+        result: CompactionResult,
+        measuredTokensAfter: Int,
+        pendingRuns: [CompactionSegment.PendingRunSummary]
+    ) -> Transcript {
+        let entryId = "compaction-boundary-\(UUID().uuidString)"
+        let liveEntryIds = folded.map(\.id)
+        let liveIdSet = Set(liveEntryIds)
+        let content = CompactionSegment.Content(
+            liveWindowEntryIds: liveEntryIds + [entryId],
+            foldedEntryIds: preFoldEntries.map(\.id).filter { !liveIdSet.contains($0) },
+            // Measured pre-fold usage when the session has one — the same
+            // calibration `foldedUsage(tokensBefore:tokensAfter:)` reads —
+            // else the pipeline's estimate, the best available number.
+            tokensBefore: usageState.measuredTokens ?? result.tokensBefore,
+            tokensAfter: measuredTokensAfter,
+            stagesApplied: result.stagesApplied,
+            promptName: Self.deterministicFoldPromptName,
+            pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns
+        )
+        var segments: [Transcript.Segment] = [
+            // Empty deliberately: a deterministic fold synthesizes no summary
+            // text, and the boundary's job for the model is only to exist —
+            // "a boundary entry whose text part is empty or minimal".
+            .text(Transcript.TextSegment(id: "\(entryId)-text", content: ""))
+        ]
+        // A session with no parked runs adds nothing; one with parked runs
+        // carries their rendering as an additional text segment, exactly as
+        // ``Summarization``'s boundary does, so a post-compaction model knows
+        // its tokens and can call status().
+        if !pendingRuns.isEmpty {
+            segments.append(
+                .text(
+                    Transcript.TextSegment(
+                        id: "\(entryId)-pending-runs",
+                        content: CompactionSegment.renderedPendingRuns(pendingRuns)
+                    )
+                )
+            )
+        }
+        segments.append(.custom(CompactionSegment(content: content)))
+        let boundary = Transcript.Entry.response(
+            Transcript.Response(id: entryId, assetIDs: [], segments: segments)
+        )
+        return Transcript(entries: Array(folded) + [boundary])
     }
 
     /// A fold's post-fold size, in the same unit ``usageState`` is denominated

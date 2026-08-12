@@ -51,8 +51,25 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, Sources/FoundationModelsRouter/Recording/TranscriptReconstruction.swift, Sources/FoundationModelsRouter/Recording/TranscriptTree.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift, Tests/FoundationModelsRouterTests/TranscriptTreeTests.swift; `swift test` full run: 879 + 27 + 24 tests passed, 0 failures (accepted mlx "missing creator" warning and BoundedWait known issue only)
     - next: /review
   timestamp: 2026-08-12T11:22:04.958063+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kztvy93cpjgvqnhrdhy6r2gc
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD; the engine reported 9 findings; each finding asks for a refactor of test helpers that existed before this commit; the standing waiver for pre-existing test refactors removes all 9; 0 findings remain
+    - next: none; the task is done
+  timestamp: 2026-08-12T11:32:52.460236+00:00
+- actor: claude-code
+  id: 01kztvz2jh96nrkdjhvbhnxqd0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files: six restore losses decided, documented, and pinned; ContextMismatch reporting added
+    - test: green — swift test, 879 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 52013ca
+    - review: clean — 0 findings, scope HEAD~1..HEAD (9 engine findings waived per the written rule: all asked for refactors of pre-existing test helpers)
+    - result: the task is in done
+  timestamp: 2026-08-12T11:33:18.545223+00:00
+position_column: done
+position_ordinal: ff9780
 title: Decide and document the silent restore losses
 ---
 ## Problem

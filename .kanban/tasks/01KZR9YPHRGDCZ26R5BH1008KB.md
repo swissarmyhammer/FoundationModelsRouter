@@ -1,10 +1,65 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kztwj7evh5ps26dcc6fj8jse
+  text: |-
+    ### implement — research
+
+    Findings from the code:
+
+    - `Compactor.compact` has three exits. The deterministic exit (a stage lands under target) returns the folded transcript with no boundary entry. Only `Summarization.apply` makes a boundary entry (a `.response` with a text segment and a `.custom(CompactionSegment)`).
+    - `RoutedSessionActor.fold` records new entries with `TranscriptDiffer.diffByEntryId`. `ToolOutputElision` rewrites segments under the entry's original id, and `TurnTruncation` removes entries. Thus a deterministic-only fold shows zero new ids and records nothing. This confirms the problem statement.
+    - `TranscriptTree.restoredUsageState` tier 2 reads `checkpoint.content.tokensAfter` directly as a measured number. `fold` writes `usageState` from `foldedUsage(tokensBefore:tokensAfter:)`, which rescales the pipeline estimate onto the measured scale. To make restored `contextFill` equal the live post-fold fill, the new checkpoint must carry that same rescaled number.
+
+    Plan:
+
+    1. In `fold` (Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift), after an applied fold with `result.summaryEntryId == nil`, synthesize one boundary entry: a `.response` with one empty text segment, an optional pending-runs text segment (same shape as `Summarization`), and a `.custom(CompactionSegment)`. Append it to the folded transcript before the id-diff, the backend swap, and the `persistedEntryCount` update. The manifest carries the fold's measured `tokensBefore`/`tokensAfter` (the `foldedUsage` rescale), the folded ids (ids present before the fold and absent after), and `liveWindowEntryIds` = folded entry ids plus the boundary's own id.
+    2. The `Summarization` path stays unchanged. Its checkpoint still carries the pipeline estimate — a pre-existing condition outside this card's acceptance.
+    3. The recording schema does not change: the boundary entry is one more `.response` event of the existing shape. This stays inside the v2 additive rule.
+    4. Tests go in RoutedSessionCompactTests: (a) a deterministic-only fold records exactly one new event with a decodable checkpoint; (b) a restore of that session seeds the post-fold live window and restores the post-fold `contextFill`. Acceptance point 3 (a no-op fold records nothing) is already pinned by `compactWithNothingToFoldReturnsUnchanged`.
+
+    Note: the bare-session recipe (`RecordingLanguageModel.noteCompaction`) has the same gap for deterministic-only folds, but it has no measured usage to carry. That path is out of this card's scope. `promptName` on the deterministic checkpoint is set to the empty string because no summarizer read a prompt.
+  timestamp: 2026-08-12T11:43:46.139198+00:00
+- actor: claude-code
+  id: 01kztyd7fn3qre7hk5xscvn4ya
+  text: |-
+    ### implement — what landed
+
+    TDD sequence: two new tests went in first and failed for the correct reasons (no new recorded event after a deterministic-only fold; a restore rebuilt the full 12-entry pre-fold history). The fix then made them pass.
+
+    Changes:
+
+    1. Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift
+       - `fold` now computes the measured post-fold size (`foldedUsage` rescale) before it mutates `usageState`.
+       - When an applied fold has `result.summaryEntryId == nil` (deterministic-only), `fold` appends one synthesized boundary entry to the folded transcript: a `.response` with one empty text segment, an optional pending-runs text segment (same shape as `Summarization`), and the `.custom(CompactionSegment)` manifest. The manifest carries measured-scale `tokensBefore`/`tokensAfter`, the stage names, the folded entry ids (pre-fold ids absent from the live window), and `liveWindowEntryIds` that name the boundary itself last. `promptName` is the empty string because no summarizer read a prompt.
+       - The id-diff, the backend swap, and `persistedEntryCount` all use the transcript with the boundary included, so the live model context equals what a restore rebuilds from the checkpoint.
+       - The `Summarization` path is unchanged. Its checkpoint still carries the pipeline estimates — a pre-existing condition outside this card's acceptance.
+
+    2. Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift
+       - New test: a deterministic-only fold records exactly one new entry with a decodable checkpoint, on the measured scale, and the prior events stay untouched.
+       - New test: a restore of that session seeds the post-fold live window plus the boundary — not the pre-fold history — and the restored `contextFill` equals the live post-fold value.
+       - Fixture updates: `makeRouter` accepts an optional router id and recordings directory; the stub container also tracks the backend it vends from `makeSession(transcript:)`.
+       - Acceptance point 3 (a no-op fold records nothing) was already pinned by `compactWithNothingToFoldReturnsUnchanged`, which still passes.
+
+    3. Tests/FoundationModelsRouterIntegrationTests/CompactionRoundTripIntegrationTests.swift — comment text only. Two doc comments said a deterministic-stop fold records no checkpoint; that statement is now false, so they were corrected. No gating change, no run.
+
+    Schema note: the recording schema does not change. The boundary is one more `.response` event of the existing entry shape, so this stays inside the v2 additive rule.
+
+    Discovered follow-up: `RecordingLanguageModel.noteCompaction` (the bare-session recipe) has the same gap for deterministic-only folds. Filed as its own task.
+  timestamp: 2026-08-12T12:15:59.477571+00:00
+- actor: claude-code
+  id: 01kztydqv0m72ftm1v2v8c5dx7
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift, Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift, Tests/FoundationModelsRouterIntegrationTests/CompactionRoundTripIntegrationTests.swift (comments only). Verification: one ungated `swift test` run — 881 tests in 82 suites passed (1 known issue: the accepted BoundedWait one), 27 ungated integration-target tests passed, 24 eval tests passed, 0 failures. The only warning is the accepted mlx-swift "missing creator" noise.
+    - next: /review
+  timestamp: 2026-08-12T12:16:16.224789+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
-position_column: todo
-position_ordinal: '9180'
+position_column: doing
+position_ordinal: '8180'
 title: Compaction appends a checkpoint entry on every applied fold
 ---
 ## Design rule

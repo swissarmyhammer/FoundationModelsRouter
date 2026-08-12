@@ -106,8 +106,9 @@ struct CompactionRoundTripIntegrationTests {
     /// the deterministic stages landed under target on their own, and so
     /// whether ``Summarization`` ran at all, was therefore decided by sampled
     /// reply lengths rather than by anything this suite asserts — the same run
-    /// could reach stage 3 or stop at stage 2, and only the stage-3 run
-    /// records a compaction checkpoint for step 4 to restore (task f80n046).
+    /// could reach stage 3 or stop at stage 2 (task f80n046). Both shapes now
+    /// record a compaction checkpoint (task ^h1008kb), but only the stage-3
+    /// run synthesizes the real summary whose recall step 3 measures.
     ///
     /// A 0.25 target is 512 tokens, which the recency window's own prompt text
     /// exceeds on its own by a wide margin whichever four turns it happens to
@@ -420,11 +421,12 @@ struct CompactionRoundTripIntegrationTests {
         // 2. Compact at the trigger: shrinks fill, preserves identity.
         let result = try await session.compact(budget: Self.foldBudget)
         // Every stage, in order — not merely "something ran". A fold that
-        // stops after the deterministic stages synthesizes no summary
-        // entry, so it records no compaction checkpoint and step 4 below
-        // has nothing to restore; `stagesApplied` non-empty cannot tell
-        // that fold from this one. `Self.foldBudget` is what makes the
-        // full pipeline a property here rather than a coincidence.
+        // stops after the deterministic stages records a checkpoint too
+        // (task ^h1008kb), but this test is about the model-assisted round
+        // trip — a real summary whose quality step 3 measures by recall —
+        // so `stagesApplied` non-empty cannot tell that fold from this
+        // one. `Self.foldBudget` is what makes the full pipeline a
+        // property here rather than a coincidence.
         #expect(
             result.stagesApplied == [
                 ToolOutputElision.stageName, TurnTruncation.stageName, Summarization.stageName,

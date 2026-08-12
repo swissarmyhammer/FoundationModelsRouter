@@ -53,9 +53,11 @@ struct RoutedSessionCompactTests {
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(
+            let backend = StubSessionBackend(
                 responseText: responseText, entries: Array(transcript), usageIncrement: usageIncrement,
                 generationLog: generationLog)
+            lastBackend = backend
+            return backend
         }
     }
 
@@ -155,12 +157,16 @@ struct RoutedSessionCompactTests {
     }
 
     private static func makeRouter(
+        id: ULID = .generate(),
         container: ConfiguredLLMContainer,
         recorder: any TranscriptRecorder,
-        cacheDir: URL
+        cacheDir: URL,
+        recordingsDir: URL? = nil
     ) -> Router {
         Router(
+            id: id,
             cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
             recorder: recorder,
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
@@ -636,8 +642,9 @@ struct RoutedSessionCompactTests {
         return token
     }
 
-    /// The last recorded event's rebuilt summary `.response` — the boundary
-    /// entry a Summarization fold appends — or records an issue.
+    /// The last recorded event's rebuilt boundary `.response` — the entry
+    /// every applied fold appends, carrying its ``CompactionSegment``
+    /// checkpoint — or records an issue.
     private static func lastRecordedBoundary(
         in recorder: InMemoryRecorder
     ) async throws -> (response: Transcript.Response, segment: CompactionSegment) {
@@ -876,5 +883,154 @@ struct RoutedSessionCompactTests {
         // Read off the ratio and not the floor: a ceiling squeezed down to
         // `minimumSummaryTokens` would be the same number whatever the ratio is.
         #expect(unturnedCeiling > Summarization.minimumSummaryTokens)
+    }
+
+    // MARK: - A deterministic-only fold records its checkpoint (task ^h1008kb)
+
+    /// The per-turn measured usage delta the two checkpoint tests below
+    /// configure their stub backend with — large against the tiny stub
+    /// transcript's own byte-size estimate, so the fold's measured-scale
+    /// rescale (``RoutedSessionActor``'s `foldedUsage`) is a real conversion
+    /// rather than a near-identity.
+    private static let measuredTokensPerCheckpointTurn = 50_000
+
+    /// The resolved working context those tests run against, sized so the
+    /// measured per-turn delta above reports a mid-scale `contextFill`.
+    private static let checkpointTestContext = 100_000
+
+    /// A budget whose target sits strictly between `entries`' recency-window-only
+    /// floor and its full pre-fold estimate: low enough that the pipeline folds
+    /// something, high enough that the deterministic ``TurnTruncation`` stage
+    /// alone lands under it — the fold shape that synthesizes no summary entry.
+    private static func deterministicShrinkBudget(for entries: [Transcript.Entry]) -> TokenBudget {
+        let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: entries))
+        let targetTokens = (recencyWindowOnlyEstimate(entries) + preFoldTokens) / 2
+        return TokenBudget(limit: preFoldTokens, target: Double(targetTokens) / Double(preFoldTokens))
+    }
+
+    @Test(
+        "a deterministic-only fold records exactly one new entry carrying a decodable CompactionSegment checkpoint on the measured scale"
+    )
+    @MainActor
+    func deterministicOnlyFoldRecordsOneCheckpointEntry() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let container = ConfiguredLLMContainer(
+            responseText: Self.cannedText,
+            usageIncrement: (input: Self.measuredTokensPerCheckpointTurn, output: 0))
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(
+            profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+        try await Self.driveTurns(6, on: session)
+
+        let backend = try #require(container.lastBackend)
+        let budget = Self.deterministicShrinkBudget(for: backend.transcriptEntries())
+
+        let beforeEvents = await recorder.events
+        let result = try await session.compact(budget: budget)
+
+        // The fold under test really was deterministic-only: no summarizer
+        // ran and no summary entry exists for the diff to pick up.
+        #expect(result.stagesApplied == [ToolOutputElision.stageName, TurnTruncation.stageName])
+        #expect(result.summary == nil)
+
+        // Exactly one new recorded entry, appended after the untouched prefix.
+        let afterEvents = await recorder.events
+        #expect(afterEvents.count == beforeEvents.count + 1)
+        #expect(Array(afterEvents.prefix(beforeEvents.count)) == beforeEvents)
+
+        // That entry carries this fold's decodable CompactionSegment
+        // checkpoint, and the checkpoint names its own entry in the live
+        // window so a restore keeps the boundary itself.
+        let (response, compactionSegment) = try await Self.lastRecordedBoundary(in: recorder)
+        #expect(compactionSegment.content.stagesApplied == result.stagesApplied)
+        #expect(!compactionSegment.content.foldedEntryIds.isEmpty)
+        #expect(compactionSegment.content.liveWindowEntryIds.contains(response.id))
+
+        // The checkpoint's token counts are on the measured scale — the same
+        // numbers the live session now reports through `contextFill` — so a
+        // restore reads post-fold usage rather than a pre-fold stamp.
+        let expectedMeasuredTokensAfter = Int(
+            (Double(Self.measuredTokensPerCheckpointTurn) * Double(result.tokensAfter)
+                / Double(result.tokensBefore)).rounded())
+        #expect(compactionSegment.content.tokensBefore == Self.measuredTokensPerCheckpointTurn)
+        #expect(compactionSegment.content.tokensAfter == expectedMeasuredTokensAfter)
+        let postFoldFill = await session.contextFill
+        #expect(postFoldFill == Double(expectedMeasuredTokensAfter) / Double(Self.checkpointTestContext))
+    }
+
+    @Test(
+        "restoring a deterministically folded session seeds the post-fold live window — not the pre-fold history — and restores the post-fold contextFill"
+    )
+    @MainActor
+    func restoreAfterDeterministicOnlyFoldYieldsPostFoldWindowAndFill() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let container = ConfiguredLLMContainer(
+            responseText: Self.cannedText,
+            usageIncrement: (input: Self.measuredTokensPerCheckpointTurn, output: 0))
+        let router = Self.makeRouter(
+            container: container, recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile = try await router.resolve(
+            profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+        try await Self.driveTurns(6, on: session)
+
+        let backend = try #require(container.lastBackend)
+        let preFoldEntries = backend.transcriptEntries()
+        let result = try await session.compact(budget: Self.deterministicShrinkBudget(for: preFoldEntries))
+        #expect(result.summary == nil)
+        let postFoldFill = await session.contextFill
+
+        // The post-fold live window TurnTruncation left: the header plus the
+        // newest 4 turns, verbatim.
+        let (header, turns) = TranscriptTurns.split(preFoldEntries)
+        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
+        let expectedWindow = header + recent.flatMap(\.entries)
+
+        // "Fresh process": a second, independently constructed Router/profile
+        // pointed at the same router id and recordings directory.
+        let container2 = ConfiguredLLMContainer(
+            responseText: Self.cannedText,
+            usageIncrement: (input: Self.measuredTokensPerCheckpointTurn, output: 0))
+        let router2 = Self.makeRouter(
+            id: router.id, container: container2, recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = try await router2.resolve(
+            profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
+
+        let restored = try await profile2.standard.restoreSessionTree(root: session.id)
+        #expect(restored.root.id == session.id)
+
+        // The restored backend was seeded with the post-fold live window plus
+        // the fold's own boundary entry — never the whole pre-fold history.
+        let restoredBackend = try #require(container2.lastBackend)
+        let restoredEntries = restoredBackend.transcriptEntries()
+        #expect(Array(restoredEntries.dropLast()) == expectedWindow)
+        #expect(restoredEntries.count < preFoldEntries.count)
+        guard case .response(let boundary)? = restoredEntries.last,
+            case .custom(let segment)? = boundary.segments.last,
+            let compactionSegment = segment as? CompactionSegment
+        else {
+            Issue.record("expected the restored transcript to end in the fold's boundary entry")
+            return
+        }
+        #expect(compactionSegment.content.stagesApplied == result.stagesApplied)
+
+        // `contextFill` restores to the fold's own post-fold measurement,
+        // not a pre-fold stamp.
+        let restoredFill = await restored.root.contextFill
+        #expect(restoredFill == postFoldFill)
     }
 }
