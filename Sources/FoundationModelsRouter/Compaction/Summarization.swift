@@ -231,47 +231,25 @@ public struct Summarization: Sendable, Equatable, Codable {
         let summaryText = try await summarize(old, prompt: prompt, summarizer: summarizer)
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
-        let textSegmentId = "\(entryId)-text"
-        let pendingRunsSegmentId = "\(entryId)-pending-runs"
         let foldedEntryIds = old.flatMap(\.entries).map(\.id)
         let recentEntries = recent.flatMap(\.entries)
         let stagesApplied = priorStagesApplied + [Self.stageName]
         let liveWindowEntryIds = header.map(\.id) + [entryId] + recentEntries.map(\.id)
 
+        // The entry construction itself is shared with the deterministic-only
+        // fold path — see ``CompactionSegment/boundaryEntry(id:summaryText:content:)``.
         func makeSummaryEntry(tokensAfter: Int) -> Transcript.Entry {
-            let content = CompactionSegment.Content(
-                liveWindowEntryIds: liveWindowEntryIds,
-                foldedEntryIds: foldedEntryIds,
-                tokensBefore: tokensBefore,
-                tokensAfter: tokensAfter,
-                stagesApplied: stagesApplied,
-                promptName: prompt.name,
-                pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns
-            )
-            var segments: [Transcript.Segment] = [
-                .text(Transcript.TextSegment(id: textSegmentId, content: summaryText))
-            ]
-            // A session with no parked runs adds nothing; one with parked
-            // runs carries their rendering as a second text segment — the
-            // only segment kind the model-facing transcript rendering reads —
-            // so a post-compaction model knows its tokens and can call
-            // status() (see ``CompactionSegment/renderedPendingRuns(_:)``).
-            if !pendingRuns.isEmpty {
-                segments.append(
-                    .text(
-                        Transcript.TextSegment(
-                            id: pendingRunsSegmentId,
-                            content: CompactionSegment.renderedPendingRuns(pendingRuns)
-                        )
-                    )
-                )
-            }
-            segments.append(.custom(CompactionSegment(content: content)))
-            return .response(
-                Transcript.Response(
-                    id: entryId,
-                    assetIDs: [],
-                    segments: segments
+            CompactionSegment.boundaryEntry(
+                id: entryId,
+                summaryText: summaryText,
+                content: CompactionSegment.Content(
+                    liveWindowEntryIds: liveWindowEntryIds,
+                    foldedEntryIds: foldedEntryIds,
+                    tokensBefore: tokensBefore,
+                    tokensAfter: tokensAfter,
+                    stagesApplied: stagesApplied,
+                    promptName: prompt.name,
+                    pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns
                 )
             )
         }

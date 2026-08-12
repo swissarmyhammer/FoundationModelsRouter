@@ -482,10 +482,10 @@ extension RoutedSessionActor {
     /// boundary entry to the conversation history, and the engine rebuilds a
     /// restored context "from" the newest checkpoint. ``Summarization``'s
     /// summary entry is that boundary for a model-assisted fold; this is its
-    /// deterministic counterpart — a `.response` whose text segment is empty
-    /// (there is no summary to show the model), plus the same optional
-    /// pending-run rendering a summarized boundary carries, plus the
-    /// `.custom` ``CompactionSegment`` manifest. Recording it through the
+    /// deterministic counterpart, built by the same shared construction —
+    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` — with an
+    /// empty summary (there is no summary to show the model), so the two
+    /// boundary shapes cannot drift apart. Recording it through the
     /// ordinary id-diff is what puts the checkpoint on disk, since the
     /// deterministic stages themselves add no new entry ids
     /// (``ToolOutputElision`` rewrites in place, ``TurnTruncation`` only
@@ -525,41 +525,24 @@ extension RoutedSessionActor {
         let entryId = "compaction-boundary-\(UUID().uuidString)"
         let liveEntryIds = folded.map(\.id)
         let liveIdSet = Set(liveEntryIds)
-        let content = CompactionSegment.Content(
-            liveWindowEntryIds: liveEntryIds + [entryId],
-            foldedEntryIds: preFoldEntries.map(\.id).filter { !liveIdSet.contains($0) },
-            // Measured pre-fold usage when the session has one — the same
-            // calibration `foldedUsage(tokensBefore:tokensAfter:)` reads —
-            // else the pipeline's estimate, the best available number.
-            tokensBefore: usageState.measuredTokens ?? result.tokensBefore,
-            tokensAfter: measuredTokensAfter,
-            stagesApplied: result.stagesApplied,
-            promptName: Self.deterministicFoldPromptName,
-            pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns
-        )
-        var segments: [Transcript.Segment] = [
+        let boundary = CompactionSegment.boundaryEntry(
+            id: entryId,
             // Empty deliberately: a deterministic fold synthesizes no summary
             // text, and the boundary's job for the model is only to exist —
             // "a boundary entry whose text part is empty or minimal".
-            .text(Transcript.TextSegment(id: "\(entryId)-text", content: ""))
-        ]
-        // A session with no parked runs adds nothing; one with parked runs
-        // carries their rendering as an additional text segment, exactly as
-        // ``Summarization``'s boundary does, so a post-compaction model knows
-        // its tokens and can call status().
-        if !pendingRuns.isEmpty {
-            segments.append(
-                .text(
-                    Transcript.TextSegment(
-                        id: "\(entryId)-pending-runs",
-                        content: CompactionSegment.renderedPendingRuns(pendingRuns)
-                    )
-                )
+            summaryText: "",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: liveEntryIds + [entryId],
+                foldedEntryIds: preFoldEntries.map(\.id).filter { !liveIdSet.contains($0) },
+                // Measured pre-fold usage when the session has one — the same
+                // calibration `foldedUsage(tokensBefore:tokensAfter:)` reads —
+                // else the pipeline's estimate, the best available number.
+                tokensBefore: usageState.measuredTokens ?? result.tokensBefore,
+                tokensAfter: measuredTokensAfter,
+                stagesApplied: result.stagesApplied,
+                promptName: Self.deterministicFoldPromptName,
+                pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns
             )
-        }
-        segments.append(.custom(CompactionSegment(content: content)))
-        let boundary = Transcript.Entry.response(
-            Transcript.Response(id: entryId, assetIDs: [], segments: segments)
         )
         return Transcript(entries: Array(folded) + [boundary])
     }

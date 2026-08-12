@@ -191,9 +191,10 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
     /// - Parameter pendingRuns: The parked runs' summaries, in park order.
     /// - Returns: The rendered pending-run text.
     ///
-    /// Deliberately `internal`: its only caller is ``Summarization``'s
-    /// boundary-entry synthesis, matching the repo's pattern of internal
-    /// statics on public types (e.g. `Compactor.estimatedTokenCount(of:)`).
+    /// Deliberately `internal`: its only caller is
+    /// ``boundaryEntry(id:summaryText:content:)``, matching the repo's pattern
+    /// of internal statics on public types (e.g.
+    /// `Compactor.estimatedTokenCount(of:)`).
     internal static func renderedPendingRuns(_ pendingRuns: [PendingRunSummary]) -> String {
         let lines = pendingRuns.map { run in
             let progress = run.latestProgressDetail.map { " — latest progress: \($0)" } ?? " — no progress reported yet"
@@ -204,5 +205,59 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
             or wait()/cancel() with a completion token:
             \(lines.joined(separator: "\n"))
             """
+    }
+
+    /// Builds the boundary entry an applied fold appends to the conversation
+    /// history — the one construction both fold paths call, so the recorded
+    /// checkpoint's shape cannot drift between them. ``Summarization`` calls
+    /// it with the synthesized summary; `RoutedSessionActor`'s
+    /// deterministic-only fold calls it with an empty summary (task ^h1008kb).
+    ///
+    /// The entry is a `.response` carrying, in order: a text segment with
+    /// `summaryText` (id `<entryId>-text`), an optional text segment
+    /// rendering `content.pendingRuns` model-visibly (id
+    /// `<entryId>-pending-runs`, present exactly when the manifest carries
+    /// pending runs — see ``renderedPendingRuns(_:)``), and the `.custom`
+    /// ``CompactionSegment`` manifest itself.
+    ///
+    /// - Parameters:
+    ///   - entryId: The boundary entry's own `Transcript.Entry.id`. The text
+    ///     segment ids derive from it.
+    ///   - summaryText: The model-visible summary text — empty when the fold
+    ///     synthesized none, because the boundary's job for the model is
+    ///     then only to exist.
+    ///   - content: The fold manifest the `.custom` segment wraps. Its
+    ///     ``Content/pendingRuns`` decides the pending-runs segment: non-nil
+    ///     renders one, `nil` adds none.
+    /// - Returns: The synthesized boundary entry.
+    ///
+    /// Deliberately `internal`, matching ``renderedPendingRuns(_:)``: its
+    /// callers are this module's two fold paths.
+    internal static func boundaryEntry(
+        id entryId: String,
+        summaryText: String,
+        content: Content
+    ) -> Transcript.Entry {
+        var segments: [Transcript.Segment] = [
+            .text(Transcript.TextSegment(id: "\(entryId)-text", content: summaryText))
+        ]
+        // A session with no parked runs adds nothing; one with parked runs
+        // carries their rendering as an additional text segment — the only
+        // segment kind the model-facing transcript rendering reads — so a
+        // post-compaction model knows its tokens and can call status().
+        if let pendingRuns = content.pendingRuns {
+            segments.append(
+                .text(
+                    Transcript.TextSegment(
+                        id: "\(entryId)-pending-runs",
+                        content: renderedPendingRuns(pendingRuns)
+                    )
+                )
+            )
+        }
+        segments.append(.custom(CompactionSegment(content: content)))
+        return .response(
+            Transcript.Response(id: entryId, assetIDs: [], segments: segments)
+        )
     }
 }
