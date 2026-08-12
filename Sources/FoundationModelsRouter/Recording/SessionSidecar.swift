@@ -315,8 +315,12 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// custom `init(from:)` has a fallback ready when the decoded bytes
     /// predate ``workingDirectory`` and carry no such key at all (see that
     /// field's "Backward compatibility" doc comment).
-    static let sidecarDirectoryUserInfoKey = CodingUserInfoKey(
-        rawValue: "SessionSidecar.sidecarDirectory")!
+    static let sidecarDirectoryUserInfoKey: CodingUserInfoKey = {
+        guard let key = CodingUserInfoKey(rawValue: "SessionSidecar.sidecarDirectory") else {
+            preconditionFailure("CodingUserInfoKey(rawValue:) cannot fail for a fixed, nonempty literal")
+        }
+        return key
+    }()
 
     private enum CodingKeys: String, CodingKey {
         case slot, model, context, instructions, grammar, recordingLevel, forkedAtEntryCount,

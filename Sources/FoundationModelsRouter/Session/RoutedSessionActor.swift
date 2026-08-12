@@ -15,7 +15,7 @@ import FoundationModels
 /// or a fork's inherited profile/gates plus its own child identity and
 /// fork-time baseline).
 ///
-/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:contextTokens:usageState:autoCompactionBudget:autoCompactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+/// - Parameters: mirror ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:contextTokens:usageState:autoCompactionBudget:autoCompactionPrompt:summarization:agentSpawn:discoveryPriming:recordingRoot:)``
 ///   one-for-one.
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(

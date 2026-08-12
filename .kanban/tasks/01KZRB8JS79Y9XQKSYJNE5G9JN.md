@@ -38,6 +38,37 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, Sources/FoundationModelsRouter/Recording/RecordingSchemaVersion.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift; swift test: 908 tests passed, 0 failures
     - next: /review
   timestamp: 2026-08-12T05:00:47.346753+00:00
+- actor: claude-code
+  id: 01kzt5yabp80gy4mx35ftp97jc
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD; 2 findings confirmed — Sources/FoundationModelsRouter/Recording/SessionSidecar.swift:319 (force unwrap in non-test code), Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18 (doc symbol link does not include the recordingRoot: parameter)
+    - next: correct the two findings, then run the review again
+  timestamp: 2026-08-12T05:08:25.078147+00:00
+- actor: claude-code
+  id: 01kzt5z6phfv0q3kna475qr5xc
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 6 code files
+    - test: green — swift test, 857 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 3fe1db8
+    - review: findings — Sources/FoundationModelsRouter/Recording/SessionSidecar.swift:319 (force unwrap in non-test code), Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18 (doc symbol link does not include the new recordingRoot: parameter)
+  timestamp: 2026-08-12T05:08:54.097015+00:00
+- actor: claude-code
+  id: 01kzt6nsmvw49t3wtxrsry5t7r
+  text: |-
+    Iteration 2: the two review findings are corrected.
+
+    1. SessionSidecar.swift — the force unwrap on `sidecarDirectoryUserInfoKey` is removed. The key now comes from a closure with `guard let` and `preconditionFailure`, the same pattern the repo uses in RepoMetadata.swift for a fixed literal that cannot fail. Sweep result for the rule "no force unwrap in non-test code": the five non-test files this task touched (SessionSidecar.swift, SessionTreeRestoration.swift, RecordingSchemaVersion.swift, RoutedSessionActor.swift, RoutedLLM.swift) contain no other `!` force unwrap, no `try!`, and no `as!`.
+
+    2. RoutedSessionActor.swift — the `RoutedSessionActor/init(...)` symbol link now ends with `agentSpawn:discoveryPriming:recordingRoot:`, which matches the declared parameter order. Sweep result for stale symbol links: no `makeSession` link in Sources omits `recordingRoot:` (the parameter sits between `workingDirectory:` and `tools:` in those symbols, and all 34 links carry it); `makeGuidedSession` has no `recordingRoot:` parameter, so its links are correct as written; the line-18 init link was the only stale one.
+
+    Verification: `swift build` clean, then one `swift test` run — 857 + 27 + 24 tests passed, 0 failures, 1 known issue (the accepted BoundedWait), and only the accepted mlx-swift "missing creator" warning.
+
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift; swift test: 908 tests passed, 0 failures, 1 accepted known issue
+    - next: /review
+  timestamp: 2026-08-12T05:21:14.395494+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
 - 01KZREJ4MJ67R0RBFKKN9TDQ8C
@@ -60,4 +91,9 @@ A restored session silently loses its behavioral configuration: compaction budge
 
 - A session saved with a budget restores with the same budget applied, given the app supplied a summarizer through the hook.
 - The restore result names every recorded configuration item that could not be re-applied.
-- Old sidecars without the envelope keep restoring with today's behavior (additive schema rule). #transcript
+- Old sidecars without the envelope keep restoring with today's behavior (additive schema rule).
+
+## Review Findings (2026-08-12 00:02)
+
+- [x] `Sources/FoundationModelsRouter/Recording/SessionSidecar.swift:319` — Force unwrap (`!`) appears in non-test code—violates the rule that forbids force unwraps outside tests. Use `guard let` or `??` to safely handle the optional result, or if this is guaranteed to succeed at compile time, use a safe failable initializer pattern: `CodingUserInfoKey(rawValue: "SessionSidecar.sidecarDirectory") ?? CodingUserInfoKey(rawValue: "fallback")` or refactor to avoid the force unwrap.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18` — Symbol link in doc comment is incomplete—missing the `recordingRoot:` parameter that was added to the init signature. Update the symbol link from `init(…:agentSpawn:discoveryPriming:)` to `init(…:agentSpawn:discoveryPriming:recordingRoot:)` to match the actual init signature. #transcript
