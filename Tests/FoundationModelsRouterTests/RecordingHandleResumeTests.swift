@@ -406,4 +406,189 @@ struct RecordingHandleResumeTests {
         let merged = try MergedTranscript.merged(under: routerDirectory)
         #expect(merged.count == 9)
     }
+
+    // MARK: - Resume after a fold: cut in append-only history coordinates (task ^bw2gts3)
+
+    /// Enough driven turns that ``TurnTruncation`` (default recency window
+    /// `defaultKeepRecentTurns`) has old turns to fold away.
+    private static let foldWarmupTurnCount = 6
+
+    /// A long-ish canned response, repeated across every turn, so six turns'
+    /// worth of transcript carries a real byte-size estimate and the
+    /// deterministic-fold budget derivation has room to sit strictly between
+    /// the recency-window floor and the full pre-fold estimate.
+    private static let foldableCannedText = String(
+        repeating: "The quick brown fox jumps over the lazy dog. ", count: 12)
+
+    /// Drives `count` sequential turns on `session` (prompts `"turn 0"`,
+    /// `"turn 1"`, …), syncing `handle` after each so every turn-final
+    /// response is recorded — the bare-handle counterpart of the shared
+    /// `driveTurns(_:on:)` fixture, which drives a ``RoutedSession``.
+    ///
+    /// - Parameters:
+    ///   - count: How many turns to drive.
+    ///   - session: The session to drive them on.
+    ///   - handle: The recording handle to sync after each turn.
+    /// - Throws: Whatever `respond(to:)` throws.
+    @MainActor
+    private static func driveTurns(
+        _ count: Int, on session: LanguageModelSession, syncing handle: RecordingLanguageModel
+    ) async throws {
+        for index in 0..<count {
+            _ = try await session.respond(to: "turn \(index)")
+            await handle.sync(session.transcript)
+        }
+    }
+
+    /// The entry ids of `sessionId`'s own recorded entry events, in order —
+    /// what the resumed handle itself appended after its cut.
+    ///
+    /// - Parameters:
+    ///   - tree: The loaded recording tree to read from.
+    ///   - sessionId: The session whose own recorded entries to list.
+    /// - Returns: The entry ids, in recorded order.
+    /// - Throws: Whatever ``TranscriptTree/events(forSession:)`` throws.
+    private static func ownRecordedEntryIds(in tree: TranscriptTree, sessionId: ULID) throws -> [String] {
+        try tree.events(forSession: sessionId).compactMap { $0.entry?.entryId }
+    }
+
+    @Test("resuming a compacted session records its cut in append-only history coordinates, so reconstruction restores the fold's live window plus the handle's own entries")
+    @MainActor
+    func resumingACompactedSessionCutsInAppendOnlyHistoryCoordinates() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let model = StubUnderlyingModel(
+            plainResponseText: Self.foldableCannedText, toolResponseText: "tool reply")
+        let router = Self.makeRouter(
+            container: StubLanguageModelContainer(model: model),
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // The parent handle records six turns, then folds deterministically:
+        // the derived budget's target sits where TurnTruncation alone lands
+        // under it, so no model-assisted summarization runs.
+        let parentHandle = profile.standard.makeLanguageModel()
+        let parentSession = LanguageModelSession(
+            model: parentHandle, tools: [], instructions: "be terse")
+        try await Self.driveTurns(Self.foldWarmupTurnCount, on: parentSession, syncing: parentHandle)
+
+        let preFoldEntries = Array(parentSession.transcript)
+        let (folded, result) = try await Compactor.compact(
+            Transcript(entries: preFoldEntries),
+            budget: deterministicFoldBudget(for: preFoldEntries)
+        )
+        #expect(!result.stagesApplied.isEmpty)
+        _ = await parentHandle.noteCompaction(folded, result: result)
+
+        // The resume cut in the recorded history's own append-only
+        // coordinates: the raw effective entry-event count, boundary entry
+        // included — strictly larger than the checkpoint-filtered restore
+        // view a compacted session yields.
+        let routerDirectory = RouterTestFixtures.routerDirectory(
+            routerId: router.id, recordingsDir: recordingsDir)
+        let entryEventCountAtResume = try TranscriptTree.load(under: routerDirectory)
+            .effectiveEntryEvents(forSession: parentHandle.state.sessionId).count
+
+        let (childHandle, restored) = try profile.standard.makeLanguageModel(
+            resuming: parentHandle.state.sessionId)
+        #expect(restored.count < entryEventCountAtResume)
+
+        let childSession = LanguageModelSession(model: childHandle, tools: [], transcript: restored)
+        _ = try await childSession.respond(to: "continue please")
+        await childHandle.sync(childSession.transcript)
+
+        let tree = try TranscriptTree.load(under: routerDirectory)
+
+        // The fold's checkpoint governs the handle's restore: it sits inside
+        // the inherited span, before the cut. A cut taken from the restore
+        // view's count instead selects the oldest pre-fold span, which
+        // carries no checkpoint at all.
+        let checkpoint = try #require(
+            TranscriptTree.newestCompactionCheckpoint(
+                in: tree.effectiveEntryEvents(forSession: childHandle.state.sessionId)))
+
+        // Entry-for-entry: the checkpoint's live window plus the handle's own
+        // recorded entries — and nothing the fold discarded comes back.
+        let childOwnIds = try Self.ownRecordedEntryIds(in: tree, sessionId: childHandle.state.sessionId)
+        #expect(!childOwnIds.isEmpty)
+        let restoredChildIds = try tree.effectiveTranscript(
+            forSession: childHandle.state.sessionId
+        ).map(\.id)
+        #expect(restoredChildIds == checkpoint.content.liveWindowEntryIds + childOwnIds)
+        #expect(Set(checkpoint.content.foldedEntryIds).isDisjoint(with: restoredChildIds))
+
+        // The handle's sidecar records the cut in history coordinates
+        // alongside the legacy positional baseline (the restore view's count,
+        // which stays the handle's own diff baseline).
+        let childNode = try #require(tree.session(childHandle.state.sessionId))
+        #expect(childNode.sidecar.forkedAtHistoryOrdinal == entryEventCountAtResume)
+        #expect(childNode.sidecar.forkedAtEntryCount == restored.count)
+    }
+
+    @Test("a resume-handle sidecar with no forkedAtHistoryOrdinal key (an old recording) still restores through forkedAtEntryCount")
+    @MainActor
+    func oldResumeRecordingWithoutHistoryOrdinalRestoresThroughTheLegacyCutField() async throws {
+        let cacheDir = Self.makeTempDir()
+        let recordingsDir = Self.makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: recordingsDir)
+        }
+
+        let model = StubUnderlyingModel(plainResponseText: "reply", toolResponseText: "tool reply")
+        let router = Self.makeRouter(
+            container: StubLanguageModelContainer(model: model),
+            recorder: JSONLRecorder(directory: recordingsDir),
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // An unfolded parent: for a recording with no fold before the resume,
+        // the legacy positional count and the history-coordinate cut agree,
+        // which is exactly why old recordings keep restoring correctly.
+        let parentHandle = profile.standard.makeLanguageModel()
+        let parentSession = LanguageModelSession(
+            model: parentHandle, tools: [], instructions: "be terse")
+        _ = try await parentSession.respond(to: "remember 42")
+        await parentHandle.sync(parentSession.transcript)
+
+        let (childHandle, restored) = try profile.standard.makeLanguageModel(
+            resuming: parentHandle.state.sessionId)
+        let childSession = LanguageModelSession(model: childHandle, tools: [], transcript: restored)
+        _ = try await childSession.respond(to: "continue please")
+        await childHandle.sync(childSession.transcript)
+
+        // Rewrite the handle's sidecar without the new key, simulating a
+        // recording written before the field existed.
+        let routerDirectory = RouterTestFixtures.routerDirectory(
+            routerId: router.id, recordingsDir: recordingsDir)
+        let treeBefore = try TranscriptTree.load(under: routerDirectory)
+        let childNodeBefore = try #require(treeBefore.session(childHandle.state.sessionId))
+        let sidecarURL = childNodeBefore.directory
+            .appendingPathComponent(sessionSidecarFileName, isDirectory: false)
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: sidecarURL)) as? [String: Any])
+        json.removeValue(forKey: "forkedAtHistoryOrdinal")
+        try JSONSerialization.data(withJSONObject: json).write(to: sidecarURL)
+
+        // The legacy field alone still yields the whole effective
+        // conversation: the parent's entries at resume time plus the handle's
+        // own entries.
+        let tree = try TranscriptTree.load(under: routerDirectory)
+        let expectedIds =
+            try tree.effectiveTranscript(forSession: parentHandle.state.sessionId).map(\.id)
+            + Self.ownRecordedEntryIds(in: tree, sessionId: childHandle.state.sessionId)
+        #expect(
+            try tree.effectiveTranscript(forSession: childHandle.state.sessionId).map(\.id)
+                == expectedIds)
+    }
 }

@@ -472,7 +472,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// no cut point, empty initial transcript, nested directly under the
     /// router root) and ``makeLanguageModel(resuming:registry:)`` (a resuming
     /// handle: nested under the session it resumed, with that session's own
-    /// entry count as its cut point), which otherwise differ only in those
+    /// entry counts as its cut points), which otherwise differ only in those
     /// values.
     ///
     /// - Parameters:
@@ -489,6 +489,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     events belong to this handle's own effective transcript, or `nil`
     ///     for a from-scratch handle, which inherits nothing. Defaults to
     ///     `nil`.
+    ///   - forkedAtHistoryOrdinal: The handle's cut point in `parentId`'s
+    ///     recorded history's own append-only coordinates, or `nil` for a
+    ///     from-scratch handle. Defaults to `nil`. See
+    ///     ``RecordingLanguageModelState/forkedAtHistoryOrdinal``.
     ///   - initialTranscript: The transcript to prime the handle's last-seen
     ///     diff baseline with. Defaults to empty.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle.
@@ -498,6 +502,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         recordingDirectory: URL,
         parentId: ULID? = nil,
         forkedAtEntryCount: Int? = nil,
+        forkedAtHistoryOrdinal: Int? = nil,
         initialTranscript: Transcript = Transcript(entries: [])
     ) -> RecordingLanguageModel {
         let state = RecordingLanguageModelState(
@@ -513,6 +518,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             profile: owningProfile,
             parentId: parentId,
             forkedAtEntryCount: forkedAtEntryCount,
+            forkedAtHistoryOrdinal: forkedAtHistoryOrdinal,
             initialTranscript: initialTranscript
         )
         return RecordingLanguageModel(state: state)
@@ -562,11 +568,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// never the whole resumed history re-recorded into a fresh directory.
     /// The vended handle nests under the resumed session's own directory and records
     /// the resumed transcript's entry count as its
-    /// ``SessionSidecar/forkedAtEntryCount``, the same lineage semantics
+    /// ``SessionSidecar/forkedAtEntryCount`` alongside the resumed session's
+    /// raw effective entry-event count as its
+    /// ``SessionSidecar/forkedAtHistoryOrdinal`` — the same lineage semantics
     /// ``RoutedSessionActor/fork(workingDirectory:)`` establishes for
     /// ``RoutedSession`` — so ``TranscriptTree``/``MergedTranscript``
     /// reconstruction over the resumed session plus this handle's own
-    /// recordings yields the full conversation.
+    /// recordings yields the full conversation, and resuming a *compacted*
+    /// session restores the fold's live window rather than the discarded
+    /// pre-fold span (see ``TranscriptTree/effectiveEntryEvents(forSession:)``).
     ///
     /// This is also a way for a single resumed session to get real tools by
     /// pairing the returned handle and transcript directly into
@@ -615,6 +625,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         let restoredTranscript = try tree.effectiveTranscript(forSession: sessionId, registry: registry)
+        // The resume cut in the resumed session's recorded history's own
+        // append-only coordinates: its raw effective entry-event count, fold
+        // boundaries included. `restoredTranscript.count` cannot serve as
+        // the cut — it counts the checkpoint-filtered restore view, which a
+        // fold makes SMALLER than the raw count, and a reader applying it as
+        // a raw prefix would select the oldest pre-fold span (the defect
+        // task ^6z1msg1 removed for actor forks).
+        let historyOrdinalAtResume = try tree.effectiveEntryEvents(forSession: sessionId).count
 
         // Nested directly under the resumed session's own directory, exactly
         // as ``RoutedSessionActor/fork(workingDirectory:)`` nests a fork:
@@ -632,7 +650,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             recordingDirectory: resumedNode.directory
                 .appendingPathComponent(childId.description, isDirectory: true),
             parentId: sessionId,
+            // The legacy positional count stays the restore view's count —
+            // it is also this handle's own diff baseline — while the
+            // append-only ordinal above carries the actual cut.
             forkedAtEntryCount: restoredTranscript.count,
+            forkedAtHistoryOrdinal: historyOrdinalAtResume,
             initialTranscript: restoredTranscript
         )
         return (handle, restoredTranscript)

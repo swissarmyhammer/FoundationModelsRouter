@@ -312,6 +312,17 @@ actor RecordingLanguageModelState {
     /// ``RoutedModel/makeLanguageModel(resuming:registry:)``. Recorded
     /// verbatim as this handle's ``SessionSidecar/forkedAtEntryCount``.
     nonisolated let forkedAtEntryCount: Int?
+    /// This handle's cut point in ``parentId``'s recorded history's own
+    /// append-only coordinates — the resumed session's raw effective
+    /// entry-event count at resume time (see
+    /// ``TranscriptTree/effectiveEntryEvents(forSession:)``) — or `nil` for
+    /// a fresh handle. Recorded verbatim as this handle's
+    /// ``SessionSidecar/forkedAtHistoryOrdinal``, so a reader cuts the
+    /// parent's raw events at the resume point: the checkpoint-filtered
+    /// ``forkedAtEntryCount`` is smaller than the raw count once the resumed
+    /// session compacted, and applying it as a raw prefix would select the
+    /// oldest pre-fold span instead of the fold's live window.
+    nonisolated let forkedAtHistoryOrdinal: Int?
 
     /// The last-seen transcript snapshot every diff runs against; updated
     /// after each successful diff (see ``diffAndRecord(current:usage:)``). Primed
@@ -351,6 +362,9 @@ actor RecordingLanguageModelState {
     ///   - forkedAtEntryCount: How many of `parentId`'s effective entry-kind
     ///     events belong to this handle's own effective transcript — `nil`
     ///     for a fresh handle.
+    ///   - forkedAtHistoryOrdinal: This handle's cut point in `parentId`'s
+    ///     recorded history's own append-only coordinates — `nil` for a
+    ///     fresh handle. See ``forkedAtHistoryOrdinal``.
     ///   - initialTranscript: The transcript to prime ``lastSeen`` with —
     ///     the resumed session's own reconstructed transcript for a handle
     ///     born via ``RoutedModel/makeLanguageModel(resuming:registry:)``, or
@@ -368,6 +382,7 @@ actor RecordingLanguageModelState {
         profile: LanguageModelProfile,
         parentId: ULID? = nil,
         forkedAtEntryCount: Int? = nil,
+        forkedAtHistoryOrdinal: Int? = nil,
         initialTranscript: Transcript = Transcript(entries: [])
     ) {
         self.routerId = routerId
@@ -382,6 +397,7 @@ actor RecordingLanguageModelState {
         self.profile = profile
         self.parentId = parentId
         self.forkedAtEntryCount = forkedAtEntryCount
+        self.forkedAtHistoryOrdinal = forkedAtHistoryOrdinal
         self.lastSeen = initialTranscript
     }
 
@@ -648,13 +664,15 @@ actor RecordingLanguageModelState {
             // `LanguageModelSession` — so there is no grammar to record.
             grammar: nil,
             forkedAtEntryCount: forkedAtEntryCount,
-            // The resume-handle path records no append-only cut: its
-            // `forkedAtEntryCount` is the resumed session's reconstructed
-            // transcript count, a coordinate this handle tracks nowhere in
-            // raw recorded-event terms. `nil` keeps readers on the legacy
-            // fallback, exactly as before the ordinal field existed (task
-            // ^6z1msg1 scopes the RoutedSessionActor fork/restore paths).
-            forkedAtHistoryOrdinal: nil,
+            // The resume cut in the recorded history's own append-only
+            // coordinates, computed by
+            // ``RoutedModel/makeLanguageModel(resuming:registry:)`` at resume
+            // time — `nil` for a fresh handle, which has no parent to cut.
+            // Without it, a reader falls back to `forkedAtEntryCount`, which
+            // a compacted resume makes smaller than the raw event count, and
+            // the cut selects the oldest pre-fold span (task ^bw2gts3; the
+            // actor fork path fixed the same defect in task ^6z1msg1).
+            forkedAtHistoryOrdinal: forkedAtHistoryOrdinal,
             // This handle never exposes a working-directory override — the
             // caller drives its own `LanguageModelSession` and any tools it
             // hands it directly, with no Router-managed working directory of

@@ -149,8 +149,11 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// append-only coordinates: how many effective entry-kind events (see
     /// ``TranscriptEvent/Kind/isEntryKind``) the parent's recorded history
     /// held at the moment this session was forked — the parent's
-    /// ``RoutedSessionActor/historyOrdinal``, which only ever grows, unlike
-    /// the positional ``forkedAtEntryCount`` a fold rewinds.
+    /// ``RoutedSessionActor/historyOrdinal`` for an actor fork, or the
+    /// resumed session's raw effective entry-event count for a handle born
+    /// via ``RoutedModel/makeLanguageModel(resuming:registry:)``. Either
+    /// way a coordinate that only ever grows, unlike the positional
+    /// ``forkedAtEntryCount`` a fold rewinds.
     ///
     /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` truncates the
     /// parent's effective events to this count, so a fork taken after a

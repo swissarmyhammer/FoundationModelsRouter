@@ -42,8 +42,24 @@ comments:
     - evidence: 23 files — new Sources/FoundationModelsRouter/Recording/OrderPreservingGeneratedContentDecoder.swift; Sources/FoundationModelsRouter/Recording/TranscriptEntryMapper.swift; Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift; 20 test files (TranscriptEntryMapperTests, RestoreFidelityTests, CompactionSpikeTests, and the empty-assetIDs sweep). One full ungated `swift test`: 894 + 27 + 24 tests passed, 0 failures, 0 skipped-by-change (1 pre-existing withKnownIssue in BoundedWait).
     - next: /review the task; the card stays in doing.
   timestamp: 2026-08-12T21:00:17.726617+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzvxsbhfbpshat1ph2hzbxte
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 5921ebb). The engine gave 7 findings. All 7 findings ask for a refactor of test code that was in the repository before this commit, and no finding is on a line that this commit changed. The written waiver for existing tests drops all 7 findings. Dropped: AutoCompactionTests.swift:487 (assignOnlyProperty lastBackend); ExamplesTests.swift:535 (StubModelLoader duplicate); TranscriptReconstructionTests.swift:201, 208, 214, 280, 357 (shared stub and helper deduplication). Zero findings stay open. The card has no unchecked review items.
+    - next: none. The task moved doing → review → done.
+  timestamp: 2026-08-12T21:24:22.703986+00:00
+- actor: claude-code
+  id: 01kzvxt8jk57asynr6s3gyjrhc
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 23 files; new OrderPreservingGeneratedContentDecoder keeps structure key order; empty-assetIds responses rebuild with no synthesized metadata key; GenerationID loss documented as permanent; canonicalized(_:) tightened to .toolCalls only
+    - test: green — swift test, 894 + 27 + 24 tests passed, 0 failures (the one implement run is the test evidence)
+    - commit: 5921ebb
+    - review: clean — 7 findings, all waived (pre-existing tests, no flagged line changed by this commit); task moved to done
+  timestamp: 2026-08-12T21:24:52.435756+00:00
+position_column: done
+position_ordinal: ff9c80
 title: 'Mapper fidelity: keep GeneratedContent property order and stop synthesizing assetIDs metadata on rebuild'
 ---
 ## Problem
