@@ -174,23 +174,6 @@ struct RoutedSessionCompactTests {
         )
     }
 
-    /// Drives `count` sequential `respond(to:)` turns on `session`.
-    private static func driveTurns(_ count: Int, on session: RoutedSession) async throws {
-        for index in 0..<count {
-            _ = try await session.respond(to: "turn \(index)")
-        }
-    }
-
-    /// The estimated token size of just `entries`' un-foldable recency
-    /// window (the header plus the newest 4 turns) — the floor no
-    /// deterministic stage can fold below, so a `budget.target` under this
-    /// forces the model-assisted ``Summarization`` stage to run.
-    private static func recencyWindowOnlyEstimate(_ entries: [Transcript.Entry]) -> Int {
-        let (header, turns) = TranscriptTurns.split(entries)
-        let (_, recent) = TranscriptTurns.partition(turns, keepRecentTurns: 4)
-        return Compactor.estimatedTokenCount(of: Transcript(entries: header + recent.flatMap(\.entries)))
-    }
-
     // MARK: - Shrinks the live window; accurate result
 
     @Test("compact() shrinks the live window (post-compact contextFill < pre-compact) and returns an accurate CompactionResult")
@@ -214,11 +197,11 @@ struct RoutedSessionCompactTests {
         // neither ToolOutputElision/TurnTruncation nor Summarization has
         // anything to fold — this drives enough turns that older ones fall
         // outside it.
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let preFoldFill = await session.contextFill
         // A turn's own usage delta reports the *whole* transcript's size at
         // that point (generation is stateless) — not a cumulative sum across
@@ -275,11 +258,11 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let preFoldFill = await session.contextFill
         // The premise of this test: even the part of the transcript no
         // deterministic stage may touch estimates larger than everything the
@@ -317,13 +300,13 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let sessionId = session.id
         let recordingDirectory = session.recordingDirectory
 
         let backend = try #require(container.lastBackend)
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         // A target strictly under the recency window's own floor: neither
         // ToolOutputElision nor TurnTruncation can land under this alone, so
         // the model-assisted Summarization stage must run and synthesize a
@@ -376,7 +359,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preFoldTokens = Compactor.estimatedTokenCount(of: Transcript(entries: backend.transcriptEntries()))
@@ -414,9 +397,9 @@ struct RoutedSessionCompactTests {
         let scratchProfile = try await router.resolve(
             profile: Self.profile(context: 1_000_000), reporting: ResolutionProgress())
         let scratchSession = scratchProfile.standard.makeSession()
-        try await Self.driveTurns(6, on: scratchSession)
+        try await driveTurns(6, on: scratchSession)
         let scratchBackend = try #require(container.lastBackend)
-        let recencyOnly = Self.recencyWindowOnlyEstimate(scratchBackend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(scratchBackend.transcriptEntries())
 
         // A fresh router/profile whose resolved context makes the *default*
         // budget's 0.5 target land strictly below the recency-window floor.
@@ -427,7 +410,7 @@ struct RoutedSessionCompactTests {
         let profile2 = try await router2.resolve(
             profile: Self.profile(context: tightContext), reporting: ResolutionProgress())
         let session2 = profile2.standard.makeSession()
-        try await Self.driveTurns(6, on: session2)
+        try await driveTurns(6, on: session2)
 
         let result = try await session2.compact()
 
@@ -463,10 +446,10 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
         let customPrompt = CompactionPrompt(name: "custom-test-prompt-v1", text: "Summarize tersely.")
 
@@ -505,12 +488,12 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let sessionId = session.id
         let recordingDirectory = session.recordingDirectory
         let backend = try #require(container.lastBackend)
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         // Strictly under the recency-window floor: forces the model-assisted
         // Summarization stage to run (see compactIsAppendOnlyAndPreservesIdentity).
         let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
@@ -559,7 +542,7 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(2, on: session)
+        try await driveTurns(2, on: session)
 
         // A generous budget the tiny two-turn transcript is already well
         // under.
@@ -683,14 +666,14 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let latch = RunLatch()
         let token = await Self.parkFakeRun(on: session.mailbox, latch: latch)
         await session.mailbox.updateProgress(completionToken: token, detail: "halfway through")
 
         let backend = try #require(container.lastBackend)
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         // Strictly under the recency-window floor: forces the model-assisted
         // Summarization stage — the only stage that synthesizes a boundary
         // entry — to run (see compactIsAppendOnlyAndPreservesIdentity).
@@ -740,10 +723,10 @@ struct RoutedSessionCompactTests {
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
 
         let result = try await session.compact(budget: budget)
@@ -796,7 +779,7 @@ struct RoutedSessionCompactTests {
         let router = Self.makeRouter(container: container, recorder: InMemoryRecorder(), cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile(context: 100_000), reporting: ResolutionProgress())
         let session = profile.standard.makeSession(summarization: summarization)
-        try await Self.driveTurns(Self.turnsBeforeTunedFold, on: session)
+        try await driveTurns(Self.turnsBeforeTunedFold, on: session)
         return (session, container, dir)
     }
 
@@ -815,7 +798,7 @@ struct RoutedSessionCompactTests {
         container: ConfiguredLLMContainer
     ) async throws -> [StubGenerationCall] {
         let backend = try #require(container.lastBackend)
-        let recencyOnly = Self.recencyWindowOnlyEstimate(backend.transcriptEntries())
+        let recencyOnly = recencyWindowOnlyEstimate(backend.transcriptEntries())
         let budget = TokenBudget(limit: recencyOnly * 2, target: 0.25)
         let callsBeforeFold = container.generationLog.calls.count
 
@@ -925,7 +908,7 @@ struct RoutedSessionCompactTests {
             profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let budget = Self.deterministicShrinkBudget(for: backend.transcriptEntries())
@@ -985,7 +968,7 @@ struct RoutedSessionCompactTests {
             profile: Self.profile(context: Self.checkpointTestContext), reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
-        try await Self.driveTurns(6, on: session)
+        try await driveTurns(6, on: session)
 
         let backend = try #require(container.lastBackend)
         let preFoldEntries = backend.transcriptEntries()

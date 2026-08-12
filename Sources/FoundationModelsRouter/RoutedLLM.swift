@@ -332,6 +332,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // whole transcript diff (including any leading `.instructions`
             // entry) is new.
             persistedEntryCount: 0,
+            // A vended root has recorded nothing yet, so its append-only
+            // history position starts at zero too.
+            historyOrdinal: 0,
             // The vended root lands its own write-once sidecar as it is
             // constructed — the vending handle does not write it on the
             // session's behalf, so a root actor built anywhere cannot come into

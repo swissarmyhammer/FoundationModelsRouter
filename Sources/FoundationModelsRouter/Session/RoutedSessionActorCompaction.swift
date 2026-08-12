@@ -463,6 +463,10 @@ extension RoutedSessionActor {
         // the model sees live is exactly what a restore rebuilds from the
         // checkpoint's live window.
         backend = backend.replacingTranscript(applied)
+        // Only the positional backend baseline rewinds to the folded window.
+        // `historyOrdinal` already advanced when the diff above recorded the
+        // boundary entry, and never rewinds: the fold changed the *context*,
+        // not the session's position in its own append-only history.
         persistedEntryCount = applied.count
         usageState = .measured(input: measuredTokensAfter, output: 0)
 

@@ -16,7 +16,7 @@ import FoundationModels
 /// fork-time baseline).
 ///
 /// Each parameter corresponds one-for-one with a parameter of
-/// ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:sidecarOrigin:contextTokens:usageState:autoCompactionBudget:autoCompactionPrompt:summarization:agentSpawn:discoveryPriming:recordingRoot:)``
+/// ``RoutedSessionActor/init(profile:routerId:id:parentId:recordingDirectory:workingDirectory:backend:slot:model:recorder:instructions:grammar:tools:originalTools:outbox:mailbox:generationGate:forkAdmissionGate:holdsAdmissionPermit:persistedEntryCount:historyOrdinal:sidecarOrigin:contextTokens:usageState:autoCompactionBudget:autoCompactionPrompt:summarization:agentSpawn:discoveryPriming:recordingRoot:)``
 /// and forwards unchanged — see that initializer's documentation for what
 /// each value means.
 ///
@@ -42,6 +42,7 @@ func makeRoutedSessionActor(
     forkAdmissionGate: AsyncSemaphore,
     holdsAdmissionPermit: Bool,
     persistedEntryCount: Int,
+    historyOrdinal: Int,
     sidecarOrigin: SessionSidecarOrigin,
     contextTokens: Int = ProfileDefinition.defaultContext,
     usageState: ContextUsageState = .none,
@@ -73,6 +74,7 @@ func makeRoutedSessionActor(
         forkAdmissionGate: forkAdmissionGate,
         holdsAdmissionPermit: holdsAdmissionPermit,
         persistedEntryCount: persistedEntryCount,
+        historyOrdinal: historyOrdinal,
         sidecarOrigin: sidecarOrigin,
         contextTokens: contextTokens,
         usageState: usageState,
@@ -348,9 +350,11 @@ actor RoutedSessionActor: RoutedSession {
     /// and for why the set is deliberately unbounded.
     var journaledTerminalCorrelationIDs: Set<String> = []
 
-    /// How many of ``backend``'s ``LanguageModelSessionBackend/transcriptEntries()``
-    /// have already been persisted, so each turn's post-generation snapshot can
-    /// diff against it to find only what the SDK appended *this* turn.
+    /// The positional diff baseline against the *current* ``backend``
+    /// transcript: how many of ``LanguageModelSessionBackend/transcriptEntries()``
+    /// have already been persisted (or were inherited), so each turn's
+    /// post-generation snapshot can diff against it to find only what the SDK
+    /// appended *this* turn.
     ///
     /// `0` for a root session — nothing has been persisted yet. For a fork,
     /// this is the parent's entry count *at fork time*
@@ -358,7 +362,29 @@ actor RoutedSessionActor: RoutedSession {
     /// takes, before ``LanguageModelSessionBackend/makeFork()`` seeds
     /// the child), so the inherited history the child's backend starts holding
     /// is never re-persisted into the child's own transcript.
+    ///
+    /// **Positional, not append-only.** This legitimately resets whenever the
+    /// backend transcript is swapped — a fold rewinds it to the folded
+    /// window's count — so it must never be read as the session's position in
+    /// its own recorded history. That coordinate is ``historyOrdinal``, which
+    /// only grows.
     var persistedEntryCount: Int
+
+    /// This session's position in its own append-only recorded history: how
+    /// many entry-kind events (``TranscriptEvent/Kind/isEntryKind``) its
+    /// effective recorded stream holds — the inherited prefix it started
+    /// from, plus every entry-kind event ``append(partial:)`` has recorded
+    /// since. Counted at that one choke point, so it counts exactly what
+    /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` counts.
+    ///
+    /// Starts at `0` for a vended root, at the parent's ordinal at fork time
+    /// for a fork (which is also the cut point its sidecar records — see
+    /// ``SessionSidecar/forkedAtHistoryOrdinal``), and at the reconstructed
+    /// effective entry-event count for a restored session. Unlike
+    /// ``persistedEntryCount``, it never rewinds: compaction is append-only,
+    /// so a fold *grows* it by the recorded boundary entry while the
+    /// positional baseline shrinks to the folded window.
+    var historyOrdinal: Int
 
     /// Where this session's `session.json` comes from: its own write at init
     /// when the session is new, or the tree it was restored from.
@@ -477,11 +503,14 @@ actor RoutedSessionActor: RoutedSession {
     ///
     /// Every parameter here is documented on the stored property it
     /// initializes, above — no separate `Parameters:` block, so there is
-    /// nowhere for the two to drift apart. The three this initializer's own
+    /// nowhere for the two to drift apart. The ones this initializer's own
     /// behavior actually turns on are ``persistedEntryCount`` (`0` for a root
-    /// session, or the parent's entry count at fork time for a fork — for a
-    /// new fork this doubles as the cut point recorded into its sidecar, so
-    /// the lineage cut point and the diff baseline are one fact),
+    /// session, or the parent's backend entry count at fork time for a fork —
+    /// the positional diff baseline, recorded into a new fork's sidecar as
+    /// the legacy `forkedAtEntryCount`), ``historyOrdinal`` (the session's
+    /// starting position in its own append-only recorded history — for a new
+    /// fork this IS the cut point recorded into its sidecar, so the lineage
+    /// cut and the starting ordinal are one fact),
     /// ``sidecarOrigin`` (where this session's `session.json` comes from — a
     /// write of its own at init, a tree it was restored from, or nothing
     /// durable at all), and `agentSpawn` (the parent session/tool-call this
@@ -514,6 +543,7 @@ actor RoutedSessionActor: RoutedSession {
         forkAdmissionGate: AsyncSemaphore,
         holdsAdmissionPermit: Bool = false,
         persistedEntryCount: Int,
+        historyOrdinal: Int,
         sidecarOrigin: SessionSidecarOrigin,
         contextTokens: Int = ProfileDefinition.defaultContext,
         usageState: ContextUsageState = .none,
@@ -544,6 +574,7 @@ actor RoutedSessionActor: RoutedSession {
         self.forkAdmissionGate = forkAdmissionGate
         self.holdsAdmissionPermit = holdsAdmissionPermit
         self.persistedEntryCount = persistedEntryCount
+        self.historyOrdinal = historyOrdinal
         self.sidecarOrigin = sidecarOrigin
         self.contextTokens = contextTokens
         self.usageState = usageState
@@ -555,13 +586,17 @@ actor RoutedSessionActor: RoutedSession {
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into
         // it — so any transcript a reader finds always has the facts to
-        // interpret it sitting beside it. A session with no parent is a root and
-        // carries no cut point; a fork's cut point *is* its diff baseline, read
-        // from the one `persistedEntryCount` rather than passed a second time.
+        // interpret it sitting beside it. A session with no parent is a root
+        // and carries no cut point; a fork records both coordinates of its
+        // cut, each read from the one stored value it equals at construction:
+        // the legacy positional `forkedAtEntryCount` is its diff baseline
+        // (`persistedEntryCount`), and the append-only
+        // `forkedAtHistoryOrdinal` is its starting `historyOrdinal`.
         sidecarOrigin.writeSidecarIfNew(
             instructions: instructions,
             grammar: grammar?.source,
             forkedAtEntryCount: parentId == nil ? nil : persistedEntryCount,
+            forkedAtHistoryOrdinal: parentId == nil ? nil : historyOrdinal,
             workingDirectory: workingDirectory,
             agentSpawn: agentSpawn,
             // The configuration envelope (task ^ne5g9jn), assembled here from

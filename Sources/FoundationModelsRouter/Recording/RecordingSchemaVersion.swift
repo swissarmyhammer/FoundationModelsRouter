@@ -46,6 +46,14 @@ public enum RecordingSchemaVersion {
     /// never look for it, an absent key decodes as `nil`, and a `nil` mode
     /// rebuilds exactly as before the field existed.
     ///
+    /// The optional ``SessionSidecar/forkedAtHistoryOrdinal`` key (task
+    /// ^6z1msg1) landed *within* v2 by the same additive rule: a fork's cut
+    /// point in its parent's append-only recorded-history coordinates. Old
+    /// readers never look for it and keep reading the legacy
+    /// ``SessionSidecar/forkedAtEntryCount``, which every new fork still
+    /// writes; an absent key decodes as `nil` and readers fall back to that
+    /// legacy cut, so an old recording restores exactly as it always has.
+    ///
     /// The unknown-case carriers (task ^9n7fna4) also landed within v2:
     /// ``TranscriptEvent/Kind/unknown`` and
     /// ``SegmentPayload/unknown(id:description:)``, which record a

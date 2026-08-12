@@ -539,6 +539,13 @@ actor RecordingLanguageModelState {
             // `LanguageModelSession` — so there is no grammar to record.
             grammar: nil,
             forkedAtEntryCount: forkedAtEntryCount,
+            // The resume-handle path records no append-only cut: its
+            // `forkedAtEntryCount` is the resumed session's reconstructed
+            // transcript count, a coordinate this handle tracks nowhere in
+            // raw recorded-event terms. `nil` keeps readers on the legacy
+            // fallback, exactly as before the ordinal field existed (task
+            // ^6z1msg1 scopes the RoutedSessionActor fork/restore paths).
+            forkedAtHistoryOrdinal: nil,
             // This handle never exposes a working-directory override — the
             // caller drives its own `LanguageModelSession` and any tools it
             // hands it directly, with no Router-managed working directory of

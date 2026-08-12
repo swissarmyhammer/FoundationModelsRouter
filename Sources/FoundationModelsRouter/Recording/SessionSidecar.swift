@@ -126,14 +126,47 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     public let grammar: String?
     /// How much of this session's activity is recorded.
     public let recordingLevel: RecordingLevel
-    /// How many entries the parent's transcript held at fork time — the
-    /// parent's ``LanguageModelSessionBackend/transcriptEntries()`` count at
-    /// the moment this session was forked from it, which is also the fork's own
-    /// transcript-diff baseline (see ``RoutedSessionActor/persistedEntryCount``),
-    /// so the lineage cut point and the diff baseline are one fact, not two.
+    /// How many entries the parent's *backend* transcript held at fork time —
+    /// the parent's ``LanguageModelSessionBackend/transcriptEntries()`` count
+    /// at the moment this session was forked from it, which is also the fork's
+    /// own transcript-diff baseline (see ``RoutedSessionActor/persistedEntryCount``).
+    ///
+    /// This is a positional count against the parent's *live* backend window,
+    /// so a parent fold rewinds it — which is why it no longer serves as the
+    /// fork's cut point on new recordings: ``forkedAtHistoryOrdinal`` records
+    /// the cut in the recorded history's own append-only coordinates instead.
+    /// Readers use this field as the cut only for a recording made before
+    /// that field existed, where it was captured with no post-fork fold
+    /// semantics attached and still names the correct raw position (see
+    /// ``TranscriptTree/effectiveEntryEvents(forSession:)``). It is still
+    /// written on every new fork, so a pre-ordinal reader of a new recording
+    /// behaves exactly as it always has.
     ///
     /// `nil` for a root session: a session with no parent has nothing to cut.
     public let forkedAtEntryCount: Int?
+
+    /// The fork's cut point in its parent's recorded history's own
+    /// append-only coordinates: how many effective entry-kind events (see
+    /// ``TranscriptEvent/Kind/isEntryKind``) the parent's recorded history
+    /// held at the moment this session was forked — the parent's
+    /// ``RoutedSessionActor/historyOrdinal``, which only ever grows, unlike
+    /// the positional ``forkedAtEntryCount`` a fold rewinds.
+    ///
+    /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` truncates the
+    /// parent's effective events to this count, so a fork taken after a
+    /// parent fold restores the fold's live window (the checkpoint sits
+    /// inside the inherited prefix) plus the fork's own entries — never the
+    /// pre-fold span the fold discarded.
+    ///
+    /// `nil` for a root session, and for a fork recorded before this field
+    /// existed — readers then fall back to ``forkedAtEntryCount``.
+    ///
+    /// **Additive within schema v2.** An optional key old readers never look
+    /// for and old recordings never carry: an absent key decodes as `nil`,
+    /// and readers fall back to the legacy cut, so no
+    /// ``RecordingSchemaVersion`` bump is needed (see that registry's v2
+    /// entry).
+    public let forkedAtHistoryOrdinal: Int?
     /// Which concrete models won each slot on the run that created this
     /// session, or `nil` for a fork (see ``ResolvedProfile``).
     public let profile: ResolvedProfile?
@@ -258,8 +291,12 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///   - instructions: This session's system instructions, or `nil`.
     ///   - grammar: This session's guided-generation grammar source, or `nil`.
     ///   - recordingLevel: How much of this session's activity is recorded.
-    ///   - forkedAtEntryCount: The parent's transcript entry count at fork
-    ///     time, or `nil` for a root session.
+    ///   - forkedAtEntryCount: The parent's backend transcript entry count at
+    ///     fork time, or `nil` for a root session.
+    ///   - forkedAtHistoryOrdinal: The fork's cut point in the parent's
+    ///     recorded history's append-only coordinates, or `nil` for a root
+    ///     session or a recording made before this field existed. Defaults
+    ///     to `nil`.
     ///   - profile: The run's resolved-profile facts for a root session, or
     ///     `nil` for a fork.
     ///   - workingDirectory: This session's own working directory.
@@ -286,6 +323,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         grammar: String?,
         recordingLevel: RecordingLevel,
         forkedAtEntryCount: Int?,
+        forkedAtHistoryOrdinal: Int? = nil,
         profile: ResolvedProfile?,
         workingDirectory: URL,
         agentSpawn: AgentSpawn? = nil,
@@ -301,6 +339,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.grammar = grammar
         self.recordingLevel = recordingLevel
         self.forkedAtEntryCount = forkedAtEntryCount
+        self.forkedAtHistoryOrdinal = forkedAtHistoryOrdinal
         self.profile = profile
         self.workingDirectory = workingDirectory
         self.agentSpawn = agentSpawn
@@ -324,8 +363,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case slot, model, context, instructions, grammar, recordingLevel, forkedAtEntryCount,
-            profile, compactionCount, workingDirectory, agentSpawn, routerId, schemaVersion,
-            configuration
+            forkedAtHistoryOrdinal, profile, compactionCount, workingDirectory, agentSpawn,
+            routerId, schemaVersion, configuration
     }
 
     /// Decodes a sidecar, defaulting an absent ``workingDirectory`` key to
@@ -351,6 +390,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         grammar = try container.decodeIfPresent(String.self, forKey: .grammar)
         recordingLevel = try container.decode(RecordingLevel.self, forKey: .recordingLevel)
         forkedAtEntryCount = try container.decodeIfPresent(Int.self, forKey: .forkedAtEntryCount)
+        forkedAtHistoryOrdinal = try container.decodeIfPresent(Int.self, forKey: .forkedAtHistoryOrdinal)
         profile = try container.decodeIfPresent(ResolvedProfile.self, forKey: .profile)
         compactionCount = try container.decodeIfPresent(Int.self, forKey: .compactionCount)
         agentSpawn = try container.decodeIfPresent(AgentSpawn.self, forKey: .agentSpawn)
@@ -396,6 +436,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
             grammar: grammar,
             recordingLevel: recordingLevel,
             forkedAtEntryCount: forkedAtEntryCount,
+            forkedAtHistoryOrdinal: forkedAtHistoryOrdinal,
             profile: profile,
             workingDirectory: workingDirectory,
             agentSpawn: agentSpawn,
@@ -591,8 +632,11 @@ public struct SessionSidecarWriter: Sendable {
     /// - Parameters:
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - grammar: The session's guided-generation grammar source, or `nil`.
-    ///   - forkedAtEntryCount: The parent's transcript entry count at fork
-    ///     time, or `nil` for a root session.
+    ///   - forkedAtEntryCount: The parent's backend transcript entry count at
+    ///     fork time, or `nil` for a root session.
+    ///   - forkedAtHistoryOrdinal: The fork's cut point in the parent's
+    ///     recorded history's append-only coordinates, or `nil` for a root
+    ///     session — see ``SessionSidecar/forkedAtHistoryOrdinal``.
     ///   - workingDirectory: The session's own working directory.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
     ///     from, or `nil`. Recorded only when `forkedAtEntryCount` is `nil`
@@ -606,6 +650,7 @@ public struct SessionSidecarWriter: Sendable {
         instructions: String?,
         grammar: String?,
         forkedAtEntryCount: Int?,
+        forkedAtHistoryOrdinal: Int?,
         workingDirectory: URL,
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         configuration: SessionConfiguration.Persistable? = nil,
@@ -626,6 +671,7 @@ public struct SessionSidecarWriter: Sendable {
             grammar: grammar,
             recordingLevel: recordingLevel,
             forkedAtEntryCount: forkedAtEntryCount,
+            forkedAtHistoryOrdinal: forkedAtHistoryOrdinal,
             profile: forkedAtEntryCount == nil ? profile : nil,
             workingDirectory: workingDirectory,
             agentSpawn: forkedAtEntryCount == nil ? agentSpawn : nil,
@@ -743,8 +789,11 @@ enum SessionSidecarOrigin: Sendable {
     /// - Parameters:
     ///   - instructions: The session's system instructions, or `nil`.
     ///   - grammar: The session's guided-generation grammar source, or `nil`.
-    ///   - forkedAtEntryCount: The parent's transcript entry count at fork time,
-    ///     or `nil` for a root session.
+    ///   - forkedAtEntryCount: The parent's backend transcript entry count at
+    ///     fork time, or `nil` for a root session.
+    ///   - forkedAtHistoryOrdinal: The fork's cut point in the parent's
+    ///     recorded history's append-only coordinates, or `nil` for a root
+    ///     session — see ``SessionSidecar/forkedAtHistoryOrdinal``.
     ///   - workingDirectory: The session's own working directory.
     ///   - agentSpawn: The parent session/tool-call this session was spawned
     ///     from, or `nil`. See ``SessionSidecar/agentSpawn``.
@@ -755,6 +804,7 @@ enum SessionSidecarOrigin: Sendable {
         instructions: String?,
         grammar: String?,
         forkedAtEntryCount: Int?,
+        forkedAtHistoryOrdinal: Int?,
         workingDirectory: URL,
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         configuration: SessionConfiguration.Persistable? = nil,
@@ -765,6 +815,7 @@ enum SessionSidecarOrigin: Sendable {
             instructions: instructions,
             grammar: grammar,
             forkedAtEntryCount: forkedAtEntryCount,
+            forkedAtHistoryOrdinal: forkedAtHistoryOrdinal,
             workingDirectory: workingDirectory,
             agentSpawn: agentSpawn,
             configuration: configuration,

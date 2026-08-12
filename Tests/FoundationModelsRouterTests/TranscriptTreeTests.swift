@@ -542,7 +542,11 @@ struct TranscriptTreeTests {
         let routerDir = routerDirectory(router: router, recordingsDir: recordingsDir)
         // Sanity: both forks load, and the root reconstructs, before the delete.
         let before = try TranscriptTree.load(under: routerDir)
-        #expect(before.children(of: root.id).map(\.id) == [forkA.id, forkB.id])
+        // The *set* of children, not their order: two forks minted in the
+        // same millisecond share a ULID timestamp and sort by their random
+        // bits, so creation order is not guaranteed — the same convention
+        // `treeShapeMatchesIndex` above states for its own children check.
+        #expect(Set(before.children(of: root.id).map(\.id)) == Set([forkA.id, forkB.id]))
         let rootEntryCountBefore = try before.effectiveEntryEvents(forSession: root.id).count
 
         // Delete forkB's whole directory. The layout is the only structure

@@ -184,6 +184,7 @@ struct TranscriptReconstructionIntegrationTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
+            historyOrdinal: 0,
             // A new root under the vending handle's durable recording, exactly
             // as `makeSession` names it: this session writes its own sidecar
             // before it can record anything — which `TranscriptTree.load` below

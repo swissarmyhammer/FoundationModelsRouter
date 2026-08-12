@@ -113,6 +113,14 @@ extension RoutedSessionActor {
         // inherited into the fork is never re-persisted into the child's
         // transcript (see ``persistedEntryCount``).
         let entryCountAtFork = backend.transcriptEntries().count
+        // The cut in append-only history coordinates, captured in the same
+        // synchronous window as `entryCountAtFork` so the two describe one
+        // moment: this session's position in its own recorded history —
+        // unlike the positional backend count above, a fold never rewinds it,
+        // so a fork taken after a fold restores the fold's live window rather
+        // than the discarded pre-fold span (see ``historyOrdinal`` and
+        // ``SessionSidecar/forkedAtHistoryOrdinal``).
+        let historyOrdinalAtFork = historyOrdinal
         let forkedBackend = backend.makeFork(tools: childTools)
         turnLock.signal()
 
@@ -150,6 +158,10 @@ extension RoutedSessionActor {
             forkAdmissionGate: forkAdmissionGate,
             holdsAdmissionPermit: true,
             persistedEntryCount: entryCountAtFork,
+            // The child's history starts where the parent's recorded history
+            // stood at fork time — this initial ordinal is also the cut point
+            // the child's sidecar records.
+            historyOrdinal: historyOrdinalAtFork,
             // A fork is a brand-new session wherever its parent could record
             // one — including a fork of a restored session.
             sidecarOrigin: sidecarOrigin.forFork,

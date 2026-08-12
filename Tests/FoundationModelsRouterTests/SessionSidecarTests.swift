@@ -631,6 +631,7 @@ struct SessionSidecarTests {
             forkAdmissionGate: standard.forkAdmissionGate,
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
+            historyOrdinal: 0,
             sidecarOrigin: .new(under: standard.durableRecording)
         )
         #expect(session.recordingDirectory == recordingDirectory)
@@ -821,7 +822,8 @@ struct SessionSidecarTests {
             routerId: .generate()
         )
         writer.write(
-            instructions: nil, grammar: nil, forkedAtEntryCount: nil, workingDirectory: dir, to: dir)
+            instructions: nil, grammar: nil, forkedAtEntryCount: nil, forkedAtHistoryOrdinal: nil,
+            workingDirectory: dir, to: dir)
 
         // The gate lives in the writer, not in whoever built it: `.off` means a
         // writer that writes nothing, so a durable root can always be handed one

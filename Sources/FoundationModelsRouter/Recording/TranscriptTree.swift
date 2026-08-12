@@ -38,9 +38,10 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
     case sessionDirectoryNotIdentified(directory: URL)
 
     /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` needs this
-    /// session's ``SessionSidecar/forkedAtEntryCount`` to truncate its
-    /// parent's effective entries, but its sidecar has none — it nests under a
-    /// parent session yet records no cut point, so it cannot say how much of
+    /// session's fork cut point — its ``SessionSidecar/forkedAtHistoryOrdinal``,
+    /// or the legacy ``SessionSidecar/forkedAtEntryCount`` — to truncate its
+    /// parent's effective entries, but its sidecar has neither: it nests under
+    /// a parent session yet records no cut point, so it cannot say how much of
     /// that parent's conversation is its own.
     case forkCutPointMissing(session: ULID, directory: URL)
 
@@ -80,8 +81,8 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
         case .forkCutPointMissing(let id, let directory):
             return """
                 Session \(id.description) (\(directory.path)) nests under a parent session but its \
-                session.json records no forkedAtEntryCount, so its effective transcript cannot be \
-                reconstructed.
+                session.json records no fork cut point (neither forkedAtHistoryOrdinal nor \
+                forkedAtEntryCount), so its effective transcript cannot be reconstructed.
                 """
         case .transcriptLineCorrupt(let id, let file):
             return """
@@ -380,15 +381,14 @@ public struct TranscriptTree: Sendable {
     }
 
     /// This session's whole effective conversation: recursively, the
-    /// parent's effective entry-kind events truncated to
-    /// ``SessionNode/forkedAtEntryCount``, followed by this session's own
-    /// entry-kind events — exactly mirroring what its live `Transcript` held
-    /// (see plan.md's "Transcript fidelity" section).
+    /// parent's effective entry-kind events truncated to this session's fork
+    /// cut point, followed by this session's own entry-kind events — the raw
+    /// recorded history its live `Transcript` was built from (see plan.md's
+    /// "Transcript fidelity" section).
     ///
-    /// "Entry-kind" means ``TranscriptEvent/Kind/instructions``,
-    /// ``TranscriptEvent/Kind/prompt``, ``TranscriptEvent/Kind/toolCalls``,
-    /// ``TranscriptEvent/Kind/toolOutput``, ``TranscriptEvent/Kind/response``,
-    /// and ``TranscriptEvent/Kind/reasoning`` only: the router-only
+    /// "Entry-kind" means ``TranscriptEvent/Kind/isEntryKind`` — the six
+    /// kinds mirroring the SDK's own entry cases plus the
+    /// ``TranscriptEvent/Kind/unknown`` carrier: the router-only
     /// ``TranscriptEvent/Kind/session`` meta event and
     /// ``TranscriptEvent/Kind/embedding`` events never appear in the result,
     /// even if present in the underlying files.
@@ -396,11 +396,19 @@ public struct TranscriptTree: Sendable {
     /// A root's result is just its own entry-kind events — there is no parent
     /// to truncate and prepend. A fork's parent contribution is *that
     /// parent's own effective conversation* (already recursively including
-    /// whatever it in turn inherited), truncated to this session's
-    /// `forkedAtEntryCount` — so an ancestor that keeps generating turns after
+    /// whatever it in turn inherited), truncated to the fork's cut point —
+    /// ``SessionSidecar/forkedAtHistoryOrdinal``, the cut in the recorded
+    /// history's own append-only coordinates, or the legacy
+    /// ``SessionSidecar/forkedAtEntryCount`` for a recording made before that
+    /// field existed (captured pre-fold, so it names the same position in
+    /// these coordinates). An ancestor that keeps generating turns after
     /// this session forked from it never leaks into the result: the
     /// truncation point was fixed at fork time, independent of how much the
-    /// ancestor's own transcript grows afterward.
+    /// ancestor's own transcript grows afterward. Because the cut is in raw
+    /// recorded coordinates, an ancestor's fold never moves it: the fold's
+    /// checkpoint boundary sits *inside* the inherited prefix, where
+    /// ``effectiveTranscript(forSession:registry:view:)``'s restore view
+    /// applies it — the cut selects history; the checkpoint selects context.
     ///
     /// - Parameter id: The session's span id.
     /// - Returns: The session's full effective entry-kind conversation, oldest
@@ -434,36 +442,22 @@ public struct TranscriptTree: Sendable {
         guard let parent = nodesById[parentId] else {
             preconditionFailure("a loaded node's parentId always names another loaded node")
         }
-        guard let forkedAtEntryCount = node.sidecar.forkedAtEntryCount else {
+        // The cut point in the recorded history's own append-only
+        // coordinates. A recording made before `forkedAtHistoryOrdinal`
+        // existed falls back to the legacy `forkedAtEntryCount`: that count
+        // was captured before any post-fork fold could rewind it, so on such
+        // a recording it names the same position in these coordinates.
+        guard let cut = node.sidecar.forkedAtHistoryOrdinal ?? node.sidecar.forkedAtEntryCount else {
             throw TranscriptTreeError.forkCutPointMissing(session: node.id, directory: node.directory)
         }
         let parentEffective = try effectiveEntryEvents(for: parent)
-        return Array(parentEffective.prefix(forkedAtEntryCount)) + ownEntries
+        return Array(parentEffective.prefix(cut)) + ownEntries
     }
 
-    /// `node`'s own recorded events, filtered to entry kinds only.
+    /// `node`'s own recorded events, filtered to entry kinds only (see
+    /// ``TranscriptEvent/Kind/isEntryKind``).
     private func entryKindEvents(for node: SessionNode) throws -> [TranscriptEvent] {
-        try Self.decodeEvents(in: node.directory, forSession: node.id).filter { Self.isEntryKind($0.kind) }
-    }
-
-    // MARK: - Entry-kind filter
-
-    /// Whether `kind` mirrors a real `FoundationModels.Transcript.Entry` —
-    /// one of the six named cases, or ``TranscriptEvent/Kind/unknown``, the
-    /// carrier for an entry case a future SDK added (it mirrors a real entry
-    /// too, so reconstruction must see it). The router-only
-    /// ``TranscriptEvent/Kind/session``/``TranscriptEvent/Kind/embedding``
-    /// kinds and the legacy ``TranscriptEvent/Kind/toolCall`` are not
-    /// entry-kind. Exhaustive over every ``TranscriptEvent/Kind`` case, so a
-    /// future case added to the enum fails to compile here until this switch
-    /// is updated, rather than silently defaulting either way.
-    private static func isEntryKind(_ kind: TranscriptEvent.Kind) -> Bool {
-        switch kind {
-        case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
-            return true
-        case .session, .embedding, .toolCall:
-            return false
-        }
+        try Self.decodeEvents(in: node.directory, forSession: node.id).filter(\.kind.isEntryKind)
     }
 
     // MARK: - Event decoding

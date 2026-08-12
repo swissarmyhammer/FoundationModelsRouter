@@ -203,9 +203,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// profile's ``LanguageModelProfile/standard``, `.flash` through
     /// ``LanguageModelProfile/flash``. A slot with no generation handle, or a
     /// resident model that does not match the recorded one, is a typed error
-    /// naming the offending session — never a crash. Each restored session's `persistedEntryCount` starts at its
-    /// reconstructed effective-transcript entry count, so its first live turn
-    /// persists only what is genuinely new. `instructions`/``Grammar`` are
+    /// naming the offending session — never a crash. Each restored session's
+    /// `persistedEntryCount` starts at its reconstructed effective-transcript
+    /// entry count, so its first live turn persists only what is genuinely
+    /// new; its `historyOrdinal` starts at the raw effective entry-event
+    /// count, so a fork taken from it records its cut in append-only history
+    /// coordinates. `instructions`/``Grammar`` are
     /// rehydrated from the node's own ``SessionSidecar``, so a restored
     /// guided session constrains its next turn as the original did — for
     /// ``Grammar/jsonSchema(_:)``.
@@ -572,6 +575,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 forkAdmissionGate: routedLLM.forkAdmissionGate,
                 holdsAdmissionPermit: false,
                 persistedEntryCount: transcript.count,
+                // The restored session's position in its own append-only
+                // recorded history: the raw effective entry-event count —
+                // NOT `transcript.count`, which the checkpoint filter may
+                // have shrunk to the fold's live window (see
+                // ``RoutedSessionActor/historyOrdinal``).
+                historyOrdinal: effectiveEvents.count,
                 // Restored, not new: this node's sidecar is the write-once one
                 // read from disk just above, never rewritten. The writer travels
                 // only for forks taken from the restored session.

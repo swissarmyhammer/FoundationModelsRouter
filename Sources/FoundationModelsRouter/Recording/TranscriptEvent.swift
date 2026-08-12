@@ -72,6 +72,29 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// degrades it to a text-only entry (see ``TranscriptEntryMapper``'s
         /// documented degradations).
         case unknown
+
+        /// Whether this kind mirrors a real `FoundationModels.Transcript.Entry` —
+        /// one of the six named entry cases, or ``unknown``, the carrier for an
+        /// entry case a future SDK added (it mirrors a real entry too, so
+        /// reconstruction must see it). The router-only ``session``/``embedding``
+        /// kinds and the legacy ``toolCall`` are not entry-kind.
+        ///
+        /// This is the one predicate behind the recorded history's entry
+        /// coordinates: ``TranscriptTree/effectiveEntryEvents(forSession:)``
+        /// filters by it, and ``RoutedSessionActor/historyOrdinal`` counts by it
+        /// as events are appended, so the writer's ordinal and the reader's
+        /// positions can never disagree about which events count. Exhaustive
+        /// over every case, so a future case added to this enum fails to
+        /// compile here until the switch is updated, rather than silently
+        /// defaulting either way.
+        var isEntryKind: Bool {
+            switch self {
+            case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
+                return true
+            case .session, .embedding, .toolCall:
+                return false
+            }
+        }
     }
 
     /// The recording root id — the router instance that owns this transcript.

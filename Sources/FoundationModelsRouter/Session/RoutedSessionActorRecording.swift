@@ -498,9 +498,20 @@ extension RoutedSessionActor {
     /// transcript directory, so siblings write separate files and the on-disk tree
     /// mirrors the fork lineage.
     ///
+    /// This is the one choke point every event this session records goes
+    /// through — turn diffs, the fold's boundary diff, journaled run
+    /// terminals, the session meta line, and the bodyless close alike — so it
+    /// is also where ``historyOrdinal`` advances: one step per entry-kind
+    /// partial (``TranscriptEvent/Kind/isEntryKind``), exactly the events
+    /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` counts. Counting
+    /// anywhere else could drift from what actually lands in the file.
+    ///
     /// - Parameter partial: The event to record, minus its recorder-owned `seq`
     ///   and `ts`.
     func append(partial: TranscriptEvent.Partial) async {
+        if partial.kind.isEntryKind {
+            historyOrdinal += 1
+        }
         await recorder.append(partial, to: recordingDirectory)
     }
 

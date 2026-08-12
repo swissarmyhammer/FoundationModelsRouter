@@ -96,10 +96,26 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift, Sources/FoundationModelsRouter/Compaction/Summarization.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift. Verification: `swift build --build-tests` clean, then one ungated `swift test` run — 881 tests in 82 suites passed (1 known issue: the accepted BoundedWait one), 27 integration-target tests passed, 24 eval tests passed, 0 failures, exit 0. The only warning is the accepted mlx-swift "missing creator" noise. The finding in the description is now `- [x]`; tags re-supplied and verified as ["transcript"].
     - next: /review
   timestamp: 2026-08-12T12:56:15.641224+00:00
+- actor: claude-code
+  id: 01kzv118rtqmtnp5qb0t03qpyh
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 1da07b2); 0 findings, 8 validators attempted, 0 failed; the one prior finding is checked
+    - next: none — the task moved to done
+  timestamp: 2026-08-12T13:01:53.306796+00:00
+- actor: claude-code
+  id: 01kzv12a2y340sgdryrmar366b
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files (CompactionSegment.swift, Summarization.swift, RoutedSessionActorCompaction.swift); the shared boundaryEntry(id:summaryText:content:) repairs the duplication finding
+    - test: green — swift test, 881 tests in 82 suites passed, 0 failures (the one implement run is the test evidence)
+    - commit: 1da07b2
+    - review: clean — 0 findings on HEAD~1..HEAD, 1 prior finding checked; task moved to done
+  timestamp: 2026-08-12T13:02:27.422384+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9880
 title: Compaction appends a checkpoint entry on every applied fold
 ---
 ## Design rule
