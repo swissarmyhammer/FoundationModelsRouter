@@ -133,21 +133,29 @@ struct SessionTreeRestorationTests {
     /// Builds a router wired with the stubs and a durable recordings root, so
     /// vended sessions nest their transcripts and index under it.
     ///
-    /// - Parameter id: The router id to construct with — pass the first
-    ///   router's `id` to simulate a fresh process continuing the same
-    ///   recording root.
+    /// - Parameters:
+    ///   - id: The router id to construct with — pass the first router's `id`
+    ///     to simulate a fresh process continuing the same recording root.
+    ///   - cacheDir: The disposable cache directory.
+    ///   - recordingsDir: The durable recordings root.
+    ///   - maxConcurrentForks: The in-flight fork ceiling per profile.
+    ///   - recorder: The recorder to construct with. A recording root admits
+    ///     one live writer, so a continuation router that must *write* while
+    ///     the first router is still alive in this process has to share the
+    ///     first writer's recorder; `nil` (the default) makes a fresh one.
     private static func makeRouter(
         id: ULID = .generate(),
         cacheDir: URL,
         recordingsDir: URL,
-        maxConcurrentForks: Int = 4
+        maxConcurrentForks: Int = 4,
+        recorder: JSONLRecorder? = nil
     ) -> Router {
         Router(
             id: id,
             maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
-            recorder: JSONLRecorder(directory: recordingsDir),
+            recorder: recorder ?? JSONLRecorder(directory: recordingsDir),
             probe: StubProbe(
                 chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
@@ -211,7 +219,8 @@ struct SessionTreeRestorationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let recorder = JSONLRecorder(directory: recordingsDir)
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let root = profile1.standard.makeSession()
@@ -224,9 +233,13 @@ struct SessionTreeRestorationTests {
 
         // "Tear down": nothing below reaches back into router1/profile1
         // except reading the ids already captured above — a fresh router
-        // simulates a new process continuing the same recording root.
+        // simulates a new process continuing the same recording root. The
+        // restored leaf below must *write*, and a recording root admits one
+        // live writer, so the continuation router shares router1's still-live
+        // recorder rather than standing up a second writer on the same root.
 
-        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let router2 = Self.makeRouter(
+            id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)

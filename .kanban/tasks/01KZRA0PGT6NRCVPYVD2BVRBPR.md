@@ -36,8 +36,25 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift (doc comment only), Tests/FoundationModelsRouterTests/DiscoveryPrimingTests.swift, Tests/FoundationModelsRouterTests/PendingEventInjectionTests.swift; swift test: 864 + 27 + 24 tests passed, 0 failures
     - next: /review
   timestamp: 2026-08-12T08:19:40.784592+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzth6fn1d5mkepdjva4ca7hc
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings (8 validators attempted, 0 failed)
+    - next: none, task is done
+  timestamp: 2026-08-12T08:25:06.977118+00:00
+- actor: claude-code
+  id: 01kzth76tbzf1xs2wd0xd91p5d
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files, the attach logic targets the last .prompt partial and reports honestly
+    - test: green — swift test, 864 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: 38a4593
+    - review: clean — 0 findings, scope HEAD~1..HEAD
+    - result: the task is in done
+  timestamp: 2026-08-12T08:25:30.699076+00:00
+position_column: done
+position_ordinal: ff9480
 title: Attach pending-event segments to the real prompt when priming is on
 ---
 ## Problem

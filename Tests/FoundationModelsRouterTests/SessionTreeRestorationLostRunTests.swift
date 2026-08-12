@@ -121,19 +121,26 @@ struct SessionTreeRestorationLostRunTests {
 
     /// Builds a router wired with the stubs and a durable recordings root.
     ///
-    /// - Parameter id: The router id to construct with — pass the first
-    ///   router's `id` to simulate a fresh process continuing the same
-    ///   recording root.
+    /// - Parameters:
+    ///   - id: The router id to construct with — pass the first router's `id`
+    ///     to simulate a fresh process continuing the same recording root.
+    ///   - cacheDir: The disposable cache directory.
+    ///   - recordingsDir: The durable recordings root.
+    ///   - recorder: The recorder to construct with. A recording root admits
+    ///     one live writer, so a continuation router that must *write* while
+    ///     the first router is still alive in this process has to share the
+    ///     first writer's recorder; `nil` (the default) makes a fresh one.
     private static func makeRouter(
         id: ULID = .generate(),
         cacheDir: URL,
-        recordingsDir: URL
+        recordingsDir: URL,
+        recorder: JSONLRecorder? = nil
     ) -> Router {
         Router(
             id: id,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
-            recorder: JSONLRecorder(directory: recordingsDir),
+            recorder: recorder ?? JSONLRecorder(directory: recordingsDir),
             probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: StubModelLoader(container: BasicLLMContainer(), dimension: stubDimension)
@@ -508,8 +515,12 @@ struct SessionTreeRestorationLostRunTests {
         }
 
         // (1) Record a session whose only journaled event is a dangling
-        // .progress — the orphaned run.
-        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
+        // .progress — the orphaned run. The continuation routers below must
+        // *write* while router1 is still alive in this process, and a
+        // recording root admits one live writer, so all three routers share
+        // this one recorder.
+        let recorder = JSONLRecorder(directory: recordingsDir)
+        let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
         await root.outbox.post(Self.event(correlationID: "run-1", kind: .progress, detail: "812 lines so far"))
@@ -517,7 +528,8 @@ struct SessionTreeRestorationLostRunTests {
 
         // (2) The first restore manufactures the .lost onto the restored
         // node's fresh outbox.
-        let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let router2 = Self.makeRouter(
+            id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let firstRestore = try await profile2.standard.restoreSessionTree(root: root.id)
         let firstPending = await firstRestore.root.outbox.pending()
@@ -530,7 +542,8 @@ struct SessionTreeRestorationLostRunTests {
 
         // (4) A second restore under a third fresh process: the .lost is
         // now *persisted* in the effective transcript...
-        let router3 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let router3 = Self.makeRouter(
+            id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile3 = try await router3.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let secondRestore = try await profile3.standard.restoreSessionTree(root: root.id)
 

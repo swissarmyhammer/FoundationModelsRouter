@@ -46,8 +46,27 @@ public actor JSONLRecorder: TranscriptRecorder {
     /// opener creates the directory and its `transcript.jsonl` on disk; tests
     /// inject a spy here to observe writes and syncs without disk I/O.
     private let openHandle: @Sendable (URL) throws -> any TranscriptAppendHandle
+    /// The claim this recorder holds on its recording root ``directory``, so
+    /// two live writers can never append into the same root. Held from
+    /// construction by ``init(owningDirectory:now:)``, and taken lazily just
+    /// before the first append otherwise — `nil` until then, and `nil` on
+    /// every append another live writer's claim refused.
+    private var rootOwnership: RecordingRootOwnership?
+
+    /// The production handle opener: creates the directory and its
+    /// `transcript.jsonl` on disk on first use.
+    private static let productionOpenHandle: @Sendable (URL) throws -> any TranscriptAppendHandle = {
+        try openHandleForAppending(fileName: "transcript.jsonl", in: $0)
+    }
 
     /// Creates a JSONL recorder whose default directory is `directory`.
+    ///
+    /// Ownership of `directory` as a recording root is taken just before the
+    /// first append, keeping this initializer non-throwing and writing nothing
+    /// to disk until an event lands. When another live writer already owns the
+    /// root, every append is logged and dropped — never interleaved — until
+    /// that writer releases it. To learn about a held root at open time
+    /// instead, use the throwing ``init(owningDirectory:now:)``.
     ///
     /// - Parameters:
     ///   - directory: The directory to write `transcript.jsonl` into for appends
@@ -58,7 +77,37 @@ public actor JSONLRecorder: TranscriptRecorder {
         self.init(
             directory: directory,
             now: now,
-            openHandle: { try openHandleForAppending(fileName: "transcript.jsonl", in: $0) }
+            openHandle: Self.productionOpenHandle
+        )
+    }
+
+    /// Creates a JSONL recorder that takes ownership of `directory` as a
+    /// recording root at construction — the open-time chokepoint that turns a
+    /// second concurrent writer into a typed error instead of silent
+    /// transcript corruption discovered at restore time.
+    ///
+    /// The claim spans processes (an atomically created `owner.lock` marker
+    /// naming this process) and recorders within this process (a process-wide
+    /// registry). A stale marker left by a crashed owner is taken over with a
+    /// logged warning. The root is released when this recorder deallocates:
+    /// the marker is removed and the root is immediately claimable again.
+    ///
+    /// - Parameters:
+    ///   - directory: The recording root to own; created — along with its
+    ///     lock marker — at construction.
+    ///   - now: The clock used to stamp each event's `ts`.
+    /// - Throws: ``RecordingRootLockError/alreadyOwned(root:owner:)`` when a
+    ///   live writer already owns the root, naming that owner;
+    ///   ``RecordingRootLockError/contested(root:)`` when a stale-lock
+    ///   takeover loses its race; otherwise any file-system error creating
+    ///   the root or its marker.
+    public init(owningDirectory directory: URL, now: @escaping @Sendable () -> Date = { Date() }) throws {
+        let ownership = try RecordingRootOwnership.acquire(root: directory)
+        self.init(
+            directory: directory,
+            now: now,
+            openHandle: Self.productionOpenHandle,
+            rootOwnership: ownership
         )
     }
 
@@ -70,14 +119,18 @@ public actor JSONLRecorder: TranscriptRecorder {
     ///     session directory.
     ///   - now: The clock used to stamp each event's `ts`.
     ///   - openHandle: Opens the append handle for a directory on first use.
+    ///   - rootOwnership: An already-held claim on `directory` as a recording
+    ///     root, or `nil` to take the claim lazily at first append.
     init(
         directory: URL,
         now: @escaping @Sendable () -> Date = { Date() },
-        openHandle: @escaping @Sendable (URL) throws -> any TranscriptAppendHandle
+        openHandle: @escaping @Sendable (URL) throws -> any TranscriptAppendHandle,
+        rootOwnership: RecordingRootOwnership? = nil
     ) {
         self.directory = directory
         self.now = now
         self.openHandle = openHandle
+        self.rootOwnership = rootOwnership
     }
 
     /// Stamps and appends an event as one JSON line into `directory`'s
@@ -85,7 +138,13 @@ public actor JSONLRecorder: TranscriptRecorder {
     /// and drops it on any I/O failure. A `.response`-kind event is a turn
     /// close, so it additionally synchronizes the target's handle (see the
     /// type's Durability section).
+    ///
+    /// The first append also claims the recording root (see ``rootOwnership``);
+    /// while another live writer holds it, the event is logged and dropped
+    /// before it is stamped, so no line ever interleaves into a root this
+    /// recorder does not own and `seq` spends nothing on refused appends.
     public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
+        guard ensureRootOwnership() else { return }
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
         let target = directory ?? self.directory
@@ -100,6 +159,27 @@ public actor JSONLRecorder: TranscriptRecorder {
         )
         guard event.kind == .response else { return }
         synchronizeHandle(in: target, afterSeq: event.seq)
+    }
+
+    /// Claims the recording root before a write when no claim is held yet,
+    /// matching the best-effort append policy: a refusal is logged, never
+    /// thrown. Retried on every refused append, so this recorder takes the
+    /// root over once its current owner releases it (or dies and leaves a
+    /// stale marker).
+    ///
+    /// - Returns: `true` when this recorder owns the root and may write;
+    ///   `false` when another live writer holds it and the event must drop.
+    private func ensureRootOwnership() -> Bool {
+        if rootOwnership != nil { return true }
+        do {
+            rootOwnership = try RecordingRootOwnership.acquire(root: directory)
+            return true
+        } catch {
+            recordingLogger.error(
+                "dropping transcript event: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
     }
 
     /// Best-effort fsync of `directory`'s cached append handle, called after
