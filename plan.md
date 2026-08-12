@@ -1177,6 +1177,16 @@ a text body like any other: `metadataOnly` strips it and the redact hook covers 
 these occur on today's MLX text paths — instructions, text prompts/responses, guided structured
 responses, and tool traffic round-trip losslessly.
 
+**Unknown future SDK cases degrade to text, never a crash.** The day the SDK adds a seventh
+`Transcript.Entry` case or a fifth `Transcript.Segment` case, the mapper's `@unknown default`
+arms record it instead of aborting the host process mid-turn: an unknown entry records as the
+`unknown` event kind, an unknown segment as the `unknown` segment carrier, each holding the SDK
+value's own `id` plus its `description` as best-effort text, with a logged warning naming the
+unrecognized case. Reconstruction rebuilds the carrier as a `.text` segment (an unknown-kind
+entry becomes a text-only `.response` entry), so restore stays total. The content is preserved
+as text; the case's exact structure is lost until the mapper learns the new case. Both carriers
+are additive within schema v2 (see `RecordingSchemaVersion` for the recorded reasoning).
+
 ## Decisions
 
 - **Human waits release the model gate (decided):** the single serial gate is

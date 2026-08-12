@@ -436,16 +436,18 @@ public struct TranscriptTree: Sendable {
 
     // MARK: - Entry-kind filter
 
-    /// Whether `kind` mirrors one of `FoundationModels.Transcript.Entry`'s six
-    /// cases. The router-only ``TranscriptEvent/Kind/session``/
-    /// ``TranscriptEvent/Kind/embedding`` kinds and the legacy
-    /// ``TranscriptEvent/Kind/toolCall`` are not entry-kind. Exhaustive over
-    /// every ``TranscriptEvent/Kind`` case, so a future case added to the enum
-    /// fails to compile here until this switch is updated, rather than
-    /// silently defaulting either way.
+    /// Whether `kind` mirrors a real `FoundationModels.Transcript.Entry` —
+    /// one of the six named cases, or ``TranscriptEvent/Kind/unknown``, the
+    /// carrier for an entry case a future SDK added (it mirrors a real entry
+    /// too, so reconstruction must see it). The router-only
+    /// ``TranscriptEvent/Kind/session``/``TranscriptEvent/Kind/embedding``
+    /// kinds and the legacy ``TranscriptEvent/Kind/toolCall`` are not
+    /// entry-kind. Exhaustive over every ``TranscriptEvent/Kind`` case, so a
+    /// future case added to the enum fails to compile here until this switch
+    /// is updated, rather than silently defaulting either way.
     private static func isEntryKind(_ kind: TranscriptEvent.Kind) -> Bool {
         switch kind {
-        case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning:
+        case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
             return true
         case .session, .embedding, .toolCall:
             return false

@@ -1,10 +1,42 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01kzt9a1k8gz8ndcwjscmy6ddh
+  text: |-
+    Research done. Design decisions:
+
+    1. Carriers. Add `SegmentPayload.unknown(id:description:)` for segments. Add `TranscriptEvent.Kind.unknown` for entries. At record time, an unknown entry payload stores the entry id plus one `.unknown` segment that holds the SDK value's `description` text. Both `Transcript.Entry` and `Transcript.Segment` supply `id: String` and `description` (verified in the macOS SDK swiftinterface: both are `Identifiable` and `CustomStringConvertible`).
+    2. Schema version. The carriers stay in v2. Reason: this build can write a carrier only when it runs on a future OS that adds an SDK case. On the current SDK, recordings do not change at all. A bump of `current` to v3 makes every old reader refuse every new recording, to guard against a carrier that cannot occur on the current SDK. The known gap: an old v2 reader that meets a carrier-bearing recording gets a decode error, not the typed newer-router refusal. That trade is deliberate and is recorded in the v2 doc. When a future SDK case becomes known and the mapper maps it as a real kind, THAT change is the shape change that must be born versioned.
+    3. Rebuild. An `.unknown` segment becomes a `.text` segment that carries the description. A `.unknown` kind becomes a text-only `.response` entry — `.response` is the one segments-carrying entry case whose initializer needs nothing beyond id and segments (assetIDs can be empty). Reconstruction stays total; `contentRemoved` and `missingRequiredField` refusals apply as for every other kind.
+    4. Warnings. Log through `makeModuleLogger(category: "Recording")` at record time (naming the unrecognized case via `Mirror`) and at rebuild time (naming the degradation). The test reads the warning back with `OSLogStore(scope: .currentProcessIdentifier)`, since the record-time arm is unreachable on the current SDK.
+    5. Exhaustive switches to update: `TranscriptTree.isEntryKind` (`.unknown` is an entry kind), `TranscriptEntryMapper.entry(from:kind:)`, `RoutedSessionActorRecording.emitSessionEvents` (`.unknown` yields no session event). Invariant sites in the payload: `contentByteCount`, `strippingContent()`, `redacted(with:)` all handle the new case (description counts as content, is stripped, and is redacted).
+    6. Docs: mapper type doc gains the degradation entry; plan.md "Honest fidelity scope" gains the unknown-case paragraph; `RecordingSchemaVersion.v2` doc records the version decision.
+  timestamp: 2026-08-12T06:07:15.048277+00:00
+- actor: claude-code
+  id: 01kztdjfc7xc1aqev2n2phns2m
+  text: |-
+    Implementation done, TDD (RED first: the new schema tests failed to compile with "type 'SegmentPayload' has no member 'unknown'", and the decode-path test had no `unknown` type to decode; then GREEN).
+
+    What changed:
+    - `TranscriptEvent.Kind` gains `unknown`; `SegmentPayload` gains `unknown(id:description:)` with encode/decode arms, and the new case is handled in `contentByteCount` (description counts as content), `strippingContent()` (description blanked), and `redacted(with:)` (description is a redaction site).
+    - `TranscriptEntryMapper`: both `fatalError` arms are gone. Record time maps an unknown entry to kind `.unknown` with one `.unknown` segment (entry id + `description` text) and an unknown segment to the `.unknown` carrier, each with a warning that names the case via `Mirror` (public privacy; content stays private). Rebuild time turns an `.unknown` segment into a `.text` segment and an `.unknown` kind into a text-only `.response` entry, each with a warning. `contentRemoved` and `missingRequiredField` refusals apply as for every other kind.
+    - `TranscriptTree.isEntryKind`: `.unknown` is an entry kind, so reconstruction sees it. `RoutedSessionActorRecording.emitSessionEvents`: `.unknown` yields no session event.
+    - Version decision recorded in the `RecordingSchemaVersion.v2` doc: carriers land within v2; reasoning and the known old-reader decode-error limit are stated there and in an earlier comment here.
+    - plan.md "Honest fidelity scope" gains the unknown-case paragraph; the mapper type doc lists the degradation.
+    - Tests: 4 new schema tests (decode from recorded JSON, round-trip, strip/redact, Kind round-trip) and 2 new mapper tests that assert the text degradation AND read the logged warning back through `OSLogStore(scope: .currentProcessIdentifier)` — a real assertion, not a comment. Old-recording tests (v1 line, legacy toolCall, bogus segment type still throws) all still pass.
+
+    Acceptance check: no `fatalError` remains in the mapper (grep count 0); the simulated unknown segment records without crash, rebuilds as text, and the warning is asserted; old recordings still decode.
+
+    ### implement — changed
+    - evidence: 8 files — Sources/FoundationModelsRouter/Recording/{TranscriptEvent,TranscriptEntryPayload,TranscriptEntryMapper,TranscriptTree,RecordingSchemaVersion}.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift, Tests/FoundationModelsRouterTests/{TranscriptEventSchemaTests,TranscriptEntryMapperTests}.swift, plus plan.md; `swift test` = 863+27+24 tests passed, 0 failures (1 known issue: the accepted BoundedWait one)
+    - next: /review
+  timestamp: 2026-08-12T07:21:45.607706+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
-position_column: todo
-position_ordinal: '9880'
+position_column: doing
+position_ordinal: '8180'
 title: Replace the mapper's fatalError arms with typed degradation for unknown SDK cases
 ---
 ## Problem

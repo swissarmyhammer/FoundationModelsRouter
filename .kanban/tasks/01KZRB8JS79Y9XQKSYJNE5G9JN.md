@@ -125,11 +125,28 @@ comments:
     - sweep: We examined all 40 stored properties in the file. All other properties have doc comments. The one-for-one claim on `makeRoutedSessionActor` agrees with the initializer's 29 parameters. No other doc comment in the file makes a claim that its targets do not honor.
     - next: The task is ready for /review.
   timestamp: 2026-08-12T05:53:34.898834+00:00
+- actor: claude-code
+  id: 01kzt8q4mk29e1kbh2pk98mtnv
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings, 8 validators attempted; all prior checklist items are checked
+    - next: none — the task moved to done
+  timestamp: 2026-08-12T05:56:55.571375+00:00
+- actor: claude-code
+  id: 01kzt8qvhvs5ztwgg0s2214kg7
+  text: |-
+    ### finish iteration 4 — clean
+    - implement: changed — 1 file, six stored properties documented
+    - test: green — swift test, 857 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: b53b8a8
+    - review: clean — 0 findings, scope HEAD~1..HEAD; all 4 prior findings checked
+    - result: the task is in done
+  timestamp: 2026-08-12T05:57:19.035387+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
 - 01KZREJ4MJ67R0RBFKKN9TDQ8C
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9280
 title: Make restore configuration a re-application story, not a loss list
 ---
 ## Problem

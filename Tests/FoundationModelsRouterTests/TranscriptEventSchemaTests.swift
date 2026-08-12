@@ -322,6 +322,52 @@ struct TranscriptEventSchemaTests {
         }
     }
 
+    // MARK: - Unknown-case carriers (task 9n7fna4)
+
+    @Test("the unknown segment carrier decodes from its own recorded JSON")
+    func unknownSegmentCarrierDecodes() throws {
+        // A real unknown SDK segment cannot be constructed against the
+        // current SDK, so the carrier enters through its own decode path —
+        // exactly what a recording written by a router that met a future
+        // segment case holds on disk.
+        let json = """
+        {"type":"unknown","id":"s1","description":"future segment, rendered as text"}
+        """
+        let decoded = try JSONDecoder().decode(SegmentPayload.self, from: Data(json.utf8))
+        #expect(decoded == SegmentPayload.unknown(id: "s1", description: "future segment, rendered as text"))
+    }
+
+    @Test("the unknown segment carrier round-trips id and description")
+    func unknownSegmentCarrierRoundTrips() throws {
+        let payload = TranscriptEntryPayload(
+            entryId: "e1",
+            segments: [.unknown(id: "s1", description: "future segment, rendered as text")]
+        )
+        try assertRoundTrips(payload)
+    }
+
+    @Test("the unknown segment carrier strips and redacts its description as content")
+    func unknownSegmentCarrierStripsAndRedacts() {
+        let segment = SegmentPayload.unknown(id: "s1", description: "secret future content")
+        #expect(segment.strippingContent() == .unknown(id: "s1", description: ""))
+        #expect(segment.redacted(with: { _ in "[gone]" }) == .unknown(id: "s1", description: "[gone]"))
+    }
+
+    @Test("an unknown-kind event line round-trips through Codable")
+    func unknownKindRoundTrips() throws {
+        let event = TranscriptEvent(
+            routerId: .generate(),
+            sessionId: .generate(),
+            seq: 1,
+            ts: Self.fixedInstant,
+            kind: .unknown
+        )
+        let data = try JSONEncoder().encode(event)
+        let decoded = try JSONDecoder().decode(TranscriptEvent.self, from: data)
+        #expect(decoded == event)
+        #expect(decoded.kind == .unknown)
+    }
+
     // MARK: - MergedTranscript over mixed v1/v2 files
 
     @Test("MergedTranscript.merged(under:) decodes a directory mixing v1 and v2 lines")

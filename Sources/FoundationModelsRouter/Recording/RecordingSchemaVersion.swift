@@ -40,6 +40,21 @@ public enum RecordingSchemaVersion {
     /// optional key old readers never look for, an absent key decodes as
     /// `nil`, and a `nil` envelope restores with the pre-envelope defaults —
     /// so no version bump was needed.
+    ///
+    /// The unknown-case carriers (task ^9n7fna4) also landed within v2:
+    /// ``TranscriptEvent/Kind/unknown`` and
+    /// ``SegmentPayload/unknown(id:description:)``, which record a
+    /// `Transcript.Entry` or `Transcript.Segment` case a future SDK adds. A
+    /// deliberate decision, with a known limit. This build can only write a
+    /// carrier when it runs on a future OS whose SDK has more cases than the
+    /// SDK it compiled against; on the current SDK, recordings are unchanged,
+    /// so a bump of ``current`` would make every old reader refuse every new
+    /// recording to guard against a value that cannot occur yet. The limit:
+    /// an old v2 reader that meets a carrier-bearing recording gets a decode
+    /// error rather than the typed
+    /// ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
+    /// refusal. When a future SDK case becomes known and the mapper maps it
+    /// as a real kind, that shape change must be born versioned.
     public static let v2 = 2
 
     /// The version writers stamp on every new sidecar

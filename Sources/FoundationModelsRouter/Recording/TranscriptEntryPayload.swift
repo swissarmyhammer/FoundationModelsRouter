@@ -152,6 +152,10 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
 /// string plus its content encoded to JSON, since `CustomSegment.Content` is
 /// protocol-guaranteed `Codable` — persisting a custom segment is always
 /// lossless, only *rebuilding* it needs a registry (a downstream concern).
+/// The extra ``unknown(id:description:)`` case is not one of the SDK's four —
+/// it is the carrier a segment case *added by a future SDK* records into, so
+/// an SDK addition degrades to text instead of crashing the host (see
+/// ``TranscriptEntryMapper``'s documented degradations).
 public enum SegmentPayload: Sendable, Codable, Equatable {
     /// A `Transcript.TextSegment`: plain text content.
     case text(id: String, content: String)
@@ -168,6 +172,14 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
     /// its `content` encoded to JSON, and the flattened GUI convenience
     /// description alongside — not the fidelity carrier.
     case custom(id: String, typeDiscriminator: String, contentJSON: String, description: String?)
+    /// A `Transcript.Segment` case this router build does not know — a case a
+    /// future SDK added after the mapper was written.
+    ///
+    /// Carries the segment's own `id` and the SDK value's `description` as a
+    /// best-effort text rendering; rebuild degrades it to a `.text` segment
+    /// holding that description. Never written on the current SDK, whose four
+    /// segment cases the mapper covers in full.
+    case unknown(id: String, description: String)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -186,6 +198,7 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
         case structure
         case attachment
         case custom
+        case unknown
     }
 
     /// Decodes a segment from its flattened representation, switching on the
@@ -223,6 +236,11 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
                 contentJSON: try container.decode(String.self, forKey: .contentJSON),
                 description: try container.decodeIfPresent(String.self, forKey: .description)
             )
+        case .unknown:
+            self = .unknown(
+                id: try container.decode(String.self, forKey: .id),
+                description: try container.decode(String.self, forKey: .description)
+            )
         }
     }
 
@@ -258,6 +276,10 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
             try container.encode(typeDiscriminator, forKey: .typeDiscriminator)
             try container.encode(contentJSON, forKey: .contentJSON)
             try container.encodeIfPresent(description, forKey: .description)
+        case .unknown(let id, let description):
+            try container.encode(SegmentType.unknown, forKey: .type)
+            try container.encode(id, forKey: .id)
+            try container.encode(description, forKey: .description)
         }
     }
 }
@@ -417,6 +439,12 @@ extension SegmentPayload {
             return utf8ByteCount(of: [label, url])
         case .custom:
             return 0
+        // An `.unknown` carrier counts its description: rebuild degrades it
+        // to a `.text` segment holding exactly that string, so it is
+        // model-visible on a reconstructed seed the same way `.text` content
+        // is.
+        case .unknown(_, let description):
+            return utf8ByteCount(of: [description])
         }
     }
 }
@@ -561,13 +589,16 @@ extension SegmentPayload {
             return .attachment(id: id, label: nil, url: nil)
         case .custom(let id, let typeDiscriminator, _, _):
             return .custom(id: id, typeDiscriminator: typeDiscriminator, contentJSON: "", description: nil)
+        case .unknown(let id, _):
+            return .unknown(id: id, description: "")
         }
     }
 
     /// Returns a copy with `transform` applied to this segment's textual
     /// content sites: `.text`'s `content`, `.structure`'s `contentJSON` (as an
-    /// opaque string), `.attachment`'s `label` (its `url` is untouched), and
-    /// `.custom`'s `contentJSON` (as an opaque string) and `description`.
+    /// opaque string), `.attachment`'s `label` (its `url` is untouched),
+    /// `.custom`'s `contentJSON` (as an opaque string) and `description`, and
+    /// `.unknown`'s `description`.
     ///
     /// - Parameter transform: The redaction hook applied to each content site.
     /// - Returns: A copy with this segment's textual content sites redacted.
@@ -586,6 +617,8 @@ extension SegmentPayload {
                 contentJSON: transform(contentJSON),
                 description: description.map(transform)
             )
+        case .unknown(let id, let description):
+            return .unknown(id: id, description: transform(description))
         }
     }
 }

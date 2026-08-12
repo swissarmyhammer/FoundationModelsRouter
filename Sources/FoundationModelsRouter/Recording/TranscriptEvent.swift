@@ -30,7 +30,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// v2 kinds mirror `FoundationModels.Transcript.Entry`'s own six cases —
     /// ``instructions``, ``prompt``, ``toolCalls``, ``toolOutput``,
     /// ``response``, ``reasoning`` — plus the two router-only kinds
-    /// (``session``, ``embedding``) that never enter Apple's transcript.
+    /// (``session``, ``embedding``) that never enter Apple's transcript, and
+    /// the ``unknown`` carrier for an entry case a future SDK adds.
     public enum Kind: String, Sendable, Codable, Equatable {
         /// The session was created (its first event).
         case session
@@ -59,6 +60,18 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// `Transcript.Entry.toolCalls` case. Kept only so pre-v2 recordings
         /// still decode; no longer written.
         case toolCall
+        /// A `Transcript.Entry` case this router build does not know — a case
+        /// a future SDK added after this mapper was written.
+        ///
+        /// Only ever written when the router runs on an OS whose SDK has more
+        /// entry cases than the SDK this build compiled against; on the
+        /// current SDK the mapper covers every case and never emits this. The
+        /// event's payload carries the entry's own id plus one
+        /// ``SegmentPayload/unknown(id:description:)`` segment holding the
+        /// SDK value's `description` as best-effort text, and reconstruction
+        /// degrades it to a text-only entry (see ``TranscriptEntryMapper``'s
+        /// documented degradations).
+        case unknown
     }
 
     /// The recording root id — the router instance that owns this transcript.

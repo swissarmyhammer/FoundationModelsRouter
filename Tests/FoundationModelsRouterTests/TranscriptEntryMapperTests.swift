@@ -1,6 +1,7 @@
 import CoreImage
 import Foundation
 import FoundationModels
+import OSLog
 import Testing
 
 @testable import FoundationModelsRouter
@@ -487,6 +488,58 @@ struct TranscriptEntryMapperTests {
         #expect(rebuiltImage.url == url)
     }
 
+    // MARK: - Unknown-case degradation (task 9n7fna4)
+
+    @Test("an unknown segment carrier rebuilds as the documented text degradation and logs a warning")
+    func unknownSegmentCarrierDegradesToTextAndWarns() throws {
+        // A real unknown SDK segment cannot be constructed against the
+        // current SDK, so the carrier enters through its own decode path —
+        // exactly what a recording written by a router that met a future
+        // segment case holds on disk.
+        let json = """
+        {"type":"unknown","id":"s9","description":"future segment content"}
+        """
+        let carrier = try JSONDecoder().decode(SegmentPayload.self, from: Data(json.utf8))
+        let payload = TranscriptEntryPayload(entryId: "e1", segments: [carrier], assetIds: [])
+        let logStart = Date()
+
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: .response)
+
+        guard case .response(let response) = rebuilt, case .text(let textSegment) = response.segments.first
+        else {
+            Issue.record("expected the unknown carrier to degrade to .text")
+            return
+        }
+        #expect(textSegment.id == "s9")
+        #expect(textSegment.content == "future segment content")
+        try assertWarningLogged(containing: "unknown segment carrier", since: logStart)
+    }
+
+    @Test("an unknown-kind payload rebuilds as a text-only entry and logs a warning")
+    func unknownKindRebuildsAsTextOnlyEntryAndWarns() throws {
+        // The shape record time writes for a future Transcript.Entry case:
+        // the entry's own id, plus one unknown segment carrying the SDK
+        // value's description as best-effort text.
+        let payload = TranscriptEntryPayload(
+            entryId: "e1",
+            segments: [.unknown(id: "e1", description: "future entry content")]
+        )
+        let logStart = Date()
+
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: .unknown)
+
+        guard case .response(let response) = rebuilt, case .text(let textSegment) = response.segments.first
+        else {
+            Issue.record("expected the unknown-kind payload to rebuild as a text-only entry")
+            return
+        }
+        #expect(response.id == "e1")
+        #expect(response.assetIDs.isEmpty)
+        #expect(response.segments.count == 1)
+        #expect(textSegment.content == "future entry content")
+        try assertWarningLogged(containing: "unknown entry kind", since: logStart)
+    }
+
     // MARK: - Reconstruction failures
 
     @Test("reconstruction refuses a contentRemoved payload with a typed error")
@@ -556,5 +609,20 @@ struct TranscriptEntryMapperTests {
         #expect(mappedKind == kind)
         let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: mappedKind)
         #expect(rebuilt == original)
+    }
+
+    /// Asserts this process logged, since `start`, a message under this
+    /// module's subsystem containing `fragment` — proof the unknown-case
+    /// degradation warning actually reached the log, read back through
+    /// `OSLogStore(scope: .currentProcessIdentifier)`.
+    private func assertWarningLogged(containing fragment: String, since start: Date) throws {
+        let store = try OSLogStore(scope: .currentProcessIdentifier)
+        let entries = try store.getEntries(at: store.position(date: start))
+            .compactMap { $0 as? OSLogEntryLog }
+            .filter { $0.subsystem == moduleName }
+        #expect(
+            entries.contains { $0.composedMessage.contains(fragment) },
+            "no \(moduleName) log entry since \(start) contains \"\(fragment)\""
+        )
     }
 }

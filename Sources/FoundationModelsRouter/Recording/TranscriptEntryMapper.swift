@@ -1,5 +1,12 @@
 import Foundation
 import FoundationModels
+import os
+
+/// The logger the mapper reports unknown-case degradations to — a future
+/// SDK's entry or segment case being recorded as, or rebuilt from, the
+/// best-effort text carriers (``TranscriptEvent/Kind/unknown``,
+/// ``SegmentPayload/unknown(id:description:)``).
+private let transcriptEntryMapperLogger = makeModuleLogger(category: "Recording")
 
 /// A failure reconstructing a `Transcript.Entry` from a persisted
 /// ``TranscriptEntryPayload``.
@@ -64,6 +71,16 @@ public enum TranscriptEntryReconstructionError: Error, Equatable {
 /// `ImageAttachment(imageURL:)`) degrades on rebuild to a text segment
 /// carrying the attachment's label, never a throw. `.custom` segments are
 /// **not** on this list — they round-trip via ``CustomSegmentRegistry``.
+///
+/// **Unknown future SDK cases** are the last documented degradation: an entry
+/// or segment case a future SDK adds after this mapper was written records as
+/// the ``TranscriptEvent/Kind/unknown`` kind or the
+/// ``SegmentPayload/unknown(id:description:)`` carrier — the value's `id`
+/// plus its `description` as best-effort text — with a logged warning naming
+/// the unrecognized case, never a crash. Rebuild degrades the carrier to a
+/// `.text` segment (or, for the `.unknown` kind, a text-only `.response`
+/// entry); the case's exact structure is lost until the mapper learns it.
+/// See plan.md's "Honest fidelity scope".
 public enum TranscriptEntryMapper {
     // MARK: - Encode: Transcript.Entry -> TranscriptEntryPayload
 
@@ -144,12 +161,22 @@ public enum TranscriptEntryMapper {
 
         @unknown default:
             // A future SDK release added a `Transcript.Entry` case this
-            // mapper predates — ``TranscriptEvent/Kind`` has no case for it
-            // to map to. This is a genuine "the mapper needs updating for a
-            // new SDK" situation, not a data problem a typed error is meant
-            // to describe, so it fails loudly here rather than silently
-            // discarding the entry or fabricating a kind that misdescribes it.
-            fatalError("TranscriptEntryMapper.event(from:): unhandled Transcript.Entry case \(entry)")
+            // mapper predates. A recording library must never turn an SDK
+            // addition into a crash mid-turn, so the entry degrades: it
+            // records as ``TranscriptEvent/Kind/unknown``, carrying the
+            // entry's own id and its `description` as best-effort text. The
+            // case's exact structure is lost until the mapper learns it (see
+            // plan.md "Honest fidelity scope").
+            let caseName = Mirror(reflecting: entry).children.first?.label ?? "unknown"
+            transcriptEntryMapperLogger.warning(
+                "TranscriptEntryMapper.event(from:): unrecognized Transcript.Entry case \(caseName, privacy: .public); recording as the unknown entry kind with best-effort text"
+            )
+            let description = String(describing: entry)
+            let payload = TranscriptEntryPayload(
+                entryId: entry.id,
+                segments: [.unknown(id: entry.id, description: description)]
+            )
+            return (.unknown, payload, description)
         }
     }
 
@@ -159,7 +186,9 @@ public enum TranscriptEntryMapper {
     ///
     /// - Parameters:
     ///   - payload: The structural payload to rebuild from.
-    ///   - kind: Which of the six `Transcript.Entry` cases to rebuild.
+    ///   - kind: Which of the six `Transcript.Entry` cases to rebuild, or
+    ///     ``TranscriptEvent/Kind/unknown`` for the documented text-only
+    ///     degradation.
     ///   - registry: The registered ``PersistableCustomSegment`` types a
     ///     `.custom` segment in `payload` may need to rebuild. Defaults to an
     ///     empty registry, so any `.custom` segment throws
@@ -190,6 +219,23 @@ public enum TranscriptEntryMapper {
             return .response(try rebuildResponse(payload, registry: registry))
         case .reasoning:
             return .reasoning(try rebuildReasoning(payload, registry: registry))
+        case .unknown:
+            // The documented unknown-case degradation, rebuild side: the
+            // carrier's best-effort text becomes a text-only entry, so
+            // reconstruction stays total instead of crashing or dropping the
+            // entry. `.response` is the one segments-carrying entry case
+            // whose initializer needs nothing beyond an id and segments
+            // (`assetIDs` can be empty), so it fabricates the least.
+            transcriptEntryMapperLogger.warning(
+                "TranscriptEntryMapper.entry(from:kind:): rebuilding unknown entry kind \(payload.entryId, privacy: .public) as a text-only response entry"
+            )
+            return .response(
+                Transcript.Response(
+                    id: payload.entryId,
+                    assetIDs: [],
+                    segments: try requiredSegments(payload, registry: registry)
+                )
+            )
         case .session, .embedding, .toolCall:
             throw TranscriptEntryReconstructionError.unsupportedKind(kind)
         }
@@ -363,9 +409,16 @@ public enum TranscriptEntryMapper {
         case .custom(let custom):
             return customSegmentPayload(custom)
         @unknown default:
-            // See the matching `@unknown default` in `event(from:)` above:
-            // a future SDK segment case this mapper predates.
-            fatalError("TranscriptEntryMapper: unhandled Transcript.Segment case \(segment)")
+            // See the matching `@unknown default` in `event(from:)` above: a
+            // future SDK segment case this mapper predates. Degrade to the
+            // ``SegmentPayload/unknown(id:description:)`` carrier instead of
+            // crashing; the segment's `description` is the best-effort text
+            // rebuild shows.
+            let caseName = Mirror(reflecting: segment).children.first?.label ?? "unknown"
+            transcriptEntryMapperLogger.warning(
+                "TranscriptEntryMapper.segmentPayload(_:): unrecognized Transcript.Segment case \(caseName, privacy: .public); recording as the unknown segment carrier"
+            )
+            return .unknown(id: segment.id, description: segment.description)
         }
     }
 
@@ -414,6 +467,15 @@ public enum TranscriptEntryMapper {
 
         case .custom(let id, let typeDiscriminator, let contentJSON, _):
             return try registry.rebuildSegment(discriminator: typeDiscriminator, id: id, contentJSON: contentJSON)
+
+        case .unknown(let id, let description):
+            // The documented unknown-case degradation, rebuild side: the
+            // carrier's best-effort text becomes a real `.text` segment, so
+            // reconstruction stays total and the content stays visible.
+            transcriptEntryMapperLogger.warning(
+                "TranscriptEntryMapper: rebuilding unknown segment carrier \(id, privacy: .public) as a text segment"
+            )
+            return .text(Transcript.TextSegment(id: id, content: description))
         }
     }
 
