@@ -82,6 +82,41 @@ comments:
     - evidence: 10 files — Tests/FoundationModelsRouterTests/Helpers/ScriptedMarkerTools.swift (sah:allow duplication marker on NonStringMarkerTool), Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift (new shared routerDirectory(routerId:recordingsDir:)), Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift, SessionTreeRestorationTests.swift, TranscriptReconstructionTests.swift, CompactionSegmentTests.swift, TranscriptTreeTests.swift, ForkAfterCompactionRestorationTests.swift (private routerDirectory copies removed, call sites moved to the shared helper), AutoCompactionTests.swift, GuidedGenerationTests.swift (private recencyWindowOnlyEstimate clones removed, call sites moved to the shared CompactionFoldFixtures helper). One ungated `swift test`: 942 tests (891 + 27 + 24), 0 failures.
     - next: run /review for a fresh pass over the fixes; the task stays in doing.
   timestamp: 2026-08-12T18:35:15.279213+00:00
+- actor: claude-code
+  id: 01kzvn7yxn8dxa7ryc0nw5p4ne
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (commit 3ec2566); engine counts 15 confirmed; 12 dropped by the written waiver for tests that existed before this commit; 3 open — Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:186, Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:509, Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift:251
+    - next: resolve the 3 open findings in the section "Review Findings (2026-08-12 13:36)", then run the review again
+  timestamp: 2026-08-12T18:55:04.117477+00:00
+- actor: claude-code
+  id: 01kzvn91d9n7d54pbmm2n7d7v1
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 10 files; sah:allow duplication marker on NonStringMarkerTool, shared routerDirectory helper replaces six private copies, two recencyWindowOnlyEstimate clones removed
+    - test: green — swift test, 942 tests (891 + 27 + 24), 0 failures (the one implement run is the test evidence)
+    - commit: 3ec2566
+    - review: findings — 3 open, all NEW (different from iteration 1): AutoCompactionTests.swift:186, GuidedGenerationTests.swift:509, RestoreFidelityTests.swift:251 (12 waived, pre-existing tests). Guardrail not armed: each round gives different findings.
+  timestamp: 2026-08-12T18:55:39.433067+00:00
+- actor: claude-code
+  id: 01kzvnhg9rjq0tj8jrv5v4s0kb
+  text: |-
+    Resolution of the three findings of 2026-08-12 13:36. All three make the same claim: a call to a helper in Helpers/CompactionFoldFixtures.swift is not accessible because the file is not imported. The claim conflicts with observable reality, and no code change is necessary:
+
+    1. Package.swift declares the test target with path Tests/FoundationModelsRouterTests and no exclude, so Helpers/CompactionFoldFixtures.swift compiles into the same module as the three call sites. `recencyWindowOnlyEstimate` and `driveTurns` are internal free functions, and each file of a target sees the internal declarations of the other files. Swift does not have a file-level import inside one module.
+    2. The two proposed fixes cannot compile: `import CompactionFoldFixtures` names no module, and `CompactionFoldFixtures.recencyWindowOnlyEstimate(...)` names no type (CompactionFoldFixtures is only a file name). The `RouterTestFixtures.routerDirectory()` pattern the first finding cites is different: `RouterTestFixtures` is an enum type, so its calls show a type qualifier.
+    3. Semantics check: the deleted local copies in AutoCompactionTests and GuidedGenerationTests had the same body as the shared helper (`keepRecentTurns: 4`, equal to `defaultKeepRecentTurns = 4`; verified against the diff of commit 3ec2566). `driveTurns` has exactly one definition in the repository.
+    4. Evidence: the working tree is clean at commit 3ec2566; `swift build --build-tests` is clean; ONE ungated `swift test` run gives 942 tests (891 + 27 + 24) in 100 suites, 0 failures, exit code 0. The one known issue is the pre-existing deliberate withKnownIssue in BoundedWait.
+
+    Each of the three items is checked off on the card with this evidence. The card tags were re-supplied as ["transcript"] and the description was re-verified after the update.
+  timestamp: 2026-08-12T19:00:16.824985+00:00
+- actor: claude-code
+  id: 01kzvnhr6ha6552gmxn3bt5ma1
+  text: |-
+    ### implement — no-change
+    - evidence: 0 source files changed; card description updated only (three findings checked off with evidence). The three claims are not correct: the helpers are internal free functions in the same test target (Package.swift, path Tests/FoundationModelsRouterTests, no exclude), so no import exists or is necessary. `swift build --build-tests` clean; ONE ungated `swift test`: 942 tests (891 + 27 + 24), 0 failures, exit code 0.
+    - next: run /review for a fresh pass; the task stays in doing.
+  timestamp: 2026-08-12T19:00:24.913913+00:00
 depends_on:
 - 01KZR9YPHRGDCZ26R5BH1008KB
 - 01KZR9Z6QH9WVXVSX9T6Z1MSG1
@@ -123,4 +158,25 @@ Add always-run tests (stub/scripted backends, no GPU):
 ### Waived findings (2026-08-12 13:01)
 
 - Dropped: `Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:28` (magic numbers). The line is from commit 3b0f756 (2026-08-04). This commit did not change the line. The written waiver for tests that existed before this commit applies.
-- Dropped: `Tests/FoundationModelsRouterTests/Helpers/ScriptedToolCallingModel.swift:43` (`Executor` near-duplicate of `ScriptedToolCallingModel`). The two types are from commit fe0a645 (2026-08-10). This commit did not change the anchor lines, and the duplication existed before this commit. The written waiver for tests that existed before this commit applies. #transcript
+- Dropped: `Tests/FoundationModelsRouterTests/Helpers/ScriptedToolCallingModel.swift:43` (`Executor` near-duplicate of `ScriptedToolCallingModel`). The two types are from commit fe0a645 (2026-08-10). This commit did not change the anchor lines, and the duplication existed before this commit. The written waiver for tests that existed before this commit applies.
+
+## Review Findings (2026-08-12 13:36)
+
+- [x] `Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:186` — The change deleted the private static function `recencyWindowOnlyEstimate` from this file, but line 186 still calls it directly without qualification or import. This breaks the call site because the function no longer exists in this file and is not imported from its new home in the shared fixtures. Qualify the call to use the shared version: either add `import CompactionFoldFixtures` at the top and call it directly, or call it as `CompactionFoldFixtures.recencyWindowOnlyEstimate(expectedWarmUpEntries())`. This mirrors the pattern correctly used in CompactionSegmentTests.swift and ForkAfterCompactionRestorationTests.swift where `RouterTestFixtures.routerDirectory()` is properly qualified after deletion of local copies. — **Resolved 2026-08-12, not a defect.** The claim is not correct: the call compiles and the tests pass. Package.swift puts all of Tests/FoundationModelsRouterTests, with the Helpers directory, in one test target with no exclude, so `recencyWindowOnlyEstimate` is an internal free function in the same module as this call site. Swift does not have a file-level import inside one module. `import CompactionFoldFixtures` names no module and `CompactionFoldFixtures.` names no type, so the two proposed fixes cannot compile. `RouterTestFixtures.routerDirectory()` shows a qualifier because `RouterTestFixtures` is an enum type, not an import. The deleted local copy had the same body (`keepRecentTurns: 4`, equal to `defaultKeepRecentTurns`), so the semantics did not change. Evidence: `swift build --build-tests` is clean; one ungated `swift test` run gives 942 tests (891 + 27 + 24), 0 failures, exit code 0.
+- [x] `Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:509` — The change removed the local `autoCompactionRecencyWindowOnlyEstimate` function but replaced it with a call to `recencyWindowOnlyEstimate`. This replacement function is defined in Helpers/CompactionFoldFixtures.swift, which is not imported at the top of the file, making the call inaccessible and breaking the code. Add an import for CompactionFoldFixtures at the top of the file, or verify that recencyWindowOnlyEstimate is exported from FoundationModelsRouter and accessible through the @testable import. — **Resolved 2026-08-12, not a defect.** `recencyWindowOnlyEstimate` is an internal free function in the same test target as this file, so the call needs no import and no export from FoundationModelsRouter. The removed local copy had the same body (`keepRecentTurns: 4`, equal to `defaultKeepRecentTurns`), so the semantics did not change. Evidence: `swift build --build-tests` is clean; one ungated `swift test` run gives 942 tests, 0 failures.
+- [x] `Tests/FoundationModelsRouterTests/RestoreFidelityTests.swift:251` — Line 251 calls `driveTurns`, which is defined in Helpers/CompactionFoldFixtures.swift and is not imported by this file. The call is inaccessible. Add an import for CompactionFoldFixtures to make `driveTurns` accessible. — **Resolved 2026-08-12, not a defect.** `driveTurns` is an internal free function in the same test target as this file, so the call needs no import. It has exactly one definition in the repository (Helpers/CompactionFoldFixtures.swift). Evidence: `swift build --build-tests` is clean; one ungated `swift test` run gives 942 tests, 0 failures.
+
+### Waived findings (2026-08-12 13:36)
+
+- Dropped: `Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:57` (add a Sendable invariant doc comment to `ConfiguredLLMContainer`). The line is from commit c5a6223 (2026-07-24). This commit did not change the line. The written waiver for tests that existed before this commit applies.
+- Dropped: `Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:464` (add a Sendable invariant doc comment to `ReplaceSpy`). The line is from commit c5a6223 (2026-07-24). This commit did not change the line. The same written waiver applies.
+- Dropped: `Tests/FoundationModelsRouterTests/AutoCompactionTests.swift:487` (`lastBackend` is assignOnlyProperty). The line is from commit c5a6223 (2026-07-24). This commit did not change the line or the reads of the property. The written waiver for tests that existed before this commit applies. The synthesized ==/hash waiver does not apply here, because `ReplaceSpy` is a class.
+- Dropped: `Tests/FoundationModelsRouterTests/ForkAfterCompactionRestorationTests.swift:33` (add a Sendable invariant doc comment to `RetainingLLMContainer`). The line is from commit 282a598, which came before this commit. This commit did not change the line. The written waiver for tests that existed before this commit applies.
+- Dropped: `Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:147` (remove the private `StubMetadataSource` duplicate). The line is from commit e0d1002 (2026-06-30). This commit did not change the line. The same written waiver applies.
+- Dropped: `Tests/FoundationModelsRouterTests/GuidedGenerationTests.swift:188` (remove the private `makeTempDir()` duplicate). The line is from commit e0d1002 (2026-06-30). This commit did not change the line. The same written waiver applies.
+- Dropped: `Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:28` (magic numbers). The line is from commit 3b0f756 (2026-08-04). This commit did not change the line. The same written waiver applies. The pass of 2026-08-12 13:01 also dropped this finding.
+- Dropped: `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:34` (remove the private `StubEmbeddingContainer` duplicate). The line is from commit ef4985f (2026-07-10). This commit did not change the line. The same written waiver applies.
+- Dropped: `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:43` (remove the private `StubProbe` duplicate). The line is from commit ef4985f (2026-07-10). This commit did not change the line. The same written waiver applies.
+- Dropped: `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:49` (remove the private `StubMetadataSource` duplicate). The line is from commit ef4985f (2026-07-10). This commit did not change the line. The same written waiver applies.
+- Dropped: `Tests/FoundationModelsRouterTests/TranscriptTreeTests.swift:21` (move the duplicated `CannedLLMContainer` to the shared fixtures). The line is from commit ad1cb12 (2026-07-10). This commit did not change the line. The same written waiver applies.
+- Dropped: `Tests/FoundationModelsRouterTests/TranscriptTreeTests.swift:178` (reduce the complexity of `buildBranchingTree`). The line is from commit ad1cb12 (2026-07-10). This commit did not change the line. The same written waiver applies. #transcript
