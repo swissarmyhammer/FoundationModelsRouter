@@ -90,7 +90,11 @@ struct CompactionSpikeTests {
                     Transcript.ToolCall(
                         id: "call-old-1",
                         toolName: "search",
-                        arguments: try GeneratedContent(json: #"{"query":"weather"}"#)
+                        // Properties-built, the shape a live call's arguments
+                        // take (minus the unrepresentable GenerationID) — a
+                        // json-parsed GeneratedContent never compares equal
+                        // to the rebuilt live form.
+                        arguments: GeneratedContent(properties: ["query": "weather"])
                     )
                 ]
             )
@@ -129,7 +133,6 @@ struct CompactionSpikeTests {
         .response(
             Transcript.Response(
                 id: "summary-1",
-                assetIDs: [],
                 segments: [
                     .text(
                         Transcript.TextSegment(

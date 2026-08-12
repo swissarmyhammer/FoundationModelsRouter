@@ -159,10 +159,10 @@ struct TranscriptReconstructionTests {
         private func recordResponse() {
             if let customSegment {
                 entries.append(
-                    .response(Transcript.Response(assetIDs: [], segments: [.custom(customSegment)])))
+                    .response(Transcript.Response(segments: [.custom(customSegment)])))
             } else {
                 entries.append(
-                    .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))]))
+                    .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))]))
                 )
             }
         }

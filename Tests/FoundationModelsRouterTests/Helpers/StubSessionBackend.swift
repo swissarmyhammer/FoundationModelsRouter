@@ -372,7 +372,7 @@ final class StubSessionBackend: LanguageModelSessionBackend, @unchecked Sendable
     /// cumulative `usage` grows by one turn's tokens per call.
     private func recordResponse() {
         entries.append(
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))]))
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))]))
         )
         if let usageIncrement {
             cumulativeUsage = (

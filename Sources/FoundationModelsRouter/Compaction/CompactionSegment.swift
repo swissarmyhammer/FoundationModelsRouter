@@ -257,7 +257,7 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
         }
         segments.append(.custom(CompactionSegment(content: content)))
         return .response(
-            Transcript.Response(id: entryId, assetIDs: [], segments: segments)
+            Transcript.Response(id: entryId, segments: segments)
         )
     }
 

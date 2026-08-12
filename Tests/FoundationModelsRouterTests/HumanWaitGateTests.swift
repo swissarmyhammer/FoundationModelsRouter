@@ -111,7 +111,7 @@ struct HumanWaitGateTests {
             }
             let responseText = "ok-\(prompt)"
             entries.append(
-                .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))]))
+                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))]))
             )
             await observer.exit(prompt)
             return responseText

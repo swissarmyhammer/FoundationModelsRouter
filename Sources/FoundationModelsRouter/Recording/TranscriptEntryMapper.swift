@@ -82,10 +82,21 @@ enum TranscriptEntryEncodingError: Error, Equatable {
 /// `kind` case a future SDK adds records as *no* mode, with a logged
 /// warning. The existential `metadata` dictionaries on
 /// `Prompt`/`ToolCall`/`Response`/`Reasoning` are dropped for the same
-/// payload-schema reason — and a rebuilt `.response` entry can *gain* one:
-/// `Transcript.Response(id:assetIDs:segments:)`, the only rebuildable
-/// initializer, synthesizes a `metadata["assetIDs"]` key the original entry
-/// may never have carried; that synthesis is contract, pinned by test. A
+/// payload-schema reason — and a rebuilt `.response` entry with a non-empty
+/// persisted asset-id list *gains* one: `Transcript.Response(id:assetIDs:segments:)`,
+/// the only initializer that accepts asset ids, synthesizes a
+/// `metadata["assetIDs"]` key the original entry may never have carried;
+/// that synthesis is contract, pinned by test. A response with an *empty*
+/// persisted asset-id list rebuilds through the metadata-less
+/// `Transcript.Response(id:segments:)` initializer instead, so it carries no
+/// synthesized key — the shape a live generated response with no asset ids
+/// has (also pinned by test). A live tool call's `arguments` carry a
+/// `GenerationID`, and `GenerationID`'s only public constructor is `init()`
+/// (a fresh random id, not `Codable`), so no persisted form can rebuild the
+/// same id: rebuilt tool-call arguments always carry a nil id, a permanent
+/// degradation. The arguments' *property order* is not part of that loss —
+/// every rebuilt `GeneratedContent` keeps the key order its persisted JSON
+/// carries, via ``OrderPreservingGeneratedContentDecoder``. A
 /// `Transcript.ResponseFormat` originally built from a `Generable` *type*
 /// (`ResponseFormat(type:)`) rebuilds in schema form
 /// (`ResponseFormat(schema:)` is the only rebuildable initializer, and its
@@ -269,15 +280,15 @@ public enum TranscriptEntryMapper {
             // carrier's best-effort text becomes a text-only entry, so
             // reconstruction stays total instead of crashing or dropping the
             // entry. `.response` is the one segments-carrying entry case
-            // whose initializer needs nothing beyond an id and segments
-            // (`assetIDs` can be empty), so it fabricates the least.
+            // whose initializer needs nothing beyond an id and segments, so
+            // it fabricates the least — through the metadata-less
+            // initializer, which stamps no synthesized `metadata` key.
             transcriptEntryMapperLogger.warning(
                 "TranscriptEntryMapper.entry(from:kind:): rebuilding unknown entry kind \(payload.entryId, privacy: .public) as a text-only response entry"
             )
             return .response(
                 Transcript.Response(
                     id: payload.entryId,
-                    assetIDs: [],
                     segments: try requiredSegments(payload, registry: registry)
                 )
             )
@@ -363,7 +374,14 @@ public enum TranscriptEntryMapper {
     ) throws -> Transcript.Response {
         try rebuildSegmentedEntry(payload, registry: registry, field: \.assetIds, fieldName: "assetIds") {
             id, segments, assetIds in
-            Transcript.Response(id: id, assetIDs: assetIds, segments: segments)
+            // A response with no asset ids rebuilds through the metadata-less
+            // initializer: the assetIDs-based one stamps a synthesized
+            // `metadata["assetIDs"]` key that a live generated response with
+            // no asset ids never carries (see the type doc's documented
+            // degradations).
+            assetIds.isEmpty
+                ? Transcript.Response(id: id, segments: segments)
+                : Transcript.Response(id: id, assetIDs: assetIds, segments: segments)
         }
     }
 
@@ -737,9 +755,18 @@ public enum TranscriptEntryMapper {
         }
     }
 
+    /// Decodes persisted `GeneratedContent` JSON with its document key order
+    /// intact, via ``OrderPreservingGeneratedContentDecoder`` — a plain
+    /// `GeneratedContent(json:)` parse reports a structure's property order
+    /// in arbitrary dictionary order, and the live equality the rebuilt
+    /// content must satisfy compares that order.
+    ///
+    /// - Parameters:
+    ///   - json: The persisted JSON to decode.
+    ///   - context: What the JSON is, named in the thrown error.
     private static func decodeGeneratedContent(_ json: String, context: String) throws -> GeneratedContent {
         do {
-            return try GeneratedContent(json: json)
+            return try OrderPreservingGeneratedContentDecoder.decode(json: json)
         } catch {
             throw TranscriptEntryReconstructionError.invalidJSON(context: context, underlying: String(describing: error))
         }

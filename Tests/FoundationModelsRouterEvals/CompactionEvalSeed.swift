@@ -96,7 +96,7 @@ enum CompactionEvalTurn {
             Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: text))])
         )
         let reply = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: replyText))])
+            Transcript.Response(segments: [.text(Transcript.TextSegment(content: replyText))])
         )
         guard viaTool else {
             return [prompt, reply]

@@ -135,6 +135,9 @@ struct TranscriptEntryMapperTests {
 
     @Test("a .toolCalls entry round-trips through event(from:) and entry(from:kind:)")
     func toolCallsRoundTrips() throws {
+        // Arguments are properties-built — the shape a live call's arguments
+        // take (minus the unrepresentable GenerationID). A json-parsed
+        // GeneratedContent never compares equal to the rebuilt live form.
         let original = Transcript.Entry.toolCalls(
             Transcript.ToolCalls(
                 id: "calls-1",
@@ -142,7 +145,7 @@ struct TranscriptEntryMapperTests {
                     Transcript.ToolCall(
                         id: "call-1",
                         toolName: "search",
-                        arguments: try GeneratedContent(json: #"{"query":"weather"}"#)
+                        arguments: GeneratedContent(properties: ["query": "weather"])
                     )
                 ]
             )
@@ -154,8 +157,8 @@ struct TranscriptEntryMapperTests {
     func multiCallToolCallsRoundTrips() throws {
         // Two calls in one entry — the shape a model produces when it asks
         // for two independent calls at once. Distinct ids, names, and
-        // arguments, so a rebuild that dropped, reordered, or merged calls
-        // cannot pass.
+        // arguments (properties-built, the live form), so a rebuild that
+        // dropped, reordered, or merged calls cannot pass.
         let original = Transcript.Entry.toolCalls(
             Transcript.ToolCalls(
                 id: "calls-1",
@@ -163,12 +166,12 @@ struct TranscriptEntryMapperTests {
                     Transcript.ToolCall(
                         id: "call-1",
                         toolName: "search",
-                        arguments: try GeneratedContent(json: #"{"query":"weather"}"#)
+                        arguments: GeneratedContent(properties: ["query": "weather"])
                     ),
                     Transcript.ToolCall(
                         id: "call-2",
                         toolName: "lookup",
-                        arguments: try GeneratedContent(json: #"{"value":"ONE"}"#)
+                        arguments: GeneratedContent(properties: ["value": "ONE"])
                     ),
                 ]
             )
@@ -230,7 +233,6 @@ struct TranscriptEntryMapperTests {
     func textIsFlattenedFromTextSegments() {
         let entry = Transcript.Entry.response(
             Transcript.Response(
-                assetIDs: [],
                 segments: [
                     .text(Transcript.TextSegment(content: "line one")),
                     .text(Transcript.TextSegment(content: "line two")),
@@ -250,7 +252,7 @@ struct TranscriptEntryMapperTests {
 
     @Test("event(from:) reports nil text when a response has no text segments")
     func nilTextWhenNoTextSegments() {
-        let entry = Transcript.Entry.response(Transcript.Response(assetIDs: [], segments: []))
+        let entry = Transcript.Entry.response(Transcript.Response(segments: []))
         let (_, _, text) = TranscriptEntryMapper.event(from: entry)
         #expect(text == nil)
     }
@@ -262,7 +264,6 @@ struct TranscriptEntryMapperTests {
         let originalContent = try GeneratedContent(json: #"{"temperature":72}"#)
         let original = Transcript.Entry.response(
             Transcript.Response(
-                assetIDs: [],
                 segments: [.structure(Transcript.StructuredSegment(id: "s1", schemaName: "Weather", content: originalContent))]
             )
         )
@@ -280,6 +281,67 @@ struct TranscriptEntryMapperTests {
         #expect(originalValue == rebuiltValue)
     }
 
+    @Test("a structured segment keeps its GeneratedContent property order through the round trip")
+    func structuredSegmentKeepsPropertyOrder() throws {
+        // A live structured segment's content carries its property order
+        // (`orderedKeys`), and `Transcript.StructuredSegment` equality
+        // compares it. Keys in non-alphabetical insertion order, plus a
+        // structure nested inside an array, so a rebuild that reads the
+        // order from anywhere but the persisted JSON document cannot pass.
+        let liveContent = GeneratedContent(properties: [
+            "marker": "TWO",
+            "alpha": "A",
+            "steps": GeneratedContent(elements: [
+                GeneratedContent(properties: ["z": "last", "a": "first"])
+            ]),
+        ])
+        let original = Transcript.Entry.toolOutput(
+            Transcript.ToolOutput(
+                id: "output-1",
+                toolName: "marker",
+                segments: [
+                    .structure(
+                        Transcript.StructuredSegment(id: "s1", schemaName: "Marker", content: liveContent))
+                ]
+            )
+        )
+        try assertRoundTrips(original, kind: .toolOutput)
+
+        let (kind, payload, _) = TranscriptEntryMapper.event(from: original)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
+        guard case .toolOutput(let rebuiltOutput) = rebuilt,
+            case .structure(let rebuiltSegment) = rebuiltOutput.segments.first,
+            case .structure(_, let rebuiltKeys) = rebuiltSegment.content.kind
+        else {
+            Issue.record("expected a rebuilt .toolOutput entry with a .structure segment")
+            return
+        }
+        #expect(rebuiltKeys == ["marker", "alpha", "steps"])
+    }
+
+    @Test("a .response with no asset ids rebuilds without a synthesized metadata key, equal to the live entry")
+    func responseWithoutAssetIDsRebuildsWithoutSynthesizedMetadata() throws {
+        // A live generated response with no asset ids carries no metadata at
+        // all, so the rebuild must not stamp a `metadata["assetIDs"]` key
+        // onto it — full entry equality holds, and the rebuilt metadata
+        // dictionary stays empty.
+        let original = Transcript.Entry.response(
+            Transcript.Response(
+                id: "response-1",
+                segments: [.text(Transcript.TextSegment(id: "s1", content: "plain text answer"))]
+            )
+        )
+        try assertRoundTrips(original, kind: .response)
+
+        let (kind, payload, _) = TranscriptEntryMapper.event(from: original)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
+        guard case .response(let rebuiltResponse) = rebuilt else {
+            Issue.record("expected a rebuilt .response entry")
+            return
+        }
+        #expect(rebuiltResponse.metadata.isEmpty)
+    }
+
     @Test("a .response entry with mixed segments (text and structure) round-trips with full entry equality")
     func mixedSegmentEntryRoundTrips() throws {
         // Two different segment kinds inside one entry, so a rebuild that
@@ -293,14 +355,16 @@ struct TranscriptEntryMapperTests {
         let original = Transcript.Entry.response(
             Transcript.Response(
                 id: "response-1",
-                assetIDs: [],
                 segments: [
                     .text(Transcript.TextSegment(id: "s1", content: "here is the weather")),
                     .structure(
                         Transcript.StructuredSegment(
                             id: "s2",
                             schemaName: "Weather",
-                            content: try GeneratedContent(json: #"{"temperature":72}"#)
+                            // Properties-built, the live form — a json-parsed
+                            // GeneratedContent never compares equal to the
+                            // rebuilt live form.
+                            content: GeneratedContent(properties: ["temperature": 72])
                         )
                     ),
                 ]
@@ -315,7 +379,7 @@ struct TranscriptEntryMapperTests {
     func customSegmentEncodesWithoutRegistry() {
         let segment = NoteSegment(id: "n1", content: Note(body: "hello"))
         let entry = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.custom(segment)])
+            Transcript.Response(segments: [.custom(segment)])
         )
         let (_, payload, _) = TranscriptEntryMapper.event(from: entry)
         guard case .custom(let id, let discriminator, let contentJSON, let description) = payload.segments?.first else {
@@ -333,7 +397,7 @@ struct TranscriptEntryMapperTests {
     func registeredCustomSegmentRoundTrips() throws {
         let segment = NoteSegment(id: "n1", content: Note(body: "hello"))
         let entry = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.custom(segment)])
+            Transcript.Response(segments: [.custom(segment)])
         )
         var registry = CustomSegmentRegistry()
         registry.register(NoteSegment.self)
@@ -361,7 +425,7 @@ struct TranscriptEntryMapperTests {
     func unregisteredCustomSegmentThrows() throws {
         let segment = NoteSegment(id: "n1", content: Note(body: "hello"))
         let entry = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.custom(segment)])
+            Transcript.Response(segments: [.custom(segment)])
         )
         let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
 
@@ -446,13 +510,35 @@ struct TranscriptEntryMapperTests {
             Issue.record("expected a rebuilt .response entry")
             return
         }
-        // The rebuilder uses the assetIDs-based initializer (there is no
-        // public initializer that accepts both `assetIDs:` and `metadata:`
-        // together), so the rebuild synthesizes a `metadata["assetIDs"]` key
-        // the original never carried. Both halves of that documented contract
-        // are pinned here: the original's own custom metadata key never
-        // survives the round trip, and the synthesized key is present.
-        #expect(rebuiltResponse.metadata["k"] == nil)
+        // The payload has no metadata field, and a response whose persisted
+        // asset-id list is empty rebuilds through the metadata-less
+        // initializer — so the original's own metadata key is gone and no
+        // key is synthesized in its place: the rebuilt dictionary is empty.
+        #expect(rebuiltResponse.metadata.isEmpty)
+    }
+
+    @Test("a .response with asset ids still synthesizes the metadata key on rebuild")
+    func responseWithAssetIDsSynthesizesMetadataKey() throws {
+        // With a non-empty asset-id list the only rebuildable initializer is
+        // the assetIDs-based one (no public initializer accepts both
+        // `assetIDs:` and `metadata:` together), and it stamps a
+        // `metadata["assetIDs"]` key. That synthesis stays a documented,
+        // pinned contract for this case.
+        let original = Transcript.Entry.response(
+            Transcript.Response(
+                id: "response-1",
+                assetIDs: ["asset-1"],
+                segments: [.text(Transcript.TextSegment(id: "s1", content: "hi"))]
+            )
+        )
+        let (kind, payload, _) = TranscriptEntryMapper.event(from: original)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
+
+        guard case .response(let rebuiltResponse) = rebuilt else {
+            Issue.record("expected a rebuilt .response entry")
+            return
+        }
+        #expect(rebuiltResponse.assetIDs == ["asset-1"])
         #expect(rebuiltResponse.metadata["assetIDs"] != nil)
     }
 
@@ -607,7 +693,6 @@ struct TranscriptEntryMapperTests {
 
         let original = Transcript.Entry.response(
             Transcript.Response(
-                assetIDs: [],
                 segments: [
                     .attachment(
                         Transcript.AttachmentSegment(id: "a1", content: .image(imageAttachment), label: "a red pixel")
@@ -639,7 +724,6 @@ struct TranscriptEntryMapperTests {
         let url = URL(fileURLWithPath: "/tmp/photo.png")
         let original = Transcript.Entry.response(
             Transcript.Response(
-                assetIDs: [],
                 segments: [
                     .attachment(
                         Transcript.AttachmentSegment(

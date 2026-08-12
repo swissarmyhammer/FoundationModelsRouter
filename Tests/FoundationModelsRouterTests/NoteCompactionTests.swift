@@ -189,7 +189,6 @@ struct NoteCompactionTests {
         .response(
             Transcript.Response(
                 id: id,
-                assetIDs: [],
                 segments: [
                     .text(Transcript.TextSegment(id: "\(id)-text", content: summaryText)),
                     .custom(

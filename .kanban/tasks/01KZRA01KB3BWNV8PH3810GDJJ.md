@@ -117,12 +117,28 @@ comments:
     - evidence: 0 source files changed; card description updated only (three findings checked off with evidence). The three claims are not correct: the helpers are internal free functions in the same test target (Package.swift, path Tests/FoundationModelsRouterTests, no exclude), so no import exists or is necessary. `swift build --build-tests` clean; ONE ungated `swift test`: 942 tests (891 + 27 + 24), 0 failures, exit code 0.
     - next: run /review for a fresh pass; the task stays in doing.
   timestamp: 2026-08-12T19:00:24.913913+00:00
+- actor: claude-code
+  id: 01kzvnnhgx6bedm13kre1bbx0w
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit c6d7a82, kanban-card-only change); 0 findings, 0 confirmed, 0 refuted. All 7 prior finding items on the card show `- [x]`.
+    - next: none. The task moved doing -> review -> done.
+  timestamp: 2026-08-12T19:02:29.149095+00:00
+- actor: claude-code
+  id: 01kzvnpkc80cmhe5hsdk7swqmy
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: no-change — the three round-2 findings conflict with observable reality (the shared test helpers compile in the same module; the proposed import fix cannot compile); each item checked off with evidence
+    - test: green — swift test, 942 tests (891 + 27 + 24), 0 failures (the one implement run is the test evidence)
+    - commit: c6d7a82 (card evidence only)
+    - review: clean — 0 findings on HEAD~1..HEAD; all 7 prior finding items checked; task moved to done
+  timestamp: 2026-08-12T19:03:03.816759+00:00
 depends_on:
 - 01KZR9YPHRGDCZ26R5BH1008KB
 - 01KZR9Z6QH9WVXVSX9T6Z1MSG1
 - 01KZRAH9TQCGSJYTENYXSGJNEY
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9b80
 title: 'Restore fidelity tests: rich content, multi-fold, driven forks'
 ---
 ## Problem

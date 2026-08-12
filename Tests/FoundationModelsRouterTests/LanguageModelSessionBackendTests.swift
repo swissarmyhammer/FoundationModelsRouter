@@ -311,7 +311,7 @@
                 ),
                 .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "first"))])),
                 .response(
-                    Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))])
+                    Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))])
                 ),
                 .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "second"))])),
             ]

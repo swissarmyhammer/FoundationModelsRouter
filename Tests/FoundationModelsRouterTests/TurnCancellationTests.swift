@@ -233,7 +233,7 @@ struct TurnCancellationTests {
                 $0.append(
                     .response(
                         Transcript.Response(
-                            assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))]))
+                            segments: [.text(Transcript.TextSegment(content: responseText))]))
                 )
             }
         }
@@ -604,7 +604,7 @@ struct TurnCancellationTests {
                 .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])),
                 .response(
                     Transcript.Response(
-                        assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok-\(prompt)"))])),
+                        segments: [.text(Transcript.TextSegment(content: "ok-\(prompt)"))])),
             ]
         }
     }

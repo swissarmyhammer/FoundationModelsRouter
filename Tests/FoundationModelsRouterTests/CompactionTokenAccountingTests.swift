@@ -122,7 +122,7 @@ struct CompactionTokenAccountingTests {
                     )
                 )
             }
-            return .response(Transcript.Response(id: "boundary", assetIDs: [], segments: segments))
+            return .response(Transcript.Response(id: "boundary", segments: segments))
         }
 
         let withSegment = Compactor.estimatedTokenCount(of: Transcript(entries: [boundaryEntry(includingCompactionSegment: true)]))

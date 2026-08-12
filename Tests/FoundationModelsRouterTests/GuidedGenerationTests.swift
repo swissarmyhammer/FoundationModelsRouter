@@ -491,7 +491,7 @@ struct GuidedGenerationTests {
                 .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn \(index)"))])),
                 .response(
                     Transcript.Response(
-                        assetIDs: [], segments: [.text(Transcript.TextSegment(content: autoCompactionCannedText))])),
+                        segments: [.text(Transcript.TextSegment(content: autoCompactionCannedText))])),
             ]
         }
     }

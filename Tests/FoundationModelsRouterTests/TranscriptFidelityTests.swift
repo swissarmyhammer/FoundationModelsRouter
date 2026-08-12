@@ -407,7 +407,7 @@ struct TranscriptFidelityTests {
         // persists both and advances `persistedEntryCount` to 2.
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
         ]
         _ = try await session.respond(to: "turn1")
 
@@ -440,7 +440,7 @@ struct TranscriptFidelityTests {
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))])),
             .toolCalls(Transcript.ToolCalls([toolCall])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
         ]
         _ = try await session.respond(to: "turn3")
 
@@ -470,7 +470,7 @@ struct TranscriptFidelityTests {
         // turn 1 but driven through streamResponse(to:) instead.
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
         ]
         for try await _ in await session.streamResponse(to: "turn1") {}
 
@@ -501,7 +501,7 @@ struct TranscriptFidelityTests {
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "post-shrink prompt"))])),
             .toolCalls(Transcript.ToolCalls([toolCall])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
         ]
         for try await _ in await session.streamResponse(to: "turn3") {}
 
@@ -531,7 +531,7 @@ struct TranscriptFidelityTests {
         // real `.response` entry, but `respond` still throws.
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "will fail"))])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "got this far"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "got this far"))])),
         ]
         container.backend.shouldThrow = true
 
@@ -573,7 +573,7 @@ struct TranscriptFidelityTests {
         // the same double-close regression must not reappear there either.
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "will fail"))])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "got this far"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "got this far"))])),
         ]
         container.backend.shouldThrow = true
 

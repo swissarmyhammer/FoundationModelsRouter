@@ -71,7 +71,6 @@ enum TranscriptFixtures {
             .response(
                 Transcript.Response(
                     id: "response-\(index)",
-                    assetIDs: [],
                     segments: [.text(Transcript.TextSegment(id: "response-\(index)-text", content: responseText))]
                 )
             )

@@ -64,7 +64,7 @@ struct PromptQueueTests {
             entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
             entries.append(
                 .response(
-                    Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))])))
+                    Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])))
             return responseText
         }
 

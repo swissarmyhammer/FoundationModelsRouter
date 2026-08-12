@@ -146,7 +146,6 @@ struct CompactionSegmentTests {
         let original = Transcript.Entry.response(
             Transcript.Response(
                 id: "summary-1",
-                assetIDs: [],
                 segments: [
                     .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: ...")),
                     .custom(segment),
@@ -247,7 +246,6 @@ struct CompactionSegmentTests {
             .response(
                 Transcript.Response(
                     id: "summary-1",
-                    assetIDs: [],
                     segments: [
                         .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: prior turns folded.")),
                         .custom(CompactionSegment(id: "compaction-1", content: content)),
@@ -559,7 +557,7 @@ struct CompactionSegmentTests {
 
         let content = Self.makeContent()
         let entry = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.custom(CompactionSegment(id: "c1", content: content))])
+            Transcript.Response(segments: [.custom(CompactionSegment(id: "c1", content: content))])
         )
         let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
         let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: registry)
@@ -579,10 +577,10 @@ struct CompactionSegmentTests {
 
         let compactionContent = Self.makeContent()
         let compactionEntry = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.custom(CompactionSegment(id: "c1", content: compactionContent))])
+            Transcript.Response(segments: [.custom(CompactionSegment(id: "c1", content: compactionContent))])
         )
         let noteEntry = Transcript.Entry.response(
-            Transcript.Response(assetIDs: [], segments: [.custom(NoteSegment(id: "n1", content: Note(body: "hello")))])
+            Transcript.Response(segments: [.custom(NoteSegment(id: "n1", content: Note(body: "hello")))])
         )
 
         for (entry, assertion): (Transcript.Entry, (Transcript.Entry) -> Void) in [

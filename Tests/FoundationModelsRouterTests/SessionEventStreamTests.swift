@@ -259,7 +259,7 @@ struct SessionEventStreamTests {
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "hi"))])),
             .response(
                 Transcript.Response(
-                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "hello world"))])),
+                    id: "resp-1", segments: [.text(Transcript.TextSegment(content: "hello world"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "hi"))
@@ -299,7 +299,7 @@ struct SessionEventStreamTests {
             ),
             .response(
                 Transcript.Response(
-                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "it's sunny"))])),
+                    id: "resp-1", segments: [.text(Transcript.TextSegment(content: "it's sunny"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "weather?"))
@@ -342,7 +342,7 @@ struct SessionEventStreamTests {
             ),
             .response(
                 Transcript.Response(
-                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "done"))])),
+                    id: "resp-1", segments: [.text(Transcript.TextSegment(content: "done"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "compare weather"))
@@ -399,7 +399,7 @@ struct SessionEventStreamTests {
             ),
             .response(
                 Transcript.Response(
-                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "done"))])),
+                    id: "resp-1", segments: [.text(Transcript.TextSegment(content: "done"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "compare weather"))
@@ -435,7 +435,7 @@ struct SessionEventStreamTests {
                     ]
                 )
             ),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "search something"))
@@ -462,7 +462,7 @@ struct SessionEventStreamTests {
                     segments: [.text(Transcript.TextSegment(content: "the user wants the weather"))]
                 )
             ),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))])),
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "weather?"))
@@ -481,7 +481,7 @@ struct SessionEventStreamTests {
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
         container.backend.usageIncrement = (input: 10, output: 5)
         container.backend.entries = [
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))]))
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))]))
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "hi"))
@@ -499,7 +499,7 @@ struct SessionEventStreamTests {
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
         container.backend.entries = [
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))]))
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "ok"))]))
         ]
 
         let events = try await Self.collect(session.streamEvents(to: "hi"))
@@ -528,7 +528,7 @@ struct SessionEventStreamTests {
             ),
             .response(
                 Transcript.Response(
-                    id: "resp-1", assetIDs: [], segments: [.text(Transcript.TextSegment(content: "ok"))])),
+                    id: "resp-1", segments: [.text(Transcript.TextSegment(content: "ok"))])),
         ]
 
         var collected: [SessionEvent] = []
@@ -565,7 +565,7 @@ struct SessionEventStreamTests {
         container.backend.responseChunks = ["hello"]
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "hi"))])),
-            .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: "hello"))])),
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "hello"))])),
         ]
 
         _ = try await Self.collect(session.streamEvents(to: "hi"))

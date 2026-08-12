@@ -156,7 +156,7 @@ struct AutoCompactionTests {
             [
                 .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn \(index)"))])),
                 .response(
-                    Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: cannedText))])),
+                    Transcript.Response(segments: [.text(Transcript.TextSegment(content: cannedText))])),
             ]
         }
     }
@@ -409,7 +409,7 @@ struct AutoCompactionTests {
                 [
                     .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "seed turn \(index)"))])),
                     .response(
-                        Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))])),
+                        Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])),
                 ]
             }
         }
@@ -423,7 +423,7 @@ struct AutoCompactionTests {
             }
             entries.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
             entries.append(
-                .response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: responseText))])))
+                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))])))
             return responseText
         }
 

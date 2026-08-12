@@ -15,7 +15,7 @@ import Testing
 ///    `.reasoning` entry — runs through the production
 ///    ``MLXFoundationModelsSessionBackend``, is reconstructed from disk, and
 ///    must equal the live transcript's record-time canonical form entry for
-///    entry (see ``canonicalized(_:)`` for the three live-only facets no
+///    entry (see ``canonicalized(_:)`` for the one live-only facet no
 ///    persisted form can keep). The transcript carries all six entry kinds.
 /// 2. **Multi-fold restore.** A live session folds twice through the
 ///    model-assisted `Summarization` stage (the stub backend is the scripted
@@ -101,33 +101,34 @@ struct RestoreFidelityTests {
         }
     }
 
-    /// `entries` in record-time canonical form: each mapped to its on-disk
-    /// payload and rebuilt, in memory — exactly what recording keeps of a
-    /// live entry, with no disk in the loop.
+    /// `entries` with each `.toolCalls` entry — and only those — mapped to
+    /// its on-disk payload and rebuilt, in memory: exactly what recording
+    /// keeps of a live tool-call entry, with no disk in the loop.
     ///
-    /// Three facets of a LIVE entry are not representable on disk today, so
-    /// a reconstruction cannot equal the raw live transcript whenever a tool
-    /// call ran (task ^ja94kb6 tracks the two fixable ones):
-    /// - a live tool call's `arguments` carry a `GenerationID`, and
-    ///   `GenerationID` has no value-preserving public constructor, so no
-    ///   persisted form can rebuild it (permanent);
-    /// - a live structured segment's `GeneratedContent` carries its property
-    ///   order, which the mapper's `GeneratedContent(json:)` rebuild drops
-    ///   (fixable);
-    /// - a rebuilt `.response` synthesizes a `metadata["assetIDs"]` key a
-    ///   live generated response never carries (fixable).
+    /// One facet of a LIVE entry is not representable on disk, so a
+    /// reconstruction cannot equal the raw live transcript whenever a tool
+    /// call ran: a live tool call's `arguments` carry a `GenerationID`, and
+    /// `GenerationID` has no value-preserving public constructor, so no
+    /// persisted form can rebuild it (permanent — see the mapper's
+    /// documented degradations). Task ^ja94kb6 closed the other two facets
+    /// this helper used to absorb (structure property order, a synthesized
+    /// `metadata["assetIDs"]` key), so every non-`.toolCalls` entry is
+    /// returned RAW and the comparison holds the reconstruction to full live
+    /// equality for it.
     ///
-    /// Comparing a disk reconstruction against this form still holds every
-    /// entry, every segment, and every persisted field to full equality, and
-    /// any loss on the disk path itself — encode, JSONL, decode, checkpoint
+    /// Comparing a disk reconstruction against this form holds every entry,
+    /// every segment, and every persisted field to full equality, and any
+    /// loss on the disk path itself — encode, JSONL, decode, checkpoint
     /// stitching — fails the comparison, because this form never touches
     /// disk.
     ///
     /// - Parameter entries: The live transcript entries to canonicalize.
-    /// - Returns: The entries the mapper's round trip keeps, in order.
+    /// - Returns: The entries, with `.toolCalls` in the mapper's round-trip
+    ///   form and every other entry untouched, in order.
     /// - Throws: Whatever the mapper's rebuild throws.
     private static func canonicalized(_ entries: [Transcript.Entry]) throws -> [Transcript.Entry] {
         try entries.map { entry in
+            guard case .toolCalls = entry else { return entry }
             let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
             return try TranscriptEntryMapper.entry(from: payload, kind: kind)
         }
@@ -212,8 +213,8 @@ struct RestoreFidelityTests {
         // live transcript's record-time canonical form, entry for entry —
         // the text tests' entry-array equality check, now over rich content.
         // Raw live equality is unreachable for a tool turn: see
-        // ``canonicalized(_:)`` for the three live-only facets no persisted
-        // form can keep, and task ^ja94kb6 for the two fixable ones.
+        // ``canonicalized(_:)`` for the one live-only facet no persisted
+        // form can keep — a live tool call's arguments GenerationID.
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
         let reconstructed = try tree.effectiveTranscript(forSession: session.id)

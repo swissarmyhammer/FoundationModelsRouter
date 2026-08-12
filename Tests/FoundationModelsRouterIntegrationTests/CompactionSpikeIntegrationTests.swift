@@ -108,7 +108,6 @@ struct CompactionSpikeIntegrationTests {
         )
         let summary = Transcript.Response(
             id: "summary-1",
-            assetIDs: [],
             segments: [
                 .text(
                     Transcript.TextSegment(
