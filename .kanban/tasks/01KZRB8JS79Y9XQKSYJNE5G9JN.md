@@ -69,6 +69,37 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Recording/SessionSidecar.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift; swift test: 908 tests passed, 0 failures, 1 accepted known issue
     - next: /review
   timestamp: 2026-08-12T05:21:14.395494+00:00
+- actor: claude-code
+  id: 01kzt75gnevd98eacjwcp8jpfe
+  text: |-
+    ### review — findings
+    - evidence: 1 finding — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18 (scope: review sha HEAD~1..HEAD; counts: 1 confirmed, 8 refuted)
+    - next: correct the open finding in the new "## Review Findings (2026-08-12 00:22)" section, then run the review again
+  timestamp: 2026-08-12T05:29:49.486210+00:00
+- actor: claude-code
+  id: 01kzt7669rza57anfhcg0fh8tz
+  text: |-
+    ### finish iteration 2 — findings
+    - implement: changed — 2 files, both prior findings fixed and the cause swept
+    - test: green — swift test, 857 + 27 + 24 passed, 1 accepted known issue (BoundedWait); the one green run in the implement step is the test evidence
+    - commit: b9c4d7a
+    - review: findings — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18 (the `- Parameters:` block must list each parameter with nested entries, or be removed in favor of prose that points to the init documentation). This is a new finding, not a repeat: iteration 1 flagged the stale symbol link at the same location; this flags the block format.
+  timestamp: 2026-08-12T05:30:11.640727+00:00
+- actor: claude-code
+  id: 01kzt7m3fvbbne771r6etmp2mq
+  text: |-
+    Iteration 3: the open finding is corrected.
+
+    The validator rule (swift/documentation): one parameter uses an inline `- Parameter name:` entry; two or more parameters use a `- Parameters:` block with nested names. A `- Parameters:` marker followed by prose is not permitted. The fix uses option (2) from the finding: the `- Parameters:` marker on `makeRoutedSessionActor` is removed. Prose now says that each parameter agrees one-for-one with a parameter of the `RoutedSessionActor` initializer, with the full symbol link kept. The `- Returns:` entry stays because the result is not `Void`.
+
+    Sweep result for the same cause across the five files this task touched (RoutedSessionActor.swift, SessionSidecar.swift, SessionTreeRestoration.swift, RoutedLLM.swift, RecordingSchemaVersion.swift): every other `- Parameters:` block has correct nested entries, and every inline `- Parameter name:` entry documents a one-parameter function with the internal name. The line-18 block was the only violation.
+
+    Verification: `swift build` clean, then one `swift test` run — 857 + 27 + 24 tests passed, 0 failures, 1 known issue (the accepted BoundedWait), and only the accepted mlx-swift "missing creator" warning.
+
+    ### implement — changed
+    - evidence: 1 file — Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift; swift test: 908 tests passed, 0 failures, 1 accepted known issue
+    - next: /review
+  timestamp: 2026-08-12T05:37:47.515948+00:00
 depends_on:
 - 01KZRB8W3SADG2MHP3B2GTD3DM
 - 01KZREJ4MJ67R0RBFKKN9TDQ8C
@@ -96,4 +127,8 @@ A restored session silently loses its behavioral configuration: compaction budge
 ## Review Findings (2026-08-12 00:02)
 
 - [x] `Sources/FoundationModelsRouter/Recording/SessionSidecar.swift:319` — Force unwrap (`!`) appears in non-test code—violates the rule that forbids force unwraps outside tests. Use `guard let` or `??` to safely handle the optional result, or if this is guaranteed to succeed at compile time, use a safe failable initializer pattern: `CodingUserInfoKey(rawValue: "SessionSidecar.sidecarDirectory") ?? CodingUserInfoKey(rawValue: "fallback")` or refactor to avoid the force unwrap.
-- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18` — Symbol link in doc comment is incomplete—missing the `recordingRoot:` parameter that was added to the init signature. Update the symbol link from `init(…:agentSpawn:discoveryPriming:)` to `init(…:agentSpawn:discoveryPriming:recordingRoot:)` to match the actual init signature. #transcript
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18` — Symbol link in doc comment is incomplete—missing the `recordingRoot:` parameter that was added to the init signature. Update the symbol link from `init(…:agentSpawn:discoveryPriming:)` to `init(…:agentSpawn:discoveryPriming:recordingRoot:)` to match the actual init signature.
+
+## Review Findings (2026-08-12 00:22)
+
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift:18` — The `- Parameters:` documentation block should list each parameter with its name and description using nested entries, not reference another symbol with prose. Either (1) list each parameter explicitly with nested entries (e.g., `- profile: ...`, `- routerId: ...`), or (2) remove the `- Parameters:` block entirely and describe the relationship in prose without the parameter documentation marker. Since this function forwards all parameters unchanged to the init, option (2) might be cleaner: replace lines 18-19 with prose like `/// Each parameter corresponds one-to-one with a parameter of ``RoutedSessionActor/init(...)`` — see that initializer's documentation for details.` #transcript
