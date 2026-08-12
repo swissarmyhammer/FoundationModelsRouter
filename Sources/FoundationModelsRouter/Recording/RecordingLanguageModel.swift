@@ -3,7 +3,8 @@ import FoundationModels
 import os
 
 /// The logger ``RecordingLanguageModelState`` reports a defensively-clamped
-/// transcript shrink to (see ``RecordingLanguageModelState/diffAndRecord(current:usage:)``)
+/// transcript shrink or a detected non-append divergence to (see
+/// ``RecordingLanguageModelState/diffAndRecord(current:usage:)``)
 /// — mirrors ``RoutedSessionActor``'s own `sessionRecordingLogger` in
 /// Session/RoutedSessionActorRecording.swift, kept as a separate constant since
 /// that one is `private` to its own file.
@@ -559,6 +560,14 @@ actor RecordingLanguageModelState {
     /// ``lastSeen`` — nothing guarantees the SDK's transcript stays
     /// strictly append-only forever.
     ///
+    /// A non-append change that is not a shrink — a mid-transcript
+    /// insertion, or a rewrite of an already-recorded entry — is detected by
+    /// ``TranscriptDiffer/divergence(lastSeen:current:)`` before the
+    /// positional diff runs, and answered with the documented loud signal
+    /// (see ``TranscriptDiffer/Divergence``): a warning log plus one
+    /// recorded ``TranscriptEvent/Kind/divergence`` marker event, nothing
+    /// recorded for this call, and ``lastSeen`` reset to `current`.
+    ///
     /// When `usage` is non-nil, it is stamped as `tokensIn`/`tokensOut` (via
     /// ``TranscriptEvent/Partial/stampingUsage(tokensIn:tokensOut:)``) onto
     /// the *last* `.response`-kind partial this diff produced — mirroring
@@ -580,6 +589,24 @@ actor RecordingLanguageModelState {
                 \(self.sessionId.description, privacy: .public); recording no entries for this call and \
                 resetting the baseline
                 """
+            )
+            lastSeen = current
+            return
+        }
+        if let divergence = TranscriptDiffer.divergence(lastSeen: lastSeen, current: current) {
+            recordingLanguageModelLogger.warning(
+                """
+                \(divergence.description, privacy: .public) for handle \
+                \(self.sessionId.description, privacy: .public); recording a divergence marker instead \
+                of a wrong diff and resetting the baseline
+                """
+            )
+            await recorder.append(
+                TranscriptEvent.Partial(
+                    routerId: routerId, sessionId: sessionId, parentId: parentId, slot: slot, model: model,
+                    kind: .divergence, text: divergence.description
+                ),
+                to: recordingDirectory
             )
             lastSeen = current
             return

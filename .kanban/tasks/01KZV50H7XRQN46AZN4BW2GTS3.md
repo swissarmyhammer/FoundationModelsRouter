@@ -20,8 +20,24 @@ comments:
     - evidence: 4 files changed. Sources/FoundationModelsRouter/RoutedLLM.swift — makeLanguageModel(resuming:) computes tree.effectiveEntryEvents(forSession:).count and writes it as forkedAtHistoryOrdinal; makeRecordingLanguageModelHandle threads the new parameter. Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift — RecordingLanguageModelState stores forkedAtHistoryOrdinal and writeSidecarIfNeeded writes it (before, it wrote nil). Sources/FoundationModelsRouter/Recording/SessionSidecar.swift — the forkedAtHistoryOrdinal doc now names the resume-handle writer. Tests/FoundationModelsRouterTests/RecordingHandleResumeTests.swift — two new tests. TDD: the compacted-resume test failed first (newestCompactionCheckpoint gave nil, because the cut selected the pre-fold span), then passed after the change. The old-recording test removes the key from the sidecar JSON and shows the legacy forkedAtEntryCount fallback stays correct. The schema stays in v2: the key is already in the v2 registry entry, and this change adds no new key. Verification: swift build --build-tests clean; one ungated swift test run — 896+27+24 tests passed, 0 failures (the 1 known issue is the pre-existing deliberate one in BoundedWait.swift).
     - next: /review
   timestamp: 2026-08-12T21:57:44.192363+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzvzykww5ryxcfrrq2d2h840
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 786c11e); 0 findings, 8 validators, 0 failed
+    - next: none. The task moved doing -> review -> done.
+  timestamp: 2026-08-12T22:02:12.252336+00:00
+- actor: claude-code
+  id: 01kzvzzabyawnaw2x1srx6416n
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files; makeLanguageModel(resuming:) writes forkedAtHistoryOrdinal from the raw effective entry-event count; two new tests (compacted resume, legacy fallback)
+    - test: green — swift test, 896 + 27 + 24 tests passed, 0 failures (the one implement run is the test evidence)
+    - commit: 786c11e
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-12T22:02:35.262503+00:00
+position_column: done
+position_ordinal: ff9d80
 title: Record the resume-handle cut in append-only history coordinates
 ---
 ## Problem

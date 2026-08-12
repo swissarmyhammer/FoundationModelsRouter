@@ -29,9 +29,10 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     ///
     /// v2 kinds mirror `FoundationModels.Transcript.Entry`'s own six cases —
     /// ``instructions``, ``prompt``, ``toolCalls``, ``toolOutput``,
-    /// ``response``, ``reasoning`` — plus the two router-only kinds
-    /// (``session``, ``embedding``) that never enter Apple's transcript, and
-    /// the ``unknown`` carrier for an entry case a future SDK adds.
+    /// ``response``, ``reasoning`` — plus the three router-only kinds
+    /// (``session``, ``embedding``, ``divergence``) that never enter Apple's
+    /// transcript, and the ``unknown`` carrier for an entry case a future SDK
+    /// adds.
     public enum Kind: String, Sendable, Codable, Equatable {
         /// The session was created (its first event).
         case session
@@ -54,6 +55,25 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         case reasoning
         /// An embedding was produced.
         case embedding
+        /// The backend's transcript changed in a non-append way against the
+        /// already-recorded baseline — an entry in the recorded prefix was
+        /// displaced (a mid-transcript insertion, or a rewrite under a new
+        /// id) or rewritten in place under its original id — so the diff for
+        /// that call was dropped rather than recorded wrong, and this marker
+        /// states the discontinuity durably (see
+        /// ``TranscriptDiffer/divergence(from:in:)`` for the detection and
+        /// the documented signal shape).
+        ///
+        /// Router-only, like ``session`` and ``embedding``: it mirrors no
+        /// `Transcript.Entry`, carries no ``TranscriptEvent/entry`` payload,
+        /// and is never entry-kind, so reconstruction and
+        /// ``RoutedSessionActor/historyOrdinal`` never see it. Its
+        /// ``TranscriptEvent/text`` holds the divergence's description, for
+        /// browsers and debugging.
+        ///
+        /// Lands within schema v2 by the same rule as ``unknown`` — see
+        /// ``RecordingSchemaVersion/v2`` for the measured limit.
+        case divergence
         /// A tool invocation was requested.
         ///
         /// Deprecated: superseded by ``toolCalls``, which mirrors the SDK's own
@@ -76,8 +96,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         /// Whether this kind mirrors a real `FoundationModels.Transcript.Entry` —
         /// one of the six named entry cases, or ``unknown``, the carrier for an
         /// entry case a future SDK added (it mirrors a real entry too, so
-        /// reconstruction must see it). The router-only ``session``/``embedding``
-        /// kinds and the legacy ``toolCall`` are not entry-kind.
+        /// reconstruction must see it). The router-only
+        /// ``session``/``embedding``/``divergence`` kinds and the legacy
+        /// ``toolCall`` are not entry-kind.
         ///
         /// This is the one predicate behind the recorded history's entry
         /// coordinates: ``TranscriptTree/effectiveEntryEvents(forSession:)``
@@ -91,7 +112,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             switch self {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
                 return true
-            case .session, .embedding, .toolCall:
+            case .session, .embedding, .divergence, .toolCall:
                 return false
             }
         }
@@ -132,7 +153,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
     /// event records, when a downstream mapper populated one.
     ///
-    /// `nil` for router-only kinds (``Kind/session``, ``Kind/embedding``), for
+    /// `nil` for router-only kinds (``Kind/session``, ``Kind/embedding``,
+    /// ``Kind/divergence``), for
     /// any event recorded before this field existed (v1), and until the
     /// mapper that maps `Transcript.Entry` to ``TranscriptEntryPayload`` is
     /// wired in (a downstream task — this field is schema only here).

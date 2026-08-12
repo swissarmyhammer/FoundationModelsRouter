@@ -37,7 +37,8 @@ public enum TranscriptEntryReconstructionError: Error, Equatable {
     case unregisteredCustomSegmentType(discriminator: String)
 
     /// `kind` is a router-only kind (``TranscriptEvent/Kind/session``,
-    /// ``TranscriptEvent/Kind/embedding``) or the legacy
+    /// ``TranscriptEvent/Kind/embedding``, ``TranscriptEvent/Kind/divergence``)
+    /// or the legacy
     /// ``TranscriptEvent/Kind/toolCall`` — none of which correspond to a real
     /// `FoundationModels.Transcript.Entry` case, so there is nothing to
     /// rebuild.
@@ -292,7 +293,7 @@ public enum TranscriptEntryMapper {
                     segments: try requiredSegments(payload, registry: registry)
                 )
             )
-        case .session, .embedding, .toolCall:
+        case .session, .embedding, .divergence, .toolCall:
             throw TranscriptEntryReconstructionError.unsupportedKind(kind)
         }
     }

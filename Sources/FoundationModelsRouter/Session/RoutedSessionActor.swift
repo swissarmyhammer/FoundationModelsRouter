@@ -370,6 +370,30 @@ actor RoutedSessionActor: RoutedSession {
     /// only grows.
     var persistedEntryCount: Int
 
+    /// The identity of the ``persistedEntryCount``-long backend prefix this
+    /// session has already persisted — the recorded entry ids plus the
+    /// boundary entry's mapped payload (``TranscriptDiffer/Baseline``) — or
+    /// `nil` when no verifiable identity exists yet.
+    ///
+    /// ``persistedEntryCount`` alone cannot detect a non-append backend
+    /// change: the chokepoint reads its "last seen" prefix out of the
+    /// *current* backend transcript, so a rewritten or displaced prefix
+    /// entry trivially matches itself. This captures what the prefix looked
+    /// like when it was recorded, so `recordTranscriptDelta` can verify it
+    /// still stands (``TranscriptDiffer/divergence(from:in:)``) before
+    /// diffing.
+    ///
+    /// `nil` at construction — a root has recorded nothing, and a fork's or
+    /// restored session's inherited prefix is established by its first
+    /// successful diff — and reset to `nil` by the shrink guard, whose count
+    /// reset makes the prefix name entries this session never recorded, so
+    /// there is no identity to verify until the next successful diff
+    /// re-establishes one. Refreshed wherever ``persistedEntryCount`` is
+    /// refreshed otherwise: after every successful diff, after a detected
+    /// divergence (to the current transcript, so later turns verify against
+    /// reality), and after a compaction fold (to the folded window).
+    var persistedBaseline: TranscriptDiffer.Baseline?
+
     /// This session's position in its own append-only recorded history: how
     /// many entry-kind events (``TranscriptEvent/Kind/isEntryKind``) its
     /// effective recorded stream holds — the inherited prefix it started

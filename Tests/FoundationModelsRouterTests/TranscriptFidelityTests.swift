@@ -510,6 +510,163 @@ struct TranscriptFidelityTests {
         #expect(events.last?.text == "turn3 response")
     }
 
+    // MARK: - Non-append divergence: loud marker, no wrong diff, recovery
+
+    @Test("an in-place rewrite of an already-recorded entry records a divergence marker, records no wrong diff, and recovers on the next turn")
+    @MainActor
+    func inPlaceRewriteRecordsDivergenceMarkerAndRecovers() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+
+        // Turn 1: two entries, both recorded. The `.response` carries an
+        // explicit id so turn 2 can rewrite it IN PLACE — same id, same
+        // count, changed content — the shape a positional diff cannot see.
+        let promptEntry = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))]))
+        let responseId = UUID().uuidString
+        container.backend.entries = [
+            promptEntry,
+            .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+        ]
+        _ = try await session.respond(to: "turn1")
+
+        var events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // Turn 2: the backend rewrites the recorded `.response` in place. The
+        // guard must record a loud `.divergence` marker and nothing else —
+        // never a duplicated or rewritten `.response` event, and never a
+        // silently-stale record with no signal at all.
+        container.backend.entries = [
+            promptEntry,
+            .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten response"))])),
+        ]
+        _ = try await session.respond(to: "turn2")
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence])
+        let marker = try #require(events.first { $0.kind == .divergence })
+        #expect(marker.text != nil)
+        #expect(marker.entry == nil)
+
+        // Turn 3: appends past the reset baseline record normally again.
+        container.backend.entries.append(
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])))
+        _ = try await session.respond(to: "turn3")
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence, .response])
+        #expect(events.last?.text == "turn3 response")
+    }
+
+    @Test("a mid-transcript insertion records a divergence marker and never re-records (duplicates) the tail")
+    @MainActor
+    func midTranscriptInsertionRecordsDivergenceMarkerWithoutDuplicatingTail() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = VariableLLMContainer()
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: container, recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        let session = profile.standard.makeSession()
+
+        // Turn 1: two entries, both recorded. The entry VALUES are kept so
+        // turn 2's insertion leaves their ids intact around the new entry.
+        let promptEntry = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))]))
+        let responseEntry = Transcript.Entry.response(
+            Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn1 response"))]))
+        container.backend.entries = [promptEntry, responseEntry]
+        _ = try await session.respond(to: "turn1")
+
+        var events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // Turn 2: the backend inserts an entry MID-transcript, so the count
+        // grows but the new entry is not at the tail. A purely positional
+        // diff would re-record the last entry (the old tail) as if it were
+        // new; the guard must record a loud `.divergence` marker instead,
+        // and must not duplicate the tail.
+        container.backend.entries = [
+            promptEntry,
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "inserted prompt"))])),
+            responseEntry,
+        ]
+        _ = try await session.respond(to: "turn2")
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence])
+        #expect(events.filter { $0.text == "turn1 response" }.count == 1)
+
+        // Turn 3: appends past the reset baseline record normally again.
+        container.backend.entries.append(
+            .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])))
+        _ = try await session.respond(to: "turn3")
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence, .response])
+        #expect(events.last?.text == "turn3 response")
+    }
+
+    @Test("a bare handle whose synced transcript rewrites an entry in place records a divergence marker, records no wrong diff, and recovers on the next sync")
+    @MainActor
+    func handleInPlaceRewriteRecordsDivergenceMarkerAndRecovers() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recorder = InMemoryRecorder()
+        let router = Self.makeRouter(container: UndrivenLanguageModelContainer(), recorder: recorder, cacheDir: dir)
+        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
+
+        // The bare-handle sibling of the two session-path tests above:
+        // `sync(_:)` runs the same last-seen-vs-current diff, so the same
+        // guard must fire there. Entries are fabricated directly (see
+        // CompactionSegmentTests' resume test for the same technique).
+        let handle = profile.standard.makeLanguageModel()
+        let promptEntry = Transcript.Entry.prompt(
+            Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn1 prompt"))]))
+        let responseId = UUID().uuidString
+        await handle.sync(
+            Transcript(entries: [
+                promptEntry,
+                .response(Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "turn1 response"))])),
+            ]))
+
+        var events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response])
+
+        // Sync 2: the same transcript with its `.response` rewritten in
+        // place — same id, same count, changed content.
+        let rewrittenResponse = Transcript.Entry.response(
+            Transcript.Response(id: responseId, segments: [.text(Transcript.TextSegment(content: "rewritten response"))]))
+        await handle.sync(Transcript(entries: [promptEntry, rewrittenResponse]))
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence])
+        #expect(events.filter { $0.kind == .response }.count == 1)
+
+        // Sync 3: an append past the reset baseline records normally again.
+        await handle.sync(
+            Transcript(entries: [
+                promptEntry,
+                rewrittenResponse,
+                .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: "turn3 response"))])),
+            ]))
+
+        events = await recorder.events
+        #expect(events.map(\.kind) == [.session, .prompt, .response, .divergence, .response])
+        #expect(events.last?.text == "turn3 response")
+    }
+
     // MARK: - Throwing turn whose SDK transcript already gained a real .response
 
     @Test("a turn that throws after the SDK durably appended a real .response entry records exactly one .response event")

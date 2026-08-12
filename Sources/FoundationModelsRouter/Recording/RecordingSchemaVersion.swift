@@ -68,6 +68,17 @@ public enum RecordingSchemaVersion {
     /// ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
     /// refusal. When a future SDK case becomes known and the mapper maps it
     /// as a real kind, that shape change must be born versioned.
+    ///
+    /// The ``TranscriptEvent/Kind/divergence`` marker (task ^4rzxjna) lands
+    /// within v2 by the same rule as the unknown-case carriers, with the
+    /// same known limit. It is only ever written when the SDK backend makes
+    /// a non-append transcript change — an in-place rewrite or a
+    /// mid-transcript insertion — which the current SDK never does, so on
+    /// today's SDK recordings are unchanged and a bump would make every old
+    /// reader refuse every new recording to guard against a line that
+    /// cannot occur yet. An old v2 reader that meets a divergence-bearing
+    /// recording gets a decode error on that line rather than the typed
+    /// refusal.
     public static let v2 = 2
 
     /// The version writers stamp on every new sidecar

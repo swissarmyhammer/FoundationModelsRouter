@@ -917,19 +917,4 @@ struct TranscriptEntryMapperTests {
         let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: mappedKind, registry: registry)
         #expect(rebuilt == original)
     }
-
-    /// Asserts this process logged, since `start`, a message under this
-    /// module's subsystem containing `fragment` — proof a degradation warning
-    /// or an encode-failure fault actually reached the log, read back through
-    /// `OSLogStore(scope: .currentProcessIdentifier)`.
-    private func assertLogged(containing fragment: String, since start: Date) throws {
-        let store = try OSLogStore(scope: .currentProcessIdentifier)
-        let entries = try store.getEntries(at: store.position(date: start))
-            .compactMap { $0 as? OSLogEntryLog }
-            .filter { $0.subsystem == moduleName }
-        #expect(
-            entries.contains { $0.composedMessage.contains(fragment) },
-            "no \(moduleName) log entry since \(start) contains \"\(fragment)\""
-        )
-    }
 }

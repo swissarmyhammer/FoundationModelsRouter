@@ -3,7 +3,7 @@ import FoundationModels
 import os
 
 /// The logger ``RoutedSessionActor`` reports a defensively-clamped transcript
-/// shrink to (see
+/// shrink or a detected non-append divergence to (see
 /// ``RoutedSessionActor/recordTranscriptDelta(grammar:since:usage:pendingEvents:onEvent:)``).
 private let sessionRecordingLogger = makeModuleLogger(category: "Recording")
 
@@ -175,7 +175,18 @@ extension RoutedSessionActor {
     /// `TranscriptErrorHandlingPolicy` opt-in could condense or rewrite it),
     /// this logs a warning, records nothing for this turn's diff, and resets
     /// ``persistedEntryCount`` to the smaller count so the next turn diffs from
-    /// reality instead of tripping the same guard again. Otherwise the
+    /// reality instead of tripping the same guard again.
+    ///
+    /// A non-append change that is not a shrink — a mid-transcript insertion,
+    /// or a rewrite of an already-recorded entry — is detected next, by
+    /// ``TranscriptDiffer/divergence(from:in:)`` against ``persistedBaseline``
+    /// (when one is established), and answered with the documented loud
+    /// signal (see ``TranscriptDiffer/Divergence``): a warning log plus one
+    /// recorded ``TranscriptEvent/Kind/divergence`` marker event, nothing
+    /// recorded for this turn's diff, and both the count and the baseline
+    /// reset to the current transcript.
+    ///
+    /// Otherwise the
     /// last-seen (the first ``persistedEntryCount`` entries) and current (all
     /// of `entries`) states are diffed via ``TranscriptDiffer/diff(lastSeen:current:routerId:sessionId:parentId:slot:model:)``
     /// — the one diff implementation this session shares with the upcoming
@@ -254,12 +265,33 @@ extension RoutedSessionActor {
                 """
             )
             persistedEntryCount = entries.count
+            // The count now names entries this session never recorded, so no
+            // verifiable identity exists until the next successful diff
+            // re-establishes one — see ``persistedBaseline``.
+            persistedBaseline = nil
+            return (false, pendingEvents.isEmpty)
+        }
+
+        let current = Transcript(entries: entries)
+        if let baseline = persistedBaseline,
+            let divergence = TranscriptDiffer.divergence(from: baseline, in: current)
+        {
+            sessionRecordingLogger.warning(
+                """
+                \(divergence.description, privacy: .public) for session \
+                \(self.id.description, privacy: .public); recording a divergence marker instead of a \
+                wrong diff and resetting the baseline
+                """
+            )
+            await append(partial: makePartialEvent(kind: .divergence, grammar: grammar, text: divergence.description))
+            persistedEntryCount = entries.count
+            persistedBaseline = TranscriptDiffer.Baseline(transcript: current)
             return (false, pendingEvents.isEmpty)
         }
 
         let diffPartials = TranscriptDiffer.diff(
             lastSeen: Transcript(entries: entries.prefix(persistedEntryCount)),
-            current: Transcript(entries: entries),
+            current: current,
             routerId: routerId,
             sessionId: id,
             parentId: parentId,
@@ -307,6 +339,7 @@ extension RoutedSessionActor {
             onEvent?(.toolStatus(id: id, status: .failed, summary: nil))
         }
         persistedEntryCount = entries.count
+        persistedBaseline = TranscriptDiffer.Baseline(transcript: current)
         return (lastResponseIndex != nil, pendingEventsAttached)
     }
 
@@ -436,7 +469,7 @@ extension RoutedSessionActor {
             onEvent(.entryRecorded(id: entry.entryId, kind: .reasoning))
         case .response:
             onEvent(.entryRecorded(id: entry.entryId, kind: .response))
-        case .session, .instructions, .prompt, .embedding, .toolCall, .unknown:
+        case .session, .instructions, .prompt, .embedding, .divergence, .toolCall, .unknown:
             break
         }
     }

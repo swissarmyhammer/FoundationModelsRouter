@@ -460,39 +460,6 @@ struct CompactionSegmentTests {
 
     // MARK: - makeLanguageModel(resuming:), all-default arguments
 
-    /// A minimal `LanguageModel` conformer satisfying
-    /// ``LoadedLLMContainer/languageModel``'s requirement — never actually
-    /// driven in this suite, since the test below only calls
-    /// ``RecordingLanguageModel/sync(_:usage:)`` directly with a fabricated
-    /// transcript rather than driving a real `LanguageModelSession` turn.
-    private struct UndrivenLanguageModel: LanguageModel {
-        var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([]) }
-        var executorConfiguration: Executor.Configuration { Executor.Configuration() }
-
-        struct Executor: LanguageModelExecutor {
-            struct Configuration: Sendable, Hashable {}
-            typealias Model = UndrivenLanguageModel
-
-            init(configuration: Configuration) throws {}
-
-            func respond(
-                to request: LanguageModelExecutorGenerationRequest,
-                model: UndrivenLanguageModel,
-                streamingInto channel: LanguageModelExecutorGenerationChannel
-            ) async throws {
-                fatalError("UndrivenLanguageModel.Executor.respond: never driven in this suite")
-            }
-        }
-    }
-
-    private struct LanguageModelHandleContainer: PlainTranscriptStubContainer {
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            StubSessionBackend()
-        }
-
-        var languageModel: any LanguageModel { UndrivenLanguageModel() }
-    }
-
     @Test("resuming a session whose recorded transcript carries a CompactionSegment through makeLanguageModel(resuming:)'s default (routerDefault) registry succeeds with no caller configuration")
     @MainActor
     func makeLanguageModelResumingWithDefaultArgumentsRestoresCompactionSegment() async throws {
@@ -504,7 +471,7 @@ struct CompactionSegmentTests {
         }
 
         let router = Self.makeRouter(
-            container: LanguageModelHandleContainer(),
+            container: UndrivenLanguageModelContainer(),
             recorder: JSONLRecorder(directory: recordingsDir),
             cacheDir: cacheDir,
             recordingsDir: recordingsDir

@@ -1,5 +1,11 @@
 import FoundationModels
 import Foundation
+import os
+
+/// The logger ``TranscriptTree/restoreFilteredEvents(_:checkpoint:)`` reports
+/// a duplicated entry id to — restore's own loud channel, since restore has
+/// no recorder to write a marker through.
+private let transcriptReconstructionLogger = makeModuleLogger(category: "Recording")
 
 /// A failure reconstructing a `FoundationModels.Transcript` from a session's
 /// effective entry-kind events — thrown by
@@ -191,16 +197,37 @@ extension TranscriptTree {
     /// (resolved back to their recorded events) followed by everything
     /// recorded strictly after the checkpoint's own position.
     ///
+    /// **Duplicated entry ids resolve loudly, to the NEWEST event.** A
+    /// recording can carry two events with one entry id — an SDK entry-id
+    /// reuse, or an in-place rewrite recorded twice — and a live-window id
+    /// must resolve to exactly one of them. The newest event (the latest in
+    /// `events`' order) wins: it is the later write, so the earlier event's
+    /// content is superseded, and restoring the oldest would silently
+    /// resurrect content the backend had already replaced. Each duplicate is
+    /// reported to the log with the id and both events' `seq` positions —
+    /// restore has no recorder, so the log is its loud channel.
+    ///
     /// - Throws: ``TranscriptReconstructionError/checkpointEntryMissing(session:seq:entryId:)``
     ///   if a listed live-window entry id names no event `events` contains.
     static func restoreFilteredEvents(
         _ events: [TranscriptEvent],
         checkpoint: CompactionCheckpoint
     ) throws -> [TranscriptEvent] {
-        let byEntryId = Dictionary(
-            events.compactMap { event in event.entry.map { ($0.entryId, event) } },
-            uniquingKeysWith: { first, _ in first }
-        )
+        var byEntryId: [String: TranscriptEvent] = [:]
+        for event in events {
+            guard let entryId = event.entry?.entryId else { continue }
+            if let superseded = byEntryId[entryId] {
+                transcriptReconstructionLogger.warning(
+                    """
+                    duplicate entry id \(entryId, privacy: .public) in session \
+                    \(checkpoint.event.sessionId.description, privacy: .public)'s effective events, \
+                    at seq \(superseded.seq, privacy: .public) and seq \(event.seq, privacy: .public); \
+                    restoring the newest event for this id
+                    """
+                )
+            }
+            byEntryId[entryId] = event
+        }
         let liveWindow = try checkpoint.content.liveWindowEntryIds.map { entryId -> TranscriptEvent in
             guard let event = byEntryId[entryId] else {
                 throw TranscriptReconstructionError.checkpointEntryMissing(

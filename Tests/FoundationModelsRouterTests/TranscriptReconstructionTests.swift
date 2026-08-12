@@ -1035,4 +1035,57 @@ struct TranscriptReconstructionTests {
             _ = try tree.effectiveTranscript(forSession: sessionId)
         }
     }
+
+    // MARK: - Duplicate entry ids at restore resolve loudly, to the newest event
+
+    @Test("a duplicated entry id in the live-window resolution restores the newest recorded event and logs the duplicate")
+    func duplicateEntryIdRestoresNewestEventAndLogs() throws {
+        let start = Date()
+        let sessionId = ULID.generate()
+        let routerId = ULID.generate()
+
+        // Two `.response` events carrying the SAME entry id — the shape an
+        // SDK entry-id reuse (or an in-place rewrite recorded twice) leaves
+        // on disk. The later event is the later write.
+        func responseEvent(seq: Int, text: String) -> TranscriptEvent {
+            TranscriptEvent(
+                routerId: routerId,
+                sessionId: sessionId,
+                seq: seq,
+                ts: Date(timeIntervalSince1970: TimeInterval(seq)),
+                kind: .response,
+                text: text,
+                entry: TranscriptEntryPayload(
+                    entryId: "dup-1",
+                    segments: [.text(id: "dup-1-text-\(seq)", content: text)],
+                    assetIds: []
+                )
+            )
+        }
+        let superseded = responseEvent(seq: 0, text: "superseded content")
+        let newest = responseEvent(seq: 1, text: "current content")
+        let checkpointEvent = try TranscriptFixtures.compactionCheckpointEvent(
+            seq: 2, sessionId: sessionId, routerId: routerId, entryId: "checkpoint-1",
+            content: CompactionSegment.Content(
+                liveWindowEntryIds: ["dup-1", "checkpoint-1"],
+                foldedEntryIds: [],
+                tokensBefore: 100,
+                tokensAfter: 50,
+                stagesApplied: ["Summarization"],
+                promptName: "default"
+            )
+        )
+        let events = [superseded, newest, checkpointEvent]
+        let checkpoint = try #require(TranscriptTree.newestCompactionCheckpoint(in: events))
+
+        let restored = try TranscriptTree.restoreFilteredEvents(events, checkpoint: checkpoint)
+
+        // The documented winner: the live window resolves "dup-1" to the
+        // NEWEST event carrying that id, never the oldest — the later event
+        // is the later write, and the earlier one is superseded content —
+        // and the duplicate is logged with the id and both positions.
+        #expect(restored.map(\.seq) == [1, 2])
+        #expect(restored.first?.text == "current content")
+        try assertLogged(containing: "duplicate entry id dup-1", since: start)
+    }
 }

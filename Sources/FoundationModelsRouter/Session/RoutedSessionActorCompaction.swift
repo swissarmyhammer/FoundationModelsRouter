@@ -468,6 +468,10 @@ extension RoutedSessionActor {
         // boundary entry, and never rewinds: the fold changed the *context*,
         // not the session's position in its own append-only history.
         persistedEntryCount = applied.count
+        // The folded window is what the backend now holds, so its identity is
+        // what later turns' non-append-divergence checks verify against — see
+        // ``persistedBaseline``.
+        persistedBaseline = TranscriptDiffer.Baseline(transcript: applied)
         usageState = .measured(input: measuredTokensAfter, output: 0)
 
         return result
