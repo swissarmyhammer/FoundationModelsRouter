@@ -28,7 +28,7 @@ struct ToolInvocationLivenessTests {
         /// Every plain operation event posted, in post order.
         private(set) var operationEvents: [OperationEvent] = []
 
-        func post(_ event: OperationEvent) {
+        func post(event: OperationEvent) {
             operationEvents.append(event)
         }
 

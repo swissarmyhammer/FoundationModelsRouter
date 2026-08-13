@@ -194,7 +194,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 
     /// Renders the wire form of an envelope for `completionToken`.
     ///
-    /// The one definition both ``rendered`` and ``isRendered(_:)`` go through,
+    /// The one definition both ``rendered`` and ``isRendered(text:)`` go through,
     /// so recognition can never drift from rendering. Built literally — a
     /// completion token is a 26-character Crockford base32 ULID, so no
     /// escaping can ever be needed — keeping the rendering total and
@@ -227,7 +227,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     ///
     /// - Parameter text: The rendered tool output to test.
     /// - Returns: `true` iff `text` is a rendered pending envelope.
-    public static func isRendered(_ text: String) -> Bool {
+    public static func isRendered(text: String) -> Bool {
         guard text.count == renderedLength, text.hasPrefix(renderedPrefix) else {
             return false
         }
@@ -669,7 +669,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 /// The shared per-tool session-mount composition,
 /// ``sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``,
 /// extends this namespace from `Session/ToolOutputCapping.swift` — it
-/// layers `ToolOutputCapping` over ``wrapping(_:sessionID:mailbox:sink:configuration:)``,
+/// layers `ToolOutputCapping` over ``wrapping(tool:sessionID:mailbox:sink:configuration:)``,
 /// and lives beside the capping layer so this file carries no dependency
 /// on it.
 public enum ToolDetachment {
@@ -706,7 +706,7 @@ public enum ToolDetachment {
     /// - Returns: The detaching decorator around `tool` when it qualifies;
     ///   the binding-only ``ContextBindingTool`` around it otherwise.
     public static func wrapping(
-        _ tool: any Tool,
+        tool: any Tool,
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
@@ -1093,7 +1093,7 @@ private actor RunEventFunnel: OperationEventSink {
     /// synthesis decisions need, then forwards it upstream — except a
     /// second terminal for the run, which is dropped (exactly one
     /// `.completed` per run is enforced here).
-    func post(_ event: OperationEvent) async {
+    func post(event: OperationEvent) async {
         switch event.kind {
         case .completed:
             guard !hasDeliveredTerminal else { return }
@@ -1182,6 +1182,6 @@ private actor RunEventFunnel: OperationEventSink {
     /// the run posted them.
     private func enqueueUpstream(event: OperationEvent) -> Task<Void, Never> {
         let upstream = self.upstream
-        return deliveryChain.enqueue { await upstream.post(event) }
+        return deliveryChain.enqueue { await upstream.post(event: event) }
     }
 }

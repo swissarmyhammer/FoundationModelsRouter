@@ -47,7 +47,7 @@ struct ToolContextTests {
     private actor RecordingSink: OperationEventSink {
         private(set) var events: [OperationEvent] = []
 
-        func post(_ event: OperationEvent) {
+        func post(event: OperationEvent) {
             events.append(event)
         }
     }
@@ -63,7 +63,7 @@ struct ToolContextTests {
             self.response = response
         }
 
-        func post(_ event: OperationEvent) async {
+        func post(event: OperationEvent) async {
             guard let request = event.elicitation else { return }
             await mailbox.respond(elicitationId: request.elicitationId, response)
         }
@@ -354,7 +354,7 @@ struct ToolContextTests {
     @Test("elicit registers before posting: an answer arriving the instant the event is observed is delivered, never dropped")
     func elicitAnswerArrivingImmediatelyIsDelivered() async throws {
         let mailbox = SessionMailbox()
-        // The sink answers from inside `post(_:)` itself — no polling, no
+        // The sink answers from inside `post(event:)` itself — no polling, no
         // scheduling gap the registration could hide behind. If the pending
         // entry were not registered before the post, this respond would
         // no-op and elicit would suspend forever.

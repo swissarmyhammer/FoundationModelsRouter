@@ -193,7 +193,7 @@ struct SessionTreeRestorationLostRunTests {
         let profile1 = try await router1.resolve(profile: profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
         for event in journaled {
-            await root.outbox.post(event)
+            await root.outbox.post(event: event)
         }
         _ = try await root.respond(to: "hello")
 
@@ -393,7 +393,7 @@ struct SessionTreeRestorationLostRunTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
-        await root.outbox.post(Self.event(correlationID: "run-1", kind: .progress, detail: "dangling"))
+        await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "dangling"))
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
         _ = try await fork.respond(to: "fork turn")
@@ -427,14 +427,14 @@ struct SessionTreeRestorationLostRunTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
-        await root.outbox.post(Self.event(correlationID: "run-1", kind: .progress, detail: "running"))
+        await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "running"))
         _ = try await root.respond(to: "hello")
         let fork = try await root.fork(workingDirectory: nil)
         _ = try await fork.respond(to: "fork turn")
         // The completion lands in the parent only after the fork's cut point
         // was fixed — it never enters the fork's inherited prefix.
         await root.outbox.post(
-            Self.event(correlationID: "run-1", kind: .completed, detail: "exit 0", outcome: .succeeded))
+            event: Self.event(correlationID: "run-1", kind: .completed, detail: "exit 0", outcome: .succeeded))
         _ = try await root.respond(to: "parent turn two")
 
         let router2 = Self.makeRouter(id: router1.id, cacheDir: cacheDir, recordingsDir: recordingsDir)
@@ -516,7 +516,7 @@ struct SessionTreeRestorationLostRunTests {
         let router1 = Self.makeRouter(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
         let profile1 = try await router1.resolve(profile: Self.profile, reporting: ResolutionProgress())
         let root = profile1.standard.makeSession()
-        await root.outbox.post(Self.event(correlationID: "run-1", kind: .progress, detail: "812 lines so far"))
+        await root.outbox.post(event: Self.event(correlationID: "run-1", kind: .progress, detail: "812 lines so far"))
         _ = try await root.respond(to: "hello")
 
         // (2) The first restore manufactures the .lost onto the restored

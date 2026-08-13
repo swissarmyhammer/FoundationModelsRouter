@@ -11,13 +11,13 @@ public protocol OperationEventSink: Sendable {
     /// Receives one posted event.
     ///
     /// - Parameter event: The event to receive.
-    func post(_ event: OperationEvent) async
+    func post(event: OperationEvent) async
 
     /// Receives one posted ``ToolInvocationRecord`` — the binding layers post
     /// an open record immediately before each wrapped call and a close record
     /// when it returns (also on throw).
     ///
-    /// Delivery-only, unlike ``post(_:)``'s events: a record is never staged
+    /// Delivery-only, unlike ``post(event:)``'s events: a record is never staged
     /// for a future turn and never recorded to the transcript — the post-turn
     /// diff stays the recording authority. ``SessionOutbox`` forwards it to
     /// the session actor for live ``SessionEvent/toolInvocation(_:)``

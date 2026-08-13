@@ -101,7 +101,7 @@ struct DetachedRunTranscriptTests {
         let terminal = OperationEvent(
             tool: "shell", op: "run command", correlationID: token, kind: .completed,
             detail: "exit 0, 2481 lines", outcome: .succeeded)
-        await session.outbox.post(terminal)
+        await session.outbox.post(event: terminal)
 
         // No second prompt is sent: the transcript must already hold the
         // outcome.
@@ -139,7 +139,7 @@ struct DetachedRunTranscriptTests {
             Self.event(kind: .completed, detail: "exit 0"),
         ]
         for event in posted {
-            await session.outbox.post(event)
+            await session.outbox.post(event: event)
         }
 
         // The outbox coalesces the two `.progress` posts down to one pending
@@ -167,7 +167,7 @@ struct DetachedRunTranscriptTests {
         _ = try await session.respond(to: "start the long job")
 
         let terminal = Self.event(kind: .completed, detail: "exit 0, 2481 lines")
-        await session.outbox.post(terminal)
+        await session.outbox.post(event: terminal)
 
         _ = try await session.respond(to: "what happened?")
 
@@ -193,7 +193,7 @@ struct DetachedRunTranscriptTests {
         // `TranscriptTree.lostRunTerminalEvents(in:)`). A session that never
         // generates must still write no file at all, so nothing is journaled
         // here.
-        await session.outbox.post(Self.event(kind: .completed, detail: "lost"))
+        await session.outbox.post(event: Self.event(kind: .completed, detail: "lost"))
         #expect(await recorder.events.isEmpty)
 
         _ = try await session.respond(to: "what happened?")
@@ -248,7 +248,7 @@ struct DetachedRunTranscriptTests {
         let mailbox = session.mailbox
         let settling = Task { () -> OperationEvent in
             await cancelRequested.wait()
-            await outbox.post(natural)
+            await outbox.post(event: natural)
             return natural
         }
         await mailbox.park(
@@ -312,7 +312,7 @@ struct DetachedRunTranscriptTests {
         // contradictory endings for one call is what a parent-grouping view
         // would draw, so the second report must not reach the transcript.
         await session.outbox.post(
-            OperationEvent(
+            event: OperationEvent(
                 tool: "shell", op: "run command", correlationID: token, kind: .completed,
                 detail: "exit 0", outcome: .succeeded))
         bodyMayEnd.signal()

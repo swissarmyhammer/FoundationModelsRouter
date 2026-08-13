@@ -571,7 +571,7 @@ struct DiscoveryPrimingTests {
 
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "7", kind: .completed, detail: "exit 0")
-        await fixture.session.outbox.post(posted)
+        await fixture.session.outbox.post(event: posted)
 
         _ = try await fixture.session.respond(to: Self.prompt)
 

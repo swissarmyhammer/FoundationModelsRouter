@@ -46,6 +46,47 @@ comments:
 
     Option 2 is defensible if the API is going to churn anyway; doing both migrations at once is strictly cheaper than doing them separately. It is a call about API stability, not about the rule, so it is not mine to make unilaterally.
   timestamp: 2026-08-11T14:46:49.115632+00:00
+- actor: claude-code
+  id: 01kzy79gdafgkfc64xgyjky40w
+  text: |
+    ### The user withdrew the waiver. The labels are applied again.
+
+    The user selected option 2 from the comment above. The waiver is no longer in effect. Thus the three labels are now in the code.
+
+    `dbd6446` made this change. `a373129` removed it. More than 40 commits came after `a373129`. The newest is `0410871`, which made `outbox` and `mailbox` internal. A revert of `a373129` was not possible without many conflicts. Thus I made the change again against today's code. I used the diff of `dbd6446` as the guide.
+
+    ### What changed
+
+    - `OperationEventSink.post(_:)` is now `post(event:)`. This is the protocol requirement. Swift matches a conformance by the full name, thus each conformer must agree.
+    - The two conformers in the package agree: `RunEventFunnel.post(event:)` in `Hosting/DetachingTool.swift`, and the public `SessionOutbox.post(event:)`.
+    - `PendingRunEnvelope.isRendered(text:)` has the label.
+    - `ToolDetachment.wrapping(tool:sessionID:mailbox:sink:configuration:)` has the label.
+    - Each call site agrees: `sink.post(event:)` in `ToolContext`, `upstream.post(event:)` in `RunEventFunnel`, `outbox.post(event:)` in `SessionTreeRestoration`, and `isRendered(text:)` plus `wrapping(tool:)` in `ToolOutputCapping`.
+    - Six test sinks agree, not five. `ToolInvocationLivenessTests` is new since `dbd6446`. The other five are in `DetachingToolTests`, `ToolContextTests` (two sinks), `ElicitationRoutingTests`, and `PropagationProbeIntegrationTests`.
+    - Each doc reference agrees. No doc link names a symbol that does not exist.
+
+    ### What did not change, and why
+
+    `ToolContext.post(_:)`, `ToolContext.progress(_:)` and `ToolContext.elicit(_:)` keep their labels. These are callers of the sink. They are not conformers of it. No finding names them. The remaining `post(_:)` text in the code names only these symbols. `ToolOutputCapping.wrapping(tool:toTokenLimit:)` is a different function. It already had its label.
+
+    ### The downstream repository must make the same change
+
+    `OperationEventSink` is public. `FoundationModelsMultitool` conforms to it. That repository will not build until it makes this change:
+
+    - File: `FoundationModelsMultitool/Sources/FoundationModelsMultitool/Invocation/RunBinding.swift`
+    - Change `func post(_ event: OperationEvent) async` to `func post(event: OperationEvent) async`
+
+    That repository has its own board. Thus the change belongs there. Do the change together with the `^n59eb1k` migration that the repository already owes. Then the repository absorbs one break, not two.
+  timestamp: 2026-08-13T18:48:58.026573+00:00
+- actor: claude-code
+  id: 01kzy79stggge9s5wp3bsvm9zt
+  text: |
+    ### implement — changed
+
+    - evidence: 24 files, 108 insertions and 108 deletions. Sources (10): `Hosting/OperationEventSink.swift`, `Hosting/DetachingTool.swift`, `Hosting/ToolContext.swift`, `Hosting/SessionMailbox.swift`, `Session/SessionOutbox.swift`, `Session/ToolOutputCapping.swift`, `Session/RoutedSessionActorRunJournal.swift`, `Session/RoutedSessionActorRecording.swift`, `Recording/SessionTreeRestoration.swift`, `RoutedLLM.swift`. Tests (14): `DetachingToolTests`, `SessionOutboxTests`, `SessionOutboxToolWiringTests`, `ToolContextTests`, `ToolInvocationLivenessTests`, `ElicitationRoutingTests`, `DetachedRunTranscriptTests`, `PendingEventInjectionTests`, `SessionTreeRestorationLostRunTests`, `TurnCancellationTests`, `DiscoveryPrimingTests`, `PromptQueueTests`, `Helpers/ScriptedMarkerTools`, and `PropagationProbeIntegrationTests`.
+    - verification: one ungated `swift test` run. 924 tests in 87 suites passed. 27 tests in 11 suites passed. 24 tests in 5 suites passed. Zero failures. One known issue, which is the `BoundedWait` known issue that was there before. This is above the recorded baseline of 811/77 + 27/11 + 24/5. `swift build --build-tests` gives zero warnings.
+    - next: `/review`. The card stays in `doing`.
+  timestamp: 2026-08-13T18:49:07.664837+00:00
 position_column: doing
 position_ordinal: '80'
 title: Apply the three public fluent-usage labels that ^zn8n9md ticked but waived

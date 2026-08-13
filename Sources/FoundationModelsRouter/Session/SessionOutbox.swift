@@ -27,7 +27,7 @@ import FoundationModels
 ///   one. Independently of all that staging, every posted event is also
 ///   recorded in the session's transcript as it arrives, through the
 ///   ``OperationEventJournal`` ``attach(journal:)`` installs — see
-///   ``post(_:)`` for why the transcript keeps what the prompt coalesces
+///   ``post(event:)`` for why the transcript keeps what the prompt coalesces
 ///   away.
 /// - **Turn-starting prompts** (``PendingPrompt``) — full `Transcript.Prompt`s
 ///   (queued user messages), never coalesced, dispatched strictly in enqueue
@@ -47,7 +47,7 @@ import FoundationModels
 /// ``drainForDispatch()`` is the commit boundary: it hands back everything
 /// currently pending (every event, plus at most the one next-in-line prompt)
 /// and atomically empties exactly what it returned — the drain and any
-/// concurrent ``post(_:)``/``enqueue(prompt:)`` never interleave, because this
+/// concurrent ``post(event:)``/``enqueue(prompt:)`` never interleave, because this
 /// is an actor. Meant to be called from inside the session's serial-gated
 /// chokepoint, so drains never race a concurrent turn.
 ///
@@ -157,7 +157,7 @@ public actor SessionOutbox: OperationEventSink {
     /// resumed the next time either kind gains an item.
     private var wakeups: [CheckedContinuation<Void, Never>] = []
 
-    /// Where every ``post(_:)`` also records its event as it arrives, or `nil`
+    /// Where every ``post(event:)`` also records its event as it arrives, or `nil`
     /// until ``attach(journal:)`` installs one — see ``OperationEventJournal``
     /// for why this reference is weak.
     private weak var journal: (any OperationEventJournal)?
@@ -195,7 +195,7 @@ public actor SessionOutbox: OperationEventSink {
     /// has already been appended.
     ///
     /// - Parameter event: The event to post.
-    public func post(_ event: OperationEvent) async {
+    public func post(event: OperationEvent) async {
         // Enqueued before the staging decision and before any suspension, so
         // the journal's order is exactly this outbox's post order.
         let journalWrite = enqueueJournalWrite(event: event)
@@ -228,7 +228,7 @@ public actor SessionOutbox: OperationEventSink {
     /// journaling it a second time.
     ///
     /// ``RoutedSessionActor/requeueUnattachedPendingEvents(events:)`` reaches here
-    /// rather than ``post(_:)`` because a re-stage is not a new report: the
+    /// rather than ``post(event:)`` because a re-stage is not a new report: the
     /// run reported once, the journal already recorded that one report at the
     /// moment it happened, and recording it again would claim the run
     /// reported twice. An event that was never journaled at all — one posted
@@ -236,7 +236,7 @@ public actor SessionOutbox: OperationEventSink {
     /// reaches the transcript on the turn it eventually rides.
     ///
     /// - Parameter event: The event to restage, under the same coalescing
-    ///   policy ``post(_:)`` applies.
+    ///   policy ``post(event:)`` applies.
     internal func requeue(event: OperationEvent) {
         stage(event: event)
         wakeUp()
@@ -301,7 +301,7 @@ public actor SessionOutbox: OperationEventSink {
     /// Posts one ``ToolInvocationRecord`` — the ``OperationEventSink``
     /// invocation route the per-call binding layers post through.
     ///
-    /// Delivery-only, and deliberately nothing like ``post(_:)``: the record
+    /// Delivery-only, and deliberately nothing like ``post(event:)``: the record
     /// is forwarded to the attached ``ToolInvocationObserver`` for live
     /// ``SessionEvent/toolInvocation(_:)`` delivery, and to nothing else. It
     /// is never staged as a pending item and never journaled, so the
@@ -319,7 +319,7 @@ public actor SessionOutbox: OperationEventSink {
     ///
     /// The chain is what makes the transcript's order of journaled events
     /// exactly this outbox's post order. Awaiting the journal inline instead
-    /// would suspend ``post(_:)`` on this actor, letting a concurrent post of
+    /// would suspend ``post(event:)`` on this actor, letting a concurrent post of
     /// another run overtake it, and position in the transcript is the record.
     ///
     /// - Parameter event: The event to record.
@@ -332,7 +332,7 @@ public actor SessionOutbox: OperationEventSink {
     }
 
     /// Appends `event` onto ``events`` as a brand-new pending item with a
-    /// fresh ``ItemID`` — shared by every ``post(_:)`` branch that adds a
+    /// fresh ``ItemID`` — shared by every ``post(event:)`` branch that adds a
     /// pending event rather than coalescing into an existing one (a
     /// `.completed` or `.elicitation` event, always appended; a `.progress`
     /// event with no still-pending entry for its `(tool, correlationID)`
@@ -379,7 +379,7 @@ public actor SessionOutbox: OperationEventSink {
     /// recorded), so cancelling that id is a no-op reporting
     /// ``PromptQueueMutationResult/alreadySent`` rather than mutating a turn
     /// out from under it. Being an actor method, this never interleaves with
-    /// a concurrent ``drainForDispatch()``/``post(_:)``/``enqueue(prompt:)``.
+    /// a concurrent ``drainForDispatch()``/``post(event:)``/``enqueue(prompt:)``.
     ///
     /// - Parameter id: The id ``enqueue(prompt:)`` returned for the prompt to
     ///   cancel.
@@ -460,7 +460,7 @@ public actor SessionOutbox: OperationEventSink {
     ///
     /// Meant to be called from inside the session's serial-gated chokepoint,
     /// exactly like ``drainForDispatch()`` — atomic, and never interleaves
-    /// with a concurrent ``post(_:)``/``enqueue(prompt:)`` from a background
+    /// with a concurrent ``post(event:)``/``enqueue(prompt:)`` from a background
     /// tool.
     ///
     /// - Returns: Every event pending at the moment of the call, now
@@ -478,7 +478,7 @@ public actor SessionOutbox: OperationEventSink {
     ///
     /// Called only from inside the session's serial-gated chokepoint,
     /// so a drain never races a concurrent turn; being an actor method, it
-    /// also never interleaves with a concurrent ``post(_:)``/
+    /// also never interleaves with a concurrent ``post(event:)``/
     /// ``enqueue(prompt:)`` from a background tool.
     ///
     /// **The contract that binds a drain to a turn.** Every drain happens

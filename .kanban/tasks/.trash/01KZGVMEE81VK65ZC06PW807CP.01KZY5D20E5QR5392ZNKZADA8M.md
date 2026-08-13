@@ -269,6 +269,13 @@ comments:
     ### Orchestrator note — skipped in this finish batch
     This card's acceptance requires repeated full gated runs (`FM_ROUTER_INTEGRATION_TESTS=1`) as the proof. This finish batch runs under two standing constraints that forbid that evidence: no gated suites, and no repeated test runs. The card stays in `todo`, untouched. Work it in a session that permits gated runs on the real model.
   timestamp: 2026-08-12T09:27:17.792671+00:00
+- actor: claude-code
+  id: 01kzxf28yx27jh95s1996eyh8e
+  text: |-
+    ### finish batch — skipped
+    - reason: the acceptance of this card needs repeated runs of the gated suites (FM_ROUTER_INTEGRATION_TESTS), because the failure is a prompt-cache interaction between suites and it does not show in one run. The batch runs one ungated `swift test` for each task and does no repeated or soak runs, so this card cannot be proved in the batch.
+    - state: the card stays in `todo` and is ready. A person must run it with the gated suites available.
+  timestamp: 2026-08-13T11:45:35.197322+00:00
 position_column: todo
 position_ordinal: 8a80
 title: Gated tool-calling suites lose their tool call or their recall when they inherit another suite's prompt cache

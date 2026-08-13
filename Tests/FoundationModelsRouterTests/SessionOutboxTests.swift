@@ -27,9 +27,9 @@ struct SessionOutboxTests {
     @Test("N .progress posts for one correlationID pend as exactly 1 — the latest")
     func progressCoalescesToLatestPerCorrelation() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "90%"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "90%"))
 
         let pending = await outbox.pending()
         #expect(pending.events.count == 1)
@@ -39,9 +39,9 @@ struct SessionOutboxTests {
     @Test("progress coalescing is scoped per (tool, correlationID) — distinct correlations pend separately")
     func progressCoalescesOnlyWithinSameCorrelation() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "c1-a"))
-        await outbox.post(Self.event(correlationID: "c2", kind: .progress, detail: "c2-a"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "c1-b"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "c1-a"))
+        await outbox.post(event: Self.event(correlationID: "c2", kind: .progress, detail: "c2-a"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "c1-b"))
 
         let pending = await outbox.pending()
         #expect(pending.events.count == 2)
@@ -52,8 +52,8 @@ struct SessionOutboxTests {
     @Test("progress coalescing is scoped per tool — same correlationID, different tool, pend separately")
     func progressCoalescesOnlyWithinSameTool() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(tool: "shell", correlationID: "c1", kind: .progress, detail: "shell-a"))
-        await outbox.post(Self.event(tool: "notes", correlationID: "c1", kind: .progress, detail: "notes-a"))
+        await outbox.post(event: Self.event(tool: "shell", correlationID: "c1", kind: .progress, detail: "shell-a"))
+        await outbox.post(event: Self.event(tool: "notes", correlationID: "c1", kind: .progress, detail: "notes-a"))
 
         let pending = await outbox.pending()
         #expect(pending.events.count == 2)
@@ -62,10 +62,10 @@ struct SessionOutboxTests {
     @Test("interleaved .completed events all survive, in post order")
     func completedEventsAllSurviveInOrder() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "c1-progress"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "c1-done"))
-        await outbox.post(Self.event(correlationID: "c2", kind: .progress, detail: "c2-progress"))
-        await outbox.post(Self.event(correlationID: "c2", kind: .completed, detail: "c2-done"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "c1-progress"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "c1-done"))
+        await outbox.post(event: Self.event(correlationID: "c2", kind: .progress, detail: "c2-progress"))
+        await outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "c2-done"))
 
         let pending = await outbox.pending()
         // Every .completed is kept, plus each correlation's still-pending
@@ -77,8 +77,8 @@ struct SessionOutboxTests {
     @Test("a .completed after a coalesced .progress for the same correlation does not replace it")
     func completedDoesNotCoalesceWithPriorProgress() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "in flight"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "finished"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "in flight"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "finished"))
 
         let pending = await outbox.pending()
         #expect(pending.events.count == 2)
@@ -88,8 +88,8 @@ struct SessionOutboxTests {
     @Test("two .elicitation events for the same (tool, correlationID) both survive a drain")
     func elicitationEventsNeverCoalesce() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "first question"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "second question"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .elicitation, detail: "first question"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .elicitation, detail: "second question"))
 
         let drained = await outbox.drainForDispatch()
         #expect(drained.events.map(\.event.detail) == ["first question", "second question"])
@@ -98,10 +98,10 @@ struct SessionOutboxTests {
     @Test("interleaved .progress still coalesces while .elicitation events are all kept, in post order")
     func progressCoalescesAroundElicitationEvents() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "question A"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "question B"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "10%"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .elicitation, detail: "question A"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "50%"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .elicitation, detail: "question B"))
 
         let pending = await outbox.pending()
         // The two .progress posts coalesce into the first one's slot; both
@@ -113,8 +113,8 @@ struct SessionOutboxTests {
     @Test("an .elicitation never replaces a pending .progress for the same (tool, correlationID)")
     func elicitationDoesNotCoalesceWithPriorProgress() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "in flight"))
-        await outbox.post(Self.event(correlationID: "c1", kind: .elicitation, detail: "question"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "in flight"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .elicitation, detail: "question"))
 
         let pending = await outbox.pending()
         #expect(pending.events.count == 2)
@@ -126,13 +126,13 @@ struct SessionOutboxTests {
     @Test("pending() reports items with stable ids and kinds")
     func pendingReportsStableIdsAndKinds() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "first"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "first"))
         let firstPending = await outbox.pending()
         let idAfterFirstPost = try! #require(firstPending.events.first?.id)
 
         // A second .progress for the same correlation coalesces in place — the
         // stable id assigned at first enqueue does not change.
-        await outbox.post(Self.event(correlationID: "c1", kind: .progress, detail: "second"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .progress, detail: "second"))
         let secondPending = await outbox.pending()
         #expect(secondPending.events.first?.id == idAfterFirstPost)
         #expect(secondPending.events.first?.event.detail == "second")
@@ -141,8 +141,8 @@ struct SessionOutboxTests {
     @Test("every posted event gets a distinct id from every other pending item")
     func distinctEventsGetDistinctIds() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "one"))
-        await outbox.post(Self.event(correlationID: "c2", kind: .completed, detail: "two"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
+        await outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "two"))
 
         let pending = await outbox.pending()
         let ids = Set(pending.events.map(\.id))
@@ -179,8 +179,8 @@ struct SessionOutboxTests {
     @Test("drainForDispatch commits and empties every pending event")
     func drainForDispatchEmptiesEvents() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "one"))
-        await outbox.post(Self.event(correlationID: "c2", kind: .completed, detail: "two"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
+        await outbox.post(event: Self.event(correlationID: "c2", kind: .completed, detail: "two"))
 
         let drained = await outbox.drainForDispatch()
         #expect(drained.events.map(\.event.detail) == ["one", "two"])
@@ -209,7 +209,7 @@ struct SessionOutboxTests {
     @Test("drainForDispatch with no queued prompts returns nil for the prompt")
     func drainForDispatchWithNoPromptsReturnsNil() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "one"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
 
         let drained = await outbox.drainForDispatch()
         #expect(drained.prompt == nil)
@@ -219,7 +219,7 @@ struct SessionOutboxTests {
     @Test("a second drainForDispatch with nothing new pending returns empty")
     func secondDrainWithNothingNewReturnsEmpty() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "one"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "one"))
         _ = await outbox.drainForDispatch()
 
         let secondDrain = await outbox.drainForDispatch()
@@ -235,7 +235,7 @@ struct SessionOutboxTests {
         await withTaskGroup(of: Void.self) { group in
             for i in 0..<totalEvents {
                 group.addTask {
-                    await outbox.post(Self.event(correlationID: "c\(i)", kind: .completed, detail: "e\(i)"))
+                    await outbox.post(event: Self.event(correlationID: "c\(i)", kind: .completed, detail: "e\(i)"))
                 }
             }
         }
@@ -277,7 +277,7 @@ struct SessionOutboxTests {
     ///
     /// The indirection is the point: `nextEvent()` parks on a
     /// `CheckedContinuation<Void, Never>` that only a later
-    /// ``SessionOutbox/post(_:)`` or ``SessionOutbox/enqueue(prompt:)`` resumes,
+    /// ``SessionOutbox/post(event:)`` or ``SessionOutbox/enqueue(prompt:)`` resumes,
     /// and nothing can break such a wait — cancelling it does not unpark it. This
     /// target sets no `.timeLimit` trait, so a regression anywhere on the wakeup
     /// route would hang the whole `swift test` run rather than fail the test that
@@ -344,7 +344,7 @@ struct SessionOutboxTests {
         try? await Task.sleep(nanoseconds: Self.waiterSuspensionNanoseconds)
         #expect(waiter.isStillParked)
 
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "woke"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "woke"))
 
         // The waiter must complete promptly once posted.
         #expect(await waiter.wokeUp())
@@ -353,7 +353,7 @@ struct SessionOutboxTests {
     @Test("nextEvent() returns immediately when the outbox is already non-empty")
     func nextEventReturnsImmediatelyWhenNonEmpty() async {
         let outbox = SessionOutbox()
-        await outbox.post(Self.event(correlationID: "c1", kind: .completed, detail: "already here"))
+        await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "already here"))
 
         // Must not hang: the outbox is already non-empty.
         let waiter = OutboxWaiter(on: outbox, waitingFor: "an outbox that is already non-empty")

@@ -1109,7 +1109,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
-        await session.outbox.post(posted)
+        await session.outbox.post(event: posted)
 
         let insideTool = AsyncSemaphore(value: 0)
         let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
@@ -1140,7 +1140,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
-        await session.outbox.post(posted)
+        await session.outbox.post(event: posted)
 
         let insideTool = AsyncSemaphore(value: 0)
         let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
@@ -1687,7 +1687,7 @@ struct TurnCancellationTests {
         // Staged after the warm-up, so this turn is the one that drains it.
         let posted = OperationEvent(
             tool: "shell", op: "run command", correlationID: "1", kind: .completed, detail: "exit 0")
-        await session.outbox.post(posted)
+        await session.outbox.post(event: posted)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
         let parked = Self.parkInsideCancellationAwareTool(

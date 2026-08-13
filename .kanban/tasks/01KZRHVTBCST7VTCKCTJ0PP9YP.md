@@ -144,8 +144,24 @@ comments:
     - files: 14 changed — `Package.swift`; `Sources/FoundationModelsRouter/Session/RoutedSession.swift`, `.../Session/RoutedSessionActor.swift`, `.../Session/RoutedSessionActorForking.swift`, `.../Session/SessionOutbox.swift`, `.../Hosting/SessionMailbox.swift`, `.../Hosting/ToolContext.swift`, `.../Recording/SessionTreeRestoration.swift`, `.../RoutedLLM.swift`; new `.../Session/RoutedSessionActorQueueing.swift`; new `.../FoundationModelsRouter.docc/RoutedSession.md`; `Tests/FoundationModelsRouterTests/PromptQueueTests.swift`; new `Tests/FoundationModelsRouterTests/Helpers/SessionPlumbingAccess.swift`; `plan.md`.
     - next: ready for `/review`. The task stays in `doing`.
   timestamp: 2026-08-13T11:34:13.058388+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzxf1hw37yysa9zgee5gezxv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 0410871) — 0 findings, 0 confirmed, 8 refuted, 24 attempted, 0 failed, 0 skipped. No prior `## Review Findings` section on the card.
+    - next: the card moves to `done`.
+  timestamp: 2026-08-13T11:45:11.555163+00:00
+- actor: claude-code
+  id: 01kzxf1xrgz1122agndy8xa778
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 14 files; one bare ungated `swift test` run: 975 tests, 0 failures
+    - commit: 0410871 — 18 files
+    - review: clean — 0 findings (24 checks attempted, 8 candidates refuted)
+    - next: none — task is done
+  timestamp: 2026-08-13T11:45:23.728845+00:00
+position_column: done
+position_ordinal: ffa380
 title: 'Audit the session plumbing surface: capabilities stay, mechanisms go internal'
 ---
 ## Problem
