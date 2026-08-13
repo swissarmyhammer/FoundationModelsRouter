@@ -377,4 +377,126 @@ struct SessionProjectionTests {
             ]
         )
     }
+
+    // MARK: - groupedRows: the computed grouped view (task ^8dc98vs)
+
+    @Test("a tool turn groups as one call group holding the reasoning and the pre-tool text, then the final answer top-level")
+    @MainActor
+    func groupedRowsAttachAdjacentContextToTheCallGroup() {
+        let projection = SessionProjection()
+        // The live event order of one tool turn: the two text rows stream
+        // first, and the diff then closes the entries in transcript order —
+        // reasoning, the superseded pre-tool response, the tool call and its
+        // result, and the final answer's response.
+        projection.apply(.textDelta("Let me check. "))
+        projection.apply(.textReset)
+        projection.apply(.textDelta("The final answer."))
+        projection.apply(.reasoningDelta("thinking"))
+        projection.apply(.entryRecorded(id: "reasoning-1", kind: .reasoning))
+        projection.apply(.entryRecorded(id: "resp-pre-tool", kind: .response))
+        projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
+        projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
+        projection.apply(.entryRecorded(id: "calls-1", kind: .toolCalls))
+        projection.apply(.toolStatus(id: "call-1", status: .completed, summary: "72F", output: nil))
+        projection.apply(.entryRecorded(id: "resp-final", kind: .response))
+
+        let expectedCallRow = SessionProjection.TranscriptEntry(
+            id: "call-1",
+            kind: .toolCall(
+                SessionProjection.ToolCallEntry(
+                    id: "call-1", name: "search", argumentsJSON: "{}", status: .completed, summary: "72F")),
+            sourceEntryId: "calls-1")
+        let expectedContext = [
+            SessionProjection.TranscriptEntry(
+                id: "reasoning-1", kind: .reasoning("thinking"), sourceEntryId: "reasoning-1"),
+            SessionProjection.TranscriptEntry(
+                id: "resp-pre-tool", kind: .text("Let me check. "), sourceEntryId: "resp-pre-tool"),
+        ]
+        let expectedAnswerRow = SessionProjection.TranscriptEntry(
+            id: "resp-final", kind: .text("The final answer."), sourceEntryId: "resp-final")
+        #expect(
+            projection.groupedRows == [
+                .toolCallGroup(SessionProjection.ToolCallGroup(call: expectedCallRow, context: expectedContext)),
+                .row(expectedAnswerRow),
+            ]
+        )
+        // Group identity is the call's SDK id.
+        #expect(projection.groupedRows.map(\.id) == ["call-1", "resp-final"])
+    }
+
+    @Test("two concurrent same-name calls form two groups, keyed by their distinct call ids")
+    @MainActor
+    func groupedRowsKeyTwoConcurrentSameNameCallsByTheirIds() throws {
+        let projection = SessionProjection()
+        projection.apply(.textDelta("done"))
+        projection.apply(.toolCall(id: "call-a", name: "search", argumentsJSON: "{}"))
+        projection.apply(.toolStatus(id: "call-a", status: .running, summary: nil, output: nil))
+        projection.apply(.toolCall(id: "call-b", name: "search", argumentsJSON: "{}"))
+        projection.apply(.toolStatus(id: "call-b", status: .running, summary: nil, output: nil))
+        projection.apply(.entryRecorded(id: "calls-1", kind: .toolCalls))
+        projection.apply(.toolStatus(id: "call-a", status: .completed, summary: "NYC", output: nil))
+        projection.apply(.toolStatus(id: "call-b", status: .completed, summary: "SF", output: nil))
+        projection.apply(.entryRecorded(id: "resp-1", kind: .response))
+
+        #expect(projection.groupedRows.map(\.id) == ["call-a", "call-b", "resp-1"])
+        try #require(projection.groupedRows.count == 3)
+        guard case .toolCallGroup(let first) = projection.groupedRows[0],
+            case .toolCallGroup(let second) = projection.groupedRows[1]
+        else {
+            Issue.record("expected two leading call groups, got \(projection.groupedRows)")
+            return
+        }
+        #expect(first.id == "call-a")
+        #expect(second.id == "call-b")
+        #expect(first.context.isEmpty)
+        #expect(second.context.isEmpty)
+    }
+
+    @Test("rows after the last tool result and the final answer text stay top-level")
+    @MainActor
+    func groupedRowsKeepTrailingReasoningAndTheAnswerTopLevel() throws {
+        let projection = SessionProjection()
+        // Transcript order: the tool call, its output, a trailing reasoning
+        // entry, then the answer — so the reasoning follows the last result.
+        projection.apply(.textDelta("the answer"))
+        projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
+        projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
+        projection.apply(.entryRecorded(id: "calls-1", kind: .toolCalls))
+        projection.apply(.toolStatus(id: "call-1", status: .completed, summary: "72F", output: nil))
+        projection.apply(.reasoningDelta("after the result"))
+        projection.apply(.entryRecorded(id: "reasoning-1", kind: .reasoning))
+        projection.apply(.entryRecorded(id: "resp-1", kind: .response))
+
+        #expect(projection.groupedRows.map(\.id) == ["call-1", "reasoning-1", "resp-1"])
+        try #require(projection.groupedRows.count == 3)
+        guard case .toolCallGroup(let group) = projection.groupedRows[0] else {
+            Issue.record("expected a leading call group, got \(projection.groupedRows)")
+            return
+        }
+        #expect(group.context.isEmpty)
+        guard case .row(let reasoningRow) = projection.groupedRows[1], case .row(let answerRow) = projection.groupedRows[2]
+        else {
+            Issue.record("expected two trailing top-level rows, got \(projection.groupedRows)")
+            return
+        }
+        #expect(reasoningRow.kind == .reasoning("after the result"))
+        #expect(answerRow.kind == .text("the answer"))
+    }
+
+    @Test("a turn with no tool call groups nothing: every row stays top-level")
+    @MainActor
+    func groupedRowsOfAPlainTurnStayTopLevel() throws {
+        let projection = SessionProjection()
+        projection.apply(.textDelta("plain answer"))
+        projection.apply(.reasoningDelta("thinking"))
+        projection.apply(.entryRecorded(id: "reasoning-1", kind: .reasoning))
+        projection.apply(.entryRecorded(id: "resp-1", kind: .response))
+
+        #expect(projection.groupedRows.map(\.id) == ["reasoning-1", "resp-1"])
+        try #require(projection.groupedRows.count == 2)
+        guard case .row = projection.groupedRows[0], case .row = projection.groupedRows[1] else {
+            Issue.record("expected two top-level rows, got \(projection.groupedRows)")
+            return
+        }
+    }
 }

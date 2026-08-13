@@ -234,6 +234,7 @@ public final class SessionProjection {
             // than growing the old one into a sentence the model never wrote.
             // The rule itself lives in the shared ``ResponseTextFold``.
             responseTextFold.reset()
+            markOpenTextRowSuperseded()
         case .reasoningDelta(let fragment):
             phase = .generating
             appendReasoningFragment(fragment)
@@ -253,6 +254,7 @@ public final class SessionProjection {
             // Bookkeeping only, deliberately no phase change: the close
             // arrives at diff time, alongside events that already set the
             // phase they report, and closing an entry is not itself a phase.
+            recordEntryOrdinal(id)
             adoptRecordedEntry(id: id, kind: kind)
         case .compaction(let result):
             phase = .compacting
@@ -504,6 +506,12 @@ public final class SessionProjection {
         guard let index = transcript.firstIndex(where: { $0.sourceEntryId == nil && isKind($0.kind) }) else {
             return
         }
+        // The row's identity changes, so its membership in the superseded
+        // set follows it — a superseded text row stays superseded under its
+        // adopted id (see ``supersededTextRowIds``).
+        if supersededTextRowIds.remove(transcript[index].id) != nil {
+            supersededTextRowIds.insert(entryId)
+        }
         transcript[index] = TranscriptEntry(id: entryId, kind: transcript[index].kind, sourceEntryId: entryId)
     }
 
@@ -557,7 +565,14 @@ public final class SessionProjection {
     ///
     /// - Parameter transcript: The cold transcript to mirror.
     public func seed(from transcript: Transcript) {
-        self.transcript = Self.transcriptRows(from: Array(transcript))
+        let entries = Array(transcript)
+        self.transcript = Self.transcriptRows(from: entries)
+        supersededTextRowIds = Self.supersededTextEntryIds(in: entries)
+        recordedEntryOrdinals = [:]
+        for row in self.transcript {
+            guard let sourceEntryId = row.sourceEntryId else { continue }
+            recordEntryOrdinal(sourceEntryId)
+        }
         responseTextFold = ResponseTextFold()
         openInvocationCorrelationIDs.removeAll()
         provisionalEntryCount = 0
@@ -720,5 +735,224 @@ public final class SessionProjection {
             tokensAfter: segment.content.tokensAfter,
             stagesApplied: segment.content.stagesApplied)
         return TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId)
+    }
+
+    // MARK: - The grouped view (task ^8dc98vs)
+
+    /// One tool call's group in ``groupedRows``: the call row plus the
+    /// adjacent context rows that led to it.
+    public struct ToolCallGroup: Sendable, Equatable, Identifiable {
+        /// The ``TranscriptEntry/Kind/toolCall(_:)`` row this group holds.
+        public let call: TranscriptEntry
+
+        /// The context rows attached to this call, in transcript order: the
+        /// ``TranscriptEntry/Kind/reasoning(_:)`` rows and the superseded
+        /// ``TranscriptEntry/Kind/text(_:)`` rows that come immediately
+        /// before the call. Empty when no such run precedes the call.
+        public let context: [TranscriptEntry]
+
+        /// This group's stable identity — the call's SDK
+        /// `Transcript.ToolCall.id`, which is also ``call``'s own row id.
+        public var id: String { call.id }
+
+        /// Creates a call group.
+        ///
+        /// - Parameters:
+        ///   - call: The tool-call row the group holds.
+        ///   - context: The context rows attached to the call.
+        public init(call: TranscriptEntry, context: [TranscriptEntry]) {
+            self.call = call
+            self.context = context
+        }
+    }
+
+    /// One item in ``groupedRows``: a top-level row, or one call's group.
+    public enum GroupedRow: Sendable, Equatable, Identifiable {
+        /// A row that attaches to no call group and stays top-level.
+        case row(TranscriptEntry)
+
+        /// A tool call plus the adjacent context rows that led to it.
+        case toolCallGroup(ToolCallGroup)
+
+        /// This item's stable identity: the row's own id for ``row(_:)``,
+        /// and the call's SDK id for ``toolCallGroup(_:)`` (see
+        /// ``ToolCallGroup/id``). The two spaces cannot collide inside one
+        /// grouped view, because a grouped call row is never also top-level.
+        public var id: String {
+            switch self {
+            case .row(let row):
+                return row.id
+            case .toolCallGroup(let group):
+                return group.id
+            }
+        }
+    }
+
+    /// The grouped view over ``transcript`` — a UI convenience that attaches
+    /// each tool call's adjacent context to that call's group, derived on
+    /// read and never stored. The flat ``transcript`` stays the source of
+    /// truth: this view changes neither ``apply(_:)``'s observable behavior,
+    /// nor the event vocabulary, nor the recording.
+    ///
+    /// **The rule.** The rows first sort into canonical (transcript) order —
+    /// see ``canonicallyOrderedTranscript()`` for why the live row order
+    /// needs that step. Then, within that order, the contiguous run of
+    /// ``TranscriptEntry/Kind/reasoning(_:)`` rows and superseded
+    /// ``TranscriptEntry/Kind/text(_:)`` rows that comes immediately before
+    /// a tool-call row attaches to that call's ``ToolCallGroup``. When one
+    /// `.toolCalls` entry announced several calls, the run attaches to the
+    /// first call's group. Every other row — the final answer text, a
+    /// compaction row, and any context run that no call follows — stays
+    /// top-level, in canonical order.
+    ///
+    /// **Scope.** In a well-formed history every turn ends with its answer
+    /// text row, which closes the pending run, so context never crosses a
+    /// turn boundary. A turn that ends with no answer (a failed turn) leaves
+    /// its trailing context pending, and the next turn's first call would
+    /// attach it; the rows carry no turn marker, so the view cannot tell
+    /// those apart, and both paths behave the same way.
+    public var groupedRows: [GroupedRow] {
+        Self.groupedRows(from: canonicallyOrderedTranscript(), supersededTextRowIds: supersededTextRowIds)
+    }
+
+    /// The row ids of every ``TranscriptEntry/Kind/text(_:)`` row a
+    /// ``SessionEvent/textReset`` closed as superseded — the fact
+    /// ``groupedRows`` needs to tell pre-tool text from the final answer.
+    ///
+    /// Live, ``apply(_:)`` marks the open text row when the reset arrives,
+    /// and ``adopt(entryId:ontoOldestOpenRowWhere:)`` carries the mark across
+    /// the row's one id change. Seeded, ``seed(from:)`` installs the
+    /// structural mirror ``supersededTextEntryIds(in:)`` computes, so the two
+    /// paths agree.
+    private var supersededTextRowIds: Set<String> = []
+
+    /// Each recorded entry id's arrival ordinal, from every
+    /// ``SessionEvent/entryRecorded(id:kind:)`` this projection observed —
+    /// the diff closes entries in transcript order, so these ordinals ARE
+    /// the transcript order, shared by the live and the seeded paths (see
+    /// ``canonicallyOrderedTranscript()``). ``seed(from:)`` installs the
+    /// same ordinals from the seeded rows' ``TranscriptEntry/sourceEntryId``
+    /// values, which the cold walk produced in transcript order.
+    private var recordedEntryOrdinals: [String: Int] = [:]
+
+    /// Marks the currently open text row superseded — the
+    /// ``SessionEvent/textReset`` half of ``supersededTextRowIds``. A no-op
+    /// when no open text row is last, which is the only place an open text
+    /// row can be.
+    private func markOpenTextRowSuperseded() {
+        guard let last = transcript.last, last.sourceEntryId == nil, case .text = last.kind else { return }
+        supersededTextRowIds.insert(last.id)
+    }
+
+    /// Records `id`'s arrival ordinal into ``recordedEntryOrdinals``, once —
+    /// a second close for an id a retried diff already recorded keeps the
+    /// first ordinal, so an id's canonical position never moves.
+    ///
+    /// - Parameter id: The recorded entry's SDK `Transcript.Entry.id`.
+    private func recordEntryOrdinal(_ id: String) {
+        guard recordedEntryOrdinals[id] == nil else { return }
+        recordedEntryOrdinals[id] = recordedEntryOrdinals.count
+    }
+
+    /// The entry ids of every text row a cold transcript's own structure
+    /// shows as superseded — the seeded mirror of the live
+    /// ``SessionEvent/textReset`` mark.
+    ///
+    /// The live reset fires when a new response begins while text had
+    /// already accumulated, so the structural rule is: a plain `.response`
+    /// entry is superseded when a later plain `.response` entry starts in
+    /// the same turn. The scope resets at each `.prompt` entry, the same
+    /// turn scope ``transcriptRows(from:)`` applies to output pairing. A
+    /// compaction boundary response neither counts as a restart nor gets
+    /// marked — the fold is not part of the generation stream, so it never
+    /// emits a live reset.
+    ///
+    /// - Parameter entries: The cold transcript's entries, oldest first.
+    /// - Returns: The superseded text rows' entry ids.
+    private nonisolated static func supersededTextEntryIds(in entries: [Transcript.Entry]) -> Set<String> {
+        var superseded: Set<String> = []
+        var turnTextEntryIds: [String] = []
+        for entry in entries {
+            let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
+            switch kind {
+            case .prompt:
+                turnTextEntryIds.removeAll()
+            case .response:
+                guard compactionRow(from: entry, entryId: payload.entryId) == nil else { break }
+                superseded.formUnion(turnTextEntryIds)
+                turnTextEntryIds.append(payload.entryId)
+            case .toolCalls, .toolOutput, .reasoning, .session, .instructions, .embedding, .divergence,
+                .toolCall, .unknown:
+                break
+            }
+        }
+        return superseded
+    }
+
+    /// ``transcript`` re-ordered into canonical (transcript) order — the
+    /// order both projection paths share, which is what makes the grouped
+    /// view equal between them.
+    ///
+    /// The live projection appends text rows while they stream and the other
+    /// rows at diff time, so its row order can differ from transcript order.
+    /// The ``SessionEvent/entryRecorded(id:kind:)`` closes arrive in
+    /// transcript order, and ``recordedEntryOrdinals`` keeps them, so
+    /// sorting rows by their entry's ordinal restores transcript order. A
+    /// row with no recorded ordinal — a still-open streamed row, or a
+    /// compaction row with no ``TranscriptEntry/sourceEntryId`` — inherits
+    /// the nearest preceding row's ordinal and keeps its relative position;
+    /// the sort is made stable by breaking ties on the original index.
+    ///
+    /// - Returns: The rows in canonical order.
+    private func canonicallyOrderedTranscript() -> [TranscriptEntry] {
+        var keyed: [(ordinal: Int, index: Int, row: TranscriptEntry)] = []
+        keyed.reserveCapacity(transcript.count)
+        // Rows before any recorded entry sort ahead of every recorded one.
+        var carried = -1
+        for (index, row) in transcript.enumerated() {
+            if let sourceEntryId = row.sourceEntryId, let ordinal = recordedEntryOrdinals[sourceEntryId] {
+                carried = ordinal
+            }
+            keyed.append((carried, index, row))
+        }
+        return keyed.sorted { ($0.ordinal, $0.index) < ($1.ordinal, $1.index) }.map(\.row)
+    }
+
+    /// Applies the grouping rule to rows already in canonical order — the
+    /// pure function behind ``groupedRows``.
+    ///
+    /// One pass keeps the pending run of context candidates — reasoning rows
+    /// and superseded text rows. A tool-call row takes the pending run as
+    /// its group's context. Any other row flushes the run to top-level items
+    /// first and then stays top-level itself, and a run left pending at the
+    /// end flushes the same way.
+    ///
+    /// - Parameters:
+    ///   - rows: The rows to group, in canonical order.
+    ///   - supersededTextRowIds: The ids of the text rows that are
+    ///     superseded — see ``supersededTextRowIds``.
+    /// - Returns: The grouped items, in canonical order.
+    private nonisolated static func groupedRows(
+        from rows: [TranscriptEntry], supersededTextRowIds: Set<String>
+    ) -> [GroupedRow] {
+        var grouped: [GroupedRow] = []
+        var pendingContext: [TranscriptEntry] = []
+        for row in rows {
+            switch row.kind {
+            case .reasoning:
+                pendingContext.append(row)
+            case .text where supersededTextRowIds.contains(row.id):
+                pendingContext.append(row)
+            case .toolCall:
+                grouped.append(.toolCallGroup(ToolCallGroup(call: row, context: pendingContext)))
+                pendingContext.removeAll()
+            case .text, .compaction:
+                grouped.append(contentsOf: pendingContext.map(GroupedRow.row))
+                pendingContext.removeAll()
+                grouped.append(.row(row))
+            }
+        }
+        grouped.append(contentsOf: pendingContext.map(GroupedRow.row))
+        return grouped
     }
 }

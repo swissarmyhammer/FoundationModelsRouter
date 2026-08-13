@@ -282,6 +282,69 @@ struct SessionProjectionSeedingTests {
         #expect(rows.map(\.sourceEntryId) == [nil])
     }
 
+    // MARK: - groupedRows: seeded and live agree (task ^8dc98vs)
+
+    @Test("the grouped view of a seeded projection equals the grouped view of the live projection for the same turn")
+    @MainActor
+    func groupedRowsOfASeededProjectionEqualTheLiveProjections() throws {
+        // One tool turn, in transcript order: reasoning, the superseded
+        // pre-tool text, one call, its result, and the final answer.
+        let call = Transcript.ToolCall(
+            id: "call-1", toolName: "search", arguments: try GeneratedContent(json: #"{"city":"NYC"}"#))
+        let outputSegment = Transcript.TextSegment(id: "s-out", content: "NYC: sunny")
+        let entries: [Transcript.Entry] = [
+            .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "weather?"))])),
+            .reasoning(
+                Transcript.Reasoning(
+                    id: "reasoning-1",
+                    segments: [.text(Transcript.TextSegment(content: "thinking"))],
+                    signature: nil)),
+            .response(
+                Transcript.Response(
+                    id: "resp-pre-tool",
+                    segments: [.text(Transcript.TextSegment(content: "Let me check. "))])),
+            .toolCalls(Transcript.ToolCalls(id: "calls-1", [call])),
+            .toolOutput(
+                Transcript.ToolOutput(
+                    id: "call-1", toolName: "search", segments: [.text(outputSegment)])),
+            .response(
+                Transcript.Response(
+                    id: "resp-final",
+                    segments: [.text(Transcript.TextSegment(content: "The final answer."))])),
+        ]
+
+        let seeded = SessionProjection()
+        seeded.seed(from: Transcript(entries: entries))
+
+        // The live projection observes the same turn in live order: the text
+        // streams first, then the diff closes the entries in transcript order.
+        let live = SessionProjection()
+        live.apply(.textDelta("Let me check. "))
+        live.apply(.textReset)
+        live.apply(.textDelta("The final answer."))
+        live.apply(.reasoningDelta("thinking"))
+        live.apply(.entryRecorded(id: "reasoning-1", kind: .reasoning))
+        live.apply(.entryRecorded(id: "resp-pre-tool", kind: .response))
+        live.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: call.arguments.jsonString))
+        live.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
+        live.apply(.entryRecorded(id: "calls-1", kind: .toolCalls))
+        live.apply(
+            .toolStatus(
+                id: "call-1", status: .completed, summary: "NYC: sunny",
+                output: [.text(id: "s-out", content: "NYC: sunny")]))
+        live.apply(.entryRecorded(id: "resp-final", kind: .response))
+
+        #expect(seeded.groupedRows == live.groupedRows)
+        // Shape sanity: one call group holding the reasoning and the pre-tool
+        // text, then the final answer top-level.
+        #expect(seeded.groupedRows.map(\.id) == ["call-1", "resp-final"])
+        guard case .toolCallGroup(let group) = seeded.groupedRows.first else {
+            Issue.record("expected a leading call group, got \(seeded.groupedRows)")
+            return
+        }
+        #expect(group.context.map(\.id) == ["reasoning-1", "resp-pre-tool"])
+    }
+
     // MARK: - seed(from:)
 
     @Test("seed installs the grouped rows, and a live turn after the seed appends a new row without duplication")
@@ -337,9 +400,11 @@ struct SessionProjectionSeedingTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        // One round asking for two marker calls at once, then a `.reasoning`
-        // entry before the final answer — the tool-turn shape the acceptance
-        // names, with two same-name calls so the id pairing is load-bearing.
+        // One round asking for two marker calls at once, with narrated
+        // pre-tool text the SDK strands in a superseded `.response` entry,
+        // then a `.reasoning` entry before the final answer — the tool-turn
+        // shape the acceptance names, with two same-name calls so the id
+        // pairing is load-bearing (tasks ^5aky6xr and ^8dc98vs).
         let script = ScriptedTurnScript(
             rounds: [
                 [
@@ -355,6 +420,7 @@ struct SessionProjectionSeedingTests {
                     ),
                 ]
             ],
+            narration: "Let me look both of those up. ",
             reasoning: "scripted reasoning before the final answer"
         )
         let recorder = JSONLRecorder(directory: recordingsDir)
@@ -402,9 +468,22 @@ struct SessionProjectionSeedingTests {
         let seededById = Dictionary(uniqueKeysWithValues: seeded.transcript.map { ($0.id, $0) })
         #expect(seededById.count == seeded.transcript.count)
         #expect(seededById == liveById)
-        // Shape sanity: the turn produced two tool rows, a reasoning row, and
-        // the answer's text row — all adopted, none provisional.
-        #expect(seeded.transcript.count == 4)
+        // Shape sanity: the turn produced the superseded narration row, two
+        // tool rows, a reasoning row, and the answer's text row — all
+        // adopted, none provisional.
+        #expect(seeded.transcript.count == 5)
+
+        // The grouped view agrees between the two paths, item for item —
+        // the acceptance claim of task ^8dc98vs, over the real recorded
+        // pipeline. The narration attaches to the first call's group; the
+        // trailing reasoning and the answer stay top-level.
+        #expect(seeded.groupedRows == liveProjection.groupedRows)
+        guard case .toolCallGroup(let firstGroup) = seeded.groupedRows.first else {
+            Issue.record("expected a leading call group, got \(seeded.groupedRows)")
+            return
+        }
+        #expect(firstGroup.id == "call-one")
+        #expect(firstGroup.context.map(\.kind) == [.text("Let me look both of those up. ")])
 
         // A live turn after the seed appends new rows without duplicating any
         // seeded row. The script's one round is already in the restored
