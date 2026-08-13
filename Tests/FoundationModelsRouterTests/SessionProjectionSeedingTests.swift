@@ -31,9 +31,8 @@ struct SessionProjectionSeedingTests {
     /// The post-fold token count the compaction fixtures record.
     private static let foldTokensAfter = 400
 
-    /// A `.response` boundary entry carrying a ``CompactionSegment`` — the
-    /// shape ``CompactionSegment/boundaryEntry(id:summaryText:content:)``
-    /// produces, built directly so the segment id is deterministic.
+    /// The shared boundary-entry fixture with this suite's token counts
+    /// applied — see ``TranscriptFixtures/makeCompactionEntry(entryId:segmentId:summaryText:tokensBefore:tokensAfter:)``.
     ///
     /// - Parameters:
     ///   - entryId: The boundary entry's own `Transcript.Entry.id`.
@@ -44,22 +43,12 @@ struct SessionProjectionSeedingTests {
     private static func makeBoundaryEntry(
         entryId: String, segmentId: String, summaryText: String
     ) -> Transcript.Entry {
-        .response(
-            Transcript.Response(
-                id: entryId,
-                segments: [
-                    .text(Transcript.TextSegment(id: "\(entryId)-text", content: summaryText)),
-                    .custom(
-                        CompactionSegment(
-                            id: segmentId,
-                            content: CompactionSegment.Content(
-                                liveWindowEntryIds: [entryId],
-                                foldedEntryIds: ["folded-1"],
-                                tokensBefore: foldTokensBefore,
-                                tokensAfter: foldTokensAfter,
-                                stagesApplied: ["Summarization"],
-                                promptName: "default"))),
-                ]))
+        TranscriptFixtures.makeCompactionEntry(
+            entryId: entryId,
+            segmentId: segmentId,
+            summaryText: summaryText,
+            tokensBefore: foldTokensBefore,
+            tokensAfter: foldTokensAfter)
     }
 
     // MARK: - The pure grouping

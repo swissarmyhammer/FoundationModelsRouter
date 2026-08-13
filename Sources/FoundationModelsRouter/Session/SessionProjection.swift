@@ -66,7 +66,7 @@ public final class SessionProjection {
     /// ``SessionEvent/toolStatus(id:status:summary:)`` (no prior matching
     /// ``SessionEvent/toolCall(id:name:argumentsJSON:)``) leaves it
     /// unchanged rather than reporting ``Phase/runningTool`` for nothing (see
-    /// ``updateToolCall(id:status:summary:)``), and
+    /// ``updateToolCallRow(id:status:summary:in:)``), and
     /// ``SessionEvent/entryRecorded(id:kind:)`` is identity bookkeeping that
     /// never touches it.
     ///
@@ -237,7 +237,7 @@ public final class SessionProjection {
                     id: id,
                     kind: .toolCall(ToolCallEntry(id: id, name: name, argumentsJSON: argumentsJSON, status: .running, summary: nil))))
         case .toolStatus(let id, let status, let summary):
-            if updateToolCall(id: id, status: status, summary: summary) {
+            if Self.updateToolCallRow(id: id, status: status, summary: summary, in: &transcript) {
                 phase = .runningTool
             }
         case .toolInvocation(let record):
@@ -355,30 +355,42 @@ public final class SessionProjection {
             makeKind: TranscriptEntry.Kind.reasoning)
     }
 
-    /// Finds the ``TranscriptEntry/Kind/toolCall(_:)`` entry whose
+    /// Finds the ``TranscriptEntry/Kind/toolCall(_:)`` row in `rows` whose
     /// ``ToolCallEntry/id`` matches `id` (searching from the end, since a
-    /// call's own entry is unique per id) and updates its status/summary in
-    /// place.
+    /// call's own row is unique per id) and updates its status/summary in
+    /// place — the one body behind both the live
+    /// ``SessionEvent/toolStatus(id:status:summary:)`` update and the cold
+    /// seed's `.toolOutput` pairing (see ``transcriptRows(from:)``), so the
+    /// two paths cannot drift.
     ///
-    /// A true no-op when no matching entry exists — defensive against a
-    /// status event with no preceding call, never a crash — which is why this
-    /// reports whether it found a match: ``apply(_:)`` only flips ``phase``
-    /// to ``Phase/runningTool`` on a genuine update, so an untracked status
-    /// event never surfaces as a phase change with nothing to show for it.
+    /// A true no-op when no matching row exists — defensive against a
+    /// status event (or a cold output) with no preceding call, never a
+    /// crash — which is why this reports whether it found a match:
+    /// ``apply(_:)`` only flips ``phase`` to ``Phase/runningTool`` on a
+    /// genuine update, so an untracked status event never surfaces as a
+    /// phase change with nothing to show for it.
     ///
-    /// - Returns: Whether a matching entry was found and updated.
+    /// - Parameters:
+    ///   - id: The call id the update names.
+    ///   - status: The call's new status.
+    ///   - summary: The tool's output text, or `nil` when it carries none.
+    ///   - rows: The rows to update — the live ``transcript``, or the cold
+    ///     grouping's rows-so-far.
+    /// - Returns: Whether a matching row was found and updated.
     @discardableResult
-    private func updateToolCall(id: String, status: ToolCallStatus, summary: String?) -> Bool {
+    private nonisolated static func updateToolCallRow(
+        id: String, status: ToolCallStatus, summary: String?, in rows: inout [TranscriptEntry]
+    ) -> Bool {
         guard
-            let index = transcript.lastIndex(where: {
+            let index = rows.lastIndex(where: {
                 if case .toolCall(let call) = $0.kind { return call.id == id }
                 return false
             })
         else { return false }
-        guard case .toolCall(var call) = transcript[index].kind else { return false }
+        guard case .toolCall(var call) = rows[index].kind else { return false }
         call.status = status
         call.summary = summary
-        transcript[index].kind = .toolCall(call)
+        rows[index].kind = .toolCall(call)
         return true
     }
 
@@ -402,7 +414,8 @@ public final class SessionProjection {
     /// producing. An untracked close — a detached run's late close after its
     /// turn ended, whose open ``SessionEvent/turnEnded(_:)`` already
     /// cleared — changes nothing, the same defensive posture
-    /// ``updateToolCall(id:status:summary:)`` takes for an untracked status.
+    /// ``updateToolCallRow(id:status:summary:in:)`` takes for an untracked
+    /// status.
     ///
     /// - Parameter record: The record to apply.
     private func applyToolInvocation(_ record: ToolInvocationRecord) {
@@ -613,7 +626,7 @@ public final class SessionProjection {
                     dispatched: dispatchedToolCallIds,
                     completed: completedToolCallIds)
                 completedToolCallIds.insert(callId)
-                completeToolCallRow(id: callId, summary: text, in: &rows)
+                updateToolCallRow(id: callId, status: .completed, summary: text, in: &rows)
             case .response:
                 rows.append(
                     compactionRow(from: entry, entryId: payload.entryId)
@@ -628,33 +641,6 @@ public final class SessionProjection {
         }
         failUnansweredToolCallRows(in: &rows)
         return rows
-    }
-
-    /// Marks the `.toolOutput`-paired call row `id` completed, carrying
-    /// `summary` — the cold mirror of the live
-    /// ``SessionEvent/toolStatus(id:status:summary:)`` update, searching from
-    /// the end exactly as ``updateToolCall(id:status:summary:)`` does. A true
-    /// no-op when no row carries the id, the same defensive posture the live
-    /// path takes for an untracked status.
-    ///
-    /// - Parameters:
-    ///   - id: The call id the output paired to.
-    ///   - summary: The output's flattened text, or `nil` when it carries no
-    ///     text segment (a structured output).
-    ///   - rows: The rows grouped so far.
-    private nonisolated static func completeToolCallRow(
-        id: String, summary: String?, in rows: inout [TranscriptEntry]
-    ) {
-        guard
-            let index = rows.lastIndex(where: {
-                if case .toolCall(let call) = $0.kind { return call.id == id }
-                return false
-            })
-        else { return }
-        guard case .toolCall(var call) = rows[index].kind else { return }
-        call.status = .completed
-        call.summary = summary
-        rows[index].kind = .toolCall(call)
     }
 
     /// Marks every call row still ``ToolCallStatus/running`` as

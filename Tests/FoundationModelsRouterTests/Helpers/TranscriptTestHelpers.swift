@@ -84,6 +84,51 @@ enum TranscriptFixtures {
         try (1...turnCount).map { try Self.makeTurn(index: $0, toolOutputText: toolOutputText) }
     }
 
+    /// Builds a raw compaction boundary `.response` entry: a text segment
+    /// with `summaryText` (id `<entryId>-text`) plus a `.custom`
+    /// ``CompactionSegment`` — the shape
+    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` produces,
+    /// built directly so the segment id is deterministic (the production
+    /// construction generates its own segment id).
+    ///
+    /// The segment content carries fixed fixture values — `[entryId]` as the
+    /// live window, one folded entry id, `["Summarization"]` as the applied
+    /// stages, and the `"default"` prompt name — so tests that only assert on
+    /// ids, summary text, and token counts share one construction.
+    ///
+    /// - Parameters:
+    ///   - entryId: The boundary entry's own `Transcript.Entry.id`.
+    ///   - segmentId: The persisted ``CompactionSegment/id``.
+    ///   - summaryText: The model-visible summary text; empty for a
+    ///     deterministic-only fold.
+    ///   - tokensBefore: The pre-fold token count the segment records.
+    ///   - tokensAfter: The post-fold token count the segment records.
+    /// - Returns: The boundary entry.
+    static func makeCompactionEntry(
+        entryId: String,
+        segmentId: String,
+        summaryText: String,
+        tokensBefore: Int,
+        tokensAfter: Int
+    ) -> Transcript.Entry {
+        .response(
+            Transcript.Response(
+                id: entryId,
+                segments: [
+                    .text(Transcript.TextSegment(id: "\(entryId)-text", content: summaryText)),
+                    .custom(
+                        CompactionSegment(
+                            id: segmentId,
+                            content: CompactionSegment.Content(
+                                liveWindowEntryIds: [entryId],
+                                foldedEntryIds: ["folded-1"],
+                                tokensBefore: tokensBefore,
+                                tokensAfter: tokensAfter,
+                                stagesApplied: ["Summarization"],
+                                promptName: "default"))),
+                ]))
+    }
+
     /// Builds a `.response`-kind event carrying a text summary segment plus a
     /// ``CompactionSegment`` — the exact shape a real compaction's
     /// synthesized entry takes (see ``CompactionSegment``'s own doc comment

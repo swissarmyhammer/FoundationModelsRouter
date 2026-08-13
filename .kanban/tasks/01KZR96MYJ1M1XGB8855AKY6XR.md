@@ -38,6 +38,40 @@ comments:
     - evidence: 8 files — Sources/FoundationModelsRouter/Session/ToolCallOutputPairing.swift (new), Sources/FoundationModelsRouter/Session/SessionProjection.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorRecording.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorRunJournal.swift, Tests/FoundationModelsRouterTests/SessionProjectionSeedingTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/ScriptedToolCallingModel.swift (doc only). One `swift test` run: 915 + 27 + 24 = 966 tests in 103 suites, 0 failures, exit 0 (1 pre-existing known issue in BoundedWait).
     - next: /review
   timestamp: 2026-08-13T01:14:12.932694+00:00
+- actor: claude-code
+  id: 01kzwbd8q456h6fv1v0eegf20h
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (87404c8); engine counts: 3 findings, 3 confirmed, 0 refuted; 1 finding waived (test code that was in the repository before this commit); 2 open findings recorded — Sources/FoundationModelsRouter/Session/SessionProjection.swift:645, Tests/FoundationModelsRouterTests/SessionProjectionSeedingTests.swift:44
+    - next: correct the 2 open findings, then run the review again
+  timestamp: 2026-08-13T01:22:26.660154+00:00
+- actor: claude-code
+  id: 01kzwbe17gmh5hsa3tjsf4bj13
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 8 files; one `swift test` run: 966 tests in 103 suites, 0 failures
+    - commit: 87404c8 — 12 files
+    - review: findings — Sources/FoundationModelsRouter/Session/SessionProjection.swift:645 (near-duplicate of updateToolCall at 370), Tests/FoundationModelsRouterTests/SessionProjectionSeedingTests.swift:44 (makeBoundaryEntry duplicates compaction-boundary construction; extract a shared helper); 1 engine finding waived (waiver 1, pre-existing test helper type)
+    - next: implement the two findings, commit, re-review
+  timestamp: 2026-08-13T01:22:51.760207+00:00
+- actor: claude-code
+  id: 01kzwd32raajdyytaxkdzjbk9c
+  text: |-
+    Corrected the two open review findings.
+
+    Finding 1 — near-duplicate functions in SessionProjection.swift. The two bodies are now one shared static function, `updateToolCallRow(id:status:summary:in:)`. It takes the row array as an `inout` parameter and returns a Bool. The live path calls it on `&transcript` from `apply(_:)`; the cold path calls it on `&rows` from `transcriptRows(from:)` with status `.completed`. The old instance method `updateToolCall` and the old static `completeToolCallRow` are deleted. The three doc references to the old names now point to the new name.
+
+    Finding 2 — duplicated compaction-boundary construction in the tests. A shared fixture `TranscriptFixtures.makeCompactionEntry(entryId:segmentId:summaryText:tokensBefore:tokensAfter:)` now lives in Tests/FoundationModelsRouterTests/Helpers/TranscriptTestHelpers.swift. It builds the raw boundary `.response` entry with a deterministic segment id. SessionProjectionSeedingTests keeps a thin private `makeBoundaryEntry` that only binds the suite's token constants and forwards to the shared fixture — the construction logic lives in one place. The pre-existing local `boundaryEntry(includingCompactionSegment:)` in CompactionTokenAccountingTests was not changed: it is test code that was in the repository before this commit, and it has a different shape (a with/without-segment toggle), so the review skill's written rule keeps it out of scope.
+
+    Verification: one bare `swift test` run, exit 0.
+  timestamp: 2026-08-13T01:51:50.026614+00:00
+- actor: claude-code
+  id: 01kzwd3am9skha5tryg1a9xme0
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Session/SessionProjection.swift (merged `completeToolCallRow` and `updateToolCall` into one shared static `updateToolCallRow(id:status:summary:in:)`), Tests/FoundationModelsRouterTests/Helpers/TranscriptTestHelpers.swift (new shared `makeCompactionEntry` fixture), Tests/FoundationModelsRouterTests/SessionProjectionSeedingTests.swift (uses the shared fixture). One `swift test` run: 915 + 27 + 24 = 966 tests in 103 suites, 0 failures, exit 0 (1 pre-existing known issue in BoundedWait). Both findings checked off in the description.
+    - next: /review
+  timestamp: 2026-08-13T01:51:58.089414+00:00
 depends_on:
 - 01KZR9658E5CEVBK177RT024HY
 position_column: doing
@@ -64,4 +98,13 @@ A second gap blocks the fix: `RoutedSession` does not expose its transcript publ
 ## Acceptance
 
 - Restore a recorded tool-turn session, seed a projection, and compare: the seeded rows must equal the rows a live projection produced during the original run, ids included (needs the stable-identity task).
-- A live turn after a seed must append rows without duplication. #projection
+- A live turn after a seed must append rows without duplication.
+
+## Review Findings (2026-08-12 20:15)
+
+- [x] `Sources/FoundationModelsRouter/Session/SessionProjection.swift:645` — func `completeToolCallRow` is a near-duplicate of `updateToolCall` at Sources/FoundationModelsRouter/Session/SessionProjection.swift:370 (60 tokens, 91% alike).
+- [x] `Tests/FoundationModelsRouterTests/SessionProjectionSeedingTests.swift:44` — The `makeBoundaryEntry` function reinvents compaction boundary entry creation that is already handled by the shared `compactionCheckpointEvent` helper. Rather than duplicate this logic across multiple test files, the existing helper should be generalized or a simpler shared variant should be extracted and reused. Extract a shared simple helper like `makeCompactionEntry(entryId:segmentId:summaryText:tokensBefore:tokensAfter:)` in TranscriptTestHelpers.swift that builds raw `Transcript.Entry` values with compaction segments. Use that helper here and in other test files instead of duplicating the logic.
+
+### Waived findings
+
+- Waived: a finding at `Tests/FoundationModelsRouterTests/Helpers/ScriptedToolCallingModel.swift:43` said that the type `Executor` is a near-duplicate of `ScriptedToolCallingModel`. The `Executor` type was in the repository before this commit. This commit changed only a document comment in that file. The review skill has a written rule that drops findings that ask for a refactor of test code that was in the repository before the commit. #projection
