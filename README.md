@@ -29,7 +29,17 @@ let coding = ProfileDefinition(
     embedding: ["mlx-community/bge-small-en-v1.5-4bit"]
 )
 
-let profile = try await router.resolve(coding, reporting: ResolutionProgress())
+// `ResolutionProgress` binds into SwiftUI; `progress.phases` is the same
+// progress as an AsyncSequence, ending on its own at ready/failed.
+let progress = ResolutionProgress()
+let progressTask = Task { @MainActor in
+    for await transition in progress.phases {
+        print("resolve: \(transition.phase)")
+    }
+}
+
+let profile = try await router.resolve(coding, reporting: progress)
+await progressTask.value
 
 let session = profile.standard.makeSession(instructions: "You are a terse Swift expert.")
 let answer = try await session.respond(

@@ -115,30 +115,19 @@ let demo = ProfileDefinition(
 
 // MARK: - Resolve once, watching progress
 
-// How long the progress poller sleeps between phase checks.
-let progressPollMilliseconds = 200
-
+// `progress.phases` yields each phase transition as one element and ends at
+// ready/failed, so a terminal caller needs no polling task.
 let progress = ResolutionProgress()
 
 let progressTask = Task { @MainActor in
-    var lastPhase: ResolutionProgress.Phase?
-    while !Task.isCancelled {
-        if progress.phase != lastPhase {
-            let percent = Int((progress.fraction * 100).rounded())
-            print("[resolve] phase=\(progress.phase) fraction=\(percent)%")
-            lastPhase = progress.phase
-        }
-        switch progress.phase {
-        case .ready, .failed:
-            return
-        default:
-            try? await Task.sleep(for: .milliseconds(progressPollMilliseconds))
-        }
+    for await transition in progress.phases {
+        let percent = Int((transition.fraction * 100).rounded())
+        print("[resolve] phase=\(transition.phase) fraction=\(percent)%")
     }
 }
 
 let profile = try await router.resolve(profile: demo, reporting: progress)
-progressTask.cancel()
+await progressTask.value
 
 print("Resolved \"\(profile.definitionName)\": standard = \(profile.standard.chosen.stringValue)")
 
@@ -281,9 +270,9 @@ print(
     "[restore] restored session id: \(restoredSession.id) (same as original: \(restoredSession.id == session.id))"
 )
 
-let routerDirectory = recordingsDir.appendingPathComponent(
-    profile.standard.routerId.description, isDirectory: true)
-let tree = try TranscriptTree.load(under: routerDirectory)
+// The value-typed tree behind the live restore above, loaded off the same
+// handle — no hand-built recording path.
+let tree = try profile.standard.transcriptTree()
 
 let checkpointedWindow = try tree.effectiveTranscript(forSession: session.id)
 print("[restore] checkpointed live window entry count: \(checkpointedWindow.count)")

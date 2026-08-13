@@ -130,3 +130,69 @@ public final class ResolutionProgress {
         fraction = total / Double(slots.count)
     }
 }
+
+extension ResolutionProgress {
+    /// One element of ``phases``: the phase the resolution entered, and the
+    /// overall ``fraction`` at that moment.
+    public typealias PhaseTransition = (phase: Phase, fraction: Double)
+
+    /// The phase transitions of this resolution as an asynchronous sequence.
+    ///
+    /// The `@Observable` surface serves SwiftUI; this sequence serves a CLI
+    /// or a test, replacing the polling task such a caller would otherwise
+    /// write:
+    ///
+    /// ```swift
+    /// for await transition in progress.phases {
+    ///     print("phase=\(transition.phase) fraction=\(transition.fraction)")
+    /// }
+    /// ```
+    ///
+    /// The sequence yields the current phase first, then yields each observed
+    /// change of ``phase`` exactly once, and finishes after it yields
+    /// ``Phase/ready`` or ``Phase/failed(_:)``. It never polls: each element
+    /// arrives from an observation of ``phase``, so an idle resolution costs
+    /// nothing. A phase the resolution enters and leaves between two
+    /// observations is skipped — the same visibility a polling loop had.
+    public var phases: AsyncStream<PhaseTransition> {
+        AsyncStream { continuation in
+            yieldPhaseTransitions(into: continuation, after: nil)
+        }
+    }
+
+    /// Yields the current phase into `continuation` when it differs from
+    /// `lastYielded`, finishes the stream at a terminal phase, and otherwise
+    /// re-arms an observation of ``phase`` to run again on its next change.
+    ///
+    /// - Parameters:
+    ///   - continuation: The stream to yield transitions into.
+    ///   - lastYielded: The phase this chain yielded last, or `nil` before
+    ///     the first element.
+    private func yieldPhaseTransitions(
+        into continuation: AsyncStream<PhaseTransition>.Continuation,
+        after lastYielded: Phase?
+    ) {
+        var latestYielded = lastYielded
+        if phase != latestYielded {
+            continuation.yield((phase: phase, fraction: fraction))
+            latestYielded = phase
+        }
+        switch phase {
+        case .ready, .failed:
+            continuation.finish()
+        case .sizing, .downloading, .loading:
+            let observed = latestYielded
+            withObservationTracking {
+                _ = phase
+            } onChange: { [weak self] in
+                Task { @MainActor in
+                    guard let self else {
+                        continuation.finish()
+                        return
+                    }
+                    self.yieldPhaseTransitions(into: continuation, after: observed)
+                }
+            }
+        }
+    }
+}

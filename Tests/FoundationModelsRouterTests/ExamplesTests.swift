@@ -199,13 +199,29 @@ struct ExamplesTests {
         )
 
         // `ResolutionProgress` is `@Observable`, so a SwiftUI view can bind to it
-        // and drive a `ProgressView` as resolution advances.
+        // and drive a `ProgressView` as resolution advances. For a CLI (or a
+        // test), `progress.phases` is the same progress as an AsyncSequence:
+        // each phase transition is one element, and the sequence ends at
+        // ready/failed — no polling task.
         let progress = ResolutionProgress()
+        let observedPhases = Task { @MainActor in
+            var phases: [ResolutionProgress.Phase] = []
+            for await transition in progress.phases {
+                phases.append(transition.phase)
+            }
+            return phases
+        }
         let profile = try await router.resolve(profile: coding, reporting: progress)
 
         // Resolution succeeded: every slot is resident and the bar is full.
         #expect(progress.phase == .ready)
         #expect(progress.fraction == 1.0)
+
+        // The phases sequence saw the resolution start and finish, and ended
+        // on its own at .ready.
+        let phases = await observedPhases.value
+        #expect(phases.first == .sizing)
+        #expect(phases.last == .ready)
 
         // The biggest-preference candidate won each generation slot.
         #expect(profile.definitionName == "coding")

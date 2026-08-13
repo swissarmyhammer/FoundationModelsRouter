@@ -48,10 +48,26 @@ comments:
     - evidence: 2 files changed. Tests/FoundationModelsRouterTests/Helpers/UndrivenLanguageModel.swift — added doc comments to all seven declarations that had none: `capabilities`, `executorConfiguration`, `typealias Model`, `init(configuration:)`, `respond`, `makeSession`, `languageModel` (the findings named four; the sweep of the file found three more with the same cause). Tests/FoundationModelsRouterTests/TranscriptReconstructionTests.swift — removed the local `responseEvent` helper and replaced its two calls with direct `Self.textEntryEvent(...)` calls (kind `.response`, entryId "dup-1"), the fix the finding names. A sweep of the other files this task changed (LogAssertions.swift, CompactionSegmentTests.swift, TranscriptEntryMapperTests.swift, TranscriptFidelityTests.swift, and the nine Sources files in commit 1922b94) found no other undocumented declaration and no other copied helper. Behavior did not change: the test assertions are unchanged. Build: `swift build --build-tests` — complete. Test: one ungated `swift test` — 900 + 27 + 24 = 951 tests in 84 + 11 + 5 = 100 suites, 0 failures, exit 0. The one known issue is the pre-existing deliberate `withKnownIssue` in the BoundedWait test. All five items in "Review Findings (2026-08-12 18:30)" are checked; tags re-supplied as ["transcript"] and verified.
     - next: review (/review). The task stays in `doing`.
   timestamp: 2026-08-12T23:59:21.780463+00:00
+- actor: claude-code
+  id: 01kzw6trrh337zf8t4zs03jwrm
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 0e4e8b7); 0 findings, 8 validators attempted, 0 failed; all 5 prior review items show a check
+    - next: none. The task is done.
+  timestamp: 2026-08-13T00:02:26.193156+00:00
+- actor: claude-code
+  id: 01kzw6vdrs45sv8fmggjtg3d52
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files; seven doc comments in UndrivenLanguageModel.swift, duplicated responseEvent helper replaced by the shared textEntryEvent
+    - test: green — swift test, 951 tests (900 + 27 + 24), 0 failures (the one implement run is the test evidence)
+    - commit: 0e4e8b7
+    - review: clean — 0 findings on HEAD~1..HEAD; all 5 prior findings checked; task moved to done
+  timestamp: 2026-08-13T00:02:47.705688+00:00
 depends_on:
 - 01KZR9Z6QH9WVXVSX9T6Z1MSG1
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ff9e80
 title: Make the transcript differ loud on non-append backend changes
 ---
 ## Problem

@@ -183,6 +183,45 @@ public struct RestoredSessionTree: Sendable {
     }
 }
 
+extension RoutedModel {
+    /// Loads the ``TranscriptTree`` recorded under this handle's recording root.
+    ///
+    /// This is the read-only companion of
+    /// ``restoreSessionTree(root:recordingRoot:registry:tools:)``: it returns
+    /// the value-typed tree without constructing live sessions, so a caller
+    /// can inspect recorded sessions — for example via
+    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` —
+    /// without composing the recording directory from ``Router/recordingsDir``
+    /// and ``routerId`` by hand. The directory layout is the router's private
+    /// convention; this call is the supported way to read it back.
+    ///
+    /// - Parameter recordingRoot: The exact directory to load the tree from,
+    ///   or `nil` (the default) for this handle's router-level root. Omitted,
+    ///   this loads the nested `<recordingsRoot>/<routerId>/` layout, throwing
+    ///   ``SessionTreeRestorationError/noDurableRecordingsRoot`` when this
+    ///   handle has no durable transcripts root. Supplied, this loads
+    ///   `recordingRoot` directly — the flat layout a caller-supplied
+    ///   `recordingRoot` at session-creation time produces (task ke41yth).
+    /// - Returns: The loaded tree.
+    /// - Throws: ``SessionTreeRestorationError/noDurableRecordingsRoot`` when
+    ///   `recordingRoot` is `nil` and this handle records to memory/none;
+    ///   ``TranscriptTreeError`` for anything ``TranscriptTree/load(under:)``
+    ///   throws.
+    public func transcriptTree(recordingRoot: URL? = nil) throws -> TranscriptTree {
+        let treeDirectory: URL
+        if let recordingRoot {
+            treeDirectory = recordingRoot
+        } else {
+            guard let recordingsRoot else {
+                throw SessionTreeRestorationError.noDurableRecordingsRoot
+            }
+            treeDirectory = recordingsRoot.appendingPathComponent(
+                routerId.description, isDirectory: true)
+        }
+        return try TranscriptTree.load(under: treeDirectory)
+    }
+}
+
 extension RoutedModel where Container == any LoadedLLMContainer {
     /// Restores a whole session tree from disk, rooted at a root session's id.
     ///
@@ -380,23 +419,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // profile must still be alive when this is called.
         let owningProfile = requireOwningProfile(apiName: "restoreSessionTree")
 
-        // `recordingRoot` supplied: that directory itself holds the tree's
-        // session directories directly — the flat, no-routerId-segment
-        // layout `makeSession(recordingRoot:)` writes (task ke41yth) — so it
-        // is loaded as-is, with no dependency on this handle's own
-        // `recordingsRoot`. Omitted: today's nested
-        // `<recordingsRoot>/<routerId>/` layout, unchanged.
-        let treeDirectory: URL
-        if let recordingRoot {
-            treeDirectory = recordingRoot
-        } else {
-            guard let recordingsRoot else {
-                throw SessionTreeRestorationError.noDurableRecordingsRoot
-            }
-            treeDirectory = recordingsRoot.appendingPathComponent(
-                routerId.description, isDirectory: true)
-        }
-        let tree = try TranscriptTree.load(under: treeDirectory)
+        // `transcriptTree(recordingRoot:)` owns the directory choice:
+        // `recordingRoot` supplied loads that flat layout directly, omitted
+        // loads the nested `<recordingsRoot>/<routerId>/` layout — see that
+        // call's own documentation.
+        let tree = try transcriptTree(recordingRoot: recordingRoot)
         guard let rootNode = tree.session(rootId) else {
             throw TranscriptTreeError.sessionNotFound(rootId)
         }

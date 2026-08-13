@@ -50,30 +50,20 @@ let demo = ProfileDefinition(
 // MARK: - Resolve once, watching progress
 
 // `ResolutionProgress` is `@Observable`; a SwiftUI view binds to it directly.
-// Here a background task polls it and prints each phase transition so a
-// first-time user watching this run in a terminal sees
-// sizing -> downloading -> loading -> ready, plus the overall fraction.
+// `progress.phases` is the same progress as an AsyncSequence for a terminal:
+// each phase transition arrives as one element — sizing -> downloading ->
+// loading -> ready — and the sequence ends at ready/failed.
 let progress = ResolutionProgress()
 
 let progressTask = Task { @MainActor in
-    var lastPhase: ResolutionProgress.Phase?
-    while !Task.isCancelled {
-        if progress.phase != lastPhase {
-            let percent = Int((progress.fraction * 100).rounded())
-            print("[resolve] phase=\(progress.phase) fraction=\(percent)%")
-            lastPhase = progress.phase
-        }
-        switch progress.phase {
-        case .ready, .failed:
-            return
-        default:
-            try? await Task.sleep(for: .milliseconds(200))
-        }
+    for await transition in progress.phases {
+        let percent = Int((transition.fraction * 100).rounded())
+        print("[resolve] phase=\(transition.phase) fraction=\(percent)%")
     }
 }
 
 let profile = try await router.resolve(profile: demo, reporting: progress)
-progressTask.cancel()
+await progressTask.value
 
 print(
     """
