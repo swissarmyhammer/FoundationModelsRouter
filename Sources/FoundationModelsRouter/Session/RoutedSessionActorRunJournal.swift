@@ -123,9 +123,9 @@ extension RoutedSessionActor: OperationEventJournal {
     /// A model-invoked `.toolOutput`'s id does arrive equal to the id of the
     /// call it answers, but that is the SDK's own undocumented and unenforced
     /// behaviour, and this router does not rely on it anywhere — see
-    /// ``completedToolCallId(forOutputEntryId:dispatched:completed:)``, which
-    /// resolves a completion's call id from the calls the same diff announced
-    /// rather than from the entry.
+    /// ``ToolCallOutputPairing/completedToolCallId(forOutputEntryId:dispatched:completed:)``,
+    /// which resolves a completion's call id from the calls the same diff
+    /// announced rather than from the entry.
     ///
     /// **Nothing is mutated.** Every report of a run — each progress update,
     /// each elicitation, the one terminal — is appended as its own entry, with

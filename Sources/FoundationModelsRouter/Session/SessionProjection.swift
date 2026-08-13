@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import Observation
 
 /// One tool invocation's lifecycle, correlated by ``id`` across its
@@ -498,5 +499,227 @@ public final class SessionProjection {
             transcript[index] = TranscriptEntry(
                 id: transcript[index].id, kind: transcript[index].kind, sourceEntryId: sourceEntryId)
         }
+    }
+
+    // MARK: - Seeding from a cold Transcript
+
+    /// Resets this projection to mirror `transcript` — the cold-start
+    /// counterpart of ``apply(_:)``, for a session restored from its recording
+    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``)
+    /// whose history predates every live event this projection could observe.
+    ///
+    /// Installs the rows ``transcriptRows(from:)`` groups from `transcript`'s
+    /// entries and returns everything else to its fresh-projection value —
+    /// ``phase`` to ``Phase/idle``, ``currentTurn`` to `nil`, ``tokensIn``/
+    /// ``tokensOut``/``contextFill`` to zero (none of the seeded history's
+    /// usage was observed by this projection; the session's own restored
+    /// ``RoutedSession/contextFill`` is the durable value), and the streaming
+    /// coalescing state cleared. Seeding is therefore equal to constructing a
+    /// fresh projection and installing the rows, whatever this projection
+    /// observed before.
+    ///
+    /// Live events applied after a seed append normally: every seeded text
+    /// and reasoning row already carries its adopted SDK entry id, so a later
+    /// turn's ``SessionEvent/textDelta(_:)`` opens a new row rather than
+    /// growing a seeded one, and a later ``SessionEvent/entryRecorded(id:kind:)``
+    /// adopts onto that new row alone.
+    ///
+    /// The transcript to seed from comes from ``RoutedSession/transcript`` —
+    /// the chosen source, read off the live session — or from
+    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` when
+    /// no live session exists; both produce the same entries for a restored
+    /// session.
+    ///
+    /// - Parameter transcript: The cold transcript to mirror.
+    public func seed(from transcript: Transcript) {
+        self.transcript = Self.transcriptRows(from: Array(transcript))
+        responseTextFold = ResponseTextFold()
+        openInvocationCorrelationIDs.removeAll()
+        provisionalEntryCount = 0
+        currentTurn = nil
+        tokensIn = 0
+        tokensOut = 0
+        contextFill = 0
+        phase = .idle
+    }
+
+    /// Groups a cold transcript's entries into the rows a live projection
+    /// would hold for the same history — the pure function behind
+    /// ``seed(from:)`` (task ^5aky6xr).
+    ///
+    /// Each entry maps through ``TranscriptEntryMapper/event(from:)``, the
+    /// same mapping the live diff derives its ``SessionEvent``s from, so call
+    /// ids, argument JSON, and text flattening cannot drift between the two
+    /// paths. The grouping mirrors the live event fold row for row:
+    ///
+    /// - A `.response` entry becomes a ``TranscriptEntry/Kind/text(_:)`` row
+    ///   that already adopted its entry id — unless it is a compaction
+    ///   boundary (it carries a ``CompactionSegment``), which becomes a
+    ///   ``TranscriptEntry/Kind/compaction(_:)`` row instead (see
+    ///   ``compactionRow(from:entryId:)`` for the one id divergence).
+    /// - A `.reasoning` entry becomes a ``TranscriptEntry/Kind/reasoning(_:)``
+    ///   row that already adopted its entry id.
+    /// - A `.toolCalls` entry becomes one ``TranscriptEntry/Kind/toolCall(_:)``
+    ///   row per call, keyed on the call's own id and stamped with the entry
+    ///   id as ``TranscriptEntry/sourceEntryId``.
+    /// - A `.toolOutput` entry completes its call's row — paired through the
+    ///   shared ``ToolCallOutputPairing/completedToolCallId(forOutputEntryId:dispatched:completed:)``,
+    ///   by id equality first and first-occurrence ordinal order second, the
+    ///   same rule the live diff applies — carrying the output's flattened
+    ///   text as the row's summary. An output that pairs to no row yields
+    ///   nothing, exactly as the live projection drops an untracked status.
+    /// - A `.prompt` entry yields no row and resets the pairing scope: the
+    ///   live rule's scope is one turn's diff, and a turn's diff begins at
+    ///   its own `.prompt`.
+    /// - Every other kind (`.instructions`, and any future kind) yields no
+    ///   row, matching the live event vocabulary.
+    ///
+    /// Once every entry is grouped, a call row still ``ToolCallStatus/running``
+    /// is marked ``ToolCallStatus/failed`` — the cold mirror of the live
+    /// diff's closing sweep for a call whose output never arrived.
+    ///
+    /// Rows come back in transcript order. A live projection's row order can
+    /// differ for one row per turn — the answer's text row streams before the
+    /// turn's diff appends the tool rows — but every row's content and id are
+    /// equal between the two paths.
+    ///
+    /// - Parameter entries: The cold transcript's entries, oldest first.
+    /// - Returns: The rows the entries group into, in transcript order.
+    nonisolated static func transcriptRows(from entries: [Transcript.Entry]) -> [TranscriptEntry] {
+        var rows: [TranscriptEntry] = []
+        var dispatchedToolCallIds: [String] = []
+        var completedToolCallIds: Set<String> = []
+        for entry in entries {
+            let (kind, payload, text) = TranscriptEntryMapper.event(from: entry)
+            switch kind {
+            case .prompt:
+                dispatchedToolCallIds.removeAll()
+                completedToolCallIds.removeAll()
+            case .toolCalls:
+                for call in payload.toolCalls ?? [] {
+                    dispatchedToolCallIds.append(call.id)
+                    rows.append(
+                        TranscriptEntry(
+                            id: call.id,
+                            kind: .toolCall(
+                                ToolCallEntry(
+                                    id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON,
+                                    status: .running, summary: nil)),
+                            sourceEntryId: payload.entryId))
+                }
+            case .toolOutput:
+                let callId = ToolCallOutputPairing.completedToolCallId(
+                    forOutputEntryId: payload.entryId,
+                    dispatched: dispatchedToolCallIds,
+                    completed: completedToolCallIds)
+                completedToolCallIds.insert(callId)
+                completeToolCallRow(id: callId, summary: text, in: &rows)
+            case .response:
+                rows.append(
+                    compactionRow(from: entry, entryId: payload.entryId)
+                        ?? TranscriptEntry(id: payload.entryId, kind: .text(text ?? ""), sourceEntryId: payload.entryId))
+            case .reasoning:
+                rows.append(
+                    TranscriptEntry(
+                        id: payload.entryId, kind: .reasoning(text ?? ""), sourceEntryId: payload.entryId))
+            case .session, .instructions, .embedding, .divergence, .toolCall, .unknown:
+                break
+            }
+        }
+        failUnansweredToolCallRows(in: &rows)
+        return rows
+    }
+
+    /// Marks the `.toolOutput`-paired call row `id` completed, carrying
+    /// `summary` — the cold mirror of the live
+    /// ``SessionEvent/toolStatus(id:status:summary:)`` update, searching from
+    /// the end exactly as ``updateToolCall(id:status:summary:)`` does. A true
+    /// no-op when no row carries the id, the same defensive posture the live
+    /// path takes for an untracked status.
+    ///
+    /// - Parameters:
+    ///   - id: The call id the output paired to.
+    ///   - summary: The output's flattened text, or `nil` when it carries no
+    ///     text segment (a structured output).
+    ///   - rows: The rows grouped so far.
+    private nonisolated static func completeToolCallRow(
+        id: String, summary: String?, in rows: inout [TranscriptEntry]
+    ) {
+        guard
+            let index = rows.lastIndex(where: {
+                if case .toolCall(let call) = $0.kind { return call.id == id }
+                return false
+            })
+        else { return }
+        guard case .toolCall(var call) = rows[index].kind else { return }
+        call.status = .completed
+        call.summary = summary
+        rows[index].kind = .toolCall(call)
+    }
+
+    /// Marks every call row still ``ToolCallStatus/running`` as
+    /// ``ToolCallStatus/failed`` — the cold mirror of the live diff's closing
+    /// sweep, which fails every announced call whose output never arrived.
+    ///
+    /// - Parameter rows: The rows grouped from the whole transcript.
+    private nonisolated static func failUnansweredToolCallRows(in rows: inout [TranscriptEntry]) {
+        for index in rows.indices {
+            guard case .toolCall(var call) = rows[index].kind, call.status == .running else { continue }
+            call.status = .failed
+            rows[index].kind = .toolCall(call)
+        }
+    }
+
+    /// The ``TranscriptEntry/Kind/compaction(_:)`` row a compaction boundary
+    /// entry implies, or `nil` when `entry` is an ordinary `.response`.
+    ///
+    /// A boundary is a `.response` entry carrying a `.custom`
+    /// ``CompactionSegment`` (see
+    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)``). The
+    /// rebuilt ``CompactionResult`` mirrors the one the live fold emitted:
+    /// the summary is the boundary's first text segment (empty text means a
+    /// deterministic-only fold, whose live result carried no summary), the
+    /// join key ``CompactionResult/summaryEntryId`` is the boundary entry's
+    /// own id exactly when a summary exists, and the token counts and stages
+    /// come from the persisted ``CompactionSegment/Content``.
+    ///
+    /// **The one id divergence from a live row.** A live fold's
+    /// ``CompactionResult/id`` is generated when the fold runs and is never
+    /// persisted, so no cold seed can read it back. The cold row keys on the
+    /// persisted ``CompactionSegment/id`` instead — stable across every seed
+    /// of the same recording, just not equal to the live run's generated id.
+    /// Every other row kind seeds with the exact id its live counterpart
+    /// adopted.
+    ///
+    /// - Parameters:
+    ///   - entry: The `.response` entry to inspect.
+    ///   - entryId: That entry's own id, already read off its payload.
+    /// - Returns: The compaction row, or `nil` for an ordinary response.
+    private nonisolated static func compactionRow(
+        from entry: Transcript.Entry, entryId: String
+    ) -> TranscriptEntry? {
+        guard case .response(let response) = entry else { return nil }
+        var segment: CompactionSegment?
+        var summaryText: String?
+        for candidate in response.segments {
+            if segment == nil, case .custom(let custom) = candidate,
+                let compaction = custom as? CompactionSegment
+            {
+                segment = compaction
+            }
+            if summaryText == nil, case .text(let textSegment) = candidate {
+                summaryText = textSegment.content
+            }
+        }
+        guard let segment else { return nil }
+        let summary = summaryText.flatMap { $0.isEmpty ? nil : $0 }
+        let result = CompactionResult(
+            id: segment.id,
+            summary: summary,
+            summaryEntryId: summary == nil ? nil : entryId,
+            tokensBefore: segment.content.tokensBefore,
+            tokensAfter: segment.content.tokensAfter,
+            stagesApplied: segment.content.stagesApplied)
+        return TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId)
     }
 }

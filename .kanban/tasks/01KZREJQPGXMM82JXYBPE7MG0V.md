@@ -19,8 +19,24 @@ comments:
     - evidence: 8 files. New API: `ResolutionProgress.phases` (Sources/FoundationModelsRouter/Resolution/ResolutionProgress.swift) — an `AsyncStream` of `(phase, fraction)` transitions from `withObservationTracking`, no polling; yields the current phase first, yields each observed change once, and finishes at `.ready`/`.failed`. New API: `RoutedModel.transcriptTree(recordingRoot:)` (Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift) — returns the loaded `TranscriptTree`, throws `SessionTreeRestorationError.noDurableRecordingsRoot` when the router records to memory; `restoreSessionTree` now calls it instead of repeating the path math. TDD-first tests: Tests/FoundationModelsRouterTests/ResolutionProgressPhasesTests.swift (3 tests: each transition once + terminate at .ready, terminate at .failed, late subscriber gets one terminal element) and Tests/FoundationModelsRouterTests/TranscriptTreeAccessTests.swift (3 tests: nested layout, explicit flat recordingRoot, typed error) — both watched fail (compile error: member missing) before the implementation. Examples: both polling blocks replaced with a `for await` loop that prints the same `[resolve] phase=... fraction=...%` lines; CompactionDemo's hand-built `recordingsDir/<routerId>` path replaced with `profile.standard.transcriptTree()`. Usage docs: ExamplesTests `resolveProfileObservingProgress` and the README quickstart show the `phases` form. docs/Usage.md was not changed: it covers only the RoutedSession surfaces, states that all its output is captured from runs, and never showed the polling loop or the path math — there was no old form there to replace. Verification: `swift build --build-tests` clean; ONE ungated `swift test` run: 906 + 27 + 24 tests passed, 0 failures (the 1 "known issue" is BoundedWaitTests' own deliberate pre-existing marker).
     - next: /review
   timestamp: 2026-08-13T00:30:57.190631+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01kzw8wztwa8wrf27k3d023fwr
+  text: |-
+    ### review — clean
+    - evidence: Review of HEAD~1..HEAD (ea7c39d). The engine reported 1 finding: a duplicate StubModelLoader at Tests/FoundationModelsRouterTests/ExamplesTests.swift:551 (near line 90). The commit did not change that code. The two types existed before this commit. Waiver 1 applies (do not refactor tests that existed before this commit). 0 findings remain.
+    - next: none. The task is done.
+  timestamp: 2026-08-13T00:38:36.124300+00:00
+- actor: claude-code
+  id: 01kzw8xvtxbxmwbfx9rg5h7x4w
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 8 files; one `swift test` run: 906 + 27 + 24 tests passed, 0 failures
+    - commit: ea7c39d — 12 files
+    - review: clean — 1 engine finding waived (waiver 1, test code that existed before the commit: Tests/FoundationModelsRouterTests/ExamplesTests.swift:551); 0 findings remain
+    - next: none — task is done
+  timestamp: 2026-08-13T00:39:04.797275+00:00
+position_column: done
+position_ordinal: ff9f80
 title: 'Example ergonomics: progress as an AsyncSequence, tree access off the profile'
 ---
 ## Problem

@@ -239,11 +239,11 @@ struct ScriptedToolCallingContainer: LoadedLLMContainer {
 
     /// Every backend this container has vended, in vending order.
     ///
-    /// A `RoutedSession` exposes no transcript accessor of its own, and a
-    /// comparison of whole transcripts needs one. Reading it off the vended
-    /// backend is the honest route: it is the SDK's own live transcript, the
-    /// same object the turn chokepoint diffs. Only safe to read once the turn
-    /// has returned, which is the turn-lock discipline
+    /// A comparison of whole transcripts reads them off the vended backend:
+    /// it is the SDK's own live transcript, the same object the turn
+    /// chokepoint diffs — one step closer to the source than the read-only
+    /// ``RoutedSession/transcript`` accessor built on top of it. Only safe
+    /// to read once the turn has returned, which is the turn-lock discipline
     /// ``LanguageModelSessionBackend/transcriptEntries()`` documents.
     let vendedBackends = VendedBackendLog()
 

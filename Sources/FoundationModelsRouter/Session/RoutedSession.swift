@@ -148,6 +148,25 @@ public protocol RoutedSession: Actor {
     ///   guess — until the first live turn re-measures.
     var contextFill: Double { get async }
 
+    /// The SDK transcript this session has accumulated so far — read-only,
+    /// and read under the session's own turn lock, so it never observes a
+    /// turn mid-append.
+    ///
+    /// This is the supported way to read the entries a session's history
+    /// holds — most importantly for seeding a ``SessionProjection`` via
+    /// ``SessionProjection/seed(from:)`` after
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``,
+    /// whose restored sessions carry a full transcript while a fresh
+    /// projection starts empty. A restored session reports the reconstructed
+    /// effective transcript its backend was seeded with (the same entries
+    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
+    /// produces), plus whatever live turns appended since.
+    ///
+    /// Waiting on the turn lock means a read issued while a turn is in
+    /// flight suspends until that turn finishes, exactly as
+    /// ``fork(workingDirectory:)`` does for the same reason.
+    var transcript: Transcript { get async }
+
     /// Folds this session's transcript in place: same ``id``, same
     /// ``recordingDirectory``/``recorder`` identity, shorter live window
     /// (compaction_plan.md §1.4).

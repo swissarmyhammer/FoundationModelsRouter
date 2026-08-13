@@ -139,6 +139,22 @@ actor RoutedSessionActor: RoutedSession {
     /// fixed for its whole lifetime.
     var backend: any LanguageModelSessionBackend
 
+    /// See ``RoutedSession/transcript``.
+    ///
+    /// Reads ``backend``'s own accumulated entries under ``turnLock`` — the
+    /// same lock discipline ``fork(workingDirectory:)`` takes for the same
+    /// read: a concurrent turn suspends across its model call while its
+    /// backend mutates the underlying transcript, so an unlocked read could
+    /// observe a turn mid-append. The lock is released as soon as the
+    /// entries are captured.
+    var transcript: Transcript {
+        get async {
+            await turnLock.wait()
+            defer { turnLock.signal() }
+            return Transcript(entries: backend.transcriptEntries())
+        }
+    }
+
     /// The slot this session's model fills, stamped onto recorded events.
     nonisolated let slot: ModelSlot
 
