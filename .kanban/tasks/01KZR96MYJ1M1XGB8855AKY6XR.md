@@ -72,10 +72,26 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Session/SessionProjection.swift (merged `completeToolCallRow` and `updateToolCall` into one shared static `updateToolCallRow(id:status:summary:in:)`), Tests/FoundationModelsRouterTests/Helpers/TranscriptTestHelpers.swift (new shared `makeCompactionEntry` fixture), Tests/FoundationModelsRouterTests/SessionProjectionSeedingTests.swift (uses the shared fixture). One `swift test` run: 915 + 27 + 24 = 966 tests in 103 suites, 0 failures, exit 0 (1 pre-existing known issue in BoundedWait). Both findings checked off in the description.
     - next: /review
   timestamp: 2026-08-13T01:51:58.089414+00:00
+- actor: claude-code
+  id: 01kzwdaapaf8t6q7zr45rdg5p0
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 88f7210); 0 new findings; all prior findings show a check
+    - next: none; the task is done
+  timestamp: 2026-08-13T01:55:47.530917+00:00
+- actor: claude-code
+  id: 01kzwdaycvdmerdmns25jmh8xa
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files; both findings fixed and checked off; one `swift test` run: 966 tests in 103 suites, 0 failures
+    - commit: 88f7210 — 5 files
+    - review: clean — 0 findings
+    - next: none — task is done
+  timestamp: 2026-08-13T01:56:07.707089+00:00
 depends_on:
 - 01KZR9658E5CEVBK177RT024HY
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffa080
 title: Seed SessionProjection from a cold Transcript
 ---
 ## Problem

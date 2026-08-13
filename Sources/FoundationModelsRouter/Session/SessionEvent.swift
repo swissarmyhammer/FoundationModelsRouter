@@ -45,7 +45,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// belongs to the turn this names. That is what lets a client map prompt to
     /// turn to events without an id repeated on each event — and it is why no
     /// turn identity is stamped into
-    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:)``,
+    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:output:)``,
     /// whose `id` is documented as Apple's `Transcript.ToolCall.id` and belongs
     /// to that identity space alone.
     ///
@@ -99,7 +99,7 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// - Parameters:
     ///   - id: The invocation's own id — Apple's `Transcript.ToolCall.id`,
-    ///     stable across this call's ``toolStatus(id:status:summary:)``
+    ///     stable across this call's ``toolStatus(id:status:summary:output:)``
     ///     updates and load-bearing for distinguishing two concurrent
     ///     same-name tool calls.
     ///   - name: The tool's name.
@@ -112,9 +112,17 @@ public enum SessionEvent: Sendable, Equatable {
     /// - Parameters:
     ///   - id: The originating call's id.
     ///   - status: The invocation's current status.
-    ///   - summary: The tool's output text once ``ToolCallStatus/completed``,
-    ///     or `nil` for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
-    case toolStatus(id: String, status: ToolCallStatus, summary: String?)
+    ///   - summary: The tool's flattened output text once
+    ///     ``ToolCallStatus/completed``, or `nil` for
+    ///     ``ToolCallStatus/running``/``ToolCallStatus/failed``.
+    ///   - output: The tool's full output segments once
+    ///     ``ToolCallStatus/completed`` — every ``SegmentPayload`` the
+    ///     answering `.toolOutput` entry carries, in entry order, so a
+    ///     `.structure`, `.attachment`, or `.custom` result travels intact
+    ///     where `summary` flattens it to text — or `nil` for
+    ///     ``ToolCallStatus/running``/``ToolCallStatus/failed`` and for an
+    ///     entry that carries no segments.
+    case toolStatus(id: String, status: ToolCallStatus, summary: String?, output: [SegmentPayload]?)
 
     /// A live ``ToolInvocationRecord`` from this session's own per-call
     /// binding layers: an open record (``ToolInvocationRecord/closedAt``
@@ -124,7 +132,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// **This is the mid-turn tool liveness signal** (task ^zfd8e69). The
     /// open record arrives while the tool's own work is still running —
     /// unlike ``toolCall(id:name:argumentsJSON:)`` and
-    /// ``toolStatus(id:status:summary:)``, which the post-turn diff
+    /// ``toolStatus(id:status:summary:output:)``, which the post-turn diff
     /// synthesizes once generation finishes. It travels on both routes: the
     /// turn's own ``RoutedSession/streamEvents(to:maxTokens:)`` stream and
     /// ``RoutedSession/streamSessionEvents()``. A detached run's close
@@ -135,7 +143,7 @@ public enum SessionEvent: Sendable, Equatable {
     /// **Delivery-only.** The record is never staged in the session's outbox
     /// and never recorded to the transcript; the post-turn diff stays the
     /// recording authority, and its ``toolCall(id:name:argumentsJSON:)``/
-    /// ``toolStatus(id:status:summary:)`` events keep arriving unchanged.
+    /// ``toolStatus(id:status:summary:output:)`` events keep arriving unchanged.
     ///
     /// **The identity rule.** The record's
     /// ``ToolInvocationRecord/correlationID`` is the run's `completionToken`
@@ -148,7 +156,7 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// Ordering, within one turn's in-band calls: the open record precedes
     /// its close record, and both precede the diff's
-    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:)``
+    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:output:)``
     /// for the same turn and that turn's ``turnEnded(_:)``.
     case toolInvocation(ToolInvocationRecord)
 
@@ -167,7 +175,7 @@ public enum SessionEvent: Sendable, Equatable {
     ///
     /// Emitted once per recorded `.response`/`.reasoning`/`.toolCalls` entry,
     /// in diff order, after that entry's own derived events (the
-    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:)``
+    /// ``toolCall(id:name:argumentsJSON:)``/``toolStatus(id:status:summary:output:)``
     /// pairs of a `.toolCalls` entry, the ``reasoningDelta(_:)`` of a
     /// `.reasoning` entry). A `.response` entry emits exactly this one event —
     /// its text already streamed live as ``textDelta(_:)`` fragments. It

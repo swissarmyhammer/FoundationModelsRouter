@@ -4,7 +4,7 @@ import Observation
 
 /// One tool invocation's lifecycle, correlated by ``id`` across its
 /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` and
-/// ``SessionEvent/toolStatus(id:status:summary:)`` events — load-bearing
+/// ``SessionEvent/toolStatus(id:status:summary:output:)`` events — load-bearing
 /// for distinguishing two concurrent same-name tool calls, exactly like
 /// the events it is built from.
 ///
@@ -23,9 +23,16 @@ public struct ToolCallEntry: Sendable, Equatable, Identifiable {
     public let argumentsJSON: String
     /// The invocation's current status.
     public var status: ToolCallStatus
-    /// The tool's output text once ``ToolCallStatus/completed``, or `nil`
-    /// for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
+    /// The tool's flattened output text once ``ToolCallStatus/completed``,
+    /// or `nil` for ``ToolCallStatus/running``/``ToolCallStatus/failed``.
     public var summary: String?
+    /// The tool's full output segments once ``ToolCallStatus/completed`` —
+    /// every ``SegmentPayload`` the answering `.toolOutput` entry carries, in
+    /// entry order, so a `.structure`, `.attachment`, or `.custom` result
+    /// survives where ``summary`` flattens it to text — or `nil` for
+    /// ``ToolCallStatus/running``/``ToolCallStatus/failed`` and for an entry
+    /// that carries no segments.
+    public var output: [SegmentPayload]? = nil
 }
 
 /// The `@MainActor`/`@Observable` mirror of one ``RoutedSession``'s live
@@ -63,10 +70,10 @@ public final class SessionProjection {
     ///
     /// Derived from whichever ``SessionEvent`` most recently arrived and
     /// actually updated something — an untracked
-    /// ``SessionEvent/toolStatus(id:status:summary:)`` (no prior matching
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)`` (no prior matching
     /// ``SessionEvent/toolCall(id:name:argumentsJSON:)``) leaves it
     /// unchanged rather than reporting ``Phase/runningTool`` for nothing (see
-    /// ``updateToolCallRow(id:status:summary:in:)``), and
+    /// ``updateToolCallRow(id:status:summary:output:in:)``), and
     /// ``SessionEvent/entryRecorded(id:kind:)`` is identity bookkeeping that
     /// never touches it.
     ///
@@ -76,7 +83,7 @@ public final class SessionProjection {
     /// returns it to ``Phase/generating`` once the last open invocation
     /// closed (see ``applyToolInvocation(_:)``). The diff-time
     /// ``SessionEvent/toolCall(id:name:argumentsJSON:)``/
-    /// ``SessionEvent/toolStatus(id:status:summary:)``/
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)``/
     /// ``SessionEvent/reasoningDelta(_:)`` events — synthesized only once
     /// generation finishes and the turn's own diff runs — still set it too,
     /// as they always did.
@@ -236,8 +243,8 @@ public final class SessionProjection {
                 TranscriptEntry(
                     id: id,
                     kind: .toolCall(ToolCallEntry(id: id, name: name, argumentsJSON: argumentsJSON, status: .running, summary: nil))))
-        case .toolStatus(let id, let status, let summary):
-            if Self.updateToolCallRow(id: id, status: status, summary: summary, in: &transcript) {
+        case .toolStatus(let id, let status, let summary, let output):
+            if Self.updateToolCallRow(id: id, status: status, summary: summary, output: output, in: &transcript) {
                 phase = .runningTool
             }
         case .toolInvocation(let record):
@@ -357,9 +364,9 @@ public final class SessionProjection {
 
     /// Finds the ``TranscriptEntry/Kind/toolCall(_:)`` row in `rows` whose
     /// ``ToolCallEntry/id`` matches `id` (searching from the end, since a
-    /// call's own row is unique per id) and updates its status/summary in
-    /// place — the one body behind both the live
-    /// ``SessionEvent/toolStatus(id:status:summary:)`` update and the cold
+    /// call's own row is unique per id) and updates its status, summary, and
+    /// output in place — the one body behind both the live
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)`` update and the cold
     /// seed's `.toolOutput` pairing (see ``transcriptRows(from:)``), so the
     /// two paths cannot drift.
     ///
@@ -373,13 +380,17 @@ public final class SessionProjection {
     /// - Parameters:
     ///   - id: The call id the update names.
     ///   - status: The call's new status.
-    ///   - summary: The tool's output text, or `nil` when it carries none.
+    ///   - summary: The tool's flattened output text, or `nil` when it
+    ///     carries none.
+    ///   - output: The tool's full output segments, or `nil` when it carries
+    ///     none — see ``ToolCallEntry/output``.
     ///   - rows: The rows to update — the live ``transcript``, or the cold
     ///     grouping's rows-so-far.
     /// - Returns: Whether a matching row was found and updated.
     @discardableResult
     private nonisolated static func updateToolCallRow(
-        id: String, status: ToolCallStatus, summary: String?, in rows: inout [TranscriptEntry]
+        id: String, status: ToolCallStatus, summary: String?, output: [SegmentPayload]?,
+        in rows: inout [TranscriptEntry]
     ) -> Bool {
         guard
             let index = rows.lastIndex(where: {
@@ -390,6 +401,7 @@ public final class SessionProjection {
         guard case .toolCall(var call) = rows[index].kind else { return false }
         call.status = status
         call.summary = summary
+        call.output = output
         rows[index].kind = .toolCall(call)
         return true
     }
@@ -414,8 +426,8 @@ public final class SessionProjection {
     /// producing. An untracked close — a detached run's late close after its
     /// turn ended, whose open ``SessionEvent/turnEnded(_:)`` already
     /// cleared — changes nothing, the same defensive posture
-    /// ``updateToolCallRow(id:status:summary:in:)`` takes for an untracked
-    /// status.
+    /// ``updateToolCallRow(id:status:summary:output:in:)`` takes for an
+    /// untracked status.
     ///
     /// - Parameter record: The record to apply.
     private func applyToolInvocation(_ record: ToolInvocationRecord) {
@@ -579,7 +591,8 @@ public final class SessionProjection {
     ///   shared ``ToolCallOutputPairing/completedToolCallId(forOutputEntryId:dispatched:completed:)``,
     ///   by id equality first and first-occurrence ordinal order second, the
     ///   same rule the live diff applies — carrying the output's flattened
-    ///   text as the row's summary. An output that pairs to no row yields
+    ///   text as the row's summary and its full segments as the row's
+    ///   ``ToolCallEntry/output``. An output that pairs to no row yields
     ///   nothing, exactly as the live projection drops an untracked status.
     /// - A `.prompt` entry yields no row and resets the pairing scope: the
     ///   live rule's scope is one turn's diff, and a turn's diff begins at
@@ -626,7 +639,7 @@ public final class SessionProjection {
                     dispatched: dispatchedToolCallIds,
                     completed: completedToolCallIds)
                 completedToolCallIds.insert(callId)
-                updateToolCallRow(id: callId, status: .completed, summary: text, in: &rows)
+                updateToolCallRow(id: callId, status: .completed, summary: text, output: payload.segments, in: &rows)
             case .response:
                 rows.append(
                     compactionRow(from: entry, entryId: payload.entryId)

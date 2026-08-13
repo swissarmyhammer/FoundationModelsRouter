@@ -19,7 +19,7 @@ enum ToolOutputCapping {
     /// this layer), appending an explicit truncation marker.
     ///
     /// Never silent: a caller (the model reading the returned text, or a
-    /// driver watching ``SessionEvent/toolStatus(id:status:summary:)``,
+    /// driver watching ``SessionEvent/toolStatus(id:status:summary:output:)``,
     /// whose `summary` is exactly what the SDK recorded for this tool's
     /// return value) can always tell a result was capped, and by how much.
     ///
@@ -131,7 +131,7 @@ enum ToolOutputCapping {
 /// outermost, so the model-facing tool the SDK actually calls is the capped
 /// one: both continued generation and the transcript's own recorded
 /// `.toolOutput` entry (and therefore
-/// ``SessionEvent/toolStatus(id:status:summary:)``'s `summary`) see the
+/// ``SessionEvent/toolStatus(id:status:summary:output:)``'s `summary`) see the
 /// capped text, never the oversized original.
 struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// The wrapped tool, called through untouched save for its return value.

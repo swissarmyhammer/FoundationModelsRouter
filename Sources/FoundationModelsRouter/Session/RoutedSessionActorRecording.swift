@@ -307,7 +307,7 @@ extension RoutedSessionActor {
         // Tool-call ids this diff has announced (`.toolCalls`) versus resolved
         // (`.toolOutput`), in request order — consulted once the loop finishes
         // to report any call whose output never arrived within this same
-        // diff as ``SessionEvent/toolStatus(id:status:summary:)`` `.failed`.
+        // diff as ``SessionEvent/toolStatus(id:status:summary:output:)`` `.failed`.
         // Stay empty (and cost nothing further) when `onEvent` is `nil`, which
         // no turn's own sink is.
         var dispatchedToolCallIds: [String] = []
@@ -336,7 +336,7 @@ extension RoutedSessionActor {
             )
         }
         for id in dispatchedToolCallIds where !completedToolCallIds.contains(id) {
-            onEvent?(.toolStatus(id: id, status: .failed, summary: nil))
+            onEvent?(.toolStatus(id: id, status: .failed, summary: nil, output: nil))
         }
         persistedEntryCount = entries.count
         persistedBaseline = TranscriptDiffer.Baseline(transcript: current)
@@ -401,14 +401,15 @@ extension RoutedSessionActor {
     /// already returns its full response text regardless of recording level.
     ///
     /// A `.toolCalls` partial yields one ``SessionEvent/toolCall(id:name:argumentsJSON:)``
-    /// plus a paired ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// plus a paired ``SessionEvent/toolStatus(id:status:summary:output:)`` of
     /// ``ToolCallStatus/running`` per requested call, recording each id into
     /// `dispatchedToolCallIds`, then closes itself with one
     /// ``SessionEvent/entryRecorded(id:kind:)`` carrying the `.toolCalls`
     /// entry's own id. A `.toolOutput` partial yields one
-    /// ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)`` of
     /// ``ToolCallStatus/completed``, carrying the tool's flattened output as
-    /// `summary`, and records its id into `completedToolCallIds`. That id is
+    /// `summary` and the entry's full ``SegmentPayload``s as `output`, and
+    /// records its id into `completedToolCallIds`. That id is
     /// resolved through the shared
     /// ``ToolCallOutputPairing/completedToolCallId(forOutputEntryId:dispatched:completed:)``
     /// rather than taken from the entry, so the id a completion carries is
@@ -453,7 +454,7 @@ extension RoutedSessionActor {
         case .toolCalls:
             for call in entry.toolCalls ?? [] {
                 onEvent(.toolCall(id: call.id, name: call.toolName, argumentsJSON: call.argumentsJSON))
-                onEvent(.toolStatus(id: call.id, status: .running, summary: nil))
+                onEvent(.toolStatus(id: call.id, status: .running, summary: nil, output: nil))
                 dispatchedToolCallIds.append(call.id)
             }
             onEvent(.entryRecorded(id: entry.entryId, kind: .toolCalls))
@@ -464,7 +465,7 @@ extension RoutedSessionActor {
                 completed: completedToolCallIds
             )
             completedToolCallIds.insert(callId)
-            onEvent(.toolStatus(id: callId, status: .completed, summary: partial.text))
+            onEvent(.toolStatus(id: callId, status: .completed, summary: partial.text, output: entry.segments))
         case .reasoning:
             onEvent(.reasoningDelta(partial.text ?? ""))
             onEvent(.entryRecorded(id: entry.entryId, kind: .reasoning))

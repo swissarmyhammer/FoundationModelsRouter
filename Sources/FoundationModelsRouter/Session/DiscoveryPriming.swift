@@ -215,7 +215,7 @@ enum DiscoveryPrimer {
     ///
     /// The `.toolOutput` entry's id **is** the `Transcript.ToolCall`'s id, which
     /// is what correlates the two — the same pairing an SDK-native call has, and
-    /// what ``SessionEvent/toolStatus(id:status:summary:)`` is derived from.
+    /// what ``SessionEvent/toolStatus(id:status:summary:output:)`` is derived from.
     ///
     /// - Parameters:
     ///   - prompt: The turn's own prompt.

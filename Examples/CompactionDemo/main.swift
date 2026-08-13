@@ -53,7 +53,7 @@ import Tokenizers
         print("[turn] \(start.turnId) started")
     case .toolCall(let id, let name, let argumentsJSON):
         print("[tool] call \(name) (\(id)): \(argumentsJSON)")
-    case .toolStatus(let id, let status, let summary):
+    case .toolStatus(let id, let status, let summary, _):
         print("[tool] \(id) -> \(status)\(summary.map { ": \($0)" } ?? "")")
     case .toolInvocation(let record):
         // The live signal: the open record arrives while the tool still

@@ -298,9 +298,9 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/textDelta(_:)``
     /// fragments as the model produces them; then, once generation finishes
     /// and the turn's diff runs, ``SessionEvent/toolCall(id:name:argumentsJSON:)``
-    /// paired with a ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// paired with a ``SessionEvent/toolStatus(id:status:summary:output:)`` of
     /// ``ToolCallStatus/running`` for each call the model requested (in diff
-    /// order), a ``SessionEvent/toolStatus(id:status:summary:)`` of
+    /// order), a ``SessionEvent/toolStatus(id:status:summary:output:)`` of
     /// ``ToolCallStatus/completed`` as each call's output lands (or
     /// ``ToolCallStatus/failed`` for a call whose matching `.toolOutput`
     /// never arrived within this turn's diff), any

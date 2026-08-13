@@ -13,7 +13,7 @@ import Testing
 /// ^way106d): a record's ``ToolInvocationRecord/correlationID`` is the run's
 /// `completionToken`, and it never appears inside a
 /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` /
-/// ``SessionEvent/toolStatus(id:status:summary:)`` id — those stay Apple's
+/// ``SessionEvent/toolStatus(id:status:summary:output:)`` id — those stay Apple's
 /// `Transcript.ToolCall.id` space, derived by the post-turn diff.
 @Suite("Tool invocation liveness: records from the binding layers, delivered mid-turn")
 struct ToolInvocationLivenessTests {
@@ -244,7 +244,7 @@ struct ToolInvocationLivenessTests {
             })
         let completedIndex = try #require(
             events.firstIndex {
-                if case .toolStatus(_, .completed, _) = $0 { return true }
+                if case .toolStatus(_, .completed, _, _) = $0 { return true }
                 return false
             })
         #expect(openIndex < closeIndex)

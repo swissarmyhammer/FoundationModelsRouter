@@ -69,7 +69,7 @@ struct SessionProjectionTests {
     func toolCallThenRunningStatusYieldsRunningEntry() {
         let projection = SessionProjection()
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: #"{"query":"weather"}"#))
-        projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil))
+        projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
 
         #expect(projection.phase == .runningTool)
         #expect(
@@ -86,8 +86,8 @@ struct SessionProjectionTests {
     func completedStatusUpdatesMatchingEntry() {
         let projection = SessionProjection()
         projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
-        projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil))
-        projection.apply(.toolStatus(id: "call-1", status: .completed, summary: "72F and sunny"))
+        projection.apply(.toolStatus(id: "call-1", status: .running, summary: nil, output: nil))
+        projection.apply(.toolStatus(id: "call-1", status: .completed, summary: "72F and sunny", output: nil))
 
         #expect(
             projection.transcript.map(\.kind) == [
@@ -98,16 +98,40 @@ struct SessionProjectionTests {
         )
     }
 
+    @Test("a completed toolStatus's full output segments land on the row — text, structure, and custom — with summary staying the flattened text")
+    @MainActor
+    func completedStatusCarriesFullOutputSegmentsOnTheRow() {
+        let projection = SessionProjection()
+        projection.apply(.toolCall(id: "call-1", name: "search", argumentsJSON: "{}"))
+        let output: [SegmentPayload] = [
+            .text(id: "s-text", content: "72F and sunny"),
+            .structure(id: "s-struct", schemaName: "Weather", contentJSON: #"{"tempF":72}"#),
+            .custom(
+                id: "s-note", typeDiscriminator: "TestNoteSegment", contentJSON: #"{"body":"hello"}"#,
+                description: "Note: hello"),
+        ]
+        projection.apply(.toolStatus(id: "call-1", status: .completed, summary: "72F and sunny", output: output))
+
+        #expect(
+            projection.transcript.map(\.kind) == [
+                .toolCall(
+                    SessionProjection.ToolCallEntry(
+                        id: "call-1", name: "search", argumentsJSON: "{}", status: .completed,
+                        summary: "72F and sunny", output: output))
+            ]
+        )
+    }
+
     @Test("two concurrent same-name tool calls are tracked as distinct entries, correlated by id")
     @MainActor
     func twoConcurrentSameNameToolCallsAreDistinctEntries() {
         let projection = SessionProjection()
         projection.apply(.toolCall(id: "call-a", name: "search", argumentsJSON: #"{"city":"NYC"}"#))
-        projection.apply(.toolStatus(id: "call-a", status: .running, summary: nil))
+        projection.apply(.toolStatus(id: "call-a", status: .running, summary: nil, output: nil))
         projection.apply(.toolCall(id: "call-b", name: "search", argumentsJSON: #"{"city":"SF"}"#))
-        projection.apply(.toolStatus(id: "call-b", status: .running, summary: nil))
-        projection.apply(.toolStatus(id: "call-a", status: .completed, summary: "NYC: sunny"))
-        projection.apply(.toolStatus(id: "call-b", status: .completed, summary: "SF: foggy"))
+        projection.apply(.toolStatus(id: "call-b", status: .running, summary: nil, output: nil))
+        projection.apply(.toolStatus(id: "call-a", status: .completed, summary: "NYC: sunny", output: nil))
+        projection.apply(.toolStatus(id: "call-b", status: .completed, summary: "SF: foggy", output: nil))
 
         #expect(
             projection.transcript.map(\.kind) == [
@@ -125,7 +149,7 @@ struct SessionProjectionTests {
     @MainActor
     func toolStatusWithNoMatchingToolCallIsANoOp() {
         let projection = SessionProjection()
-        projection.apply(.toolStatus(id: "unknown", status: .completed, summary: "ignored"))
+        projection.apply(.toolStatus(id: "unknown", status: .completed, summary: "ignored", output: nil))
 
         #expect(projection.transcript.isEmpty)
         // Genuinely a no-op: an untracked status update must not even flip

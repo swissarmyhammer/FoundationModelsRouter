@@ -22,7 +22,7 @@ import Foundation
 /// (``ToolContext/completionToken``). It is *never* an SDK
 /// `Transcript.ToolCall.id`, and it never appears inside a
 /// ``SessionEvent/toolCall(id:name:argumentsJSON:)`` /
-/// ``SessionEvent/toolStatus(id:status:summary:)`` id: those stay Apple's
+/// ``SessionEvent/toolStatus(id:status:summary:output:)`` id: those stay Apple's
 /// `Transcript.ToolCall.id` space alone. A consumer joins the two views
 /// explicitly — the live record identifies the run (``correlationID``,
 /// ``tool``, open order inside the turn frame) and the diff's `.toolCall`

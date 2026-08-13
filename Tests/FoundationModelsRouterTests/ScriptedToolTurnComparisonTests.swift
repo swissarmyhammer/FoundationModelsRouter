@@ -117,9 +117,9 @@ struct ScriptedToolTurnComparisonTests {
                 answer = ""
             case .toolCall(let id, _, _):
                 calledIds.append(id)
-            case .toolStatus(let id, .completed, _):
+            case .toolStatus(let id, .completed, _, _):
                 completedIds.append(id)
-            case .toolStatus(let id, .failed, _):
+            case .toolStatus(let id, .failed, _, _):
                 failedIds.append(id)
             case .turnStarted, .toolStatus, .toolInvocation, .reasoningDelta, .entryRecorded, .compaction,
                 .discoveryPrimingFailed, .turnEnded:

@@ -141,6 +141,15 @@ struct TurnOutcomeTests {
         #expect(outcome.toolCalls.map(\.name) == [Self.firstTool, Self.secondTool])
         #expect(outcome.toolCalls.map(\.status) == [.completed, .completed])
         #expect(outcome.toolCalls.map(\.summary) == ToolTurnScenario.markers)
+        // The full output segments ride along too: each marker tool's output
+        // entry carries one `.text` segment whose content is the marker.
+        let outputTexts = outcome.toolCalls.map { call -> String? in
+            guard let output = call.output, output.count == 1,
+                case .text(_, let content) = output[0]
+            else { return nil }
+            return content
+        }
+        #expect(outputTexts == ToolTurnScenario.markers)
 
         // The live view: one record per run (the close record replaced the
         // open record), in the completionToken id space.

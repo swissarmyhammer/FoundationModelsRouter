@@ -281,6 +281,7 @@ struct SessionEventStreamTests {
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
         let arguments = try GeneratedContent(json: #"{"query":"weather"}"#)
+        let outputSegment = Transcript.TextSegment(content: "72F and sunny")
         container.backend.responseChunks = ["it's sunny"]
         container.backend.entries = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "weather?"))])),
@@ -294,7 +295,7 @@ struct SessionEventStreamTests {
                 Transcript.ToolOutput(
                     id: "call-1",
                     toolName: "search",
-                    segments: [.text(Transcript.TextSegment(content: "72F and sunny"))]
+                    segments: [.text(outputSegment)]
                 )
             ),
             .response(
@@ -307,12 +308,78 @@ struct SessionEventStreamTests {
             eventsAfterTurnFrame(events) == [
                 .textDelta("it's sunny"),
                 .toolCall(id: "call-1", name: "search", argumentsJSON: arguments.jsonString),
-                .toolStatus(id: "call-1", status: .running, summary: nil),
+                .toolStatus(id: "call-1", status: .running, summary: nil, output: nil),
                 .entryRecorded(id: "calls-1", kind: .toolCalls),
-                .toolStatus(id: "call-1", status: .completed, summary: "72F and sunny"),
+                .toolStatus(
+                    id: "call-1", status: .completed, summary: "72F and sunny",
+                    output: [.text(id: outputSegment.id, content: "72F and sunny")]),
                 .entryRecorded(id: "resp-1", kind: .response),
             ]
         )
+    }
+
+    @Test("a completed status carries the output entry's full segments — text, structure, and custom — while summary stays the flattened text")
+    @MainActor
+    func completedStatusCarriesFullOutputSegments() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        let arguments = try GeneratedContent(json: #"{"query":"weather"}"#)
+        let structureContent = try GeneratedContent(json: #"{"tempF":72}"#)
+        let noteSegment = TestNoteSegment(id: "s-note", content: TestNote(body: "hello"))
+        let outputSegments: [Transcript.Segment] = [
+            .text(Transcript.TextSegment(id: "s-text", content: "72F and sunny")),
+            .structure(
+                Transcript.StructuredSegment(id: "s-struct", schemaName: "Weather", content: structureContent)),
+            .custom(noteSegment),
+        ]
+        container.backend.entries = [
+            .toolCalls(
+                Transcript.ToolCalls(
+                    id: "calls-1",
+                    [Transcript.ToolCall(id: "call-1", toolName: "search", arguments: arguments)]
+                )
+            ),
+            .toolOutput(Transcript.ToolOutput(id: "call-1", toolName: "search", segments: outputSegments)),
+            .response(
+                Transcript.Response(
+                    id: "resp-1", segments: [.text(Transcript.TextSegment(content: "ok"))])),
+        ]
+
+        let events = try await Self.collect(session.streamEvents(to: "weather?"))
+        var completedSummary: String?
+        var completedOutput: [SegmentPayload]?
+        for event in events {
+            guard case .toolStatus(id: "call-1", status: .completed, let summary, let output) = event else {
+                continue
+            }
+            completedSummary = summary
+            completedOutput = output
+        }
+
+        // `summary` stays the flattened text — the `.text` segments alone.
+        #expect(completedSummary == "72F and sunny")
+        // The full segments travel intact, through the same mapping the
+        // recording persists.
+        let output = try #require(completedOutput)
+        #expect(output == outputSegments.map(TranscriptEntryMapper.segmentPayload))
+        try #require(output.count == outputSegments.count)
+        #expect(output[0] == .text(id: "s-text", content: "72F and sunny"))
+        guard case .structure(let structureId, let schemaName, let contentJSON) = output[1] else {
+            Issue.record("expected a .structure payload, got \(output[1])")
+            return
+        }
+        #expect(structureId == "s-struct")
+        #expect(schemaName == "Weather")
+        #expect(contentJSON == structureContent.jsonString)
+        guard case .custom(let customId, let discriminator, _, let description) = output[2] else {
+            Issue.record("expected a .custom payload, got \(output[2])")
+            return
+        }
+        #expect(customId == "s-note")
+        #expect(discriminator == TestNoteSegment.typeDiscriminator)
+        #expect(description == "Note: hello")
     }
 
     @Test("two concurrent same-name tool calls in one .toolCalls entry are distinguished by id")
@@ -324,6 +391,8 @@ struct SessionEventStreamTests {
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
         let argumentsA = try GeneratedContent(json: #"{"city":"NYC"}"#)
         let argumentsB = try GeneratedContent(json: #"{"city":"SF"}"#)
+        let outputSegmentA = Transcript.TextSegment(content: "NYC: sunny")
+        let outputSegmentB = Transcript.TextSegment(content: "SF: foggy")
         container.backend.entries = [
             .toolCalls(
                 Transcript.ToolCalls(
@@ -335,10 +404,10 @@ struct SessionEventStreamTests {
                 )
             ),
             .toolOutput(
-                Transcript.ToolOutput(id: "call-a", toolName: "search", segments: [.text(Transcript.TextSegment(content: "NYC: sunny"))])
+                Transcript.ToolOutput(id: "call-a", toolName: "search", segments: [.text(outputSegmentA)])
             ),
             .toolOutput(
-                Transcript.ToolOutput(id: "call-b", toolName: "search", segments: [.text(Transcript.TextSegment(content: "SF: foggy"))])
+                Transcript.ToolOutput(id: "call-b", toolName: "search", segments: [.text(outputSegmentB)])
             ),
             .response(
                 Transcript.Response(
@@ -350,12 +419,16 @@ struct SessionEventStreamTests {
             eventsAfterTurnFrame(events) == [
                 .textDelta("ok"),
                 .toolCall(id: "call-a", name: "search", argumentsJSON: argumentsA.jsonString),
-                .toolStatus(id: "call-a", status: .running, summary: nil),
+                .toolStatus(id: "call-a", status: .running, summary: nil, output: nil),
                 .toolCall(id: "call-b", name: "search", argumentsJSON: argumentsB.jsonString),
-                .toolStatus(id: "call-b", status: .running, summary: nil),
+                .toolStatus(id: "call-b", status: .running, summary: nil, output: nil),
                 .entryRecorded(id: "calls-1", kind: .toolCalls),
-                .toolStatus(id: "call-a", status: .completed, summary: "NYC: sunny"),
-                .toolStatus(id: "call-b", status: .completed, summary: "SF: foggy"),
+                .toolStatus(
+                    id: "call-a", status: .completed, summary: "NYC: sunny",
+                    output: [.text(id: outputSegmentA.id, content: "NYC: sunny")]),
+                .toolStatus(
+                    id: "call-b", status: .completed, summary: "SF: foggy",
+                    output: [.text(id: outputSegmentB.id, content: "SF: foggy")]),
                 .entryRecorded(id: "resp-1", kind: .response),
             ]
         )
@@ -377,6 +450,8 @@ struct SessionEventStreamTests {
         // plants output entries keyed in a different space and holds Router to
         // reporting the call ids it announced regardless (task ^w8dzvee, D1).
         // Two calls, because with one the mis-keying is invisible.
+        let outputSegmentA = Transcript.TextSegment(content: "NYC: sunny")
+        let outputSegmentB = Transcript.TextSegment(content: "SF: foggy")
         container.backend.entries = [
             .toolCalls(
                 Transcript.ToolCalls(
@@ -390,12 +465,12 @@ struct SessionEventStreamTests {
             .toolOutput(
                 Transcript.ToolOutput(
                     id: "output-entry-1", toolName: "search",
-                    segments: [.text(Transcript.TextSegment(content: "NYC: sunny"))])
+                    segments: [.text(outputSegmentA)])
             ),
             .toolOutput(
                 Transcript.ToolOutput(
                     id: "output-entry-2", toolName: "search",
-                    segments: [.text(Transcript.TextSegment(content: "SF: foggy"))])
+                    segments: [.text(outputSegmentB)])
             ),
             .response(
                 Transcript.Response(
@@ -407,12 +482,16 @@ struct SessionEventStreamTests {
             eventsAfterTurnFrame(events) == [
                 .textDelta("ok"),
                 .toolCall(id: "call-a", name: "search", argumentsJSON: argumentsA.jsonString),
-                .toolStatus(id: "call-a", status: .running, summary: nil),
+                .toolStatus(id: "call-a", status: .running, summary: nil, output: nil),
                 .toolCall(id: "call-b", name: "search", argumentsJSON: argumentsB.jsonString),
-                .toolStatus(id: "call-b", status: .running, summary: nil),
+                .toolStatus(id: "call-b", status: .running, summary: nil, output: nil),
                 .entryRecorded(id: "calls-1", kind: .toolCalls),
-                .toolStatus(id: "call-a", status: .completed, summary: "NYC: sunny"),
-                .toolStatus(id: "call-b", status: .completed, summary: "SF: foggy"),
+                .toolStatus(
+                    id: "call-a", status: .completed, summary: "NYC: sunny",
+                    output: [.text(id: outputSegmentA.id, content: "NYC: sunny")]),
+                .toolStatus(
+                    id: "call-b", status: .completed, summary: "SF: foggy",
+                    output: [.text(id: outputSegmentB.id, content: "SF: foggy")]),
                 .entryRecorded(id: "resp-1", kind: .response),
             ]
         )
@@ -440,7 +519,7 @@ struct SessionEventStreamTests {
 
         let events = try await Self.collect(session.streamEvents(to: "search something"))
         let statusEvents = events.compactMap { event -> ToolCallStatus? in
-            guard case .toolStatus(id: "call-1", let status, _) = event else { return nil }
+            guard case .toolStatus(id: "call-1", let status, _, _) = event else { return nil }
             return status
         }
         #expect(statusEvents == [.running, .failed])
@@ -515,6 +594,7 @@ struct SessionEventStreamTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (session, container, _) = try await Self.makeSession(cacheDir: dir)
+        let outputSegment = Transcript.TextSegment(content: "result")
         container.backend.shouldThrow = true
         container.backend.entries = [
             .toolCalls(
@@ -524,7 +604,7 @@ struct SessionEventStreamTests {
                 )
             ),
             .toolOutput(
-                Transcript.ToolOutput(id: "call-1", toolName: "search", segments: [.text(Transcript.TextSegment(content: "result"))])
+                Transcript.ToolOutput(id: "call-1", toolName: "search", segments: [.text(outputSegment)])
             ),
             .response(
                 Transcript.Response(
@@ -545,9 +625,11 @@ struct SessionEventStreamTests {
         #expect(
             eventsAfterTurnFrame(collected) == [
                 .toolCall(id: "call-1", name: "search", argumentsJSON: "{}"),
-                .toolStatus(id: "call-1", status: .running, summary: nil),
+                .toolStatus(id: "call-1", status: .running, summary: nil, output: nil),
                 .entryRecorded(id: "calls-1", kind: .toolCalls),
-                .toolStatus(id: "call-1", status: .completed, summary: "result"),
+                .toolStatus(
+                    id: "call-1", status: .completed, summary: "result",
+                    output: [.text(id: outputSegment.id, content: "result")]),
                 .entryRecorded(id: "resp-1", kind: .response),
             ]
         )

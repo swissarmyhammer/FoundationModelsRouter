@@ -59,17 +59,19 @@ struct SessionProjectionSeedingTests {
             id: "call-a", toolName: "search", arguments: try GeneratedContent(json: #"{"city":"NYC"}"#))
         let callB = Transcript.ToolCall(
             id: "call-b", toolName: "search", arguments: try GeneratedContent(json: #"{"city":"SF"}"#))
+        let outputSegmentA = Transcript.TextSegment(content: "NYC: sunny")
+        let outputSegmentB = Transcript.TextSegment(content: "SF: foggy")
         let entries: [Transcript.Entry] = [
             .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "weather?"))])),
             .toolCalls(Transcript.ToolCalls(id: "calls-1", [callA, callB])),
             .toolOutput(
                 Transcript.ToolOutput(
                     id: "call-a", toolName: "search",
-                    segments: [.text(Transcript.TextSegment(content: "NYC: sunny"))])),
+                    segments: [.text(outputSegmentA)])),
             .toolOutput(
                 Transcript.ToolOutput(
                     id: "call-b", toolName: "search",
-                    segments: [.text(Transcript.TextSegment(content: "SF: foggy"))])),
+                    segments: [.text(outputSegmentB)])),
             .reasoning(
                 Transcript.Reasoning(
                     id: "reasoning-1",
@@ -90,15 +92,69 @@ struct SessionProjectionSeedingTests {
                 .toolCall(
                     SessionProjection.ToolCallEntry(
                         id: "call-a", name: "search", argumentsJSON: callA.arguments.jsonString,
-                        status: .completed, summary: "NYC: sunny")),
+                        status: .completed, summary: "NYC: sunny",
+                        output: [.text(id: outputSegmentA.id, content: "NYC: sunny")])),
                 .toolCall(
                     SessionProjection.ToolCallEntry(
                         id: "call-b", name: "search", argumentsJSON: callB.arguments.jsonString,
-                        status: .completed, summary: "SF: foggy")),
+                        status: .completed, summary: "SF: foggy",
+                        output: [.text(id: outputSegmentB.id, content: "SF: foggy")])),
                 .reasoning("thinking"),
                 .text("the answer"),
             ]
         )
+    }
+
+    @Test("a seeded output's full segments land on the row — text, structure, and custom — with summary staying the flattened text")
+    func seededOutputCarriesFullSegments() throws {
+        let structureContent = try GeneratedContent(json: #"{"tempF":72}"#)
+        let noteSegment = TestNoteSegment(id: "s-note", content: TestNote(body: "hello"))
+        let outputSegments: [Transcript.Segment] = [
+            .text(Transcript.TextSegment(id: "s-text", content: "72F and sunny")),
+            .structure(
+                Transcript.StructuredSegment(id: "s-struct", schemaName: "Weather", content: structureContent)),
+            .custom(noteSegment),
+        ]
+        let entries: [Transcript.Entry] = [
+            .toolCalls(
+                Transcript.ToolCalls(
+                    id: "calls-1",
+                    [
+                        Transcript.ToolCall(
+                            id: "call-1", toolName: "search", arguments: try GeneratedContent(json: "{}"))
+                    ])),
+            .toolOutput(Transcript.ToolOutput(id: "call-1", toolName: "search", segments: outputSegments)),
+        ]
+
+        let rows = SessionProjection.transcriptRows(from: entries)
+
+        guard case .toolCall(let call) = rows.first?.kind else {
+            Issue.record("expected one .toolCall row, got \(rows)")
+            return
+        }
+        // `summary` stays the flattened text — the `.text` segments alone.
+        #expect(call.status == .completed)
+        #expect(call.summary == "72F and sunny")
+        // The full segments land on the row, through the same mapping the
+        // live diff emits, so the two paths carry equal data.
+        let output = try #require(call.output)
+        #expect(output == outputSegments.map(TranscriptEntryMapper.segmentPayload))
+        try #require(output.count == outputSegments.count)
+        #expect(output[0] == .text(id: "s-text", content: "72F and sunny"))
+        guard case .structure(let structureId, let schemaName, let contentJSON) = output[1] else {
+            Issue.record("expected a .structure payload, got \(output[1])")
+            return
+        }
+        #expect(structureId == "s-struct")
+        #expect(schemaName == "Weather")
+        #expect(contentJSON == structureContent.jsonString)
+        guard case .custom(let customId, let discriminator, _, let description) = output[2] else {
+            Issue.record("expected a .custom payload, got \(output[2])")
+            return
+        }
+        #expect(customId == "s-note")
+        #expect(discriminator == TestNoteSegment.typeDiscriminator)
+        #expect(description == "Note: hello")
     }
 
     @Test("an output whose id names no announced call pairs by first-occurrence ordinal order, like the live path")
@@ -179,7 +235,7 @@ struct SessionProjectionSeedingTests {
         // The stray output pairs to nothing: turn two announced no call, and
         // turn one's call is out of scope — so the call stays .failed and the
         // output yields no row, exactly as the live projection drops an
-        // untracked ``SessionEvent/toolStatus(id:status:summary:)``.
+        // untracked ``SessionEvent/toolStatus(id:status:summary:output:)``.
         #expect(rows.map(\.id) == ["call-1"])
         guard case .toolCall(let call) = rows.first?.kind else {
             Issue.record("expected one .toolCall row, got \(rows)")

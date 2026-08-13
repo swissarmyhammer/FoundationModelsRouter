@@ -65,7 +65,7 @@ public struct TokenBudget: Sendable, Equatable, Codable {
     /// estimated size exceeds this limit is truncated to it, with an
     /// explicit `"… [truncated: N of M tokens]"` marker appended — never
     /// silently dropped — so both the model and a driver watching
-    /// ``SessionEvent/toolStatus(id:status:summary:)`` see that a result was
+    /// ``SessionEvent/toolStatus(id:status:summary:output:)`` see that a result was
     /// capped. Replaces an external per-tool capping
     /// job.
     public var toolOutputLimit: Int?

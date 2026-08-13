@@ -13,7 +13,7 @@ import Foundation
 ///
 /// **Two tool views, two id spaces.** ``toolCalls`` is the post-turn diff's
 /// view — each call's `id` is Apple's `Transcript.ToolCall.id`, with the
-/// lifecycle its ``SessionEvent/toolStatus(id:status:summary:)`` events
+/// lifecycle its ``SessionEvent/toolStatus(id:status:summary:output:)`` events
 /// reported. ``toolInvocations`` is the live view — each record's
 /// ``ToolInvocationRecord/correlationID`` is the run's `completionToken`,
 /// carrying the wall-clock open/close instants and the derived per-call
@@ -45,7 +45,7 @@ public struct TurnOutcome: Sendable, Equatable {
 
     /// The turn's tool invocations as the post-turn diff derived them, in
     /// diff order: id, name, arguments, and the lifecycle status/summary the
-    /// turn's ``SessionEvent/toolStatus(id:status:summary:)`` events reported.
+    /// turn's ``SessionEvent/toolStatus(id:status:summary:output:)`` events reported.
     public let toolCalls: [ToolCallEntry]
 
     /// The turn's live ``ToolInvocationRecord``s, in open order, one per run:
@@ -97,8 +97,8 @@ struct TurnOutcomeFold {
         case .toolCall(let id, let name, let argumentsJSON):
             toolCalls.append(
                 ToolCallEntry(id: id, name: name, argumentsJSON: argumentsJSON, status: .running, summary: nil))
-        case .toolStatus(let id, let status, let summary):
-            updateToolCall(id: id, status: status, summary: summary)
+        case .toolStatus(let id, let status, let summary, let output):
+            updateToolCall(id: id, status: status, summary: summary, output: output)
         case .toolInvocation(let record):
             applyToolInvocation(record)
         case .compaction(let result):
@@ -136,11 +136,16 @@ struct TurnOutcomeFold {
     /// - Parameters:
     ///   - id: The originating call's `Transcript.ToolCall.id`.
     ///   - status: The invocation's current status.
-    ///   - summary: The tool's output text once completed, or `nil`.
-    private mutating func updateToolCall(id: String, status: ToolCallStatus, summary: String?) {
+    ///   - summary: The tool's flattened output text once completed, or `nil`.
+    ///   - output: The tool's full output segments once completed, or `nil` —
+    ///     see ``ToolCallEntry/output``.
+    private mutating func updateToolCall(
+        id: String, status: ToolCallStatus, summary: String?, output: [SegmentPayload]?
+    ) {
         guard let index = toolCalls.lastIndex(where: { $0.id == id }) else { return }
         toolCalls[index].status = status
         toolCalls[index].summary = summary
+        toolCalls[index].output = output
     }
 
     /// Tracks one live record: the first record of a run appends, and a later

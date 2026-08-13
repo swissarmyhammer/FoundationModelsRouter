@@ -257,7 +257,7 @@ otherwise have to maintain:
    result before it ever reaches the model or gets recorded
    (`ToolOutputCapping`), truncating with an explicit
    `"… [truncated: N of M tokens]"` marker — never silent — and reflecting
-   the truncation on `SessionEvent/toolStatus(id:status:summary:)`. This
+   the truncation on `SessionEvent/toolStatus(id:status:summary:output:)`. This
    replaces the harness's own external `ObservedTool` capping job with a
    seam Router's own tool-instancing pipeline already owns.
 
