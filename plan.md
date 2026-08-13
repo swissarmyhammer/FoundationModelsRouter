@@ -746,9 +746,11 @@ layer up:
   composer affordance, not an engine one" stance, landed inside Router
   itself rather than left for every caller to reinvent: `SessionOutbox`
   gives every session a staging area for queued user prompts and
-  tool-posted events, and its `nextEvent()` is the idle-wakeup a driver
-  loop awaits instead of polling — but the loop that calls it is always
-  the caller's own `Task`, never something Router starts on its own.
+  tool-posted events, and `RoutedSession.awaitQueuedWork()` — the typed
+  capability over that staging area's own wake-up signal (task ^j0pp9yp) —
+  is the idle-wakeup a driver loop awaits instead of polling. The loop that
+  calls it is always the caller's own `Task`, never something Router starts
+  on its own.
 - **Cancellation comes in two halves, queue-side and in-flight.**
   `cancel(id:)` withdraws a still-pending queued prompt before it is ever
   dispatched — a cancelled prompt never produces a turn. `cancelCurrentTurn()`

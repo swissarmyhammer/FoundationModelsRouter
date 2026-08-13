@@ -72,7 +72,7 @@ extension RoutedSessionActor {
         let childOutbox = SessionOutbox()
         // The child's mailbox is fresh for the same reason its outbox is:
         // parked runs and pending elicitations never migrate between
-        // sessions (see ``RoutedSession/mailbox``).
+        // sessions (see ``RoutedSessionActor/mailbox``).
         let childMailbox = SessionMailbox()
         // Minted before the tool composition below, deliberately: the
         // child's binding layers (`DetachingTool` and `ContextBindingTool`)

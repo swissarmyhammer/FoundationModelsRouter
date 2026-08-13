@@ -103,7 +103,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     tool in the binding-only ``ContextBindingTool``; both wrappers
     ///     bind the ambient ``ToolContext`` — stamped with the tool's own
     ///     identity and a fresh per-call `correlationID`, posting events to
-    ///     the vended session's own fresh ``RoutedSession/outbox`` — around
+    ///     the vended session's own fresh ``SessionOutbox`` — around
     ///     each call, and the tool instance itself passes through untouched
     ///     (see ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     ///     Defaults to no tools.
@@ -377,7 +377,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// shared, so a tool's events post to *this* session's own outbox
     /// rather than a sibling or ancestor's, and parked runs and pending
     /// elicitations never migrate between sessions or survive a restore
-    /// (see ``RoutedSession/mailbox``).
+    /// (see ``RoutedSessionActor/mailbox``).
     ///
     /// The shared detach → optional-cap pipeline behind two of
     /// task ^k4nygqa's three composition sites: the root site

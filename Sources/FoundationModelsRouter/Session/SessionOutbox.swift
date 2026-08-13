@@ -61,6 +61,15 @@ import FoundationModels
 /// are `Codable`, so both are round-trippable through the same
 /// `TranscriptEntryMapper`/`CustomSegmentRegistry` machinery the recorder
 /// already uses — a natural later extension, not built here.
+///
+/// **Audience (task ^j0pp9yp).** The public surface of this actor is its
+/// vocabulary — ``ItemID``, ``PromptQueueMutationResult``, and
+/// ``QueueDepth`` — plus the ``OperationEventSink`` conformance the
+/// binding layers post through. The staging and queue mechanics are
+/// internal: an app drives the queue through ``RoutedSession``'s typed
+/// methods (`enqueue`, `pendingPrompts`, `cancel`, `replace`,
+/// `promptQueueDepth`, `awaitQueuedWork`, `dispatchNextPrompt`) alone,
+/// and a session never exposes its own outbox instance.
 public actor SessionOutbox: OperationEventSink {
     /// A stable identifier assigned to a pending item at enqueue time.
     ///
@@ -82,33 +91,33 @@ public actor SessionOutbox: OperationEventSink {
     /// One pending turn-riding event, with the stable id it was assigned when
     /// it (or the coalesced predecessor it replaced) first entered the
     /// outbox.
-    public struct PendingEvent: Sendable {
+    struct PendingEvent: Sendable {
         /// This item's stable id.
-        public let id: ItemID
+        let id: ItemID
 
         /// The posted event, or — for a coalesced `.progress` — the latest
         /// one posted for this `(tool, correlationID)`.
-        public let event: OperationEvent
+        let event: OperationEvent
     }
 
     /// One pending turn-starting queued prompt, with the stable id it was
     /// assigned at ``enqueue(prompt:)``.
-    public struct PendingPrompt: Sendable {
+    struct PendingPrompt: Sendable {
         /// This item's stable id.
-        public let id: ItemID
+        let id: ItemID
 
         /// The queued prompt.
-        public let prompt: Transcript.Prompt
+        let prompt: Transcript.Prompt
     }
 
     /// A snapshot of everything currently pending, per kind, returned by
     /// ``pending()``.
-    public struct Pending: Sendable {
+    struct Pending: Sendable {
         /// Every pending turn-riding event, in outbox order.
-        public let events: [PendingEvent]
+        let events: [PendingEvent]
 
         /// Every pending turn-starting prompt, in enqueue (FIFO) order.
-        public let prompts: [PendingPrompt]
+        let prompts: [PendingPrompt]
     }
 
     /// What ``drainForDispatch()`` hands to the injection task: every pending
@@ -162,8 +171,9 @@ public actor SessionOutbox: OperationEventSink {
     /// ``enqueueJournalWrite(event:)``.
     private var journalChain = SerialAsyncChain()
 
-    /// Creates an empty outbox.
-    public init() {}
+    /// Creates an empty outbox — internal, because only session construction
+    /// (vend, fork, restore) mints one; see the audience note above.
+    init() {}
 
     /// Posts one ``OperationEvent`` — the ``OperationEventSink`` conformance
     /// the session's tool-side event route posts through.
@@ -341,7 +351,7 @@ public actor SessionOutbox: OperationEventSink {
     /// - Parameter prompt: The prompt to stage.
     /// - Returns: The stable id assigned to this queued prompt.
     @discardableResult
-    public func enqueue(prompt: Transcript.Prompt) -> ItemID {
+    func enqueue(prompt: Transcript.Prompt) -> ItemID {
         let id = ItemID()
         prompts.append(PendingPrompt(id: id, prompt: prompt))
         wakeUp()
@@ -377,7 +387,7 @@ public actor SessionOutbox: OperationEventSink {
     ///   still pending and was removed; ``PromptQueueMutationResult/alreadySent``
     ///   otherwise.
     @discardableResult
-    public func cancel(id: ItemID) -> PromptQueueMutationResult {
+    func cancel(id: ItemID) -> PromptQueueMutationResult {
         mutatingPendingPrompt(id: id) { index in
             prompts.remove(at: index)
         }
@@ -398,7 +408,7 @@ public actor SessionOutbox: OperationEventSink {
     ///   still pending and was updated; ``PromptQueueMutationResult/alreadySent``
     ///   otherwise.
     @discardableResult
-    public func replace(id: ItemID, prompt: Transcript.Prompt) -> PromptQueueMutationResult {
+    func replace(id: ItemID, prompt: Transcript.Prompt) -> PromptQueueMutationResult {
         mutatingPendingPrompt(id: id) { index in
             prompts[index] = PendingPrompt(id: id, prompt: prompt)
         }
@@ -431,7 +441,7 @@ public actor SessionOutbox: OperationEventSink {
     /// A snapshot of everything currently pending, per kind.
     ///
     /// - Returns: The current ``Pending`` snapshot.
-    public func pending() -> Pending {
+    func pending() -> Pending {
         Pending(events: events, prompts: prompts)
     }
 
@@ -456,7 +466,7 @@ public actor SessionOutbox: OperationEventSink {
     /// - Returns: Every event pending at the moment of the call, now
     ///   committed and no longer reported by ``pending()``. Any prompt
     ///   waiting in the queue is left exactly where it is.
-    public func drainPendingEvents() -> [PendingEvent] {
+    func drainPendingEvents() -> [PendingEvent] {
         let drainedEvents = events
         events = []
         return drainedEvents
@@ -543,7 +553,7 @@ public actor SessionOutbox: OperationEventSink {
     /// whose turn is already running.
     ///
     /// - Returns: The current ``QueueDepth``.
-    public func queueDepth() -> QueueDepth {
+    func queueDepth() -> QueueDepth {
         QueueDepth(queued: prompts.count, dispatched: dispatched?.id)
     }
 
@@ -554,7 +564,7 @@ public actor SessionOutbox: OperationEventSink {
     ///
     /// Returns immediately if the outbox is already non-empty at the time of
     /// the call.
-    public func nextEvent() async {
+    func nextEvent() async {
         guard events.isEmpty, prompts.isEmpty else { return }
         await withCheckedContinuation { continuation in
             wakeups.append(continuation)

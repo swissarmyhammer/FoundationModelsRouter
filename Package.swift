@@ -80,7 +80,11 @@ let package = Package(
         .target(
             name: packageName,
             dependencies: mlxProducts + [ulidProduct],
-            path: "Sources/\(packageName)"
+            path: "Sources/\(packageName)",
+            // The DocC catalog (task ^j0pp9yp) is documentation input for
+            // `docc`, not build input; the Swift Build backend does not
+            // consume it, so it is excluded to keep the build warning-free.
+            exclude: ["\(packageName).docc"]
         ),
         .testTarget(
             name: "\(packageName)Tests",

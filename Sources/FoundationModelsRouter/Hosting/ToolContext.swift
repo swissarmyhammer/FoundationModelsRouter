@@ -37,7 +37,12 @@ public struct ToolContext: Sendable {
 
     /// The owning session's mailbox: where ``elicit(_:)`` parks its pending
     /// continuation, keyed by the request's `elicitationId`.
-    public let mailbox: SessionMailbox
+    ///
+    /// Internal, deliberately: a tool reaches elicitation through the typed
+    /// ``elicit(_:)`` capability, never through the raw mailbox (task
+    /// ^j0pp9yp). The binder supplies the mailbox at construction and keeps
+    /// its own reference when it needs one.
+    let mailbox: SessionMailbox
 
     /// The upstream sink every capability posts through.
     private let sink: any OperationEventSink

@@ -42,11 +42,27 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Session/SessionProjection.swift, Tests/FoundationModelsRouterTests/SessionProjectionTests.swift, Tests/FoundationModelsRouterTests/SessionProjectionSeedingTests.swift; one ungated `swift test`: 923 + 27 + 24 tests passed, 0 failures
     - next: review
   timestamp: 2026-08-13T05:33:05.899473+00:00
+- actor: claude-code
+  id: 01kzwt0twvzkdrwqh6hv70cc1b
+  text: |-
+    ### review — clean
+    - evidence: 0 findings. Scope: review sha HEAD~1..HEAD (commit 05af00a). Validators attempted: 8, failed: 0, skipped: 0.
+    - next: none. The task moved to done.
+  timestamp: 2026-08-13T05:37:47.931123+00:00
+- actor: claude-code
+  id: 01kzwt17wgn4s93psm435qhtdy
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files; one `swift test` run: 923 + 27 + 24 tests passed, 0 failures
+    - commit: 05af00a — 7 files
+    - review: clean — 0 findings
+    - next: none — task is done
+  timestamp: 2026-08-13T05:38:01.232030+00:00
 depends_on:
 - 01KZR9658E5CEVBK177RT024HY
 - 01KZR96MYJ1M1XGB8855AKY6XR
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: ffa280
 title: 'Grouped view: attach adjacent context to a tool call'
 ---
 ## Problem

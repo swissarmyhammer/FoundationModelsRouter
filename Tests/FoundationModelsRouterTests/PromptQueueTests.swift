@@ -237,6 +237,29 @@ struct PromptQueueTests {
         #expect(promptTexts == ["first", "second", "third"])
     }
 
+    @Test("awaitQueuedWork() resumes a parked driver once a prompt is enqueued, and returns at once while work is still queued")
+    @MainActor
+    func awaitQueuedWorkWakesForQueuedPrompt() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Park a driver first, then enqueue. Whichever side runs first, the
+        // waiter must complete: a wait that starts before the enqueue is
+        // resumed by it, and a wait that starts after finds the queue
+        // non-empty and returns at once.
+        let waiter = Task { await session.awaitQueuedWork() }
+        _ = await session.enqueue(prompt: "wake the driver")
+        await waiter.value
+
+        // The prompt is still queued, so a fresh wait returns immediately
+        // rather than parking until more work arrives.
+        await session.awaitQueuedWork()
+
+        let dispatched = try await session.dispatchNextPrompt()
+        #expect(dispatched == "stub response")
+    }
+
     @Test("a direct respond(to:) call does not consume or drop a queued prompt")
     @MainActor
     func respondDoesNotConsumeQueuedPrompt() async throws {

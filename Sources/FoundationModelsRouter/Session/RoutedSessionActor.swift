@@ -202,7 +202,9 @@ actor RoutedSessionActor: RoutedSession {
     /// inspectable without a live model.
     nonisolated let tools: [any Tool]
 
-    /// This session's own outbox — see ``RoutedSession/outbox``.
+    /// This session's own outbox: the staging area for tool events posted by
+    /// long-running work and queued user prompts, both destined to enter the
+    /// conversation at a future turn boundary. See ``SessionOutbox``.
     ///
     /// Fresh per session: a root session is constructed already holding a
     /// brand-new, empty outbox and its own ``tools`` instanced to it (a pure
@@ -217,7 +219,8 @@ actor RoutedSessionActor: RoutedSession {
     /// delivery never migrates between sessions.
     nonisolated let outbox: SessionOutbox
 
-    /// This session's own mailbox — see ``RoutedSession/mailbox``.
+    /// This session's own mailbox: the registry of parked detached runs and
+    /// pending elicitations. See ``SessionMailbox``.
     ///
     /// Fresh per session, with the same scope rule as ``outbox``: a root
     /// session is constructed already holding a brand-new, empty mailbox,

@@ -358,7 +358,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///     and every recorded name with no supplied instance is reported in
     ///     ``RestoredSessionTree/configurationReport`` — so a missing tool is
     ///     named, never silent. Each restored node gets its own fresh
-    ///     ``RoutedSession/outbox``, with every String-output tool wrapped
+    ///     ``SessionOutbox``, with every String-output tool wrapped
     ///     in its own per-node detachment layer posting there (a
     ///     non-String-output tool gets the binding-only
     ///     ``ContextBindingTool``, posting there too) — exactly the
@@ -504,7 +504,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // outbox and mailbox, so a tool's events post to *this* node's
             // own outbox rather than a sibling or ancestor's, and parked
             // runs and pending elicitations never survive a restore (see
-            // ``RoutedSession/mailbox``).
+            // ``RoutedSessionActor/mailbox``).
             // This site's chain is detach only, plus capping when the
             // node's recorded budget carries a `toolOutputLimit` —
             // deliberately no fork (restoration re-instances from the

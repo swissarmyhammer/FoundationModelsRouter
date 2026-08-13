@@ -33,6 +33,18 @@ import Foundation
 /// run's canceler is invoked with its kind's semantics and exactly one
 /// terminal event per parked run is produced for the journal — no orphans, no
 /// holes — and every pending elicitation is rejected.
+///
+/// **Audience (task ^j0pp9yp).** The public surface of this actor is what a
+/// host that binds its own ``ToolContext`` needs — ``init()`` and
+/// ``makeCompletionToken()`` to construct the binding, and
+/// ``respond(elicitationId:_:)``/``complete(elicitationId:)`` to answer the
+/// elicitations a hand-bound tool raises — plus the answer-delivery
+/// vocabulary those calls return. The run-plane machinery (park, wait,
+/// cancel, status, sweep) is internal wiring the detachment engine and the
+/// session own: a tool reaches elicitation through
+/// ``ToolContext/elicit(_:)``, and an app answers a session's elicitations
+/// through ``RoutedSession/respond(elicitationId:response:)`` and
+/// ``RoutedSession/complete(elicitationId:)``.
 public actor SessionMailbox {
     // MARK: - Vocabulary
 
@@ -41,7 +53,7 @@ public actor SessionMailbox {
     ///
     /// Phase 1 ships ``swiftTask`` only; this enum is the seam where the
     /// `process` (phase 2) and `mcpRequest` (phase 4) kinds land.
-    public enum RunKind: String, Codable, Sendable, Equatable {
+    enum RunKind: String, Codable, Sendable, Equatable {
         /// An in-process Swift `Task`: cancellation is cooperative
         /// (`Task.cancel()`), so a canceler honestly reports
         /// ``OperationOutcome/cancelled`` — requested, the work may still be
@@ -52,27 +64,27 @@ public actor SessionMailbox {
     /// One row of ``status()``'s run-plane snapshot: the parked run's token,
     /// op, kind, and latest progress detail — envelopes only, never bulk
     /// output.
-    public struct RunStatus: Sendable, Equatable {
+    struct RunStatus: Sendable, Equatable {
         /// The run's completion token — the ULID string that is also the
         /// run's event `correlationID`.
-        public let completionToken: String
+        let completionToken: String
 
         /// The fused tool's name that owns the run.
-        public let tool: String
+        let tool: String
 
         /// The canonical `"verb noun"` op string of the parked operation.
-        public let op: String
+        let op: String
 
         /// What kind of work the run is.
-        public let kind: RunKind
+        let kind: RunKind
 
         /// The latest progress detail reported for the run, or `nil` when
         /// none has been reported yet.
-        public let latestProgressDetail: String?
+        let latestProgressDetail: String?
     }
 
     /// What ``wait(completionToken:seconds:)`` resolved to.
-    public enum WaitResult: Sendable, Equatable {
+    enum WaitResult: Sendable, Equatable {
         /// The run settled; the terminal event carries the run's identifier
         /// (`correlationID`), its bounded output tail (`detail`), and its
         /// honest outcome.
@@ -88,7 +100,7 @@ public actor SessionMailbox {
     }
 
     /// What ``cancel(completionToken:)`` resolved to.
-    public enum CancelResult: Sendable, Equatable {
+    enum CancelResult: Sendable, Equatable {
         /// The canceler ran; this is the outcome it reported — verbatim,
         /// never a guess (``OperationOutcome``'s authority distinction).
         case reported(OperationOutcome)
@@ -106,7 +118,7 @@ public actor SessionMailbox {
 
     /// What ``park(tool:op:kind:completionToken:settling:canceler:)``
     /// resolved to.
-    public enum ParkResult: Sendable, Equatable {
+    enum ParkResult: Sendable, Equatable {
         /// The run is parked under its token.
         case parked
 
@@ -154,7 +166,7 @@ public actor SessionMailbox {
     /// characters (the tail — the end of the output is what a caller acts
     /// on), so the run identifier plus a capped tail is all that ever leaves
     /// the run plane.
-    public static let terminalDetailTailLimit = 4_096
+    static let terminalDetailTailLimit = 4_096
 
     /// The most recent settled terminal events retained for late
     /// ``wait(completionToken:seconds:)`` and ``cancel(completionToken:)``
@@ -163,13 +175,13 @@ public actor SessionMailbox {
     /// evicted and their tokens report ``WaitResult/unknownToken`` /
     /// ``CancelResult/unknownToken`` again — a session-lifetime mailbox must
     /// not grow without bound.
-    public static let settledTerminalEventRetentionLimit = 128
+    static let settledTerminalEventRetentionLimit = 128
 
     /// The largest deadline ``wait(completionToken:seconds:)`` honors, in
     /// seconds (one day). A larger — or infinite — requested deadline is
     /// clamped here rather than trapped on: the run stays parked past the
     /// clamp, so a caller can simply wait again.
-    public static let waitSecondsCeiling: Double = 86_400
+    static let waitSecondsCeiling: Double = 86_400
 
     /// Nanoseconds in one second — the unit conversion
     /// ``boundedNanoseconds(clamping:)`` applies, because every deadline
@@ -297,7 +309,7 @@ public actor SessionMailbox {
     ///   canceler and settling handle, the exact hole ``sweep()`` exists to
     ///   prevent).
     @discardableResult
-    public func park(
+    func park(
         tool: String,
         op: String,
         kind: RunKind,
@@ -329,7 +341,7 @@ public actor SessionMailbox {
     /// - Parameters:
     ///   - completionToken: The parked run's completion token.
     ///   - detail: The run's newest progress detail.
-    public func updateProgress(completionToken: String, detail: String) {
+    func updateProgress(completionToken: String, detail: String) {
         parkedRuns[completionToken]?.latestProgressDetail = detail
     }
 
@@ -337,7 +349,7 @@ public actor SessionMailbox {
     /// kind, and latest progress — envelopes only, never bulk output.
     ///
     /// - Returns: One ``RunStatus`` per still-parked run.
-    public func status() -> [RunStatus] {
+    func status() -> [RunStatus] {
         parkOrder.compactMap { token in
             parkedRuns[token].map { run in
                 RunStatus(
@@ -368,7 +380,7 @@ public actor SessionMailbox {
     ///     immediate deadline, and anything above ``waitSecondsCeiling``
     ///     (including infinity) is capped there — never a trap.
     /// - Returns: The ``WaitResult``.
-    public func wait(completionToken: String, seconds: Double) async -> WaitResult {
+    func wait(completionToken: String, seconds: Double) async -> WaitResult {
         if let terminal = settledTerminalEvents[completionToken] {
             return .settled(terminal)
         }
@@ -400,7 +412,7 @@ public actor SessionMailbox {
     ///   outcome; ``CancelResult/alreadySettled(_:)`` with the retained
     ///   terminal event when the run finished before the cancel arrived; or
     ///   ``CancelResult/unknownToken`` as a safe, reportable no-op.
-    public func cancel(completionToken: String) async -> CancelResult {
+    func cancel(completionToken: String) async -> CancelResult {
         if let terminal = settledTerminalEvents[completionToken] {
             return .alreadySettled(terminal)
         }
@@ -438,7 +450,7 @@ public actor SessionMailbox {
     ///     caller that delivers the request through its own channel.
     /// - Returns: The user's answer — for an accepted URL-mode request,
     ///   delivered only once the flow completed.
-    public func awaitAnswer(
+    func awaitAnswer(
         to request: ElicitationRequest,
         posting: @escaping @Sendable () async -> Void = {}
     ) async -> ElicitationResponse {
@@ -458,7 +470,7 @@ public actor SessionMailbox {
     /// The ids of every pending elicitation, in registration order.
     ///
     /// - Returns: The pending `elicitationId`s.
-    public func pendingElicitationIds() -> [ULID] {
+    func pendingElicitationIds() -> [ULID] {
         elicitationOrder.filter { pendingElicitations[$0] != nil }
     }
 
@@ -533,7 +545,7 @@ public actor SessionMailbox {
     ///   in flight returns empty — the in-flight sweep already owns every
     ///   parked run's single terminal event, so a concurrent second sweep
     ///   never double-invokes a canceler or double-journals.
-    public func sweep() async -> [OperationEvent] {
+    func sweep() async -> [OperationEvent] {
         guard !isSweeping else { return [] }
         isSweeping = true
         defer { isSweeping = false }

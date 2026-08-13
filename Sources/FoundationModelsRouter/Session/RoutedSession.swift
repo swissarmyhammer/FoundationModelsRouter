@@ -108,25 +108,6 @@ public protocol RoutedSession: Actor {
     /// ``streamResponse(to:)`` stays unconstrained regardless.
     nonisolated var grammar: Grammar? { get }
 
-    /// This session's outbox: the staging area for tool events posted by
-    /// long-running work and queued user prompts, both destined to enter the
-    /// conversation at a future turn boundary. See ``SessionOutbox``.
-    ///
-    /// Fresh per session — a fork is given its own outbox rather than sharing
-    /// its parent's (see ``fork(workingDirectory:)``'s doc comment for the
-    /// fork-then-detach composition that binds each session's own event
-    /// route to it, so event delivery never migrates between sessions).
-    nonisolated var outbox: SessionOutbox { get }
-
-    /// This session's mailbox: the registry of parked detached runs and
-    /// pending elicitations. See ``SessionMailbox``.
-    ///
-    /// Fresh per session, exactly like ``outbox`` — a fork is given its own
-    /// mailbox rather than sharing its parent's, and a restored session gets
-    /// a brand-new one — so a run parked on one session can never be waited
-    /// on, cancelled, or swept through another.
-    nonisolated var mailbox: SessionMailbox { get }
-
     /// Context fill, 0...1 — measured token usage against the profile's
     /// resolved working context (compaction_plan.md §1.5).
     ///
@@ -437,7 +418,8 @@ public protocol RoutedSession: Actor {
     ///   turn: a cancelled turn whose diff produced a `.prompt`-kind partial did
     ///   durably deliver the events it drained, so they are recorded as
     ///   delivered; one whose diff produced none never delivered them, so they
-    ///   are re-queued onto ``outbox`` for a future turn rather than lost. A
+    ///   are re-queued onto the session's ``SessionOutbox`` for a future turn
+    ///   rather than lost. A
     ///   cancelled ``dispatchNextPrompt()`` turn's *prompt* is a separate question
     ///   with a separate answer: ``SessionOutbox/drainForDispatch()`` is that
     ///   prompt's commit point — the very boundary that makes a racing
@@ -547,7 +529,7 @@ public protocol RoutedSession: Actor {
     /// misuse; the optimization does not.
     ///
     /// Router carries elicitation's typed envelope and resume plumbing —
-    /// ``ToolContext/elicit(_:)`` parks the run in this session's ``mailbox``
+    /// ``ToolContext/elicit(_:)`` parks the run in this session's ``SessionMailbox``
     /// and ``respond(elicitationId:response:)``/``complete(elicitationId:)``
     /// deliver the answer — while the presenting UI stays the host app's.
     /// This method's contribution is orthogonal: making the wait on the
@@ -589,7 +571,7 @@ public protocol RoutedSession: Actor {
     ///   backend whose fork can fail.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 
-    /// Tears the session down explicitly: runs ``mailbox``'s
+    /// Tears the session down explicitly: runs the session mailbox's
     /// ``SessionMailbox/sweep()`` — cancelling every parked run per its
     /// kind's semantics and rejecting every pending elicitation — and drains
     /// the resulting terminal events into the journal (exactly one per
@@ -610,7 +592,7 @@ public protocol RoutedSession: Actor {
     /// journals nothing, and has no subscriptions left to finish.
     func close() async
 
-    /// Runs the earliest still-pending prompt in ``outbox``'s queue as one
+    /// Runs the earliest still-pending prompt in this session's queue as one
     /// normal recorded turn: dequeues it together with any pending
     /// turn-riding events (both drained atomically — see
     /// ``SessionOutbox/drainForDispatch()``), composes them into the turn
@@ -622,13 +604,13 @@ public protocol RoutedSession: Actor {
     /// ``RoutedSession/enqueue(prompt:)-(String)``: nothing in this package
     /// auto-drains it — consistent with Router's current character, which has
     /// no hidden auto-turn loop (see this type's own doc comment). The
-    /// intended driver-loop shape, using ``outbox``'s ``SessionOutbox/nextEvent()``
+    /// intended driver-loop shape, using ``awaitQueuedWork()``
     /// as the idle-wakeup signal (it resumes for a queued prompt exactly as
     /// it does for a pending event):
     ///
     /// ```swift
     /// while !Task.isCancelled {
-    ///     await session.outbox.nextEvent()
+    ///     await session.awaitQueuedWork()
     ///     if let response = try await session.dispatchNextPrompt() {
     ///         // handle `response`
     ///     }
@@ -679,6 +661,123 @@ public protocol RoutedSession: Actor {
     ///   than lost.
     /// - Throws: Any error thrown by the model.
     func dispatchNextPrompt() async throws -> String?
+
+    /// Suspends until this session's staging area holds work for a future
+    /// turn — a queued prompt or a pending tool event — and returns
+    /// immediately when it already does.
+    ///
+    /// The idle-wakeup signal of the ``dispatchNextPrompt()`` driver loop
+    /// (see that method's doc comment for the loop's shape): a driver parks
+    /// here instead of polling, wakes when
+    /// ``enqueue(prompt:)-(Transcript.Prompt)`` stages a prompt or a
+    /// long-running tool posts an event, and asks ``dispatchNextPrompt()``
+    /// to run whatever arrived. One wake-up per call — a driver loops,
+    /// re-parking after each dispatch.
+    func awaitQueuedWork() async
+
+    /// Stages a queued user prompt for a future turn.
+    ///
+    /// Queued prompts are app state until ``dispatchNextPrompt()`` actually
+    /// dispatches one: nothing here touches the recorded transcript, which
+    /// stays the record of committed turns only.
+    ///
+    /// - Parameter prompt: The prompt to stage.
+    /// - Returns: The stable id assigned to this queued prompt, usable with
+    ///   ``pendingPrompts()``, ``cancel(id:)``, and ``replace(id:prompt:)``.
+    @discardableResult
+    func enqueue(prompt: Transcript.Prompt) async -> SessionOutbox.ItemID
+
+    /// A snapshot of every prompt currently queued for a future turn, in
+    /// FIFO dispatch order.
+    ///
+    /// - Returns: Each queued prompt's stable id paired with its current
+    ///   content, reflecting any ``replace(id:prompt:)`` applied to it since
+    ///   it was enqueued.
+    func pendingPrompts() async -> [(id: SessionOutbox.ItemID, prompt: Transcript.Prompt)]
+
+    /// Cancels a still-pending queued prompt.
+    ///
+    /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)``
+    ///   returned for the prompt to cancel.
+    /// - Returns: Whether the prompt was still pending and was removed, or
+    ///   had already been drained for dispatch by
+    ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
+    ///   A cancelled prompt never produces a turn. For the in-flight
+    ///   counterpart — stopping a turn already handed to the model — see
+    ///   ``cancelCurrentTurn()``, and for the two composed into one call that
+    ///   covers a prompt's whole life before it generates, ``cancelPrompt(id:)``.
+    @discardableResult
+    func cancel(id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult
+
+    /// Replaces a still-pending queued prompt's content, in place —
+    /// preserving its FIFO dispatch position.
+    ///
+    /// - Parameters:
+    ///   - id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned for
+    ///     the prompt to replace.
+    ///   - prompt: The prompt's new content.
+    /// - Returns: Whether the prompt was still pending and was updated, or
+    ///   had already been drained for dispatch by
+    ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
+    ///   A replaced prompt dispatches its edited content.
+    @discardableResult
+    func replace(id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult
+
+    /// How much queued user-prompt work this session is carrying — the prompts
+    /// still waiting *and* the one whose turn is already running.
+    ///
+    /// ``pendingPrompts()`` reports only what is still waiting. Between
+    /// ``SessionOutbox/drainForDispatch()`` and the end of the turn it started, a
+    /// prompt is in neither the queue nor the transcript, and this is the surface
+    /// that names it there — so a driver's backlog reading never dips by one for
+    /// the length of every turn.
+    ///
+    /// - Returns: The current ``SessionOutbox/QueueDepth``.
+    func promptQueueDepth() async -> SessionOutbox.QueueDepth
+
+    /// Delivers the user's answer to a pending elicitation raised by a run on
+    /// **this** session — the inbound answer route: app host → session → this
+    /// session's own ``SessionMailbox`` → the parked ``ToolContext/elicit(_:)``
+    /// continuation.
+    ///
+    /// The answer addresses the elicitation, never the run: one run can hold
+    /// several pending elicitations at once, each resolved by its own id. A
+    /// form-mode `accept` resumes the run with its `content`; `decline` and
+    /// `cancel` resume with those actions — a declined elicitation is not a
+    /// cancelled run, the tool decides what to do with the answer. A URL-mode
+    /// `accept` only records that the user agreed to open the URL: the entry
+    /// stays open, and the run stays parked, until
+    /// ``complete(elicitationId:)`` arrives.
+    ///
+    /// The route uses no task locals: this call reaches exactly this
+    /// session's ``SessionMailbox`` by reference, so two sessions sharing a
+    /// registry can never cross-route — an id pending on another session is
+    /// simply unknown here. Unknown, malformed, and already-answered ids are
+    /// safe no-ops per the MCP spec.
+    ///
+    /// - Parameters:
+    ///   - elicitationId: The pending elicitation's id — the string form of
+    ///     the ``ElicitationRequest/elicitationId`` the request carried.
+    ///   - response: The user's answer.
+    /// - Returns: The ``SessionMailbox/ElicitationAnswerDelivery``.
+    @discardableResult
+    func respond(elicitationId: String, response: ElicitationResponse) async -> SessionMailbox.ElicitationAnswerDelivery
+
+    /// Signals that an accepted URL-mode elicitation's out-of-band flow
+    /// finished — the second step of the URL-mode two-step: the accept
+    /// delivered through ``respond(elicitationId:response:)`` only meant the
+    /// user agreed to open the URL, and this completion is what resumes the
+    /// run that stayed parked past it.
+    ///
+    /// Routes by reference to this session's own ``SessionMailbox`` exactly
+    /// as ``respond(elicitationId:response:)`` does. Unknown, malformed,
+    /// not-yet-accepted, and already-completed (duplicate) ids are safe
+    /// no-ops per the MCP spec.
+    ///
+    /// - Parameter elicitationId: The accepted URL-mode elicitation's id.
+    /// - Returns: The ``SessionMailbox/ElicitationCompletionDelivery``.
+    @discardableResult
+    func complete(elicitationId: String) async -> SessionMailbox.ElicitationCompletionDelivery
 }
 
 extension RoutedSession {
@@ -750,22 +849,6 @@ extension RoutedSession {
         streamEvents(to: prompt, maxTokens: nil)
     }
 
-    /// Stages a queued user prompt for a future turn — the ``RoutedSession``
-    /// convenience over this session's own ``outbox`` (see
-    /// ``SessionOutbox/enqueue(prompt:)``).
-    ///
-    /// Queued prompts are app state until ``dispatchNextPrompt()`` actually
-    /// dispatches one: nothing here touches the recorded transcript, which
-    /// stays the record of committed turns only.
-    ///
-    /// - Parameter prompt: The prompt to stage.
-    /// - Returns: The stable id assigned to this queued prompt, usable with
-    ///   ``pendingPrompts()``, ``cancel(id:)``, and ``replace(id:prompt:)``.
-    @discardableResult
-    public func enqueue(prompt: Transcript.Prompt) async -> SessionOutbox.ItemID {
-        await outbox.enqueue(prompt: prompt)
-    }
-
     /// Stages a plain-text queued user prompt for a future turn — the
     /// `String` convenience over ``enqueue(prompt:)-(Transcript.Prompt)``,
     /// wrapping `prompt` in a single `.text` segment.
@@ -775,62 +858,6 @@ extension RoutedSession {
     @discardableResult
     public func enqueue(prompt: String) async -> SessionOutbox.ItemID {
         await enqueue(prompt: Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
-    }
-
-    /// A snapshot of every prompt currently queued for a future turn, in
-    /// FIFO dispatch order.
-    ///
-    /// - Returns: Each queued prompt's stable id paired with its current
-    ///   content, reflecting any ``replace(id:prompt:)`` applied to it since
-    ///   it was enqueued.
-    public func pendingPrompts() async -> [(id: SessionOutbox.ItemID, prompt: Transcript.Prompt)] {
-        await outbox.pending().prompts.map { (id: $0.id, prompt: $0.prompt) }
-    }
-
-    /// Cancels a still-pending queued prompt.
-    ///
-    /// - Parameter id: The id ``enqueue(prompt:)`` returned for the prompt to
-    ///   cancel.
-    /// - Returns: Whether the prompt was still pending and was removed, or
-    ///   had already been drained for dispatch by
-    ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
-    ///   A cancelled prompt never produces a turn. For the in-flight
-    ///   counterpart — stopping a turn already handed to the model — see
-    ///   ``cancelCurrentTurn()``, and for the two composed into one call that
-    ///   covers a prompt's whole life before it generates, ``cancelPrompt(id:)``.
-    @discardableResult
-    public func cancel(id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult {
-        await outbox.cancel(id: id)
-    }
-
-    /// Replaces a still-pending queued prompt's content, in place —
-    /// preserving its FIFO dispatch position.
-    ///
-    /// - Parameters:
-    ///   - id: The id ``enqueue(prompt:)`` returned for the prompt to
-    ///     replace.
-    ///   - prompt: The prompt's new content.
-    /// - Returns: Whether the prompt was still pending and was updated, or
-    ///   had already been drained for dispatch by
-    ///   ``dispatchNextPrompt()`` — see ``SessionOutbox/PromptQueueMutationResult``.
-    ///   A replaced prompt dispatches its edited content.
-    @discardableResult
-    public func replace(id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult {
-        await outbox.replace(id: id, prompt: prompt)
-    }
-
-    /// How much queued user-prompt work this session is carrying — the prompts
-    /// still waiting *and* the one whose turn is already running.
-    ///
-    /// ``pendingPrompts()`` reports only what is still waiting. Between
-    /// ``SessionOutbox/drainForDispatch()`` and the end of the turn it started, a
-    /// prompt is in neither the queue nor the transcript, and this is the surface
-    /// that names it there — so a driver's backlog reading never dips by one for
-    /// the length of every turn.
-    ///
-    /// - Returns: The current ``SessionOutbox/QueueDepth``.
-    public func promptQueueDepth() async -> SessionOutbox.QueueDepth {
-        await outbox.queueDepth()
     }
 
     /// Cancels a submitted prompt, whether it is still queued or already
@@ -878,94 +905,13 @@ extension RoutedSession {
     /// - Returns: Which of the three ``PromptCancellationResult`` states applied.
     @discardableResult
     public func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
-        if await outbox.cancel(id: id) == .applied {
+        if await cancel(id: id) == .applied {
             return .withdrawn
         }
-        guard await outbox.queueDepth().dispatched == id else {
+        guard await promptQueueDepth().dispatched == id else {
             return .alreadyFinished
         }
         return await cancelCurrentTurn() == .requested ? .turnCancelled : .alreadyFinished
     }
 
-    /// Delivers the user's answer to a pending elicitation raised by a run on
-    /// **this** session — the inbound answer route: app host → session → this
-    /// session's own ``mailbox`` → the parked ``ToolContext/elicit(_:)``
-    /// continuation.
-    ///
-    /// The answer addresses the elicitation, never the run: one run can hold
-    /// several pending elicitations at once, each resolved by its own id. A
-    /// form-mode `accept` resumes the run with its `content`; `decline` and
-    /// `cancel` resume with those actions — a declined elicitation is not a
-    /// cancelled run, the tool decides what to do with the answer. A URL-mode
-    /// `accept` only records that the user agreed to open the URL: the entry
-    /// stays open, and the run stays parked, until
-    /// ``complete(elicitationId:)`` arrives.
-    ///
-    /// The route uses no task locals: this call reaches exactly this
-    /// session's ``mailbox`` by reference, so two sessions sharing a registry
-    /// can never cross-route — an id pending on another session is simply
-    /// unknown here. Unknown, malformed, and already-answered ids are safe
-    /// no-ops per the MCP spec.
-    ///
-    /// - Parameters:
-    ///   - elicitationId: The pending elicitation's id — the string form of
-    ///     the ``ElicitationRequest/elicitationId`` the request carried.
-    ///   - response: The user's answer.
-    /// - Returns: The ``SessionMailbox/ElicitationAnswerDelivery``.
-    @discardableResult
-    public func respond(elicitationId: String, response: ElicitationResponse) async -> SessionMailbox.ElicitationAnswerDelivery {
-        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) {
-            await mailbox.respond(elicitationId: $0, response)
-        }
-    }
-
-    /// Signals that an accepted URL-mode elicitation's out-of-band flow
-    /// finished — the second step of the URL-mode two-step: the accept
-    /// delivered through ``respond(elicitationId:response:)`` only meant the
-    /// user agreed to open the URL, and this completion is what resumes the
-    /// run that stayed parked past it.
-    ///
-    /// Routes by reference to this session's own ``mailbox`` exactly as
-    /// ``respond(elicitationId:response:)`` does. Unknown, malformed,
-    /// not-yet-accepted, and already-completed (duplicate) ids are safe
-    /// no-ops per the MCP spec.
-    ///
-    /// - Parameter elicitationId: The accepted URL-mode elicitation's id.
-    /// - Returns: The ``SessionMailbox/ElicitationCompletionDelivery``.
-    @discardableResult
-    public func complete(elicitationId: String) async -> SessionMailbox.ElicitationCompletionDelivery {
-        await deliver(toElicitation: elicitationId, orReturn: .noPendingElicitation) {
-            await mailbox.complete(elicitationId: $0)
-        }
-    }
-
-    /// Parses an inbound elicitation id and hands the parsed id to `delivery` —
-    /// the one place either inbound elicitation route decides what an
-    /// unparseable id means.
-    ///
-    /// ``respond(elicitationId:response:)`` and ``complete(elicitationId:)``
-    /// both take the id as a `String`, because it reaches Router from a host
-    /// app across a boundary that carries text, and both owe the MCP spec the
-    /// same safe no-op when that text is not a ``ULID`` at all. Routing both
-    /// through here keeps that one decision in one place: neither route can be
-    /// changed to treat an unparseable id differently without the other
-    /// following.
-    ///
-    /// - Parameters:
-    ///   - elicitationId: The elicitation's id as the caller supplied it.
-    ///   - unparseableResult: What to report when `elicitationId` is not a
-    ///     parseable ``ULID`` — each route's own `noPendingElicitation`.
-    ///   - delivery: Delivers the parsed id to this session's ``mailbox``.
-    /// - Returns: Whatever `delivery` reported, or `unparseableResult` when the
-    ///   id could not be parsed.
-    private func deliver<Delivery>(
-        toElicitation elicitationId: String,
-        orReturn unparseableResult: Delivery,
-        using delivery: (ULID) async -> Delivery
-    ) async -> Delivery {
-        guard let id = ULID(elicitationId) else {
-            return unparseableResult
-        }
-        return await delivery(id)
-    }
 }
