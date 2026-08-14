@@ -22,9 +22,10 @@ let huggingFacePackage = "swift-huggingface"
 let transformersPackage = "swift-transformers"
 
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
-// The fork is a sibling checkout, referenced by path (see the `dependencies`
-// list): the router and the fork move together, so the router builds against
-// the working copy beside it rather than a pinned branch commit.
+// The fork is referenced by URL on its `stable` branch (see the `dependencies`
+// list), so every checkout of the router — this machine, another machine, CI —
+// builds against the same published fork rather than whatever working copy
+// happens to sit beside it.
 let mlxProducts: [Target.Dependency] = [
     .product(name: "MLXLMCommon", package: mlxPackage),
     .product(name: "MLXLLM", package: mlxPackage),
@@ -69,7 +70,8 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            path: "../\(mlxPackage)"
+            url: "https://github.com/swissarmyhammer/\(mlxPackage)",
+            branch: "stable"
         ),
         .package(
             url: "https://github.com/yaslab/\(ulidPackage).git",
