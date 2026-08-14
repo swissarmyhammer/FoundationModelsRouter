@@ -34,6 +34,54 @@ comments:
     - note for the review step: `status()` still appears in `CompactionSegment` and `RoutedSessionCompactTests`. That is the model-facing sandbox builtin the compaction boundary text names, not the mailbox method, and `RoutedSessionCompactTests` asserts on that rendered text. It is deliberately unchanged.
     - next: /review
   timestamp: 2026-08-14T02:50:42.802152+00:00
+- actor: claude-code
+  id: 01m000xa42d1pe1qt3jkabc47h
+  text: |
+    ### review — findings
+
+    - evidence: `review sha HEAD~1..HEAD` (commit 3aac832). Engine counts: 5 findings, 5 confirmed, 4 refuted, 32 attempted, 0 failed. 1 finding recorded: Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift:11.
+    - dropped: 4 findings fell under the skill's blanket exception for test code that already existed at HEAD~1 — `eventually(_:)` and the five stubs in SessionMailboxTests.swift, `makeTempDir()` and `makeRouter(container:cacheDir:recorder:)` in SessionOutboxToolWiringTests.swift. `git show HEAD~1` proves each helper predates the commit, so each finding asks to refactor a pre-existing test. The kept finding cites Helpers/ParkedRunFixtures.swift, a file this commit adds, so the exception does not cover it.
+    - next: /implement the open finding — remove the third copy of the gate/latch, and leave one canonical version the run-plane suites share.
+  timestamp: 2026-08-14T11:35:55.778542+00:00
+- actor: claude-code
+  id: 01m000y68ntsd8wcr715h7j88b
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: skipped — the work was already committed as 3aac832, and the tree held no code change
+    - test: skipped — the implement comment records one bare `swift test`, exit 0
+    - commit: 3aac832 (the checkpoint this review scoped to)
+    - review: findings — Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift:11 (engine: 5 findings, 5 confirmed, 4 refuted; 4 dropped as refactors of tests that already existed)
+  timestamp: 2026-08-14T11:36:24.597333+00:00
+- actor: claude-code
+  id: 01m001fpdyscqnf2xaprvgzk24
+  text: |-
+    ### finding round 2 — worked the open finding
+
+    The finding named three copies of the gate/latch. A sweep of the whole test target found a FOURTH: `private actor ToolGate` in `SessionOutboxToolWiringTests.swift`. The rule says a finding names one example of a cause and the cause comes out of the whole file, so all three copies went, not the two the finding lists.
+
+    What the four copies were:
+    - `Helpers/ParkedRunFixtures.swift` — `actor RunLatch` (the canonical one, kept)
+    - `DetachingToolTests.swift` — `private actor ToolGate`, method `waitUntilOpened()`
+    - `SessionOutboxToolWiringTests.swift` — `private actor ToolGate`, method `waitUntilOpened()`
+    - `RoutedSessionCompactTests.swift` — `private actor RunLatch`, plus a second copy of `parkFakeRun` and its own `parkedRunOp` constant
+
+    What landed:
+    - `RunLatch` in `Helpers/ParkedRunFixtures.swift` is the one gate the test target declares. Its doc now names every suite that uses it, and says the body it holds may be a fake parked run OR a gated tool's `call(arguments:)`.
+    - `DetachingToolTests` and `SessionOutboxToolWiringTests` dropped their `ToolGate` and call `RunLatch.waitUntilOpen()`. The `ToolGate` open()/waitUntilOpened() body was equivalent to `RunLatch`'s, so no behavior moved; the `let gate:` fixture properties keep their names because the tool fixtures around them are `GatedTool`, `GatedZeroWaitTool` and `GatedSessionIdentityTool`.
+    - `RoutedSessionCompactTests` dropped its `RunLatch`, `parkedRunOp` and `parkFakeRun` and now calls the shared `parkFakeRun(on:latch:)` with `FakeRun.op`. Its local copy stamped tool `"fake"`, op `"run task"`, detail `"done"` and canceler outcome `.cancelled` — exactly the shared function's `FakeRun.tool`, `FakeRun.op` and its two defaults — so the fixture is identical.
+    - `DetachingToolTests`'s `// MARK: - Sink and gate fixtures` became `// MARK: - Sink fixtures`, because the gate no longer lives there.
+
+    Proof the cause is gone: `sah tool code_context duplication find` over all six run-plane test files (the four changed, plus `SessionMailboxTests` and `ToolContextTests`) reports nothing, one file at a time and all six at once.
+
+    No production source changed — this round touched test scaffolding only.
+  timestamp: 2026-08-14T11:45:58.206480+00:00
+- actor: claude-code
+  id: 01m001fxwk5re4hvg0qncerw31
+  text: |-
+    ### implement — changed
+    - evidence: 4 files — Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift, Tests/FoundationModelsRouterTests/DetachingToolTests.swift, Tests/FoundationModelsRouterTests/SessionOutboxToolWiringTests.swift, Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift (64 insertions, 133 deletions). `swift build --build-tests` clean. One bare `swift test`: 933 tests in 87 suites, 27 tests in 11 suites, 24 tests in 5 suites — all passed, exit 0, with the one pre-existing `withKnownIssue` in the BoundedWait suite. `sah tool code_context duplication find` over the six run-plane test files reports nothing.
+    - next: /review
+  timestamp: 2026-08-14T11:46:05.843919+00:00
 position_column: doing
 position_ordinal: '80'
 title: ToolContext gets the run-plane capabilities a tool host needs
@@ -94,6 +142,7 @@ Review it, keep it or replace it, and commit it with the rest. It obeys the same
 - `SessionMailbox.status()` became `parkedRuns()`, its private bookkeeping struct became `ParkedRunEntry`, and its private dictionary became `runsByToken`. One name for one operation, end to end.
 - `waitSecondsCeiling` and `terminalDetailTailLimit` are public statics on `ToolContext`. One declaration each; the mailbox and `SessionTreeRestoration` read them from there, and every run-plane member of `SessionMailbox` stays internal.
 - The `inheriting:` overload was reviewed and kept. Its committed test drives only the non-String-output route, so a second test drives the String-output route: the run must park in the mailbox the inherited context carries, and the inner run's ambient `sessionID` must be the inherited one.
+- The test target now declares ONE gate: `RunLatch` in `Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift`. The `ToolGate` copies in `DetachingToolTests` and `SessionOutboxToolWiringTests`, and the `RunLatch`, `parkedRunOp` and `parkFakeRun` copies in `RoutedSessionCompactTests`, are gone; each suite uses the shared latch, `FakeRun.op` and the shared `parkFakeRun`.
 
 ## Acceptance Criteria
 
@@ -104,4 +153,8 @@ Review it, keep it or replace it, and commit it with the rest. It obeys the same
 - [x] The "Audience" paragraph in `Hosting/SessionMailbox.swift` names the host run-plane capability, so the next audit does not close this door again
 - [x] `swift build` clean and `swift test` green
 
-#eventplan
+
+
+## Review Findings (2026-08-14 06:22)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift:11` — The new `RunLatch` actor (lines 11–35) reinvents synchronization logic that already exists elsewhere. `ToolGate` in `DetachingToolTests.swift` (lines 54–70) and `RunLatch` in `RoutedSessionCompactTests.swift` (line 570, per probe evidence) are nearly identical implementations (0.96+ similarity). Rather than creating a third copy, consolidate into one shared version. Remove the duplicate `RunLatch` from ParkedRunFixtures.swift and instead import `ToolGate` from DetachingToolTests.swift, or better: move the canonical implementation to ParkedRunFixtures.swift with a shared name (e.g., `RunLatch` or `Gate`), then update DetachingToolTests.swift and RoutedSessionCompactTests.swift to reuse it. This consolidates the single canonical gate/latch abstraction the comment already promises ('the scaffolding lives in exactly one place'). #eventplan

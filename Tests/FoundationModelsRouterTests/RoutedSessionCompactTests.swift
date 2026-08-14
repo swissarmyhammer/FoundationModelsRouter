@@ -565,66 +565,6 @@ struct RoutedSessionCompactTests {
 
     // MARK: - Live completionTokens cross the compaction boundary (task ^6e7h2q6)
 
-    /// A latch a fake run body suspends on until the test (or cooperative
-    /// cancellation) opens it — the same controllable stand-in for a detached
-    /// run's real work ``SessionMailboxTests`` uses.
-    private actor RunLatch {
-        private var isOpen = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-
-        func open() {
-            guard !isOpen else { return }
-            isOpen = true
-            let parked = waiters
-            waiters = []
-            for waiter in parked {
-                waiter.resume()
-            }
-        }
-
-        func waitUntilOpen() async {
-            guard !isOpen else { return }
-            await withCheckedContinuation { waiters.append($0) }
-        }
-    }
-
-    /// The op string the parked fake run below carries — asserted verbatim in
-    /// the boundary's recorded pending-run summary.
-    private static let parkedRunOp = "run task"
-
-    /// Parks a fake swift-task run on `mailbox` and returns its completion
-    /// token; the run stays parked until `latch` opens.
-    private static func parkFakeRun(on mailbox: SessionMailbox, latch: RunLatch) async -> String {
-        let token = SessionMailbox.makeCompletionToken()
-        let settling = Task<OperationEvent, Never> {
-            await withTaskCancellationHandler {
-                await latch.waitUntilOpen()
-            } onCancel: {
-                Task { await latch.open() }
-            }
-            return OperationEvent(
-                tool: "fake",
-                op: parkedRunOp,
-                correlationID: token,
-                kind: .completed,
-                detail: "done",
-                outcome: Task.isCancelled ? .cancelled : .succeeded
-            )
-        }
-        await mailbox.park(
-            tool: "fake",
-            op: parkedRunOp,
-            kind: .swiftTask,
-            completionToken: token,
-            settling: settling,
-            canceler: {
-                settling.cancel()
-                return .cancelled
-            }
-        )
-        return token
-    }
-
     /// The last recorded event's rebuilt boundary `.response` — the entry
     /// every applied fold appends, carrying its ``CompactionSegment``
     /// checkpoint — or records an issue.
@@ -669,7 +609,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: session.mailbox, latch: latch)
+        let token = await parkFakeRun(on: session.mailbox, latch: latch)
         await session.mailbox.updateProgress(completionToken: token, detail: "halfway through")
 
         let backend = try #require(container.lastBackend)
@@ -690,7 +630,7 @@ struct RoutedSessionCompactTests {
             compactionSegment.content.pendingRuns == [
                 CompactionSegment.PendingRunSummary(
                     completionToken: token,
-                    op: Self.parkedRunOp,
+                    op: FakeRun.op,
                     latestProgressDetail: "halfway through"
                 )
             ])
@@ -702,7 +642,7 @@ struct RoutedSessionCompactTests {
         #expect(texts.count == 2)
         let rendering = try #require(texts.last)
         #expect(rendering.contains(token))
-        #expect(rendering.contains(Self.parkedRunOp))
+        #expect(rendering.contains(FakeRun.op))
         #expect(rendering.contains("halfway through"))
         #expect(rendering.contains("status()"))
 

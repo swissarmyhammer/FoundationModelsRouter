@@ -42,27 +42,7 @@ struct SessionOutboxToolWiringTests {
         }
     }
 
-    /// A manually opened gate a fixture tool blocks on until the test lets
-    /// it finish (mirrors ``DetachingToolTests``'s own gate).
-    private actor ToolGate {
-        private var isOpen = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-
-        func open() {
-            isOpen = true
-            for waiter in waiters {
-                waiter.resume()
-            }
-            waiters.removeAll()
-        }
-
-        func waitUntilOpened() async {
-            guard !isOpen else { return }
-            await withCheckedContinuation { waiters.append($0) }
-        }
-    }
-
-    /// Blocks on a ``ToolGate`` and supplies a per-call `waitSeconds` of `0`
+    /// Blocks on a ``RunLatch`` and supplies a per-call `waitSeconds` of `0`
     /// through ``DetachmentParameterProviding``, so the composition-site
     /// ``DetachingTool`` detaches it immediately — keeping the
     /// pending-envelope tests fast without touching the wrap-time
@@ -70,10 +50,10 @@ struct SessionOutboxToolWiringTests {
     private struct GatedZeroWaitTool: Tool, DetachmentParameterProviding {
         let name = "gated-zero-wait"
         let description = "test-only slow tool that detaches immediately"
-        let gate: ToolGate
+        let gate: RunLatch
 
         func call(arguments: FakeToolArguments) async throws -> String {
-            await gate.waitUntilOpened()
+            await gate.waitUntilOpen()
             return "gated: \(arguments.value)"
         }
 
@@ -1132,7 +1112,7 @@ struct SessionOutboxToolWiringTests {
         let router = Self.makeRouter(container: container, cacheDir: dir, recorder: recorder)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let gate = ToolGate()
+        let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
         let backend = try #require(container.lastBackend)
         guard let detached = container.lastTools.first as? DetachingTool<FakeToolArguments> else {
@@ -1190,7 +1170,7 @@ struct SessionOutboxToolWiringTests {
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let gate = ToolGate()
+        let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
         let child = try await session.fork(workingDirectory: nil)
 
@@ -1225,7 +1205,7 @@ struct SessionOutboxToolWiringTests {
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let gate = ToolGate()
+        let gate = RunLatch()
         // toolOutputLimit 5 is far below the envelope's own estimated size:
         // real tool output at this cap is truncated, but the envelope —
         // control-plane data whose completionToken the model must keep —
@@ -1267,7 +1247,7 @@ struct SessionOutboxToolWiringTests {
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let gate = ToolGate()
+        let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
         let backend = try #require(container.lastBackend)
 

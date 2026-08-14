@@ -38,7 +38,7 @@ struct DetachingToolTests {
         let waitSeconds: Double
     }
 
-    // MARK: - Sink and gate fixtures
+    // MARK: - Sink fixtures
 
     /// A sink that records every posted event, in order.
     private actor RecordingSink: OperationEventSink {
@@ -46,26 +46,6 @@ struct DetachingToolTests {
 
         func post(event: OperationEvent) {
             events.append(event)
-        }
-    }
-
-    /// A manually opened gate a fixture tool blocks on until the test lets
-    /// it finish.
-    private actor ToolGate {
-        private var isOpen = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-
-        func open() {
-            isOpen = true
-            for waiter in waiters {
-                waiter.resume()
-            }
-            waiters.removeAll()
-        }
-
-        func waitUntilOpened() async {
-            guard !isOpen else { return }
-            await withCheckedContinuation { waiters.append($0) }
         }
     }
 
@@ -81,15 +61,15 @@ struct DetachingToolTests {
         }
     }
 
-    /// Blocks on a ``ToolGate`` until the test opens it — the detachment slow
+    /// Blocks on a ``RunLatch`` until the test opens it — the detachment slow
     /// path's subject.
     private struct GatedTool: Tool {
         let name = "gated_tool"
         let description = "blocks until its gate opens"
-        let gate: ToolGate
+        let gate: RunLatch
 
         func call(arguments: DetachingArguments) async throws -> String {
-            await gate.waitUntilOpened()
+            await gate.waitUntilOpen()
             return "gated: \(arguments.value)"
         }
     }
@@ -173,10 +153,10 @@ struct DetachingToolTests {
     private struct PerCallClockTool: Tool, DetachmentParameterProviding {
         let name = "per_call_clock_tool"
         let description = "supplies waitSeconds from its own arguments"
-        let gate: ToolGate
+        let gate: RunLatch
 
         func call(arguments: ClockedArguments) async throws -> String {
-            await gate.waitUntilOpened()
+            await gate.waitUntilOpen()
             return "clocked: \(arguments.value)"
         }
 
@@ -211,10 +191,10 @@ struct DetachingToolTests {
     private struct NilClockTool: Tool, DetachmentParameterProviding {
         let name = "nil_clock_tool"
         let description = "supplies no per-call clocks at all"
-        let gate: ToolGate
+        let gate: RunLatch
 
         func call(arguments: DetachingArguments) async throws -> String {
-            await gate.waitUntilOpened()
+            await gate.waitUntilOpen()
             return "nil-clock: \(arguments.value)"
         }
 
@@ -314,7 +294,7 @@ struct DetachingToolTests {
         }
     }
 
-    /// Blocks on a ``ToolGate`` and then returns the ambient run's session
+    /// Blocks on a ``RunLatch`` and then returns the ambient run's session
     /// identity — the subject of
     /// ``ToolDetachment/wrapping(tool:inheriting:sink:configuration:)``: the
     /// inner run must be bound on the session plane the inherited context
@@ -322,10 +302,10 @@ struct DetachingToolTests {
     private struct GatedSessionIdentityTool: Tool {
         let name = "gated_session_identity_tool"
         let description = "returns the ambient context's session identity once its gate opens"
-        let gate: ToolGate
+        let gate: RunLatch
 
         func call(arguments: DetachingArguments) async throws -> String {
-            await gate.waitUntilOpened()
+            await gate.waitUntilOpen()
             return ToolContext.current?.sessionID.ulidString ?? "unbound"
         }
     }
@@ -564,7 +544,7 @@ struct DetachingToolTests {
 
     @Test("a slow tool detaches: pending envelope, mailbox entry, synthesized progress, one terminal upstream")
     func detachmentSlowPath() async throws {
-        let gate = ToolGate()
+        let gate = RunLatch()
         let harness = Self.makeHarness(
             wrapping: GatedTool(gate: gate),
             configuration: DetachConfiguration(
@@ -616,7 +596,7 @@ struct DetachingToolTests {
 
     @Test("waitSeconds 0 detaches immediately")
     func zeroWaitDetachesImmediately() async throws {
-        let gate = ToolGate()
+        let gate = RunLatch()
         let harness = Self.makeHarness(
             wrapping: GatedTool(gate: gate),
             configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
@@ -642,7 +622,7 @@ struct DetachingToolTests {
 
     @Test("a per-call waitSeconds extracted from the arguments overrides the wrap-time default")
     func perCallWaitSecondsOverridesConfiguration() async throws {
-        let gate = ToolGate()
+        let gate = RunLatch()
         // Wrap-time wait is generous — only the per-call value can be what
         // detaches this call within the test's lifetime.
         let harness = Self.makeHarness(
@@ -688,7 +668,7 @@ struct DetachingToolTests {
 
     @Test("nil per-call clocks fall back to the wrap-time configuration")
     func nilPerCallClocksFallBackToConfiguration() async throws {
-        let gate = ToolGate()
+        let gate = RunLatch()
         let harness = Self.makeHarness(
             wrapping: NilClockTool(gate: gate),
             configuration: DetachConfiguration(
@@ -901,7 +881,7 @@ struct DetachingToolTests {
 
     @Test("detachment-off mode runs to completion, never parks, and never returns a pending envelope")
     func detachmentOffRunsToCompletion() async throws {
-        let gate = ToolGate()
+        let gate = RunLatch()
         // waitSeconds is deliberately tiny: in run-to-completion mode it must
         // play no part at all.
         let harness = Self.makeHarness(
@@ -1105,7 +1085,7 @@ struct DetachingToolTests {
 
     @Test("ToolDetachment.wrapping discovers a String-output tool from any Tool and detaches it")
     func factoryWrapsStringOutputTool() async throws {
-        let gate = ToolGate()
+        let gate = RunLatch()
         let mailbox = SessionMailbox()
         let sink = RecordingSink()
         let wrapped = ToolDetachment.wrapping(
@@ -1214,7 +1194,7 @@ struct DetachingToolTests {
 
     @Test("ToolDetachment.wrapping inheriting a ToolContext parks the run in that context's own mailbox")
     func factoryInheritsMailboxAndSessionIdentity() async throws {
-        let gate = ToolGate()
+        let gate = RunLatch()
         let mailbox = SessionMailbox()
         let sessionID = ULID.generate()
         let sink = RecordingSink()

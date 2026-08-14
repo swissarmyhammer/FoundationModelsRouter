@@ -2,12 +2,16 @@ import Foundation
 
 @testable import FoundationModelsRouter
 
-/// A latch a fake run body suspends on until a test (or cooperative
+/// A latch a fixture body suspends on until a test (or cooperative
 /// cancellation) opens it — the controllable stand-in for a detached run's
-/// real work.
+/// real work, whether that body is a fake parked run or a gated tool's
+/// `call(arguments:)`.
 ///
-/// Shared by the run-plane suites (`SessionMailboxTests`, `ToolContextTests`)
-/// so the scaffolding lives in exactly one place.
+/// This is the one gate the test target declares. Every suite that has to
+/// hold a run open — `SessionMailboxTests`, `ToolContextTests`,
+/// `DetachingToolTests`, `SessionOutboxToolWiringTests`,
+/// `RoutedSessionCompactTests` — uses it, so the scaffolding lives in exactly
+/// one place and cannot drift copy from copy.
 actor RunLatch {
     /// Whether the latch has been opened.
     private var isOpen = false
