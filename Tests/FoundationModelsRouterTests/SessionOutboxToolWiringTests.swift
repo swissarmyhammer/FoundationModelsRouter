@@ -1205,9 +1205,9 @@ struct SessionOutboxToolWiringTests {
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
 
-        let childParked = await child.mailbox.status().map(\.completionToken)
+        let childParked = await child.mailbox.parkedRuns().map(\.completionToken)
         #expect(childParked == [envelope.completionToken])
-        let parentParked = await session.mailbox.status()
+        let parentParked = await session.mailbox.parkedRuns()
         #expect(parentParked.isEmpty)
 
         // Settle the parked run so no detached work outlives the test.
@@ -1290,7 +1290,7 @@ struct SessionOutboxToolWiringTests {
         let rendered = try #require(backend.renderedToolOutputs.first)
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
-        let parked = await session.mailbox.status().map(\.completionToken)
+        let parked = await session.mailbox.parkedRuns().map(\.completionToken)
         #expect(parked == [envelope.completionToken])
 
         // The parked run outlived the cancelled turn un-cancelled: opening

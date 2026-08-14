@@ -467,7 +467,7 @@ struct SessionTreeRestorationLostRunTests {
         // carry an arbitrarily large one; the manufactured terminal must
         // apply the same trailing-tail bound sweep()'s synthesized terminal
         // does, keeping the end of the output (what a reader acts on).
-        let oversized = String(repeating: "x", count: SessionMailbox.terminalDetailTailLimit) + "TAIL-MARKER"
+        let oversized = String(repeating: "x", count: ToolContext.terminalDetailTailLimit) + "TAIL-MARKER"
         let (restored, _) = try await Self.recordAndRestore(
             journaled: [Self.event(correlationID: "run-1", kind: .progress, detail: oversized)],
             cacheDir: cacheDir,
@@ -477,7 +477,7 @@ struct SessionTreeRestorationLostRunTests {
         let pending = await restored.root.outbox.pending()
         let manufactured = try #require(pending.events.first?.event)
         #expect(manufactured.outcome == .lost)
-        #expect(manufactured.detail.count == SessionMailbox.terminalDetailTailLimit)
+        #expect(manufactured.detail.count == ToolContext.terminalDetailTailLimit)
         #expect(manufactured.detail.hasSuffix("TAIL-MARKER"))
     }
 

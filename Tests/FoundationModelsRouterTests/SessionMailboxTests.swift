@@ -5,111 +5,33 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task 3g930c4: the ``SessionMailbox`` actor — parked detached
-/// runs (park/status/wait/cancel), the pending-elicitation registry, and the
-/// ``RoutedSession/close()``-driven teardown sweep that journals exactly one
-/// terminal event per parked run.
+/// runs (park/parkedRuns/wait/cancel), the pending-elicitation registry, and
+/// the ``RoutedSession/close()``-driven teardown sweep that journals exactly
+/// one terminal event per parked run.
 ///
 /// Everything runs against stubs — fake parked `Task`s, a plain
 /// ``StubSessionBackend``, and an ``InMemoryRecorder`` — so the suite needs
 /// no network and no GPU.
 @Suite("Session mailbox: parked runs, elicitations, and close()-driven sweep")
 struct SessionMailboxTests {
-    // MARK: - Fake run scaffolding
+    // MARK: - park / parkedRuns / wait lifecycle
 
-    /// A latch a fake run body suspends on until the test (or cooperative
-    /// cancellation) opens it — the controllable stand-in for a detached
-    /// run's real work.
-    private actor RunLatch {
-        private var isOpen = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
-
-        func open() {
-            guard !isOpen else { return }
-            isOpen = true
-            let parked = waiters
-            waiters = []
-            for waiter in parked {
-                waiter.resume()
-            }
-        }
-
-        func waitUntilOpen() async {
-            guard !isOpen else { return }
-            await withCheckedContinuation { waiters.append($0) }
-        }
-    }
-
-    /// Counts canceler invocations so a test can assert the sweep invoked
-    /// each parked run's canceler exactly once.
-    private actor CancelCounter {
-        private(set) var count = 0
-        func increment() { count += 1 }
-    }
-
-    private static let fakeTool = "fake"
-    private static let fakeOp = "run task"
-
-    /// Parks a fake swift-task run on `mailbox`: its settling task suspends
-    /// on `latch` (opening it on cooperative cancellation), then produces a
-    /// terminal `.completed` event whose outcome honestly reports whether it
-    /// was cancelled. The canceler cancels the settling task and reports
-    /// `cancelerOutcome`.
-    private static func parkFakeRun(
-        on mailbox: SessionMailbox,
-        latch: RunLatch,
-        detailOnSettle: String = "done",
-        cancelerOutcome: OperationOutcome = .cancelled,
-        counter: CancelCounter? = nil
-    ) async -> String {
-        let token = SessionMailbox.makeCompletionToken()
-        let settling = Task<OperationEvent, Never> {
-            await withTaskCancellationHandler {
-                await latch.waitUntilOpen()
-            } onCancel: {
-                Task { await latch.open() }
-            }
-            return OperationEvent(
-                tool: fakeTool,
-                op: fakeOp,
-                correlationID: token,
-                kind: .completed,
-                detail: detailOnSettle,
-                outcome: Task.isCancelled ? .cancelled : .succeeded
-            )
-        }
-        await mailbox.park(
-            tool: fakeTool,
-            op: fakeOp,
-            kind: .swiftTask,
-            completionToken: token,
-            settling: settling,
-            canceler: {
-                await counter?.increment()
-                settling.cancel()
-                return cancelerOutcome
-            }
-        )
-        return token
-    }
-
-    // MARK: - park / status / wait lifecycle
-
-    @Test("park lists the run in status(), wait() returns its terminal event, and a settled run leaves status()")
-    func parkStatusWaitLifecycle() async {
+    @Test("park lists the run in parkedRuns(), wait() returns its terminal event, and a settled run leaves parkedRuns()")
+    func parkListingAndWaitLifecycle() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
 
-        let pending = await mailbox.status()
+        let pending = await mailbox.parkedRuns()
         #expect(pending.count == 1)
         #expect(pending.first?.completionToken == token)
-        #expect(pending.first?.tool == Self.fakeTool)
-        #expect(pending.first?.op == Self.fakeOp)
+        #expect(pending.first?.tool == FakeRun.tool)
+        #expect(pending.first?.op == FakeRun.op)
         #expect(pending.first?.kind == .swiftTask)
         #expect(pending.first?.latestProgressDetail == nil)
 
         await mailbox.updateProgress(completionToken: token, detail: "50%")
-        #expect(await mailbox.status().first?.latestProgressDetail == "50%")
+        #expect(await mailbox.parkedRuns().first?.latestProgressDetail == "50%")
 
         await latch.open()
         let result = await mailbox.wait(completionToken: token, seconds: 5)
@@ -122,18 +44,18 @@ struct SessionMailboxTests {
         #expect(terminal.detail == "exit 0")
         #expect(terminal.outcome == .succeeded)
 
-        #expect(await mailbox.status().isEmpty)
+        #expect(await mailbox.parkedRuns().isEmpty)
     }
 
     @Test("wait() on a run that never settles elapses its deadline and leaves the run parked")
     func waitDeadlineElapses() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch)
+        let token = await parkFakeRun(on: mailbox, latch: latch)
 
         let result = await mailbox.wait(completionToken: token, seconds: 0.05)
         #expect(result == .deadlineElapsed)
-        #expect(await mailbox.status().count == 1)
+        #expect(await mailbox.parkedRuns().count == 1)
 
         // Settle the fake run so the test tears down with no suspended
         // continuation left behind.
@@ -148,13 +70,13 @@ struct SessionMailboxTests {
     func waitClampsUntrustedSeconds(seconds: Double) async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch)
+        let token = await parkFakeRun(on: mailbox, latch: latch)
 
         // A non-positive or non-finite deadline resolves as an immediate
         // deadline elapse — never a crash — and leaves the run parked.
         let result = await mailbox.wait(completionToken: token, seconds: seconds)
         #expect(result == .deadlineElapsed)
-        #expect(await mailbox.status().count == 1)
+        #expect(await mailbox.parkedRuns().count == 1)
 
         await latch.open()
         _ = await mailbox.wait(completionToken: token, seconds: 5)
@@ -164,7 +86,7 @@ struct SessionMailboxTests {
     func settledRunResolvesWaitDespiteZeroDeadline() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch)
+        let token = await parkFakeRun(on: mailbox, latch: latch)
         await latch.open()
         _ = await mailbox.wait(completionToken: token, seconds: 5)
 
@@ -180,8 +102,8 @@ struct SessionMailboxTests {
     func waitReturnsBoundedResult() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let oversized = String(repeating: "x", count: SessionMailbox.terminalDetailTailLimit * 3) + "end-of-output"
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch, detailOnSettle: oversized)
+        let oversized = String(repeating: "x", count: ToolContext.terminalDetailTailLimit * 3) + "end-of-output"
+        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: oversized)
 
         await latch.open()
         let result = await mailbox.wait(completionToken: token, seconds: 5)
@@ -190,7 +112,7 @@ struct SessionMailboxTests {
             return
         }
         #expect(terminal.correlationID == token)
-        #expect(terminal.detail.count == SessionMailbox.terminalDetailTailLimit)
+        #expect(terminal.detail.count == ToolContext.terminalDetailTailLimit)
         #expect(terminal.detail.hasSuffix("end-of-output"))
     }
 
@@ -200,7 +122,7 @@ struct SessionMailboxTests {
     func cancelWhileWaiting() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch)
+        let token = await parkFakeRun(on: mailbox, latch: latch)
 
         let waiting = Task { await mailbox.wait(completionToken: token, seconds: 5) }
         let cancelResult = await mailbox.cancel(completionToken: token)
@@ -219,7 +141,7 @@ struct SessionMailboxTests {
     func cancelReportsCancelerOutcomeVerbatim() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch, cancelerOutcome: .stopped)
+        let token = await parkFakeRun(on: mailbox, latch: latch, cancelerOutcome: .stopped)
 
         let cancelResult = await mailbox.cancel(completionToken: token)
         #expect(cancelResult == .reported(.stopped))
@@ -232,7 +154,7 @@ struct SessionMailboxTests {
     func cancelOnSettledRunReportsAlreadySettled() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
         await latch.open()
         _ = await mailbox.wait(completionToken: token, seconds: 5)
 
@@ -251,12 +173,12 @@ struct SessionMailboxTests {
     func parkRefusesDuplicateToken() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: mailbox, latch: latch)
+        let token = await parkFakeRun(on: mailbox, latch: latch)
 
         let refusedSettling = Task<OperationEvent, Never> {
             OperationEvent(
-                tool: Self.fakeTool,
-                op: Self.fakeOp,
+                tool: FakeRun.tool,
+                op: FakeRun.op,
                 correlationID: token,
                 kind: .completed,
                 detail: "refused",
@@ -264,8 +186,8 @@ struct SessionMailboxTests {
             )
         }
         let refused = await mailbox.park(
-            tool: Self.fakeTool,
-            op: Self.fakeOp,
+            tool: FakeRun.tool,
+            op: FakeRun.op,
             kind: .swiftTask,
             completionToken: token,
             settling: refusedSettling,
@@ -273,8 +195,8 @@ struct SessionMailboxTests {
         )
         #expect(refused == .duplicateToken)
         // The incumbent is still the one and only parked run — no duplicate
-        // status row, no silent overwrite.
-        #expect(await mailbox.status().count == 1)
+        // parked-run row, no silent overwrite.
+        #expect(await mailbox.parkedRuns().count == 1)
 
         await latch.open()
         let result = await mailbox.wait(completionToken: token, seconds: 5)
@@ -294,7 +216,7 @@ struct SessionMailboxTests {
         var tokens: [String] = []
         for _ in 0...SessionMailbox.settledTerminalEventRetentionLimit {
             let latch = RunLatch()
-            let token = await Self.parkFakeRun(on: mailbox, latch: latch)
+            let token = await parkFakeRun(on: mailbox, latch: latch)
             await latch.open()
             _ = await mailbox.wait(completionToken: token, seconds: 5)
             tokens.append(token)
@@ -322,7 +244,7 @@ struct SessionMailboxTests {
         #expect(await mailbox.cancel(completionToken: unknown) == .unknownToken)
         #expect(await mailbox.wait(completionToken: unknown, seconds: 5) == .unknownToken)
         await mailbox.updateProgress(completionToken: unknown, detail: "ignored")
-        #expect(await mailbox.status().isEmpty)
+        #expect(await mailbox.parkedRuns().isEmpty)
     }
 
     @Test("unknown and already-completed elicitationIds are safe no-ops")
@@ -528,8 +450,8 @@ struct SessionMailboxTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        let tokenA = await Self.parkFakeRun(on: session.mailbox, latch: latchA, counter: counter)
-        let tokenB = await Self.parkFakeRun(on: session.mailbox, latch: latchB, counter: counter)
+        let tokenA = await parkFakeRun(on: session.mailbox, latch: latchA, counter: counter)
+        let tokenB = await parkFakeRun(on: session.mailbox, latch: latchB, counter: counter)
 
         let elicitationId = ULID.generate()
         let rejected = AnswerDrivenRun(waitingFor: "the elicitation \(elicitationId) swept by close()") {
@@ -542,7 +464,7 @@ struct SessionMailboxTests {
         // Each parked run's canceler ran per its kind's semantics.
         #expect(await counter.count == 2)
         // The mailbox is empty: no parked runs, no pending elicitations.
-        #expect(await session.mailbox.status().isEmpty)
+        #expect(await session.mailbox.parkedRuns().isEmpty)
         #expect(await session.mailbox.pendingElicitationIds().isEmpty)
         // The pending elicitation was rejected.
         #expect(try await rejected.deliveredAnswer() == .cancel)
@@ -609,8 +531,8 @@ struct SessionMailboxTests {
         let counter = CancelCounter()
         let latchA = RunLatch()
         let latchB = RunLatch()
-        _ = await Self.parkFakeRun(on: session.mailbox, latch: latchA, counter: counter)
-        _ = await Self.parkFakeRun(on: session.mailbox, latch: latchB, counter: counter)
+        _ = await parkFakeRun(on: session.mailbox, latch: latchA, counter: counter)
+        _ = await parkFakeRun(on: session.mailbox, latch: latchB, counter: counter)
 
         // Two concurrent closes, then a third sequential one.
         async let firstClose: Void = session.close()
@@ -649,7 +571,7 @@ struct SessionMailboxTests {
         let session = profile1.standard.makeSession()
 
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: session.mailbox, latch: latch)
+        let token = await parkFakeRun(on: session.mailbox, latch: latch)
         await session.close()
 
         // "Tear down" and restore under a fresh process with the DEFAULT
@@ -701,9 +623,9 @@ struct SessionMailboxTests {
 
         // Parking on the parent never leaks into the child's mailbox.
         let latch = RunLatch()
-        let token = await Self.parkFakeRun(on: session.mailbox, latch: latch)
-        #expect(await session.mailbox.status().count == 1)
-        #expect(await child.mailbox.status().isEmpty)
+        let token = await parkFakeRun(on: session.mailbox, latch: latch)
+        #expect(await session.mailbox.parkedRuns().count == 1)
+        #expect(await child.mailbox.parkedRuns().isEmpty)
 
         await latch.open()
         _ = await session.mailbox.wait(completionToken: token, seconds: 5)

@@ -11,6 +11,11 @@ import Testing
 /// `post(_:)`/`progress(_:)`, and the `elicit(_:)` round trip through a real
 /// ``SessionMailbox`` — accept with content, decline, cancel, and two
 /// concurrent elicitations on one run resolving independently.
+///
+/// The run-plane capabilities a tool host reads (task ^k0mecjp) are exercised
+/// here too: `parkedRuns()`, `wait(completionToken:seconds:)` and
+/// `cancel(completionToken:)`, each driven against a real ``SessionMailbox``
+/// holding a fake parked run — no live model anywhere.
 @Suite("ToolContext: ambient task-local capability surface")
 struct ToolContextTests {
     // MARK: - Fixtures
@@ -108,6 +113,15 @@ struct ToolContextTests {
         Issue.record("elicitations \(elicitationIds) never became pending")
         throw PendingElicitationTimeout()
     }
+
+    /// The ceiling on any await a run-plane test performs against the
+    /// mailbox — long enough that a settled run is never missed, and it is
+    /// never actually waited out.
+    private static let settlementDeadline: Double = 30
+
+    /// A deadline short enough that a run which never settles elapses it
+    /// while the suite stays fast.
+    private static let elapsingDeadline: Double = 0.05
 
     /// A single-string-field form request addressed by `elicitationId`.
     private static func formRequest(elicitationId: ULID = ULID.generate()) -> ElicitationRequest {
@@ -391,5 +405,126 @@ struct ToolContextTests {
         let posted = try #require(await sink.events.first)
         #expect(!posted.tool.isEmpty)
         #expect(!posted.op.isEmpty)
+    }
+
+    // MARK: - Run-plane capabilities
+
+    @Test("parkedRuns() reports the session's parked runs, and a settled run leaves the report")
+    func parkedRunsReportsTheSessionsRuns() async throws {
+        let mailbox = SessionMailbox()
+        let latch = RunLatch()
+        let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
+        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+
+        let parked = await context.parkedRuns()
+        #expect(parked.count == 1)
+        #expect(parked.first?.completionToken == token)
+        #expect(parked.first?.tool == FakeRun.tool)
+        #expect(parked.first?.op == FakeRun.op)
+        #expect(parked.first?.kind == .swiftTask)
+        #expect(parked.first?.latestProgressDetail == nil)
+
+        await mailbox.updateProgress(completionToken: token, detail: "50%")
+        #expect(await context.parkedRuns().first?.latestProgressDetail == "50%")
+
+        await latch.open()
+        _ = await context.wait(completionToken: token, seconds: Self.settlementDeadline)
+        #expect(await context.parkedRuns().isEmpty)
+    }
+
+    @Test("wait() resolves to the run's terminal event once it settles")
+    func waitResolvesToTheTerminalEvent() async throws {
+        let mailbox = SessionMailbox()
+        let latch = RunLatch()
+        let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
+        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+
+        await latch.open()
+        let outcome = await context.wait(
+            completionToken: token, seconds: Self.settlementDeadline
+        )
+
+        guard case .settled(let terminal) = outcome else {
+            Issue.record("expected .settled, got \(outcome)")
+            return
+        }
+        #expect(terminal.correlationID == token)
+        #expect(terminal.detail == "exit 0")
+        #expect(terminal.outcome == .succeeded)
+    }
+
+    @Test("wait() reports its deadline elapsing and leaves the run parked")
+    func waitReportsTheDeadlineElapsing() async throws {
+        let mailbox = SessionMailbox()
+        let latch = RunLatch()
+        let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
+        let token = await parkFakeRun(on: mailbox, latch: latch)
+
+        #expect(
+            await context.wait(completionToken: token, seconds: Self.elapsingDeadline)
+                == .deadlineElapsed
+        )
+        #expect(await context.parkedRuns().count == 1)
+
+        // Settle the fake run so the test tears down with no suspended
+        // continuation left behind.
+        await latch.open()
+        _ = await context.wait(completionToken: token, seconds: Self.settlementDeadline)
+    }
+
+    @Test("wait() on a token no run is known under is a safe, reportable no-op")
+    func waitReportsAnUnknownToken() async throws {
+        let context = Self.makeContext(sink: RecordingSink())
+
+        let outcome = await context.wait(
+            completionToken: SessionMailbox.makeCompletionToken(),
+            seconds: Self.settlementDeadline
+        )
+
+        #expect(outcome == .unknownToken)
+    }
+
+    @Test("cancel() reports the outcome the run's canceler reports")
+    func cancelReportsTheCancelersOutcome() async throws {
+        let mailbox = SessionMailbox()
+        let latch = RunLatch()
+        let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
+        let token = await parkFakeRun(on: mailbox, latch: latch, cancelerOutcome: .cancelled)
+
+        #expect(await context.cancel(completionToken: token) == .reported(.cancelled))
+
+        // The cancelled run settles on its own schedule; collect it so the
+        // test leaves nothing suspended.
+        _ = await context.wait(completionToken: token, seconds: Self.settlementDeadline)
+    }
+
+    @Test("cancel() on a run that already settled reports its retained terminal event")
+    func cancelReportsAnAlreadySettledRun() async throws {
+        let mailbox = SessionMailbox()
+        let latch = RunLatch()
+        let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
+        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+
+        await latch.open()
+        _ = await context.wait(completionToken: token, seconds: Self.settlementDeadline)
+        let outcome = await context.cancel(completionToken: token)
+
+        guard case .alreadySettled(let terminal) = outcome else {
+            Issue.record("expected .alreadySettled, got \(outcome)")
+            return
+        }
+        #expect(terminal.correlationID == token)
+        #expect(terminal.outcome == .succeeded)
+    }
+
+    @Test("cancel() on a token no run is known under is a safe, reportable no-op")
+    func cancelReportsAnUnknownToken() async throws {
+        let context = Self.makeContext(sink: RecordingSink())
+
+        let outcome = await context.cancel(
+            completionToken: SessionMailbox.makeCompletionToken()
+        )
+
+        #expect(outcome == .unknownToken)
     }
 }

@@ -361,7 +361,7 @@ extension RoutedSessionActor {
         // (token, op, latest progress — never output content), so a
         // post-compaction model can rediscover its in-flight work from the
         // boundary and call status() for the live view.
-        let pendingRuns = await mailbox.status().map { run in
+        let pendingRuns = await mailbox.parkedRuns().map { run in
             CompactionSegment.PendingRunSummary(
                 completionToken: run.completionToken,
                 op: run.op,

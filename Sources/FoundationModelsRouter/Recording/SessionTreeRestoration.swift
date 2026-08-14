@@ -732,7 +732,7 @@ extension TranscriptTree {
                 op: newest.op,
                 correlationID: run.correlationID,
                 kind: .completed,
-                detail: String(detail.suffix(SessionMailbox.terminalDetailTailLimit)),
+                detail: String(detail.suffix(ToolContext.terminalDetailTailLimit)),
                 outcome: .lost
             )
         }

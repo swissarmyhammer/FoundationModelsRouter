@@ -1,10 +1,10 @@
 # ``FoundationModelsRouter/RoutedSession``
 
-The public session surface, grouped by audience (task ^j0pp9yp).
+The public session surface, grouped by audience (tasks ^j0pp9yp, ^k0mecjp).
 
 ## Overview
 
-A session has two audiences, and each one gets typed capabilities:
+A session has three audiences, and each one gets typed capabilities:
 
 - **Apps and drivers** hold a `RoutedSession` and use the members below.
   They never touch the raw staging and parking machinery — the session's
@@ -13,6 +13,11 @@ A session has two audiences, and each one gets typed capabilities:
   ambient ``ToolContext`` and uses its capabilities:
   ``ToolContext/post(_:)``, ``ToolContext/progress(_:)``,
   ``ToolContext/elicit(_:)``, and ``ToolContext/isCancelled``.
+- **Tool hosts** — a tool that shows the run plane to a model — read that
+  plane through the same ambient context, never through a mailbox:
+  ``ToolContext/parkedRuns()``,
+  ``ToolContext/wait(completionToken:seconds:)``, and
+  ``ToolContext/cancel(completionToken:)`` (task ^k0mecjp).
 
 ## Topics
 

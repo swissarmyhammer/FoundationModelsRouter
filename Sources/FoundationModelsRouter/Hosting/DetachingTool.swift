@@ -155,13 +155,13 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     private static let followUpWaitSeconds = 60
 
     /// The run-plane state name a `wait` reports for a run that finished — the
-    /// wire spelling of ``SessionMailbox/WaitResult/settled``, whose event
+    /// wire spelling of ``WaitOutcome/settled``, whose event
     /// carries the run's output in its `detail`.
     private static let settledStateName = "settled"
 
     /// The run-plane state name a `wait` reports when its own deadline ran out
     /// with the run still parked — the wire spelling of
-    /// ``SessionMailbox/WaitResult/deadlineElapsed``.
+    /// ``WaitOutcome/deadlineElapsed``.
     private static let deadlineElapsedStateName = "deadline_elapsed"
 
     /// The fixed text before the first `completionToken` slot in
@@ -673,6 +673,47 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 /// and lives beside the capping layer so this file carries no dependency
 /// on it.
 public enum ToolDetachment {
+    /// Wraps `tool` on the session plane an ambient ``ToolContext`` already
+    /// names — the entry point for a binder outside this package that mounts
+    /// its own inner calls under a tool of its own (`FoundationModelsMultitool`
+    /// gives every `tools.*` call inside one `runCode` snippet its own
+    /// correlation this way).
+    ///
+    /// ``ToolContext/mailbox`` is internal (task ^j0pp9yp), so such a binder
+    /// cannot call ``wrapping(tool:sessionID:mailbox:sink:configuration:)``
+    /// itself. It has no need to name either value: a captured ambient
+    /// context already carries the session identity and the mailbox, and
+    /// this reads both off it. The decision, the decorators, and every
+    /// guarantee are that method's, unchanged.
+    ///
+    /// `sink` stays a parameter rather than being read off `context`,
+    /// because the two are not the same route: a binder that re-stamps an
+    /// inner run's events onto its own outer correlation posts through
+    /// ``ToolContext/post(_:)``, which the context's own sink would bypass.
+    ///
+    /// - Parameters:
+    ///   - tool: The tool to consider for detachment.
+    ///   - context: The enclosing call's ambient context, captured while its
+    ///     binding was still in scope.
+    ///   - sink: The upstream sink the run's events are posted to.
+    ///   - configuration: The wrap-time mode and clock defaults.
+    /// - Returns: The detaching decorator around `tool` when it qualifies;
+    ///   the binding-only ``ContextBindingTool`` around it otherwise.
+    public static func wrapping(
+        tool: any Tool,
+        inheriting context: ToolContext,
+        sink: any OperationEventSink,
+        configuration: DetachConfiguration
+    ) -> any Tool {
+        wrapping(
+            tool: tool,
+            sessionID: context.sessionID,
+            mailbox: context.mailbox,
+            sink: sink,
+            configuration: configuration
+        )
+    }
+
     /// Wraps `tool` in a ``DetachingTool`` when it can be detached,
     /// discovered dynamically rather than requiring the tool to opt in —
     /// and in the binding-only ``ContextBindingTool`` otherwise, so every

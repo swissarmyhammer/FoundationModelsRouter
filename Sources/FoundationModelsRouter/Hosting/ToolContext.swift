@@ -30,18 +30,44 @@ public struct ToolContext: Sendable {
     /// capture-at-start rule above).
     @TaskLocal public static var current: ToolContext?
 
+    // MARK: - Run-plane bounds
+
+    /// The largest deadline ``wait(completionToken:seconds:)`` honors, in
+    /// seconds (one day). A larger — or infinite — requested deadline is
+    /// clamped here rather than trapped on: the run stays parked past the
+    /// clamp, so a caller can simply wait again.
+    ///
+    /// Published because a host clamps a model-supplied deadline against it
+    /// before it ever reaches the run plane, and reports the clamp it made.
+    public static let waitSecondsCeiling: Double = 86_400
+
+    /// The maximum character count of a terminal event's `detail` as the run
+    /// plane reports it — the bound behind
+    /// "``wait(completionToken:seconds:)`` returns a bounded output tail,
+    /// never a capability's full store". A longer detail is truncated to its
+    /// trailing `terminalDetailTailLimit` characters (the tail — the end of
+    /// the output is what a caller acts on), so the run identifier plus a
+    /// capped tail is all that ever leaves the run plane.
+    ///
+    /// Published because a host asserts its own rendered output tail against
+    /// it, so what it hands a model is never wider than what it was given.
+    public static let terminalDetailTailLimit = 4_096
+
     // MARK: - Session scope
 
     /// The owning session's identity — ``RoutedSession/id``.
     public let sessionID: ULID
 
     /// The owning session's mailbox: where ``elicit(_:)`` parks its pending
-    /// continuation, keyed by the request's `elicitationId`.
+    /// continuation, keyed by the request's `elicitationId`, and the run
+    /// plane the three run-plane capabilities below read.
     ///
     /// Internal, deliberately: a tool reaches elicitation through the typed
-    /// ``elicit(_:)`` capability, never through the raw mailbox (task
-    /// ^j0pp9yp). The binder supplies the mailbox at construction and keeps
-    /// its own reference when it needs one.
+    /// ``elicit(_:)`` capability (task ^j0pp9yp) and the run plane through
+    /// ``parkedRuns()``, ``wait(completionToken:seconds:)`` and
+    /// ``cancel(completionToken:)`` (task ^k0mecjp) — never through the raw
+    /// mailbox. The binder supplies the mailbox at construction and keeps its
+    /// own reference when it needs one.
     let mailbox: SessionMailbox
 
     /// The upstream sink every capability posts through.
@@ -226,5 +252,53 @@ public struct ToolContext: Sendable {
         return await mailbox.awaitAnswer(to: request) {
             await sink.post(event: event)
         }
+    }
+
+    // MARK: - Run-plane capabilities
+
+    /// Every run still parked on this session's run plane, in park order.
+    ///
+    /// The host route onto the run plane (task ^k0mecjp): a tool host that
+    /// shows the plane to a model renders these rows, and never holds the
+    /// session's mailbox to get them. Each row carries envelopes only — the
+    /// run's token, identity, kind, and latest progress — never a
+    /// capability's bulk output.
+    ///
+    /// - Returns: One ``ParkedRun`` per still-parked run.
+    public func parkedRuns() async -> [ParkedRun] {
+        await mailbox.parkedRuns()
+    }
+
+    /// Awaits a parked run's settlement with a deadline.
+    ///
+    /// The result is the run's terminal event — its bounded output tail
+    /// (capped at ``terminalDetailTailLimit``) plus the run's identifier —
+    /// never a capability's full store. A run that already settled resolves
+    /// immediately, and an unknown token is a safe, reportable no-op.
+    ///
+    /// - Parameters:
+    ///   - completionToken: The run's completion token.
+    ///   - seconds: How long to wait for settlement before reporting
+    ///     ``WaitOutcome/deadlineElapsed``. A model-supplied deadline is
+    ///     clamped rather than trusted: NaN and negative values floor to an
+    ///     immediate deadline, and anything above ``waitSecondsCeiling``
+    ///     (including infinity) is capped there — never a trap.
+    /// - Returns: The ``WaitOutcome``.
+    public func wait(completionToken: String, seconds: Double) async -> WaitOutcome {
+        await mailbox.wait(completionToken: completionToken, seconds: seconds)
+    }
+
+    /// Requests cancellation of a parked run and reports the outcome its
+    /// canceler reports — verbatim, never a guess.
+    ///
+    /// The run stays parked until it actually settles: for a
+    /// ``RunKind/swiftTask`` run cancellation is cooperative, so the body
+    /// ends on its own schedule and ``wait(completionToken:seconds:)`` is
+    /// what collects the terminal event.
+    ///
+    /// - Parameter completionToken: The run's completion token.
+    /// - Returns: The ``CancelOutcome``.
+    public func cancel(completionToken: String) async -> CancelOutcome {
+        await mailbox.cancel(completionToken: completionToken)
     }
 }

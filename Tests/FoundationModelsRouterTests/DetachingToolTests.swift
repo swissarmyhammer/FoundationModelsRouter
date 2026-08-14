@@ -314,6 +314,22 @@ struct DetachingToolTests {
         }
     }
 
+    /// Blocks on a ``ToolGate`` and then returns the ambient run's session
+    /// identity — the subject of
+    /// ``ToolDetachment/wrapping(tool:inheriting:sink:configuration:)``: the
+    /// inner run must be bound on the session plane the inherited context
+    /// names.
+    private struct GatedSessionIdentityTool: Tool {
+        let name = "gated_session_identity_tool"
+        let description = "returns the ambient context's session identity once its gate opens"
+        let gate: ToolGate
+
+        func call(arguments: DetachingArguments) async throws -> String {
+            await gate.waitUntilOpened()
+            return ToolContext.current?.sessionID.ulidString ?? "unbound"
+        }
+    }
+
     // Note: there is deliberately no non-Sendable-Arguments fixture — a
     // `Tool` conformance with non-Sendable `Arguments` does not compile
     // (`Tool.call` is `@concurrent`), so the case ``ToolDetachment/wrapping``
@@ -439,7 +455,7 @@ struct DetachingToolTests {
         // outgrew the cap would lose the completionToken the model needs.
         let rendered = PendingRunEnvelope(completionToken: ULID.generate().ulidString).rendered
 
-        #expect(rendered.count <= SessionMailbox.terminalDetailTailLimit)
+        #expect(rendered.count <= ToolContext.terminalDetailTailLimit)
     }
 
     @Test("an envelope whose two token slots disagree is not recognized")
@@ -541,7 +557,7 @@ struct DetachingToolTests {
 
         #expect(rendered == "fast: x")
         #expect(await harness.sink.events.isEmpty)
-        #expect(await harness.mailbox.status().isEmpty)
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
     }
 
     // MARK: - Detachment slow path
@@ -566,7 +582,7 @@ struct DetachingToolTests {
         #expect(ULID(ulidString: envelope.completionToken) != nil)
 
         // The mailbox holds the parked run under that token, kind swiftTask.
-        let status = await harness.mailbox.status()
+        let status = await harness.mailbox.parkedRuns()
         #expect(status.count == 1)
         #expect(status.first?.completionToken == envelope.completionToken)
         #expect(status.first?.kind == .swiftTask)
@@ -612,7 +628,7 @@ struct DetachingToolTests {
 
         let envelope = try Self.decodeEnvelope(rendered)
         #expect(envelope.pending)
-        #expect(await harness.mailbox.status().count == 1)
+        #expect(await harness.mailbox.parkedRuns().count == 1)
 
         await gate.open()
         let terminal = try await Self.settledTerminal(
@@ -903,12 +919,12 @@ struct DetachingToolTests {
         // Give the call ample room to (wrongly) act on the tiny waitSeconds
         // before letting the tool finish.
         try await Task.sleep(nanoseconds: UInt64(Self.shortInterval * 1_000_000_000))
-        #expect(await harness.mailbox.status().isEmpty)
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
         await gate.open()
 
         let rendered = try await calling.value
         #expect(rendered == "gated: complete")
-        #expect(await harness.mailbox.status().isEmpty)
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
         // In-band silent success: no events at all.
         #expect(await harness.sink.events.isEmpty)
     }
@@ -928,7 +944,7 @@ struct DetachingToolTests {
         // Poll (bounded) until a beat lands in the parked run's status row.
         var observedDetail: String?
         for _ in 0..<1_000 {
-            let status = await harness.mailbox.status()
+            let status = await harness.mailbox.parkedRuns()
             if let detail = status.first?.latestProgressDetail {
                 observedDetail = detail
                 break
@@ -1162,5 +1178,79 @@ struct DetachingToolTests {
         #expect(events.map(\.correlationID) == [first.text, second.text])
         #expect(first.text != second.text)
         #expect(ULID(first.text) != nil)
+    }
+
+    @Test("ToolDetachment.wrapping inheriting a ToolContext binds on that context's session plane")
+    func factoryInheritsAmbientContext() async throws {
+        let sink = RecordingSink()
+        let outer = ToolContext(
+            stamping: AmbientNonStringOutputTool(),
+            sessionID: ULID.generate(),
+            mailbox: SessionMailbox(),
+            sink: sink,
+            completionToken: "outer-run",
+            isCancelled: { false }
+        )
+        let wrapped = ToolDetachment.wrapping(
+            tool: AmbientNonStringOutputTool(),
+            inheriting: outer,
+            sink: sink,
+            configuration: DetachConfiguration(mode: .detaching)
+        )
+
+        let binding = try #require(
+            wrapped as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
+        let inner = try await binding.call(arguments: AmbientToolArguments(value: "inherited"))
+
+        // The same decision and the same stamping the mailbox-taking overload
+        // makes — the inner call is bound under its own identity, on a fresh
+        // correlation of its own rather than the outer run's token.
+        let events = await sink.events
+        #expect(events.map(\.detail) == ["inherited"])
+        #expect(events.map(\.tool) == ["ambient-non-string"])
+        #expect(events.map(\.correlationID) == [inner.text])
+        #expect(inner.text != outer.completionToken)
+    }
+
+    @Test("ToolDetachment.wrapping inheriting a ToolContext parks the run in that context's own mailbox")
+    func factoryInheritsMailboxAndSessionIdentity() async throws {
+        let gate = ToolGate()
+        let mailbox = SessionMailbox()
+        let sessionID = ULID.generate()
+        let sink = RecordingSink()
+        let outer = ToolContext(
+            stamping: GatedSessionIdentityTool(gate: gate),
+            sessionID: sessionID,
+            mailbox: mailbox,
+            sink: sink,
+            completionToken: SessionMailbox.makeCompletionToken(),
+            isCancelled: { false }
+        )
+        let wrapped = ToolDetachment.wrapping(
+            tool: GatedSessionIdentityTool(gate: gate),
+            inheriting: outer,
+            sink: sink,
+            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
+        )
+
+        let detaching = try #require(wrapped as? DetachingTool<DetachingArguments>)
+        let rendered = try await detaching.call(
+            arguments: DetachingArguments(value: "inherited")
+        )
+        let envelope = try Self.decodeEnvelope(rendered)
+
+        // The run parked in the mailbox the inherited context carries — a
+        // mailbox this call never named.
+        let parked = await mailbox.parkedRuns()
+        #expect(parked.map(\.completionToken) == [envelope.completionToken])
+
+        await gate.open()
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: mailbox
+        )
+        // The inner run ran on the inherited session plane: the identity it
+        // read off its own ambient context is the outer context's.
+        #expect(terminal.detail == sessionID.ulidString)
+        #expect(terminal.outcome == .succeeded)
     }
 }

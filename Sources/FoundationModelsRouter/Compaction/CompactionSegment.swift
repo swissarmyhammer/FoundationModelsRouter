@@ -45,7 +45,7 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
     /// and call `status()` for the live view.
     ///
     /// Deliberately restricted to the run plane — the same triple
-    /// ``SessionMailbox/RunStatus`` reports (token, op, latest progress) —
+    /// ``ParkedRun`` reports (token, op, latest progress) —
     /// and never a run's output content: the boundary carries envelopes,
     /// exactly as the mailbox itself does.
     public struct PendingRunSummary: Codable, Equatable, Sendable {
