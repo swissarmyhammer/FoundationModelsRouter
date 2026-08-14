@@ -310,6 +310,18 @@ actor RoutedSessionActor: RoutedSession {
     /// it regardless).
     var cancelRequestedTurnId: UInt64?
 
+    /// How many cancellation requests ``cancelCurrentTurn()`` has recorded on
+    /// this session, ever.
+    ///
+    /// Monotonic and never cleared, unlike ``cancelRequestedTurnId``, which
+    /// ``endTurn()`` clears the moment its turn ends. That is what a caller
+    /// spanning more than one turn needs: ``respond(to:maxTokens:)``'s
+    /// run-plane drain asks, after its turn has already ended, whether a
+    /// cancellation landed on that turn — and by then the turn's id is gone.
+    /// Comparing this count against the one it snapshotted answers that
+    /// without reviving the turn's identity.
+    var cancelRequestCount: UInt64 = 0
+
     /// The fork-admission gate, shared with the owning model.
     ///
     /// ``fork(workingDirectory:)`` acquires a permit to admit the child; a fork

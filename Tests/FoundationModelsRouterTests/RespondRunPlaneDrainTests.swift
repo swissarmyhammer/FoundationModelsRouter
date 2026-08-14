@@ -1,0 +1,438 @@
+import Foundation
+import FoundationModels
+import Testing
+
+@testable import FoundationModelsRouter
+
+/// Exercises task ^nmpejc5: ``RoutedSession/respond(to:maxTokens:)`` drains the
+/// run plane before it returns, so a turn that backgrounds its tool work still
+/// answers from that work's own results rather than from the completion token
+/// the tool handed back — while ``RoutedSession/streamEvents(to:maxTokens:)``
+/// keeps backgrounding as its feature.
+///
+/// Everything runs against stubs — tools gated on a ``RunLatch``, a backend
+/// that calls them, and an ``InMemoryRecorder`` — so the suite needs no
+/// network and no GPU.
+@Suite("respond(to:): the run-plane drain, and the surfaces that keep backgrounding")
+struct RespondRunPlaneDrainTests {
+    // MARK: - Test tools
+
+    /// The argument schema the gated fixture tool takes: one string, the same
+    /// smallest surface the other tool-wiring suites use.
+    @Generable
+    struct DrainToolArguments {
+        let value: String
+    }
+
+    /// Blocks on a ``RunLatch`` and supplies a per-call `waitSeconds` of `0`
+    /// through ``DetachmentParameterProviding``, so the session's own
+    /// ``DetachingTool`` layer detaches it at once: one model turn leaves a
+    /// real parked run behind, and the test decides when it settles.
+    private struct GatedBackgroundTool: Tool, DetachmentParameterProviding {
+        let name: String
+        let description = "test-only slow tool that detaches at once"
+
+        /// The latch this tool's body waits on before producing its output.
+        let gate: RunLatch
+
+        /// The output the body returns once the latch opens — the run's own
+        /// result, which a grounded answer has to carry.
+        let output: String
+
+        func call(arguments: DrainToolArguments) async throws -> String {
+            await gate.waitUntilOpen()
+            return output
+        }
+
+        func detachmentClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (0, nil)
+        }
+    }
+
+    // MARK: - Backends
+
+    /// The backend the drain tests drive: its first turn calls every composed
+    /// detaching tool — each of which parks — and answers with the last
+    /// pending envelope; every later turn answers *from the prompt it was
+    /// given*, so an answer grounded in the drained results is provable by
+    /// reading the answer.
+    ///
+    /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
+    /// owning session drives one backend method at a time (its turn lock
+    /// serializes turns), and the test reads the captures only after the
+    /// driving call returned.
+    private final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        /// The prefix every non-first turn's answer opens with, so a test can
+        /// tell a drained continuation turn's answer from the first turn's
+        /// pending envelope.
+        static let answerPrefix = "answered from: "
+
+        private let inner = StubSessionBackend()
+
+        /// The session's own composed tool list.
+        private let tools: [any Tool]
+
+        /// Every prompt this backend was asked to respond to, in turn order.
+        private(set) var receivedPrompts: [String] = []
+
+        /// How many composed tool calls this backend made, across every turn.
+        private(set) var toolCallCount = 0
+
+        init(tools: [any Tool]) {
+            self.tools = tools
+        }
+
+        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            receivedPrompts.append(prompt)
+            _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
+            guard toolCallCount == 0 else {
+                return Self.answerPrefix + prompt
+            }
+            var rendered = ""
+            for tool in tools {
+                guard let detached = tool as? DetachingTool<DrainToolArguments> else { continue }
+                toolCallCount += 1
+                rendered = try await detached.call(arguments: DrainToolArguments(value: prompt))
+            }
+            return rendered
+        }
+
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { continuation in
+                Task {
+                    do {
+                        continuation.yield(try await self.respond(to: prompt, maxTokens: maxTokens))
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+        }
+
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+            try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+        }
+
+        func makeFork() -> any LanguageModelSessionBackend {
+            inner.makeFork()
+        }
+
+        func transcriptEntries() -> [Transcript.Entry] {
+            inner.transcriptEntries()
+        }
+
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            inner.usageTokenCounts()
+        }
+    }
+
+    /// A backend whose every turn parks one fresh run on the session's own
+    /// mailbox — the shape the termination rule exists for: a drained turn
+    /// that starts yet more background work.
+    ///
+    /// It reaches the mailbox through the turn-scope ambient ``ToolContext``
+    /// the session binds around every model call, which is the same route a
+    /// tool of that turn would take.
+    ///
+    /// `@unchecked Sendable` on the same terms as ``BackgroundingBackend``.
+    private final class AlwaysParkingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+        /// The answer every turn produces, so a test can assert respond
+        /// returned an answer rather than a pending envelope.
+        static let answerText = "started another run"
+
+        private let inner = StubSessionBackend()
+
+        /// Holds every run this backend parked, so the test can release them
+        /// one at a time.
+        let releaser = ParkedRunReleaser()
+
+        /// Every prompt this backend was asked to respond to, in turn order.
+        private(set) var receivedPrompts: [String] = []
+
+        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
+            receivedPrompts.append(prompt)
+            _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
+            if let mailbox = ToolContext.current?.mailbox {
+                await releaser.park(on: mailbox)
+            }
+            return Self.answerText
+        }
+
+        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
+            inner.streamResponse(to: prompt, maxTokens: maxTokens)
+        }
+
+        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
+            try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
+        }
+
+        func makeFork() -> any LanguageModelSessionBackend {
+            inner.makeFork()
+        }
+
+        func transcriptEntries() -> [Transcript.Entry] {
+            inner.transcriptEntries()
+        }
+
+        func usageTokenCounts() -> (input: Int, output: Int)? {
+            inner.usageTokenCounts()
+        }
+    }
+
+    /// Parks fake runs on a mailbox and holds each one parked until the test
+    /// releases it — the controllable stand-in for background work a drained
+    /// turn starts.
+    private actor ParkedRunReleaser {
+        /// One latch per parked run, keyed by the run's completion token.
+        private var gates: [String: RunLatch] = [:]
+
+        /// Parks one fresh run whose body waits for ``release(token:)``.
+        ///
+        /// - Parameter mailbox: The mailbox the run parks on.
+        func park(on mailbox: SessionMailbox) async {
+            let gate = RunLatch()
+            let token = await parkFakeRun(on: mailbox, latch: gate)
+            gates[token] = gate
+        }
+
+        /// Lets one parked run settle. An unknown token is a no-op.
+        ///
+        /// - Parameter token: The run's completion token.
+        func release(token: String) async {
+            await gates[token]?.open()
+        }
+
+        /// Lets every run parked so far settle, so no fake run outlives a
+        /// test.
+        func releaseAll() async {
+            for gate in gates.values {
+                await gate.open()
+            }
+        }
+    }
+
+    // MARK: - Containers
+
+    /// Vends one retained ``BackgroundingBackend`` per session, handing it the
+    /// composed tool list `makeSession` threaded through.
+    ///
+    /// `@unchecked Sendable` invariant: `lastBackend` is written once,
+    /// synchronously, inside `makeSession(instructions:tools:)` — itself
+    /// called synchronously from `RoutedModel.makeSession` on the vending
+    /// thread — and read only by the `@MainActor` test method after that vend
+    /// returns.
+    private final class BackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        private(set) var lastBackend: BackgroundingBackend?
+
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            makeSession(instructions: instructions, tools: [])
+        }
+
+        func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
+            let backend = BackgroundingBackend(tools: tools)
+            lastBackend = backend
+            return backend
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
+        }
+    }
+
+    /// Vends one retained ``AlwaysParkingBackend`` per session, under the same
+    /// `@unchecked Sendable` invariant ``BackgroundingLLMContainer`` documents.
+    private final class AlwaysParkingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        private(set) var lastBackend: AlwaysParkingBackend?
+
+        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+            let backend = AlwaysParkingBackend()
+            lastBackend = backend
+            return backend
+        }
+
+        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
+            StubSessionBackend(entries: Array(transcript))
+        }
+    }
+
+    // MARK: - Constants
+
+    /// The two background results the drain has to fold into the answer — one
+    /// per mounted tool, so a drain that settles only the first run is a wrong
+    /// answer rather than a lucky one.
+    private static let firstToolOutput = "background result: the first job finished"
+
+    /// The second mounted tool's result. See ``firstToolOutput``.
+    private static let secondToolOutput = "background result: the second job finished"
+
+    /// How long a test waits for a run it has already released to settle —
+    /// generous, because the latch is opened first and the wait only has to
+    /// observe an already-finishing run.
+    private static let mailboxWaitTimeoutSeconds: Double = 30
+
+    // MARK: - Fixtures
+
+    /// Builds a fresh router + resolved profile over `container`.
+    ///
+    /// - Parameters:
+    ///   - container: The stub container every vended session's backend comes
+    ///     from.
+    ///   - dir: The temporary directory the router caches and records under.
+    /// - Returns: The resolved profile sessions are vended from.
+    private static func makeProfile(
+        container: any LoadedLLMContainer, dir: URL
+    ) async throws -> LanguageModelProfile {
+        let router = RouterTestFixtures.makeRouter(
+            cacheDir: dir,
+            loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
+        )
+        return try await router.resolve(
+            profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
+    }
+
+    /// Waits, bounded, for `session`'s run plane to report at least `count`
+    /// parked runs, then reports their tokens.
+    ///
+    /// - Parameters:
+    ///   - count: How many parked runs to wait for.
+    ///   - session: The session whose mailbox is observed.
+    /// - Returns: The parked runs' completion tokens, in park order.
+    private static func parkedTokens(
+        atLeast count: Int, on session: RoutedSession
+    ) async -> [String] {
+        #expect(
+            await BoundedWait.conditionReached("\(count) runs parking on the session") {
+                await session.mailbox.parkedRuns().count >= count
+            })
+        return await session.mailbox.parkedRuns().map(\.completionToken)
+    }
+
+    // MARK: - respond(to:) drains before it returns
+
+    @Test(
+        "respond(to:) waits for every run its turn parked, folds their results into the same call, and returns with nothing left parked"
+    )
+    @MainActor
+    func respondDrainsEveryParkedRunBeforeReturning() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = BackgroundingLLMContainer()
+        let profile = try await Self.makeProfile(container: container, dir: dir)
+        let firstGate = RunLatch()
+        let secondGate = RunLatch()
+        let session = profile.standard.makeSession(tools: [
+            GatedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
+            GatedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
+        ])
+        let backend = try #require(container.lastBackend)
+
+        let responding = Task { try await session.respond(to: "run both jobs") }
+
+        // Both runs park inside the first turn. Releasing them one at a time —
+        // and waiting for the first to settle before releasing the second —
+        // is what makes a drain that collects only the first run a wrong
+        // answer rather than a lucky one.
+        let tokens = await Self.parkedTokens(atLeast: 2, on: session)
+        #expect(tokens.count == 2)
+        await firstGate.open()
+        _ = await session.mailbox.wait(
+            completionToken: tokens[0], seconds: Self.mailboxWaitTimeoutSeconds)
+        await secondGate.open()
+
+        let answer = try await responding.value
+
+        // The answer is the drained continuation turn's, written from both
+        // runs' own output — never from the pending envelope the tools
+        // returned.
+        #expect(answer.hasPrefix(BackgroundingBackend.answerPrefix))
+        #expect(answer.contains(Self.firstToolOutput))
+        #expect(answer.contains(Self.secondToolOutput))
+
+        // Nothing is left parked, and the model was never asked to poll: one
+        // turn of its own, one drained continuation turn, two tool calls.
+        #expect(await session.mailbox.parkedRuns().isEmpty)
+        #expect(backend.receivedPrompts.count == 2)
+        #expect(backend.toolCallCount == 2)
+    }
+
+    // MARK: - The termination rule
+
+    @Test(
+        "a drained turn that parks another run still terminates: respond runs its own turn plus at most the drain-round limit"
+    )
+    @MainActor
+    func drainedTurnThatParksAnotherRunTerminates() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = AlwaysParkingLLMContainer()
+        let profile = try await Self.makeProfile(container: container, dir: dir)
+        let session = profile.standard.makeSession()
+        let backend = try #require(container.lastBackend)
+
+        let responding = Task { try await session.respond(to: "start") }
+
+        // Release each parked run only after it has been observed parked
+        // twice, so the drain's own snapshot — taken microseconds after the
+        // park, while this driver sleeps between observations — can never
+        // miss it and end the loop early.
+        let driver = Task {
+            var seen: Set<String> = []
+            while !Task.isCancelled {
+                for run in await session.mailbox.parkedRuns() {
+                    if seen.insert(run.completionToken).inserted { continue }
+                    await backend.releaser.release(token: run.completionToken)
+                }
+                try? await Task.sleep(nanoseconds: BoundedWait.pollIntervalNanoseconds)
+            }
+        }
+
+        let answer = try await responding.value
+        driver.cancel()
+
+        #expect(answer == AlwaysParkingBackend.answerText)
+        #expect(backend.receivedPrompts.count == 1 + RoutedSessionActor.parkedRunDrainRoundLimit)
+
+        // Nothing detached outlives the test.
+        await backend.releaser.releaseAll()
+    }
+
+    // MARK: - streamEvents(to:) still backgrounds
+
+    @Test("streamEvents(to:) is unchanged: it finishes with the turn's runs still parked, and runs no drained turn")
+    @MainActor
+    func streamEventsKeepsBackgroundingItsParkedRuns() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = BackgroundingLLMContainer()
+        let profile = try await Self.makeProfile(container: container, dir: dir)
+        let firstGate = RunLatch()
+        let secondGate = RunLatch()
+        let session = profile.standard.makeSession(tools: [
+            GatedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
+            GatedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
+        ])
+        let backend = try #require(container.lastBackend)
+
+        for try await _ in await session.streamEvents(to: "run both jobs") {}
+
+        // The stream finished while both runs were still in flight — that is
+        // the feature on this surface — and no continuation turn ran.
+        #expect(await session.mailbox.parkedRuns().count == 2)
+        #expect(backend.receivedPrompts.count == 1)
+
+        // Settle the parked runs so no detached work outlives the test.
+        let tokens: [String] = await session.mailbox.parkedRuns().map(\.completionToken)
+        await firstGate.open()
+        await secondGate.open()
+        for token in tokens {
+            _ = await session.mailbox.wait(
+                completionToken: token, seconds: Self.mailboxWaitTimeoutSeconds)
+        }
+    }
+}

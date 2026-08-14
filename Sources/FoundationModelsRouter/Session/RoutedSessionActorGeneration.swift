@@ -2,6 +2,35 @@
 /// event-stream entry points a caller drives, plus the session-scoped event
 /// subscriptions a host watches a whole session through.
 extension RoutedSessionActor {
+    /// The most drained continuation turns one ``respond(to:maxTokens:)`` call
+    /// runs after its own turn — the whole of the drain's termination rule.
+    ///
+    /// A drained turn hands the model results it did not have before, so it can
+    /// start more background work and park more runs, which asks for another
+    /// drain. That is a loop with no exit of its own, so the exit is stated
+    /// here: **drain every parked run, round after round, up to this many
+    /// rounds — then answer with whatever the last turn produced.** A `respond`
+    /// that can spin forever is worse than one that returns early (task
+    /// ^nmpejc5), so the bound is part of the design rather than a later
+    /// safeguard.
+    ///
+    /// Four rounds, because the case the rule exists for is a model that
+    /// chains background steps — start work, read it, start the next step —
+    /// and four continuation turns cover a chain of that shape while keeping
+    /// the worst case a caller can pay small and countable.
+    static let parkedRunDrainRoundLimit = 4
+
+    /// The prompt each drained continuation turn carries.
+    ///
+    /// The settled runs' own results ride ahead of it as that turn's preamble
+    /// (see ``generate(grammar:prompt:onEvent:_:)``'s drain-on-turn
+    /// composition), so this text only has to say what the preamble is and ask
+    /// for the answer the caller is still waiting on.
+    static let drainedRunContinuationPrompt = """
+        The background work you started has finished, and its results are above. \
+        Answer the request now, from those results.
+        """
+
     /// Generates a complete text response to a prompt, recording the call.
     ///
     /// Routes through the guided path when ``grammar`` is set, constraining the
@@ -9,12 +38,54 @@ extension RoutedSessionActor {
     /// otherwise runs the plain path. Both funnel through the same
     /// ``generate(grammar:prompt:onEvent:_:)`` chokepoint.
     ///
+    /// **What this call drains, and what it does not.** The two planes drain at
+    /// different times, and this is the surface where both are drained before
+    /// the caller is answered:
+    ///
+    /// - The **content plane** — ``SessionOutbox``, the events long-running
+    ///   work has posted — is drained at the top of *each* of this call's
+    ///   turns, folded into that turn's prompt as a plain-text preamble. That
+    ///   is the ordinary drain-on-turn every generation surface performs.
+    /// - The **run plane** — ``SessionMailbox``, the runs a detached tool call
+    ///   parked — is drained *after* this call's own turn: every parked run is
+    ///   awaited to settlement, and a further turn is run so the settled
+    ///   results reach the model in this same call. So a turn whose tool work
+    ///   backgrounded still answers from that work's own output rather than
+    ///   from the completion token the tool returned, and no caller has to make
+    ///   the model call a `wait` tool to get there. Every run parked at each
+    ///   round is drained, not just the first, and the drain covers the whole
+    ///   run plane rather than only this turn's own parkings — "nothing left
+    ///   parked when `respond` returns" is a statement about the session.
+    /// - It **does not sweep**. Cancelling parked runs and synthesizing their
+    ///   terminals is teardown, and belongs to ``close()`` alone
+    ///   (``SessionMailbox/sweep()``). A drain waits for work to finish; a
+    ///   sweep ends it.
+    /// - It **does not change the streaming surfaces**.
+    ///   ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
+    ///   still return while a run they parked is in flight: backgrounding is
+    ///   the feature there, and a consumer of those surfaces watches the run
+    ///   plane itself.
+    ///
+    /// The drain terminates by the rule ``parkedRunDrainRoundLimit`` states.
+    /// Two other things end it: a run that has not settled by the run plane's
+    /// own ``ToolContext/waitSecondsCeiling``, since a further turn could not
+    /// carry its result anyway; and a cancellation landing on this call —
+    /// either ``RoutedSession/cancelCurrentTurn()`` (counted by
+    /// ``cancelRequestCount``, because a detached tool call can answer a
+    /// cancellation by detaching, so the turn returns a response rather than
+    /// throwing) or the caller's own task being cancelled. A cancelled turn is
+    /// never drained: whatever it parked stays parked, exactly as it did
+    /// before this surface drained anything.
+    ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
-    /// - Returns: The model's complete text response.
-    /// - Throws: Any error thrown by the model.
+    /// - Returns: The model's complete text response — the last drained turn's,
+    ///   when this call's own turn backgrounded work.
+    /// - Throws: Any error thrown by the model. A turn that throws is never
+    ///   drained: the failure reaches the caller as it always did, and whatever
+    ///   the failed turn parked stays parked for ``close()``'s sweep.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         // `backend` is this session's own persistent generation object — never
         // recreated per call — so turns accumulate conversation state. A guided
@@ -24,7 +95,57 @@ extension RoutedSessionActor {
         // the grammar (or `nil`) onto each event and composes `prompt` with
         // whatever the outbox drains for this turn (see
         // ``generate(grammar:prompt:onEvent:_:)``).
-        try await generate(grammar: grammar, prompt: prompt, respondBody(grammar: grammar, maxTokens: maxTokens))
+        let cancellationsBefore = cancelRequestCount
+        var answer = try await generate(
+            grammar: grammar, prompt: prompt, respondBody(grammar: grammar, maxTokens: maxTokens))
+
+        // The run-plane drain. Each round runs outside the turn lock — the
+        // chokepoint released it on its way out — so the parked runs, and any
+        // other caller, are free to make progress while this call waits.
+        for _ in 0..<Self.parkedRunDrainRoundLimit {
+            // A cancelled turn is never drained. Cancellation does not always
+            // reach this call as a thrown error: a detached tool call answers
+            // the cancellation by detaching and returning its pending envelope
+            // (see ``RoutedSession/cancelCurrentTurn()``), so the turn returns
+            // a response and only the count says what happened. Draining then
+            // would wait for — and re-prompt the model with — exactly the work
+            // the caller asked to stop.
+            guard cancelRequestCount == cancellationsBefore, !Task.isCancelled else { break }
+            guard await settleParkedRuns() else { break }
+            answer = try await generate(
+                grammar: grammar, prompt: Self.drainedRunContinuationPrompt,
+                respondBody(grammar: grammar, maxTokens: maxTokens))
+        }
+        return answer
+    }
+
+    /// Awaits the settlement of every run parked on this session's mailbox at
+    /// the moment of the call — one drain round.
+    ///
+    /// A settled run's terminal event has already reached ``outbox`` by the
+    /// time its settlement is observable here: the detachment engine awaits
+    /// that post before the run's settling handle resolves, and
+    /// ``SessionMailbox/park(tool:op:kind:completionToken:settling:canceler:)``
+    /// observes the same handle. So a round that reports `true` leaves the
+    /// results staged for the next turn's own drain-on-turn composition to
+    /// fold into the prompt.
+    ///
+    /// - Returns: `true` when at least one run was parked and every one of them
+    ///   left the run plane — settled, or gone from it between this round's
+    ///   snapshot and its own wait (``WaitOutcome/unknownToken``), which is the
+    ///   same fact arriving a moment earlier. `false` when the run plane was
+    ///   already empty, or when a run outlasted
+    ///   ``ToolContext/waitSecondsCeiling`` and so is still parked: neither
+    ///   case has a settled result for a further turn to carry.
+    private func settleParkedRuns() async -> Bool {
+        let parked = await mailbox.parkedRuns()
+        guard !parked.isEmpty else { return false }
+        for run in parked {
+            let outcome = await mailbox.wait(
+                completionToken: run.completionToken, seconds: ToolContext.waitSecondsCeiling)
+            if case .deadlineElapsed = outcome { return false }
+        }
+        return true
     }
 
     /// Streams a text response to a prompt as it is produced, recording the call.

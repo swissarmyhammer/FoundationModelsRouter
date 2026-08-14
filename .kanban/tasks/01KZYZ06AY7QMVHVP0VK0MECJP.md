@@ -82,8 +82,27 @@ comments:
     - evidence: 4 files — Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift, Tests/FoundationModelsRouterTests/DetachingToolTests.swift, Tests/FoundationModelsRouterTests/SessionOutboxToolWiringTests.swift, Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift (64 insertions, 133 deletions). `swift build --build-tests` clean. One bare `swift test`: 933 tests in 87 suites, 27 tests in 11 suites, 24 tests in 5 suites — all passed, exit 0, with the one pre-existing `withKnownIssue` in the BoundedWait suite. `sah tool code_context duplication find` over the six run-plane test files reports nothing.
     - next: /review
   timestamp: 2026-08-14T11:46:05.843919+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m002e0jxeqvfq8nq1n5gbpvs
+  text: |
+    ### review — clean
+    - scope: review sha HEAD~1..HEAD (7e2e740, "test(router): make RunLatch the one gate actor the test target declares")
+    - evidence: engine counts — 13 findings, 13 confirmed, 1 refuted, 16 attempted, 0 failed. All 13 dropped by the review skill's blanket exception on existing test code; 0 recordable findings.
+    - dropped findings: all 13 ask to re-docstring `Tests/FoundationModelsRouterTests/SessionOutboxToolWiringTests.swift` (lines 7, 32, 45, 69, 86, 127, 134, 165, 201, 304, 309, 965, 1019) — each wants a doc-comment summary line to end with a period. The commit touched only lines 45, 53, 56, 1115, 1173, 1208 and 1250 of that file, and its edit at line 45 only swapped the symbol reference ToolGate to RunLatch inside a sentence that already existed. No finding names code this commit wrote.
+    - prior finding (2026-08-14 06:22) verified addressed: the test target declares exactly one gate actor, `RunLatch` at Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift:15. Five suites use it — DetachingToolTests, SessionMailboxTests, ToolContextTests, SessionOutboxToolWiringTests, RoutedSessionCompactTests. One `parkFakeRun` declaration remains, in the same helper file. No `ToolGate` declaration is left in the repository.
+    - next: none. Task moved to done.
+  timestamp: 2026-08-14T12:02:31.645059+00:00
+- actor: claude-code
+  id: 01m002f13r1t3b8yer0j25aex1
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 4 test files; RunLatch in Helpers/ParkedRunFixtures.swift is now the one gate actor the test target declares, and the copies in DetachingToolTests, SessionOutboxToolWiringTests and RoutedSessionCompactTests are deleted
+    - test: green — one bare `swift test`, 984 tests in 3 targets (933 + 27 + 24), 0 failures, 1 known pre-existing BoundedWait issue. The tester also reported the llbuild warning `missing creator for mutated node: (.../mlx-swift_Cmlx.bundle/Contents/MacOS)`. That warning comes from the `Cmlx` target of upstream mlx-swift, reached through the sibling mlx-swift-lm checkout. It is not caused by this task and no file in this repository can silence it, so it does not hold this card. It needs its own card on the fork's board.
+    - commit: 7e2e740 test(router): make RunLatch the one gate actor the test target declares (^k0mecjp)
+    - review: clean — 0 recordable findings. The prior finding is verified fixed at Helpers/ParkedRunFixtures.swift:15. The engine's 13 new findings all ask to re-docstring pre-existing test code in SessionOutboxToolWiringTests.swift and are dropped by the review skill's written exception.
+  timestamp: 2026-08-14T12:03:04.952463+00:00
+position_column: done
+position_ordinal: ffa580
 title: ToolContext gets the run-plane capabilities a tool host needs
 ---
 ## Why

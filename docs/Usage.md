@@ -2,7 +2,9 @@
 
 Two surfaces, one session. `respond(to:)` blocks and returns the answer.
 `streamEvents(to:)` delivers the same turn incrementally. Both run the same
-turn machinery — the only difference is whether anyone is listening.
+turn machinery. They differ in who is listening — and in what each one waits
+for: `respond(to:)` also drains the run plane before it returns, while
+`streamEvents(to:)` leaves backgrounded work running (see below).
 
 Every transcript and every line of output below was **captured by running the
 code**, against the deterministic scripted model so the values are stable.
@@ -41,11 +43,26 @@ entryCount=2
 `respond` returns the SDK's final answer verbatim. It derives **no events** —
 the sink is `nil` on this path.
 
+It also drains the **run plane** before it returns. When a tool call of the
+turn backgrounds its work and hands the model a completion token, `respond`
+waits for every such run to settle and runs a further turn with those results,
+so the answer is written from what the work returned rather than from the
+token, and nothing is left parked when the call returns. The caller never has
+to make the model poll a `wait` tool. The drain is bounded: it runs at most
+four further turns, so a model that keeps starting work from inside a drained
+turn is answered early rather than awaited forever. A cancelled turn is not
+drained.
+
 ---
 
 ## 2. `streamEvents(to:)` — incremental
 
 Use this for an interactive client.
+
+This surface does **not** drain the run plane: it finishes while the work a
+tool of the turn backgrounded is still running. That is the feature here — an
+interactive client watches the run plane itself and folds each result in as it
+arrives.
 
 ```swift
 for try await event in await session.streamEvents(to: "what is the vault code?") {

@@ -1263,19 +1263,32 @@ struct SessionOutboxToolWiringTests {
         }
         #expect(backend.toolCallStarted)
         await session.cancelCurrentTurn()
+
+        // The run parked in this session's mailbox, and it is still parked
+        // with the turn cancelled. Read the run plane here, while the work is
+        // still in flight: `respond(to:)` drains the run plane before it
+        // returns (task ^nmpejc5), so a read after the call would say nothing
+        // about what the cancellation did.
+        #expect(
+            await BoundedWait.conditionReached("the tool's run parking on the session") {
+                await !session.mailbox.parkedRuns().isEmpty
+            })
+        let parked = await session.mailbox.parkedRuns().map(\.completionToken)
+
+        // The parked run outlived the cancelled turn un-cancelled: opening
+        // the gate lets it settle as a normal success — and lets the turn's
+        // own caller finish.
+        await gate.open()
         _ = try? await turn.value
 
         // The tool call answered with the pending envelope, not a
-        // CancellationError, and the run parked in this session's mailbox.
+        // CancellationError, and that envelope's token is the run that was
+        // parked.
         let rendered = try #require(backend.renderedToolOutputs.first)
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
-        let parked = await session.mailbox.parkedRuns().map(\.completionToken)
         #expect(parked == [envelope.completionToken])
 
-        // The parked run outlived the cancelled turn un-cancelled: opening
-        // the gate lets it settle as a normal success.
-        await gate.open()
         let settled = await session.mailbox.wait(completionToken: envelope.completionToken, seconds: Self.mailboxWaitTimeoutSeconds)
         guard case .settled(let terminal) = settled else {
             Issue.record("expected the parked run to settle after the gate opened, got \(settled)")

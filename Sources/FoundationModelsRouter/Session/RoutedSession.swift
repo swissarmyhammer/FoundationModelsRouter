@@ -230,12 +230,42 @@ public protocol RoutedSession: Actor {
 
     /// Generates a complete text response to a prompt, recording the call.
     ///
+    /// **What this call drains, and what it does not.** A session carries two
+    /// planes, and they drain at different times — this is the surface where
+    /// both are drained before the caller is answered:
+    ///
+    /// - The **content plane** (the events long-running work has posted) is
+    ///   drained at the top of each of this call's turns and folded into that
+    ///   turn's prompt as a plain-text preamble, exactly as every generation
+    ///   surface drains it.
+    /// - The **run plane** (the runs a detached tool call parked) is drained
+    ///   *after* this call's own turn: every parked run is awaited to
+    ///   settlement, and a further turn is run so those results reach the model
+    ///   in this same call. So the answer is written from what the backgrounded
+    ///   work returned rather than from the completion token it handed back,
+    ///   nothing is left parked when this call returns, and no caller has to
+    ///   make the model call a `wait` tool to get there. Every run parked at
+    ///   each round is drained, not just the first.
+    /// - It **does not sweep**: ending parked runs is teardown, and belongs to
+    ///   ``close()``.
+    /// - It **does not change the streaming surfaces**.
+    ///   ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
+    ///   still return while a run they parked is in flight — backgrounding is
+    ///   the feature there.
+    ///
+    /// The drain terminates by a stated rule: it runs at most
+    /// ``RoutedSessionActor/parkedRunDrainRoundLimit`` drained turns after this
+    /// call's own, so a model that keeps starting background work from inside a
+    /// drained turn is answered early rather than awaited forever.
+    ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
     ///     the underlying model's own default ceiling.
-    /// - Returns: The model's complete text response.
-    /// - Throws: Any error thrown by the model.
+    /// - Returns: The model's complete text response — the last drained turn's,
+    ///   when this call's own turn backgrounded work.
+    /// - Throws: Any error thrown by the model. A turn that throws is never
+    ///   drained.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced, recording the call.
@@ -254,6 +284,12 @@ public protocol RoutedSession: Actor {
     /// attach-or-requeue rule. A consumer that wants the turn recorded as a whole
     /// turn has to drain the stream to its end. Fragments already yielded stay
     /// yielded either way.
+    ///
+    /// This surface drains the content plane at the top of its turn like every
+    /// other, and deliberately does **not** drain the run plane: it finishes
+    /// while a run the turn parked is still in flight. Backgrounding is the
+    /// feature here — a consumer watching a stream watches the run plane too.
+    /// ``respond(to:maxTokens:)`` is the surface that waits.
     ///
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
@@ -310,6 +346,11 @@ public protocol RoutedSession: Actor {
     ///     use the underlying model's own default ceiling.
     /// Abandoning this stream cancels the turn behind it and has it recorded as a
     /// cancelled turn, exactly as described on ``streamResponse(to:maxTokens:)``.
+    ///
+    /// Like ``streamResponse(to:maxTokens:)``, and unlike
+    /// ``respond(to:maxTokens:)``, this surface does **not** drain the run
+    /// plane: the stream finishes while a run the turn parked is still in
+    /// flight, and that run's result reaches the model on a later turn.
     ///
     /// - Returns: A stream of session events, finishing when the turn
     ///   completes or throwing if it fails (after yielding whatever the turn
@@ -822,6 +863,10 @@ extension RoutedSession {
 
     /// Generates a complete text response to a prompt using the underlying
     /// model's own default token ceiling, recording the call.
+    ///
+    /// Drains this session's run plane before it returns, exactly as
+    /// ``respond(to:maxTokens:)`` does — see that method for what each plane
+    /// drains, and for the drain's termination rule.
     ///
     /// - Parameter prompt: The prompt to respond to.
     /// - Returns: The model's complete text response.

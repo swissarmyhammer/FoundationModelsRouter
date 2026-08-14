@@ -42,6 +42,10 @@ extension RoutedSessionActor {
     func cancelCurrentTurn() -> TurnCancellationResult {
         guard let turnId = currentTurnId else { return .noTurnInFlight }
         cancelRequestedTurnId = turnId
+        // The monotonic count outlives this turn, so a caller whose work spans
+        // the turn's end — ``respond(to:maxTokens:)``'s run-plane drain — can
+        // still tell that this request landed. See ``cancelRequestCount``.
+        cancelRequestCount += 1
         inFlightModelCall?.cancel()
         return .requested
     }
