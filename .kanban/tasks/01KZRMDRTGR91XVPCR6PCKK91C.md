@@ -87,8 +87,33 @@ comments:
     - verification: one ungated `swift test` run. 924 tests in 87 suites passed. 27 tests in 11 suites passed. 24 tests in 5 suites passed. Zero failures. One known issue, which is the `BoundedWait` known issue that was there before. This is above the recorded baseline of 811/77 + 27/11 + 24/5. `swift build --build-tests` gives zero warnings.
     - next: `/review`. The card stays in `doing`.
   timestamp: 2026-08-13T18:49:07.664837+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01kzy8zjvzdtadm831f10yp5p2
+  text: |-
+    ### review — clean
+    - scope: `review sha HEAD~1..HEAD` (commit a8d6252)
+    - engine counts: 14 findings, 14 confirmed, 1 refuted, 48 attempted
+    - waived: all 14 findings ask to refactor test code that was in the repo before this commit (duplicate stubs and helpers in PendingEventInjectionTests, SessionOutboxTests, SessionOutboxToolWiringTests, against PromptQueueTests). The written rule drops findings that ask to refactor tests that already existed. This commit changes only argument labels in those files.
+    - surviving findings: 0
+    - source break: the rename is source-breaking on purpose. The user withdrew the earlier waiver and chose to take the break, and commit a373129 records that decision. A finding against the rename itself is answered by that record.
+    - build: `swift build` complete, no error. The mlx "missing creator for mutated node" warning is a known waived warning.
+    - tests: `swift test` exit code 0.
+    - open item outside this package: `FoundationModelsMultitool` conforms to the public `OperationEventSink`. `Sources/FoundationModelsMultitool/Invocation/RunBinding.swift` must change `func post(_ event: OperationEvent) async` to `func post(event: OperationEvent) async`. That package has its own board, so the change belongs there.
+    - next: none. Task is in done.
+  timestamp: 2026-08-13T19:18:30.015174+00:00
+- actor: claude-code
+  id: 01kzy90bmr8ax0vxsjct20ypb8
+  text: |-
+    ### finish iteration 1 — clean
+    - decision: the user withdrew the waiver and chose option 2. The change is applied again against today's code (`a373129` could not be reverted, because more than 40 commits landed after it).
+    - implement: changed — 24 source and test files; one bare ungated `swift test` run: 924 + 27 + 24 tests passed, 0 failures
+    - commit: a8d6252 — 30 files
+    - review: clean — 0 findings (the engine reported 14; all 14 are duplication findings against test code that was in the repository before this commit, so standing waiver 1 drops them)
+    - downstream: `FoundationModelsMultitool` will not build until `Sources/FoundationModelsMultitool/Invocation/RunBinding.swift` changes `func post(_ event: OperationEvent) async` to `func post(event: OperationEvent) async`. That repository has its own board.
+    - next: none — task is done
+  timestamp: 2026-08-13T19:18:55.384366+00:00
+position_column: done
+position_ordinal: ffa480
 title: Apply the three public fluent-usage labels that ^zn8n9md ticked but waived
 ---
 `^zn8n9md` closed with 13 findings ticked. Three of them were ticked but not applied. The commit `7210df0` records the reason: they are public API, and the batch had already shipped two source-breaking public renames.
