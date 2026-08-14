@@ -70,12 +70,26 @@ extension RoutedSessionActor {
     /// Two other things end it: a run that has not settled by the run plane's
     /// own ``ToolContext/waitSecondsCeiling``, since a further turn could not
     /// carry its result anyway; and a cancellation landing on this call —
-    /// either ``RoutedSession/cancelCurrentTurn()`` (counted by
-    /// ``cancelRequestCount``, because a detached tool call can answer a
-    /// cancellation by detaching, so the turn returns a response rather than
-    /// throwing) or the caller's own task being cancelled. A cancelled turn is
-    /// never drained: whatever it parked stays parked, exactly as it did
-    /// before this surface drained anything.
+    /// either ``RoutedSession/cancelCurrentTurn()`` or the caller's own task
+    /// being cancelled. A cancelled turn is never drained: whatever it parked
+    /// stays parked, exactly as it did before this surface drained anything.
+    ///
+    /// A cancellation lands wherever this call happens to be, and the two
+    /// places need different machinery (task ^h3efdrc):
+    ///
+    /// - **Between rounds** it is read off ``cancelRequestCount`` and
+    ///   `Task.isCancelled`. The count, rather than a thrown error, because a
+    ///   detached tool call answers a cancellation by detaching, so the turn
+    ///   returns a response and only the count says what happened.
+    /// - **Inside a wait** — the long case, since a wait here runs to the
+    ///   day-long ceiling — neither is enough: ``SessionMailbox/wait(completionToken:seconds:)``
+    ///   ignores task cancellation by design, and between turns there is no turn
+    ///   for `cancelCurrentTurn()` to cancel. So each wait is raced against both
+    ///   routes; see ``awaitSettlement(of:)``.
+    ///
+    /// A cancelled drain answers with the last turn's answer rather than
+    /// throwing, whichever place the cancellation landed in — the same thing the
+    /// detaching route already produces, and the only answer this call has.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -102,6 +116,14 @@ extension RoutedSessionActor {
         // The run-plane drain. Each round runs outside the turn lock — the
         // chokepoint released it on its way out — so the parked runs, and any
         // other caller, are free to make progress while this call waits.
+        //
+        // Registered for the whole drain, and registered here rather than
+        // per wait: the turn above cleared `currentTurnId` on its way out, and
+        // this statement runs before the next suspension, so there is no
+        // instant at which this call is in flight and a cancellation can find
+        // nothing to land on.
+        runPlaneDrainCount += 1
+        defer { runPlaneDrainCount -= 1 }
         for _ in 0..<Self.parkedRunDrainRoundLimit {
             // A cancelled turn is never drained. Cancellation does not always
             // reach this call as a thrown error: a detached tool call answers
@@ -111,7 +133,7 @@ extension RoutedSessionActor {
             // would wait for — and re-prompt the model with — exactly the work
             // the caller asked to stop.
             guard cancelRequestCount == cancellationsBefore, !Task.isCancelled else { break }
-            guard await settleParkedRuns() else { break }
+            guard await settleParkedRuns(cancellationsBefore: cancellationsBefore) else { break }
             answer = try await generate(
                 grammar: grammar, prompt: Self.drainedRunContinuationPrompt,
                 respondBody(grammar: grammar, maxTokens: maxTokens))
@@ -130,22 +152,105 @@ extension RoutedSessionActor {
     /// results staged for the next turn's own drain-on-turn composition to
     /// fold into the prompt.
     ///
+    /// - Parameter cancellationsBefore: The ``cancelRequestCount`` this
+    ///   ``respond(to:maxTokens:)`` call started from, re-read before each wait
+    ///   this round starts so a cancellation landing between two waits — or
+    ///   between this round's snapshot and its first wait — ends the round
+    ///   instead of being waited out.
     /// - Returns: `true` when at least one run was parked and every one of them
     ///   left the run plane — settled, or gone from it between this round's
     ///   snapshot and its own wait (``WaitOutcome/unknownToken``), which is the
     ///   same fact arriving a moment earlier. `false` when the run plane was
-    ///   already empty, or when a run outlasted
-    ///   ``ToolContext/waitSecondsCeiling`` and so is still parked: neither
-    ///   case has a settled result for a further turn to carry.
-    private func settleParkedRuns() async -> Bool {
+    ///   already empty, when a run outlasted
+    ///   ``ToolContext/waitSecondsCeiling`` and so is still parked, or when a
+    ///   cancellation reached this call: none of the three has a settled result
+    ///   for a further turn to carry.
+    private func settleParkedRuns(cancellationsBefore: UInt64) async -> Bool {
         let parked = await mailbox.parkedRuns()
         guard !parked.isEmpty else { return false }
         for run in parked {
-            let outcome = await mailbox.wait(
-                completionToken: run.completionToken, seconds: ToolContext.waitSecondsCeiling)
-            if case .deadlineElapsed = outcome { return false }
+            // Checked here, immediately before the wait registers its gate —
+            // there is no suspension between the two, so a cancellation either
+            // is seen here or finds the gate to resume.
+            guard cancelRequestCount == cancellationsBefore, !Task.isCancelled else { return false }
+            switch await awaitSettlement(of: run.completionToken) {
+            case .mailbox(.deadlineElapsed), .cancelled:
+                return false
+            case .mailbox:
+                continue
+            }
         }
         return true
+    }
+
+    /// Awaits one parked run's settlement, racing the mailbox's own wait
+    /// against a cancellation reaching this draining call.
+    ///
+    /// The race is what makes a drain interruptible at all.
+    /// ``SessionMailbox/wait(completionToken:seconds:)`` ignores task
+    /// cancellation by design and its deadline here is the run plane's own
+    /// day-long ceiling, so awaiting it bare would hold this call past any
+    /// cancellation — and there is no turn in flight for
+    /// ``RoutedSession/cancelCurrentTurn()`` to cancel instead (task
+    /// ^h3efdrc). Both cancellation routes are raced: the enclosing task's own,
+    /// through the cancellation handler, and `cancelCurrentTurn()`'s, through
+    /// the gate registered in ``runPlaneDrainWaitGates``.
+    ///
+    /// A continuation-based race rather than a task group, for ``RaceGate``'s
+    /// stated reason: a group awaits every child before returning, so the
+    /// abandoned wait would still hold the call. That abandoned wait costs one
+    /// unstructured task, which cannot be cancelled out of the mailbox and so
+    /// ends on its own terms — the run settling, the ceiling elapsing, or
+    /// ``close()``'s sweep — holding nothing but the mailbox and this gate.
+    ///
+    /// - Parameter completionToken: The parked run's completion token.
+    /// - Returns: Whichever of the mailbox's answer or a cancellation arrived
+    ///   first.
+    private func awaitSettlement(of completionToken: String) async -> RunPlaneDrainWaitOutcome {
+        let gate = RaceGate<RunPlaneDrainWaitOutcome>()
+        let waiterID = ULID.generate()
+        runPlaneDrainWaitGates[waiterID] = gate
+        defer { runPlaneDrainWaitGates.removeValue(forKey: waiterID) }
+        let mailbox = self.mailbox
+        Task {
+            let outcome = await mailbox.wait(
+                completionToken: completionToken, seconds: ToolContext.waitSecondsCeiling)
+            gate.resume(with: .mailbox(outcome))
+        }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { gate.register(continuation: $0) }
+        } onCancel: {
+            gate.resume(with: .cancelled)
+        }
+    }
+
+    /// Ends every run-plane drain wait parked on this session, so a
+    /// ``respond(to:maxTokens:)`` call suspended between its turns returns
+    /// instead of waiting the run plane out.
+    ///
+    /// Called by ``cancelCurrentTurn()`` when no turn is in flight — see that
+    /// method for why a drain is the other thing a cancellation can land on.
+    /// Each resumed drain stops at the run it was waiting on and answers with
+    /// its last turn's answer; nothing is swept, so the runs stay parked
+    /// exactly as they were. A drain that holds no wait right now needs nothing
+    /// resumed: it reads ``cancelRequestCount`` before the next wait it starts.
+    func endRunPlaneDrainWaits() {
+        // Copied out and the registry emptied before any resume, so this
+        // cancellation reaches exactly the waits it found: a drain that goes on
+        // to register another wait registers it into an empty registry, and no
+        // resumed waiter's own removal races this one.
+        let gates = Array(runPlaneDrainWaitGates.values)
+        runPlaneDrainWaitGates.removeAll()
+        for gate in gates {
+            gate.resume(with: .cancelled)
+        }
+    }
+
+    /// Whether a ``respond(to:maxTokens:)`` call on this session is parked on a
+    /// wait of its own run plane — between its turns, with no turn in flight to
+    /// carry a cancellation.
+    var isParkedOnRunPlaneDrainWait: Bool {
+        !runPlaneDrainWaitGates.isEmpty
     }
 
     /// Streams a text response to a prompt as it is produced, recording the call.
@@ -443,4 +548,17 @@ extension RoutedSessionActor {
             )
         }
     }
+}
+
+/// Whichever of a parked run's settlement or a cancellation reaching the
+/// draining call arrives first — the outcome of one run-plane drain wait.
+enum RunPlaneDrainWaitOutcome: Sendable {
+    /// The mailbox answered the wait: the run settled, its token was already
+    /// unknown, or the run plane's own deadline elapsed.
+    case mailbox(WaitOutcome)
+
+    /// A cancellation reached the draining call first, by either route — the
+    /// caller's own task, or ``RoutedSession/cancelCurrentTurn()``. The run is
+    /// left exactly as it was, still parked.
+    case cancelled
 }

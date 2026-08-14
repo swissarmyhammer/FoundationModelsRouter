@@ -3,7 +3,9 @@ import FoundationModels
 
 /// The outcome of ``RoutedSession/cancelCurrentTurn()``.
 public enum TurnCancellationResult: Sendable, Equatable {
-    /// A turn was in flight and cancellation was requested of it.
+    /// A turn was in flight and cancellation was requested of it — or, with no
+    /// turn in flight, a ``RoutedSession/respond(to:maxTokens:)`` call was
+    /// draining the run plane between its turns and was ended.
     ///
     /// "Requested" rather than "stopped", deliberately: cancellation is
     /// cooperative here and advisory past the process boundary, so this reports
@@ -15,9 +17,9 @@ public enum TurnCancellationResult: Sendable, Equatable {
     /// ``RoutedSession/cancelCurrentTurn()``).
     case requested
 
-    /// No turn was in flight, so there was nothing to cancel and nothing
-    /// happened — the state a second cancellation, or one arriving after the
-    /// turn already finished, reports.
+    /// Nothing was in flight to cancel, so nothing happened — no turn, and no
+    /// `respond` draining the run plane. The state a second cancellation, or one
+    /// arriving after the call already finished, reports.
     case noTurnInFlight
 }
 
@@ -257,6 +259,15 @@ public protocol RoutedSession: Actor {
     /// ``RoutedSessionActor/parkedRunDrainRoundLimit`` drained turns after this
     /// call's own, so a model that keeps starting background work from inside a
     /// drained turn is answered early rather than awaited forever.
+    ///
+    /// A cancellation ends the drain too, from either route —
+    /// ``cancelCurrentTurn()`` or the caller's own task — and it lands whether
+    /// the call is inside a turn or already parked on a run between turns
+    /// (task ^h3efdrc). A cancelled drain **returns the last turn's answer
+    /// rather than throwing**, which is what a cancellation reaching a detached
+    /// tool call already produces: the turn answers with its pending envelope.
+    /// It stops waiting and nothing else — the runs it was waiting on stay
+    /// parked, since ending them is ``close()``'s job.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
@@ -509,12 +520,23 @@ public protocol RoutedSession: Actor {
     /// turn recording of its own, so it leaves no trace beyond the gates it hands
     /// back.
     ///
+    /// A **`respond(to:maxTokens:)` draining the run plane** is reached as well,
+    /// and it is the one thing this cancels that is not a turn. That call drains
+    /// *between* its turns, so it can be waiting on a parked run with no turn in
+    /// flight at all — and the run plane's own wait ignores task cancellation,
+    /// with a ceiling of a day, so before this there was no way out of such a
+    /// call short of ``close()`` (task ^h3efdrc). A cancellation arriving then
+    /// ends the wait: the call stops draining and returns its last turn's answer
+    /// rather than throwing, and the runs it was waiting on stay parked, exactly
+    /// as they were. Ending them is ``close()``'s job, never this one's.
+    ///
     /// Safe at any time and any number of times: a second cancellation of the
-    /// same turn requests what was already requested, and a cancellation with no
-    /// turn in flight does nothing at all.
+    /// same turn requests what was already requested, and a cancellation with
+    /// nothing in flight — no turn, and no draining call — does nothing at all.
     ///
     /// - Returns: ``TurnCancellationResult/requested`` when a turn was in flight
-    ///   and cancellation was requested of it, or
+    ///   and cancellation was requested of it, or when a draining
+    ///   `respond(to:maxTokens:)` was ended; or
     ///   ``TurnCancellationResult/noTurnInFlight`` when there was nothing to
     ///   cancel.
     @discardableResult

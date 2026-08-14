@@ -38,9 +38,25 @@ extension RoutedSessionActor {
     /// cancelled, rather than one or the other: the task covers a turn that is
     /// generating right now, and the recorded id covers a turn that is between
     /// model calls (see ``cancelRequestedTurnId``).
+    ///
+    /// A turn is not the only thing a caller can be waiting on, though.
+    /// ``respond(to:maxTokens:)`` drains the run plane *between* its turns, so a
+    /// call can be suspended on a parked run with `currentTurnId` already `nil`
+    /// — nothing to cancel, and a caller with no way out (task ^h3efdrc). That
+    /// drain is what this reaches when no turn is in flight: ``runPlaneDrainCount``
+    /// says such a call exists, the request is counted so the drain's own checks
+    /// see it, and every wait already parked is resumed
+    /// (``endRunPlaneDrainWaits()``) rather than left to the run plane's day-long
+    /// ceiling. Only when there is no turn *and* no drain is there nothing to
+    /// cancel.
     @discardableResult
     func cancelCurrentTurn() -> TurnCancellationResult {
-        guard let turnId = currentTurnId else { return .noTurnInFlight }
+        guard let turnId = currentTurnId else {
+            guard runPlaneDrainCount > 0 else { return .noTurnInFlight }
+            cancelRequestCount += 1
+            endRunPlaneDrainWaits()
+            return .requested
+        }
         cancelRequestedTurnId = turnId
         // The monotonic count outlives this turn, so a caller whose work spans
         // the turn's end — ``respond(to:maxTokens:)``'s run-plane drain — can

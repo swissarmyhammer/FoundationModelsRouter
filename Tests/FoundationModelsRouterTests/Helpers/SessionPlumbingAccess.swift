@@ -15,4 +15,11 @@ extension RoutedSession {
 
     /// The session's internal ``SessionMailbox``.
     nonisolated var mailbox: SessionMailbox { (self as! RoutedSessionActor).mailbox }
+
+    /// Whether a ``RoutedSession/respond(to:maxTokens:)`` call on this session
+    /// is parked on a wait of its own run plane — see
+    /// ``RoutedSessionActor/isParkedOnRunPlaneDrainWait``.
+    var isParkedOnRunPlaneDrainWait: Bool {
+        get async { await (self as! RoutedSessionActor).isParkedOnRunPlaneDrainWait }
+    }
 }

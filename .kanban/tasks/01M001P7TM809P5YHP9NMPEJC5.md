@@ -46,8 +46,25 @@ comments:
     - follow-up filed: `^h3efdrc` — `cancelCurrentTurn()` cannot stop a `respond()` already parked inside its drain wait.
     - next: /review
   timestamp: 2026-08-14T13:09:22.182093+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m006pyqd91cyetpeqhhnwvrk
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (d2be019) — 0 findings, 0 confirmed, 0 refuted; 16 validators attempted, 0 failed, 0 skipped
+    - next: task moved to done; no findings to record
+  timestamp: 2026-08-14T13:17:18.957404+00:00
+- actor: claude-code
+  id: 01m006qj6byt92fhhrfv09ta3p
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files. `respond(to:maxTokens:)` runs its own turn, then drains the run plane: it waits for every parked run to settle and runs a further turn carrying those results. Termination rule: bounded re-entry over the whole run plane — at most `parkedRunDrainRoundLimit` (= 4) drained continuation turns, with early exits on the run plane's wait ceiling, on `cancelCurrentTurn()` and on caller-task cancellation. `streamEvents`/`streamResponse` unchanged.
+    - test: green — one bare `swift test`, 987 tests in 3 targets (936 + 27 + 24), 0 failures, 1 known pre-existing BoundedWait issue. The only warning is the pre-existing upstream Cmlx bundle warning, which no file in this repository controls.
+    - commit: d2be019 feat(session)!: respond(to:) self-drains the run plane before it returns (^nmpejc5)
+    - review: clean — 0 findings, 16 validators attempted, 0 failed, 0 skipped.
+    - note: the consumer session (FoundationModelsMultitool) has the termination rule and has recorded it in its gated runner, so its scenarios are written against the real rule.
+  timestamp: 2026-08-14T13:17:38.891970+00:00
+position_column: done
+position_ordinal: ffa680
 title: respond(to:) must self-drain the run plane before it returns
 ---
 Filed by the `FoundationModelsMultitool` session as the consumer requirement behind its card `^n6kgckr`.

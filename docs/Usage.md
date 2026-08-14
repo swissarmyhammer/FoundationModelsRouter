@@ -53,6 +53,11 @@ four further turns, so a model that keeps starting work from inside a drained
 turn is answered early rather than awaited forever. A cancelled turn is not
 drained.
 
+A cancellation also ends a drain that is already waiting — `cancelCurrentTurn()`
+reports `.requested` for such a call, and cancelling the caller's own task works
+too. The call then returns its last turn's answer rather than throwing, and the
+runs it was waiting on stay parked: stopping them is `close()`'s job.
+
 ---
 
 ## 2. `streamEvents(to:)` — incremental

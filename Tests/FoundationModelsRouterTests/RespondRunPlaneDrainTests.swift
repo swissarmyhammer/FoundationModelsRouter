@@ -293,6 +293,45 @@ struct RespondRunPlaneDrainTests {
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
     }
 
+    /// Waits, bounded, for `session` to hold a ``RoutedSession/respond(to:maxTokens:)``
+    /// call parked on a wait of its own run plane.
+    ///
+    /// That is the state the two cancellation routes under test have to reach:
+    /// the call's own turn is over, so no turn is in flight, and the call is
+    /// suspended on a run that will not settle. A cancellation landing a moment
+    /// earlier would land on the turn instead and prove nothing about the
+    /// drain.
+    ///
+    /// - Parameter session: The session whose drain is observed.
+    /// - Throws: ``SignalNeverArrived`` when no drain parked on a wait inside
+    ///   the bound.
+    private static func awaitDrainWait(on session: RoutedSession) async throws {
+        guard
+            await BoundedWait.conditionReached(
+                "a respond call parking on a wait of the run plane",
+                when: { await session.isParkedOnRunPlaneDrainWait })
+        else {
+            throw SignalNeverArrived()
+        }
+    }
+
+    /// Opens `gates` and waits for every run parked on `session` to settle, so
+    /// no detached work outlives a test.
+    ///
+    /// - Parameters:
+    ///   - session: The session whose mailbox is drained.
+    ///   - gates: The latches the parked runs' bodies are waiting on.
+    private static func releaseParkedRuns(on session: RoutedSession, opening gates: [RunLatch]) async {
+        let tokens: [String] = await session.mailbox.parkedRuns().map(\.completionToken)
+        for gate in gates {
+            await gate.open()
+        }
+        for token in tokens {
+            _ = await session.mailbox.wait(
+                completionToken: token, seconds: mailboxWaitTimeoutSeconds)
+        }
+    }
+
     /// Waits, bounded, for `session`'s run plane to report at least `count`
     /// parked runs, then reports their tokens.
     ///
@@ -434,5 +473,86 @@ struct RespondRunPlaneDrainTests {
             _ = await session.mailbox.wait(
                 completionToken: token, seconds: Self.mailboxWaitTimeoutSeconds)
         }
+    }
+
+    // MARK: - Cancelling a call parked in its drain
+
+    @Test(
+        "cancelCurrentTurn() reaches a respond parked in its run-plane drain: it reports requested, and the call ends with its own turn's answer"
+    )
+    @MainActor
+    func cancelCurrentTurnEndsARespondParkedInItsDrain() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = BackgroundingLLMContainer()
+        let profile = try await Self.makeProfile(container: container, dir: dir)
+        let gate = RunLatch()
+        let session = profile.standard.makeSession(tools: [
+            GatedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+        ])
+        let backend = try #require(container.lastBackend)
+
+        let returned = AsyncSemaphore(value: 0)
+        let responding = Task { () -> String in
+            defer { returned.signal() }
+            return try await session.respond(to: "run the job")
+        }
+        try await Self.awaitDrainWait(on: session)
+
+        // The call's own turn is over, so nothing holds the turn lock — and the
+        // caller is still inside `respond`. This is the call the cancellation
+        // has to reach.
+        #expect(await session.cancelCurrentTurn() == .requested)
+
+        try await BoundedWait.awaitSignal(returned, named: "the cancelled respond call returning")
+        let answer = try await responding.value
+
+        // A cancelled drain answers with the last turn's answer rather than
+        // throwing: here that is this call's own turn's answer, the pending
+        // envelope the detaching tool returned. No drained continuation turn
+        // ran.
+        #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
+        #expect(backend.receivedPrompts.count == 1)
+
+        // A cancelled drain stops waiting; it does not sweep. The run it was
+        // waiting on is still parked, exactly as it was.
+        #expect(await session.mailbox.parkedRuns().count == 1)
+
+        await Self.releaseParkedRuns(on: session, opening: [gate])
+    }
+
+    @Test("cancelling the caller's own task ends a respond parked in its run-plane drain")
+    @MainActor
+    func cancellingTheCallersTaskEndsARespondParkedInItsDrain() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let container = BackgroundingLLMContainer()
+        let profile = try await Self.makeProfile(container: container, dir: dir)
+        let gate = RunLatch()
+        let session = profile.standard.makeSession(tools: [
+            GatedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+        ])
+        let backend = try #require(container.lastBackend)
+
+        let returned = AsyncSemaphore(value: 0)
+        let responding = Task { () -> String in
+            defer { returned.signal() }
+            return try await session.respond(to: "run the job")
+        }
+        try await Self.awaitDrainWait(on: session)
+
+        // The other cancellation route: the caller's own task, which the
+        // mailbox's wait ignores by design.
+        responding.cancel()
+
+        try await BoundedWait.awaitSignal(returned, named: "the cancelled respond call returning")
+        let answer = try await responding.value
+        #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
+        #expect(backend.receivedPrompts.count == 1)
+        #expect(await session.mailbox.parkedRuns().count == 1)
+
+        await Self.releaseParkedRuns(on: session, opening: [gate])
     }
 }

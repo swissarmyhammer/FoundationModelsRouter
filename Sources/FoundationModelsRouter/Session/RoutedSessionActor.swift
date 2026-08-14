@@ -322,6 +322,37 @@ actor RoutedSessionActor: RoutedSession {
     /// without reviving the turn's identity.
     var cancelRequestCount: UInt64 = 0
 
+    /// How many ``respond(to:maxTokens:)`` calls on this session are draining
+    /// the run plane right now.
+    ///
+    /// A drain runs *between* that call's turns, so ``currentTurnId`` is `nil`
+    /// for its whole length and a cancellation arriving then has no turn to land
+    /// on. This is what says a call is still inside `respond` all the same, and
+    /// it is what ``cancelCurrentTurn()`` reads to answer
+    /// ``TurnCancellationResult/requested`` rather than
+    /// ``TurnCancellationResult/noTurnInFlight`` (task ^h3efdrc).
+    ///
+    /// Held for the whole drain, not just for the waits inside it, so a
+    /// cancellation landing between two waits is recorded rather than dropped —
+    /// the drain reads ``cancelRequestCount`` before each wait it starts.
+    /// Counted rather than flagged because the drain runs outside ``turnLock``:
+    /// two callers can be draining this session at the same time.
+    var runPlaneDrainCount = 0
+
+    /// The gates the run-plane drain waits parked on this session are suspended
+    /// on, keyed by a fresh waiter id.
+    ///
+    /// The handle ``cancelCurrentTurn()`` resumes to end a call already
+    /// suspended on a parked run: ``SessionMailbox/wait(completionToken:seconds:)``
+    /// ignores task cancellation by design and its ceiling is a day
+    /// (``ToolContext/waitSecondsCeiling``), so a drain parked on one ends
+    /// early only because something else resumes it.
+    ///
+    /// A dictionary rather than one gate because the drain runs outside
+    /// ``turnLock``: two callers can be draining this session at the same time,
+    /// and each waiter has to be resumable — and removable — on its own.
+    var runPlaneDrainWaitGates: [ULID: RaceGate<RunPlaneDrainWaitOutcome>] = [:]
+
     /// The fork-admission gate, shared with the owning model.
     ///
     /// ``fork(workingDirectory:)`` acquires a permit to admit the child; a fork
