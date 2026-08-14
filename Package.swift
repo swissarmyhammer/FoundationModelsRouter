@@ -22,11 +22,20 @@ let huggingFacePackage = "swift-huggingface"
 let transformersPackage = "swift-transformers"
 
 // Products from the controlled fork of mlx-swift-lm that the router builds on.
-// The fork is pinned to the `foundationmodels-fixes` branch and locked to a
-// specific commit via Package.resolved (committed, not ignored).
+// The fork is a sibling checkout, referenced by path (see the `dependencies`
+// list): the router and the fork move together, so the router builds against
+// the working copy beside it rather than a pinned branch commit.
 let mlxProducts: [Target.Dependency] = [
     .product(name: "MLXLMCommon", package: mlxPackage),
     .product(name: "MLXLLM", package: mlxPackage),
+    // Linked for its model registry, not for vision. `loadModelContainer`
+    // finds a factory through `ModelFactoryRegistry`, which resolves its
+    // built-in trampolines with `NSClassFromString` — so a factory reaches
+    // the registry only when its module is linked into the binary. Muse
+    // Glimmer (`muse_glimmer`) is registered in `VLMModelFactory` alone, and
+    // it is the model the gated suites load, so the router must link MLXVLM
+    // or the id fails with `unsupportedModelType` after the full download.
+    .product(name: "MLXVLM", package: mlxPackage),
     .product(name: "MLXEmbedders", package: mlxPackage),
     .product(name: "MLXHuggingFace", package: mlxPackage),
     .product(name: "MLXFoundationModels", package: mlxPackage),
@@ -60,8 +69,7 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "git@github.com:swissarmyhammer/\(mlxPackage).git",
-            branch: "foundationmodels-fixes"
+            path: "../\(mlxPackage)"
         ),
         .package(
             url: "https://github.com/yaslab/\(ulidPackage).git",

@@ -5,6 +5,15 @@ import MLXEmbedders
 import MLXFoundationModels
 import MLXLLM
 import MLXLMCommon
+// Load-bearing although this file names no `MLXVLM` symbol: keep it.
+// `loadModelContainer` selects a factory through `MLXLMCommon`'s
+// `ModelFactoryRegistry`, which finds its built-in trampolines with
+// `NSClassFromString` — a factory whose module the linker dropped is
+// silently absent from that list. `MLXLLM` above is imported for the same
+// reason. Muse Glimmer (`muse_glimmer`), the model the gated suites load,
+// is registered only in `VLMModelFactory`, so without this import the id
+// throws `unsupportedModelType` *after* paying for the whole download.
+import MLXVLM
 
 // The MLX container types are the live loaded handles. They are `final class …:
 // Sendable`, so conforming them to the router's marker protocols lets

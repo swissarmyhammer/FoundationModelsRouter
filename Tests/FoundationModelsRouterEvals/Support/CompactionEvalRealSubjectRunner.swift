@@ -8,15 +8,15 @@ import Tokenizers
 @testable import FoundationModelsRouter
 
 /// The real (non-tiny) `mlx-community` model the gated eval resolves against
-/// actual hardware — the same dense causal LM
-/// `CompactionRoundTripIntegrationTests` uses as its own `.standard` slot, so
-/// this target exercises genuinely capable multi-turn recall rather than a
-/// toy model.
+/// actual hardware — the same model `RealModels.standard` names for the gated
+/// integration suite, so this target exercises genuinely capable multi-turn
+/// recall rather than a toy model.
 enum CompactionEvalRealModel {
-    /// The `mlx-community/Qwen3.6-27B-mxfp4` HuggingFace model reference this
-    /// runner resolves — see this enum's own doc comment for why that
-    /// specific dense causal LM was chosen over a toy model.
-    static let ref: ModelRef = "mlx-community/Qwen3.6-27B-mxfp4"
+    /// The `mlx-community/Muse-Glimmer-30B-4bit` HuggingFace model reference
+    /// this runner resolves, the general substitute for the Qwen3.6 model
+    /// this eval used before — see `RealModels` in the integration target for
+    /// why Qwen lost prompt caching and Muse Glimmer keeps it.
+    static let ref: ModelRef = "mlx-community/Muse-Glimmer-30B-4bit"
 
     /// The maximum context window, in tokens, to load ``ref`` with — passed
     /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.

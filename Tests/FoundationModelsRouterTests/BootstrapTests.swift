@@ -8,6 +8,9 @@ import Testing
 // macOS 27, this test target will not compile.
 import MLXLMCommon
 import MLXLLM
+// MLXVLM carries the `muse_glimmer` factory the gated suites' model needs;
+// the router links it for that registry entry alone, never for vision.
+import MLXVLM
 import MLXEmbedders
 import MLXHuggingFace
 import MLXFoundationModels
