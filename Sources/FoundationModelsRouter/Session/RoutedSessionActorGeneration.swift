@@ -38,9 +38,10 @@ extension RoutedSessionActor {
     /// otherwise runs the plain path. Both funnel through the same
     /// ``generate(grammar:prompt:onEvent:_:)`` chokepoint.
     ///
-    /// **What this call drains, and what it does not.** The two planes drain at
-    /// different times, and this is the surface where both are drained before
-    /// the caller is answered:
+    /// **What this call drains, and what it does not.**
+    ///
+    /// The two planes drain at different times, and this is the surface where
+    /// both are drained before the caller is answered:
     ///
     /// - The **content plane** — ``SessionOutbox``, the events long-running
     ///   work has posted — is drained at the top of *each* of this call's
@@ -66,19 +67,21 @@ extension RoutedSessionActor {
     ///   the feature there, and a consumer of those surfaces watches the run
     ///   plane itself.
     ///
-    /// **How often this drain enters its loop.** Every park hands the model
-    /// ``PendingRunEnvelope``, whose text tells it to collect that run with a
-    /// `wait` call before it answers. ``DetachingTool`` writes that text, and
-    /// ``ToolContext`` publishes no park of its own, so no host can park a run
-    /// without the instruction — a host whose tools always advise collection is
-    /// every host, not an unusual one. A model that obeys the instruction leaves
-    /// the run plane empty, ``settleParkedRuns(cancellationsBefore:)`` answers
-    /// `false` on the first round, and no drained turn runs. So the loop below
-    /// is a safety net for the turn that ends with a run still parked: the model
-    /// ignored the instruction, or its own `wait` ran out. The suite parks the
-    /// runs it drains — through a real detaching tool whose model is a stub, or
-    /// on the run plane directly — so it proves what the loop does and not how
-    /// often a real model reaches it (task ^466d38p).
+    /// **How often this drain enters its loop.**
+    ///
+    /// Every park hands the model ``PendingRunEnvelope``, whose text tells it
+    /// to collect that run with a `wait` call before it answers.
+    /// ``DetachingTool`` writes that text, and ``ToolContext`` publishes no
+    /// park of its own, so no host can park a run without the instruction — a
+    /// host whose tools always advise collection is every host, not an unusual
+    /// one. A model that obeys the instruction leaves the run plane empty,
+    /// ``settleParkedRuns(cancellationsBefore:)`` answers `false` on the first
+    /// round, and no drained turn runs. So the loop below is a safety net for
+    /// the turn that ends with a run still parked: the model ignored the
+    /// instruction, or its own `wait` ran out. The suite parks the runs it
+    /// drains — through a real detaching tool whose model is a stub, or on the
+    /// run plane directly — so it proves what the loop does and not how often a
+    /// real model reaches it (task ^466d38p).
     ///
     /// The drain terminates by the rule ``parkedRunDrainRoundLimit`` states.
     /// Two other things end it: a run that has not settled by the run plane's

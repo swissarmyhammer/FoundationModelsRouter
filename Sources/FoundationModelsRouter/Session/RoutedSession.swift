@@ -232,9 +232,10 @@ public protocol RoutedSession: Actor {
 
     /// Generates a complete text response to a prompt, recording the call.
     ///
-    /// **What this call drains, and what it does not.** A session carries two
-    /// planes, and they drain at different times — this is the surface where
-    /// both are drained before the caller is answered:
+    /// **What this call drains, and what it does not.**
+    ///
+    /// A session carries two planes, and they drain at different times — this
+    /// is the surface where both are drained before the caller is answered:
     ///
     /// - The **content plane** (the events long-running work has posted) is
     ///   drained at the top of each of this call's turns and folded into that
@@ -260,8 +261,9 @@ public protocol RoutedSession: Actor {
     /// call's own, so a model that keeps starting background work from inside a
     /// drained turn is answered early rather than awaited forever.
     ///
-    /// **How often the drain runs — it is a safety net, not the usual path.** A
-    /// tool call that parks its run returns ``PendingRunEnvelope``, and that
+    /// **How often the drain runs — it is a safety net, not the usual path.**
+    ///
+    /// A tool call that parks its run returns ``PendingRunEnvelope``, and that
     /// envelope tells the model to collect the run itself, with a `wait` call,
     /// before it answers. ``DetachingTool`` writes that instruction on every
     /// park, so every host hands it to the model and no host can turn it off. A
@@ -405,6 +407,7 @@ public protocol RoutedSession: Actor {
     /// closing ``SessionEvent/turnEnded(_:)``.
     ///
     /// **Excluded, deliberately: the live text increments.**
+    ///
     /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel
     /// only on the turn's own ``streamEvents(to:maxTokens:)`` stream, never
     /// here. This feed buffers every subscription without bound so a slow
@@ -447,10 +450,11 @@ public protocol RoutedSession: Actor {
     /// `FoundationModelsMCP` turns that Swift-level cancellation into a
     /// protocol-level `notifications/cancelled` for the server behind it.
     ///
-    /// **Propagation past the process boundary is advisory.** MCP's
-    /// `notifications/cancelled` is a notification, not a command: a server may
-    /// keep working, and nothing on this side can make it stop. The honest
-    /// report is "we stopped listening", never "it stopped".
+    /// **Propagation past the process boundary is advisory.**
+    ///
+    /// MCP's `notifications/cancelled` is a notification, not a command: a
+    /// server may keep working, and nothing on this side can make it stop. The
+    /// honest report is "we stopped listening", never "it stopped".
     ///
     /// What is observable afterwards:
     ///
