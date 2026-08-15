@@ -11,7 +11,7 @@ import Testing
 /// `Transcript.Entry` — a summary entry Router fabricates itself, and an
 /// elision-placeholder entry replacing an old `toolOutput` payload — survives
 /// the recording mirror (``TranscriptEntryMapper`` → ``TranscriptEntryPayload``
-/// → ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` in
+/// → ``TranscriptTree/effectiveTranscript(forSession:view:)`` in
 /// `TranscriptReconstruction.swift`), and whether Apple's FoundationModels SDK
 /// ships any native transcript-condensing primitive Router should defer to
 /// instead of building its own.
@@ -52,7 +52,7 @@ import Testing
 /// What this hermetic suite proves is the disk half of that dependency: once
 /// synthesized, an id survives ``TranscriptEntryMapper/event(from:)`` →
 /// ``TranscriptEntryPayload`` → JSONL →
-/// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` exactly,
+/// ``TranscriptTree/effectiveTranscript(forSession:view:)`` exactly,
 /// whether it is a brand-new id or a deliberately reused one. Whether a live
 /// `LanguageModelSession(transcript:)` *also* preserves those same ids on
 /// ingest (rather than reassigning them) is a separate, runtime-only question

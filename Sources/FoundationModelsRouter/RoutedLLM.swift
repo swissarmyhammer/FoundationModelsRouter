@@ -37,7 +37,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Shared by every generation-only entry point that requires a live
     /// owning ``LanguageModelProfile`` —
     /// ``makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
-    /// ``makeLanguageModel()``, and ``makeLanguageModel(resuming:registry:)``
+    /// ``makeLanguageModel()``, and ``makeLanguageModel(resuming:)``
     /// — which otherwise differ only in which name the trap message should
     /// report. A handle holds its profile only *weakly* (no retain cycle
     /// with the profile's strong hold on its models): whatever the caller
@@ -470,7 +470,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Shared by ``makeLanguageModel()`` (a from-scratch handle: no parent,
     /// no cut point, empty initial transcript, nested directly under the
-    /// router root) and ``makeLanguageModel(resuming:registry:)`` (a resuming
+    /// router root) and ``makeLanguageModel(resuming:)`` (a resuming
     /// handle: nested under the session it resumed, with that session's own
     /// entry counts as its cut points), which otherwise differ only in those
     /// values.
@@ -563,7 +563,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Unlike ``makeLanguageModel()``, whose last-seen transcript starts
     /// empty, this primes the handle's last-seen transcript with the resumed
-    /// session's own reconstructed ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``,
+    /// session's own reconstructed ``TranscriptTree/effectiveTranscript(forSession:view:)``,
     /// so the handle's *first* diff records only genuinely new entries —
     /// never the whole resumed history re-recorded into a fresh directory.
     /// The vended handle nests under the resumed session's own directory and records
@@ -585,7 +585,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// supplies real tools straight to `LanguageModelSession`'s own
     /// initializer, with no per-session instancing of its own. For restoring
     /// a whole fork tree at once, prefer
-    /// ``restoreSessionTree(root:recordingRoot:registry:tools:)`` instead, which threads
+    /// ``restoreSessionTree(root:recordingRoot:tools:)`` instead, which threads
     /// its own `tools:` parameter to every restored node — each with its own
     /// fresh outbox and instanced tool copies — via
     /// ``LoadedLLMContainer/makeSession(transcript:tools:)``.
@@ -597,12 +597,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   - sessionId: The previously recorded session's span id to resume
     ///     from — any session already recorded under this router's root (a
     ///     root, a fork, or another recording-handle session).
-    ///   - registry: The registered ``PersistableCustomSegment`` types a
-    ///     `.custom` segment anywhere in the resumed session's recorded
-    ///     transcript may need to rebuild. Defaults to
-    ///     ``CustomSegmentRegistry/routerDefault`` (pre-seeded with
-    ///     ``CompactionSegment``), so resuming a compacted session needs no
-    ///     caller setup.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle whose first diff
     ///   only records genuinely new entries, paired with the reconstructed
     ///   ``FoundationModels/Transcript`` to hand to
@@ -611,10 +605,9 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   this handle has no durable transcripts root; ``TranscriptTreeError``
     ///   / ``TranscriptReconstructionError`` for anything
     ///   ``TranscriptTree/load(under:)`` or
-    ///   ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` throws.
+    ///   ``TranscriptTree/effectiveTranscript(forSession:view:)`` throws.
     public func makeLanguageModel(
-        resuming sessionId: ULID,
-        registry: CustomSegmentRegistry = .routerDefault
+        resuming sessionId: ULID
     ) throws -> (handle: RecordingLanguageModel, transcript: Transcript) {
         let owningProfile = requireOwningProfile(apiName: "makeLanguageModel")
         guard let recordingsRoot else {
@@ -624,7 +617,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let routerDirectory = recordingsRoot.appendingPathComponent(
             routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
-        let restoredTranscript = try tree.effectiveTranscript(forSession: sessionId, registry: registry)
+        let restoredTranscript = try tree.effectiveTranscript(forSession: sessionId)
         // The resume cut in the resumed session's recorded history's own
         // append-only coordinates: its raw effective entry-event count, fold
         // boundaries included. `restoredTranscript.count` cannot serve as

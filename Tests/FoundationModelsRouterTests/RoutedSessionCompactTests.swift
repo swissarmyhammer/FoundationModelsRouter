@@ -334,9 +334,9 @@ struct RoutedSessionCompactTests {
         #expect(appended.kind == .response)
         #expect(appended.sessionId == sessionId)
         let entryPayload = try #require(appended.entry)
-        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind, registry: .routerDefault)
-        guard case .response(let response) = rebuilt, case .custom(let segment)? = response.segments.last,
-            let compactionSegment = segment as? CompactionSegment
+        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
+        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+            let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the appended entry to carry a .custom CompactionSegment")
             return
@@ -422,11 +422,11 @@ struct RoutedSessionCompactTests {
         let events = await recorder2.events
         let appended = try #require(events.last)
         let entryPayload = try #require(appended.entry)
-        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind, registry: .routerDefault)
-        guard case .response(let response) = rebuilt, case .custom(let segment)? = response.segments.last,
-            let compactionSegment = segment as? CompactionSegment
+        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
+        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+            let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
-            Issue.record("expected the appended entry to carry a .custom CompactionSegment")
+            Issue.record("expected the appended entry to carry a .structure CompactionSegment")
             return
         }
         #expect(compactionSegment.content.promptName == CompactionPrompt.default.name)
@@ -459,11 +459,11 @@ struct RoutedSessionCompactTests {
         let events = await recorder.events
         let appended = try #require(events.last)
         let entryPayload = try #require(appended.entry)
-        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind, registry: .routerDefault)
-        guard case .response(let response) = rebuilt, case .custom(let segment)? = response.segments.last,
-            let compactionSegment = segment as? CompactionSegment
+        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
+        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+            let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
-            Issue.record("expected the appended entry to carry a .custom CompactionSegment")
+            Issue.record("expected the appended entry to carry a .structure CompactionSegment")
             return
         }
         #expect(compactionSegment.content.promptName == "custom-test-prompt-v1")
@@ -574,11 +574,11 @@ struct RoutedSessionCompactTests {
         let events = await recorder.events
         let appended = try #require(events.last)
         let entryPayload = try #require(appended.entry)
-        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind, registry: .routerDefault)
-        guard case .response(let response) = rebuilt, case .custom(let segment)? = response.segments.last,
-            let compactionSegment = segment as? CompactionSegment
+        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
+        guard case .response(let response) = rebuilt, case .structure(let segment)? = response.segments.last,
+            let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
-            Issue.record("expected the appended entry to carry a .custom CompactionSegment")
+            Issue.record("expected the appended entry to carry a .structure CompactionSegment")
             throw StubSessionBackend.StubError.boom
         }
         return (response, compactionSegment)
@@ -933,8 +933,8 @@ struct RoutedSessionCompactTests {
         #expect(Array(restoredEntries.dropLast()) == expectedWindow)
         #expect(restoredEntries.count < preFoldEntries.count)
         guard case .response(let boundary)? = restoredEntries.last,
-            case .custom(let segment)? = boundary.segments.last,
-            let compactionSegment = segment as? CompactionSegment
+            case .structure(let segment)? = boundary.segments.last,
+            let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the restored transcript to end in the fold's boundary entry")
             return

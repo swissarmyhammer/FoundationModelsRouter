@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -77,7 +78,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
 
         _ = try await backend.respond(
-            to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: 64)
+            to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let entriesAfterFirstTurn = backend.session.transcript.count
         #expect(entriesAfterFirstTurn > 0)
 
@@ -86,7 +87,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // the second turn's answer must reflect the first turn's content.
         let secondReply = try await backend.respond(
             to: "What is my favorite color? Answer with just the color, lowercase.",
-            maxTokens: 64
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(secondReply.lowercased().contains("teal"))
 
@@ -105,7 +106,7 @@ struct LanguageModelSessionBackendIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        _ = try await parent.respond(to: "Remember the number 42.", maxTokens: 64)
+        _ = try await parent.respond(to: "Remember the number 42.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let parentEntryCountAtForkTime = parent.session.transcript.count
 
         let child = try #require(parent.makeFork() as? MLXFoundationModelsSessionBackend)
@@ -124,7 +125,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // boundary.
         let childReply = try await child.respond(
             to: "What number should I remember? Answer with just the number.",
-            maxTokens: 64
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(childReply.contains("42"))
         let childEntryCountAfterOwnTurn = child.session.transcript.count
@@ -132,7 +133,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // The two then diverge independently: a further parent turn does not
         // retroactively change the child's already-seeded (and now
         // independently-grown) transcript.
-        _ = try await parent.respond(to: "Remember the number 7 too.", maxTokens: 64)
+        _ = try await parent.respond(to: "Remember the number 7 too.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
 
         await container.model.evict()
@@ -150,7 +151,7 @@ struct LanguageModelSessionBackendIntegrationTests {
                 as? MLXFoundationModelsSessionBackend
         )
 
-        _ = try await prior.respond(to: "Remember the number 42.", maxTokens: 64)
+        _ = try await prior.respond(to: "Remember the number 42.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
         // Unlike `makeFork()`, which is called on an existing *backend* and
         // copies its live session's transcript, `makeSession(transcript:)` is
@@ -164,7 +165,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let reply = try await restored.respond(
             to: "What number should I remember? Answer with just the number.",
-            maxTokens: 64
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(reply.contains("42"))
 
@@ -187,8 +188,8 @@ struct LanguageModelSessionBackendIntegrationTests {
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
 
-        _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: 64)
-        _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: 64)
+        _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
         // Two turns × (one `.prompt` entry + one `.response` entry) == 4.
         #expect(backend.session.transcript.count == 4)
@@ -203,7 +204,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
 
-        _ = try await parent.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        _ = try await parent.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
         let child = try #require(parent.makeFork() as? MLXFoundationModelsSessionBackend)
 
@@ -225,12 +226,12 @@ struct LanguageModelSessionBackendIntegrationTests {
         // Before any turn, the public seam and the test-only accessor agree.
         #expect(backend.transcriptEntries().count == backend.session.transcript.count)
 
-        _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let countAfterFirstTurn = backend.transcriptEntries().count
         #expect(countAfterFirstTurn == backend.session.transcript.count)
         #expect(countAfterFirstTurn > 0)
 
-        _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: 64)
+        _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let countAfterSecondTurn = backend.transcriptEntries().count
         #expect(countAfterSecondTurn == backend.session.transcript.count)
         #expect(countAfterSecondTurn > countAfterFirstTurn)
@@ -413,7 +414,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             try? FileManager.default.removeItem(at: harness.cacheDir)
         }
 
-        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
         let recorded = try recordedEvents(from: harness)
 
@@ -448,7 +449,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         var collected = ""
         for try await chunk in await harness.session.streamResponse(
-            to: "Say 'hi' briefly.", maxTokens: 64)
+            to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         {
             collected += chunk
         }
@@ -488,7 +489,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         }
 
         let usageBefore = harness.backend.usageTokenCounts()
-        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let usageAfter = harness.backend.usageTokenCounts()
 
         let recorded = try recordedEvents(from: harness)
@@ -532,7 +533,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
 
         _ = try await backend.respond(
-            to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: 64)
+            to: "My favorite color is teal. Reply with just \"OK\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let turn1Usage = backend.session.usage
 
         // Nothing could have been cached before the very first turn ever ran.
@@ -549,7 +550,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         _ = try await backend.respond(
             to: "What is my favorite color? Answer with just the color, lowercase.",
-            maxTokens: 64
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         let turn2Usage = backend.session.usage
 
@@ -602,11 +603,11 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
 
         let turn1Start = Date()
-        _ = try await backend.respond(to: "Say just 'OK'.", maxTokens: 32)
+        _ = try await backend.respond(to: "Say just 'OK'.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let turn1Duration = Date().timeIntervalSince(turn1Start)
 
         let turn2Start = Date()
-        _ = try await backend.respond(to: "Say just 'OK' again.", maxTokens: 32)
+        _ = try await backend.respond(to: "Say just 'OK' again.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let turn2Duration = Date().timeIntervalSince(turn2Start)
 
         // Heuristic/warning only: logged for a human to read, never asserted.

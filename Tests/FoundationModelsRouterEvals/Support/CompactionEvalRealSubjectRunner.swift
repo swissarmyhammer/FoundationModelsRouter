@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -142,7 +143,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
             summarizer: summarizer
         )
         let answer = try await container.makeSession(transcript: folded)
-            .respond(to: question, maxTokens: Self.answerTokenCeiling)
+            .respond(to: question, maxTokens: GatedRealModelBudget.responseTokenCeiling)
         diagnostics.append(
             CompactionEvalSampleDiagnostic(
                 question: question,
@@ -159,12 +160,6 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
             stagesApplied: result.stagesApplied
         )
     }
-
-    /// The token ceiling the resumed session answers each seed's question
-    /// under — the seeds ask for one short, specific value, so the answer never
-    /// needs more, and a ceiling keeps one runaway generation from stalling a
-    /// 24-sample run.
-    private static let answerTokenCeiling = 64
 
     /// Evicts the resident model, if one was ever loaded — called once by
     /// ``GatedEvalResidencyTrait`` as the gated suite ends, however it ended,

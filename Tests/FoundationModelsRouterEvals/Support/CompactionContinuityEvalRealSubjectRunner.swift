@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -203,7 +204,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
             var stepFoldCount = 0
             var stepTokensBefore = 0
             var stepTokensAfter = 0
-            let stream = await session.streamEvents(to: text, maxTokens: 64)
+            let stream = await session.streamEvents(to: text, maxTokens: GatedRealModelBudget.responseTokenCeiling)
             for try await event in stream {
                 switch event {
                 case .textDelta(let fragment):

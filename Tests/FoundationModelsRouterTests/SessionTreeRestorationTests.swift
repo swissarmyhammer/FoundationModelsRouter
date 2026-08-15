@@ -5,7 +5,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task zcxnbst: restoring a whole session tree from disk by root
-/// session id — ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` — the
+/// session id — ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` — the
 /// final piece of plan.md's "Transcript fidelity" section, "Reconstruction
 /// end-to-end".
 ///
@@ -17,7 +17,7 @@ import Testing
 /// `id` and recordings directory as the first — mirroring how the gated
 /// integration suite discards the original `Router` and every in-memory
 /// session before restoring.
-@Suite("Session tree restoration: restoreSessionTree(root:registry:)")
+@Suite("Session tree restoration: restoreSessionTree(root:)")
 struct SessionTreeRestorationTests {
     // MARK: - Stub containers
 
@@ -541,7 +541,7 @@ struct SessionTreeRestorationTests {
     }
 
     /// Documents and locks in a known, deliberate restoration limitation (see
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``'s doc comment,
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``'s doc comment,
     /// "Known limitation: the `.ebnf` grammar case"): `SessionSidecar.grammar`
     /// persists only the grammar's `source` string, not which `Grammar` case
     /// it came from, so a session originally guided by `.ebnf(_:)` restores
@@ -785,11 +785,10 @@ struct SessionTreeRestorationTests {
                 entryId: "checkpoint-1",
                 segments: [
                     .text(id: "checkpoint-1-text", content: "summary"),
-                    .custom(
+                    .structure(
                         id: "checkpoint-1-segment",
-                        typeDiscriminator: CompactionSegment.typeDiscriminator,
-                        contentJSON: contentJSON,
-                        description: nil
+                        schemaName: CompactionSegment.schemaName,
+                        contentJSON: contentJSON
                     ),
                 ],
                 assetIds: []
@@ -1012,16 +1011,16 @@ struct SessionTreeRestorationTests {
             ])
     }
 
-    /// Builds an entry-kind event whose `.custom` segment carries content
+    /// Builds an entry-kind event whose `.structure` segment carries content
     /// that is not JSON — the fabricated corruption
-    /// `corruptCustomSegmentFailsRestoreLoudly` appends to a recorded
+    /// `corruptStructuredSegmentFailsRestoreLoudly` appends to a recorded
     /// transcript.
-    private static func corruptCustomSegmentEvent(
+    private static func corruptStructuredSegmentEvent(
         seq: Int,
         sessionId: ULID,
         routerId: ULID,
         kind: TranscriptEvent.Kind,
-        typeDiscriminator: String
+        schemaName: String
     ) -> TranscriptEvent {
         TranscriptEvent(
             routerId: routerId,
@@ -1034,11 +1033,10 @@ struct SessionTreeRestorationTests {
                 entryId: "corrupt-1",
                 segments: [
                     .text(id: "corrupt-1-text", content: "corrupt"),
-                    .custom(
+                    .structure(
                         id: "corrupt-1-segment",
-                        typeDiscriminator: typeDiscriminator,
-                        contentJSON: "{ not json",
-                        description: nil
+                        schemaName: schemaName,
+                        contentJSON: "{ not json"
                     ),
                 ],
                 assetIds: []
@@ -1047,15 +1045,15 @@ struct SessionTreeRestorationTests {
     }
 
     @Test(
-        "a corrupt custom segment fails the restore loudly with entryReconstructionFailed naming the session and seq — never a silent partial restore",
+        "a corrupt structured segment fails the restore loudly with entryReconstructionFailed naming the session and seq — never a silent partial restore",
         arguments: [
-            (CompactionSegment.typeDiscriminator, TranscriptEvent.Kind.response),
-            (OperationEventSegment.typeDiscriminator, TranscriptEvent.Kind.prompt),
+            (CompactionSegment.schemaName, TranscriptEvent.Kind.response),
+            (OperationEventSegment.schemaName, TranscriptEvent.Kind.prompt),
         ]
     )
     @MainActor
-    func corruptCustomSegmentFailsRestoreLoudly(
-        discriminator: String, kind: TranscriptEvent.Kind
+    func corruptStructuredSegmentFailsRestoreLoudly(
+        schemaName: String, kind: TranscriptEvent.Kind
     ) async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationTests")
@@ -1072,12 +1070,12 @@ struct SessionTreeRestorationTests {
         let routerDir = RouterTestFixtures.routerDirectory(routerId: router1.id, recordingsDir: recordingsDir)
         let recordedEvents = try TranscriptTree.load(under: routerDir).events(forSession: root.id)
         let corruptSeq = recordedEvents.count
-        let corruptEvent = Self.corruptCustomSegmentEvent(
+        let corruptEvent = Self.corruptStructuredSegmentEvent(
             seq: corruptSeq,
             sessionId: root.id,
             routerId: router1.id,
             kind: kind,
-            typeDiscriminator: discriminator
+            schemaName: schemaName
         )
         let transcriptURL = routerDir
             .appendingPathComponent(root.id.description, isDirectory: true)
@@ -1090,7 +1088,7 @@ struct SessionTreeRestorationTests {
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
         do {
             _ = try await profile2.standard.restoreSessionTree(root: root.id)
-            Issue.record("restoring a corrupt \(discriminator) segment must throw, not restore silently")
+            Issue.record("restoring a corrupt \(schemaName) segment must throw, not restore silently")
         } catch let error as TranscriptReconstructionError {
             guard case .entryReconstructionFailed(let session, let seq, _) = error else {
                 Issue.record("expected entryReconstructionFailed, got \(error)")

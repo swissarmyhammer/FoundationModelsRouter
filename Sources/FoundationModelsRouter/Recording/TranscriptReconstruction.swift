@@ -9,7 +9,7 @@ private let transcriptReconstructionLogger = makeModuleLogger(category: "Recordi
 
 /// A failure reconstructing a `FoundationModels.Transcript` from a session's
 /// effective entry-kind events — thrown by
-/// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``.
+/// ``TranscriptTree/effectiveTranscript(forSession:view:)``.
 ///
 /// Faithful reconstruction is a property of `full`-level recordings only
 /// (see plan.md's "Transcript fidelity" section, "Honest fidelity scope"):
@@ -21,7 +21,7 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     /// written before the ``TranscriptEvent/entry`` field existed.
     ///
     /// Reconstruction needs the structural payload
-    /// ``TranscriptEntryMapper/entry(from:kind:registry:)`` reads; a v1 line
+    /// ``TranscriptEntryMapper/entry(from:kind:)`` reads; a v1 line
     /// has none, so this refuses rather than fabricating an entry from the
     /// flattened ``TranscriptEvent/text`` alone.
     case legacyEventMissingPayload(session: ULID, seq: Int)
@@ -35,14 +35,7 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     /// fabricated entry.
     case contentRemoved(session: ULID, seq: Int)
 
-    /// A `.custom` segment's persisted type-discriminator has no
-    /// corresponding type registered in the ``CustomSegmentRegistry`` passed
-    /// to reconstruction — surfaced from
-    /// ``TranscriptEntryMapper/entry(from:kind:registry:)`` and re-thrown
-    /// with this event's session and `seq` attached.
-    case unregisteredCustomSegmentType(session: ULID, seq: Int, discriminator: String)
-
-    /// Any other ``TranscriptEntryReconstructionError`` the mapper threw —
+    /// Any ``TranscriptEntryReconstructionError`` the mapper threw —
     /// ``TranscriptEntryReconstructionError/missingRequiredField(entryId:field:)``
     /// or ``TranscriptEntryReconstructionError/invalidJSON(context:underlying:)``,
     /// evidence of a truncated or hand-corrupted on-disk log rather than one
@@ -76,12 +69,6 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
                 Session \(session.description) event #\(seq)'s content was stripped by the recording \
                 level (metadataOnly), so it cannot be honestly reconstructed into a Transcript.Entry.
                 """
-        case .unregisteredCustomSegmentType(let session, let seq, let discriminator):
-            return """
-                Session \(session.description) event #\(seq) has a .custom segment with \
-                discriminator "\(discriminator)", which is not registered in the CustomSegmentRegistry \
-                passed to reconstruction.
-                """
         case .entryReconstructionFailed(let session, let seq, let underlying):
             return """
                 Session \(session.description) event #\(seq) could not be reconstructed: \(underlying).
@@ -95,7 +82,7 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     }
 }
 
-/// Which view ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
+/// Which view ``TranscriptTree/effectiveTranscript(forSession:view:)``
 /// reconstructs (compaction_plan.md §3, "Checkpoint on restore").
 public enum TranscriptReconstructionView: Sendable, Equatable {
     /// The checkpointed live window: the newest ``CompactionSegment``
@@ -108,7 +95,7 @@ public enum TranscriptReconstructionView: Sendable, Equatable {
     /// governs — earlier ones become historical markers, reachable only
     /// through ``fullHistory``.
     ///
-    /// This is the default, and what ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+    /// This is the default, and what ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
     /// always seeds a restored session's backend from.
     case restore
 
@@ -152,7 +139,7 @@ extension TranscriptTree {
         compactionCheckpoints(in: events).last
     }
 
-    /// Decodes `event`'s ``CompactionSegment/Content`` from its `.custom`
+    /// Decodes `event`'s ``CompactionSegment/Content`` from its `.structure`
     /// segment, when it carries one un-stripped.
     ///
     /// Returns `nil` — not a throw — when `event` carries no compaction
@@ -162,7 +149,7 @@ extension TranscriptTree {
     /// treating the session as uncompacted for filtering purposes. Nothing
     /// is silently lost by this fallback: the checkpoint event itself is
     /// then included unfiltered like any other event, and mapping it
-    /// through ``TranscriptEntryMapper/entry(from:kind:registry:)`` still
+    /// through ``TranscriptEntryMapper/entry(from:kind:)`` still
     /// throws ``TranscriptReconstructionError/contentRemoved(session:seq:)``
     /// for its stripped payload, exactly as it would without this fallback.
     ///
@@ -170,8 +157,7 @@ extension TranscriptTree {
     /// checkpoint (task ^xky3j8w) — content damaged on disk at
     /// ``RecordingLevel/full``, not stripped: the decode fails, no
     /// checkpoint governs the restore filter, the checkpoint event is
-    /// included unfiltered, and mapping its `.custom` segment through the
-    /// registry throws
+    /// included unfiltered, and mapping its `.structure` segment throws
     /// ``TranscriptReconstructionError/entryReconstructionFailed(session:seq:underlying:)``
     /// — so a corrupt checkpoint can never silently restore a session as
     /// uncompacted with its full pre-fold history. Only the non-throwing
@@ -182,10 +168,10 @@ extension TranscriptTree {
     private static func compactionSegmentContent(in event: TranscriptEvent) -> CompactionSegment.Content? {
         guard event.kind == .response, let segments = event.entry?.segments else { return nil }
         for segment in segments {
-            guard case .custom(_, let discriminator, let contentJSON, _) = segment,
-                discriminator == CompactionSegment.typeDiscriminator,
-                let data = contentJSON.data(using: .utf8),
-                let content = try? JSONDecoder().decode(CompactionSegment.Content.self, from: data)
+            guard let structure = segment.persistedStructure,
+                structure.schemaName == CompactionSegment.schemaName,
+                let content = try? JSONDecoder().decode(
+                    CompactionSegment.Content.self, from: Data(structure.contentJSON.utf8))
             else { continue }
             return content
         }
@@ -262,7 +248,7 @@ extension TranscriptTree {
 
     /// The restored ``ContextUsageState`` `events` implies
     /// (compaction_plan.md §1.5, checkpoint-aware restore precedence), used
-    /// by ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` to seed a
+    /// by ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` to seed a
     /// restored session's ``RoutedSession/contextFill``:
     ///
     /// 1. The newest stamped `.response` event recorded *after* the newest
@@ -300,30 +286,23 @@ extension TranscriptTree {
     /// "Transcript fidelity" section, "Reconstruction end-to-end").
     ///
     /// Maps ``effectiveEntryEvents(forSession:)`` through
-    /// ``TranscriptEntryMapper/entry(from:kind:registry:)`` and wraps the
+    /// ``TranscriptEntryMapper/entry(from:kind:)`` and wraps the
     /// result in `Transcript(entries:)` — the SDK's own public initializer
     /// (verified in the macOS 27 `arm64e-apple-macos.swiftinterface`).
     ///
     /// **Fidelity scope.** Lossless for text/structured/tool content
     /// recorded at ``RecordingLevel/full``: instructions, text
     /// prompts/responses, guided structured responses, and tool traffic
-    /// round-trip exactly. `.custom` segments round-trip via `registry`
-    /// (solved, not lossy — an unregistered discriminator is the typed
-    /// error below, never a silent drop). `GenerationOptions.sampling`, the
+    /// round-trip exactly. `.structure` segments — including every
+    /// ``PersistableStructuredSegment`` the router or an integrator writes —
+    /// round-trip on their persisted schema name and content JSON, with no
+    /// caller setup. `GenerationOptions.sampling`, the
     /// `Prompt`/`ToolCall`/`Response`/`Reasoning` `metadata` dictionaries,
     /// `Prompt.contextOptions`, URL-less attachments, and attachment bytes
     /// degrade as documented on ``TranscriptEntryMapper``.
     ///
     /// - Parameters:
     ///   - id: The session's span id.
-    ///   - registry: The registered ``PersistableCustomSegment`` types a
-    ///     `.custom` segment in this session's effective transcript may need
-    ///     to rebuild. Defaults to ``CustomSegmentRegistry/routerDefault``
-    ///     (pre-seeded with ``CompactionSegment``), so a compacted session
-    ///     restores with no caller setup; any *other* recorded `.custom`
-    ///     segment still throws
-    ///     ``TranscriptReconstructionError/unregisteredCustomSegmentType(session:seq:discriminator:)``
-    ///     unless the caller supplies a registry that also knows about it.
     ///   - view: Which view to reconstruct (compaction_plan.md §3,
     ///     "Checkpoint on restore"). Defaults to
     ///     ``TranscriptReconstructionView/restore``: the newest recorded
@@ -339,7 +318,6 @@ extension TranscriptTree {
     ///   names a live-window entry id this session's events do not contain.
     public func effectiveTranscript(
         forSession id: ULID,
-        registry: CustomSegmentRegistry = .routerDefault,
         view: TranscriptReconstructionView = .restore
     ) throws -> Transcript {
         let events = try Self.reconstructableEvents(effectiveEntryEvents(forSession: id), view: view)
@@ -353,19 +331,13 @@ extension TranscriptTree {
                 throw TranscriptReconstructionError.legacyEventMissingPayload(session: event.sessionId, seq: event.seq)
             }
             do {
-                entries.append(try TranscriptEntryMapper.entry(from: payload, kind: event.kind, registry: registry))
+                entries.append(try TranscriptEntryMapper.entry(from: payload, kind: event.kind))
             } catch TranscriptEntryReconstructionError.contentRemoved {
                 throw TranscriptReconstructionError.contentRemoved(session: event.sessionId, seq: event.seq)
-            } catch TranscriptEntryReconstructionError.unregisteredCustomSegmentType(let discriminator) {
-                throw TranscriptReconstructionError.unregisteredCustomSegmentType(
-                    session: event.sessionId,
-                    seq: event.seq,
-                    discriminator: discriminator
-                )
             } catch let underlying as TranscriptEntryReconstructionError {
                 // Everything else the mapper can throw (`missingRequiredField`,
                 // `invalidJSON`) — evidence of a truncated or hand-corrupted
-                // log rather than one of the three documented refusals above —
+                // log rather than one of the two documented refusals above —
                 // still gets the same session/seq context attached rather than
                 // leaking out uncontextualized.
                 throw TranscriptReconstructionError.entryReconstructionFailed(
@@ -409,7 +381,7 @@ extension TranscriptTree {
     ///   era's bracket wrote `await append(makePartialEvent(kind: .prompt,
     ///   ...))` *unconditionally*, before ever calling into the backend —
     ///   so even a turn that failed instantly still left a `.prompt` event
-    ///   on disk, one `seq` before its `.response`. ``effectiveTranscript(forSession:registry:view:)``
+    ///   on disk, one `seq` before its `.response`. ``effectiveTranscript(forSession:view:)``
     ///   processes `events` in `seq` order and throws immediately on the
     ///   first unresolvable event, and `.prompt` is never `.response`-kind,
     ///   so this check never applies to it: a genuine v1 turn's `.prompt`

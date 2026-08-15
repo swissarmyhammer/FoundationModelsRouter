@@ -585,7 +585,7 @@ actor RoutedSessionActor: RoutedSession {
     /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` /
     /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
     /// ``fork(workingDirectory:)``, or
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``.
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``.
     ///
     /// Every parameter here is documented on the stored property it
     /// initializes, above — no separate `Parameters:` block, so there is

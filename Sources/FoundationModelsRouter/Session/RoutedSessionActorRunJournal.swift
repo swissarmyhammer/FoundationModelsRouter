@@ -96,7 +96,7 @@ extension RoutedSessionActor: OperationEventJournal {
     /// kind of its own would need one everywhere, and would be worse than
     /// cosmetic: ``TranscriptEvent/Kind``'s two router-only kinds
     /// (``TranscriptEvent/Kind/session``, ``TranscriptEvent/Kind/embedding``)
-    /// are rejected by ``TranscriptEntryMapper/entry(from:kind:registry:)``,
+    /// are rejected by ``TranscriptEntryMapper/entry(from:kind:)``,
     /// so a third would journal but never rebuild — a parallel layer wearing
     /// a transcript's clothes, which is the shape this design exists to
     /// avoid. The entry has no paired `.toolCalls`, exactly as
@@ -149,7 +149,7 @@ extension RoutedSessionActor: OperationEventJournal {
             Transcript.ToolOutput(
                 id: ULID.generate().description,
                 toolName: event.tool,
-                segments: [.custom(OperationEventSegment(content: event))]
+                segments: [OperationEventSegment(content: event).transcriptSegment]
             )
         )
         let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)

@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task qts4v0a: ``RoutedModel/makeLanguageModel(resuming:registry:)``,
+/// Exercises task qts4v0a: ``RoutedModel/makeLanguageModel(resuming:)``,
 /// the overload that resumes a previously recorded session into a fresh
 /// ``RecordingLanguageModel`` handle.
 ///

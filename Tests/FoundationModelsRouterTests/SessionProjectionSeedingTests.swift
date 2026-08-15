@@ -11,7 +11,7 @@ import Testing
 /// with hand-built `Transcript.Entry` values, and the end-to-end claim — the
 /// seeded rows equal the rows a live projection produced during the original
 /// run, row for row by id — runs through a real recorded tool turn, a
-/// fresh-process ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``,
+/// fresh-process ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``,
 /// and the new read-only ``RoutedSession/transcript`` accessor.
 @Suite("SessionProjection seeding from a cold Transcript (task ^5aky6xr)")
 struct SessionProjectionSeedingTests {
@@ -105,7 +105,7 @@ struct SessionProjectionSeedingTests {
         )
     }
 
-    @Test("a seeded output's full segments land on the row — text, structure, and custom — with summary staying the flattened text")
+    @Test("a seeded output's full segments land on the row — plain text and both structured kinds — with summary staying the flattened text")
     func seededOutputCarriesFullSegments() throws {
         let structureContent = try GeneratedContent(json: #"{"tempF":72}"#)
         let noteSegment = TestNoteSegment(id: "s-note", content: TestNote(body: "hello"))
@@ -113,7 +113,7 @@ struct SessionProjectionSeedingTests {
             .text(Transcript.TextSegment(id: "s-text", content: "72F and sunny")),
             .structure(
                 Transcript.StructuredSegment(id: "s-struct", schemaName: "Weather", content: structureContent)),
-            .custom(noteSegment),
+            noteSegment.transcriptSegment,
         ]
         let entries: [Transcript.Entry] = [
             .toolCalls(
@@ -148,13 +148,13 @@ struct SessionProjectionSeedingTests {
         #expect(structureId == "s-struct")
         #expect(schemaName == "Weather")
         #expect(contentJSON == structureContent.jsonString)
-        guard case .custom(let customId, let discriminator, _, let description) = output[2] else {
-            Issue.record("expected a .custom payload, got \(output[2])")
+        guard case .structure(let noteId, let noteSchemaName, let noteContentJSON) = output[2] else {
+            Issue.record("expected a .structure payload, got \(output[2])")
             return
         }
-        #expect(customId == "s-note")
-        #expect(discriminator == TestNoteSegment.typeDiscriminator)
-        #expect(description == "Note: hello")
+        #expect(noteId == "s-note")
+        #expect(noteSchemaName == TestNoteSegment.schemaName)
+        #expect(try TestNoteSegment(schemaName: noteSchemaName, contentJSON: noteContentJSON, id: noteId)?.content == TestNote(body: "hello"))
     }
 
     @Test("an output whose id names no announced call pairs by first-occurrence ordinal order, like the live path")

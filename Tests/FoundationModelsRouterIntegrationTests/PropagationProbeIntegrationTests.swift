@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -198,10 +199,6 @@ struct PropagationProbeIntegrationTests {
     private static let probePrompt =
         "Call the \(propagationProbeToolName) tool with the note 'ping'."
 
-    /// The response-token bound for the probe turn — room for a
-    /// tool-calling round plus a short final answer.
-    private static let probeMaxTokens = 512
-
     /// How much of the turn's final answer a diagnostic quotes — enough to tell
     /// a refusal from an announcement from an answer the model produced out of
     /// its own training, short enough to keep a failure message readable.
@@ -381,7 +378,8 @@ struct PropagationProbeIntegrationTests {
         let response = try await ToolContext.$current.withValue(context) {
             try await session.respond(
                 to: probePrompt,
-                options: GenerationOptions(maximumResponseTokens: probeMaxTokens)
+                options: GenerationOptions(
+                    maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
             )
         }
         let transcript = session.transcript

@@ -112,7 +112,7 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
     /// transcript, with `tools` threaded to the underlying `LanguageModelSession`
     /// so the model can call them.
     ///
-    /// This is the seam ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+    /// This is the seam ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
     /// threads its own per-restored-node instanced tool list through, mirroring
     /// how ``makeSession(instructions:tools:)`` threads tools to a from-scratch
     /// session — a restored session tree gets real, live tool-calling instead

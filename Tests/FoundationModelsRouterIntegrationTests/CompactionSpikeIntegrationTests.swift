@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -156,7 +157,7 @@ struct CompactionSpikeIntegrationTests {
         // completes without throwing.
         let reply = try await backend.respond(
             to: "What is my favorite number? Answer with just the number, digits only.",
-            maxTokens: 32
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(!reply.isEmpty)
         // The synthesized summary entry is real prior context to the model,

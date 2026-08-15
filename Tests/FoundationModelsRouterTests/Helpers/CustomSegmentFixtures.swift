@@ -3,17 +3,17 @@ import FoundationModels
 @testable import FoundationModelsRouter
 
 /// The note body a ``TestNoteSegment`` carries — a minimal `Codable` content
-/// type for tests that need a real `.custom` transcript segment.
+/// type for tests that need a real `.structure` transcript segment.
 struct TestNote: Codable, Equatable, Sendable {
     /// The note's text.
     var body: String
 }
 
-/// A shared test-only ``PersistableCustomSegment`` whose content is a
-/// ``TestNote`` — the fixture for tests that put a `.custom` segment into a
-/// hand-built `Transcript.Entry` (tool output segments, seeded rows) without
-/// each suite declaring a private conformer of its own.
-struct TestNoteSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+/// A shared test-only ``PersistableStructuredSegment`` whose content is a
+/// ``TestNote`` — the fixture for tests that put a typed `.structure` segment
+/// into a hand-built `Transcript.Entry` (tool output segments, seeded rows)
+/// without each suite declaring a private conformer of its own.
+struct TestNoteSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible {
     /// The segment's own id.
     let id: String
 
@@ -30,7 +30,7 @@ struct TestNoteSegment: PersistableCustomSegment, Equatable, CustomStringConvert
         self.content = content
     }
 
-    /// The flattened GUI convenience rendering the mapper persists as the
-    /// segment's `description`.
+    /// The flattened GUI convenience rendering a reader shows for this
+    /// segment.
     var description: String { "Note: \(content.body)" }
 }

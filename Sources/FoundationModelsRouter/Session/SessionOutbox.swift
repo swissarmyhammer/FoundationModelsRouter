@@ -59,7 +59,7 @@ import FoundationModels
 /// **Non-goal (recorded):** durable on-disk persistence of the outbox itself.
 /// Queued prompts are plain SDK `Transcript.Prompt` values and posted events
 /// are `Codable`, so both are round-trippable through the same
-/// `TranscriptEntryMapper`/`CustomSegmentRegistry` machinery the recorder
+/// `TranscriptEntryMapper`/`PersistableStructuredSegment` machinery the recorder
 /// already uses — a natural later extension, not built here.
 ///
 /// **Audience (task ^j0pp9yp).** The public surface of this actor is its

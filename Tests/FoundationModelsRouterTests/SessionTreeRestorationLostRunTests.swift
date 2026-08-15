@@ -11,7 +11,7 @@ import Testing
 /// `(tool, correlationID)` pair anywhere in that stream died with the
 /// crashed process — its memory-only ``SessionMailbox`` is gone, so no
 /// teardown sweep ever journaled a terminal event for it.
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` closes that hole
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` closes that hole
 /// at restore time: it manufactures exactly one terminal `.completed` event
 /// with outcome ``OperationOutcome/lost`` per orphaned run and posts it to
 /// the restored node's own fresh outbox, so the next turn's drain journals
@@ -19,10 +19,10 @@ import Testing
 /// is ``RoutedSessionActor/close()``'s mailbox sweep — see
 /// ``SessionMailboxTests``; this suite covers only the crash edge.)
 ///
-/// Also carries the default-registry regression: restoring a transcript that
-/// contains recorded ``OperationEventSegment``s must succeed with the
-/// default ``CustomSegmentRegistry/routerDefault`` (no
-/// `unregisteredCustomSegmentType` throw, no caller setup).
+/// Also carries the no-setup regression: restoring a transcript that contains
+/// recorded ``OperationEventSegment``s must succeed with no caller setup at
+/// all — a ``PersistableStructuredSegment`` rebuilds from its persisted
+/// schema name and content JSON.
 ///
 /// Everything runs against stubs (pattern from
 /// ``SessionTreeRestorationToolWiringTests``): no MLX, no network, no GPU.
@@ -203,11 +203,11 @@ struct SessionTreeRestorationLostRunTests {
         return (restored, root.id)
     }
 
-    // MARK: - Default-registry round trip (regression)
+    // MARK: - Structured-segment round trip (regression)
 
-    @Test("a transcript carrying OperationEventSegments restores with the default registry — no unregisteredCustomSegmentType")
+    @Test("a transcript carrying OperationEventSegments restores with no caller setup at all")
     @MainActor
-    func defaultRegistryRestoresTranscriptWithEventSegments() async throws {
+    func structuredSegmentsRestoreTranscriptWithNoCallerSetup() async throws {
         let cacheDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         let recordingsDir = RouterTestFixtures.makeTempDir(prefix: "SessionTreeRestorationLostRunTests")
         defer {
@@ -216,7 +216,7 @@ struct SessionTreeRestorationLostRunTests {
         }
 
         // A run that completed cleanly: the journaled segments exercise the
-        // default-registry rebuild path without tripping any orphan logic.
+        // structured-segment rebuild path without tripping any orphan logic.
         let (restored, rootId) = try await Self.recordAndRestore(
             journaled: [
                 Self.event(correlationID: "run-1", kind: .progress, detail: "10%"),
@@ -489,8 +489,8 @@ struct SessionTreeRestorationLostRunTests {
     private static func journaledOperationEvents(in events: [TranscriptEvent]) -> [OperationEvent] {
         events.flatMap { event in
             (event.entry?.segments ?? []).compactMap { segment in
-                guard case .custom(_, let discriminator, let contentJSON, _) = segment,
-                    discriminator == OperationEventSegment.typeDiscriminator
+                guard case .structure(_, let schemaName, let contentJSON) = segment,
+                    schemaName == OperationEventSegment.schemaName
                 else { return nil }
                 return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
             }

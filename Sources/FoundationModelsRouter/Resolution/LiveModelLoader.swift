@@ -186,7 +186,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// Manufactures a live session backend seeded from an existing transcript,
     /// with `tools` threaded to the underlying `LanguageModelSession` so the
     /// model can call them — the seam a restored session tree
-    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``) needs to
+    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``) needs to
     /// give a restored node real, live tool-calling instead of `tools: []`.
     ///
     /// Builds the new `LanguageModelSession` directly over `transcript` via
@@ -838,7 +838,19 @@ public struct LiveModelLoader: ModelLoader {
         let modelConfiguration = configuration(for: ref)
         let model = MLXLanguageModel(
             configuration: modelConfiguration,
-            capabilities: [.guidedGeneration, .toolCalling],
+            // `.reasoning` is declared for every model this loader builds, not
+            // only the ones that reason. A model that always reasons and cannot
+            // be turned off — Muse Glimmer, the model the gated suites load —
+            // throws at the first unconstrained turn when `.reasoning` is
+            // omitted ("This model always reasons; .reasoning must be declared
+            // at MLXLanguageModel init to receive its output"), because the
+            // engine would otherwise have to re-render the prompt with thinking
+            // off and it cannot. Declaring it costs a toggleable model nothing
+            // the router throws away: reasoning arrives as `.reasoning`
+            // transcript entries, which the recording path already maps
+            // (``TranscriptEntryMapper``) and the event path already surfaces
+            // as ``SessionEvent/reasoningDelta(_:)``.
+            capabilities: [.guidedGeneration, .toolCalling, .reasoning],
             weightsLocation: weightsLocation,
             load: { configuration, mlxProgressHandler in
                 try await loadModelContainer(

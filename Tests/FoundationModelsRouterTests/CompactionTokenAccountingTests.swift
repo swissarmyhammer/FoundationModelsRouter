@@ -108,18 +108,16 @@ struct CompactionTokenAccountingTests {
             ]
             if includingCompactionSegment {
                 segments.append(
-                    .custom(
-                        CompactionSegment(
-                            content: CompactionSegment.Content(
-                                liveWindowEntryIds: (0..<10).map { _ in UUID().uuidString },
-                                foldedEntryIds: (0..<8).map { _ in UUID().uuidString },
-                                tokensBefore: 2074,
-                                tokensAfter: 1843,
-                                stagesApplied: ["ToolOutputElision", "TurnTruncation", "Summarization"],
-                                promptName: CompactionPrompt.default.name
-                            )
+                    CompactionSegment(
+                        content: CompactionSegment.Content(
+                            liveWindowEntryIds: (0..<10).map { _ in UUID().uuidString },
+                            foldedEntryIds: (0..<8).map { _ in UUID().uuidString },
+                            tokensBefore: 2074,
+                            tokensAfter: 1843,
+                            stagesApplied: ["ToolOutputElision", "TurnTruncation", "Summarization"],
+                            promptName: CompactionPrompt.default.name
                         )
-                    )
+                    ).transcriptSegment
                 )
             }
             return .response(Transcript.Response(id: "boundary", segments: segments))

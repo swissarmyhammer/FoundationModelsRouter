@@ -186,9 +186,10 @@ struct SummarizationStageTests {
         }
         #expect(textSegment.content == unwrapped.summary)
 
-        guard case .custom(let customSegment) = response.segments[1], let segment = customSegment as? CompactionSegment
+        guard case .structure(let structuredSegment) = response.segments[1],
+            let segment = try CompactionSegment(structuredSegment: structuredSegment)
         else {
-            Issue.record("expected the summary entry's second segment to be a .custom CompactionSegment")
+            Issue.record("expected the summary entry's second segment to be a .structure CompactionSegment")
             return
         }
         // Turns 1 and 2 are old (turns 3...6 are the 4-turn recency window).
@@ -264,8 +265,8 @@ struct SummarizationStageTests {
         #expect(!sentPrompt.contains(CompactionPrompt.default.text))
 
         guard case .response(let response) = Array(unwrapped.transcript)[1],
-            case .custom(let segment) = response.segments.last,
-            let compaction = segment as? CompactionSegment
+            case .structure(let segment) = response.segments.last,
+            let compaction = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the synthesized summary entry to carry a CompactionSegment")
             return
@@ -753,8 +754,8 @@ struct SummarizationStageTests {
 
         let entries = Array(resultTranscript)
         #expect(entries.first == TranscriptFixtures.makeInstructions())
-        guard case .response(let response) = entries[1], case .custom(let segment) = response.segments.last,
-            let compaction = segment as? CompactionSegment
+        guard case .response(let response) = entries[1], case .structure(let segment) = response.segments.last,
+            let compaction = try CompactionSegment(structuredSegment: segment)
         else {
             Issue.record("expected the compacted transcript's second entry to carry a CompactionSegment")
             return

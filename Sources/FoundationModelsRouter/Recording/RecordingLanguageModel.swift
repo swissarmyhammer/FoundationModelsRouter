@@ -310,7 +310,7 @@ actor RecordingLanguageModelState {
     /// handle's own effective transcript — `nil` for a fresh handle, which
     /// inherits nothing, or the resumed session's reconstructed transcript
     /// entry count for one born via
-    /// ``RoutedModel/makeLanguageModel(resuming:registry:)``. Recorded
+    /// ``RoutedModel/makeLanguageModel(resuming:)``. Recorded
     /// verbatim as this handle's ``SessionSidecar/forkedAtEntryCount``.
     nonisolated let forkedAtEntryCount: Int?
     /// This handle's cut point in ``parentId``'s recorded history's own
@@ -328,7 +328,7 @@ actor RecordingLanguageModelState {
     /// The last-seen transcript snapshot every diff runs against; updated
     /// after each successful diff (see ``diffAndRecord(current:usage:)``). Primed
     /// to the resumed session's own reconstructed transcript for a handle
-    /// born via ``RoutedModel/makeLanguageModel(resuming:registry:)``, so its
+    /// born via ``RoutedModel/makeLanguageModel(resuming:)``, so its
     /// first diff records only genuinely new entries — never the whole
     /// restored history into a fresh directory.
     private var lastSeen: Transcript
@@ -368,7 +368,7 @@ actor RecordingLanguageModelState {
     ///     fresh handle. See ``forkedAtHistoryOrdinal``.
     ///   - initialTranscript: The transcript to prime ``lastSeen`` with —
     ///     the resumed session's own reconstructed transcript for a handle
-    ///     born via ``RoutedModel/makeLanguageModel(resuming:registry:)``, or
+    ///     born via ``RoutedModel/makeLanguageModel(resuming:)``, or
     ///     empty for a fresh handle.
     init(
         routerId: ULID,
@@ -693,7 +693,7 @@ actor RecordingLanguageModelState {
             forkedAtEntryCount: forkedAtEntryCount,
             // The resume cut in the recorded history's own append-only
             // coordinates, computed by
-            // ``RoutedModel/makeLanguageModel(resuming:registry:)`` at resume
+            // ``RoutedModel/makeLanguageModel(resuming:)`` at resume
             // time — `nil` for a fresh handle, which has no parent to cut.
             // Without it, a reader falls back to `forkedAtEntryCount`, which
             // a compacted resume makes smaller than the raw event count, and

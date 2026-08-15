@@ -591,22 +591,21 @@ struct DiscoveryPrimingTests {
         // entry, so the two views of one drained event never drift apart
         // (see ``OperationEventSegment/description``).
         let segments = try #require(realPrompt.entry?.segments)
-        guard case .custom(_, let discriminator, let contentJSON, let description) = segments.last else {
-            Issue.record("expected the real prompt entry to end with the drained event's .custom segment")
+        guard case .structure(_, let schemaName, let contentJSON) = segments.last else {
+            Issue.record("expected the real prompt entry to end with the drained event's .structure segment")
             return
         }
-        #expect(discriminator == OperationEventSegment.typeDiscriminator)
-        #expect(description == expectedLine)
+        #expect(schemaName == OperationEventSegment.schemaName)
         let decoded = try JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
         #expect(decoded == posted)
+        #expect(OperationEventSegment.renderedLine(for: decoded) == expectedLine)
 
-        // The synthetic discovery prompt carries no custom segment.
+        // The synthetic discovery prompt carries no event segment.
         let seedSegments = seedPrompt.entry?.segments ?? []
-        let seedCarriesCustomSegment = seedSegments.contains { segment in
-            if case .custom = segment { return true }
-            return false
+        let seedCarriesEventSegment = seedSegments.contains { segment in
+            segment.persistedStructure?.schemaName == OperationEventSegment.schemaName
         }
-        #expect(!seedCarriesCustomSegment)
+        #expect(!seedCarriesEventSegment)
     }
 
     @Test("a fork inherits its parent's priming opt-in")

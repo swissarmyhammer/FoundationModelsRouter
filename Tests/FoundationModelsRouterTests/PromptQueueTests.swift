@@ -395,7 +395,7 @@ struct PromptQueueTests {
         _ = await session.enqueue(
             prompt: Transcript.Prompt(segments: [
                 .text(Transcript.TextSegment(content: "alpha ")),
-                .custom(OperationEventSegment(id: "seg-1", content: event)),
+                OperationEventSegment(id: "seg-1", content: event).transcriptSegment,
                 .text(Transcript.TextSegment(content: "omega")),
             ]))
 

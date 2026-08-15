@@ -85,7 +85,7 @@ enum TranscriptFixtures {
     }
 
     /// Builds a raw compaction boundary `.response` entry: a text segment
-    /// with `summaryText` (id `<entryId>-text`) plus a `.custom`
+    /// with `summaryText` (id `<entryId>-text`) plus a `.structure`
     /// ``CompactionSegment`` — the shape
     /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` produces,
     /// built directly so the segment id is deterministic (the production
@@ -116,16 +116,16 @@ enum TranscriptFixtures {
                 id: entryId,
                 segments: [
                     .text(Transcript.TextSegment(id: "\(entryId)-text", content: summaryText)),
-                    .custom(
-                        CompactionSegment(
-                            id: segmentId,
-                            content: CompactionSegment.Content(
-                                liveWindowEntryIds: [entryId],
-                                foldedEntryIds: ["folded-1"],
-                                tokensBefore: tokensBefore,
-                                tokensAfter: tokensAfter,
-                                stagesApplied: ["Summarization"],
-                                promptName: "default"))),
+                    CompactionSegment(
+                        id: segmentId,
+                        content: CompactionSegment.Content(
+                            liveWindowEntryIds: [entryId],
+                            foldedEntryIds: ["folded-1"],
+                            tokensBefore: tokensBefore,
+                            tokensAfter: tokensAfter,
+                            stagesApplied: ["Summarization"],
+                            promptName: "default")
+                    ).transcriptSegment,
                 ]))
     }
 
@@ -159,11 +159,10 @@ enum TranscriptFixtures {
                 entryId: entryId,
                 segments: [
                     .text(id: "\(entryId)-text", content: summaryText),
-                    .custom(
+                    .structure(
                         id: "\(entryId)-segment",
-                        typeDiscriminator: CompactionSegment.typeDiscriminator,
-                        contentJSON: contentJSON,
-                        description: nil
+                        schemaName: CompactionSegment.schemaName,
+                        contentJSON: contentJSON
                     ),
                 ],
                 assetIds: []

@@ -5,21 +5,20 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task vchknhc (compaction epic — compaction_plan.md §1.2,
-/// build-order step 2): ``CompactionSegment``, the ``PersistableCustomSegment``
-/// carrying one compaction's fold metadata, and its default registration in
-/// ``CustomSegmentRegistry/routerDefault``.
+/// build-order step 2): ``CompactionSegment``, the ``PersistableStructuredSegment``
+/// carrying one compaction's fold metadata.
 ///
 /// Everything runs hermetically — stub `LoadedLLMContainer`s and backends, a
 /// `JSONLRecorder` writing into a temp directory — so the suite needs no
 /// network and no GPU. Builds on the entry-id findings from the compaction
 /// spike (task dws80ms, ``CompactionSpikeTests``): a synthesized `.response`
-/// entry carrying a `.custom` segment round-trips through the recording
+/// entry carrying a `.structure` segment round-trips through the recording
 /// mirror with no production changes needed for the mapper/reconstruction
 /// side; what this suite adds is the concrete ``CompactionSegment`` type
-/// itself and proof that every reconstruction entry point's *default*
-/// `registry:` argument now knows about it, so a compacted session restores
-/// with zero consumer configuration.
-@Suite("CompactionSegment: Codable round trip, recording-mirror round trip, and default-registry restoration")
+/// itself and proof that each reconstruction entry point rebuilds it from the
+/// persisted schema name alone, so a compacted session restores with zero
+/// consumer configuration.
+@Suite("CompactionSegment: Codable round trip, recording-mirror round trip, and configuration-free restoration")
 struct CompactionSegmentTests {
     // MARK: - Fixture content
 
@@ -124,22 +123,22 @@ struct CompactionSegmentTests {
     func compactionSegmentIsSendable() {
         // Locks in the Sendable guarantee a segment relies on to cross
         // actor/task boundaries. The conformance is inherited through
-        // PersistableCustomSegment -> Transcript.CustomSegment (which refines
-        // Sendable); the explicit restatement on CompactionSegment's
-        // declaration is documentation. This call type-checks as long as the
-        // guarantee holds, from either source.
+        // PersistableStructuredSegment (which refines Sendable); the explicit
+        // restatement on CompactionSegment's declaration is documentation.
+        // This call type-checks as long as the guarantee holds, from either
+        // source.
         func requiresSendable<T: Sendable>(_: T.Type) {}
         requiresSendable(CompactionSegment.self)
     }
 
-    @Test("CompactionSegment's default typeDiscriminator is the type's fully-qualified name")
-    func defaultTypeDiscriminatorIsFullyQualifiedName() {
-        #expect(CompactionSegment.typeDiscriminator == String(reflecting: CompactionSegment.self))
+    @Test("CompactionSegment's default schemaName is the type's fully-qualified name")
+    func defaultSchemaNameIsFullyQualifiedName() {
+        #expect(CompactionSegment.schemaName == String(reflecting: CompactionSegment.self))
     }
 
     // MARK: - Mapper round trip: a summary entry carrying text + CompactionSegment
 
-    @Test("a synthesized summary .response entry carrying a text segment and a CompactionSegment round-trips through TranscriptEntryMapper using CustomSegmentRegistry.routerDefault")
+    @Test("a synthesized summary .response entry carrying a text segment and a CompactionSegment round-trips through TranscriptEntryMapper")
     func compactionSegmentRoundTripsThroughMapper() throws {
         let content = Self.makeContent()
         let segment = CompactionSegment(id: "compaction-1", content: content)
@@ -148,7 +147,7 @@ struct CompactionSegmentTests {
                 id: "summary-1",
                 segments: [
                     .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: ...")),
-                    .custom(segment),
+                    segment.transcriptSegment,
                 ]
             )
         )
@@ -157,12 +156,12 @@ struct CompactionSegmentTests {
         #expect(kind == .response)
         #expect(text == "Summary: ...")
 
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: .routerDefault)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
         guard case .response(let rebuiltResponse) = rebuilt,
-            case .custom(let rebuiltSegment) = rebuiltResponse.segments.last,
-            let rebuiltCompaction = rebuiltSegment as? CompactionSegment
+            case .structure(let rebuiltSegment) = rebuiltResponse.segments.last,
+            let rebuiltCompaction = try CompactionSegment(structuredSegment: rebuiltSegment)
         else {
-            Issue.record("expected a rebuilt .response entry with a .custom CompactionSegment")
+            Issue.record("expected a rebuilt .response entry with a .structure CompactionSegment")
             return
         }
         #expect(rebuiltCompaction.id == "compaction-1")
@@ -248,7 +247,7 @@ struct CompactionSegmentTests {
                     id: "summary-1",
                     segments: [
                         .text(Transcript.TextSegment(id: "summary-text-1", content: "Summary: prior turns folded.")),
-                        .custom(CompactionSegment(id: "compaction-1", content: content)),
+                        CompactionSegment(id: "compaction-1", content: content).transcriptSegment,
                     ]
                 )
             ),
@@ -358,11 +357,11 @@ struct CompactionSegmentTests {
         )
     }
 
-    // MARK: - Recording-mirror round trip, all-default arguments (effectiveTranscript)
+    // MARK: - Recording-mirror round trip (effectiveTranscript)
 
-    @Test("a synthesized transcript carrying a CompactionSegment records through the mirror and reconstructs identically through effectiveTranscript's default (routerDefault) registry")
+    @Test("a synthesized transcript carrying a CompactionSegment records through the mirror and reconstructs identically through effectiveTranscript")
     @MainActor
-    func compactionSegmentRoundTripsThroughRecordingMirrorWithDefaultRegistry() async throws {
+    func compactionSegmentRoundTripsThroughRecordingMirror() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -386,16 +385,16 @@ struct CompactionSegmentTests {
         _ = try await session.respond(to: "irrelevant — this turn exists only to trigger the recording chokepoint")
 
         let tree = try TranscriptTree.load(under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-        // No registry argument: exercises effectiveTranscript's default,
-        // CustomSegmentRegistry.routerDefault.
+        // No caller setup at all: the segment rebuilds from its own persisted
+        // schema name.
         let reconstructed = Array(try tree.effectiveTranscript(forSession: session.id))
 
         #expect(reconstructed == synthesized)
         guard case .response(let response) = reconstructed.last,
-            case .custom(let segment) = response.segments.last,
-            let compaction = segment as? CompactionSegment
+            case .structure(let segment) = response.segments.last,
+            let compaction = try CompactionSegment(structuredSegment: segment)
         else {
-            Issue.record("expected the reconstructed summary entry to carry a .custom CompactionSegment")
+            Issue.record("expected the reconstructed summary entry to carry a .structure CompactionSegment")
             return
         }
         #expect(compaction.content.foldedEntryIds == ["old-prompt-1", "old-response-1"])
@@ -403,11 +402,11 @@ struct CompactionSegmentTests {
         #expect(compaction.content.pendingRuns == [Self.fixturePendingRun])
     }
 
-    // MARK: - restoreSessionTree, all-default arguments
+    // MARK: - restoreSessionTree
 
-    @Test("restoring a session tree containing a CompactionSegment through restoreSessionTree's default (routerDefault) registry succeeds with no caller configuration")
+    @Test("restoring a session tree containing a CompactionSegment succeeds with no caller configuration")
     @MainActor
-    func restoreSessionTreeWithDefaultArgumentsRestoresCompactionSegment() async throws {
+    func restoreSessionTreeRestoresCompactionSegment() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -446,8 +445,8 @@ struct CompactionSegmentTests {
         )
         let profile2 = try await router2.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        // No registry argument: exercises restoreSessionTree's default,
-        // CustomSegmentRegistry.routerDefault.
+        // No caller setup at all: the segment rebuilds from its own persisted
+        // schema name.
         let restored = try await profile2.standard.restoreSessionTree(root: root.id)
 
         #expect(restored.root.id == root.id)
@@ -458,11 +457,11 @@ struct CompactionSegmentTests {
         #expect(restoredTranscript == synthesized)
     }
 
-    // MARK: - makeLanguageModel(resuming:), all-default arguments
+    // MARK: - makeLanguageModel(resuming:)
 
-    @Test("resuming a session whose recorded transcript carries a CompactionSegment through makeLanguageModel(resuming:)'s default (routerDefault) registry succeeds with no caller configuration")
+    @Test("resuming a session whose recorded transcript carries a CompactionSegment succeeds with no caller configuration")
     @MainActor
-    func makeLanguageModelResumingWithDefaultArgumentsRestoresCompactionSegment() async throws {
+    func makeLanguageModelResumingRestoresCompactionSegment() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -488,90 +487,68 @@ struct CompactionSegmentTests {
         let synthesized = Self.makeSynthesizedTranscript()
         await parentHandle.sync(Transcript(entries: synthesized))
 
-        // No registry argument: exercises makeLanguageModel(resuming:)'s
-        // default, CustomSegmentRegistry.routerDefault.
+        // No caller setup at all: the segment rebuilds from its own persisted
+        // schema name.
         let (_, restored) = try profile.standard.makeLanguageModel(resuming: parentHandle.state.sessionId)
 
         #expect(Array(restored) == synthesized)
         guard case .response(let response) = Array(restored).last,
-            case .custom(let segment) = response.segments.last,
-            let compaction = segment as? CompactionSegment
+            case .structure(let segment) = response.segments.last,
+            let compaction = try CompactionSegment(structuredSegment: segment)
         else {
-            Issue.record("expected the resumed transcript's summary entry to carry a .custom CompactionSegment")
+            Issue.record("expected the resumed transcript's summary entry to carry a .structure CompactionSegment")
             return
         }
         #expect(compaction.content.promptName == "default")
         #expect(compaction.content.pendingRuns == [Self.fixturePendingRun])
     }
 
-    // MARK: - Duplicate/consumer registration does not trap
+    // MARK: - A consumer's own segment type lives alongside the router's
 
     private struct Note: Codable, Equatable, Sendable {
         var body: String
     }
 
-    private struct NoteSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+    private struct NoteSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible {
         let id: String
         let content: Note
 
         var description: String { "Note: \(content.body)" }
     }
 
-    @Test("re-registering CompactionSegment on top of CustomSegmentRegistry.routerDefault does not trap, and it still round-trips")
-    func reregisteringCompactionSegmentOnRouterDefaultDoesNotTrap() throws {
-        var registry = CustomSegmentRegistry.routerDefault
-        registry.register(CompactionSegment.self)
-
-        let content = Self.makeContent()
-        let entry = Transcript.Entry.response(
-            Transcript.Response(segments: [.custom(CompactionSegment(id: "c1", content: content))])
-        )
-        let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: registry)
-        guard case .response(let response) = rebuilt, case .custom(let segment) = response.segments.first,
-            let compaction = segment as? CompactionSegment
-        else {
-            Issue.record("expected a rebuilt .response entry with a .custom CompactionSegment")
-            return
-        }
-        #expect(compaction.content == content)
-    }
-
-    @Test("a consumer registering their own custom segment alongside CustomSegmentRegistry.routerDefault does not trap, and both segments round-trip")
-    func consumerRegisteringOwnSegmentAlongsideRouterDefaultDoesNotTrap() throws {
-        var registry = CustomSegmentRegistry.routerDefault
-        registry.register(NoteSegment.self)
-
+    @Test("a consumer's own segment type and the router's CompactionSegment both round-trip, each keyed on its own schema name")
+    func consumerSegmentAndCompactionSegmentBothRoundTrip() throws {
         let compactionContent = Self.makeContent()
         let compactionEntry = Transcript.Entry.response(
-            Transcript.Response(segments: [.custom(CompactionSegment(id: "c1", content: compactionContent))])
+            Transcript.Response(segments: [CompactionSegment(id: "c1", content: compactionContent).transcriptSegment])
         )
         let noteEntry = Transcript.Entry.response(
-            Transcript.Response(segments: [.custom(NoteSegment(id: "n1", content: Note(body: "hello")))])
+            Transcript.Response(segments: [NoteSegment(id: "n1", content: Note(body: "hello")).transcriptSegment])
         )
+        #expect(CompactionSegment.schemaName != NoteSegment.schemaName)
 
         for (entry, assertion): (Transcript.Entry, (Transcript.Entry) -> Void) in [
             (compactionEntry, { rebuilt in
-                guard case .response(let response) = rebuilt, case .custom(let segment) = response.segments.first,
-                    let compaction = segment as? CompactionSegment
+                guard case .response(let response) = rebuilt, case .structure(let segment) = response.segments.first,
+                    let compaction = try? CompactionSegment(structuredSegment: segment)
                 else {
-                    Issue.record("expected a rebuilt .response entry with a .custom CompactionSegment")
+                    Issue.record("expected a rebuilt .response entry with a .structure CompactionSegment")
                     return
                 }
                 #expect(compaction.content == compactionContent)
             }),
             (noteEntry, { rebuilt in
-                guard case .response(let response) = rebuilt, case .custom(let segment) = response.segments.first,
-                    let note = segment as? NoteSegment
+                guard case .response(let response) = rebuilt, case .structure(let segment) = response.segments.first,
+                    let note = try? NoteSegment(structuredSegment: segment)
                 else {
-                    Issue.record("expected a rebuilt .response entry with a .custom NoteSegment")
+                    Issue.record("expected a rebuilt .response entry with a .structure NoteSegment")
                     return
                 }
                 #expect(note.content == Note(body: "hello"))
             }),
         ] {
             let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
-            let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: registry)
+            let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
             assertion(rebuilt)
         }
     }

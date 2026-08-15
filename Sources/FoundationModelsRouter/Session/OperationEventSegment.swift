@@ -1,7 +1,7 @@
 import Foundation
 import FoundationModels
 
-/// A ``PersistableCustomSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a turn.
+/// A ``PersistableStructuredSegment`` durably recording one drained ``OperationEvent`` on the `.prompt` entry it rode into a turn.
 ///
 /// ``RoutedSessionActor``'s turn chokepoint drains
 /// ``SessionOutbox/drainForDispatch()`` at the start of every turn and
@@ -18,13 +18,12 @@ import FoundationModels
 ///
 /// `content` is the event itself: `OperationEvent` is already
 /// `Codable & Sendable & Equatable`, exactly what
-/// `Transcript.CustomSegment.Content` requires, so no intermediate wrapper is
-/// needed. Round-trips through ``TranscriptEntryMapper/entry(from:kind:registry:)``
-/// with zero caller setup: Router pre-registers this type in
-/// ``CustomSegmentRegistry/routerDefault`` (exactly as it does
-/// ``CompactionSegment``), so every default-argument reconstruction entry
-/// point rebuilds it out of the box.
-public struct OperationEventSegment: PersistableCustomSegment, Equatable, CustomStringConvertible, Sendable {
+/// ``PersistableStructuredSegment`` requires, so no intermediate wrapper is
+/// needed. The segment travels as a `Transcript.StructuredSegment` under the
+/// schema name `FoundationModelsRouter.OperationEventSegment`, and it
+/// round-trips through ``TranscriptEntryMapper/entry(from:kind:)`` with zero
+/// caller setup, exactly as ``CompactionSegment`` does.
+public struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
     /// A unique identifier for this segment — a fresh UUID for an event newly drained from the outbox, or the persisted id when rebuilding from disk.
     public let id: String
 
@@ -36,7 +35,7 @@ public struct OperationEventSegment: PersistableCustomSegment, Equatable, Custom
     /// - Parameters:
     ///   - id: This segment's id — a fresh one for an event newly drained
     ///     from the outbox, or the persisted id when rebuilding one from disk
-    ///     (this initializer also satisfies ``PersistableCustomSegment``'s
+    ///     (this initializer also satisfies ``PersistableStructuredSegment``'s
     ///     `init(id:content:) throws` requirement: a non-throwing
     ///     implementation is a valid conformance for a throwing requirement).
     ///   - content: The wrapped event.

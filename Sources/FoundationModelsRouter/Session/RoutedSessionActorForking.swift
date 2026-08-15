@@ -222,14 +222,14 @@ extension RoutedSessionActor {
     /// nothing already written is ever revised away.
     ///
     /// **Restore-time decision, stated deliberately:** these `.toolOutput`
-    /// events are entry-kind, so ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
+    /// events are entry-kind, so ``TranscriptTree/effectiveTranscript(forSession:view:)``
     /// rebuilds each one into the restored transcript as a
     /// `Transcript.Entry.toolOutput` (with no paired `.toolCalls` — the run
     /// was detached, not model-invoked). That is intended: a restored
     /// session's model sees how the detached runs it left behind actually
-    /// ended. ``OperationEventSegment`` is registered in
-    /// ``CustomSegmentRegistry/routerDefault``, so a default-registry
-    /// restore of a closed session succeeds with no caller setup.
+    /// ended. ``OperationEventSegment`` rebuilds from its own persisted
+    /// schema name, so restoring a closed session succeeds with no caller
+    /// setup.
     ///
     /// Journaling brings the session meta line with it: a close that
     /// journals anything first records the `.session` meta event (exactly as

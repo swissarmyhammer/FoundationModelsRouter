@@ -191,19 +191,17 @@ struct NoteCompactionTests {
                 id: id,
                 segments: [
                     .text(Transcript.TextSegment(id: "\(id)-text", content: summaryText)),
-                    .custom(
-                        CompactionSegment(
-                            id: "\(id)-segment",
-                            content: CompactionSegment.Content(
-                                liveWindowEntryIds: liveWindowEntryIds,
-                                foldedEntryIds: foldedEntryIds,
-                                tokensBefore: 12_000,
-                                tokensAfter: 3_000,
-                                stagesApplied: ["TurnTruncation", "Summarization"],
-                                promptName: "default"
-                            )
+                    CompactionSegment(
+                        id: "\(id)-segment",
+                        content: CompactionSegment.Content(
+                            liveWindowEntryIds: liveWindowEntryIds,
+                            foldedEntryIds: foldedEntryIds,
+                            tokensBefore: 12_000,
+                            tokensAfter: 3_000,
+                            stagesApplied: ["TurnTruncation", "Summarization"],
+                            promptName: "default"
                         )
-                    ),
+                    ).transcriptSegment,
                 ]
             )
         )
@@ -281,11 +279,11 @@ struct NoteCompactionTests {
 
         // The appended entry round-trips a CompactionSegment through the mapper.
         let entryPayload = try #require(appended.entry)
-        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind, registry: .routerDefault)
-        guard case .response(let response) = rebuilt, case .custom(let segment) = response.segments.last,
-            let compactionSegment = segment as? CompactionSegment
+        let rebuilt = try TranscriptEntryMapper.entry(from: entryPayload, kind: appended.kind)
+        guard case .response(let response) = rebuilt, case .structure(let segment) = response.segments.last,
+            let compactionSegment = try CompactionSegment(structuredSegment: segment)
         else {
-            Issue.record("expected the appended entry to carry a .custom CompactionSegment")
+            Issue.record("expected the appended entry to carry a .structure CompactionSegment")
             return
         }
         #expect(compactionSegment.content.foldedEntryIds == [foldedPrompt1.id, foldedResponse1.id])

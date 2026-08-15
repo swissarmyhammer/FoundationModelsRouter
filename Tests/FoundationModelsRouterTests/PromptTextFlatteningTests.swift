@@ -35,7 +35,7 @@ struct PromptTextFlatteningTests {
             tool: "shell", op: "run command", correlationID: "c1", kind: .completed, detail: "exit 0")
         let prompt = Transcript.Prompt(segments: [
             .text(Transcript.TextSegment(content: "alpha ")),
-            .custom(OperationEventSegment(id: "seg-1", content: event)),
+            OperationEventSegment(id: "seg-1", content: event).transcriptSegment,
             .text(Transcript.TextSegment(content: "omega")),
         ])
 
@@ -47,7 +47,7 @@ struct PromptTextFlatteningTests {
         let event = OperationEvent(
             tool: "shell", op: "run command", correlationID: "c2", kind: .completed, detail: "exit 0")
         let customOnly = Transcript.Prompt(segments: [
-            .custom(OperationEventSegment(id: "seg-2", content: event))
+            OperationEventSegment(id: "seg-2", content: event).transcriptSegment
         ])
 
         #expect(TranscriptEntryMapper.flattenedText(Transcript.Prompt(segments: [])) == "")

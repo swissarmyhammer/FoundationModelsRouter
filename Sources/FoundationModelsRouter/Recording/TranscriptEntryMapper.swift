@@ -11,7 +11,7 @@ private let transcriptEntryMapperLogger = makeModuleLogger(category: "Recording"
 /// A failure reconstructing a `Transcript.Entry` from a persisted
 /// ``TranscriptEntryPayload``.
 ///
-/// ``TranscriptEntryMapper/entry(from:kind:registry:)`` throws one of these
+/// ``TranscriptEntryMapper/entry(from:kind:)`` throws one of these
 /// rather than crashing or silently rebuilding an incomplete/incorrect entry
 /// whenever a payload cannot be honestly turned back into the SDK value it
 /// mirrors.
@@ -30,11 +30,6 @@ public enum TranscriptEntryReconstructionError: Error, Equatable {
     /// A persisted JSON string — a `GenerationSchema`, a `GeneratedContent`,
     /// or tool-call arguments — failed to decode.
     case invalidJSON(context: String, underlying: String)
-
-    /// A `.custom` segment's persisted type-discriminator has no
-    /// corresponding type registered in the ``CustomSegmentRegistry`` passed
-    /// to reconstruction.
-    case unregisteredCustomSegmentType(discriminator: String)
 
     /// `kind` is a router-only kind (``TranscriptEvent/Kind/session``,
     /// ``TranscriptEvent/Kind/embedding``, ``TranscriptEvent/Kind/divergence``)
@@ -68,8 +63,8 @@ enum TranscriptEntryEncodingError: Error, Equatable {
 /// `Transcript.Entry` has exactly six cases (`.instructions`, `.prompt`,
 /// `.toolCalls`, `.toolOutput`, `.response`, `.reasoning`; see plan.md's
 /// "Transcript fidelity" section) and every one of them, plus every segment
-/// case (`.text`, `.structure`, `.attachment`, `.custom`), is mapped here in
-/// both directions.
+/// case (`.text`, `.structure`, `.attachment`), is mapped here in both
+/// directions.
 ///
 /// **Documented, deliberate degradations** (each covered by a test rather
 /// than silently assumed): `GenerationOptions.sampling` is dropped — not
@@ -110,10 +105,12 @@ enum TranscriptEntryEncodingError: Error, Equatable {
 /// `ImageAttachment.url` is `nil` (an in-memory image with no backing file —
 /// the only URL-based rebuild path is `ImageAttachment(imageURL:)`) degrades
 /// on rebuild to a text segment carrying the attachment's label, never a
-/// throw. `.custom` segments are **not** on this list — they round-trip via
-/// ``CustomSegmentRegistry``; only their persisted *description* is a reader
-/// convenience the rebuild never consumes, because the conforming type's own
-/// computed `description` is authoritative (pinned by test).
+/// throw. A legacy `.custom` payload — written before the SDK removed
+/// `Transcript.Segment.custom` — is **not** on this list either: it rebuilds
+/// as the `.structure` segment it now is, under its persisted type
+/// discriminator as the schema name. Only its persisted *description* is
+/// lost, a reader convenience the rebuild never consumed, because the typed
+/// value's own computed `description` is authoritative (pinned by test).
 ///
 /// **Record-time encode failure** is loud, not silent: `jsonString(for:context:)`
 /// throws the typed ``TranscriptEntryEncodingError`` at the cause, and the
@@ -246,36 +243,30 @@ public enum TranscriptEntryMapper {
     ///   - kind: Which of the six `Transcript.Entry` cases to rebuild, or
     ///     ``TranscriptEvent/Kind/unknown`` for the documented text-only
     ///     degradation.
-    ///   - registry: The registered ``PersistableCustomSegment`` types a
-    ///     `.custom` segment in `payload` may need to rebuild. Defaults to an
-    ///     empty registry, so any `.custom` segment throws
-    ///     ``TranscriptEntryReconstructionError/unregisteredCustomSegmentType(discriminator:)``
-    ///     unless the caller supplies one.
     /// - Returns: The rebuilt entry.
     /// - Throws: ``TranscriptEntryReconstructionError`` when `payload` cannot
-    ///   be honestly rebuilt — stripped content, a missing required field,
-    ///   undecodable JSON, or an unregistered custom-segment discriminator.
+    ///   be honestly rebuilt — stripped content, a missing required field, or
+    ///   undecodable JSON.
     public static func entry(
         from payload: TranscriptEntryPayload,
-        kind: TranscriptEvent.Kind,
-        registry: CustomSegmentRegistry = CustomSegmentRegistry()
+        kind: TranscriptEvent.Kind
     ) throws -> Transcript.Entry {
         guard !payload.contentRemoved else {
             throw TranscriptEntryReconstructionError.contentRemoved(entryId: payload.entryId)
         }
         switch kind {
         case .instructions:
-            return .instructions(try rebuildInstructions(payload, registry: registry))
+            return .instructions(try rebuildInstructions(payload))
         case .prompt:
-            return .prompt(try rebuildPrompt(payload, registry: registry))
+            return .prompt(try rebuildPrompt(payload))
         case .toolCalls:
             return .toolCalls(try rebuildToolCalls(payload))
         case .toolOutput:
-            return .toolOutput(try rebuildToolOutput(payload, registry: registry))
+            return .toolOutput(try rebuildToolOutput(payload))
         case .response:
-            return .response(try rebuildResponse(payload, registry: registry))
+            return .response(try rebuildResponse(payload))
         case .reasoning:
-            return .reasoning(try rebuildReasoning(payload, registry: registry))
+            return .reasoning(try rebuildReasoning(payload))
         case .unknown:
             // The documented unknown-case degradation, rebuild side: the
             // carrier's best-effort text becomes a text-only entry, so
@@ -290,7 +281,7 @@ public enum TranscriptEntryMapper {
             return .response(
                 Transcript.Response(
                     id: payload.entryId,
-                    segments: try requiredSegments(payload, registry: registry)
+                    segments: try requiredSegments(payload)
                 )
             )
         case .session, .embedding, .divergence, .toolCall:
@@ -301,20 +292,18 @@ public enum TranscriptEntryMapper {
     // MARK: - Per-case rebuilders
 
     private static func rebuildInstructions(
-        _ payload: TranscriptEntryPayload,
-        registry: CustomSegmentRegistry
+        _ payload: TranscriptEntryPayload
     ) throws -> Transcript.Instructions {
-        let segments = try requiredSegments(payload, registry: registry)
+        let segments = try requiredSegments(payload)
         let toolDefPayloads = try requireField(payload.toolDefinitions, "toolDefinitions", entryId: payload.entryId)
         let toolDefinitions = try toolDefPayloads.map { try toolDefinition($0, entryId: payload.entryId) }
         return Transcript.Instructions(id: payload.entryId, segments: segments, toolDefinitions: toolDefinitions)
     }
 
     private static func rebuildPrompt(
-        _ payload: TranscriptEntryPayload,
-        registry: CustomSegmentRegistry
+        _ payload: TranscriptEntryPayload
     ) throws -> Transcript.Prompt {
-        let segments = try requiredSegments(payload, registry: registry)
+        let segments = try requiredSegments(payload)
         let options = GenerationOptions(
             samplingMode: nil,
             temperature: payload.options?.temperature,
@@ -360,20 +349,18 @@ public enum TranscriptEntryMapper {
     }
 
     private static func rebuildToolOutput(
-        _ payload: TranscriptEntryPayload,
-        registry: CustomSegmentRegistry
+        _ payload: TranscriptEntryPayload
     ) throws -> Transcript.ToolOutput {
-        try rebuildSegmentedEntry(payload, registry: registry, field: \.toolName, fieldName: "toolName") {
+        try rebuildSegmentedEntry(payload, field: \.toolName, fieldName: "toolName") {
             id, segments, toolName in
             Transcript.ToolOutput(id: id, toolName: toolName, segments: segments)
         }
     }
 
     private static func rebuildResponse(
-        _ payload: TranscriptEntryPayload,
-        registry: CustomSegmentRegistry
+        _ payload: TranscriptEntryPayload
     ) throws -> Transcript.Response {
-        try rebuildSegmentedEntry(payload, registry: registry, field: \.assetIds, fieldName: "assetIds") {
+        try rebuildSegmentedEntry(payload, field: \.assetIds, fieldName: "assetIds") {
             id, segments, assetIds in
             // A response with no asset ids rebuilds through the metadata-less
             // initializer: the assetIDs-based one stamps a synthesized
@@ -387,10 +374,9 @@ public enum TranscriptEntryMapper {
     }
 
     private static func rebuildReasoning(
-        _ payload: TranscriptEntryPayload,
-        registry: CustomSegmentRegistry
+        _ payload: TranscriptEntryPayload
     ) throws -> Transcript.Reasoning {
-        let segments = try requiredSegments(payload, registry: registry)
+        let segments = try requiredSegments(payload)
         return Transcript.Reasoning(id: payload.entryId, segments: segments, signature: payload.signature)
     }
 
@@ -403,7 +389,6 @@ public enum TranscriptEntryMapper {
     ///
     /// - Parameters:
     ///   - payload: The structural payload to rebuild from.
-    ///   - registry: Passed through to segment reconstruction.
     ///   - field: The single required payload field the entry needs beyond
     ///     its segments.
     ///   - fieldName: The field's name, used in the thrown error when it is
@@ -412,12 +397,11 @@ public enum TranscriptEntryMapper {
     ///     required field's unwrapped value.
     private static func rebuildSegmentedEntry<Field, Entry>(
         _ payload: TranscriptEntryPayload,
-        registry: CustomSegmentRegistry,
         field: KeyPath<TranscriptEntryPayload, Field?>,
         fieldName: String,
         construct: (String, [Transcript.Segment], Field) -> Entry
     ) throws -> Entry {
-        let segments = try requiredSegments(payload, registry: registry)
+        let segments = try requiredSegments(payload)
         let value = try requireField(payload[keyPath: field], fieldName, entryId: payload.entryId)
         return construct(payload.entryId, segments, value)
     }
@@ -427,11 +411,10 @@ public enum TranscriptEntryMapper {
     /// when `payload.segments` is `nil` — every entry kind that carries
     /// segments (every kind but `.toolCalls`) requires this field.
     private static func requiredSegments(
-        _ payload: TranscriptEntryPayload,
-        registry: CustomSegmentRegistry
+        _ payload: TranscriptEntryPayload
     ) throws -> [Transcript.Segment] {
         let segmentPayloads = try requireField(payload.segments, "segments", entryId: payload.entryId)
-        return try segmentPayloads.map { try rebuildSegment($0, registry: registry) }
+        return try segmentPayloads.map { try rebuildSegment($0) }
     }
 
     /// Returns `value` unwrapped, or throws
@@ -464,8 +447,8 @@ public enum TranscriptEntryMapper {
     /// segment that was never part of a live `Transcript.Entry` — e.g.
     /// ``RoutedSessionActor`` wrapping a drained ``OperationEvent`` in an
     /// ``OperationEventSegment`` to append onto an already-mapped `.prompt`
-    /// entry's payload — reuses the exact same encoding (discriminator
-    /// resolution, content JSON, description) rather than duplicating it.
+    /// entry's payload — reuses the exact same encoding (schema name and
+    /// content JSON) rather than duplicating it.
     ///
     /// - Parameter segment: The segment to map.
     /// - Returns: The segment's on-disk payload.
@@ -481,8 +464,6 @@ public enum TranscriptEntryMapper {
                 url = image.url?.absoluteString
             }
             return .attachment(id: attachment.id, label: attachment.label, url: url)
-        case .custom(let custom):
-            return customSegmentPayload(custom)
         @unknown default:
             // See the matching `@unknown default` in `event(from:)` above: a
             // future SDK segment case this mapper predates. Degrade to the
@@ -497,28 +478,8 @@ public enum TranscriptEntryMapper {
         }
     }
 
-    /// Opens the `.custom` existential generically so the concrete
-    /// conforming type's `Content` is known at the call site — needed to
-    /// encode `content` and to check for a ``PersistableCustomSegment``
-    /// conformance.
-    private static func customSegmentPayload(_ segment: any Transcript.CustomSegment) -> SegmentPayload {
-        encodeCustomSegment(segment)
-    }
-
-    private static func encodeCustomSegment<S: Transcript.CustomSegment>(_ segment: S) -> SegmentPayload {
-        let discriminator = (S.self as? any PersistableCustomSegment.Type)?.typeDiscriminator
-            ?? String(reflecting: S.self)
-        return .custom(
-            id: segment.id,
-            typeDiscriminator: discriminator,
-            contentJSON: jsonStringOrSentinel(for: segment.content, context: "custom segment \(segment.id) content"),
-            description: segment.description
-        )
-    }
-
     private static func rebuildSegment(
-        _ payload: SegmentPayload,
-        registry: CustomSegmentRegistry
+        _ payload: SegmentPayload
     ) throws -> Transcript.Segment {
         switch payload {
         case .text(let id, let content):
@@ -541,11 +502,19 @@ public enum TranscriptEntryMapper {
             return .text(Transcript.TextSegment(id: id, content: label ?? ""))
 
         case .custom(let id, let typeDiscriminator, let contentJSON, _):
-            // The persisted description is deliberately not read here: the
-            // conforming type's own computed `description` is authoritative,
-            // and the registry rebuilds the segment from its `id` and
-            // `contentJSON` alone (see the documented degradations above).
-            return try registry.rebuildSegment(discriminator: typeDiscriminator, id: id, contentJSON: contentJSON)
+            // The legacy carrier, written before the SDK removed
+            // `Transcript.Segment.custom`. Its type discriminator is the
+            // schema name a ``PersistableStructuredSegment`` writes today, so
+            // it rebuilds as the structured segment it now is. The persisted
+            // description is deliberately not read: the typed value's own
+            // `description` is authoritative.
+            let content = try decodeGeneratedContent(
+                contentJSON,
+                context: "segment \(id) custom content"
+            )
+            return .structure(
+                Transcript.StructuredSegment(id: id, schemaName: typeDiscriminator, content: content)
+            )
 
         case .unknown(let id, let description):
             // The documented unknown-case degradation, rebuild side: the

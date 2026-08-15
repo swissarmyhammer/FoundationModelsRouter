@@ -482,8 +482,8 @@ struct SessionMailboxTests {
             .compactMap { event in
                 guard let segments = event.entry?.segments else { return nil }
                 for segment in segments {
-                    if case .custom(_, let discriminator, let contentJSON, _) = segment,
-                        discriminator == OperationEventSegment.typeDiscriminator
+                    if case .structure(_, let schemaName, let contentJSON) = segment,
+                        schemaName == OperationEventSegment.schemaName
                     {
                         return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
                     }
@@ -549,9 +549,9 @@ struct SessionMailboxTests {
 
     // MARK: - close() then restore
 
-    @Test("a closed session restores with the default registry: the journaled terminal events rebuild as toolOutput entries")
+    @Test("a closed session restores with no caller setup: the journaled terminal events rebuild as toolOutput entries")
     @MainActor
-    func closedSessionRestoresWithDefaultRegistry() async throws {
+    func closedSessionRestoresWithNoCallerSetup() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -574,10 +574,10 @@ struct SessionMailboxTests {
         let token = await parkFakeRun(on: session.mailbox, latch: latch)
         await session.close()
 
-        // "Tear down" and restore under a fresh process with the DEFAULT
-        // registry — no caller setup: `OperationEventSegment` is in
-        // `routerDefault`, so the closed session's journaled terminal events
-        // rebuild rather than throwing unregisteredCustomSegmentType.
+        // "Tear down" and restore under a fresh process with no caller setup
+        // at all: `OperationEventSegment` rebuilds from its own persisted
+        // schema name, so the closed session's journaled terminal events come
+        // back with nothing to register.
         let router2 = Router(
             id: router1.id,
             cacheDir: cacheDir,
@@ -592,15 +592,15 @@ struct SessionMailboxTests {
         #expect(restored.root.id == session.id)
 
         // The reconstructed transcript carries the terminal event as a real
-        // toolOutput entry whose custom segment decodes back to it — the
+        // toolOutput entry whose structured segment decodes back to it — the
         // documented restore-time shape of a closed session's journal.
         let tree = try TranscriptTree.load(
             under: recordingsDir.appendingPathComponent(router1.id.description, isDirectory: true))
         let transcript = try tree.effectiveTranscript(forSession: session.id)
         let restoredTerminals: [OperationEvent] = Array(transcript).compactMap { entry in
             guard case .toolOutput(let output) = entry,
-                case .custom(let segment)? = output.segments.first,
-                let operationSegment = segment as? OperationEventSegment
+                case .structure(let structured)? = output.segments.first,
+                let operationSegment = try? OperationEventSegment(structuredSegment: structured)
             else { return nil }
             return operationSegment.content
         }

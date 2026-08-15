@@ -196,15 +196,17 @@ struct PendingEventInjectionTests {
 
         let segments = try #require(promptEvent.entry?.segments)
         #expect(segments.count == 2)
-        guard case .custom(let id, let discriminator, let contentJSON, let description) = segments.last else {
-            Issue.record("expected a trailing .custom segment")
+        guard case .structure(let id, let schemaName, let contentJSON) = segments.last else {
+            Issue.record("expected a trailing .structure segment")
             return
         }
         #expect(!id.isEmpty)
-        #expect(discriminator == OperationEventSegment.typeDiscriminator)
-        #expect(description == expectedLine)
+        #expect(schemaName == OperationEventSegment.schemaName)
         let decoded = try JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
         #expect(decoded == posted)
+        // The segment and the preamble line are two views of one event, so the
+        // line the segment renders is the line the preamble carried.
+        #expect(OperationEventSegment.renderedLine(for: decoded) == expectedLine)
     }
 
     @Test("a drained event does not reappear on the next turn")
@@ -253,13 +255,13 @@ struct PendingEventInjectionTests {
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         #expect(promptEvent.text == expectedPreamble + "\n\nstatus?")
 
-        let customEvents: [OperationEvent] = (promptEvent.entry?.segments ?? []).compactMap { segment in
-            guard case .custom(_, let discriminator, let contentJSON, _) = segment,
-                discriminator == OperationEventSegment.typeDiscriminator
+        let segmentEvents: [OperationEvent] = (promptEvent.entry?.segments ?? []).compactMap { segment in
+            guard case .structure(_, let schemaName, let contentJSON) = segment,
+                schemaName == OperationEventSegment.schemaName
             else { return nil }
             return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
         }
-        #expect(customEvents == expectedEvents)
+        #expect(segmentEvents == expectedEvents)
     }
 
     // MARK: - A turn whose backend throws before appending anything survives
@@ -361,46 +363,58 @@ struct PendingEventInjectionTests {
         #expect(partials == [entrylessPrompt])
     }
 
-    // MARK: - Registry round-trip
+    // MARK: - Round-trip
 
-    @Test("OperationEventSegment round-trips through CustomSegmentRegistry")
-    func operationEventSegmentRoundTripsThroughRegistry() throws {
+    @Test("OperationEventSegment round-trips through the mapper with no caller setup")
+    func operationEventSegmentRoundTrips() throws {
         let event = Self.event(correlationID: "c9", kind: .completed, detail: "done")
         let segment = OperationEventSegment(id: "seg-1", content: event)
         let entry = Transcript.Entry.prompt(
-            Transcript.Prompt(segments: [.custom(segment)])
+            Transcript.Prompt(segments: [segment.transcriptSegment])
         )
         let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
 
-        var registry = CustomSegmentRegistry()
-        registry.register(OperationEventSegment.self)
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: registry)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
 
         guard case .prompt(let rebuiltPrompt) = rebuilt,
-            case .custom(let rebuiltSegment) = rebuiltPrompt.segments.first,
-            let rebuiltOperationSegment = rebuiltSegment as? OperationEventSegment
+            case .structure(let structured) = rebuiltPrompt.segments.first,
+            let rebuiltOperationSegment = try OperationEventSegment(structuredSegment: structured)
         else {
-            Issue.record("expected a rebuilt .prompt entry with a .custom OperationEventSegment")
+            Issue.record("expected a rebuilt .prompt entry with a .structure OperationEventSegment")
             return
         }
         #expect(rebuiltOperationSegment.content == event)
         #expect(rebuiltOperationSegment.id == "seg-1")
     }
 
-    @Test("rebuilding an OperationEventSegment with an unregistered registry throws, naming the discriminator")
-    func unregisteredOperationEventSegmentThrows() throws {
+    @Test("a legacy .custom carrier rebuilds as the .structure segment it has become")
+    func legacyCustomCarrierRebuildsAsStructure() throws {
         let event = Self.event(correlationID: "c9", kind: .completed, detail: "done")
-        let segment = OperationEventSegment(id: "seg-1", content: event)
-        let entry = Transcript.Entry.prompt(
-            Transcript.Prompt(segments: [.custom(segment)])
+        let contentJSON = String(decoding: try JSONEncoder().encode(event), as: UTF8.self)
+        // The shape a recording written before the macOS 27 SDK removed
+        // `Transcript.Segment.custom` carries on disk.
+        let payload = TranscriptEntryPayload(
+            entryId: "prompt-1",
+            segments: [
+                .custom(
+                    id: "seg-1",
+                    typeDiscriminator: OperationEventSegment.schemaName,
+                    contentJSON: contentJSON,
+                    description: "[shell] run command (c9) completed: done"
+                )
+            ]
         )
-        let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
 
-        #expect(
-            throws: TranscriptEntryReconstructionError.unregisteredCustomSegmentType(
-                discriminator: OperationEventSegment.typeDiscriminator)
-        ) {
-            try TranscriptEntryMapper.entry(from: payload, kind: kind)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: .prompt)
+
+        guard case .prompt(let rebuiltPrompt) = rebuilt,
+            case .structure(let structured) = rebuiltPrompt.segments.first,
+            let rebuiltOperationSegment = try OperationEventSegment(structuredSegment: structured)
+        else {
+            Issue.record("expected the legacy carrier to rebuild as a .structure OperationEventSegment")
+            return
         }
+        #expect(rebuiltOperationSegment.id == "seg-1")
+        #expect(rebuiltOperationSegment.content == event)
     }
 }

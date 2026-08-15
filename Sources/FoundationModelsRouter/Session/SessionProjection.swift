@@ -538,7 +538,7 @@ public final class SessionProjection {
 
     /// Resets this projection to mirror `transcript` — the cold-start
     /// counterpart of ``apply(_:)``, for a session restored from its recording
-    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``)
+    /// (``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``)
     /// whose history predates every live event this projection could observe.
     ///
     /// Installs the rows ``transcriptRows(from:)`` groups from `transcript`'s
@@ -559,7 +559,7 @@ public final class SessionProjection {
     ///
     /// The transcript to seed from comes from ``RoutedSession/transcript`` —
     /// the chosen source, read off the live session — or from
-    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` when
+    /// ``TranscriptTree/effectiveTranscript(forSession:view:)`` when
     /// no live session exists; both produce the same entries for a restored
     /// session.
     ///
@@ -687,7 +687,7 @@ public final class SessionProjection {
     /// The ``TranscriptEntry/Kind/compaction(_:)`` row a compaction boundary
     /// entry implies, or `nil` when `entry` is an ordinary `.response`.
     ///
-    /// A boundary is a `.response` entry carrying a `.custom`
+    /// A boundary is a `.response` entry carrying a `.structure`
     /// ``CompactionSegment`` (see
     /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)``). The
     /// rebuilt ``CompactionResult`` mirrors the one the live fold emitted:
@@ -716,8 +716,8 @@ public final class SessionProjection {
         var segment: CompactionSegment?
         var summaryText: String?
         for candidate in response.segments {
-            if segment == nil, case .custom(let custom) = candidate,
-                let compaction = custom as? CompactionSegment
+            if segment == nil, case .structure(let structured) = candidate,
+                let compaction = try? CompactionSegment(structuredSegment: structured)
             {
                 segment = compaction
             }

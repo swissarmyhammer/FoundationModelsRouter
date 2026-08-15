@@ -1152,8 +1152,8 @@ struct SessionOutboxToolWiringTests {
         let events = await recorder.events
         let promptEvent = try #require(events.last { $0.kind == .prompt })
         let journaled = (promptEvent.entry?.segments ?? []).compactMap { segment -> OperationEvent? in
-            guard case .custom(_, let discriminator, let contentJSON, _) = segment,
-                discriminator == OperationEventSegment.typeDiscriminator
+            guard case .structure(_, let schemaName, let contentJSON) = segment,
+                schemaName == OperationEventSegment.schemaName
             else { return nil }
             return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
         }

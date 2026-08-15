@@ -146,13 +146,13 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
 
 /// One `Transcript.Segment`, mirrored losslessly.
 ///
-/// Apple's SDK has four segment cases: `.text`, `.structure`, `.attachment`,
-/// and `.custom` (an existential over the `CustomSegment` protocol). Three
-/// map directly to concrete fields; `.custom` carries a type-discriminator
-/// string plus its content encoded to JSON, since `CustomSegment.Content` is
-/// protocol-guaranteed `Codable` — persisting a custom segment is always
-/// lossless, only *rebuilding* it needs a registry (a downstream concern).
-/// The extra ``unknown(id:description:)`` case is not one of the SDK's four —
+/// Apple's SDK has three segment cases: `.text`, `.structure`, and
+/// `.attachment`. Each maps directly to concrete fields. The
+/// ``custom(id:typeDiscriminator:contentJSON:description:)`` case is the
+/// legacy carrier for `Transcript.Segment.custom`, which the macOS 27 SDK
+/// removed: nothing writes it now, and reading one rebuilds the `.structure`
+/// segment it has become (see ``TranscriptEntryMapper``).
+/// The extra ``unknown(id:description:)`` case is not an SDK case either —
 /// it is the carrier a segment case *added by a future SDK* records into, so
 /// an SDK addition degrades to text instead of crashing the host (see
 /// ``TranscriptEntryMapper``'s documented degradations).
@@ -432,20 +432,18 @@ extension SegmentPayload {
     /// authored text, schema name, label, and URL, never its `id` or its
     /// `"type"` tag.
     ///
-    /// A `.custom` segment counts as **zero**: nothing in it is ever shown to
-    /// a model. Verified against the backend that does the showing —
-    /// `MLXFoundationModels.TranscriptConverter.extractConcatenatedText`
-    /// renders `.text` (and `.structure`, where a caller asks for it) and
-    /// logs "Skipping non-text segment" for everything else — and the
-    /// router's own renderings agree (``Summarization``'s span rendering and
-    /// ``TranscriptEntryMapper``'s flattened text both read `.text` only).
-    /// The router's one custom segment, ``CompactionSegment``, is deliberately
-    /// built that way: the model-visible part of a compaction boundary is
-    /// synthesized as separate `.text` segments (the summary itself, and
-    /// ``CompactionSegment/renderedPendingRuns(_:)``), and the segment proper
-    /// carries bookkeeping — the `liveWindowEntryIds`/`foldedEntryIds`
-    /// manifest, token counts, stage names — that only a reader of the
-    /// recording ever sees.
+    /// A **router manifest segment** counts as **zero**: the router writes
+    /// one ``PersistableStructuredSegment`` per bookkeeping record
+    /// (``RouterSegmentSchemaNames``), and nothing in one is content a
+    /// reader of the transcript is shown twice. ``CompactionSegment`` is
+    /// deliberately built that way: the model-visible part of a compaction
+    /// boundary is synthesized as separate `.text` segments (the summary
+    /// itself, and ``CompactionSegment/renderedPendingRuns(_:)``), and the
+    /// segment proper carries bookkeeping — the
+    /// `liveWindowEntryIds`/`foldedEntryIds` manifest, token counts, stage
+    /// names — that only a reader of the recording ever needs. The legacy
+    /// `.custom` carrier counts zero for the same reason: it is the same
+    /// manifest, written before the SDK removed `Transcript.Segment.custom`.
     ///
     /// Counting that manifest is the same defect ``contentByteCount``'s owner
     /// (``Compactor/estimatedTokenCount(of:)``) already documents having fixed
@@ -457,11 +455,16 @@ extension SegmentPayload {
     /// estimated tokens, enough that a real fold reported a *larger*
     /// transcript than the one it replaced (2074 -> 2143) and so raised
     /// ``RoutedSession/contextFill``.
+    ///
+    /// A `.structure` segment that is **not** a router manifest — an
+    /// integrator's own structured segment, or a guided response the model
+    /// generated — counts in full: the model does see those.
     var contentByteCount: Int {
         switch self {
         case .text(_, let content):
             return utf8ByteCount(of: [content])
         case .structure(_, let schemaName, let contentJSON):
+            guard !RouterSegmentSchemaNames.all.contains(schemaName) else { return 0 }
             return utf8ByteCount(of: [schemaName, contentJSON])
         case .attachment(_, let label, let url):
             return utf8ByteCount(of: [label, url])
@@ -602,6 +605,26 @@ extension TranscriptEntryPayload {
 }
 
 extension SegmentPayload {
+    /// The schema name and content JSON this segment persists for a
+    /// ``PersistableStructuredSegment`` type, or `nil` for any other segment.
+    ///
+    /// Reads the ``structure(id:schemaName:contentJSON:)`` case written today
+    /// and the legacy ``custom(id:typeDiscriminator:contentJSON:description:)``
+    /// carrier written before the macOS 27 SDK removed
+    /// `Transcript.Segment.custom`. A legacy carrier's type discriminator is
+    /// the same string a schema name carries now, so both forms read the
+    /// same way and one reader serves both.
+    var persistedStructure: (schemaName: String, contentJSON: String)? {
+        switch self {
+        case .structure(_, let schemaName, let contentJSON):
+            return (schemaName, contentJSON)
+        case .custom(_, let typeDiscriminator, let contentJSON, _):
+            return (typeDiscriminator, contentJSON)
+        case .text, .attachment, .unknown:
+            return nil
+        }
+    }
+
     /// Returns a copy with this segment's content emptied, keeping its `id`
     /// and case — and, for ``custom(id:typeDiscriminator:contentJSON:description:)``,
     /// its `typeDiscriminator` — intact.

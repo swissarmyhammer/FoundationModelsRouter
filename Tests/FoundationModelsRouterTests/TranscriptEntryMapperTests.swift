@@ -15,8 +15,7 @@ import Testing
 /// representable field. A second group of tests exercises the documented,
 /// deliberate degradations (sampling, metadata, type-built response formats,
 /// URL-less attachments) and a third exercises reconstruction failures
-/// (stripped content, missing fields, bad JSON, unregistered custom
-/// segments).
+/// (stripped content, missing fields, bad JSON).
 @Suite("TranscriptEntryMapper: round-trip Transcript.Entry to/from TranscriptEntryPayload")
 struct TranscriptEntryMapperTests {
     // MARK: - Sample @Generable types (pure schema derivation, no GPU/model)
@@ -33,13 +32,13 @@ struct TranscriptEntryMapperTests {
         var query: String
     }
 
-    // MARK: - Test-only PersistableCustomSegment conformer
+    // MARK: - Test-only PersistableStructuredSegment conformer
 
     private struct Note: Codable, Equatable, Sendable {
         var body: String
     }
 
-    private struct NoteSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+    private struct NoteSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible {
         let id: String
         let content: Note
 
@@ -57,7 +56,7 @@ struct TranscriptEntryMapperTests {
         var value: Double
     }
 
-    private struct UnencodableSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+    private struct UnencodableSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible {
         let id: String
         let content: Unencodable
 
@@ -373,103 +372,95 @@ struct TranscriptEntryMapperTests {
         try assertRoundTrips(original, kind: .response)
     }
 
-    // MARK: - Custom segments: registered round-trip
+    // MARK: - Typed structured segments
 
-    @Test("event(from:) encodes a custom segment without needing a registry")
-    func customSegmentEncodesWithoutRegistry() {
+    @Test("event(from:) encodes a typed structured segment on its schema name and body JSON")
+    func typedStructuredSegmentEncodesOnSchemaName() {
         let segment = NoteSegment(id: "n1", content: Note(body: "hello"))
         let entry = Transcript.Entry.response(
-            Transcript.Response(segments: [.custom(segment)])
+            Transcript.Response(segments: [segment.transcriptSegment])
         )
         let (_, payload, _) = TranscriptEntryMapper.event(from: entry)
-        guard case .custom(let id, let discriminator, let contentJSON, let description) = payload.segments?.first else {
-            Issue.record("expected a .custom segment payload")
+        guard case .structure(let id, let schemaName, let contentJSON) = payload.segments?.first else {
+            Issue.record("expected a .structure segment payload")
             return
         }
         #expect(id == "n1")
-        #expect(discriminator == NoteSegment.typeDiscriminator)
-        #expect(description == segment.description)
+        #expect(schemaName == NoteSegment.schemaName)
         let decodedContent = try? JSONDecoder().decode(Note.self, from: Data(contentJSON.utf8))
         #expect(decodedContent == Note(body: "hello"))
     }
 
-    @Test("a registered custom segment round-trips with full entry equality, to the same concrete type")
-    func registeredCustomSegmentRoundTrips() throws {
+    @Test("a typed structured segment round-trips with full entry equality, back to the same concrete type")
+    func typedStructuredSegmentRoundTrips() throws {
         let segment = NoteSegment(id: "n1", content: Note(body: "hello"))
         let entry = Transcript.Entry.response(
-            Transcript.Response(segments: [.custom(segment)])
+            Transcript.Response(segments: [segment.transcriptSegment])
         )
-        var registry = CustomSegmentRegistry()
-        registry.register(NoteSegment.self)
 
         // Full `Transcript.Entry` equality, not a cherry-picked field
         // comparison, so the entry's id, asset ids, and segment list are all
         // held to the round trip too.
-        try assertRoundTrips(entry, kind: .response, registry: registry)
+        try assertRoundTrips(entry, kind: .response)
 
-        // And the rebuilt segment really is the registered concrete type,
+        // And the rebuilt segment really becomes the concrete type again,
         // not merely something that compares equal.
         let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind, registry: registry)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: kind)
         guard case .response(let rebuiltResponse) = rebuilt,
-            case .custom(let rebuiltSegment) = rebuiltResponse.segments.first,
-            let rebuiltNote = rebuiltSegment as? NoteSegment
+            case .structure(let rebuiltSegment) = rebuiltResponse.segments.first,
+            let rebuiltNote = try NoteSegment(structuredSegment: rebuiltSegment)
         else {
-            Issue.record("expected a rebuilt .response entry with a .custom NoteSegment")
+            Issue.record("expected a rebuilt .response entry with a .structure NoteSegment")
             return
         }
         #expect(rebuiltNote == segment)
     }
 
-    @Test("rebuilding a custom segment with an unregistered discriminator throws, naming the discriminator")
-    func unregisteredCustomSegmentThrows() throws {
+    @Test("reading a structured segment as the wrong type reports nil rather than wrong content")
+    func readingAsTheWrongTypeReportsNil() throws {
         let segment = NoteSegment(id: "n1", content: Note(body: "hello"))
-        let entry = Transcript.Entry.response(
-            Transcript.Response(segments: [.custom(segment)])
-        )
-        let (kind, payload, _) = TranscriptEntryMapper.event(from: entry)
+        let structured = segment.structuredSegment
 
-        #expect(throws: TranscriptEntryReconstructionError.unregisteredCustomSegmentType(discriminator: NoteSegment.typeDiscriminator)) {
-            try TranscriptEntryMapper.entry(from: payload, kind: kind)
-        }
+        #expect(try UnencodableSegment(structuredSegment: structured) == nil)
     }
 
-    @Test("PersistableCustomSegment's default typeDiscriminator is the type's fully-qualified name")
-    func defaultTypeDiscriminatorIsFullyQualifiedName() {
-        #expect(NoteSegment.typeDiscriminator == String(reflecting: NoteSegment.self))
+    @Test("PersistableStructuredSegment's default schemaName is the type's fully-qualified name")
+    func defaultSchemaNameIsFullyQualifiedName() {
+        #expect(NoteSegment.schemaName == String(reflecting: NoteSegment.self))
     }
 
-    @Test("a .custom segment's persisted description is not read at rebuild — the type's own description is authoritative")
-    func customSegmentRebuildsWithTheTypesOwnDescription() throws {
+    @Test("a legacy .custom payload rebuilds as the .structure segment it has become, and its persisted description is dropped")
+    func legacyCustomPayloadRebuildsAsStructure() throws {
         let original = NoteSegment(id: "n1", content: Note(body: "hello"))
-        // A payload whose persisted description disagrees with what the
-        // conforming type computes for the same content — the rebuilt segment
-        // must carry the type's description, proving the persisted copy is a
-        // reader convenience the rebuild never consumes.
-        let doctored = TranscriptEntryPayload(
+        // The shape a recording written before the macOS 27 SDK removed
+        // `Transcript.Segment.custom` carries on disk. Its persisted
+        // description was always a reader convenience the rebuild never
+        // consumed; `.structure` has no field for it at all.
+        let legacy = TranscriptEntryPayload(
             entryId: "e1",
             segments: [
                 .custom(
                     id: original.id,
-                    typeDiscriminator: NoteSegment.typeDiscriminator,
+                    typeDiscriminator: NoteSegment.schemaName,
                     contentJSON: #"{"body":"hello"}"#,
-                    description: "a doctored description the type never produced"
+                    description: "a description the rebuild never reads"
                 )
             ],
             assetIds: []
         )
-        var registry = CustomSegmentRegistry()
-        registry.register(NoteSegment.self)
 
-        let rebuilt = try TranscriptEntryMapper.entry(from: doctored, kind: .response, registry: registry)
+        let rebuilt = try TranscriptEntryMapper.entry(from: legacy, kind: .response)
 
         guard case .response(let response) = rebuilt,
-            case .custom(let rebuiltSegment) = response.segments.first
+            case .structure(let rebuiltSegment) = response.segments.first,
+            let rebuiltNote = try NoteSegment(structuredSegment: rebuiltSegment)
         else {
-            Issue.record("expected a rebuilt .response entry with a .custom segment")
+            Issue.record("expected the legacy carrier to rebuild as a .structure NoteSegment")
             return
         }
-        #expect(rebuiltSegment.description == original.description)
+        #expect(rebuiltNote == original)
+        #expect(rebuiltSegment.schemaName == NoteSegment.schemaName)
     }
 
     // MARK: - Documented degradations
@@ -822,19 +813,29 @@ struct TranscriptEntryMapperTests {
         }
     }
 
-    @Test("an unencodable custom-segment content records the empty-string sentinel and logs the failure")
-    func unencodableCustomContentRecordsSentinelAndLogs() throws {
+    @Test("an unencodable structured-segment content carries the encoding-failure marker and logs the failure")
+    func unencodableStructuredContentCarriesTheMarkerAndLogs() throws {
         let segment = UnencodableSegment(id: "u1", content: Unencodable(value: .infinity))
         let logStart = Date()
 
-        let payload = TranscriptEntryMapper.segmentPayload(.custom(segment))
+        let payload = TranscriptEntryMapper.segmentPayload(segment.transcriptSegment)
 
-        guard case .custom(_, _, let contentJSON, _) = payload else {
-            Issue.record("expected a .custom segment payload")
+        guard case .structure(_, _, let contentJSON) = payload else {
+            Issue.record("expected a .structure segment payload")
             return
         }
-        #expect(contentJSON.isEmpty)
-        try assertLogged(containing: "persisting the empty-string sentinel", since: logStart)
+        // The marker flag is the only body a failed encode can carry, and no
+        // `Content` decodes from it — so a later read refuses the segment
+        // instead of returning wrong content. Read as JSON rather than
+        // compared as text: the persisted body is the SDK's own rendering of
+        // the marker, which spaces and orders keys its own way.
+        let markerBody = try JSONSerialization.jsonObject(with: Data(contentJSON.utf8))
+        #expect(markerBody as? [String: Bool] == ["_encodingFailed": true])
+        #expect(throws: (any Error).self) {
+            _ = try UnencodableSegment(
+                schemaName: UnencodableSegment.schemaName, contentJSON: contentJSON, id: "u1")
+        }
+        try assertLogged(containing: "carrying the encoding-failure marker", since: logStart)
     }
 
     // MARK: - Reconstruction failures
@@ -898,23 +899,20 @@ struct TranscriptEntryMapperTests {
     // MARK: - Helpers
 
     /// Maps `original` through `event(from:)` then rebuilds it through
-    /// `entry(from:kind:registry:)`, asserting the rebuilt entry equals the
-    /// original — the round-trip contract every non-degraded field
-    /// combination must satisfy.
+    /// `entry(from:kind:)`, asserting the rebuilt entry equals the original —
+    /// the round-trip contract every non-degraded field combination must
+    /// satisfy.
     ///
     /// - Parameters:
     ///   - original: The entry to round-trip.
     ///   - kind: The event kind `event(from:)` must map `original` to.
-    ///   - registry: The registry the rebuild runs against. Defaults to an
-    ///     empty registry, which every non-`.custom` entry rebuilds under.
     private func assertRoundTrips(
         _ original: Transcript.Entry,
-        kind: TranscriptEvent.Kind,
-        registry: CustomSegmentRegistry = CustomSegmentRegistry()
+        kind: TranscriptEvent.Kind
     ) throws {
         let (mappedKind, payload, _) = TranscriptEntryMapper.event(from: original)
         #expect(mappedKind == kind)
-        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: mappedKind, registry: registry)
+        let rebuilt = try TranscriptEntryMapper.entry(from: payload, kind: mappedKind)
         #expect(rebuilt == original)
     }
 }

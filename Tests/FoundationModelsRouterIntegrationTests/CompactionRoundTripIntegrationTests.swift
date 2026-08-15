@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -51,7 +52,7 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
 /// downloads too) — the same manual-harness technique
 /// ``SessionTreeRestorationIntegrationTests`` uses — so this suite reaches the
 /// real public ``RoutedSession/compact(prompt:budget:)`` /
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` surface without paying
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` surface without paying
 /// for two extra downloads. `Self.context` (2048) is deliberately smaller than
 /// `RealModels.context` (8192) — the same convention `Examples/CompactionDemo`
 /// uses — so a handful of scripted turns crosses the 0.80 compaction trigger
@@ -87,6 +88,23 @@ struct CompactionRoundTripIntegrationTests {
 
     /// The reply ceiling every scripted turn below is submitted with, and the
     /// worst case ``ScriptedTurnSizingTests`` bounds a turn's total size by.
+    ///
+    /// Deliberately local, and deliberately not
+    /// `GatedRealModelBudget.responseTokenCeiling` — the shared ceiling every
+    /// other gated turn in this package now uses. This constant is a fixture
+    /// dimension, not only a limit on one reply:
+    /// ``ScriptedTurnSizingTests/triggerIsNotReachedBeforeAnOldSpanExists()``
+    /// multiplies it by `TurnTruncation`'s `keepRecentTurns` (4) to get the
+    /// largest size the first turns can reach, then compares that size against
+    /// the 1638-token trigger of ``context`` (2048). The shared ceiling of 4096
+    /// makes that product 16384, far above the trigger, and that **ungated**
+    /// sizing test fails. Raise this value only together with the fixture it
+    /// sizes.
+    ///
+    /// The turns of the loop below assert nothing about their own replies, so
+    /// a reply this ceiling truncates costs the round trip nothing. The two
+    /// turns that do read a reply — the post-compaction recall and the turn on
+    /// the restored session — carry the shared ceiling instead.
     fileprivate static let replyMaxTokens = 64
 
     /// The system instructions the round trip's session is created with —
@@ -456,7 +474,7 @@ struct CompactionRoundTripIntegrationTests {
         //    fact — proof the summary, not just the mechanism, worked.
         let recall = try await session.respond(
             to: "Without re-reading anything, what is the exact vault code from the project brief?",
-            maxTokens: 32
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(!recall.isEmpty)
         #expect(recall.contains("CRIMSON-77"))
@@ -486,7 +504,7 @@ struct CompactionRoundTripIntegrationTests {
 
         // 5. A further turn on the restored session succeeds.
         let restoredReply = try await restoredSession.respond(
-            to: "Reply with just the word \"restored\".", maxTokens: 16)
+            to: "Reply with just the word \"restored\".", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         #expect(!restoredReply.isEmpty)
 
         await container2.model.evict()

@@ -123,7 +123,7 @@ public protocol RoutedSession: Actor {
     ///   `(tokensIn + tokensOut) / contextTokens` — the newest turn's own
     ///   count already *is* the whole transcript, tokenized by the actual
     ///   model, because generation is stateless over transcripts.
-    /// - Restored from disk (``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``)
+    /// - Restored from disk (``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``)
     ///   with a stamped `.response` event recorded before the restore: that
     ///   stamp's `(tokensIn + tokensOut) / contextTokens`.
     /// - Restored from disk with no stamp at all (a pre-metering recording,
@@ -138,11 +138,11 @@ public protocol RoutedSession: Actor {
     /// This is the supported way to read the entries a session's history
     /// holds — most importantly for seeding a ``SessionProjection`` via
     /// ``SessionProjection/seed(from:)`` after
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``,
+    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``,
     /// whose restored sessions carry a full transcript while a fresh
     /// projection starts empty. A restored session reports the reconstructed
     /// effective transcript its backend was seeded with (the same entries
-    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
+    /// ``TranscriptTree/effectiveTranscript(forSession:view:)``
     /// produces), plus whatever live turns appended since.
     ///
     /// Waiting on the turn lock means a read issued while a turn is in

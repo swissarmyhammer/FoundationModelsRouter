@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -30,7 +31,7 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
 
 /// Gated real-model coverage for task dw0zx8k: reconstructing a real
 /// `FoundationModels.Transcript` from recorded events end-to-end against a
-/// live model, proving ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``
+/// live model, proving ``TranscriptTree/effectiveTranscript(forSession:view:)``
 /// against something more than stub-fabricated entries (see plan.md's
 /// "Transcript fidelity" section, "Reconstruction end-to-end").
 ///
@@ -205,7 +206,7 @@ struct TranscriptReconstructionIntegrationTests {
 
     /// Task dw0zx8k's core acceptance criterion, proved against a real
     /// model: after one live turn recorded at `full`, the `Transcript`
-    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` rebuilds
+    /// ``TranscriptTree/effectiveTranscript(forSession:view:)`` rebuilds
     /// from disk has the same entry kinds and count — one-for-one, in order —
     /// as the live `LanguageModelSession`'s own `transcript` actually
     /// accumulated.
@@ -219,7 +220,7 @@ struct TranscriptReconstructionIntegrationTests {
             try? FileManager.default.removeItem(at: harness.cacheDir)
         }
 
-        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: 64)
+        _ = try await harness.session.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
         let liveEntries = Array(harness.backend.session.transcript)
         let liveKinds = liveEntries.map { TranscriptEntryMapper.event(from: $0).kind }

@@ -69,10 +69,10 @@ struct TranscriptReconstructionTests {
         /// entries and the router's synthetic bodyless close become the
         /// *only* event a failed first turn ever produces.
         var throwsBeforeAppendingAnything: Bool = false
-        /// A custom segment ``recordResponse()`` appends to the response
-        /// entry instead of plain text, when set — the hook the custom
+        /// A structured segment ``recordResponse()`` appends to the response
+        /// entry instead of plain text, when set — the hook the structured
         /// segment reconstruction tests need.
-        var customSegment: (any Transcript.CustomSegment)?
+        var noteSegment: NoteSegment?
         private(set) var entries: [Transcript.Entry]
         private let registry: BackendRegistry
 
@@ -146,7 +146,7 @@ struct TranscriptReconstructionTests {
                 entries: entries,
                 registry: registry
             )
-            fork.customSegment = customSegment
+            fork.noteSegment = noteSegment
             return fork
         }
 
@@ -157,9 +157,9 @@ struct TranscriptReconstructionTests {
         func usageTokenCounts() -> (input: Int, output: Int)? { nil }
 
         private func recordResponse() {
-            if let customSegment {
+            if let noteSegment {
                 entries.append(
-                    .response(Transcript.Response(segments: [.custom(customSegment)])))
+                    .response(Transcript.Response(segments: [noteSegment.transcriptSegment])))
             } else {
                 entries.append(
                     .response(Transcript.Response(segments: [.text(Transcript.TextSegment(content: responseText))]))
@@ -183,13 +183,13 @@ struct TranscriptReconstructionTests {
         }
     }
 
-    // MARK: - Test-only PersistableCustomSegment conformer
+    // MARK: - Test-only PersistableStructuredSegment conformer
 
     private struct Note: Codable, Equatable, Sendable {
         var body: String
     }
 
-    private struct NoteSegment: PersistableCustomSegment, Equatable, CustomStringConvertible {
+    private struct NoteSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible {
         let id: String
         let content: Note
 
@@ -458,11 +458,11 @@ struct TranscriptReconstructionTests {
         }
     }
 
-    // MARK: - Custom segments: registered round-trip vs. empty registry
+    // MARK: - Structured segments: round-trip with no caller setup
 
-    @Test("a recording with a registered custom segment reconstructs the real segment; an empty registry throws the discriminator-naming error")
+    @Test("a recording with a typed structured segment reconstructs the real segment, with no registration step")
     @MainActor
-    func customSegmentRoundTripsWithRegistryAndThrowsWithoutIt() async throws {
+    func structuredSegmentRoundTrips() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
         defer {
@@ -482,33 +482,25 @@ struct TranscriptReconstructionTests {
 
         let root = profile.standard.makeSession()
         let backend = try #require(registry.created.first)
-        backend.customSegment = NoteSegment(id: "n1", content: Note(body: "hello"))
+        backend.noteSegment = NoteSegment(id: "n1", content: Note(body: "hello"))
         _ = try await root.respond(to: "turn 1")
 
         let tree = try TranscriptTree.load(
             under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
 
-        var segmentRegistry = CustomSegmentRegistry()
-        segmentRegistry.register(NoteSegment.self)
-        let reconstructed = try tree.effectiveTranscript(forSession: root.id, registry: segmentRegistry)
+        // The segment carries its own schema name, so reconstruction needs no
+        // caller-supplied type table at all.
+        let reconstructed = try tree.effectiveTranscript(forSession: root.id)
         guard case .response(let response) = Array(reconstructed).last,
-            case .custom(let segment) = response.segments.first,
-            let note = segment as? NoteSegment
+            case .structure(let structured) = response.segments.first,
+            let note = try NoteSegment(structuredSegment: structured)
         else {
-            Issue.record("expected a reconstructed .response entry with a .custom NoteSegment")
+            Issue.record("expected a reconstructed .response entry with a .structure NoteSegment")
             return
         }
+        #expect(note.id == "n1")
         #expect(note.content == Note(body: "hello"))
-
-        let events = try tree.events(forSession: root.id)
-        let responseEvent = try #require(events.first { $0.kind == .response })
-        #expect(throws: TranscriptReconstructionError.unregisteredCustomSegmentType(
-            session: root.id,
-            seq: responseEvent.seq,
-            discriminator: NoteSegment.typeDiscriminator
-        )) {
-            _ = try tree.effectiveTranscript(forSession: root.id)
-        }
+        #expect(structured.schemaName == NoteSegment.schemaName)
     }
 
     // MARK: - metadataOnly and v1 legacy: distinct typed errors

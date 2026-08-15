@@ -199,7 +199,7 @@ public enum ContextBudgetError: Error, Equatable, LocalizedError {
 /// measured — never a guessed fraction (compaction_plan.md §1.5).
 ///
 /// Only reachable immediately after
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)`` restores a session
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` restores a session
 /// whose recorded transcript carries no stamped `tokensIn`/`tokensOut` on any
 /// `.response`-kind event (a recording made before per-turn metering
 /// existed, or one with metadata stripped) — the very next live turn

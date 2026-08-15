@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -64,7 +65,7 @@ private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
 /// (`makeSession`/`fork`/`restoreSessionTree`), since this test's whole point
 /// is proving that public surface end-to-end, not just its backend seam.
 @Suite(
-    "Gated real-model end-to-end coverage: restoreSessionTree(root:registry:) (task zcxnbst)",
+    "Gated real-model end-to-end coverage: restoreSessionTree(root:) (task zcxnbst)",
     .serialized,
     .timeLimit(.minutes(20)),
     .enabled(if: sessionTreeRestorationIntegrationEnabled),
@@ -251,15 +252,15 @@ struct SessionTreeRestorationIntegrationTests {
         let root = profile.standard.makeSession(instructions: "You are a terse, literal assistant.")
         _ = try await root.respond(
             to: "My favorite number is 42. Remember it. Reply with just \"OK\".",
-            maxTokens: 64
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
 
         let forkA = try await root.fork(workingDirectory: nil)
-        _ = try await forkA.respond(to: "Say hi in one word.", maxTokens: 32)
+        _ = try await forkA.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let forkB = try await root.fork(workingDirectory: nil)
-        _ = try await forkB.respond(to: "Say hi in one word.", maxTokens: 32)
+        _ = try await forkB.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         let grandfork = try await forkA.fork(workingDirectory: nil)
-        _ = try await grandfork.respond(to: "Say hi in one word.", maxTokens: 32)
+        _ = try await grandfork.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
         // Step 3: sync-as-they-happen — every session's transcript.jsonl
         // already contains its own turn's entry events, before any teardown.
@@ -350,7 +351,7 @@ struct SessionTreeRestorationIntegrationTests {
         let restoredGrandfork = try #require(restored.session(original.grandforkId))
         let reply = try await restoredGrandfork.respond(
             to: "What is my favorite number? Answer with just the number, digits only.",
-            maxTokens: 32
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(reply.contains("42"))
 
@@ -359,7 +360,7 @@ struct SessionTreeRestorationIntegrationTests {
 
     // MARK: - Tools threaded through restoration (task jkdae4b)
 
-    /// Task jkdae4b: proves ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+    /// Task jkdae4b: proves ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
     /// gives a restored session real, live tool-calling — not the fixed
     /// `tools: []` a restore used to hardcode all the way down through
     /// ``LoadedLLMContainer/makeSession(transcript:)``. A root session is
@@ -386,7 +387,7 @@ struct SessionTreeRestorationIntegrationTests {
             let container = try await makeContainer()
             let (router, profile) = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
             let root = profile.standard.makeSession()
-            _ = try await root.respond(to: "Say hi in one word.", maxTokens: 32)
+            _ = try await root.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
             await container.model.evict()
             return (router.id, root.id)
         }()
@@ -400,7 +401,7 @@ struct SessionTreeRestorationIntegrationTests {
 
         let reply = try await restored.root.respond(
             to: "Call the echo tool with the text 'ping', then report its result.",
-            maxTokens: 64
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
         #expect(!reply.isEmpty)
 

@@ -382,7 +382,7 @@ extension RoutedSessionActor {
             return (diffPartials, false)
         }
         let segments = events.map { event in
-            TranscriptEntryMapper.segmentPayload(.custom(OperationEventSegment(content: event)))
+            TranscriptEntryMapper.segmentPayload(OperationEventSegment(content: event).transcriptSegment)
         }
         var partials = diffPartials
         partials[promptIndex] = partials[promptIndex].mapBody { text, _ in

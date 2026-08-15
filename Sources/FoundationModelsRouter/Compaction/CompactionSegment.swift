@@ -1,7 +1,7 @@
 import Foundation
 import FoundationModels
 
-/// A ``PersistableCustomSegment`` durably recording one compaction's fold
+/// A ``PersistableStructuredSegment`` durably recording one compaction's fold
 /// metadata (compaction_plan.md §1.2).
 ///
 /// A compaction's synthesized summary entry carries two segments: a plain
@@ -29,17 +29,16 @@ import FoundationModels
 ///   its in-flight work — or `nil` when there were none.
 ///
 /// `content` is `Content`, a plain `Codable & Sendable & Equatable` struct —
-/// exactly what `Transcript.CustomSegment.Content` requires — so this segment
-/// round-trips through ``TranscriptEntryMapper/entry(from:kind:registry:)``
-/// with zero schema work once a registry knows about it. Router pre-registers
-/// this type in ``CustomSegmentRegistry/routerDefault``, so every default-
-/// argument reconstruction entry point (``TranscriptTree/effectiveTranscript(forSession:registry:view:)``,
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``,
-/// ``RoutedModel/makeLanguageModel(resuming:registry:)``) rebuilds a recorded
+/// exactly what ``PersistableStructuredSegment`` requires — so the segment
+/// travels as a `Transcript.StructuredSegment` under the schema name
+/// `FoundationModelsRouter.CompactionSegment`, and every reconstruction entry
+/// point (``TranscriptTree/effectiveTranscript(forSession:view:)``,
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``,
+/// ``RoutedModel/makeLanguageModel(resuming:)``) rebuilds a recorded
 /// `CompactionSegment` with no consumer setup — see the mechanism precedent,
 /// ``OperationEventSegment``, for the same round-trip shape applied to a
 /// different concern.
-public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStringConvertible, Sendable {
+public struct CompactionSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
     /// One live parked run's run-plane summary, carried across the compaction
     /// boundary so a post-compaction model can rediscover its in-flight work
     /// and call `status()` for the live view.
@@ -160,7 +159,7 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
     /// - Parameters:
     ///   - id: This segment's id — a fresh one for a fold newly synthesized by
     ///     the compactor, or the persisted id when rebuilding one from disk
-    ///     (this initializer also satisfies ``PersistableCustomSegment``'s
+    ///     (this initializer also satisfies ``PersistableStructuredSegment``'s
     ///     `init(id:content:) throws` requirement: a non-throwing
     ///     implementation is a valid conformance for a throwing requirement).
     ///   - content: The wrapped fold metadata.
@@ -217,7 +216,7 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
     /// `summaryText` (id `<entryId>-text`), an optional text segment
     /// rendering `content.pendingRuns` model-visibly (id
     /// `<entryId>-pending-runs`, present exactly when the manifest carries
-    /// pending runs — see ``renderedPendingRuns(_:)``), and the `.custom`
+    /// pending runs — see ``renderedPendingRuns(_:)``), and the `.structure`
     /// ``CompactionSegment`` manifest itself.
     ///
     /// - Parameters:
@@ -226,7 +225,7 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
     ///   - summaryText: The model-visible summary text — empty when the fold
     ///     synthesized none, because the boundary's job for the model is
     ///     then only to exist.
-    ///   - content: The fold manifest the `.custom` segment wraps. Its
+    ///   - content: The fold manifest the `.structure` segment wraps. Its
     ///     ``Content/pendingRuns`` decides the pending-runs segment: non-nil
     ///     renders one, `nil` adds none.
     /// - Returns: The synthesized boundary entry.
@@ -255,7 +254,7 @@ public struct CompactionSegment: PersistableCustomSegment, Equatable, CustomStri
                 )
             )
         }
-        segments.append(.custom(CompactionSegment(content: content)))
+        segments.append(CompactionSegment(content: content).transcriptSegment)
         return .response(
             Transcript.Response(id: entryId, segments: segments)
         )

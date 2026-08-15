@@ -407,7 +407,7 @@ public struct TranscriptTree: Sendable {
     /// ancestor's own transcript grows afterward. Because the cut is in raw
     /// recorded coordinates, an ancestor's fold never moves it: the fold's
     /// checkpoint boundary sits *inside* the inherited prefix, where
-    /// ``effectiveTranscript(forSession:registry:view:)``'s restore view
+    /// ``effectiveTranscript(forSession:view:)``'s restore view
     /// applies it — the cut selects history; the checkpoint selects context.
     ///
     /// - Parameter id: The session's span id.

@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 
 /// A failure restoring a session tree from disk via
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``.
+/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``.
 ///
 /// Restoration is rooted at a *root* session id — callers never restore an
 /// individual fork — and every node's recorded model/slot must resolve
@@ -38,7 +38,7 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
         switch self {
         case .notARootSession(let id):
             return """
-                Session \(id.description) is not a root session; restoreSessionTree(root:registry:) \
+                Session \(id.description) is not a root session; restoreSessionTree(root:) \
                 restores only whole trees rooted at a root session's id.
                 """
         case .noDurableRecordingsRoot:
@@ -58,7 +58,7 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     }
 }
 
-/// What ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+/// What ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
 /// could not re-apply from the recorded configuration envelopes (task
 /// ^ne5g9jn) — the typed report that replaces silence about a restored
 /// tree's missing parts.
@@ -97,7 +97,7 @@ public struct SessionConfigurationRestorationReport: Sendable, Equatable {
 }
 
 /// A restored fork tree: every session that was live under a router's
-/// recorded root, reconstructed by ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+/// recorded root, reconstructed by ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
 /// as live, usable ``RoutedSession``s synced with what is on disk.
 ///
 /// Mirrors ``TranscriptTree``'s own shape (``session(_:)``, ``children(of:)``),
@@ -187,10 +187,10 @@ extension RoutedModel {
     /// Loads the ``TranscriptTree`` recorded under this handle's recording root.
     ///
     /// This is the read-only companion of
-    /// ``restoreSessionTree(root:recordingRoot:registry:tools:)``: it returns
+    /// ``restoreSessionTree(root:recordingRoot:tools:)``: it returns
     /// the value-typed tree without constructing live sessions, so a caller
     /// can inspect recorded sessions — for example via
-    /// ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` —
+    /// ``TranscriptTree/effectiveTranscript(forSession:view:)`` —
     /// without composing the recording directory from ``Router/recordingsDir``
     /// and ``routerId`` by hand. The directory layout is the router's private
     /// convention; this call is the supported way to read it back.
@@ -228,7 +228,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// Given a **root** session's id (forks are never restored individually —
     /// see ``SessionTreeRestorationError/notARootSession(_:)``), this loads the
     /// ``TranscriptTree`` under this handle's router recording root, computes
-    /// every node's ``TranscriptTree/effectiveTranscript(forSession:registry:view:)``,
+    /// every node's ``TranscriptTree/effectiveTranscript(forSession:view:)``,
     /// seeds one backend per node via ``LoadedLLMContainer/makeSession(transcript:)``,
     /// and constructs a live ``RoutedSessionActor`` per node — preserving each
     /// node's original id, parent id, and recording directory, so a turn driven
@@ -327,7 +327,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   only structure on disk, so a deleted child is byte-identical to a
     ///   child that never existed. The tree loads clean without it (a
     ///   missing *parent* is loud — see ``TranscriptTree/load(under:)``).
-    /// - A **corrupt custom segment** — a ``CompactionSegment`` checkpoint
+    /// - A **corrupt structured segment** — a ``CompactionSegment`` checkpoint
     ///   or an ``OperationEventSegment`` whose recorded content no longer
     ///   decodes — fails the restore loudly with
     ///   ``TranscriptReconstructionError/entryReconstructionFailed(session:seq:underlying:)``
@@ -344,11 +344,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - Parameters:
     ///   - rootId: The root session's span id to restore the whole tree from.
-    ///   - registry: The registered ``PersistableCustomSegment`` types a
-    ///     `.custom` segment anywhere in the tree's recorded transcripts may
-    ///     need to rebuild. Defaults to ``CustomSegmentRegistry/routerDefault``
-    ///     (pre-seeded with ``CompactionSegment``), so a tree containing a
-    ///     compacted session restores with no caller setup.
     ///   - tools: The tools every restored node's model can call, applied
     ///     uniformly across the whole tree — a tool instance cannot be
     ///     recorded, so this is how the caller re-supplies the live tool
@@ -406,11 +401,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   restoration-specific failure; ``TranscriptTreeError`` /
     ///   ``TranscriptReconstructionError`` for anything
     ///   ``TranscriptTree/load(under:)`` or
-    ///   ``TranscriptTree/effectiveTranscript(forSession:registry:view:)`` throws.
+    ///   ``TranscriptTree/effectiveTranscript(forSession:view:)`` throws.
     public func restoreSessionTree(
         root rootId: ULID,
         recordingRoot: URL? = nil,
-        registry: CustomSegmentRegistry = .routerDefault,
         tools: [any Tool] = []
     ) async throws -> RestoredSessionTree {
         // The handle references its profile weakly, mirroring
@@ -483,7 +477,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                     ))
             }
 
-            let transcript = try tree.effectiveTranscript(forSession: node.id, registry: registry)
+            let transcript = try tree.effectiveTranscript(forSession: node.id)
 
             // The node's recorded configuration envelope (task ^ne5g9jn),
             // or `nil` for a recording made before the envelope existed —
@@ -741,16 +735,15 @@ extension TranscriptTree {
     /// Decodes every journaled ``OperationEvent`` `event` carries as an
     /// ``OperationEventSegment`` — turn-drained events ride recorded
     /// `.prompt` entries, close-journaled terminals ride `.toolOutput` ones,
-    /// so no entry-kind filter is applied; the segment discriminator alone
+    /// so no entry-kind filter is applied; the persisted schema name alone
     /// identifies them. A stripped or undecodable segment yields nothing
     /// rather than throwing, mirroring `compactionSegmentContent(in:)`.
     ///
     /// The `try?` below is a decided behavior, not a swallowed error (task
     /// ^xky3j8w): on the restore path it can never silently hide a corrupt
-    /// segment, because ``RoutedModel/restoreSessionTree(root:recordingRoot:registry:tools:)``
+    /// segment, because ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
     /// maps every node's transcript — rebuilding the very same segments
-    /// through ``CustomSegmentRegistry`` (which registers
-    /// ``OperationEventSegment`` in its `routerDefault`) — *before* this
+    /// from their persisted schema names — *before* this
     /// orphan scan ever runs, and a corrupt segment throws
     /// ``TranscriptReconstructionError/entryReconstructionFailed(session:seq:underlying:)``
     /// there. What remains for the `nil` branch is the stripped
@@ -760,10 +753,10 @@ extension TranscriptTree {
     /// event.
     private static func operationEvents(in event: TranscriptEvent) -> [OperationEvent] {
         (event.entry?.segments ?? []).compactMap { segment in
-            guard case .custom(_, let discriminator, let contentJSON, _) = segment,
-                discriminator == OperationEventSegment.typeDiscriminator
+            guard let structure = segment.persistedStructure,
+                structure.schemaName == OperationEventSegment.schemaName
             else { return nil }
-            return try? JSONDecoder().decode(OperationEvent.self, from: Data(contentJSON.utf8))
+            return try? JSONDecoder().decode(OperationEvent.self, from: Data(structure.contentJSON.utf8))
         }
     }
 }

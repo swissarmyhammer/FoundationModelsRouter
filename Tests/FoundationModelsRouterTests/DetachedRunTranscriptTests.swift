@@ -74,8 +74,8 @@ struct DetachedRunTranscriptTests {
         events.filter { $0.kind == .toolOutput }.flatMap { recorded -> [(String, OperationEvent)] in
             guard let entry = recorded.entry else { return [] }
             return (entry.segments ?? []).compactMap { segment in
-                guard case .custom(_, let discriminator, let contentJSON, _) = segment,
-                    discriminator == OperationEventSegment.typeDiscriminator,
+                guard case .structure(_, let schemaName, let contentJSON) = segment,
+                    schemaName == OperationEventSegment.schemaName,
                     let decoded = try? JSONDecoder().decode(
                         OperationEvent.self, from: Data(contentJSON.utf8))
                 else { return nil }

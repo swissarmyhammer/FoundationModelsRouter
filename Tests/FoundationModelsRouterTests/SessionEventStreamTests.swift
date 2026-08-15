@@ -318,7 +318,7 @@ struct SessionEventStreamTests {
         )
     }
 
-    @Test("a completed status carries the output entry's full segments — text, structure, and custom — while summary stays the flattened text")
+    @Test("a completed status carries the output entry's full segments — plain text and both structured kinds — while summary stays the flattened text")
     @MainActor
     func completedStatusCarriesFullOutputSegments() async throws {
         let dir = Self.makeTempDir()
@@ -332,7 +332,7 @@ struct SessionEventStreamTests {
             .text(Transcript.TextSegment(id: "s-text", content: "72F and sunny")),
             .structure(
                 Transcript.StructuredSegment(id: "s-struct", schemaName: "Weather", content: structureContent)),
-            .custom(noteSegment),
+            noteSegment.transcriptSegment,
         ]
         container.backend.entries = [
             .toolCalls(
@@ -373,13 +373,13 @@ struct SessionEventStreamTests {
         #expect(structureId == "s-struct")
         #expect(schemaName == "Weather")
         #expect(contentJSON == structureContent.jsonString)
-        guard case .custom(let customId, let discriminator, _, let description) = output[2] else {
-            Issue.record("expected a .custom payload, got \(output[2])")
+        guard case .structure(let noteId, let noteSchemaName, let noteContentJSON) = output[2] else {
+            Issue.record("expected a .structure payload, got \(output[2])")
             return
         }
-        #expect(customId == "s-note")
-        #expect(discriminator == TestNoteSegment.typeDiscriminator)
-        #expect(description == "Note: hello")
+        #expect(noteId == "s-note")
+        #expect(noteSchemaName == TestNoteSegment.schemaName)
+        #expect(try TestNoteSegment(schemaName: noteSchemaName, contentJSON: noteContentJSON, id: noteId)?.content == TestNote(body: "hello"))
     }
 
     @Test("two concurrent same-name tool calls in one .toolCalls entry are distinguished by id")
