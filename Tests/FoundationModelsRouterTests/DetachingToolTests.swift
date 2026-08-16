@@ -10,7 +10,9 @@ import Testing
 /// ``DetachmentParameterProviding``, the two-clocks matrix (progress resets
 /// `timeout`, never `waitSeconds`), the terminal-scoped synthesis matrix
 /// (no events / progress-only / own-terminal), exactly-one-`.completed`
-/// across the throw, cancel, and timeout paths, and detachment-off mode.
+/// across the throw, cancel, and timeout paths, detachment-off mode, and the
+/// mount a tool declares for itself — which is how one session mounts a tool
+/// that must never park beside one that must.
 @Suite("DetachingTool: the two-clocks detachment engine")
 struct DetachingToolTests {
     // MARK: - Interval fixtures
@@ -202,6 +204,44 @@ struct DetachingToolTests {
             from arguments: GeneratedContent
         ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
             (nil, nil)
+        }
+    }
+
+    /// Blocks on a gate and declares
+    /// ``DetachConfiguration/runToCompletionMount`` for itself through
+    /// ``DetachmentParameterProviding`` — the tool that states the mount it
+    /// cannot work without, and a conformer that states no clocks at all.
+    private struct DeclaredRunToCompletionTool: Tool, DetachmentParameterProviding {
+        let name = "declared_run_to_completion_tool"
+        let description = "declares the mount it cannot work without"
+        let gate: RunLatch
+
+        var detachmentMount: DetachConfiguration? { .runToCompletionMount }
+
+        func call(arguments: DetachingArguments) async throws -> String {
+            await gate.waitUntilOpen()
+            return "declared: \(arguments.value)"
+        }
+    }
+
+    /// Blocks on a gate, declares no mount of its own, and supplies a
+    /// per-call `waitSeconds` of `0` — the detaching half of the pair one
+    /// session mounts, which parks at once so the pair test waits on no
+    /// wall clock.
+    private struct ZeroWaitDetachingTool: Tool, DetachmentParameterProviding {
+        let name = "zero_wait_detaching_tool"
+        let description = "parks at once and declares no mount"
+        let gate: RunLatch
+
+        func call(arguments: DetachingArguments) async throws -> String {
+            await gate.waitUntilOpen()
+            return "detaching: \(arguments.value)"
+        }
+
+        func detachmentClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (0, nil)
         }
     }
 
@@ -1232,5 +1272,290 @@ struct DetachingToolTests {
         // read off its own ambient context is the outer context's.
         #expect(terminal.detail == sessionID.ulidString)
         #expect(terminal.outcome == .succeeded)
+    }
+
+    // MARK: - The run-to-completion mount
+
+    /// How many ``shortInterval`` windows the run-to-completion mount is made
+    /// to hold a call for: more than one, so the call outlives the timeout
+    /// that kills an identical call in `timeoutExpiryCancelsInline`, and the
+    /// mount's having no clock at all is the only reason it still returns.
+    private static let clocklessHoldWindows: Double = 3
+
+    @Test("the run-to-completion mount carries no timeout at all")
+    func runToCompletionMountCarriesNoTimeout() {
+        #expect(DetachConfiguration.runToCompletionMount.mode == .runToCompletion)
+        #expect(DetachConfiguration.runToCompletionMount.timeout == nil)
+    }
+
+    @Test("the run-to-completion mount blocks until the tool finishes, never parks, and reports no timeout")
+    func runToCompletionMountBlocksUntilTheToolFinishes() async throws {
+        let gate = RunLatch()
+        let harness = Self.makeHarness(
+            wrapping: GatedTool(gate: gate),
+            configuration: .runToCompletionMount
+        )
+
+        let calling = Task {
+            try await harness.detaching.call(
+                arguments: DetachingArguments(value: "discovery")
+            )
+        }
+        // Hold the tool past the window a timeout would have killed it in.
+        try await Task.sleep(
+            nanoseconds: UInt64(
+                Self.shortInterval * Self.clocklessHoldWindows * 1_000_000_000
+            )
+        )
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        await gate.open()
+
+        let rendered = try await calling.value
+        #expect(rendered == "gated: discovery")
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        // A slow call is not a failed call: the run settles silently, so
+        // nothing at all is reported for it.
+        #expect(await harness.sink.events.isEmpty)
+    }
+
+    @Test("the run-to-completion mount hands back the tool's own error, so only a real failure reaches the model")
+    func runToCompletionMountReportsOnlyRealErrors() async throws {
+        let harness = Self.makeHarness(
+            wrapping: ThrowingTool(),
+            configuration: .runToCompletionMount
+        )
+
+        await #expect(throws: FixtureError()) {
+            _ = try await harness.detaching.call(
+                arguments: DetachingArguments(value: "x")
+            )
+        }
+
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .failed)
+    }
+
+    @Test("the stock timeout stays a plain TimeInterval, and the native session mount is what states it")
+    func stockTimeoutStaysNonOptional() {
+        // The binding itself is the assertion about the type: a
+        // `TimeInterval?` does not compile here. Only the timeout a
+        // configuration STORES became optional.
+        let stockTimeout: TimeInterval = DetachConfiguration.defaultTimeoutSeconds
+
+        #expect(DetachConfiguration.nativeSessionMount.mode == .detaching)
+        #expect(DetachConfiguration.nativeSessionMount.timeout == stockTimeout)
+    }
+
+    // MARK: - The mount a tool declares for itself
+
+    /// How long a declared run-to-completion call is held for: past both
+    /// clocks of the configuration the composition site passes, so only the
+    /// declaration can explain a call that neither parks nor times out.
+    private static let declaredMountHoldSeconds = shortInterval * clocklessHoldWindows
+
+    /// How long the pair test holds its blocking call: past the stock soft
+    /// deadline the session's own mount carries, so a call that had taken
+    /// that mount would already have parked when the parked runs are read.
+    private static let pastSessionMountWaitSeconds =
+        DetachConfiguration.defaultWaitSeconds + shortInterval
+
+    @Test("a tool's declared mount wins over the configuration the composition site passes, clock and all")
+    func declaredMountOverridesTheSiteConfiguration() async throws {
+        let gate = RunLatch()
+        let harness = Self.makeHarness(
+            wrapping: DeclaredRunToCompletionTool(gate: gate),
+            configuration: DetachConfiguration(
+                mode: .detaching, waitSeconds: 0, timeout: Self.shortInterval
+            )
+        )
+
+        let calling = Task {
+            try await harness.detaching.call(
+                arguments: DetachingArguments(value: "catalogue")
+            )
+        }
+        // Held past both of the site's clocks: a call that took them would
+        // have parked at once, and then timed out.
+        try await Task.sleep(for: .seconds(Self.declaredMountHoldSeconds))
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        await gate.open()
+
+        let rendered = try await calling.value
+        #expect(rendered == "declared: catalogue")
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        // A slow call is not a failed call: the run settles silently.
+        #expect(await harness.sink.events.isEmpty)
+    }
+
+    @Test("two tools on one session hold their own modes: the declaring one blocks while the other parks")
+    func oneSessionMountsBothModes() async throws {
+        let sessionID = ULID.generate()
+        let mailbox = SessionMailbox()
+        let sink = RecordingSink()
+        let blockingGate = RunLatch()
+        let parkingGate = RunLatch()
+        // Both tools take the one session-mount composition, under one
+        // session identity, one mailbox, one outbox, and the one mount
+        // configuration that site applies to every tool it mounts.
+        func mounted(_ tool: any Tool) -> DetachingTool<DetachingArguments>? {
+            ToolDetachment.sessionMounted(
+                tool: tool,
+                sessionID: sessionID,
+                mailbox: mailbox,
+                sink: sink,
+                cappedToTokenLimit: nil
+            ) as? DetachingTool<DetachingArguments>
+        }
+        let blocking = try #require(mounted(DeclaredRunToCompletionTool(gate: blockingGate)))
+        let parking = try #require(mounted(ZeroWaitDetachingTool(gate: parkingGate)))
+
+        // The tool that declares no mount takes the session's own, so its
+        // slow call parks and hands the model a token to collect.
+        let rendered = try await parking.call(arguments: DetachingArguments(value: "snippet"))
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+
+        // On that same session the declaring tool blocks instead, held past
+        // the soft deadline that mount would otherwise have parked it at.
+        let discovering = Task {
+            try await blocking.call(arguments: DetachingArguments(value: "catalogue"))
+        }
+        try await Task.sleep(for: .seconds(Self.pastSessionMountWaitSeconds))
+
+        // One run is parked, and it is the detaching tool's. The discovery
+        // call is still in band, with no token for the model to collect.
+        let parked = await mailbox.parkedRuns()
+        #expect(parked.count == 1)
+        #expect(parked.first?.tool == "zero_wait_detaching_tool")
+
+        await blockingGate.open()
+        let catalogue = try await discovering.value
+        #expect(catalogue == "declared: catalogue")
+
+        await parkingGate.open()
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: mailbox
+        )
+        #expect(terminal.detail == "detaching: snippet")
+    }
+
+    // MARK: - The clock relation
+
+    /// The two inverted relations a detaching mount is rejected for, each as
+    /// the `waitSeconds` it is mounted with against ``shortInterval`` as its
+    /// timeout: one equal to that timeout, one longer than it.
+    private static let invertedWaitSeconds: [TimeInterval] = [shortInterval, generousInterval]
+
+    @Test(
+        "a detaching mount whose waitSeconds does not stand under its timeout is rejected before any work starts",
+        arguments: Self.invertedWaitSeconds
+    )
+    func invertedClocksAreRejected(waitSeconds: TimeInterval) async throws {
+        let gate = RunLatch()
+        let harness = Self.makeHarness(
+            wrapping: GatedTool(gate: gate),
+            configuration: DetachConfiguration(
+                mode: .detaching, waitSeconds: waitSeconds, timeout: Self.shortInterval
+            )
+        )
+
+        await #expect(
+            throws: DetachingToolError.invalidClocks(
+                tool: "gated_tool", waitSeconds: waitSeconds, timeout: Self.shortInterval
+            )
+        ) {
+            _ = try await harness.detaching.call(
+                arguments: DetachingArguments(value: "x")
+            )
+        }
+
+        // The call was refused, so no work ran: nothing parked, and nothing
+        // was reported.
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.sink.events.isEmpty)
+    }
+
+    @Test("a per-call waitSeconds that outlasts the mount's timeout is rejected on the same rule")
+    func perCallInvertedClocksAreRejected() async throws {
+        let gate = RunLatch()
+        let harness = Self.makeHarness(
+            wrapping: PerCallClockTool(gate: gate),
+            configuration: DetachConfiguration(
+                mode: .detaching, waitSeconds: 0, timeout: Self.shortInterval
+            )
+        )
+
+        await #expect(
+            throws: DetachingToolError.invalidClocks(
+                tool: "per_call_clock_tool",
+                waitSeconds: Self.generousInterval,
+                timeout: Self.shortInterval
+            )
+        ) {
+            _ = try await harness.detaching.call(
+                arguments: ClockedArguments(value: "x", waitSeconds: Self.generousInterval)
+            )
+        }
+
+        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.sink.events.isEmpty)
+    }
+
+    @Test("the rejection names the tool, both clocks, and the mount to move to")
+    func invalidClocksNamesTheMigration() {
+        let error = DetachingToolError.invalidClocks(
+            tool: "gated_tool",
+            waitSeconds: Self.shortInterval,
+            timeout: Self.shortInterval
+        )
+
+        Self.expect(
+            String(describing: error),
+            saysInOrder: ["gated_tool", "waitSeconds", "timeout", "runToCompletionMount"]
+        )
+    }
+
+    // MARK: - The timeout's claim on a run
+
+    /// One detachment decision's subjects: the run's posting funnel and the
+    /// synthesized progress `DetachingTool.detach` offers it.
+    private static func makeDetachmentDecision(
+        postingTo sink: RecordingSink
+    ) -> (funnel: RunEventFunnel, progress: OperationEvent) {
+        let completionToken = SessionMailbox.makeCompletionToken()
+        let funnel = RunEventFunnel(
+            upstream: sink, mailbox: SessionMailbox(), completionToken: completionToken
+        )
+        let progress = OperationEvent(
+            tool: "claimed_tool",
+            op: "claimed_tool",
+            correlationID: completionToken,
+            kind: .progress,
+            detail: PendingRunEnvelope(completionToken: completionToken).rendered
+        )
+        return (funnel, progress)
+    }
+
+    @Test("a run the timeout has claimed refuses detachment, so its token never reaches the model")
+    func timeoutClaimRefusesDetachment() async {
+        let sink = RecordingSink()
+        let decision = Self.makeDetachmentDecision(postingTo: sink)
+
+        await decision.funnel.beginTimeout()
+
+        let detached = await decision.funnel.markDetached(postingIfSilent: decision.progress)
+        #expect(detached == false)
+        #expect(await sink.events.isEmpty)
+    }
+
+    @Test("a run no timeout has claimed detaches and posts its synthesized progress")
+    func unclaimedRunDetaches() async {
+        let sink = RecordingSink()
+        let decision = Self.makeDetachmentDecision(postingTo: sink)
+
+        let detached = await decision.funnel.markDetached(postingIfSilent: decision.progress)
+        #expect(detached)
+        #expect(await sink.events.map(\.kind) == [.progress])
     }
 }

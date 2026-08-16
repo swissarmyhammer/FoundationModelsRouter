@@ -85,7 +85,7 @@ extension RoutedSessionActor {
     ///
     /// The drain terminates by the rule ``parkedRunDrainRoundLimit`` states.
     /// Two other things end it: a run that has not settled by the run plane's
-    /// own ``ToolContext/waitSecondsCeiling``, since a further turn could not
+    /// own ``ToolContext/deadlineSecondsCeiling``, since a further turn could not
     /// carry its result anyway; and a cancellation landing on this call —
     /// either ``RoutedSession/cancelCurrentTurn()`` or the caller's own task
     /// being cancelled. A cancelled turn is never drained: whatever it parked
@@ -179,7 +179,7 @@ extension RoutedSessionActor {
     ///   snapshot and its own wait (``WaitOutcome/unknownToken``), which is the
     ///   same fact arriving a moment earlier. `false` when the run plane was
     ///   already empty, when a run outlasted
-    ///   ``ToolContext/waitSecondsCeiling`` and so is still parked, or when a
+    ///   ``ToolContext/deadlineSecondsCeiling`` and so is still parked, or when a
     ///   cancellation reached this call: none of the three has a settled result
     ///   for a further turn to carry.
     private func settleParkedRuns(cancellationsBefore: UInt64) async -> Bool {
@@ -231,7 +231,7 @@ extension RoutedSessionActor {
         let mailbox = self.mailbox
         Task {
             let outcome = await mailbox.wait(
-                completionToken: completionToken, seconds: ToolContext.waitSecondsCeiling)
+                completionToken: completionToken, seconds: ToolContext.deadlineSecondsCeiling)
             gate.resume(with: .mailbox(outcome))
         }
         return await withTaskCancellationHandler {

@@ -2,15 +2,47 @@ import Foundation
 import FoundationModels
 import Synchronization
 
-/// Extracts per-call detachment clocks from a call's opaque arguments.
+/// Declares a wrapped tool's own detachment parameters.
 ///
-/// The per-call clock sourcing hook: a wrapped tool that conforms lets the
-/// ``DetachingTool`` engine read a per-call `waitSeconds` and/or `timeout`
-/// out of the call's `GeneratedContent` — however the tool encodes them —
-/// instead of using the wrap-time ``DetachConfiguration``. A `nil` field
-/// falls back to that configuration; a tool that does not conform always
-/// uses it.
+/// The hook a tool states its own detachment behaviour through. A tool that
+/// conforms makes up to two declarations, and the ``DetachingTool`` engine
+/// reads each of them over the wrap-time ``DetachConfiguration`` its
+/// composition site applies:
+///
+/// - ``detachmentMount`` states the whole mount the tool needs, for every
+///   call it takes.
+/// - ``detachmentClocks(from:)`` reads a `waitSeconds` and/or a `timeout`
+///   out of one call's `GeneratedContent` — however the tool encodes them.
+///
+/// Each declaration has a default that declares nothing, so a tool states
+/// only the half it needs, and a tool that does not conform at all keeps the
+/// configuration its composition site gave it.
 public protocol DetachmentParameterProviding {
+    /// The mount this tool needs whatever mount its composition site
+    /// applies, or `nil` to take that site's own.
+    ///
+    /// The mode belongs to the tool, not to the session, because one session
+    /// vends tools that no single policy fits. A discovery tool must block
+    /// until it holds the catalogue: a model handed a pending envelope for
+    /// discovery stops discovering and starts collecting, so it never learns
+    /// what it may call, and it answers that it has no access at all. A tool
+    /// that runs a long snippet beside it must still park, because a turn
+    /// cannot wait for that snippet. The first declares
+    /// ``DetachConfiguration/runToCompletionMount`` here, the second
+    /// declares nothing, and one session mounts both.
+    ///
+    /// A declaration wins over the configuration the composition site
+    /// passes, clock and all: a tool states a mount only for behaviour it
+    /// cannot work without, so a site that overrode it would hand the tool
+    /// behaviour its author refused. Only ``detachmentClocks(from:)``
+    /// narrows a declared mount further, being the statement about one call
+    /// rather than about every call.
+    ///
+    /// Detachment reaches a tool whose `Output` is `String` alone, so this
+    /// declaration reaches no other tool either — see
+    /// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:configuration:)``.
+    var detachmentMount: DetachConfiguration? { get }
+
     /// Returns the per-call clocks encoded in `arguments`, or `nil` fields
     /// for whichever the call does not supply.
     ///
@@ -18,10 +50,28 @@ public protocol DetachmentParameterProviding {
     ///   `GeneratedContent` — the same content the tool's typed `Arguments`
     ///   were decoded from.
     /// - Returns: The per-call `waitSeconds` and `timeout`, each `nil` to
-    ///   fall back to the wrap-time configuration.
+    ///   fall back to the mount the call resolved to.
     func detachmentClocks(
         from arguments: GeneratedContent
     ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?)
+}
+
+extension DetachmentParameterProviding {
+    /// Blanket default: no declared mount, so the tool runs under the
+    /// configuration its composition site passes.
+    public var detachmentMount: DetachConfiguration? { nil }
+
+    /// Blanket default: no per-call clocks, so both clocks come from the
+    /// mount the call resolved to.
+    ///
+    /// - Parameter arguments: The call's arguments, which this default does
+    ///   not read.
+    /// - Returns: Two `nil` clocks.
+    public func detachmentClocks(
+        from arguments: GeneratedContent
+    ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+        (nil, nil)
+    }
 }
 
 /// The wrap-time clock and mode configuration of a ``DetachingTool``.
@@ -45,10 +95,14 @@ public struct DetachConfiguration: Sendable, Equatable {
         /// Router's native-session mount.
         case detaching
 
-        /// Run each call to completion, bounded only by
-        /// ``DetachConfiguration/timeout`` — detachment off, the mode
+        /// Run each call to completion — detachment off, the mode
         /// `ToolInvoker` mounts for inner `tools.*` calls. The same engine
         /// still owns correlation, events, and outcomes.
+        ///
+        /// ``DetachConfiguration/timeout`` still bounds the work unless it
+        /// is `nil`. A host that needs a call which blocks until it finishes
+        /// and reports only a real failure needs both halves at once, and
+        /// ``DetachConfiguration/runToCompletionMount`` is that pair.
         case runToCompletion
     }
 
@@ -62,6 +116,9 @@ public struct DetachConfiguration: Sendable, Equatable {
     /// ``defaultWaitSeconds`` so at stock settings the soft deadline always
     /// wins: a silent call detaches as pending long before its timeout
     /// could cancel it, leaving real timeout headroom for follow-up.
+    ///
+    /// That ordering is a checked rule in ``Mode/detaching``, not a habit —
+    /// see `clockRelationFailure(tool:mode:waitSeconds:timeout:)`.
     public static let defaultTimeoutSeconds: TimeInterval = 120
 
     /// Router's native-session mount: detachment on, stock clocks
@@ -74,19 +131,52 @@ public struct DetachConfiguration: Sendable, Equatable {
     /// native mount).
     public static let nativeSessionMount = DetachConfiguration(mode: .detaching)
 
+    /// The run-to-completion mount: a call blocks until the wrapped tool
+    /// finishes, and only a real failure of that tool reaches the model.
+    ///
+    /// This is the mount for a tool whose result the model cannot proceed
+    /// without. A discovery tool is the measured case: a model handed a
+    /// pending envelope for discovery stops discovering and starts
+    /// collecting, so it never learns what it may call, and it answers that
+    /// it has no access at all.
+    ///
+    /// The mount carries no clock. ``timeout`` is `nil`, so no timeout
+    /// watcher is ever started and a slow call can never be reported as a
+    /// failed one. A long ``timeout`` is not the same thing and is not a
+    /// substitute: a timeout that fires is itself a failure report. A host
+    /// that does want a bound on such a call states ``timeout`` on a
+    /// configuration of its own, and accepts that the bound reports
+    /// ``DetachingToolError/timedOut(tool:timeoutSeconds:)`` when it fires.
+    ///
+    /// A tool asks for this mount by declaring it as its own
+    /// ``DetachmentParameterProviding/detachmentMount``, which is how one
+    /// session carries a tool that must never park beside one that must:
+    /// every session-mounted tool is composed with the one
+    /// ``nativeSessionMount``, so a mount a host could state only for a
+    /// whole session would fix the first tool by breaking the second.
+    public static let runToCompletionMount = DetachConfiguration(
+        mode: .runToCompletion, timeout: nil
+    )
+
     /// Whether a call detaches at ``waitSeconds`` or runs to completion.
     public var mode: Mode
 
     /// How long one call may block before detaching, in seconds. Nothing
     /// resets it. `0` detaches immediately. Ignored in
     /// ``Mode/runToCompletion``.
+    ///
+    /// In ``Mode/detaching`` it must stand strictly under ``timeout`` — see
+    /// `clockRelationFailure(tool:mode:waitSeconds:timeout:)`.
     public var waitSeconds: TimeInterval
 
-    /// How long the work itself may run, in seconds. Every progress event
-    /// resets it, and it suspends while an elicitation is pending. Expiry
-    /// cancels the work and settles the run as
-    /// ``OperationOutcome/timedOut``.
-    public var timeout: TimeInterval
+    /// How long the work itself may run, in seconds, or `nil` for no
+    /// timeout at all. Every progress event resets it, and it suspends
+    /// while an elicitation is pending. Expiry cancels the work and settles
+    /// the run as ``OperationOutcome/timedOut``.
+    ///
+    /// `nil` is how a configuration says "nothing this engine adds bounds
+    /// this work": no watcher is started, so the work ends when it ends.
+    public var timeout: TimeInterval?
 
     /// Creates a configuration.
     ///
@@ -94,26 +184,87 @@ public struct DetachConfiguration: Sendable, Equatable {
     ///   - mode: Whether a call detaches at `waitSeconds` or runs to
     ///     completion.
     ///   - waitSeconds: How long one call may block before detaching.
-    ///     Defaults to ``defaultWaitSeconds``.
-    ///   - timeout: How long the work itself may run. Defaults to
-    ///     ``defaultTimeoutSeconds``.
+    ///     Defaults to ``defaultWaitSeconds``. In ``Mode/detaching`` it must
+    ///     stand strictly under `timeout`; a call whose resolved clocks do
+    ///     not is refused with
+    ///     ``DetachingToolError/invalidClocks(tool:waitSeconds:timeout:)``
+    ///     rather than run.
+    ///   - timeout: How long the work itself may run, or `nil` for no
+    ///     timeout at all. Defaults to ``defaultTimeoutSeconds``.
     public init(
         mode: Mode,
         waitSeconds: TimeInterval = Self.defaultWaitSeconds,
-        timeout: TimeInterval = Self.defaultTimeoutSeconds
+        timeout: TimeInterval? = Self.defaultTimeoutSeconds
     ) {
         self.mode = mode
         self.waitSeconds = waitSeconds
         self.timeout = timeout
     }
+
+    /// Whether a pair of clocks can both mean what they say.
+    ///
+    /// In ``Mode/detaching`` the two clocks start together and never consult
+    /// each other, so `waitSeconds` must stand strictly under `timeout`: a
+    /// call that reaches its soft deadline first parks, which is the whole
+    /// point of the mode, and the timeout keeps real headroom behind it. A
+    /// pair that inverts the order asks the engine to race two timers that
+    /// were never meant to meet, and scheduling decides which of the two
+    /// answers the caller gets.
+    ///
+    /// ``Mode/runToCompletion`` ignores `waitSeconds`, and a `nil` `timeout`
+    /// is no clock at all, so neither can invert anything.
+    ///
+    /// This is the one implementation of the rule: the wrap-time
+    /// configuration and a per-call override from
+    /// ``DetachmentParameterProviding`` are both judged here, on the clocks
+    /// the call actually resolved to.
+    ///
+    /// - Parameters:
+    ///   - tool: The wrapped tool's name, for the report.
+    ///   - mode: The mode the call runs in.
+    ///   - waitSeconds: The call's resolved soft deadline.
+    ///   - timeout: The call's resolved timeout, or `nil` for no timeout.
+    /// - Returns: The failure to refuse the call with, or `nil` when the
+    ///   pair is usable as written.
+    static func clockRelationFailure(
+        tool: String, mode: Mode, waitSeconds: TimeInterval, timeout: TimeInterval?
+    ) -> DetachingToolError? {
+        guard mode == .detaching, let timeout, waitSeconds >= timeout else { return nil }
+        return .invalidClocks(tool: tool, waitSeconds: waitSeconds, timeout: timeout)
+    }
 }
 
 /// The failures the ``DetachingTool`` engine itself produces.
-public enum DetachingToolError: Error, Equatable {
+///
+/// Each case renders as a sentence rather than as its own reflection,
+/// because both of them reach a model: a thrown engine failure is what the
+/// model reads in place of the tool's output, and it is the `detail` of the
+/// run's terminal event.
+public enum DetachingToolError: Error, Equatable, CustomStringConvertible {
     /// The per-call `timeout` elapsed with no progress and no pending
     /// elicitation; the work was cancelled and the run settled as
     /// ``OperationOutcome/timedOut``.
     case timedOut(tool: String, timeoutSeconds: TimeInterval)
+
+    /// The call's resolved clocks cannot both mean what they say: in
+    /// ``DetachConfiguration/Mode/detaching``, `waitSeconds` did not stand
+    /// strictly under `timeout`. The call is refused before any work
+    /// starts, so nothing ran, nothing parked, and nothing was reported.
+    case invalidClocks(tool: String, waitSeconds: TimeInterval, timeout: TimeInterval)
+
+    /// What the failure says to whoever reads it.
+    public var description: String {
+        switch self {
+        case .timedOut(let tool, let timeoutSeconds):
+            "\(tool) timed out after \(timeoutSeconds) seconds with no progress"
+        case .invalidClocks(let tool, let waitSeconds, let timeout):
+            "\(tool) was called with waitSeconds \(waitSeconds) and timeout \(timeout): "
+                + "a detaching tool's waitSeconds must stand strictly under its timeout. "
+                + "A tool that must never park is mounted on "
+                + "DetachConfiguration.runToCompletionMount, which carries no clock at "
+                + "all, rather than on two clocks set to the same number."
+        }
+    }
 }
 
 /// The rendered output a detached call returns in place of its result: the
@@ -275,8 +426,22 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 ///    journal must stay complete.
 /// 5. Bounds the work with the per-call `timeout`, which progress resets
 ///    and a pending elicitation suspends (the ported `CallDeadline` loop).
-///    In ``DetachConfiguration/Mode/runToCompletion`` the call runs to
-///    completion bounded only by that timeout — same engine, detachment off.
+///    A `nil` timeout starts no watcher at all, so the work is bounded by
+///    nothing this engine adds. In
+///    ``DetachConfiguration/Mode/runToCompletion`` the call runs to
+///    completion — same engine, detachment off — and on
+///    ``DetachConfiguration/runToCompletionMount`` it does so under no
+///    clock, so only a real failure of the wrapped tool ever reaches the
+///    model.
+/// 6. Refuses, before any work starts, a call whose resolved clocks cannot
+///    both mean what they say (`clockRelationFailure(tool:mode:waitSeconds:timeout:)`),
+///    and refuses to park a run the timeout has already claimed — the two
+///    clocks decide one at a time, never by race.
+/// 7. Runs under the mount the wrapped tool declares for itself
+///    (``DetachmentParameterProviding/detachmentMount``) when it declares
+///    one, and under the configuration its composition site passed
+///    otherwise. So one session mounts a tool that must never park beside
+///    one that must, each behaving its own way.
 ///
 /// `Arguments` must be `Sendable` — beyond `Tool`'s own
 /// `ConvertibleFromGeneratedContent` bound — because detachment is exactly
@@ -299,8 +464,12 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// The upstream sink every run's events funnel into.
     private let sink: any OperationEventSink
 
-    /// The wrap-time mode and clock defaults; per-call values from
-    /// ``DetachmentParameterProviding`` override the clocks.
+    /// The mount every call of this tool runs under: the tool's own
+    /// ``DetachmentParameterProviding/detachmentMount`` when it declares
+    /// one, and the configuration the composition site passed otherwise.
+    /// Per-call values from
+    /// ``DetachmentParameterProviding/detachmentClocks(from:)`` override its
+    /// clocks.
     private let configuration: DetachConfiguration
 
     /// The wrapped tool's name.
@@ -322,7 +491,9 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the run's events are posted to.
-    ///   - configuration: The wrap-time mode and clock defaults.
+    ///   - configuration: The mode and clock defaults to mount `wrapped`
+    ///     under, unless `wrapped` declares a mount of its own through
+    ///     ``DetachmentParameterProviding/detachmentMount``.
     public init(
         wrapping wrapped: any Tool<Arguments, String>,
         sessionID: ULID,
@@ -334,7 +505,12 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         self.sessionID = sessionID
         self.mailbox = mailbox
         self.sink = sink
-        self.configuration = configuration
+        // The tool's own declaration wins, and it is read here rather than
+        // per call because a mode is a property of the tool: a session
+        // mounts tools that no single policy fits, and each of them must
+        // behave its own way on that one session.
+        self.configuration =
+            (wrapped as? any DetachmentParameterProviding)?.detachmentMount ?? configuration
     }
 
     /// Runs one call through the engine — see the type doc for the full
@@ -353,11 +529,25 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// - Throws: Whatever the wrapped tool throws, unmodified, when the
     ///   call settles in-band with an error;
     ///   ``DetachingToolError/timedOut(tool:timeoutSeconds:)`` when the
-    ///   per-call timeout ends an in-band call.
+    ///   per-call timeout ends an in-band call, or when it claims a call
+    ///   the soft deadline was about to detach;
+    ///   ``DetachingToolError/invalidClocks(tool:waitSeconds:timeout:)``
+    ///   when the resolved clocks cannot both mean what they say, in which
+    ///   case no work starts at all.
     public func call(arguments: Arguments) async throws -> String {
         let clocks = perCallClocks(from: arguments)
         let waitSeconds = clocks.waitSeconds ?? configuration.waitSeconds
         let timeoutSeconds = clocks.timeout ?? configuration.timeout
+        // Judged before anything runs, so a refused call leaves no run, no
+        // parked token, and no event behind it.
+        if let failure = DetachConfiguration.clockRelationFailure(
+            tool: wrapped.name,
+            mode: configuration.mode,
+            waitSeconds: waitSeconds,
+            timeout: timeoutSeconds
+        ) {
+            throw failure
+        }
 
         let completionToken = SessionMailbox.makeCompletionToken()
         let cancellationFlag = CancellationRequestFlag()
@@ -469,9 +659,13 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 
     /// Detaches a call whose window elapsed: parks the still-running work
     /// in the mailbox, posts the synthesized progress iff the run has been
-    /// silent, and returns the pending envelope. When the run settled in
-    /// the instants between the window elapsing and detachment, returns its
-    /// in-band result instead — a settled run is never parked.
+    /// silent, and returns the pending envelope.
+    ///
+    /// The funnel decides, so the two clocks never race: a run that settled
+    /// in the instants between the window elapsing and detachment, and a run
+    /// the timeout claimed in that same window, are both refused here, and
+    /// this returns the in-band result instead. A model is therefore handed
+    /// a completion token only for a run that is really still going.
     private func detach(
         workTask: Task<RunSettlement, Never>,
         funnel: RunEventFunnel,
@@ -517,7 +711,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         arguments: Arguments,
         context: ToolContext,
         funnel: RunEventFunnel,
-        timeoutSeconds: TimeInterval,
+        timeoutSeconds: TimeInterval?,
         cancellationFlag: CancellationRequestFlag
     ) async -> RunSettlement {
         // Created inside the ToolContext binding, so the inner call — and
@@ -552,13 +746,22 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// ported `CallDeadline` loop — through the same continuation-based
     /// race the soft deadline uses. Timeout expiry cancels the inner call
     /// and resolves as ``DetachingToolError/timedOut(tool:timeoutSeconds:)``.
+    ///
+    /// A `nil` `timeoutSeconds` is no clock at all: no watcher is started,
+    /// there is nothing to race, and the call ends when the inner call
+    /// ends. That is what
+    /// ``DetachConfiguration/runToCompletionMount`` mounts a tool under, so
+    /// only a real failure of the wrapped tool can reach the model.
     private static func raceInnerAgainstTimeout(
         inner: Task<String, any Error>,
-        timeoutSeconds: TimeInterval,
+        timeoutSeconds: TimeInterval?,
         funnel: RunEventFunnel,
         cancellationFlag: CancellationRequestFlag,
         tool: String
     ) async -> Result<String, any Error> {
+        guard let timeoutSeconds else {
+            return await inner.result
+        }
         let gate = RaceGate<TimeoutRaceOutcome>()
         Task {
             gate.resume(with: .finished(await inner.result))
@@ -586,6 +789,13 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// with no deadline reset and no pending elicitation — the ported
     /// `CallDeadline.resetForProgress` comparison loop.
     ///
+    /// A window that really elapsed claims the run through
+    /// `RunEventFunnel.beginTimeout()` before this reports it, so a soft
+    /// deadline elapsing in the same instant can no longer park a run this
+    /// watcher is about to kill: `RunEventFunnel.markDetached(postingIfSilent:)`
+    /// refuses a claimed run, and the caller takes the in-band timeout
+    /// instead of handing the model a token for a dead run.
+    ///
     /// - Returns: `true` when the call genuinely timed out; `false` when
     ///   the watcher was cancelled because the race already resolved.
     private static func watchForTimeout(
@@ -608,6 +818,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             guard after.resetCount == before.resetCount, !after.isElicitationPending else {
                 continue
             }
+            await funnel.beginTimeout()
             return true
         }
     }
@@ -707,7 +918,9 @@ public enum ToolDetachment {
     ///   - context: The enclosing call's ambient context, captured while its
     ///     binding was still in scope.
     ///   - sink: The upstream sink the run's events are posted to.
-    ///   - configuration: The wrap-time mode and clock defaults.
+    ///   - configuration: The mode and clock defaults to mount `tool` under,
+    ///     unless it declares a mount of its own through
+    ///     ``DetachmentParameterProviding/detachmentMount``.
     /// - Returns: The detaching decorator around `tool` when it qualifies;
     ///   the binding-only ``ContextBindingTool`` around it otherwise.
     public static func wrapping(
@@ -754,7 +967,9 @@ public enum ToolDetachment {
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the run's events are posted to.
-    ///   - configuration: The wrap-time mode and clock defaults.
+    ///   - configuration: The mode and clock defaults to mount `tool` under,
+    ///     unless it declares a mount of its own through
+    ///     ``DetachmentParameterProviding/detachmentMount``.
     /// - Returns: The detaching decorator around `tool` when it qualifies;
     ///   the binding-only ``ContextBindingTool`` around it otherwise.
     public static func wrapping(
@@ -1006,7 +1221,15 @@ private final class CancellationRequestFlag: Sendable {
 /// Upstream deliveries are FIFO-chained, so an engine post can never
 /// overtake a tool post — the synthesized progress at detachment always
 /// lands upstream before the run's terminal.
-private actor RunEventFunnel: OperationEventSink {
+///
+/// It is also where the two clocks are kept from racing: the timeout claims
+/// the run here (``beginTimeout()``) and detachment asks here
+/// (``markDetached(postingIfSilent:)``), so exactly one of them decides what
+/// happens to a run, whichever order they arrive in.
+///
+/// Internal rather than file-private so that one decision can be tested
+/// directly; nothing outside this file constructs one.
+actor RunEventFunnel: OperationEventSink {
     /// Where the run is in its detachment lifecycle.
     private enum Phase {
         /// The call is running in-band.
@@ -1043,6 +1266,10 @@ private actor RunEventFunnel: OperationEventSink {
 
     /// Where the run is in its detachment lifecycle.
     private var phase: Phase = .running
+
+    /// Whether the timeout has claimed the run — set the moment a whole
+    /// timeout window is known to have elapsed, and never cleared.
+    private var hasTimedOut = false
 
     /// Whether any event has been delivered upstream for this run.
     private var hasDeliveredAnyEvent = false
@@ -1098,16 +1325,29 @@ private actor RunEventFunnel: OperationEventSink {
         await delivery.value
     }
 
+    /// Claims the run for the timeout, so no later detachment can park it.
+    ///
+    /// Called the moment a whole timeout window is known to have elapsed —
+    /// before the timeout resolves its race — so the claim always lands
+    /// ahead of the cancellation it is about to request. A soft deadline
+    /// that elapses in the same instant then finds a claimed run and takes
+    /// the in-band timeout rather than handing the model a token for a run
+    /// this claim has killed.
+    func beginTimeout() {
+        hasTimedOut = true
+    }
+
     /// Marks the run detached and, iff it has posted nothing yet, delivers
     /// the one synthesized progress event.
     ///
     /// - Parameter progress: The synthesized progress to deliver when the
     ///   run has been silent.
     /// - Returns: `true` when the run is (now) detached; `false` when it
-    ///   already settled — the caller returns the in-band result instead
-    ///   of parking a finished run.
+    ///   already settled, or when the timeout has claimed it — the caller
+    ///   returns the in-band result instead of parking a run that is
+    ///   finished or being killed.
     func markDetached(postingIfSilent progress: OperationEvent) async -> Bool {
-        guard case .running = phase else {
+        guard case .running = phase, !hasTimedOut else {
             return false
         }
         phase = .detached

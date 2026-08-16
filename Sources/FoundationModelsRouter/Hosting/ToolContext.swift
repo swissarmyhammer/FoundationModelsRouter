@@ -32,14 +32,20 @@ public struct ToolContext: Sendable {
 
     // MARK: - Run-plane bounds
 
-    /// The largest deadline ``wait(completionToken:seconds:)`` honors, in
-    /// seconds (one day). A larger — or infinite — requested deadline is
-    /// clamped here rather than trapped on: the run stays parked past the
-    /// clamp, so a caller can simply wait again.
+    /// The largest seconds-valued deadline the run plane honors, in seconds
+    /// (one day). A larger — or infinite — requested deadline is clamped here
+    /// rather than trapped on: the run stays parked past the clamp, so a
+    /// caller can simply wait again.
+    ///
+    /// One ceiling bounds every such deadline, which is why the name says
+    /// "deadline" rather than naming one clock:
+    /// ``wait(completionToken:seconds:)``'s own deadline, a
+    /// `DetachConfiguration.waitSeconds` window, and a
+    /// `DetachConfiguration.timeout` window all clamp against it.
     ///
     /// Published because a host clamps a model-supplied deadline against it
     /// before it ever reaches the run plane, and reports the clamp it made.
-    public static let waitSecondsCeiling: Double = 86_400
+    public static let deadlineSecondsCeiling: Double = 86_400
 
     /// The maximum character count of a terminal event's `detail` as the run
     /// plane reports it — the bound behind
@@ -281,7 +287,7 @@ public struct ToolContext: Sendable {
     ///   - seconds: How long to wait for settlement before reporting
     ///     ``WaitOutcome/deadlineElapsed``. A model-supplied deadline is
     ///     clamped rather than trusted: NaN and negative values floor to an
-    ///     immediate deadline, and anything above ``waitSecondsCeiling``
+    ///     immediate deadline, and anything above ``deadlineSecondsCeiling``
     ///     (including infinity) is capped there — never a trap.
     /// - Returns: The ``WaitOutcome``.
     public func wait(completionToken: String, seconds: Double) async -> WaitOutcome {

@@ -368,7 +368,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The handle ``cancelCurrentTurn()`` resumes to end a call already
     /// suspended on a parked run: ``SessionMailbox/wait(completionToken:seconds:)``
     /// ignores task cancellation by design and its ceiling is a day
-    /// (``ToolContext/waitSecondsCeiling``), so a drain parked on one ends
+    /// (``ToolContext/deadlineSecondsCeiling``), so a drain parked on one ends
     /// early only because something else resumes it.
     ///
     /// A dictionary rather than one gate because the drain runs outside

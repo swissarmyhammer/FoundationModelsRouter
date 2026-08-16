@@ -53,7 +53,7 @@ import Foundation
 /// typed capabilities on the context it already holds:
 /// ``ToolContext/parkedRuns()``, ``ToolContext/wait(completionToken:seconds:)``
 /// and ``ToolContext/cancel(completionToken:)``, bounded by
-/// ``ToolContext/waitSecondsCeiling`` and
+/// ``ToolContext/deadlineSecondsCeiling`` and
 /// ``ToolContext/terminalDetailTailLimit``. That is the whole host route, so
 /// no host ever needs to hold this actor, and no run-plane member of it needs
 /// to be published.
@@ -306,7 +306,7 @@ public actor SessionMailbox {
     ///     ``WaitOutcome/deadlineElapsed``. The value arrives from outside
     ///     the process (the model-supplied `waitSeconds`), so it is clamped
     ///     rather than trusted: NaN and negative values floor to an
-    ///     immediate deadline, and anything above ``ToolContext/waitSecondsCeiling``
+    ///     immediate deadline, and anything above ``ToolContext/deadlineSecondsCeiling``
     ///     (including infinity) is capped there — never a trap.
     /// - Returns: The ``WaitOutcome``.
     func wait(completionToken: String, seconds: Double) async -> WaitOutcome {
@@ -559,7 +559,7 @@ public actor SessionMailbox {
 
     /// Clamps a caller-supplied seconds value to a representable, safe
     /// nanosecond count: NaN and negative values floor to zero and anything
-    /// above ``ToolContext/waitSecondsCeiling`` (including infinity) caps
+    /// above ``ToolContext/deadlineSecondsCeiling`` (including infinity) caps
     /// there, so no outside-supplied value can trap the `UInt64` conversion.
     ///
     /// Owned here — the run plane is what the ceiling bounds — and shared by
@@ -567,7 +567,7 @@ public actor SessionMailbox {
     /// so the one clamping rule has exactly one implementation.
     static func boundedNanoseconds(clamping seconds: Double) -> UInt64 {
         guard !seconds.isNaN else { return 0 }
-        let clamped = min(max(seconds, 0), ToolContext.waitSecondsCeiling)
+        let clamped = min(max(seconds, 0), ToolContext.deadlineSecondsCeiling)
         return UInt64(clamped * nanosecondsPerSecond)
     }
 

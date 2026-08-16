@@ -82,6 +82,39 @@ struct SessionMailboxTests {
         _ = await mailbox.wait(completionToken: token, seconds: 5)
     }
 
+    // MARK: - The run plane's deadline ceiling
+
+    /// Nanoseconds in one second — the unit
+    /// ``SessionMailbox/boundedNanoseconds(clamping:)`` reports in.
+    private static let nanosecondsPerSecond: Double = 1_000_000_000
+
+    /// The run plane's ceiling, in the nanoseconds the clamp reports.
+    private static let ceilingNanoseconds = UInt64(
+        ToolContext.deadlineSecondsCeiling * nanosecondsPerSecond
+    )
+
+    /// A requested deadline plainly over the ceiling.
+    private static let overCeilingSeconds = ToolContext.deadlineSecondsCeiling + 1
+
+    @Test(
+        "boundedNanoseconds caps every deadline the run plane is given at its ceiling",
+        arguments: [
+            ToolContext.deadlineSecondsCeiling,
+            Self.overCeilingSeconds,
+            Double.infinity,
+        ]
+    )
+    func boundedNanosecondsCapsAtTheCeiling(seconds: Double) {
+        #expect(SessionMailbox.boundedNanoseconds(clamping: seconds) == Self.ceilingNanoseconds)
+    }
+
+    @Test("boundedNanoseconds converts a deadline under the ceiling rather than capping it")
+    func boundedNanosecondsConvertsUnderTheCeiling() {
+        #expect(
+            SessionMailbox.boundedNanoseconds(clamping: 1) == UInt64(Self.nanosecondsPerSecond)
+        )
+    }
+
     @Test("a settled run resolves wait() immediately even with a clamped-to-zero deadline")
     func settledRunResolvesWaitDespiteZeroDeadline() async {
         let mailbox = SessionMailbox()

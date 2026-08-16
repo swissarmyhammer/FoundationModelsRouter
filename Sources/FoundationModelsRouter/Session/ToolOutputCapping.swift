@@ -195,6 +195,13 @@ extension ToolDetachment {
     /// `correlationID` — and the capping layer passes it through unwrapped,
     /// since there is no `String` output to truncate.
     ///
+    /// The mount named here is the session's policy, not the last word: a
+    /// tool that declares its own
+    /// ``DetachmentParameterProviding/detachmentMount`` runs under that
+    /// declaration instead. So this one site mounts a tool that must never
+    /// park beside one that must, and the choice stays with the tool that
+    /// knows — see ``DetachConfiguration/runToCompletionMount``.
+    ///
     /// Shared by ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
     /// (the root and restore sites) and
     /// ``RoutedSessionActor/fork(workingDirectory:)`` (which forks each
