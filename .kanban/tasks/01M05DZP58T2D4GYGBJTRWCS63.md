@@ -218,10 +218,32 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift. Duration of `twoSessionsOverOneSharedPoolEntryContend` in the full run: 4.917 s before, 1.153 s after. Cause: `@MainActor` on the test body, which made each resume queue behind every other `@MainActor` test in the target (one read cost 1.28 s). `swift build` clean, `swift test` green (963 + 27 + 24 tests, 1 pre-existing known issue).
     - next: /review
   timestamp: 2026-08-16T19:29:40.484184+00:00
+- actor: claude-code
+  id: 01m06142ek9bqv8p7w80q2gd5z
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 5d80148) — 0 findings, 0 confirmed, 0 refuted, 9 attempted, 0 failed; 3 files reviewed, 2 skipped by `.reviewignore`. Both prior `reuse/reuse` findings of 2026-08-16 14:00 are checked.
+    - next: none — task moved to done.
+  timestamp: 2026-08-16T19:35:03.891536+00:00
+- actor: claude-code
+  id: 01m0614rv6rbb3nqfshky6vevf
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — both `reuse` findings closed by extraction to two new helpers, with no pre-existing suite edited; `@MainActor` removed from the three tests; a latent race fixed
+    - test: green — swift test, 963 + 27 + 24 tests, 0 failures
+    - commit: 5d80148
+    - review: clean — zero new findings over 9 validator passes; both prior findings checked off; task moved to done
+
+    Two things the timing investigation found, both worth keeping:
+
+    1. The slowness was not the `BoundedWait` bound. The two waits took 0.34s and 0.21s against a 5s ceiling. The cost was `@MainActor` on the test bodies: this target holds about 471 `@MainActor` markers, so each `await` queued behind every other main-actor test. One actor read cost 1.28 seconds, and the test took 4.9 seconds for a body that does 5 milliseconds of work. Off the main actor it takes 1.15 seconds. Widening the bound would have hidden this rather than fixed it.
+
+    2. A real latent flake, caught before the card closed: `gate.availablePermits == 0` proves only that `beginTurn()` took the permit, NOT that the holder reached the container, so the concurrency-peak read could see zero. It failed 1 run in 5 in isolation. The test now waits for the container rather than for the permit. No assertion was weakened.
+  timestamp: 2026-08-16T19:35:26.822414+00:00
 depends_on:
 - 01M05DYCWJPBSXEY8681ZT7VYG
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffac80
 title: No test drives generation from inside a tool call, or exercises gate contention
 ---
 Two shapes have no coverage in any target. This is why the nested-generation deadlock reached a consumer.
