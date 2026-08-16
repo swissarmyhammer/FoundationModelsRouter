@@ -53,8 +53,33 @@ comments:
     - evidence: 12 files — Sources/FoundationModelsRouter/Concurrency/ResidentModelGates.swift (new), Sources/FoundationModelsRouter/LanguageModelProfile.swift, Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift, Tests/FoundationModelsRouterTests/Helpers/HandBuiltProfileFixtures.swift, Tests/FoundationModelsRouterIntegrationTests/{RecordingHandleIntegrationTests,CompactionRoundTripIntegrationTests,RealToolTurnComparisonTests,TranscriptReconstructionIntegrationTests,LanguageModelSessionBackendTests,SessionTreeRestorationIntegrationTests}.swift, Tests/FoundationModelsRouterEvals/Support/CompactionContinuityEvalRealSubjectRunner.swift. `swift build --build-tests` clean, every target including the `Examples/` executables. `swift test` green — 963 + 27 + 24 tests, 0 failures, 0 warnings, 1 pre-existing known issue in `BoundedWait`'s own timeout self-test.
     - next: /review
   timestamp: 2026-08-16T19:58:28.452408+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m064he17gyfxxxfxrjkdr5m1
+  text: |
+    ### review — clean
+    - evidence: `review sha 244b1ac~1..244b1ac` — 12 files reviewed, 9 validators attempted, 0 failed. counts: 0 findings, 0 confirmed, 0 refuted. Zero new findings; all 5 acceptance criteria already checked; no prior findings sections. Scope was 244b1ac only, not HEAD — the kanban chore c69c642 sits on top and is not part of this review.
+    - Second gate set over one container: closed. `ResidentModelGates` is internal, so no consumer can build one. `RoutedModel.init` and `LanguageModelProfile.init` are internal. Inside the module there is exactly ONE mint site (Router.swift:477, at first load into the pool) and exactly ONE handle construction site (Router.swift:933, which reads `entry.gates`). No path can mint a second set for a container that already has one.
+    - Six gated suites and the evals runner: correct. Each holds one `let generationGates` for the one generation container and gives it to both `standard` and `flash`; the embedding handle wraps its OWN separate container (`UnusedEmbeddingContainer` / `StubEmbeddingContainer`), so its own set is right, not a second set over the same container. Same shape in `HandBuiltProfileFixtures.makeProfile`, which no longer accepts a gate argument, so a suite cannot ask for the two-gate shape.
+    - `twoHandBuiltHandlesOverOneContainerContend`: proves the fix, it does not merely pass. It asserts gate IDENTITY (`===`), which fails under the old fresh-gate default, then runs the same `expectGenerationsSerialize` drill as the resolved test — it waits for the holder to be INSIDE the container (`observer.maximumActive == 1`) before it starts the second turn, asserts the second parks on the same gate (`waiterCount == 1`), and asserts `maximumActive == 1` both mid-run and after both turns finish. Under the pre-fix two-gate behaviour the peak would read 2. The assertion is falsifiable.
+    - next: none — task complete
+  timestamp: 2026-08-16T20:34:47.463484+00:00
+- actor: claude-code
+  id: 01m064jk1q2q4dy0pmkj0akvm5
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — option 1, taken to its full form. Both gates are now one required `ResidentModelGates` value with no default, and `RoutedModel.init` and `LanguageModelProfile.init` left the public surface. 12 files plus 1 new.
+    - test: green — swift test, 1014 tests, 0 failures; `swift build --build-tests -Xswiftc -warnings-as-errors` clean, which is what proves the six gated suites still compile even though they do not run here
+    - commit: 244b1ac (breaking)
+    - review: clean — zero new findings; task moved to done
+
+    The review pressed the three things that mattered and confirmed each:
+
+    1. No residual hole. `ResidentModelGates` is internal, so a consumer cannot build the value the initializer demands. Inside the module there is one mint site and one handle-construction site. The old hole was silence; silence no longer compiles.
+    2. The six gated suites share one set for each container correctly. The second `ResidentModelGates` in each file belongs to the embedding handle, which wraps its OWN container — so a distinct set there is right, not a second set over the same container.
+    3. The inverted control proves the fix rather than merely passing. It asserts gate identity with `===`, which fails outright under the old default, then runs the same drill as the resolved-path test. Under the old behaviour the concurrency peak would read 2. It is falsifiable against the old code.
+  timestamp: 2026-08-16T20:35:25.367392+00:00
+position_column: done
+position_ordinal: ffad80
 title: The public LanguageModelProfile initializer lets a consumer defeat per-container serialization
 ---
 A consumer can build two handles over one resident container and get two separate generation gates. Two gates over one container permit two concurrent generations. That is the exact condition the gate exists to prevent.
