@@ -166,6 +166,13 @@ struct GenerationStallDiagnosticTests {
     /// The prompt every test turn sends.
     private static let prompt = "generate something"
 
+    /// The seconds ``defaultReportIntervalIsThirtySeconds()`` expects the
+    /// shipped default to be built from.
+    ///
+    /// Stated here as its own number, and never read from the source it
+    /// checks, so a change to that source makes the test fail.
+    private static let expectedDefaultReportIntervalSeconds = 30
+
     /// Builds a fresh router, resolved profile, and vended session over a
     /// ``StallingBackend``.
     ///
@@ -304,6 +311,16 @@ struct GenerationStallDiagnosticTests {
         drain.cancel()
 
         #expect(await log.stalls.isEmpty)
+    }
+
+    // MARK: - The cadence a session starts with
+
+    @Test("the shipped default reporting interval is thirty seconds")
+    func defaultReportIntervalIsThirtySeconds() {
+        #expect(
+            RoutedSessionActor.defaultGenerationStallReportInterval
+                == .seconds(Self.expectedDefaultReportIntervalSeconds)
+        )
     }
 
     // MARK: - The log a consumer with no subscription still sees

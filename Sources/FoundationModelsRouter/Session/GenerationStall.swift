@@ -182,6 +182,13 @@ struct GenerationStallWatch: Sendable {
 }
 
 extension RoutedSessionActor {
+    /// The seconds ``defaultGenerationStallReportInterval`` is built from.
+    ///
+    /// Named apart from the interval because a `Duration` is built by a call,
+    /// and a number written inside a call names nothing. The reason for the
+    /// value is on the interval itself.
+    private static let defaultGenerationStallReportIntervalSeconds = 30
+
     /// How long a model call runs with no observable progress before a session
     /// reports a ``GenerationStall``, unless the session is told otherwise.
     ///
@@ -191,7 +198,8 @@ extension RoutedSessionActor {
     /// suspects a hang learns within one attention span rather than after a
     /// coffee break. Nothing is decided by this number — a report at the wrong
     /// moment costs a log line, never a result.
-    static let defaultGenerationStallReportInterval: Duration = .seconds(30)
+    static let defaultGenerationStallReportInterval: Duration =
+        .seconds(defaultGenerationStallReportIntervalSeconds)
 
     /// Installs how long a model call on this session may run with no
     /// observable progress before it reports a ``GenerationStall``.

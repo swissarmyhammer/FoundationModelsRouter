@@ -112,6 +112,77 @@ comments:
     - timing note on `GenerationStallDiagnosticTests.swift`: tests install a 50ms report interval and poll for the stall event through `BoundedWait.conditionReached` (5s ceiling, established helper pattern). This is real wall-clock timing, not a virtual clock — the watcher does a genuine `Task.sleep(for: interval)` before it can report, so the test's pass depends on 50ms of real time elapsing and being observed inside a 5s bound (100x margin). It is not deterministic in the strict sense; it is a generously-bounded, real-time-dependent wait consistent with the suite's existing `BoundedWait` convention. One run was green; no flake was observed, but the mechanism itself is not clock-free.
     - next: none — build and tests clean, ready for review
   timestamp: 2026-08-16T17:10:43.730358+00:00
+- actor: claude-code
+  id: 01m05s1a5zjv1cf25rsvfcvsdr
+  text: |-
+    ### commit — changed
+    - evidence: `a33b3ae` feat(session)!: report a generation stall instead of bounding generation (^z6xcmnh) — 16 files (2 new), 921 insertions(+), 33 deletions(-)
+    - also: `bebd697` chore(kanban): record the ^1zt7vyg completion — a separate, unrelated board update found in the working tree, split out so it does not mix with this task's diff
+    - next: none — commit is local only, not pushed
+  timestamp: 2026-08-16T17:13:44.895913+00:00
+- actor: claude-code
+  id: 01m05sbwhk4a8z170rb0cr0n8m
+  text: |
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` — 1 finding, 1 confirmed, 0 refuted, 9 validators attempted, 0 failed. `Sources/FoundationModelsRouter/Session/GenerationStall.swift:194` `code-hygiene/magic-numbers-swift`
+    - scope note: the engine reviewed the diffs only — 13 files reviewed, 2 skipped by `.reviewignore` (`.kanban/`)
+    - the three areas the review was pointed at produced no confirmed finding: the stall watch's lifetime and cancellation in `runCancellableModelCall`, the wall-clock timing in `GenerationStallDiagnosticTests.swift`, and the `SessionEvent` source break. The source break stays a recorded decision on this card (comment `01m05rqcyvsaepr18v2v1n6f5b`); no validator asks for a change there.
+    - the finding samples one cause. Read the `code-hygiene/magic-numbers-swift` rule text and remove that cause from the whole of `GenerationStall.swift`, not the one line.
+    - next: /implement — fix the finding, then re-review
+  timestamp: 2026-08-16T17:19:31.379079+00:00
+- actor: claude-code
+  id: 01m05sccmpec3wnhv62mkbh74n
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 14 files, 2 new; decision recorded as "bound nothing, report a stall"; `SessionEvent.generationStalled` added; visibility declared per path
+    - test: green — swift test, 997 tests, 0 failures; CompactionDemo builds; all 5 exhaustive switches handle the new case by name, none by `default`
+    - commit: a33b3ae
+    - review: findings — Sources/FoundationModelsRouter/Session/GenerationStall.swift:194 (`code-hygiene/magic-numbers-swift`)
+    - note: the engine confirmed nothing on the three pointed concerns — the watch's lifetime and cancellation, the wall-clock test timing, and the `SessionEvent` source break.
+  timestamp: 2026-08-16T17:19:47.862119+00:00
+- actor: claude-code
+  id: 01m05srs2hrqcyznpw5zh5xc56
+  text: |-
+    ### The magic-numbers finding — the rule text, the cause, and the sweep
+
+    **What the rule says.** `code-hygiene/magic-numbers-swift` runs swiftlint's `no_magic_numbers` with `allowed_numbers: [0, 1, -1, 100]`, `severity: warning` and `test_parent_classes: ["QuickSpec", "XCTestCase"]`. Two facts of that rule decide the fix:
+
+    - The rule does NOT report a number that a declaration names. Measured by the rule's own probe: a variable declaration, a stored property, a `static let`, an enumeration raw value and a default parameter are all silent.
+    - It DOES report a number inside a call, even when that call is the value of a named declaration.
+
+    So the cause is not "a `30` in the source". The cause is **a number written inside a call, where the declaration names the `Duration` but nothing names the number**. `static let ... : Duration = .seconds(30)` puts `30` in a call argument, so it reports.
+
+    **The sweep of the whole file.** Every numeric literal in `GenerationStall.swift` was read against that cause:
+
+    | site | shape | reports |
+    |---|---|---|
+    | `defaultGenerationStallReportInterval` | `.seconds(30)` — a call argument | yes, the finding |
+    | `attosecondsPerSecond: Double = 1e18` | a `static let` value | no — a declaration names it |
+    | `fragmentsObserved: Int = 0` | a stored property, and `0` is allowed | no |
+    | `lastGenerationStallWatchId += 1`, `watch.fragmentsObserved += 1` | `1` is allowed | no |
+
+    One site carried the cause. It is fixed by a named `private static let defaultGenerationStallReportIntervalSeconds = 30`, and the interval is now built from that name. The value is unchanged.
+
+    **The other files of `a33b3ae`.** All 13 reviewed files were run through the same rule at the same settings — the 9 sources plus `Examples/CompactionDemo/main.swift` and the 3 test files. Before the fix: 1 finding, the one on the card. After the fix: 0 findings.
+
+    **A test pins the value.** `swiftlint` cannot tell a rename from a value change, so `defaultReportIntervalIsThirtySeconds()` was added to `GenerationStallDiagnosticTests`. It states its own `30` and never reads the source it checks. RED was verified before the fix: with the source temporarily set to `.seconds(31)` the test failed with `31.0 seconds` against `30.0 seconds`; the source was then restored to `30` through the named constant and the test passed.
+
+    **One note for a later reader.** The test's own expectation had to be a named constant too. This suite is a swift-testing `struct`, not an `XCTestCase`, so the rule's test carve-out does not reach it and a bare `.seconds(30)` in the test would have made a second finding.
+  timestamp: 2026-08-16T17:26:33.809637+00:00
+- actor: claude-code
+  id: 01m05srzwynjphy64ktws3sa9e
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Session/GenerationStall.swift, Tests/FoundationModelsRouterTests/GenerationStallDiagnosticTests.swift. `swiftlint no_magic_numbers` at the rule's own settings over all 13 files of `a33b3ae`: 1 finding before, 0 after. `swift build` clean — the one `warning: missing creator for mutated node` line names the vendored `mlx-swift_Cmlx.bundle` and is present on a stashed tree too, so it is pre-existing and not from source. `swift test`: 947 + 27 + 24 = 998 tests, 0 failed, 0 skipped, 1 known issue (the pre-existing `BoundedWait` one). The new test is `the shipped default reporting interval is thirty seconds`.
+    - next: /review
+  timestamp: 2026-08-16T17:26:40.798277+00:00
+- actor: claude-code
+  id: 01m05swx7d0ec1tbys028t7m00
+  text: |-
+    ### test — green
+    - evidence: `swift build` clean (no errors, no Swift compiler warnings). `swift test` — 947 tests in 90 suites passed (1 pre-existing intentional known issue in BoundedWaitTests), 27 tests in 11 suites passed, 24 tests in 5 suites passed. Zero failures, zero unintentional skips (the `.enabled(if: integrationEnabled)` real-model suites are pre-existing gated infrastructure, unrelated to this diff).
+    - next: ready for review
+  timestamp: 2026-08-16T17:28:49.133027+00:00
 position_column: doing
 position_ordinal: '80'
 title: Generation has no timeout, no stall detector, and no diagnostic
@@ -157,4 +228,13 @@ This card is about the missing signal, not about the deadlock. The deadlock has 
 - [x] The chosen behaviour is stated in `respond(to:)`'s documentation
 - [x] Tests cover the chosen behaviour
 
-Reported by the `FoundationModelsMultitool` session. #bug #long-running #nested-generation
+Reported by the `FoundationModelsMultitool` session.
+
+## Review Findings (2026-08-16 12:14)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 13 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/GenerationStall.swift:194` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants. #bug #long-running #nested-generation
