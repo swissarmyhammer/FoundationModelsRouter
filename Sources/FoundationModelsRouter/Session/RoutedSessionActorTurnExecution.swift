@@ -636,6 +636,18 @@ extension RoutedSessionActor {
             }
             permitLoan.close()
         }
+        // The stall watch (task ^z6xcmnh), opened before the call and closed
+        // by its own `defer`. It bounds nothing: the watchdog only reports a
+        // ``GenerationStall`` on each interval the call goes without observable
+        // progress, so a decode that stops making progress becomes visible
+        // while it is still running instead of only when it finally ends. See
+        // ``RoutedSessionActor/reportGenerationStall(id:)``.
+        let stallWatchId = beginGenerationStallWatch()
+        let stallWatchdog = Task { await self.watchGenerationForStalls(id: stallWatchId) }
+        defer {
+            stallWatchdog.cancel()
+            endGenerationStallWatch(id: stallWatchId)
+        }
         let modelCall = Task {
             try await GenerationPermitLoan.$current.withValue(permitLoan) {
                 try await ToolContext.$current.withValue(turnContext) {

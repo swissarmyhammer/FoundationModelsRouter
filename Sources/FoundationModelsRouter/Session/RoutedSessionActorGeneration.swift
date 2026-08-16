@@ -362,9 +362,15 @@ extension RoutedSessionActor {
         wrapFragment: @Sendable (ResponseFragment) -> [Element]
     ) async throws -> String {
         var response = ""
+        // This turn's stall watch counts real increments (task ^z6xcmnh):
+        // declared here so a streaming turn that has produced nothing yet is
+        // still reported as one the session can see fragments on, and noted per
+        // fragment below so the report is measured from the last one.
+        observeGenerationFragments()
         for try await fragment in backend.streamResponseFragments(
             to: composedPrompt, maxTokens: maxTokens)
         {
+            noteGenerationFragment()
             for element in wrapFragment(fragment) {
                 continuation.yield(element)
             }

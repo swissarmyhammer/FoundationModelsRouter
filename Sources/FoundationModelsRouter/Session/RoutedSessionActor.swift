@@ -422,6 +422,31 @@ actor RoutedSessionActor: RoutedSession {
     /// turn but the current one.
     var currentTurnEventSink: ((SessionEvent) -> Void)?
 
+    /// The stall watch over the one model call this session has in flight, or
+    /// `nil` between calls.
+    ///
+    /// Opened by ``beginGenerationStallWatch()`` immediately before the model
+    /// call starts and closed by its `defer`, so a watchdog that outlives its
+    /// call finds nothing to report against. Guarded by the actor's isolation,
+    /// and a session runs one turn at a time (``turnLock``), so the watch can
+    /// never belong to any call but the current one. See ``GenerationStall``.
+    var generationStallWatch: GenerationStallWatch?
+
+    /// The last id ``beginGenerationStallWatch()`` handed out.
+    ///
+    /// Monotonic, so a watchdog left over from an earlier model call can never
+    /// be mistaken for the one watching the call now in flight.
+    var lastGenerationStallWatchId: UInt64 = 0
+
+    /// How long a model call on this session may run with no observable
+    /// progress before it reports a ``GenerationStall``.
+    ///
+    /// Starts at ``defaultGenerationStallReportInterval`` and is changed
+    /// through ``setGenerationStallReportInterval(_:)``, since a cross-actor
+    /// property cannot be written directly.
+    var generationStallReportInterval: Duration = RoutedSessionActor
+        .defaultGenerationStallReportInterval
+
     /// The `correlationID` of every detached run whose ending this session has
     /// already journaled.
     ///

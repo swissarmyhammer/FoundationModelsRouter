@@ -101,8 +101,11 @@ Two things a client must know:
 - **The stream is turn-scoped.** `streamEvents(to:)` delivers events for the
   turn it started and nothing else. It will not show you another turn's events,
   and it will not show you a detached tool run completing from an earlier turn.
-  The one session-wide channel, `streamSessionEvents()`, currently carries a
-  single event type (`discoveryPrimingFailed`).
+  The one session-wide channel, `streamSessionEvents()`, carries every
+  turn-lifecycle event, whichever entry point ran the turn — including
+  `generationStalled`, the report that a generation has produced nothing
+  observable for a while. That report bounds nothing: no turn is cancelled and
+  no answer changes — see `respond(to:maxTokens:)` for the recorded decision.
 - **Abandoning the stream cancels the turn behind it.**
 
 ---

@@ -17,9 +17,10 @@ import Foundation
 /// so adding a case is a source-breaking change for any *exhaustive* `switch`
 /// over it outside this package (the compiler neither requires nor accepts an
 /// `@unknown default` there). ``turnStarted(_:)`` was added this way, and so
-/// was ``toolInvocation(_:)``: a consumer switching exhaustively adds the new
-/// case when updating. A consumer that wants to absorb future cases without a
-/// source break writes a `default` arm instead.
+/// were ``toolInvocation(_:)`` and ``generationStalled(_:)``: a consumer
+/// switching exhaustively adds the new case when updating. A consumer that
+/// wants to absorb future cases without a source break writes a `default` arm
+/// instead.
 ///
 /// The session event stream: this is
 /// the general session-event vocabulary a driver — or ``SessionProjection``,
@@ -218,6 +219,31 @@ public enum SessionEvent: Sendable, Equatable {
     /// response rather than a stream — yields it on
     /// ``RoutedSession/streamSessionEvents()``.
     case discoveryPrimingFailed(DiscoveryPrimingFailure)
+
+    /// The generation in flight has produced nothing this session can observe
+    /// for a whole reporting interval (task ^z6xcmnh).
+    ///
+    /// **A report, never a bound.** Nothing is cancelled, nothing fails, and
+    /// the answer the turn eventually returns is exactly the answer it would
+    /// have returned without this event — see
+    /// ``RoutedSession/respond(to:maxTokens:)`` for the whole recorded
+    /// decision, and ``GenerationStall`` for what a report carries.
+    ///
+    /// Emitted repeatedly while the generation stays stuck, once per further
+    /// interval without progress, so a consumer sees
+    /// ``GenerationStall/timeWithoutProgress`` grow. That growth is the fact
+    /// that separates a stuck decode from a slow one, which from outside look
+    /// identical.
+    ///
+    /// It travels on both routes, because a stall matters most on the surface
+    /// that hands its caller no stream: the turn's own
+    /// ``RoutedSession/streamEvents(to:maxTokens:)`` stream, and *every* turn's
+    /// ``RoutedSession/streamSessionEvents()`` — including the ones
+    /// ``RoutedSession/respond(to:maxTokens:)`` and
+    /// ``RoutedSession/dispatchNextPrompt()`` run. What a report is entitled to
+    /// claim differs between the two, and ``GenerationStall/visibility`` says
+    /// which claim this one makes.
+    case generationStalled(GenerationStall)
 
     /// One physical generate attempt closed, carrying its own measured token
     /// usage and the session's resulting ``RoutedSession/contextFill``.

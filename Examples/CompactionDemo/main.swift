@@ -70,6 +70,11 @@ import Tokenizers
             """)
     case .discoveryPrimingFailed(let failure):
         print("[priming] could not seed this turn: \(failure)")
+    case .generationStalled(let stall):
+        // The liveness signal: this turn is still running and has produced
+        // nothing observable for a while. Nothing is bounded — see
+        // `RoutedSession.respond(to:maxTokens:)` for the recorded decision.
+        print("[stall] \(stall)")
     case .textDelta, .textReset, .reasoningDelta, .entryRecorded, .turnEnded:
         // Already folded into the returned `TurnOutcome` (the reply text and
         // closing usage), or identity bookkeeping this demo does not print:

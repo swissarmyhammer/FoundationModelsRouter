@@ -260,13 +260,16 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed:
-            // Handled explicitly, and deliberately changes nothing: a turn whose
+        case .discoveryPrimingFailed, .generationStalled:
+            // Handled explicitly, and deliberately changes nothing. A turn whose
             // discovery priming could not seed generates exactly as an unprimed
-            // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), so
-            // this projection's phase, transcript, and counters are already the
-            // faithful mirror of what happened. The failure is a diagnostic for
-            // a driver watching the event stream, not session state.
+            // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), and a
+            // stall report bounds nothing at all — the turn is still running and
+            // will still produce whatever it was going to produce (see
+            // ``SessionEvent/generationStalled(_:)``). So this projection's
+            // phase, transcript, and counters are already the faithful mirror of
+            // what happened. Both are diagnostics for a driver watching the
+            // event stream, not session state.
             break
         case .turnEnded(let usage):
             tokensIn += usage.tokensIn

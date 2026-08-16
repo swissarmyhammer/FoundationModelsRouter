@@ -293,6 +293,43 @@ public protocol RoutedSession: Actor {
     /// It stops waiting and nothing else — the runs it was waiting on stay
     /// parked, since ending them is ``close()``'s job.
     ///
+    /// **How long generation may take: the recorded decision (task ^z6xcmnh).**
+    ///
+    /// **Nothing bounds a decode.** This call carries no wall-clock timeout, no
+    /// deadline, and no watchdog that ends a turn. A generation runs until the
+    /// model finishes it, until it fails, or until someone cancels it —
+    /// ``cancelCurrentTurn()`` or the caller's own task — and even a
+    /// cancellation is advisory: it unwinds Router's side of the call, while
+    /// whether the backend's own decode stops belongs to that backend.
+    ///
+    /// That is deliberate. A limit small enough to catch a stuck decode would
+    /// kill slow ones, and a decode's honest duration is a property of the
+    /// model, the prompt, and the machine — three things this package does not
+    /// know. Reporting a failure for work that was merely slow is worse than
+    /// reporting nothing.
+    ///
+    /// **What this call gives instead is a signal.** A generation that has
+    /// produced nothing observable for a while reports itself, on each further
+    /// interval it stays that way: one line to this module's log, needing no
+    /// subscription of any kind, and one ``SessionEvent/generationStalled(_:)``
+    /// on ``streamSessionEvents()`` — the route that reaches a caller of this
+    /// method, which holds no stream of its own. Nothing is cancelled, nothing
+    /// fails, and the answer is exactly the answer the turn would have returned
+    /// anyway. From outside, a stuck decode and a slow one look identical; a
+    /// report whose ``GenerationStall/timeWithoutProgress`` keeps growing is
+    /// what tells them apart.
+    ///
+    /// **What the signal can honestly claim differs by surface, and it says
+    /// so.** ``streamResponse(to:maxTokens:)`` and
+    /// ``streamEvents(to:maxTokens:)`` produce fragments, so a report there
+    /// counts real increments and means "no fragment in N seconds"
+    /// (``GenerationProgressVisibility/fragments(observed:)``). This method
+    /// does not: its backend call hands back one whole `String`, so there is no
+    /// increment anywhere for the session to time, and its report means only
+    /// "this model call has run N seconds"
+    /// (``GenerationProgressVisibility/wholeAnswer``). A caller that needs the
+    /// stronger statement runs the turn through a streaming surface.
+    ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
@@ -328,6 +365,14 @@ public protocol RoutedSession: Actor {
     /// while a run the turn parked is still in flight. Backgrounding is the
     /// feature here — a consumer watching a stream watches the run plane too.
     /// ``respond(to:maxTokens:)`` is the surface that waits.
+    ///
+    /// Nothing bounds a decode here either — see
+    /// ``respond(to:maxTokens:)`` for the whole recorded decision — but the
+    /// stall report this surface produces is the stronger one: it counts the
+    /// fragments the backend really produced, so it means "no fragment in N
+    /// seconds" rather than only "this call has run N seconds". The report
+    /// itself arrives as ``SessionEvent/generationStalled(_:)`` on
+    /// ``streamSessionEvents()``, since a `String` element cannot carry it.
     ///
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
@@ -378,6 +423,12 @@ public protocol RoutedSession: Actor {
     /// and before the retried attempt's events. A session with no `budget`
     /// set never emits it here.
     ///
+    /// ``SessionEvent/generationStalled(_:)`` is emitted here too, on each
+    /// interval this turn's generation goes without producing a fragment.
+    /// Nothing bounds a decode — see ``respond(to:maxTokens:)`` for the whole
+    /// recorded decision — and because this surface streams, its report counts
+    /// real fragments rather than only call duration.
+    ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
     ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
@@ -413,7 +464,9 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/entryRecorded(id:kind:)`` events its diff derives, any
     /// ``SessionEvent/compaction(_:)`` it folds,
     /// the ``SessionEvent/discoveryPrimingFailed(_:)`` report that its
-    /// pre-discovery seeding could not run (see ``DiscoveryPriming``), and its
+    /// pre-discovery seeding could not run (see ``DiscoveryPriming``), the
+    /// ``SessionEvent/generationStalled(_:)`` report that its generation has
+    /// produced nothing observable for a while, and its
     /// closing ``SessionEvent/turnEnded(_:)``.
     ///
     /// **Excluded, deliberately: the live text increments.**
