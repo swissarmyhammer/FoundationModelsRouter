@@ -1,5 +1,4 @@
 import Foundation
-import FoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
@@ -32,101 +31,17 @@ import Testing
 /// Everything runs against stubs -- a stub loader, a container that reports
 /// what is concurrently inside it, and a latch a test opens -- so the suite
 /// needs no network and no GPU, and it waits on no clock.
+///
+/// No test here takes the main actor, and none may. Nothing in the suite reads
+/// or writes main-actor state. A body that took the main actor would have to
+/// get it again after each `await`, and it would queue behind every other
+/// `@MainActor` test in this target. That cost is large: measured inside the
+/// full run, one such resume took 1.28 seconds, and
+/// ``twoSessionsOverOneSharedPoolEntryContend()`` took 4.9 seconds for a body
+/// that does 5 milliseconds of work. Off the main actor the same test takes
+/// 1.0 second, almost all of it the resolve.
 @Suite("Generation gate contention over one shared pool entry")
 struct SharedGenerationGateContentionTests {
-    // MARK: - Concurrency-observing container
-
-    /// Counts how many model calls are inside the container at one time, so a
-    /// test can say whether two generations overlapped without a sleep.
-    private actor GenerationObserver {
-        /// How many calls are inside the container right now.
-        private var active = 0
-
-        /// The most calls that were ever inside the container at one time.
-        private(set) var maximumActive = 0
-
-        /// Records one call entering the container.
-        func enter() {
-            active += 1
-            maximumActive = max(maximumActive, active)
-        }
-
-        /// Records one call leaving the container.
-        func exit() {
-            active -= 1
-        }
-    }
-
-    /// A backend that reports its own entry and exit to a ``GenerationObserver``
-    /// and stays inside its model call until a latch opens.
-    ///
-    /// Holding the call open is what makes the gate observable: a turn keeps
-    /// the container's one generation permit for as long as its model call
-    /// runs, so a second turn either parks on that permit or proves it never
-    /// had to.
-    ///
-    /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
-    /// owning session drives one backend method at a time, and the observer it
-    /// reports to is an actor.
-    private final class ObservingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
-        /// The prefix an answer opens with, so a test can tell one turn's
-        /// answer from another's.
-        static let answerPrefix = "answered: "
-
-        /// The observer this backend reports its own entry and exit to.
-        private let observer: GenerationObserver
-
-        /// The latch a call stays inside the container until a test opens.
-        private let latch: RunLatch
-
-        init(observer: GenerationObserver, latch: RunLatch) {
-            self.observer = observer
-            self.latch = latch
-        }
-
-        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            await observer.enter()
-            await latch.waitUntilOpen()
-            await observer.exit()
-            return Self.answerPrefix + prompt
-        }
-
-        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-            AsyncThrowingStream { continuation in
-                continuation.yield(Self.answerPrefix + prompt)
-                continuation.finish()
-            }
-        }
-
-        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-            try await respond(to: prompt, maxTokens: maxTokens)
-        }
-
-        func makeFork() -> any LanguageModelSessionBackend { self }
-
-        func transcriptEntries() -> [Transcript.Entry] { [] }
-
-        func usageTokenCounts() -> (input: Int, output: Int)? { nil }
-    }
-
-    /// Vends one ``ObservingSessionBackend`` per session, all reporting to one
-    /// observer and all held by one latch.
-    private struct ObservingLLMContainer: LoadedLLMContainer {
-        /// The observer every vended backend reports to.
-        let observer: GenerationObserver
-
-        /// The latch every vended backend stays inside its model call until.
-        let latch: RunLatch
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            ObservingSessionBackend(observer: observer, latch: latch)
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            ObservingSessionBackend(observer: observer, latch: latch)
-        }
-    }
-
     // MARK: - Constants
 
     /// The one model both generation slots name, so the two slots carry one
@@ -169,72 +84,15 @@ struct SharedGenerationGateContentionTests {
         return (router, profile)
     }
 
-    /// Builds a profile whose standard and flash handles are constructed by
-    /// hand over `container`, each with no `generationGate` argument.
-    ///
-    /// This is the shape the six gated suites named in this suite's own
-    /// documentation build. It exists here as the control for
-    /// ``twoHandBuiltHandlesOverOneContainerNeverContend()``, and nowhere else.
-    ///
-    /// - Parameters:
-    ///   - container: The one container both generation handles wrap.
-    ///   - router: The router the profile reports its residency to. Nothing is
-    ///     resolved through it, so it owns no residency for this profile.
-    /// - Returns: The hand-built profile.
-    private static func makeHandBuiltProfile(
-        container: any LoadedLLMContainer, router: Router
-    ) -> LanguageModelProfile {
-        let recorder = InMemoryRecorder()
-        func resolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: sharedRef, considered: [])
-        }
-        func handle(_ slot: ModelSlot) -> RoutedLLM {
-            RoutedLLM(
-                slot: slot,
-                chosen: sharedRef,
-                footprintBytes: 0,
-                resolution: resolution(slot),
-                container: container,
-                routerId: router.id,
-                recorder: recorder
-            )
-        }
-        return LanguageModelProfile(
-            definitionName: "hand-built",
-            standard: handle(.standard),
-            flash: handle(.flash),
-            embedding: RoutedEmbedder(
-                slot: .embedding,
-                chosen: sharedRef,
-                footprintBytes: 0,
-                resolution: resolution(.embedding),
-                container: StubEmbeddingContainer(dimension: RouterTestFixtures.stubDimension),
-                routerId: router.id,
-                recorder: recorder
-            ),
-            router: router,
-            residencyToken: .generate()
-        )
-    }
-
-    /// The answer ``ObservingSessionBackend`` gives to `prompt`.
-    ///
-    /// - Parameter prompt: The prompt a turn was given.
-    /// - Returns: The expected answer text.
-    private static func answer(to prompt: String) -> String {
-        ObservingSessionBackend.answerPrefix + prompt
-    }
-
     // MARK: - The gate a resolve vends
 
     @Test("a resolve that pools both generation slots onto one entry gives the two handles one gate")
-    @MainActor
     func poolingBothGenerationSlotsOntoOneEntryGivesOneGate() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SharedGenerationGateContentionTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let latch = RunLatch()
-        let container = ObservingLLMContainer(observer: GenerationObserver(), latch: latch)
+        let container = ObservingLLMContainer(observer: ConcurrencyPeakObserver(), latch: latch)
         let resolved = try await Self.makeSharedEntryProfile(container: container, dir: dir)
 
         // Identity, not equality: only one gate instance can serialize the one
@@ -246,12 +104,11 @@ struct SharedGenerationGateContentionTests {
     }
 
     @Test("two sessions over one shared pool entry contend for that entry's one generation gate")
-    @MainActor
     func twoSessionsOverOneSharedPoolEntryContend() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SharedGenerationGateContentionTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let observer = GenerationObserver()
+        let observer = ConcurrencyPeakObserver()
         let latch = RunLatch()
         let container = ObservingLLMContainer(observer: observer, latch: latch)
         let resolved = try await Self.makeSharedEntryProfile(container: container, dir: dir)
@@ -270,6 +127,17 @@ struct SharedGenerationGateContentionTests {
                 gate.availablePermits == 0
             })
 
+        // Wait for the model call as well, and not for the permit alone.
+        // `beginTurn()` takes the permit before it calls the backend, so a
+        // permit count of zero does not yet show that the holder is inside the
+        // container. The peak reading below is only a proof about the flash
+        // session if the standard session is already in the container, and a
+        // reading taken too early sees zero for the holder's own call.
+        #expect(
+            await BoundedWait.conditionReached("the standard session's turn reaching the container") {
+                await observer.maximumActive == 1
+            })
+
         // The flash session's turn now parks in `beginTurn()`, on the very
         // same gate. This is the contention: two handles, one entry, one gate.
         let waiterTurn = Task { try await waiter.respond(to: Self.secondPrompt) }
@@ -283,8 +151,8 @@ struct SharedGenerationGateContentionTests {
         #expect(await observer.maximumActive == 1)
 
         await latch.open()
-        #expect(try await holderTurn.value == Self.answer(to: Self.firstPrompt))
-        #expect(try await waiterTurn.value == Self.answer(to: Self.secondPrompt))
+        #expect(try await holderTurn.value == ObservingSessionBackend.answer(to: Self.firstPrompt))
+        #expect(try await waiterTurn.value == ObservingSessionBackend.answer(to: Self.secondPrompt))
         #expect(await observer.maximumActive == 1)
         #expect(gate.availablePermits == 1)
         #expect(gate.waiterCount == 0)
@@ -305,19 +173,26 @@ struct SharedGenerationGateContentionTests {
     /// hand-built graph differ, which is the whole reason the six gated suites
     /// could not have caught the deadlock.
     @Test("two hand-built handles over one container never contend, because each mints a gate of its own")
-    @MainActor
     func twoHandBuiltHandlesOverOneContainerNeverContend() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "SharedGenerationGateContentionTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let observer = GenerationObserver()
+        let observer = ConcurrencyPeakObserver()
         let latch = RunLatch()
         let container = ObservingLLMContainer(observer: observer, latch: latch)
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             loader: StubModelLoader(container: container, dimension: RouterTestFixtures.stubDimension)
         )
-        let profile = Self.makeHandBuiltProfile(container: container, router: router)
+        // No gate: each handle then mints one of its own. That is the shape the
+        // six gated suites build, and the hazard this control records.
+        let profile = HandBuiltProfileFixtures.makeProfile(
+            definitionName: "hand-built",
+            chosen: Self.sharedRef,
+            container: container,
+            router: router,
+            generationGate: nil
+        )
 
         #expect(profile.standard.generationGate !== profile.flash.generationGate)
 
@@ -334,8 +209,8 @@ struct SharedGenerationGateContentionTests {
             })
 
         await latch.open()
-        #expect(try await firstTurn.value == Self.answer(to: Self.firstPrompt))
-        #expect(try await secondTurn.value == Self.answer(to: Self.secondPrompt))
+        #expect(try await firstTurn.value == ObservingSessionBackend.answer(to: Self.firstPrompt))
+        #expect(try await secondTurn.value == ObservingSessionBackend.answer(to: Self.secondPrompt))
         withExtendedLifetime(profile) {}
     }
 }

@@ -111,6 +111,113 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift. `swift build --build-tests` exit 0, 0 errors. `swift test` exit 0: 963 tests in 91 suites, 27 tests in 11 suites, 24 tests in 5 suites, 0 failures. The one "known issue" is BoundedWaitTests' own deliberate record and predates this change.
     - next: /review
   timestamp: 2026-08-16T18:55:12.454972+00:00
+- actor: claude-code
+  id: 01m05z3k57ssqhwkr93qk4a619
+  text: |-
+    ### commit — changed
+    - evidence: c1fcac6 test(router): add gate contention tests for one shared pool entry (^trwcs63) — HEAD~1, not the tip. The unrelated ^jgh63sf kanban record was split into its own commit 8a35a41 (HEAD), per instruction to keep unrelated .kanban/ updates separate.
+    - next: /review
+  timestamp: 2026-08-16T18:59:51.079577+00:00
+- actor: claude-code
+  id: 01m05zdhkfx42w36wdy38pdq8e
+  text: |-
+    ### review — findings
+    - evidence: 2 findings (2 confirmed, 3 refuted, 9 attempted) — Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift:40, Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift:184
+    - scope: review sha c1fcac6~1..c1fcac6 (NOT HEAD~1..HEAD; the kanban chore commit 8a35a41 sits on top)
+    - next: extract GenerationObserver and the hand-built profile helpers from the new test file into shared test utilities, then re-run /review on this card
+  timestamp: 2026-08-16T19:05:17.167607+00:00
+- actor: claude-code
+  id: 01m05zech80vnmwmf77zewwkwy
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 1 new test file, `SharedGenerationGateContentionTests.swift`, 3 tests; criteria 1 and 2 were already closed by ^1zt7vyg and were not duplicated; the six gated suites are recorded as defective
+    - test: green — swift test, 963 + 27 + 24 tests, 0 failures; the three new tests are deterministic under `BoundedWait`, observed at 0.9s, 1.1s and 2.9s against a 5s ceiling
+    - commit: c1fcac6 (note: not HEAD — an unrelated kanban chore, 8a35a41, landed on top)
+    - review: findings — SharedGenerationGateContentionTests.swift:40, :184 (both `reuse`)
+    - note: the deliberate hazard assertion in `twoHandBuiltHandlesOverOneContainerNeverContend` passed review as recorded. The implementer also proved the contention test discriminates: pointed at two refs it fails in three places, and goes green again on one ref.
+  timestamp: 2026-08-16T19:05:44.744646+00:00
+- actor: claude-code
+  id: 01m060109y8nwpwgfmxa8cws3a
+  text: |-
+    ### Both `reuse` findings closed by extraction, and the older suites untouched
+
+    Two new files beside `RouterTestFixtures`, in `Tests/FoundationModelsRouterTests/Helpers/`:
+
+    - `ConcurrencyObservingContainer.swift` — `ConcurrencyPeakObserver` (the counter finding 1 named), `ObservingSessionBackend` and `ObservingLLMContainer`. The observer alone is useless, because it only measures what a backend reports to it, so the three moved as one unit. The container conforms to `LoadedLLMContainer` directly, and not to `PlainTranscriptStubContainer`, because a session built from a transcript must report to the same observer; a plain stub backend reports to nothing.
+    - `HandBuiltProfileFixtures.swift` — `makeProfile(definitionName:chosen:container:router:generationGate:)`, with the slot resolution and the generation handle as private helpers. That is the second half of finding 2.
+
+    The scope rule of the `review` skill was applied: the half of each finding that reaches into the five or six pre-existing suites is out of scope, so no older suite was edited. The extraction makes both helpers available to the unit target, and nothing else changed.
+
+    ### The factory cannot hide contention
+
+    `generationGate` carries NO default value. `RoutedModel` makes a fresh gate when the argument is `nil`, so a default of `nil` would let a later caller take the two-gate shape without saying so. Each caller must state which shape it asks for, and the one caller states `generationGate: nil` under a comment naming the hazard.
+
+    The contention test was not touched. It still resolves through `router.resolve(profile:reporting:)` and reads `resolved.profile.standard.generationGate`, so it still measures the real pool entry gate. The factory is reached by the control test alone.
+
+    ### Not weakened
+
+    `twoHandBuiltHandlesOverOneContainerNeverContend` keeps its doc comment word for word, and its two assertions are unchanged. Every assertion of the other two tests is unchanged. The suite's own header still names the six defective gated suites and card ^fmet68k.
+
+    ### Discovery
+
+    `update task` joined the `#Coverage-Gap #nested-generation` markers onto the last line of the description rather than keeping them on a line of their own. The tags survived and were re-read off `get task`.
+  timestamp: 2026-08-16T19:15:54.814576+00:00
+- actor: claude-code
+  id: 01m06016prajr1hgkdy48t2est
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Tests/FoundationModelsRouterTests/Helpers/ConcurrencyObservingContainer.swift (new), Tests/FoundationModelsRouterTests/Helpers/HandBuiltProfileFixtures.swift (new), Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift. `swift build --build-tests` exit 0, 0 errors and 0 warnings from this change. `swift test` exit 0: 963 tests in 91 suites, 27 tests in 11 suites, 24 tests in 5 suites, 0 failures. The three tests of this suite passed at 1.265 s, 3.117 s and 0.934 s. The one "known issue" is BoundedWaitTests' own deliberate record and predates this change.
+    - next: /review
+  timestamp: 2026-08-16T19:16:01.368373+00:00
+- actor: claude-code
+  id: 01m060t1e6n09ps7d9fpa251t8
+  text: |-
+    Concern: `twoSessionsOverOneSharedPoolEntryContend` ran 4.810 s against `BoundedWait`'s 5 s ceiling.
+
+    ## What the measurement showed
+
+    The premise was wrong. `BoundedWait` was not near its bound.
+
+    In isolation the test runs in 0.005 s. In the full run it took 4.917 s. Timing stamps inside the body located every part of that time:
+
+    - resolve: 0.99 s
+    - wait for `gate.availablePermits == 0`: 0.34 s
+    - wait for `gate.waiterCount == 1`: 0.21 s
+    - everything from `latch.open()` to the last turn value: 0.03 s
+    - **one `await observer.maximumActive` read: 1.28 s**
+    - the remaining time: more of the same, in the last three expectations
+
+    The two `BoundedWait` spins took 0.34 s and 0.21 s against a 5 s bound. They were never the cost.
+
+    ## The cause
+
+    The test body carried `@MainActor`. 471 places in this test target do. Every `await` in a `@MainActor` body must get the main actor again on the way back, and it queues behind every other `@MainActor` test in the target. One such resume cost 1.28 s. The body does 5 milliseconds of work; the rest was queue time. The helper extraction did not add the cost -- the extracted `ObservingLLMContainer`, `ObservingSessionBackend` and `ConcurrencyPeakObserver` are the same code the suite had inline. The 2.877 -> 3.117 -> 4.810 spread is that queue, which changes with the load.
+
+    Nothing in the suite reads or writes main-actor state, so the annotation bought nothing. It is removed from all three tests, and the suite doc says why and says not to add it back.
+
+    ## A second defect the measurement found
+
+    `#expect(await observer.maximumActive == 1)` after the `waiterCount` wait is racy, and it failed 1 run in 5 in isolation, in 5 milliseconds:
+
+        ✘ recorded an issue at SharedGenerationGateContentionTests.swift:133:9:
+          Expectation failed: await observer.maximumActive == 1
+
+    `beginTurn()` takes the permit before it calls the backend, so `availablePermits == 0` proves only that the permit is taken. The holder may still be outside the container, and the peak then reads 0. The test now waits for the holder to reach the container before it starts the flash session. This adds proof; it removes none. The assertion is unchanged and still proves that the parked turn never reached the container.
+
+    ## Result
+
+    - before: 4.917 s in the full run; 1 failure in 5 isolated runs
+    - after: 1.153 s in the full run; 0 failures in 5 isolated runs; full suite green
+
+    No bound was raised and no assertion was weakened.
+  timestamp: 2026-08-16T19:29:35.174627+00:00
+- actor: claude-code
+  id: 01m060t6m4t7hzfcrmreswqk4e
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift. Duration of `twoSessionsOverOneSharedPoolEntryContend` in the full run: 4.917 s before, 1.153 s after. Cause: `@MainActor` on the test body, which made each resume queue behind every other `@MainActor` test in the target (one read cost 1.28 s). `swift build` clean, `swift test` green (963 + 27 + 24 tests, 1 pre-existing known issue).
+    - next: /review
+  timestamp: 2026-08-16T19:29:40.484184+00:00
 depends_on:
 - 01M05DYCWJPBSXEY8681ZT7VYG
 position_column: doing
@@ -151,4 +258,14 @@ Six other gated suites construct `standard` and `flash` handles over one contain
 
 `SessionTreeRestorationIntegrationTests`, `LanguageModelSessionBackendTests`, `TranscriptReconstructionIntegrationTests`, `RealToolTurnComparisonTests`, `CompactionRoundTripIntegrationTests` and `RecordingHandleIntegrationTests` each build `standard` and `flash` by hand over one container and pass no gate. Each handle then mints a gate of its own, so the six test a configuration the resolver never produces. The production path resolves and nothing else, and only the resolved graph deadlocked.
 
-The public initializer that makes the two-gate configuration reachable is card ^fmet68k. This card only records the finding. #Coverage-Gap #nested-generation
+The public initializer that makes the two-gate configuration reachable is card ^fmet68k. This card only records the finding.
+
+## Review Findings (2026-08-16 14:00)
+
+> Scope: `review sha c1fcac6~1..c1fcac6` — reviewed the diffs only — lines this change added or modified. 1 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift:40` `reuse/reuse` — GenerationObserver reimplements a concurrency-tracking pattern that is 90–91% similar to existing implementations across multiple test files (ConcurrencyObserver in PooledResidencyTests, ConcurrencyCounter in AsyncSemaphoreTests, and others). This pattern should be extracted to a shared test utility rather than duplicated here. Extract GenerationObserver to a shared test utilities module (such as Tests/FoundationModelsRouterTests/Helpers/) alongside RouterTestFixtures, or refactor existing similar implementations to a common base.
+- [x] `Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift:184` `reuse/reuse` — makeHandBuiltProfile and its nested resolution/handle helper functions (lines 188–201) reimplement a hand-built profile construction pattern that is 92–99% identical to implementations across multiple test files. The nested helpers in particular are nearly identical (97–99% similarity) to versions in RealToolTurnComparisonTests, LanguageModelSessionBackendTests, SessionTreeRestorationIntegrationTests, and others. Extract the resolution and handle helper functions to shared test utilities, or create a factory function in RouterTestFixtures that constructs hand-built profiles with the given container and resolution parameters, eliminating near-identical reimplementations across six test suites. #Coverage-Gap #nested-generation
