@@ -183,8 +183,24 @@ comments:
     - evidence: `swift build` clean (no errors, no Swift compiler warnings). `swift test` — 947 tests in 90 suites passed (1 pre-existing intentional known issue in BoundedWaitTests), 27 tests in 11 suites passed, 24 tests in 5 suites passed. Zero failures, zero unintentional skips (the `.enabled(if: integrationEnabled)` real-model suites are pre-existing gated infrastructure, unrelated to this diff).
     - next: ready for review
   timestamp: 2026-08-16T17:28:49.133027+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m05t21nevxwwzjy9hjgvrgyt
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 0168afd) — 0 findings, 0 confirmed, 0 refuted, 9 validators attempted, 0 failed. 2 files reviewed. The prior `code-hygiene/magic-numbers-swift` finding on `Sources/FoundationModelsRouter/Session/GenerationStall.swift:194` is checked off.
+    - next: none — task moved to `done`.
+  timestamp: 2026-08-16T17:31:37.518924+00:00
+- actor: claude-code
+  id: 01m05t2pn8jb8vg2d1rzsqmr1g
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files; `defaultGenerationStallReportIntervalSeconds` named, plus a test that states the shipped default on its own; verified RED first, and the linter reports 0 findings over all 13 files of a33b3ae
+    - test: green — swift test, 998 tests, 0 failures
+    - commit: 0168afd
+    - review: clean — zero new findings; the prior finding is checked off; task moved to done
+  timestamp: 2026-08-16T17:31:59.016547+00:00
+position_column: done
+position_ordinal: ffaa80
 title: Generation has no timeout, no stall detector, and no diagnostic
 ---
 A decode that never progresses hangs the caller of `respond(to:)` with no signal of any type.
