@@ -109,7 +109,11 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         }
         // `.standard` and `.flash` differ only in which slot they're stamped
         // with — both share the same resident `container`, so a single
-        // helper builds either from its slot alone.
+        // helper builds either from its slot alone. Both therefore take the
+        // one gate set that container carries, as they would from a pool
+        // entry: two sets would let two generations run inside the one
+        // container at once.
+        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
         func makeRoutedLLM(_ slot: ModelSlot) -> RoutedLLM {
             RoutedLLM(
                 slot: slot,
@@ -119,7 +123,8 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                 container: container,
                 routerId: router.id,
                 recorder: recorder,
-                durableRecording: durableRecording(slot)
+                durableRecording: durableRecording(slot),
+                gates: generationGates
             )
         }
         let standard = makeRoutedLLM(.standard)
@@ -132,7 +137,8 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            durableRecording: durableRecording(.embedding)
+            durableRecording: durableRecording(.embedding),
+            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
         )
         return LanguageModelProfile(
             definitionName: "compaction-continuity-eval",

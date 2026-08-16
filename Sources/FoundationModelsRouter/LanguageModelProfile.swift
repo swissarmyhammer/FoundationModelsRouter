@@ -130,13 +130,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// on a person (``RoutedSession/awaitingUser(_:)``), so one slow human
     /// answer no longer blocks every other session on the model.
     ///
-    /// Set from the initializer's `generationGate` parameter when supplied —
-    /// pooled residency (``Router``) passes the *same* gate instance into every
-    /// ``RoutedModel`` that wraps an already-resident container, so two
-    /// profiles sharing one loaded model still serialize generation against
-    /// each other, not just within one profile's own handle. Defaults to a
-    /// fresh gate when `nil`, matching the pre-pooling behavior for a handle
-    /// constructed directly (e.g. in tests).
+    /// Taken from the resident container's own ``ResidentModelGates``, which the
+    /// initializer requires. Pooled residency (``Router``) mints one set for each
+    /// resident container and hands that set to every handle over it, so two
+    /// profiles sharing one loaded model serialize generation against each
+    /// other and not only within one profile's own handle.
     let generationGate: AsyncSemaphore
 
     /// The fork-admission gate (a fair FIFO ``AsyncSemaphore`` at value
@@ -147,9 +145,23 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// a free slot, which is freed when a fork is released. This caps the K×
     /// prefix-KV cost of copying the parent's cache on each fork. Only the
     /// generation-session fork surface acquires it.
+    ///
+    /// Taken from the same ``ResidentModelGates`` as ``generationGate``, for the
+    /// same reason: the ceiling counts the forks over one resident container.
     let forkAdmissionGate: AsyncSemaphore
 
     /// Creates a routed model handle.
+    ///
+    /// `internal`, and deliberately so. A handle is meaningful only over a
+    /// container the ``Router`` holds resident: the router owns the residency
+    /// refcount, the eviction, and the gates. A public initializer let a
+    /// consumer build a second handle over an already-resident container with a
+    /// second set of gates, and the two handles then ran two concurrent
+    /// generations over one container — the exact condition the gate exists to
+    /// prevent — with no signal. ``Router/resolve(profile:reporting:)`` is the
+    /// one way a consumer obtains a handle, and it always passes the container's
+    /// own gates. A suite reaches this initializer through `@testable import`
+    /// and states the gates it joins.
     ///
     /// - Parameters:
     ///   - slot: The slot this model fills.
@@ -164,20 +176,12 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///     record to memory/none. The two arrive as one ``DurableRecording``
     ///     because a root without a writer records transcripts
     ///     ``TranscriptTree/load(under:)`` refuses to read.
-    ///   - maxConcurrentForks: The in-flight fork ceiling this model's
-    ///     ``forkAdmissionGate`` admits (the router's `maxConcurrentForks`).
-    ///     Consumed only by the generation-session fork surface; the embedding
-    ///     handle never forks. Ignored when `forkAdmissionGate` is supplied.
-    ///     Defaults to ``defaultMaxConcurrentForks``.
-    ///   - generationGate: The shared generation gate to reuse, or `nil` to
-    ///     mint a fresh one. Pooled residency (``Router``) passes the
-    ///     already-resident container's own gate here when a second profile
-    ///     reuses it, so generation across both profiles' handles still
-    ///     serializes against the one underlying model. Defaults to `nil`.
-    ///   - forkAdmissionGate: The shared fork-admission gate to reuse, or
-    ///     `nil` to mint a fresh one sized by `maxConcurrentForks`. Same
-    ///     pooled-reuse rationale as `generationGate`. Defaults to `nil`.
-    public init(
+    ///   - gates: The gates `container` carries. There is no default: every
+    ///     handle over one resident container takes that container's one set,
+    ///     so the caller states which set this handle joins rather than minting
+    ///     a second one by omission. The embedding handle acquires neither gate
+    ///     and takes its own container's set for storage symmetry.
+    init(
         slot: ModelSlot,
         chosen: ModelRef,
         footprintBytes: Int64,
@@ -186,9 +190,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         routerId: ULID,
         recorder: any TranscriptRecorder,
         durableRecording: DurableRecording? = nil,
-        maxConcurrentForks: Int = defaultMaxConcurrentForks,
-        generationGate: AsyncSemaphore? = nil,
-        forkAdmissionGate: AsyncSemaphore? = nil
+        gates: ResidentModelGates
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -198,8 +200,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.routerId = routerId
         self.recorder = recorder
         self.durableRecording = durableRecording
-        self.generationGate = generationGate ?? AsyncSemaphore(value: 1)
-        self.forkAdmissionGate = forkAdmissionGate ?? AsyncSemaphore(value: maxConcurrentForks)
+        generationGate = gates.generation
+        forkAdmissionGate = gates.forkAdmission
     }
 }
 
@@ -263,6 +265,14 @@ public final class LanguageModelProfile: Sendable {
 
     /// Creates a resolved profile.
     ///
+    /// `internal`, for the reason ``RoutedModel``'s own initializer is: this
+    /// profile reports a residency the ``Router`` has to own. A hand-built
+    /// profile carries a token no pool entry matches, so ``release()`` and
+    /// `deinit` free nothing, and its three handles are whatever the caller
+    /// passed rather than what the router holds resident.
+    /// ``Router/resolve(profile:reporting:)`` is the one way a consumer obtains
+    /// a profile; a suite reaches this initializer through `@testable import`.
+    ///
     /// - Parameters:
     ///   - definitionName: The source ``ProfileDefinition`` name.
     ///   - standard: The resident `.standard` model.
@@ -271,7 +281,7 @@ public final class LanguageModelProfile: Sendable {
     ///   - router: The resolving router, which owns the residency slot and the
     ///     loader eviction runs through.
     ///   - residencyToken: The router-minted token identifying this residency.
-    public init(
+    init(
         definitionName: String,
         standard: RoutedLLM,
         flash: RoutedLLM,

@@ -212,6 +212,10 @@ struct RealToolTurnComparisonTests {
                 )
             )
         }
+        // Both generation handles wrap the one `greedy` container, so both take
+        // the one gate set it carries, as they would from a pool entry. Two
+        // sets would let two generations run inside the one container at once.
+        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
         func routedLLM(_ slot: ModelSlot) -> RoutedLLM {
             RoutedLLM(
                 slot: slot,
@@ -221,7 +225,8 @@ struct RealToolTurnComparisonTests {
                 container: greedy,
                 routerId: router.id,
                 recorder: recorder,
-                durableRecording: durableRecording(slot)
+                durableRecording: durableRecording(slot),
+                gates: generationGates
             )
         }
         let profile = LanguageModelProfile(
@@ -236,7 +241,8 @@ struct RealToolTurnComparisonTests {
                 container: UnusedEmbeddingContainer(),
                 routerId: router.id,
                 recorder: recorder,
-                durableRecording: durableRecording(.embedding)
+                durableRecording: durableRecording(.embedding),
+                gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
             ),
             router: router,
             residencyToken: .generate()

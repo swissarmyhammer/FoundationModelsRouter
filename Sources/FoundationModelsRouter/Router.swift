@@ -2,13 +2,12 @@ import Foundation
 
 /// The default in-flight fork-session ceiling per resolved profile.
 ///
-/// Shared between ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``
-/// and ``RoutedModel/init(slot:chosen:footprintBytes:resolution:container:routerId:recorder:durableRecording:maxConcurrentForks:generationGate:forkAdmissionGate:)``'s
-/// own default, so a ``RoutedModel`` constructed directly (outside a
-/// ``Router``, e.g. in tests) admits the same ceiling a router-vended one
-/// would.
+/// The ceiling a ``Router`` sizes each resident container's fork-admission
+/// gate by, unless the caller of
+/// ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``
+/// states another.
 ///
-/// `public` (not `internal`) because both initializers that default to it are
+/// `public` (not `internal`) because the initializer that defaults to it is
 /// `public`: a default argument expression must be at least as visible as the
 /// declaration it defaults on, since it is evaluated at every call site.
 public let defaultMaxConcurrentForks = 4
@@ -93,11 +92,11 @@ private enum PooledContainer: Sendable {
 /// profile currently referencing it, evicted only once that count reaches
 /// zero.
 ///
-/// `generationGate`/`forkAdmissionGate` are minted once, at first load, and
-/// handed to every ``RoutedModel`` built over this entry from then on — a
-/// second profile that reuses this entry gets the *same* gate instances, so
-/// generation across both profiles' handles still serializes against the one
-/// underlying model (see ``RoutedModel/generationGate``).
+/// The entry's ``ResidentModelGates`` is minted once, at first load, and handed
+/// to every ``RoutedModel`` built over this entry from then on — a second
+/// profile that reuses this entry gets the *same* gate instances, so generation
+/// across both profiles' handles still serializes against the one underlying
+/// model (see ``RoutedModel/generationGate``).
 private struct PoolEntry: Sendable {
     /// How many profiles currently reference this model.
     var refcount: Int
@@ -111,11 +110,9 @@ private struct PoolEntry: Sendable {
     /// The loaded container.
     let container: PooledContainer
 
-    /// The shared generation gate every handle built over this entry reuses.
-    let generationGate: AsyncSemaphore
-
-    /// The shared fork-admission gate every handle built over this entry reuses.
-    let forkAdmissionGate: AsyncSemaphore
+    /// The gates this resident container carries, which every handle built over
+    /// this entry reuses.
+    let gates: ResidentModelGates
 }
 
 /// The shared entry point: built once at app start, it resolves authored
@@ -477,8 +474,7 @@ public actor Router {
             refcount: 1,
             footprintBytes: footprintBytes,
             container: wrap(container),
-            generationGate: AsyncSemaphore(value: 1),
-            forkAdmissionGate: AsyncSemaphore(value: maxConcurrentForks)
+            gates: ResidentModelGates(maxConcurrentForks: maxConcurrentForks)
         )
         newKeys.insert(key)
         return key
@@ -906,9 +902,8 @@ public actor Router {
     /// the `.standard`/`.flash` generation handles and the embedding handle
     /// are built identically except for the concrete container type they
     /// unwrap from the pool entry's type-erased ``PooledContainer``, which
-    /// `unwrap` supplies. `maxConcurrentForks` is passed uniformly even
-    /// though the embedding handle never forks — it is unused whenever
-    /// `forkAdmissionGate` is supplied, as it always is here.
+    /// `unwrap` supplies. The entry's gates are passed uniformly even though
+    /// the embedding handle acquires neither of them.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -949,9 +944,7 @@ public actor Router {
                 resolution: resolution,
                 resolvedProfile: resolvedProfile
             ),
-            maxConcurrentForks: maxConcurrentForks,
-            generationGate: entry.generationGate,
-            forkAdmissionGate: entry.forkAdmissionGate
+            gates: entry.gates
         )
     }
 

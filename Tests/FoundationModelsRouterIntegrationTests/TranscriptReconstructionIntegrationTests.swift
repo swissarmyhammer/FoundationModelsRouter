@@ -124,6 +124,10 @@ struct TranscriptReconstructionIntegrationTests {
                 )
             )
         }
+        // Both generation handles wrap the one `container`, so both take the
+        // one gate set it carries, as they would from a pool entry. Two sets
+        // would let two generations run inside the one container at once.
+        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
         let standard = RoutedLLM(
             slot: .standard,
             chosen: transcriptReconstructionTinyModel,
@@ -132,7 +136,8 @@ struct TranscriptReconstructionIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            durableRecording: durableRecording(.standard)
+            durableRecording: durableRecording(.standard),
+            gates: generationGates
         )
         let flash = RoutedLLM(
             slot: .flash,
@@ -142,7 +147,8 @@ struct TranscriptReconstructionIntegrationTests {
             container: container,
             routerId: router.id,
             recorder: recorder,
-            durableRecording: durableRecording(.flash)
+            durableRecording: durableRecording(.flash),
+            gates: generationGates
         )
         let embedding = RoutedEmbedder(
             slot: .embedding,
@@ -152,7 +158,8 @@ struct TranscriptReconstructionIntegrationTests {
             container: UnusedEmbeddingContainer(),
             routerId: router.id,
             recorder: recorder,
-            durableRecording: durableRecording(.embedding)
+            durableRecording: durableRecording(.embedding),
+            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
         )
         let profile = LanguageModelProfile(
             definitionName: "test",
