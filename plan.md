@@ -705,10 +705,17 @@ to make this a real cost.
 
 Generation on a resident model is **serialized** — one at a time per model, FIFO.
 Concurrent `respond()` calls (including from forks of the same model) **queue** rather
-than run in parallel: MLX generation isn't safe to interleave on a single model's
-weights, and the GPU runs one stream anyway. Each `RoutedLLM` owns a **generation
-gate**; each session additionally owns a **turn lock** of its own (see "Human
-waits must not stall the model").
+than run in parallel. That is a **throughput** decision, not a safety one: the
+resident container gives exclusive access on its own, so two generations over it
+are safe and merely slower than one. Each `RoutedLLM` owns a **generation gate**;
+each session additionally owns a **turn lock** of its own (see "Human waits must
+not stall the model"), and the turn lock is the correctness half of the pair.
+
+Because the gate is about throughput, a turn **lends** its permit to a turn
+started from inside one of its own tool calls, on another session over the same
+resident model: the lending turn is suspended in the tool for the whole of it, so
+one generation still runs at a time. A tool body that generates on **its own**
+session is refused instead, because the turn lock is lent to nobody.
 
 **Fork fan-out is bounded** by `maxConcurrentForks` (a `Router` setting): at most that
 many fork sessions are in flight at once, capping the K× prefix-KV cost of `copy()`

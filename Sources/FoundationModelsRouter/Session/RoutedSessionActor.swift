@@ -250,7 +250,9 @@ actor RoutedSessionActor: RoutedSession {
     /// Serializes real model work across one model's whole family of sessions
     /// and forks, so generations queue rather than interleave. Unlike
     /// ``turnLock`` this one *is* handed back mid-turn, for a wait on a person
-    /// — see ``awaitingUser(_:)``.
+    /// — see ``awaitingUser(_:)`` — and it is *lent* mid-turn to a turn started
+    /// from inside one of this turn's tool calls — see
+    /// ``GenerationPermitLoan``.
     nonisolated let generationGate: AsyncSemaphore
 
     /// Whether the turn in flight on this session holds a ``generationGate``
@@ -261,6 +263,27 @@ actor RoutedSessionActor: RoutedSession {
     /// with no turn in flight at all — where signalling would mint a permit this
     /// session never acquired.
     var holdsGenerationPermit = false
+
+    /// Whether the turn in flight on this session runs on a ``generationGate``
+    /// permit an enclosing turn holds, rather than one of its own.
+    ///
+    /// `true` for a turn started from inside a tool call of another session's
+    /// turn over the same gate — see ``GenerationPermitLoan``. Such a turn took
+    /// no permit, so ``endTurn()`` must return none; keeping that fact in its
+    /// own flag rather than in ``holdsGenerationPermit`` is what makes the
+    /// gate's count exact in both directions. It is still read as "a permit on
+    /// this gate exists for this turn", which is what lets a tool of a
+    /// borrowing turn nest one level deeper on the same permit.
+    var borrowsGenerationPermit = false
+
+    /// The loan the turn in flight publishes to its own model call, or `nil`
+    /// between model calls.
+    ///
+    /// Held here as well as in the model call's task local so this actor can
+    /// keep it honest while the call runs: a turn that hands its permit back
+    /// for a wait on a person stops lending it, and gets it back when the wait
+    /// ends. See ``GenerationPermitLoan``.
+    var currentPermitLoan: GenerationPermitLoan?
 
     /// How many ``awaitingUser(_:)`` calls are currently outstanding on this
     /// session.

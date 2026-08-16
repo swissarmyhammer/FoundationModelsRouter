@@ -100,8 +100,10 @@ extension RoutedSessionActor {
         // with a `defer` (the recording bracket stays in this actor's isolation
         // region, so the gated work is not sent across an isolation boundary as a
         // `withPermit` closure would be). `beginTurn()`/`endTurn()` pair exactly
-        // like `withPermit`, so no permit can leak.
-        let turnId = await beginTurn()
+        // like `withPermit`, so no permit can leak. A refusal throws before
+        // either gate is touched, so the `defer` is installed only once there is
+        // something to release.
+        let turnId = try await beginTurn()
         defer { endTurn() }
 
         await recordSessionMetaIfNeeded()
@@ -613,9 +615,32 @@ extension RoutedSessionActor {
             completionToken: SessionMailbox.makeCompletionToken(),
             isCancelled: { cancellationProbe.isCancelled }
         )
+        // The permit this turn is running on, published for exactly this model
+        // call (task ^1zt7vyg). A tool the model invokes from inside the call
+        // reads it, and a turn that tool starts on *another* session over the
+        // same resident container runs on this permit instead of waiting for
+        // one that only comes back when this turn ends. Closed in the `defer`
+        // below, so a run that detached and outlived the call cannot borrow on
+        // it. See ``GenerationPermitLoan``.
+        let permitLoan = GenerationPermitLoan(
+            gate: generationGate,
+            sessionID: id,
+            holdsPermit: holdsGenerationPermit || borrowsGenerationPermit
+        )
+        currentPermitLoan = permitLoan
+        // Identity-matched for the same reason the model call below is: a later
+        // attempt's own loan is never cleared by an earlier one's unwind.
+        defer {
+            if currentPermitLoan === permitLoan {
+                currentPermitLoan = nil
+            }
+            permitLoan.close()
+        }
         let modelCall = Task {
-            try await ToolContext.$current.withValue(turnContext) {
-                try await body(composedPrompt)
+            try await GenerationPermitLoan.$current.withValue(permitLoan) {
+                try await ToolContext.$current.withValue(turnContext) {
+                    try await body(composedPrompt)
+                }
             }
         }
         cancellationProbe.bind(to: modelCall)
@@ -736,7 +761,7 @@ extension RoutedSessionActor {
     /// - Throws: Whatever the dispatched turn throws, recorded exactly as any
     ///   other failed turn is.
     func dispatchNextPrompt() async throws -> String? {
-        let turnId = await beginTurn()
+        let turnId = try await beginTurn()
         defer { endTurn() }
 
         let drained = await outbox.drainForDispatch()

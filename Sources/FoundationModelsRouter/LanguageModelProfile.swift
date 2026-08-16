@@ -118,9 +118,11 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///
     /// Every ``RoutedSession`` vended from this handle — the root session and all
     /// its forks alike — shares this one gate, so their generations serialize
-    /// rather than interleave: MLX generation runs a single GPU stream and is not
-    /// safe to interleave. Only the generation-session surface acquires it; the
-    /// embedding handle never does.
+    /// rather than interleave. That is a throughput decision, not a safety one:
+    /// the resident container gives exclusive access on its own, so two
+    /// generations over it are safe and merely slower than one. Only the
+    /// generation-session surface acquires the gate; the embedding handle never
+    /// does.
     ///
     /// Deliberately *not* the lock that makes a single session's turns correct —
     /// that is each session's own ``RoutedSessionActor/turnLock``. Keeping the

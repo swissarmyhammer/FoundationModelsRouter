@@ -1,6 +1,7 @@
 /// ``RoutedSessionActor``'s turn gating: the turn lock one turn at a time holds,
-/// the cancellation a client lands on the turn in flight, and the generation
-/// permit a wait on a person hands back for the duration of that wait.
+/// the cancellation a client lands on the turn in flight, the generation permit
+/// a wait on a person hands back for the duration of that wait, and the same
+/// permit a turn lends to a turn started from inside one of its tool calls.
 extension RoutedSessionActor {
     /// See ``RoutedSession/awaitingUser(_:)``.
     ///
@@ -31,10 +32,14 @@ extension RoutedSessionActor {
     /// only actor-isolated state, so every call from outside still crosses
     /// isolation through an implicit `await` at the call site.
     ///
-    /// ``currentTurnId`` — set for exactly as long as a turn holds ``turnLock``
-    /// — is what "a turn is in flight" means here, so this reports honestly for a
-    /// session with nothing running and for one whose next turn is still parked
-    /// on the lock. The request is recorded *and* the outstanding model call
+    /// ``currentTurnId`` — set from the moment a turn is through *both* of its
+    /// gates until it ends — is what "a turn is in flight" means here, so this
+    /// reports honestly for a session with nothing running, for one whose next
+    /// turn is still parked on the turn lock, and for one still waiting on a
+    /// generation permit. That last case used to answer
+    /// ``TurnCancellationResult/requested`` and then cancel a model call that
+    /// did not exist yet: a cancellation the caller believed had landed and
+    /// which did nothing at all. The request is recorded *and* the outstanding model call
     /// cancelled, rather than one or the other: the task covers a turn that is
     /// generating right now, and the recorded id covers a turn that is between
     /// model calls (see ``cancelRequestedTurnId``).
@@ -66,8 +71,9 @@ extension RoutedSessionActor {
         return .requested
     }
 
-    /// Acquires both of a turn's gates: this session's ``turnLock`` first, then
-    /// a ``generationGate`` permit.
+    /// Admits a turn through both of its gates: this session's ``turnLock``
+    /// first, then the ``generationGate`` — on a permit of its own, or on the
+    /// one an enclosing turn lends it (see ``admitToGenerationGate()``).
     ///
     /// Always in that order, and never the reverse: every other holder of the
     /// turn lock (``fork(workingDirectory:)``) takes it without ever wanting the
@@ -84,14 +90,39 @@ extension RoutedSessionActor {
     ///   id ``currentTurnId`` now holds, handed back so a caller can correlate
     ///   what the turn produces without re-reading actor state after an
     ///   `await`. See ``TurnID``.
+    /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)``
+    ///   when this call came from inside a tool of this same session's own turn
+    ///   — refused before either gate is touched, so nothing is acquired and
+    ///   nothing has to be unwound.
     @discardableResult
-    func beginTurn() async -> TurnID {
+    func beginTurn() async throws -> TurnID {
+        try refuseReentryOntoThisSession()
         await turnLock.wait()
+        await attachOutboxJournalIfNeeded()
+        await admitToGenerationGate()
+        // Minted only once this turn is through both gates. A turn still
+        // waiting for a permit has started nothing to cancel, and claiming an
+        // identity before then made ``cancelCurrentTurn()`` answer
+        // ``TurnCancellationResult/requested`` and then cancel a model call
+        // that did not exist yet.
         lastTurnId += 1
         currentTurnId = lastTurnId
-        await attachOutboxJournalIfNeeded()
-        await acquireGenerationPermit()
         return TurnID(lastTurnId)
+    }
+
+    /// Refuses a turn asked for from inside a tool of this session's own turn.
+    ///
+    /// ``turnLock`` is not lent to anybody: it is what keeps one session's
+    /// transcript written by one turn at a time, and a turn started from inside
+    /// the turn that holds it would simply park on it and never come back.
+    /// ``GenerationPermitLoan`` is only published to a turn's own model call, so
+    /// finding one that names this session is exactly "this session is already
+    /// mid-turn, on this very task".
+    ///
+    /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)``.
+    private func refuseReentryOntoThisSession() throws {
+        guard let loan = GenerationPermitLoan.current, loan.sessionID == id else { return }
+        throw SessionReentryError.sameSessionTurnInFlight(sessionID: id)
     }
 
     /// Releases what ``beginTurn()`` acquired, innermost first.
@@ -110,6 +141,10 @@ extension RoutedSessionActor {
     /// it; clearing ``currentTurnId`` is what tells the outstanding wait, when it
     /// finally gets a permit, that its lender is gone and the permit is not its
     /// to keep.
+    ///
+    /// A turn that ran on a *borrowed* permit (``borrowsGenerationPermit``)
+    /// signals nothing at all: it never took one, and the turn it borrowed from
+    /// still holds the only one there is. See ``GenerationPermitLoan``.
     func endTurn() {
         currentTurnId = nil
         // The request only ever applied to the turn now ending, and turn ids are
@@ -117,21 +152,48 @@ extension RoutedSessionActor {
         // keeps "is a cancellation outstanding?" answerable without also knowing
         // which turn is in flight.
         cancelRequestedTurnId = nil
+        borrowsGenerationPermit = false
         if holdsGenerationPermit {
             releaseGenerationPermit()
         }
         turnLock.signal()
     }
 
+    /// Admits a turn that is starting to the ``generationGate``: on the permit
+    /// an enclosing turn already holds when there is one to borrow, otherwise on
+    /// one of its own.
+    ///
+    /// The borrow is what lets a tool body generate on a second session over one
+    /// resident container. It takes no permit and returns none, so the gate's
+    /// count is untouched by the whole nested turn. See
+    /// ``GenerationPermitLoan`` for the two conditions a loan has to meet, and
+    /// for the one window this does not close.
+    private func admitToGenerationGate() async {
+        if let loan = GenerationPermitLoan.current, loan.lends(generationGate) {
+            borrowsGenerationPermit = true
+            return
+        }
+        await acquireGenerationPermit()
+    }
+
     /// Takes a ``generationGate`` permit and records that this session holds it.
+    ///
+    /// Also tells the model call in flight, if there is one, that its turn is
+    /// holding a permit again — the re-acquire at the end of a wait on a person
+    /// reaches here, and until it lands the turn has nothing to lend.
     private func acquireGenerationPermit() async {
         await generationGate.wait()
         holdsGenerationPermit = true
+        currentPermitLoan?.setHoldsPermit(true)
     }
 
     /// Hands this session's ``generationGate`` permit back.
+    ///
+    /// Also tells the model call in flight, if there is one, that its turn has
+    /// no permit to lend while the permit is away.
     private func releaseGenerationPermit() {
         holdsGenerationPermit = false
+        currentPermitLoan?.setHoldsPermit(false)
         generationGate.signal()
     }
 

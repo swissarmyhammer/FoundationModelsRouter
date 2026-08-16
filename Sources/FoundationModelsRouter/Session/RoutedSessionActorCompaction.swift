@@ -139,7 +139,7 @@ extension RoutedSessionActor {
         prompt: CompactionPrompt = .default,
         budget: TokenBudget? = nil
     ) async throws -> CompactionResult {
-        await beginTurn()
+        try await beginTurn()
         defer { endTurn() }
         return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
     }

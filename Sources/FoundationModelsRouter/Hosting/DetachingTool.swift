@@ -408,10 +408,18 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             return settlement
         }
 
+        // Each await below that the model is genuinely suspended on is marked as
+        // a tool-call window, so a turn the body starts on another session over
+        // the same resident model may run on this turn's generation permit (see
+        // ``withGenerationSuspendedForToolCall(_:)``). Nothing after a detach is
+        // marked: once the pending envelope goes back the turn resumes, and its
+        // permit is no longer free to lend.
         switch configuration.mode {
         case .runToCompletion:
             return try await withTaskCancellationHandler {
-                let settlement = await workTask.value
+                let settlement = await withGenerationSuspendedForToolCall {
+                    await workTask.value
+                }
                 return try settlement.result.get()
             } onCancel: {
                 cancellationFlag.request()
@@ -425,7 +433,10 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
                     cancellationFlag: cancellationFlag
                 )
             }
-            switch await Self.raceSettlement(of: workTask, deadlineNanoseconds: deadline) {
+            let raced = await withGenerationSuspendedForToolCall {
+                await Self.raceSettlement(of: workTask, deadlineNanoseconds: deadline)
+            }
+            switch raced {
             case .settled(let settlement):
                 return try settlement.result.get()
             case .deadlineElapsed:
@@ -904,9 +915,15 @@ public struct ContextBindingTool<
             // cannot await.
             let outcome: Result<Output, any Error>
             do {
+                // A call here always runs in-band, so the model is suspended on
+                // it for its whole length: the window a turn's generation permit
+                // may be lent across (see
+                // ``withGenerationSuspendedForToolCall(_:)``).
                 outcome = .success(
-                    try await ToolContext.$current.withValue(context) {
-                        try await wrapped.call(arguments: arguments)
+                    try await withGenerationSuspendedForToolCall {
+                        try await ToolContext.$current.withValue(context) {
+                            try await wrapped.call(arguments: arguments)
+                        }
                     })
             } catch {
                 outcome = .failure(error)

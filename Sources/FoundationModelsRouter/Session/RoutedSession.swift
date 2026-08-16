@@ -64,9 +64,13 @@ public enum PromptCancellationResult: Sendable, Equatable {
 /// ``RoutedSessionActor/turnLock``, so one session never has two turns in
 /// flight, and then the model's ``RoutedModel/generationGate``, shared with
 /// every other session and fork over that model, so real model work queues
-/// rather than overlaps (MLX generation runs a single GPU stream). Only the
-/// generation gate is ever handed back mid-turn, and only for a wait on a
-/// person (``RoutedSession/awaitingUser(_:)``). The generation itself runs
+/// rather than overlaps — a throughput gate, since the resident container gives
+/// exclusive access on its own. Only the generation gate is ever released or
+/// lent mid-turn: released for a wait on a person
+/// (``RoutedSession/awaitingUser(_:)``), and lent to a turn started from inside
+/// one of this turn's own tool calls (``GenerationPermitLoan``). Both keep one
+/// generation at a time, because this turn is suspended for the whole of
+/// either. The generation itself runs
 /// through Apple's own `LanguageModelSession` (`FoundationModels`, macOS 27+),
 /// backed by a resident MLX model conformed to the `LanguageModel` protocol via
 /// `MLXLanguageModel` (`MLXFoundationModels`) — never `MLXLMCommon`'s own
@@ -225,8 +229,11 @@ public protocol RoutedSession: Actor {
     ///     trigger/target (compaction_plan.md §1.4).
     /// - Returns: What the fold did.
     /// - Throws: Whatever the summarizer throws, when the model-assisted
-    ///   stage runs and fails, or `CancellationError` when this fold was
-    ///   cancelled.
+    ///   stage runs and fails; `CancellationError` when this fold was
+    ///   cancelled; or
+    ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when the
+    ///   call comes from inside a tool of this same session's own turn, which
+    ///   a fold — a turn on both gates — cannot be started from.
     @discardableResult
     func compact(prompt: CompactionPrompt, budget: TokenBudget?) async throws -> CompactionResult
 
@@ -292,8 +299,11 @@ public protocol RoutedSession: Actor {
     ///     the underlying model's own default ceiling.
     /// - Returns: The model's complete text response — the last drained turn's,
     ///   when this call's own turn backgrounded work.
-    /// - Throws: Any error thrown by the model. A turn that throws is never
-    ///   drained.
+    /// - Throws: Any error thrown by the model, or
+    ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when this
+    ///   call comes from inside a tool of this same session's own turn — a tool
+    ///   body may generate on another session over the same model, never on the
+    ///   one whose turn invoked it. A turn that throws is never drained.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced, recording the call.
@@ -578,6 +588,16 @@ public protocol RoutedSession: Actor {
     /// lock throughout, so a second turn here still cannot start and a
     /// concurrent ``fork(workingDirectory:)``'s transcript read is still
     /// serialized against this turn.
+    ///
+    /// **Still for a wait on a person, and on nothing else.** A tool that
+    /// generates on the model has its own route and needs nothing from here:
+    /// the turn *lends* its permit to a turn started from inside its own tool
+    /// call, rather than handing it back, and lends it only while it is
+    /// suspended in that call (``GenerationPermitLoan``). The two do not
+    /// overlap — a turn whose permit is out on a human wait has none to lend,
+    /// and picks lending up again when the wait ends — so this method's
+    /// precondition is unchanged: do not reach for it to make room for model
+    /// work.
     ///
     /// Re-acquiring is itself a wait: a tool resuming after a long pause may
     /// queue behind other sessions' turns. That is the point — it becomes an

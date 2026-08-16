@@ -1,0 +1,1 @@
+{"id":"01M05NS0WF0FDJBFNT92R6P951","timestamp":"2026-08-16T16:16:47.503597Z","op":"create","item_id":"01M05NS0WFXVJ3DXJ2QN2BSESS","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 006b75\n+tag_name: bug-nested-generation\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 006b75\n-tag_name: bug-nested-generation\n","transaction_id":null}
