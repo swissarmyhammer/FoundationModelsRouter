@@ -95,6 +95,67 @@ struct NestedGenerationReentryTests {
         }
     }
 
+    /// A tool whose body forks a routed session — the shape a host has
+    /// whenever a tool spawns a sub-agent from the conversation it runs
+    /// inside.
+    ///
+    /// It reports the child's ``RoutedSession/parentId``, so a passing answer
+    /// names the session the fork really came off.
+    private struct ForkingTool: Tool, DetachmentParameterProviding {
+        let name = "fork-probe"
+        let description = "test-only tool that forks a routed session"
+
+        /// The session this body forks.
+        let target: NestedTarget
+
+        /// The output a call produces when no target session was named, so a
+        /// misbuilt fixture reads as a wrong answer rather than as a pass.
+        static let noTargetOutput = "no target session"
+
+        /// The output a call produces when the child it made names no parent.
+        static let noParentOutput = "no parent"
+
+        func call(arguments: ReentryToolArguments) async throws -> String {
+            guard let session = target.session else { return Self.noTargetOutput }
+            let child = try await session.fork(workingDirectory: nil)
+            return child.parentId?.description ?? Self.noParentOutput
+        }
+
+        func detachmentClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (NestedGeneratingTool.waitSecondsBeforeDetaching, nil)
+        }
+    }
+
+    /// A tool whose body reads a routed session's transcript — the shape a
+    /// host has whenever a tool asks what has been said so far.
+    ///
+    /// It reports the entry count, so a passing answer says how much history
+    /// the read actually saw.
+    private struct TranscriptReadingTool: Tool, DetachmentParameterProviding {
+        let name = "transcript-probe"
+        let description = "test-only tool that reads a routed session's transcript"
+
+        /// The session this body reads.
+        let target: NestedTarget
+
+        /// The output a call produces when no target session was named, so a
+        /// misbuilt fixture reads as a wrong answer rather than as a pass.
+        static let noTargetOutput = "no target session"
+
+        func call(arguments: ReentryToolArguments) async throws -> String {
+            guard let session = target.session else { return Self.noTargetOutput }
+            return String(Array(await session.transcript).count)
+        }
+
+        func detachmentClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (NestedGeneratingTool.waitSecondsBeforeDetaching, nil)
+        }
+    }
+
     // MARK: - Backend
 
     /// The backend this suite drives: a turn whose session carries the fixture
@@ -186,6 +247,15 @@ struct NestedGenerationReentryTests {
 
     /// The prompt the tool body submits to the session it generates on.
     private static let nestedPrompt = "rank the candidates"
+
+    /// How many transcript entries one stubbed model call has appended by the
+    /// time it invokes the fixture tool: the turn's own `.prompt`, and the
+    /// `.response` ``StubSessionBackend`` pairs with it.
+    ///
+    /// This is what a transcript read from inside that tool call reports, and
+    /// it is what says the read saw the turn in progress rather than an empty
+    /// or stale history.
+    private static let entriesBeforeTheToolCall = 2
 
     /// The upper bound one stubbed turn is allowed.
     ///
@@ -301,15 +371,41 @@ struct NestedGenerationReentryTests {
         case nil:
             Issue.record(
                 """
-                \(turn) did not finish within \(turnTimeout). A tool body that generates on \
-                the same resident container as its own turn parks: the turn holds the \
-                container's one generation permit for its whole length, tool call included, \
-                and the tool body cannot take one.
+                \(turn) did not finish within \(turnTimeout). Work a tool body asks of a \
+                routed session has to settle in band: a turn holds its own session's turn \
+                lock and the container's one generation permit for its whole length, tool \
+                call included, so a call that waits on either parks for as long as the turn \
+                it is part of.
                 """)
         case .failed(_, let description):
             Issue.record("\(turn) failed instead of finishing: \(description)")
         case .finished(let answer):
             #expect(answer == expected)
+        }
+    }
+
+    /// Asserts that `outcome` failed with `expected`, naming the defect this
+    /// suite covers when the call parked or was served instead.
+    ///
+    /// - Parameters:
+    ///   - outcome: The turn's outcome, or `nil` when the bound won.
+    ///   - expected: The refusal the call has to raise.
+    ///   - call: What the refused call is called in the report.
+    private static func expectRefused(
+        _ outcome: TurnOutcome?, with expected: SessionReentryError, describing call: String
+    ) {
+        switch outcome {
+        case nil:
+            Issue.record(
+                """
+                The turn did not finish within \(turnTimeout). \(call) has to be refused, \
+                never parked on the turn lock its own caller holds.
+                """)
+        case .finished(let answer):
+            Issue.record("The turn answered \"\(answer)\" instead of refusing \(call).")
+        case .failed(let reentry, let description):
+            #expect(
+                reentry == expected, "The refusal did not name this session: \(description)")
         }
     }
 
@@ -408,22 +504,92 @@ struct NestedGenerationReentryTests {
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
 
-        switch outcome {
-        case nil:
-            Issue.record(
-                """
-                The turn did not finish within \(Self.turnTimeout). A tool body that \
-                generates on its own session must be refused, not parked on that \
-                session's own turn lock.
-                """)
-        case .finished(let answer):
-            Issue.record("The turn answered \"\(answer)\" instead of being refused.")
-        case .failed(let reentry, let description):
-            #expect(
-                reentry == .sameSessionTurnInFlight(sessionID: caller.id),
-                "The refusal did not name this session: \(description)")
-        }
+        Self.expectRefused(
+            outcome, with: .sameSessionTurnInFlight(sessionID: caller.id),
+            describing: "a tool body that generates on its own session")
 
+        Self.expectUntouched(gate)
+        withExtendedLifetime(profile) {}
+    }
+
+    // MARK: - Forking from inside a tool body
+
+    @Test("a tool body that forks its own session is refused, rather than parking without a sound")
+    func aToolBodyThatForksItsOwnSessionIsRefused() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let target = NestedTarget()
+        let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
+        let gate = profile.standard.generationGate
+
+        let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
+        // The tool forks the very session whose turn invoked it. That turn holds
+        // the turn lock a fork reads under, and cannot release it until the tool
+        // returns, so this has to fail with something a caller can read.
+        target.set(session: caller)
+
+        let outcome = await Self.outcome(
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+
+        Self.expectRefused(
+            outcome, with: .forkDuringSameSessionTurn(sessionID: caller.id),
+            describing: "a tool body that forks its own session")
+
+        Self.expectUntouched(gate)
+        withExtendedLifetime(profile) {}
+    }
+
+    @Test("a tool body forks a second session over the same resident container while its own turn is in flight")
+    func aToolBodyForksASecondSessionOverTheSameContainer() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let target = NestedTarget()
+        let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
+        let gate = profile.standard.generationGate
+
+        let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
+        let forked = profile.standard.makeSession()
+        target.set(session: forked)
+
+        let outcome = await Self.outcome(
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+
+        // The child names the session it came off, so the refusal above reaches
+        // the caller's own session and no other.
+        Self.expectFinished(
+            outcome, is: forked.id.description, describing: "The forking turn")
+        Self.expectUntouched(gate)
+        withExtendedLifetime(profile) {}
+    }
+
+    // MARK: - Reading the transcript from inside a tool body
+
+    @Test("a tool body reads its own session's transcript mid-turn, rather than parking without a sound")
+    func aToolBodyReadsItsOwnSessionsTranscript() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let target = NestedTarget()
+        let profile = try await Self.makeProfile(container: ToolCallingLLMContainer(), dir: dir)
+        let gate = profile.standard.generationGate
+
+        let caller = profile.standard.makeSession(tools: [TranscriptReadingTool(target: target)])
+        // The tool reads the very session whose turn invoked it. That turn holds
+        // the turn lock, so a read that waited for it would never come back —
+        // and it has nothing to wait for, since the only writer is suspended in
+        // this tool.
+        target.set(session: caller)
+
+        let outcome = await Self.outcome(
+            of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
+
+        // The count is the history as it stands mid-turn, which is what says the
+        // read saw this session's own backend rather than nothing at all.
+        Self.expectFinished(
+            outcome, is: String(Self.entriesBeforeTheToolCall),
+            describing: "The transcript-reading turn")
         Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }

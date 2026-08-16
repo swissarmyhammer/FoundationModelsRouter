@@ -1,8 +1,49 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8580'
+comments:
+- actor: claude-code
+  id: 01m065ep6qdfnbmck9p7d25czj
+  text: |
+    Research and decision.
+
+    Read both sites, `GenerationReentry.swift`, `DetachingTool.swift`, and `LanguageModelSessionBackend.transcriptEntries()`'s precondition doc.
+
+    Two findings shaped the answer:
+
+    1. The detachment layer starts its work with `Task { }`, not `Task.detached`, so a detached run DOES inherit `GenerationPermitLoan.current`. `GenerationPermitLoan.close()` exists for exactly that. So `loan.sessionID == id` alone — the check `beginTurn()` makes — can also be true long after the turn ended. That is safe for a refusal (an unnecessary refusal costs a caller a readable error) but NOT safe for a check that drops a lock. The new `isInsideOwnTurnToolCall` therefore also asks `toolCallDepth > 0` through the new `GenerationPermitLoan.isSuspendedInToolCall(ofSession:)`. `beginTurn()`'s own check is left exactly as `^1zt7vyg` wrote it.
+
+    2. `RoutedSession.transcript` is `get async`, NOT `get async throws`. Refusing there would have needed a public protocol break plus a `try` at every call site, for a read that has no concurrent writer to protect against. So `fork` refuses and `transcript` is served — the two answers differ, as the card allowed.
+
+    `LanguageModelSessionBackend.transcriptEntries()` says "Only safe to call while holding the owning session's turn lock". That doc now states the one bounded exemption rather than being silently violated.
+
+    Rejected: serving the fork unlocked. The turn's mid-turn state ends in a tool call whose output has not landed, and `historyOrdinalAtFork` would name a position the parent goes on writing past, so the child would diverge from what a restore replays. That is a semantics problem, not a lock problem, and no lock trick fixes it.
+  timestamp: 2026-08-16T20:50:46.103955+00:00
+- actor: claude-code
+  id: 01m065exw2fvtmc41y14y1gd53
+  text: |
+    RED was observed, not assumed. With the two source files stashed (`RoutedSessionActorForking.swift`, `RoutedSessionActor.swift`) and the tests in place, both new same-session tests ran the full 30-second bound and failed:
+
+    - "a tool body that forks its own session is refused" — did not finish within 30.0 seconds; gate.availablePermits was 0.
+    - "a tool body reads its own session's transcript mid-turn" — did not finish within 30.0 seconds; gate.availablePermits was 0.
+
+    "a tool body forks a second session over the same resident container" passed with the fix stashed, which is correct: it holds the unchanged different-session path.
+
+    After `git stash pop`, all 7 tests of the suite pass in 0.012 seconds.
+
+    Public API change, stated plainly: `SessionReentryError` gains the case `forkDuringSameSessionTurn(sessionID:)`. The enum is public, so any client `switch` over it that was exhaustive is now non-exhaustive and must add an arm. No existing case, signature, or message changed.
+
+    New tests carry no `@MainActor`, so they do not queue behind the main-actor suites.
+  timestamp: 2026-08-16T20:50:53.954785+00:00
+- actor: claude-code
+  id: 01m065f3hh5ya0fq95bwvdd43m
+  text: |
+    ### implement — changed
+    - evidence: 6 files — Sources/FoundationModelsRouter/Session/GenerationReentry.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift, Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift. `swift build` clean; `swift build --build-tests -Xswiftc -warnings-as-errors` clean; `swift test` 966 + 27 + 24 pass, 0 failures, 1 pre-existing known issue in BoundedWait's own suite.
+    - next: ready for /review
+  timestamp: 2026-08-16T20:50:59.761559+00:00
+position_column: doing
+position_ordinal: '80'
 title: fork() and transcript park forever when called from inside the session's own tool body
 ---
 Found while fixing `^1zt7vyg`. The generation gate no longer deadlocks a tool body that generates on another session (a turn now lends its permit), and a tool body that generates on **its own** session is now refused with `SessionReentryError`. Two neighbours of that shape are still silent parks.
@@ -29,9 +70,19 @@ A tool body that calls `session.fork(...)` or reads `session.transcript` on the 
 
 Whichever is chosen, the parked-forever behaviour must not stay.
 
+## The decision made
+
+`fork(workingDirectory:)` **refuses**, with the new `SessionReentryError.forkDuringSameSessionTurn(sessionID:)`. Two reasons hold together: the turn holds `turnLock` until the tool returns, and the state a fork reads is half-written mid-turn (the tool call has landed, its output and the answer that follows it have not), so a child seeded from it would carry a conversation the model never finished, at a history position the parent goes on writing past. The refusal lands before the fork-admission gate, so nothing is acquired.
+
+The `transcript` getter **is served without the lock**. What the lock buys is the absence of a *concurrent* writer, and this caller has that already: the only writer is this session's own model call, suspended in the tool that is asking. The read reports the history as it stands mid-turn, and unlike a fork nothing durable is seeded from it. The getter is also non-throwing in the public protocol, so a refusal there would have meant a wider API break for no correctness gain.
+
+Both sites ask one new shared question, `RoutedSessionActor.isInsideOwnTurnToolCall`. It is narrower than the check `beginTurn()` makes: it also asks the loan whether the lending turn is suspended in a tool call right now, because a check that makes a caller *drop* a lock has to be exact where a check that only refuses may be conservative.
+
+`turnLock` is neither lent nor weakened. A nested call on a different session is untouched, and two tests hold that.
+
 ## Acceptance Criteria
 
-- [ ] `fork(workingDirectory:)` called from inside the session's own tool body fails clearly, or is served safely — never parks
-- [ ] The `transcript` getter read from inside the session's own tool body fails clearly, or is served safely — never parks
-- [ ] A test covers each shape, bounded so it fails instead of hanging
-- [ ] The chosen behaviour is documented on both declarations #bug #nested-generation #bug-nested-generation
+- [x] `fork(workingDirectory:)` called from inside the session's own tool body fails clearly, or is served safely — never parks
+- [x] The `transcript` getter read from inside the session's own tool body fails clearly, or is served safely — never parks
+- [x] A test covers each shape, bounded so it fails instead of hanging
+- [x] The chosen behaviour is documented on both declarations #bug #bug-nested-generation #nested-generation

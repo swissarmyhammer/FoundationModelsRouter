@@ -1,22 +1,41 @@
 import Foundation
 import Synchronization
 
-/// A refusal to start a turn that would re-enter a session already mid-turn.
+/// A refusal to do work that would re-enter a session already mid-turn.
 ///
 /// The router admits one kind of re-entry and refuses the other. A tool body
 /// that generates on a **different** session over the same resident model runs
 /// on the permit its caller's turn already holds (see ``GenerationPermitLoan``)
 /// — nothing about that is unsound, because the caller's own generation is
-/// suspended in the tool for the whole of it. A tool body that generates on
-/// **its own** session is a different thing: that session's
-/// ``RoutedSessionActor/turnLock`` is the correctness gate, held for the whole
-/// turn so a session never has two turns writing one transcript, and it is not
-/// lent to anybody. Before this error existed such a call simply parked on that
-/// lock and never came back.
+/// suspended in the tool for the whole of it. A tool body that asks its **own**
+/// session for a second turn, or for a fork, is a different thing: that
+/// session's ``RoutedSessionActor/turnLock`` is the correctness gate, held for
+/// the whole turn so a session never has two turns writing one transcript, and
+/// it is not lent to anybody. Before this error existed such a call simply
+/// parked on that lock and never came back.
+///
+/// Not every same-session call is refused. Reading
+/// ``RoutedSession/transcript`` from inside the session's own tool call is
+/// served without the lock, because that read takes nothing durable from the
+/// mid-turn state and the only writer — the model call holding the lock — is
+/// suspended in the tool that is asking. See
+/// ``RoutedSessionActor/isInsideOwnTurnToolCall``.
 public enum SessionReentryError: Error, Equatable, LocalizedError {
     /// A tool body of `sessionID`'s own turn asked that same session for
     /// another turn.
     case sameSessionTurnInFlight(sessionID: ULID)
+
+    /// A tool body of `sessionID`'s own turn asked that same session to fork.
+    ///
+    /// Refused rather than served, for two reasons that hold together. The
+    /// fork reads `backend`'s conversation state under
+    /// ``RoutedSessionActor/turnLock``, which this caller's own turn holds
+    /// until the tool returns. And the state itself is half-written mid-turn
+    /// — the turn's tool call has landed and
+    /// neither its output nor the answer that follows it has — so a child
+    /// seeded from it would start on a conversation the model never finished,
+    /// at a history position the parent goes on writing past.
+    case forkDuringSameSessionTurn(sessionID: ULID)
 
     /// A localized message describing what error occurred, for `LocalizedError`
     /// conformance.
@@ -27,6 +46,12 @@ public enum SessionReentryError: Error, Equatable, LocalizedError {
                 Session \(sessionID) is already running a turn that invoked this tool, so it \
                 cannot run another one. Generate on a different session over the same model \
                 instead.
+                """
+        case .forkDuringSameSessionTurn(let sessionID):
+            return """
+                Session \(sessionID) is running a turn that invoked this tool, so its \
+                conversation state is half-written and cannot be forked. Fork before the turn \
+                starts, or fork a different session over the same model.
                 """
         }
     }
@@ -123,6 +148,25 @@ final class GenerationPermitLoan: Sendable {
     func lends(over gate: AsyncSemaphore) -> Bool {
         guard gate === self.gate else { return false }
         return state.withLock { $0.holdsPermit && $0.toolCallDepth > 0 }
+    }
+
+    /// Whether the lending turn belongs to `sessionID` and is suspended in a
+    /// tool call right now.
+    ///
+    /// This is the narrower question ``lends(over:)`` asks, minus the permit:
+    /// a turn parked in ``RoutedSession/awaitingUser(_:)`` has handed its
+    /// permit back and still holds its session's
+    /// ``RoutedSessionActor/turnLock``, so it still answers `true` here. What
+    /// the tool-call depth adds over a bare session match is the proof that
+    /// the model call is suspended — a run that detached leaves the window,
+    /// and must not be told that its session's backend is quiet.
+    ///
+    /// - Parameter sessionID: The session the caller is asking about.
+    /// - Returns: `true` when this loan's turn is that session's own and is
+    ///   awaiting a tool call.
+    func isSuspendedInToolCall(ofSession sessionID: ULID) -> Bool {
+        guard sessionID == self.sessionID else { return false }
+        return state.withLock { $0.toolCallDepth > 0 }
     }
 
     /// Records whether the lending turn holds its permit.

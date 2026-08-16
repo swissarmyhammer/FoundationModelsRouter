@@ -125,6 +125,28 @@ extension RoutedSessionActor {
         throw SessionReentryError.sameSessionTurnInFlight(sessionID: id)
     }
 
+    /// Whether this call arrived from inside a tool call of this session's own
+    /// turn — the turn that holds ``turnLock`` and cannot release it until the
+    /// tool returns.
+    ///
+    /// This is what every other site that would take ``turnLock`` has to ask
+    /// before it takes it. ``fork(workingDirectory:)`` refuses on a `true`
+    /// answer, and ``transcript`` serves its read without the lock; both used
+    /// to park for the life of a turn that could not end until they came back.
+    ///
+    /// Deliberately narrower than the check ``beginTurn()`` makes. That one
+    /// refuses on the session identity alone, which is conservative in the
+    /// safe direction — an unnecessary refusal costs a caller an error it can
+    /// read. A check that makes a caller *drop* a lock has to be exact
+    /// instead, so this one also asks the loan whether the lending turn is
+    /// suspended in a tool call right now (see
+    /// ``GenerationPermitLoan/isSuspendedInToolCall(ofSession:)``). A detached
+    /// run keeps the task local it inherited, and long after its turn ended it
+    /// must take the lock like any other caller.
+    nonisolated var isInsideOwnTurnToolCall: Bool {
+        GenerationPermitLoan.current?.isSuspendedInToolCall(ofSession: id) ?? false
+    }
+
     /// Releases what ``beginTurn()`` acquired, innermost first.
     ///
     /// Synchronous, so it can run from a `defer` on every exit path a turn has.

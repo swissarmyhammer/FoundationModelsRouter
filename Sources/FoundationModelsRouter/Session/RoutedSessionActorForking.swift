@@ -20,12 +20,29 @@ extension RoutedSessionActor {
     /// inherits this session's ``contextTokens``/``usageState`` so its fill
     /// reporting starts from the parent's fill at fork time rather than zero.
     ///
+    /// A fork asked for from inside a tool call of this session's own turn is
+    /// refused rather than served (see ``isInsideOwnTurnToolCall``). That turn
+    /// holds ``turnLock`` until the tool returns, so the wait below could never
+    /// end; and the state the fork would read is half-written mid-turn — the
+    /// tool call has landed, its output and the answer that follows it have
+    /// not — so the child would carry a conversation the model never finished,
+    /// from a history position the parent goes on writing past. Fork before
+    /// the turn starts, or fork another session over the same model.
+    ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
-    /// - Throws: Nothing in the current implementation — see the protocol
-    ///   doc's ``RoutedSession/fork(workingDirectory:)`` `Throws:` note.
+    /// - Throws: ``SessionReentryError/forkDuringSameSessionTurn(sessionID:)``
+    ///   when this call came from inside a tool call of this same session's own
+    ///   turn — refused before any gate is touched, so nothing is acquired and
+    ///   nothing has to be unwound. Otherwise nothing — see the protocol doc's
+    ///   ``RoutedSession/fork(workingDirectory:)`` `Throws:` note.
     func fork(workingDirectory: URL?) async throws -> RoutedSession {
+        // Before the admission gate, so a refused fork takes no slot.
+        guard !isInsideOwnTurnToolCall else {
+            throw SessionReentryError.forkDuringSameSessionTurn(sessionID: id)
+        }
+
         // Admission: at most the router's `maxConcurrentForks` fork sessions over
         // this model may be in flight at once. Past the ceiling this suspends
         // (FIFO) until an outstanding fork is released and frees its slot. The

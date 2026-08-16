@@ -147,12 +147,33 @@ actor RoutedSessionActor: RoutedSession {
     /// backend mutates the underlying transcript, so an unlocked read could
     /// observe a turn mid-append. The lock is released as soon as the
     /// entries are captured.
+    ///
+    /// One caller reads without taking it: a tool call of this session's own
+    /// turn (``isInsideOwnTurnToolCall``). Waiting there could never end — the
+    /// turn holding the lock cannot finish until the tool returns — and the
+    /// wait buys nothing, because what the lock keeps out is a *concurrent*
+    /// writer and the only writer there is, this session's own model call, is
+    /// suspended in the very tool that is asking. The answer is the history as
+    /// it stands right now, the turn in progress included: the prompt and
+    /// whatever the model has appended so far, without the tool's own output
+    /// or the answer that follows it. That is what a tool asking "what has
+    /// been said?" wants, and unlike a fork nothing durable is seeded from it.
     var transcript: Transcript {
         get async {
+            guard !isInsideOwnTurnToolCall else { return capturedTranscript() }
             await turnLock.wait()
             defer { turnLock.signal() }
-            return Transcript(entries: backend.transcriptEntries())
+            return capturedTranscript()
         }
+    }
+
+    /// This session's ``backend`` entries as a transcript, captured in one
+    /// synchronous window on this actor's executor so no `await` can split the
+    /// read.
+    ///
+    /// - Returns: The entries ``backend`` holds right now.
+    private func capturedTranscript() -> Transcript {
+        Transcript(entries: backend.transcriptEntries())
     }
 
     /// The slot this session's model fills, stamped onto recorded events.

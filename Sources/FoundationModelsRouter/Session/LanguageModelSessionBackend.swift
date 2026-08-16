@@ -170,6 +170,14 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// may hand the generation gate back mid-turn to wait on a human (see
     /// ``RoutedSession/awaitingUser(_:)``).
     ///
+    /// What the lock buys is the absence of a concurrent writer, and one
+    /// caller has that without holding it: a tool call of the owning session's
+    /// own turn (``RoutedSessionActor/isInsideOwnTurnToolCall``). The turn that
+    /// holds the lock is the only writer there is, and it is suspended in the
+    /// tool that is asking, so ``RoutedSession/transcript`` reads through this
+    /// unlocked there rather than parking on a lock its own caller keeps. That
+    /// is the whole exemption; every other caller takes the lock.
+    ///
     /// - Returns: Every transcript entry this backend has accumulated so far,
     ///   in order.
     func transcriptEntries() -> [FoundationModels.Transcript.Entry]

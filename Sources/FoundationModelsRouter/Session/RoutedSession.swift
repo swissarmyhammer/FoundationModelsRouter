@@ -152,6 +152,16 @@ public protocol RoutedSession: Actor {
     /// Waiting on the turn lock means a read issued while a turn is in
     /// flight suspends until that turn finishes, exactly as
     /// ``fork(workingDirectory:)`` does for the same reason.
+    ///
+    /// A tool body reading its **own** session's transcript is the one caller
+    /// that never waits. That turn holds the lock until the tool returns, so
+    /// the wait could not end; and it buys nothing, because the only writer —
+    /// this session's own model call — is suspended in the tool that is
+    /// asking. Such a read is served at once and reports the history as it
+    /// stands mid-turn: the prompt, and whatever the model has appended so
+    /// far, without the tool's own output or the answer that follows it.
+    /// Reading from a tool body of a *different* session is unchanged, and
+    /// waits.
     var transcript: Transcript { get async }
 
     /// Folds this session's transcript in place: same ``id``, same
@@ -716,11 +726,22 @@ public protocol RoutedSession: Actor {
     /// be in flight at once; a fork past that ceiling awaits a free slot, freed
     /// when an outstanding fork is released.
     ///
+    /// A tool body cannot fork the session whose turn invoked it. That turn
+    /// holds the session's turn lock until the tool returns, and the state a
+    /// fork reads is half-written until the turn ends — the tool call has
+    /// landed, its output and the answer that follows it have not — so a child
+    /// seeded from it would carry a conversation the model never finished.
+    /// Fork before the turn starts, or fork another session over the same
+    /// model. Forking a *different* session from a tool body is unchanged, and
+    /// works.
+    ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` to
     ///   default to its recording directory.
     /// - Returns: The forked child session.
-    /// - Throws: Nothing in the current implementation — the admission gate and
-    ///   turn lock never throw and ``LanguageModelSessionBackend/makeFork()``
+    /// - Throws: ``SessionReentryError/forkDuringSameSessionTurn(sessionID:)``
+    ///   when the call comes from inside a tool call of this same session's own
+    ///   turn. Nothing else in the current implementation — the admission gate
+    ///   and turn lock never throw and ``LanguageModelSessionBackend/makeFork()``
     ///   is non-throwing; declared `async throws` to match ``RoutedSession``'s
     ///   other generation entry points and leave room for a future conforming
     ///   backend whose fork can fail.
