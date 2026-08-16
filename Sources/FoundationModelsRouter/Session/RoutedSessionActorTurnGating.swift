@@ -169,7 +169,7 @@ extension RoutedSessionActor {
     /// ``GenerationPermitLoan`` for the two conditions a loan has to meet, and
     /// for the one window this does not close.
     private func admitToGenerationGate() async {
-        if let loan = GenerationPermitLoan.current, loan.lends(generationGate) {
+        if let loan = GenerationPermitLoan.current, loan.lends(over: generationGate) {
             borrowsGenerationPermit = true
             return
         }
@@ -184,7 +184,7 @@ extension RoutedSessionActor {
     private func acquireGenerationPermit() async {
         await generationGate.wait()
         holdsGenerationPermit = true
-        currentPermitLoan?.setHoldsPermit(true)
+        currentPermitLoan?.setHoldsPermit(to: true)
     }
 
     /// Hands this session's ``generationGate`` permit back.
@@ -193,7 +193,7 @@ extension RoutedSessionActor {
     /// no permit to lend while the permit is away.
     private func releaseGenerationPermit() {
         holdsGenerationPermit = false
-        currentPermitLoan?.setHoldsPermit(false)
+        currentPermitLoan?.setHoldsPermit(to: false)
         generationGate.signal()
     }
 

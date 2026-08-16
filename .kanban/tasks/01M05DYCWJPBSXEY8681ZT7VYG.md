@@ -83,6 +83,59 @@ comments:
     - the `cancelCurrentTurn()` test was already reconciled in the working tree: "cancelCurrentTurn() on a session still waiting for a generation permit reports that it cannot cancel" now asserts the new `noTurnInFlight` answer, and it passes. No further edit needed.
     - next: ready for review.
   timestamp: 2026-08-16T16:20:36.592672+00:00
+- actor: claude-code
+  id: 01m05pmp4ezermymzf6mdq1k5p
+  text: |-
+    ### review — findings
+    - evidence: 2 findings (2 confirmed, 1 refuted) — Sources/FoundationModelsRouter/Session/GenerationReentry.swift:132, Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift:45
+    - scope: review sha HEAD~1..HEAD (commit 14dd016), 9 files reviewed
+    - next: label both method parameters per swift/fluent-usage, then re-review. Sweep each file for the same cause, not only the two lines named.
+  timestamp: 2026-08-16T16:31:53.998388+00:00
+- actor: claude-code
+  id: 01m05pnt5wzh7vnt7j642f5cf5
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 10 files; permit loan (`GenerationPermitLoan` task local), typed `SessionReentryError.sameSessionTurnInFlight`, stale "not safe to interleave" claim corrected, 4 new tests through `router.resolve(...)`
+    - test: green — swift test, 992 tests (941 + 27 + 24), 0 failures; permit-leak assertions in ForkConcurrencyTests / HumanWaitGateTests / TurnCancellationTests all pass
+    - commit: 14dd016
+    - review: findings — Sources/FoundationModelsRouter/Session/GenerationReentry.swift:132, Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift:45 (both `swift/fluent-usage`)
+    - note: the review engine confirmed nothing on the three flagged concerns — the tool-call window, the `cancelCurrentTurn()` behaviour change, and the loan lifetime / permit leak question. One candidate was refuted.
+  timestamp: 2026-08-16T16:32:30.908573+00:00
+- actor: claude-code
+  id: 01m05q27hdbqfrc53w2jhs4kw1
+  text: |
+    ### Both `swift/fluent-usage` findings closed, and the cause swept
+
+    I read the `swift/fluent-usage` rule text before I edited, then swept every unlabeled method parameter that commit `14dd016` added, not only the two lines named. The commit adds six such signatures. Four read as a phrase at the call site and are correct; two named by the findings, plus two more of the same cause, are corrected.
+
+    **The two findings, word for word:**
+
+    - `Sources/FoundationModelsRouter/Session/GenerationReentry.swift:132` — `setHoldsPermit(_:)` is now `func setHoldsPermit(to holdsPermit: Bool)`. Both call sites in `RoutedSessionActorTurnGating.swift` read `setHoldsPermit(to: true)` and `setHoldsPermit(to: false)`.
+    - `Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift:45` — `set(_:)` is now `func set(session: any RoutedSession)`. All four call sites read `target.set(session: nested)` and so on.
+
+    **The same cause, at two sites the findings did not name:**
+
+    - `GenerationReentry.swift` — `lends(_ gate:)` read aloud as "the loan lends the gate", which states the wrong thing: a loan lends a *permit*, and the gate is what the asking turn would wait on. The argument is not the direct object of the verb, so the preposition belongs on the label. It is now `func lends(over gate: AsyncSemaphore)`, and the call reads `loan.lends(over: generationGate)` — the same "a turn over `gate`" wording the doc comment already used.
+    - `NestedGenerationReentryTests.swift` — `expectGateUntouched(_ gate:)` repeated the noun: the base name is already a whole clause, and the argument said "gate" a second time. This is the rule's `allViews.removeElement(button)` shape, whose stated fix is to drop the needless word from the base name. It is now `expectUntouched(_ gate:)`, so the call reads `Self.expectUntouched(gate)`. That matches the sibling helper `expectFinished(_ outcome:is:describing:)` in the same file.
+
+    **The four left as they are, and why each reads as a phrase:**
+
+    - `lends`'s sibling `withGenerationSuspendedForToolCall(_ body:)` — every call site passes a trailing closure, so no label is ever written.
+    - `expectFinished(_ outcome:, is:, describing:)` — the first argument is the direct object: "expect finished outcome is expected, describing the outer turn".
+    - `init(gate:sessionID:holdsPermit:)`, and the protocol conformances `respond(to:maxTokens:)` / `makeSession(instructions:tools:)` — already fully labeled.
+
+    `Tests/FoundationModelsRouterTests/HuggingFaceMetadataSourceTests.swift:208` holds one more `handlerBox.set(handler)`. It is not in commit `14dd016` and is not in scope here.
+
+    **Nothing about the concurrency moved.** The diff is argument labels plus one private test-helper name. The permit loan, the borrow decision in `admitToGenerationGate()`, the gate accounting in `endTurn()`, and every assertion in the suite are byte-for-byte the same behaviour. `git diff` on the source is six lines, all of them a label.
+  timestamp: 2026-08-16T16:39:17.805712+00:00
+- actor: claude-code
+  id: 01m05q2e33kraw1n63hbfbsv78
+  text: |
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Session/GenerationReentry.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift. `swift build --build-tests` complete, zero source warnings (only the pre-existing unrelated SwiftPM bundle-node warning from mlx-swift_Cmlx). `swift test` — 3 targets, 992 tests (941 + 27 + 24), 0 failures, 1 known issue (the pre-existing `withKnownIssue` at BoundedWait.swift:114). All four tests of "Nested generation from inside a tool body" pass.
+    - both `## Review Findings` items are now `- [x]`; two more sites of the same cause were swept (`lends(over:)`, `expectUntouched(_:)`)
+    - next: `/review`
+  timestamp: 2026-08-16T16:39:24.515684+00:00
 position_column: doing
 position_ordinal: '80'
 title: A nested respond on a shared resident container deadlocks on generationGate
@@ -91,7 +144,7 @@ A tool body that generates on the same resident container as its own turn parks 
 
 ## The mechanism
 
-`beginTurn()` takes `turnLock` (for each session), then `generationGate` (for each resident container). `endTurn()` releases both, and it runs in a `defer` at the end of the whole turn bracket — tool calls included (`Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:104-105`).
+`beginTurn()` takes `turnLock` (for each session), then `generationGate` (for each resident container). `endTurn()` releases both, and it runs in a `defer` at the end of the whole turn bracket (`Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift:104-105`).
 
 `generationGate` is minted one time for each `PoolEntry` (`Router.swift:115`, `:480`) and given to every handle over that entry (`:953`). `ResidencyKey` is `(ref, role)` with `role = .llm(context:)` — there is no slot axis. Two slots that name the same reference at the same context are one entry with one `AsyncSemaphore(value: 1)`. `Router.swift:383-384` names this case.
 
@@ -145,4 +198,14 @@ A nested generation is not a concurrent generation. The outer turn is suspended 
 - [x] The stale "not safe to interleave" comment is corrected or removed
 - [x] The `awaitingUser(_:)` contract is corrected if the fix uses its machinery
 
-Reported by the `FoundationModelsMultitool` session. They hold `NestedGenerationProbeTests`, a gated suite that fails today by design, and they can confirm the fix in one run. #bug #nested-generation
+Reported by the `FoundationModelsMultitool` session. They hold `NestedGenerationProbeTests`, a gated suite that fails today by design, and they can confirm the fix in one run.
+
+## Review Findings (2026-08-16 11:22)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 9 file(s) reviewed, 18 not reviewed.
+
+> 18 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 18 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Session/GenerationReentry.swift:132` `swift/fluent-usage` — Method parameter should be labeled to form a grammatical phrase. `setHoldsPermit(_:)` reads as a sentence fragment, but should read as 'setHoldsPermit(to: value)' at the call site. Change signature to `func setHoldsPermit(to holdsPermit: Bool)` so call sites read as `setHoldsPermit(to: true)`.
+- [x] `Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift:45` `swift/fluent-usage` — Method parameter should be labeled to form a grammatical phrase. `set(_:)` reads as a sentence fragment, but should read as 'set(session: value)' at the call site. Change signature to `func set(session: any RoutedSession)` so call sites read as `set(session: session)`. #bug #nested-generation

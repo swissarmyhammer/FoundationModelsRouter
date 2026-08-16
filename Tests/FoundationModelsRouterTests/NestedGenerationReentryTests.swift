@@ -42,7 +42,7 @@ struct NestedGenerationReentryTests {
         /// Names the session a later tool body generates on.
         ///
         /// - Parameter session: The session the tool body drives.
-        func set(_ session: any RoutedSession) {
+        func set(session: any RoutedSession) {
             storage.withLock { $0 = session }
         }
 
@@ -321,7 +321,7 @@ struct NestedGenerationReentryTests {
     /// ceiling to absorb.
     ///
     /// - Parameter gate: The pool entry's generation gate.
-    private static func expectGateUntouched(_ gate: AsyncSemaphore) {
+    private static func expectUntouched(_ gate: AsyncSemaphore) {
         #expect(gate.availablePermits == 1)
         #expect(gate.waiterCount == 0)
     }
@@ -343,14 +343,14 @@ struct NestedGenerationReentryTests {
         let caller = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: target, label: "caller")])
         let nested = profile.standard.makeSession()
-        target.set(nested)
+        target.set(session: nested)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
 
         Self.expectFinished(
             outcome, is: Self.chainedAnswer(through: ["caller"]), describing: "The outer turn")
-        Self.expectGateUntouched(gate)
+        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -370,8 +370,8 @@ struct NestedGenerationReentryTests {
         let middle = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: middleTarget, label: "middle")])
         let innermost = profile.standard.makeSession()
-        outerTarget.set(middle)
-        middleTarget.set(innermost)
+        outerTarget.set(session: middle)
+        middleTarget.set(session: innermost)
 
         let outcome = await Self.outcome(
             of: { try await outer.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -382,7 +382,7 @@ struct NestedGenerationReentryTests {
         Self.expectFinished(
             outcome, is: Self.chainedAnswer(through: ["outer", "middle"]),
             describing: "The outermost turn")
-        Self.expectGateUntouched(gate)
+        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -403,7 +403,7 @@ struct NestedGenerationReentryTests {
         // The tool generates on the very session whose turn invoked it. The turn
         // lock is the correctness gate and is lent to nobody, so this has to
         // fail — and it has to fail with something a caller can read.
-        target.set(caller)
+        target.set(session: caller)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -424,7 +424,7 @@ struct NestedGenerationReentryTests {
                 "The refusal did not name this session: \(description)")
         }
 
-        Self.expectGateUntouched(gate)
+        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 
@@ -467,7 +467,7 @@ struct NestedGenerationReentryTests {
         await latch.open()
         #expect(try await holderTurn.value == ToolCallingBackend.answerPrefix + Self.outerPrompt)
         #expect(try await waiterTurn.value == ToolCallingBackend.answerPrefix + Self.outerPrompt)
-        Self.expectGateUntouched(gate)
+        Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
     }
 }

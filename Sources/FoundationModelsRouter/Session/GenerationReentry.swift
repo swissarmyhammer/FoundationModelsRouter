@@ -120,7 +120,7 @@ final class GenerationPermitLoan: Sendable {
     /// - Parameter gate: The gate the asking turn would otherwise wait on.
     /// - Returns: `true` when this loan covers that gate and the lender is
     ///   suspended in a tool call while holding its permit.
-    func lends(_ gate: AsyncSemaphore) -> Bool {
+    func lends(over gate: AsyncSemaphore) -> Bool {
         guard gate === self.gate else { return false }
         return state.withLock { $0.holdsPermit && $0.toolCallDepth > 0 }
     }
@@ -129,7 +129,7 @@ final class GenerationPermitLoan: Sendable {
     ///
     /// - Parameter holdsPermit: `true` once the turn has a permit, `false`
     ///   while it has handed one back.
-    func setHoldsPermit(_ holdsPermit: Bool) {
+    func setHoldsPermit(to holdsPermit: Bool) {
         state.withLock { $0.holdsPermit = holdsPermit }
     }
 
