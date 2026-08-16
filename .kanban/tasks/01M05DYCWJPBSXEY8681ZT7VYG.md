@@ -136,8 +136,24 @@ comments:
     - both `## Review Findings` items are now `- [x]`; two more sites of the same cause were swept (`lends(over:)`, `expectUntouched(_:)`)
     - next: `/review`
   timestamp: 2026-08-16T16:39:24.515684+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m05qe1wxhj7hz826qf1bdhn3
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (8db8094) — 0 findings, 0 confirmed, 0 refuted, 9 validator passes attempted, 0 failed. Both prior `swift/fluent-usage` findings are checked off.
+    - next: none — task moved to done.
+  timestamp: 2026-08-16T16:45:45.245540+00:00
+- actor: claude-code
+  id: 01m05qeqnsbytxj1bp6vnp1cb2
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 4 sites across 3 files; the two findings named 2, the cause was swept for 2 more (`lends(over:)`, `expectUntouched(_:)`)
+    - test: green — swift test, 992 tests, 0 failures; the diff is argument labels plus one helper rename, no concurrency change
+    - commit: 8db8094
+    - review: clean — zero new findings; both prior findings checked off; task moved to done
+  timestamp: 2026-08-16T16:46:07.545567+00:00
+position_column: done
+position_ordinal: ffa980
 title: A nested respond on a shared resident container deadlocks on generationGate
 ---
 A tool body that generates on the same resident container as its own turn parks for the full life of that turn. The `FoundationModelsMultitool` session measured this on real hardware.
