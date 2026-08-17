@@ -1,0 +1,1 @@
+{"id":"01M084W236DR5QF9BN7S2D3MBG","timestamp":"2026-08-17T15:19:04.550632Z","op":"create","item_id":"01M084W23603TBB51243G191H7","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 006b75\n+tag_name: defect\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 006b75\n-tag_name: defect\n","transaction_id":null}

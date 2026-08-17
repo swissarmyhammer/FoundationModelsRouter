@@ -1,0 +1,1 @@
+{"id":"01M084VM46P7Y211N8A3RZ4GYB","timestamp":"2026-08-17T15:18:50.246257Z","op":"create","item_id":"01M084VM469WAS5KZGMNX4B8BC","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: d876e3\n+tag_name: test-debt-real-model\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: d876e3\n-tag_name: test-debt-real-model\n","transaction_id":null}

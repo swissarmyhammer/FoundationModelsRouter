@@ -1,0 +1,1 @@
+{"id":"01M084W2HPKPKB09H0WY5S2QWJ","timestamp":"2026-08-17T15:19:05.014952Z","op":"create","item_id":"01M084W2HPH3MCFPEMSENKF9ZW","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: 1d76db\n+tag_name: test-debt\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: 1d76db\n-tag_name: test-debt\n","transaction_id":null}

@@ -1,0 +1,1 @@
+{"id":"01M084W5XZ64S0A9A8F4G0BKB8","timestamp":"2026-08-17T15:19:08.479321Z","op":"create","item_id":"01M084W5XZ7PBDWCFWD778JDW5","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: bfd4f2\n+tag_name: real-model\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: bfd4f2\n-tag_name: real-model\n","transaction_id":null}

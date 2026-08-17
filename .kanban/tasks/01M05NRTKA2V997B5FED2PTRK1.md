@@ -66,6 +66,13 @@ comments:
 
     One residual the reviewer stated as an observation rather than a finding, and it is worth carrying: if the SDK ever ran two tool calls of one turn concurrently AND appended as each returned, a sibling tool still holding depth could read during that append. Confirming that needs the vendored SDK's internals. It is the same window `GenerationPermitLoan`'s own documentation already records as the one it does not close.
   timestamp: 2026-08-16T21:02:44.498853+00:00
+- actor: claude-code
+  id: 01m07p2a9and140x8cyvddp4q5
+  text: |-
+    ### commit — changed
+    - evidence: commit aff8b1b6ee3ccc97eae05dd20efceb634c81a289 "chore(kanban): record the ^d2ptrk1 completion"; pushed range 7e0c7c5..aff8b1b to origin/main; origin/main now at aff8b1b6ee3ccc97eae05dd20efceb634c81a289
+    - next: none
+  timestamp: 2026-08-17T11:00:20.906753+00:00
 position_column: done
 position_ordinal: ffae80
 title: fork() and transcript park forever when called from inside the session's own tool body
