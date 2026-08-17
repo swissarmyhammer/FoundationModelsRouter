@@ -1,6 +1,25 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m08cn49q5crm5q4j5r6t5p6x
+  text: |-
+    Context from `^vjf3mdm`, which lands before this card is measured: the eval seeds grew.
+
+    Each seed transcript now carries an authored background paragraph in its foldable head, because a fold of the old heads was always discarded — `Compactor.compact` refuses a fold that leaves the transcript no smaller, and a 128-token summary of a 150-byte span is larger than the span. Measured over the built seeds:
+
+    - Whole seed: about 100-185 estimated tokens before, 419-520 now.
+    - Foldable span: 319-444 estimated tokens now, against a worst-case real summary of 154.
+
+    What that does to the runtime this card measures:
+
+    - The generation ceilings did not move. One summarizer call at `summary allowance + reasoningTokenHeadroom`, and one answering turn at `GatedRealModelBudget.responseTokenCeiling`, exactly as before. Generation is what dominates the wall clock, so the growth should not multiply the run.
+    - Prefill grew by roughly 300 tokens per summarizer call and by the same again on the resumed session.
+    - `CompactionEvalSeedSizingTests/everySeedsFoldableSpanFitsOneSummarizerCall` pins the seeds under `Summarization.maxChunkTokens`, so a fold still makes exactly ONE summarizer call. That bound exists to stop a seed from silently turning one call into a map-reduce tree and multiplying this suite's model calls.
+
+    So re-measure against the grown dataset rather than against the 9-samples-in-1200-s figure recorded above; that figure was taken before the seeds changed.
+  timestamp: 2026-08-17T17:35:06.039113+00:00
 position_column: todo
 position_ordinal: '8480'
 title: 'The gated compaction eval no longer finishes inside gatedEvalSuiteTimeLimitMinutes: 9 of ~20 samples in 1200 seconds'

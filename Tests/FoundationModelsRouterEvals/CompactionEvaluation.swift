@@ -74,7 +74,7 @@ enum CompactionEvaluationError: Error {
 /// The token budget every ``CompactionEvaluation`` folds against unless a
 /// caller passes its own.
 ///
-/// `limit` is small because the hand-written seeds are small — around 100-185
+/// `limit` is small because the hand-written seeds are small — around 420-520
 /// estimated tokens of content each (``compactionEvalSeeds``) — and `target`
 /// resolves to 40 tokens, strictly below the smallest seed's untouched
 /// recency-window size (63). That is the whole point of the value: it

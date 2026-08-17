@@ -221,6 +221,40 @@ comments:
 
     Two follow-ups carry the rest: `^vjf3mdm` (seed sizing) and `^fz49qds` (the gated eval time limit). Whether this card closes with that measurement deferred to them is a person's decision, not one the loop should make.
   timestamp: 2026-08-17T16:26:18.246439+00:00
+- actor: claude-code
+  id: 01m08b5eqagzczd1x0h1ha9cgb
+  text: |-
+    Acceptance criterion 4 is now demonstrated. One of the two open criteria is closed.
+
+    ## `CompactionRoundTripIntegrationTests` recall of `CRIMSON-77` passes against the real model
+
+    The gated run made for `^wnj3ka3` covers it:
+
+    ```
+    FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter compactionRoundTrip
+    [compactionRoundTrip] tokensBefore=2767 tokensAfter=2612 saved=155
+    ✔ Test "contextFill climbs, compact() folds at the 0.80 trigger preserving identity,
+       a post-compact turn recalls the folded fact, restore yields the checkpointed window,
+       and a further turn succeeds" passed after 425.010 seconds.
+    ```
+
+    The recall assertion is `CompactionRoundTripIntegrationTests.swift:529`:
+
+    ```swift
+    #expect(recall.contains("CRIMSON-77"))
+    ```
+
+    It is inside the test that passed, so the post-fold turn did recall the folded fact from a real summary.
+
+    Two facts qualify this evidence, and neither weakens it:
+
+    - The fixture grew during `^wnj3ka3` (8 scripted turns, up from 6), because the old fixture measured 1633 real tokens and sat below its own 0.80 trigger. The pass is therefore against the current fixture, not the one this card was written from. It is the state of the product now.
+    - `saved=155` is a small margin. The fold DID apply here — this is not the shortfall exit that discards 8 of 9 eval folds — but the margin confirms the reading on `^vjf3mdm`: a real summary shrinks a small transcript only slightly.
+
+    ## What stays open
+
+    Criterion 5 only: `factInSummary=true` on the large majority of seeds, with `factRetention >= 0.9`. It cannot be measured until `^vjf3mdm` (seed sizing) and `^fz49qds` (the gated time limit) are settled. That is unchanged and still needs a person.
+  timestamp: 2026-08-17T17:09:03.850501+00:00
 position_column: review
 position_ordinal: '80'
 title: Compaction writes an empty summary against an always-reasoning model — the summarizer budget has no room for the think block

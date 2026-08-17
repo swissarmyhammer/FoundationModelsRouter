@@ -2,8 +2,9 @@ import Foundation
 import FoundationModels
 
 /// A built seed transcript ready to hand to the compaction pipeline: the raw
-/// entries (instructions header, fact-bearing "old" turns, filler "recent"
-/// turns), the fact under test, and the question probing it.
+/// entries (instructions header, the fixture's background turn, fact-bearing
+/// "old" turns, filler "recent" turns), the fact under test, and the question
+/// probing it.
 ///
 /// Kept separate from ``CompactionEvaluationOutcome`` (the `Codable` type
 /// that actually travels through the ``Evaluations`` framework's
@@ -15,9 +16,10 @@ struct CompactionEvalSeed: Sendable {
     /// Mirrors ``CompactionEvalFixtureSpec/id``.
     let id: String
 
-    /// The full seed transcript: `.instructions`, then every fact-bearing
-    /// "old" turn (in order), then every filler "recent" turn — in original
-    /// order, exactly as ``TranscriptTurns/split(_:)`` expects.
+    /// The full seed transcript: `.instructions`, then the fixture's
+    /// background turn, then every fact-bearing "old" turn (in order), then
+    /// every filler "recent" turn — in original order, exactly as
+    /// ``TranscriptTurns/split(_:)`` expects.
     let entries: [Transcript.Entry]
 
     /// The fact ``question`` is answerable from — ``CompactionEvalFixtureSpec/facts``
@@ -32,14 +34,21 @@ struct CompactionEvalSeed: Sendable {
     /// The question asked of the resumed, post-compaction session.
     let question: String
 
-    /// Builds a seed from a hand-written fixture spec: one turn per fact
+    /// Builds a seed from a hand-written fixture spec: the fixture's
+    /// ``CompactionEvalFixtureSpec/context`` turn, then one turn per fact
     /// (the probed fact's turn optionally delivered as a tool call/output
     /// pair instead of a plain reply — "tool traffic"), followed by
     /// `spec.recentTurnCount` filler turns drawn from
     /// ``compactionEvalFillerTurns`` (cycled if a fixture asks for more
     /// filler turns than the pool has).
     ///
-    /// Every turn carries its own assistant reply — a fact turn takes the
+    /// The background turn leads, so the facts are the last thing the folded
+    /// span states and the summary is written with them freshest. Its size is
+    /// what makes the fold worth applying at all — see
+    /// ``CompactionEvalFixtureSpec/context``.
+    ///
+    /// Every turn carries its own assistant reply — the background turn takes
+    /// ``compactionEvalContextAcknowledgement``, a fact turn takes the
     /// acknowledgement at its own index in ``compactionEvalFactAcknowledgements``,
     /// a filler turn takes its paired ``CompactionEvalFillerTurn/reply`` — so
     /// no seed's transcript repeats a reply. Both pools are longer than the
@@ -57,6 +66,9 @@ struct CompactionEvalSeed: Sendable {
             )
         )
 
+        let contextTurn = CompactionEvalTurn.statement(
+            spec.context, viaTool: false, reply: compactionEvalContextAcknowledgement)
+
         let factTurns: [Transcript.Entry] = spec.facts.enumerated().flatMap { index, fact -> [Transcript.Entry] in
             let deliverViaTool = spec.probedFactViaTool && index == spec.probedFactIndex
             let acknowledgement = compactionEvalFactAcknowledgements[index % compactionEvalFactAcknowledgements.count]
@@ -70,7 +82,7 @@ struct CompactionEvalSeed: Sendable {
 
         return CompactionEvalSeed(
             id: spec.id,
-            entries: [instructions] + factTurns + fillerTurns,
+            entries: [instructions] + contextTurn + factTurns + fillerTurns,
             plantedFact: spec.facts[spec.probedFactIndex],
             factKeyPhrase: spec.factKeyPhrase,
             question: spec.question

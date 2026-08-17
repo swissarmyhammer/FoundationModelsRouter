@@ -42,6 +42,22 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     var folded: Bool {
         stagesApplied.contains(Summarization.stageName)
     }
+
+    /// Whether this sample's fold ran and was then thrown away.
+    ///
+    /// `Compactor.compact` refuses a fold whose summary left the transcript no
+    /// smaller than it was, and its shortfall exit reports the same values as a
+    /// fold that never ran at all: no summary, and no stage applied. The two are
+    /// not the same measurement, and telling them apart is what this reads.
+    ///
+    /// The summarizer is called from ``Summarization`` and nowhere else, and an
+    /// applied `Summarization` always names itself in
+    /// ``CompactionResult/stagesApplied``. So a call with no stage to show for it
+    /// is a fold that ran and was discarded, and nothing else can produce that
+    /// pair.
+    var foldDiscarded: Bool {
+        summarizerCallCount > 0 && !folded
+    }
 }
 
 /// Which of the mutually exclusive outcomes one gated `FactRetention` sample
@@ -75,6 +91,12 @@ enum CompactionEvalFactRetentionClass: String, Sendable, CaseIterable {
     /// test alone filed every one of them under ``summaryLostFact``, which
     /// reads as a summary that forgot the fact. A summary with no text carries
     /// nothing to forget, so it belongs here.
+    ///
+    /// Covers a discarded fold too, and for the same reason: `Compactor.compact`
+    /// throws a fold away when its summary left the transcript no smaller, and
+    /// the resumed session is then handed the original turns with no summary in
+    /// them. What separates the two is legible in the table rather than here —
+    /// see ``CompactionEvalFactRetentionReport/discardedSummaryMarker``.
     case foldProducedNoSummary
 
     /// The recorded sample's question matched no seed, so its key phrase is
@@ -157,6 +179,16 @@ enum CompactionEvalFactRetentionReport {
     /// `summary=` with nothing after it — which reads as a truncated line
     /// rather than as the measurement it is. A marker states it.
     static let emptySummaryMarker = "<empty>"
+
+    /// What ``stanza(for:)`` renders in place of a fold that ran and was then
+    /// discarded — see ``CompactionEvalSampleDiagnostic/foldDiscarded``.
+    ///
+    /// `Compactor.compact` reports a discarded fold through the same shortfall
+    /// exit an unfolded transcript takes, so the summary arrives as `nil` and the
+    /// table wrote ``absentSummaryMarker`` for it — the same rendering a stage
+    /// that never ran gets. A fold the summarizer really answered, and the
+    /// pipeline then threw away, is a different measurement and says so.
+    static let discardedSummaryMarker = "<discarded>"
 
     /// Whether `summary` holds any text at all.
     ///
@@ -292,11 +324,16 @@ enum CompactionEvalFactRetentionReport {
     /// naming what the fold stored instead.
     ///
     /// - Parameter diagnostic: The sample's recorded evidence.
-    /// - Returns: The summary text, ``absentSummaryMarker`` when the fold
-    ///   produced none, or ``emptySummaryMarker`` when it stored text holding
-    ///   no characters.
+    /// - Returns: The summary text, ``discardedSummaryMarker`` when the fold ran
+    ///   and was thrown away, ``absentSummaryMarker`` when no fold produced one
+    ///   at all, or ``emptySummaryMarker`` when it stored text holding no
+    ///   characters.
     private static func renderedSummary(of diagnostic: CompactionEvalSampleDiagnostic) -> String {
-        guard let summary = diagnostic.summary else { return absentSummaryMarker }
+        guard let summary = diagnostic.summary else {
+            // Read before the absent case, because a discarded fold reports the
+            // same `nil` summary an unfolded transcript does.
+            return diagnostic.foldDiscarded ? discardedSummaryMarker : absentSummaryMarker
+        }
         return carriesText(summary) ? summary : emptySummaryMarker
     }
 }

@@ -18,6 +18,67 @@ private var compactionEvalsIntegrationEnabled: Bool {
     ProcessInfo.processInfo.environment[compactionEvalsIntegrationEnvVar] != nil
 }
 
+// MARK: - Measured sizing
+
+/// What one token of this dataset's own English prose costs in UTF-8 bytes,
+/// under the tokenizer of the model the gated eval runs
+/// (``CompactionEvalRealModel/ref``).
+///
+/// The fold arithmetic spans two currencies, and this is the rate between them.
+/// ``Summarization`` sizes a summarizer call's answer in REAL tokens
+/// (``Summarization/minimumSummaryTokens``, ``Summarization/summaryTokenRatio``),
+/// while ``Compactor`` measures a transcript in ESTIMATED ones — UTF-8 bytes
+/// over a flat ``Compactor/charsPerTokenEstimate`` of 4.0. A fixture sized in
+/// the estimate alone is exactly how `CompactionRoundTripIntegrationTests` ended
+/// up below its own trigger (task ^wnj3ka3), so this dataset is sized in the
+/// tokens the model really counts.
+///
+/// Measured with `AutoTokenizer` over the Muse Glimmer tokenizer out of the
+/// local Hub cache, against this dataset's whole prose corpus — every fixture's
+/// ``CompactionEvalFixtureSpec/context`` and facts, every acknowledgement, and
+/// every ``compactionEvalFillerTurns`` prompt and reply: 31541 bytes against
+/// 6564 tokens, which is 4.805 bytes for each token. Rounded up, so the summary
+/// sizes this feeds are never under-stated.
+let compactionEvalMeasuredBytesPerToken = 4.81
+
+/// A summarizer whose answer is the length a real one writes.
+///
+/// A stub answering `"fake summary"` shrinks a fold whatever the seed holds, so
+/// it proves the pipeline REACHED ``Summarization`` and nothing about whether
+/// the fold survived `Compactor.compact`'s did-not-shrink guard. The gated run
+/// of 2026-08-17 discarded 8 of the 9 folds the stub suite reported as reaching
+/// the stage (task ^vjf3mdm).
+///
+/// `maxTokens` bounds the whole generation — the reasoning and the answer
+/// together, see ``CompactionSummarizer/summarize(_:maxTokens:)`` — so the
+/// answer alone is what is left once ``Summarization/reasoningTokenHeadroom`` is
+/// taken off. The gated model always writes a `<think>` block and spends that
+/// headroom on it, so the summary allowance is the answer, and an answer filling
+/// it is the largest a real summarizer writes.
+private struct RealisticSummaryLengthSummarizer: CompactionSummarizer {
+    /// The headroom the stage under test adds on top of the summary allowance.
+    ///
+    /// Read from the same ``Summarization`` value the fold is given rather than
+    /// restated, so this summarizer cannot drift away from the stage calling it.
+    let reasoningTokenHeadroom: Int
+
+    /// One sentence in the register a compaction summary is written in, repeated
+    /// to reach a required size. ASCII throughout, so one character is one byte
+    /// and the length asked for is the length produced.
+    private static let sentence =
+        "The conversation above stated a constraint the next turn has to keep, so this summary records it in the order it was given. "
+
+    func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
+        let summaryTokens = max(0, maxTokens - reasoningTokenHeadroom)
+        let bytes = Int((Double(summaryTokens) * compactionEvalMeasuredBytesPerToken).rounded(.up))
+        var text = ""
+        while text.utf8.count < bytes {
+            text += Self.sentence
+        }
+        return String(text.prefix(bytes))
+    }
+}
+
 // MARK: - Hermetic wiring (plain `swift test`, no real inference)
 
 /// Hermetic proof that the evals target's wiring is correct: the dataset
@@ -101,16 +162,66 @@ struct CompactionEvaluationHermeticTests {
             func summarize(_ prompt: String, maxTokens: Int) async throws -> String { "fake summary" }
         }
 
+        try await Self.expectEverySeedFoldsThroughSummarization(
+            with: FakeSummarizer(), answering: "a trivial summary")
+    }
+
+    @Test("every seed's fold is applied, not discarded, against a summarizer answering at a real summary's length")
+    func everySeedFoldSurvivesARealisticSummary() async throws {
+        // The assertion above proves the budget carries every seed INTO
+        // `Summarization`. It cannot prove the fold that stage produced was
+        // kept, because its summarizer answers in two words: a fold that
+        // replaces a whole span with 12 bytes shrinks any transcript.
+        //
+        // `Compactor.compact` discards a fold that left the transcript no
+        // smaller, and against a real model that is what these seeds used to
+        // get: the gated run of 2026-08-17 reported `summarizerCalls=1` with an
+        // empty stage list on 8 of the 9 samples that completed. The stage ran,
+        // the summarizer answered, and the pipeline threw the fold away, so the
+        // resumed session answered from the original turns and the dataset
+        // measured nothing about compaction at all.
+        //
+        // So the summarizer here answers at the length the summary allowance
+        // really buys, and this is the assertion that fails the moment a seed
+        // stops folding — under a plain `swift test`, rather than 400 seconds
+        // into a gated run. `CompactionEvalSeedSizingTests` states the
+        // arithmetic behind it.
+        let summarization = Summarization()
+        try await Self.expectEverySeedFoldsThroughSummarization(
+            with: RealisticSummaryLengthSummarizer(
+                reasoningTokenHeadroom: summarization.reasoningTokenHeadroom),
+            answering: "a summary of the length the allowance buys"
+        )
+    }
+
+    /// Folds every seed with `summarizer` against ``compactionEvalDefaultBudget``
+    /// and requires the whole pipeline to have run and been APPLIED.
+    ///
+    /// The budget is read from the same constant the evaluation itself defaults
+    /// to, never restated as a literal: a copy would let the two drift, and
+    /// these assertions exist to fail when that value stops forcing the fold.
+    ///
+    /// - Parameters:
+    ///   - summarizer: The summarizer the fold calls.
+    ///   - description: How the summarizer answers, named in the failure message
+    ///     so a red run says which of the two callers below found the seed.
+    /// - Throws: Whatever the fold throws.
+    private static func expectEverySeedFoldsThroughSummarization(
+        with summarizer: any CompactionSummarizer,
+        answering description: String
+    ) async throws {
         let budget = compactionEvalDefaultBudget
         for seed in compactionEvalSeeds {
             let (_, result) = try await Compactor.compact(
                 Transcript(entries: seed.entries),
                 budget: budget,
-                summarizer: FakeSummarizer()
+                summarizer: summarizer
             )
             #expect(
-                result.stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"],
-                "seed \(seed.id) did not reach Summarization: stagesApplied was \(result.stagesApplied)"
+                result.stagesApplied == [
+                    ToolOutputElision.stageName, TurnTruncation.stageName, Summarization.stageName,
+                ],
+                "seed \(seed.id) did not fold through Summarization against \(description): stagesApplied was \(result.stagesApplied)"
             )
         }
     }
@@ -166,6 +277,26 @@ struct CompactionEvaluationHermeticTests {
         }
     }
 
+    @Test("every seed states its key phrase exactly once, so only the planted fact can carry it into a summary")
+    func everySeedStatesItsKeyPhraseExactlyOnce() {
+        // `FactRetention` passes when the resumed session's answer holds the key
+        // phrase, and the classification calls the sample `retained` when the
+        // summary holds it. A seed whose background prose also stated the phrase
+        // would let a summary of that background satisfy both without the
+        // planted fact ever surviving the fold — the dataset would then measure
+        // its own filler rather than compaction.
+        //
+        // Counted without regard to case, because that is how the metric and the
+        // classification both match.
+        for seed in compactionEvalSeeds {
+            let count = Self.occurrences(of: seed.factKeyPhrase, in: Self.transcriptText(of: seed))
+            #expect(
+                count == 1,
+                "seed \(seed.id) states its key phrase \"\(seed.factKeyPhrase)\" \(count) times, not once"
+            )
+        }
+    }
+
     /// Every assistant reply in `seed`'s built transcript, in order — the text
     /// content of each `.response` entry.
     ///
@@ -174,14 +305,56 @@ struct CompactionEvaluationHermeticTests {
     private static func assistantReplies(of seed: CompactionEvalSeed) -> [String] {
         seed.entries.compactMap { entry -> String? in
             guard case .response(let response) = entry else { return nil }
-            return
-                response.segments
-                .compactMap { segment -> String? in
-                    guard case .text(let text) = segment else { return nil }
-                    return text.content
-                }
-                .joined(separator: "\n")
+            return text(of: response.segments)
         }
+    }
+
+    /// Every prompt and reply of `seed`'s built transcript, joined — the text a
+    /// summarizer reading the folded span is shown.
+    ///
+    /// The tool-traffic entries a fixture may carry hold fixed strings
+    /// (`recordFact`, `noted`, `recorded`) that no fixture's own content ever
+    /// reaches, so leaving them out changes no answer this is asked for.
+    ///
+    /// - Parameter seed: The built seed to read.
+    /// - Returns: The joined text, in transcript order.
+    private static func transcriptText(of seed: CompactionEvalSeed) -> String {
+        seed.entries.compactMap { entry -> String? in
+            switch entry {
+            case .prompt(let prompt):
+                return text(of: prompt.segments)
+            case .response(let response):
+                return text(of: response.segments)
+            case .instructions, .toolCalls, .toolOutput, .reasoning:
+                return nil
+            @unknown default:
+                return nil
+            }
+        }
+        .joined(separator: "\n")
+    }
+
+    /// The joined content of every `.text` segment in `segments`, in order.
+    ///
+    /// - Parameter segments: The segments to flatten.
+    /// - Returns: The joined text content.
+    private static func text(of segments: [Transcript.Segment]) -> String {
+        segments.compactMap { segment -> String? in
+            guard case .text(let content) = segment else { return nil }
+            return content.content
+        }
+        .joined(separator: "\n")
+    }
+
+    /// How many times `phrase` appears in `text`, matched the way
+    /// `FactRetention` matches it: without regard to case.
+    ///
+    /// - Parameters:
+    ///   - phrase: The phrase to count.
+    ///   - text: The text to count it in.
+    /// - Returns: The number of occurrences.
+    private static func occurrences(of phrase: String, in text: String) -> Int {
+        text.lowercased().components(separatedBy: phrase.lowercased()).count - 1
     }
 
     private static func firstSample(
@@ -317,6 +490,56 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(table.contains(CompactionEvalFactRetentionClass.foldProducedNoSummary.rawValue))
     }
 
+    @Test("the rendered table names a discarded fold, so a fold that ran and was thrown away is legible as one")
+    func renderedTableNamesADiscardedFold() {
+        // `Compactor.compact` reports a fold it discarded through the same
+        // shortfall exit an unfolded transcript takes: no summary, no stage
+        // applied. The table wrote `<none>` for it, which is what a fold that
+        // never ran gets, so the gated run of 2026-08-17 printed 8 samples whose
+        // summarizer had answered and whose fold had been thrown away as though
+        // no stage had ever run.
+        let discarded = CompactionEvalSampleDiagnostic(
+            question: Self.seed.question,
+            summary: nil,
+            answer: "I do not have that information.",
+            stagesApplied: [],
+            summarizerCallCount: 1
+        )
+        #expect(discarded.foldDiscarded)
+        let table = Self.renderedTable(for: discarded)
+        #expect(table.contains("summary=\(CompactionEvalFactRetentionReport.discardedSummaryMarker)"))
+        #expect(!table.contains("summary=\(CompactionEvalFactRetentionReport.absentSummaryMarker)"))
+    }
+
+    @Test("a fold that never ran still renders as absent, so the discarded marker names only a discarded fold")
+    func renderedTableStillNamesAFoldThatNeverRan() {
+        // The other half of the same property. The deterministic stages landed
+        // this transcript under target on their own, so no summarizer was ever
+        // called and there is no fold to have discarded.
+        let neverRan = CompactionEvalSampleDiagnostic(
+            question: Self.seed.question,
+            summary: nil,
+            answer: "I do not have that information.",
+            stagesApplied: [ToolOutputElision.stageName],
+            summarizerCallCount: 0
+        )
+        #expect(!neverRan.foldDiscarded)
+        let table = Self.renderedTable(for: neverRan)
+        #expect(table.contains("summary=\(CompactionEvalFactRetentionReport.absentSummaryMarker)"))
+        #expect(!table.contains("summary=\(CompactionEvalFactRetentionReport.discardedSummaryMarker)"))
+    }
+
+    /// Renders the report table for one recorded sample against ``seed``.
+    ///
+    /// - Parameter diagnostic: The sample's recorded evidence.
+    /// - Returns: The rendered table, one line per newline.
+    private static func renderedTable(for diagnostic: CompactionEvalSampleDiagnostic) -> String {
+        CompactionEvalFactRetentionReport.lines(
+            of: CompactionEvalFactRetentionReport.findings(for: [diagnostic], seeds: [seed])
+        )
+        .joined(separator: "\n")
+    }
+
     @Test("the key-phrase check is case-insensitive, exactly as the FactRetention metric's is")
     func keyPhraseMatchingIsCaseInsensitive() {
         let classification = CompactionEvalFactRetentionClass.classify(
@@ -406,6 +629,110 @@ struct CompactionEvalFactRetentionReportTests {
     func everySeedQuestionIsUnique() {
         let questions = compactionEvalSeeds.map(\.question)
         #expect(Set(questions).count == questions.count)
+    }
+}
+
+// MARK: - Ungated seed sizing
+
+/// Ungated proof that every seed's foldable span is large enough for a real
+/// summary of it to be smaller (task ^vjf3mdm).
+///
+/// `CompactionEvaluationHermeticTests/everySeedFoldSurvivesARealisticSummary` is
+/// the mechanical gate — it folds every seed and requires the fold to be applied.
+/// This suite states the arithmetic that gate rests on, so a seed that drifts
+/// fails with a number rather than with "the fold was discarded".
+///
+/// Both bounds are stated in the tokens a live run really counts, never in the
+/// character-ratio estimate alone. That distinction is what
+/// `CompactionRoundTripIntegrationTests` missed twice (tasks 5m97h14 and
+/// ^wnj3ka3): the estimate and the tokenizer do not agree, and a fixture sized
+/// against the wrong one clears its bound on paper and misses it live. See
+/// ``compactionEvalMeasuredBytesPerToken``.
+@Suite("CompactionEvaluation seed sizing (ungated)")
+struct CompactionEvalSeedSizingTests {
+    /// How much larger a seed's foldable span must be than the largest summary a
+    /// real summarizer writes for it.
+    ///
+    /// `1.5` says the fold has to save at least a third of the span it replaces.
+    /// The slack is not decoration: the worst case below is computed at
+    /// ``compactionEvalMeasuredBytesPerToken``, measured over this dataset's own
+    /// prose, and a summary written in a wordier register costs more bytes for
+    /// the same tokens. A third absorbs that comfortably. The measured margin is
+    /// wider still — the tightest seed sits at 2.07 as the fixtures stand.
+    private static let summaryShrinkClearance = 1.5
+
+    /// The largest summary a real summarizer writes for a span this size, in the
+    /// estimated tokens ``Compactor`` measures a transcript in.
+    ///
+    /// Every seed's span earns the FLOOR of the summary allowance,
+    /// ``Summarization/minimumSummaryTokens``, because the other branch —
+    /// ``Summarization/summaryTokenRatio`` of the span — only passes the floor on
+    /// a span of roughly 2048 bytes or more. That branch cannot fail this bound
+    /// at all: a quarter of a span, converted back into estimated tokens at the
+    /// measured rate, is `0.25 * 4.81 / 4.0` — under a third of the span it
+    /// condensed — so a summary that large shrinks the transcript by
+    /// construction, whatever the span. The floor is the only branch that can
+    /// leave a fold no smaller than what it replaced, so the floor is what this
+    /// asserts against.
+    private static var worstCaseSummaryEstimatedTokens: Int {
+        Int(
+            (Double(Summarization.minimumSummaryTokens) * compactionEvalMeasuredBytesPerToken
+                / Compactor.charsPerTokenEstimate)
+                .rounded(.up))
+    }
+
+    /// The estimated token count of `seed`'s foldable span — every turn
+    /// ``Summarization`` replaces with one summary entry.
+    ///
+    /// Partitioned through the same ``TranscriptTurns`` split the stage itself
+    /// uses, at the stage's own ``Summarization/keepRecentTurns``, so this
+    /// measures what a fold really replaces rather than a model of it.
+    ///
+    /// - Parameter seed: The seed to measure.
+    /// - Returns: The span's size in estimated tokens.
+    private static func foldableSpanEstimatedTokens(of seed: CompactionEvalSeed) -> Int {
+        let (_, turns) = TranscriptTurns.split(seed.entries)
+        let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: Summarization().keepRecentTurns)
+        return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
+    }
+
+    @Test("every seed's foldable span outweighs the largest real summary of it, so the fold is worth applying")
+    func everySeedsFoldableSpanOutweighsARealSummary() {
+        // The lower bound of the band. Before task ^vjf3mdm a seed's whole span
+        // was one fact sentence and its acknowledgement — a few hundred bytes,
+        // against a 128-token floor a real model spends roughly 615 bytes on. The
+        // fold cost more than it saved, and `Compactor.compact` was right to
+        // throw it away.
+        let worstCase = Self.worstCaseSummaryEstimatedTokens
+        let required = Int((Double(worstCase) * Self.summaryShrinkClearance).rounded(.up))
+        for seed in compactionEvalSeeds {
+            let span = Self.foldableSpanEstimatedTokens(of: seed)
+            #expect(
+                span >= required,
+                "seed \(seed.id)'s foldable span estimates \(span) tokens, under the \(required) it needs to clear a real \(worstCase)-token summary by \(Self.summaryShrinkClearance)"
+            )
+        }
+    }
+
+    @Test("every seed's foldable span still fits one summarizer call, so a fold makes exactly one round trip")
+    func everySeedsFoldableSpanFitsOneSummarizerCall() {
+        // The upper bound of the same band. `Summarization` splits a span past
+        // `maxChunkTokens` into several map calls plus a reduce call, so a seed
+        // that grew past it would multiply the gated eval's model calls — already
+        // over its time limit, task ^fz49qds — and fold in a shape this dataset
+        // does not measure.
+        //
+        // Read against the span's own estimate. Rendering the span for the
+        // summarizer adds a role label to each entry, which only adds, and the
+        // margin here is wide enough that no per-entry label can close it.
+        let maxChunkTokens = Summarization().maxChunkTokens
+        for seed in compactionEvalSeeds {
+            let span = Self.foldableSpanEstimatedTokens(of: seed)
+            #expect(
+                span <= maxChunkTokens,
+                "seed \(seed.id)'s foldable span estimates \(span) tokens, over the \(maxChunkTokens) one summarizer call condenses"
+            )
+        }
     }
 }
 

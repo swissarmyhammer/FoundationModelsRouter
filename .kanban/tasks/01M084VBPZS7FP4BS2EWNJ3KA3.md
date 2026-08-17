@@ -61,8 +61,33 @@ comments:
     - evidence: `swift build` clean (0 warnings from our code); `swift build --build-tests -Xswiftc -warnings-as-errors` clean; `swift test` (ungated) — 973 tests in 91 suites passed with 1 known issue, 27 tests in 11 suites passed, 27 tests in 5 suites passed. 0 failures, 0 unexpected warnings, 0 unexplained skips. Gated `FM_ROUTER_INTEGRATION_TESTS=1` suites correctly skipped per instruction, not run.
     - next: none
   timestamp: 2026-08-17T17:02:37.979148+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m08aw0txs3nyhfad5sv490yk
+  text: |-
+    ### commit — changed
+    - evidence: f92e78e test(integration): re-baseline gated real-model assertions for Muse Glimmer (^wnj3ka3)
+    - next: none
+  timestamp: 2026-08-17T17:03:54.717921+00:00
+- actor: claude-code
+  id: 01m08b3b0py0bpjcvvv4kanmsd
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (checkpoint f92e78e) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 5 Swift test files reviewed; 4 `.kanban/` files excluded by `.reviewignore`.
+    - scope: the checkpoint commit only, not the accumulated task diff.
+    - next: no findings to record. Task moves to the terminal column.
+  timestamp: 2026-08-17T17:07:54.518076+00:00
+- actor: claude-code
+  id: 01m08b3zfr0df3bjtfgpdz9m9y
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files in Tests/FoundationModelsRouterIntegrationTests/; each of the six assertions re-derived, none deleted or weakened
+    - test: green — swift build clean, swift build --build-tests -Xswiftc -warnings-as-errors clean, swift test 973 + 27 + 27 tests, 0 failures, 1 pre-existing known issue
+    - commit: f92e78e
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - note: the gated compactionRoundTrip test passed against the real model in 425 s. The other five items are not verified against the real model, and the full gated suite did not run.
+  timestamp: 2026-08-17T17:08:15.480201+00:00
+position_column: done
+position_ordinal: ffb080
 title: Re-baseline the gated real-model tests against Muse Glimmer — reasoning entries, one shared model in two slots, and a fixture below its trigger
 ---
 Found by the gated real-model run of `FM_ROUTER_INTEGRATION_TESTS=1 swift test` against `aff8b1b`, recorded on `^z6xdyqn`. Six of the ten gated integration issues come from test premises that two earlier commits made false. No production code is wrong here. The tests describe a model and a profile that no longer exist.
