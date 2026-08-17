@@ -529,6 +529,20 @@ struct RealToolTurnComparisonTests {
         #expect(kinds.contains(.prompt))
         #expect(kinds.contains(.toolCalls))
         #expect(kinds.contains(.toolOutput))
-        #expect(kinds.last == .response)
+        // The turn ends with its answer. The gated model writes a `<think>`
+        // block after that answer, which the SDK appends as a `.reasoning`
+        // entry (see `GatedRealModelBudget`), so the last entry of a real
+        // turn is `.reasoning` and the last entry that is not reasoning is
+        // the `.response`. A turn that stopped after its tool output, with
+        // no answer at all, leaves `.toolOutput` there and still fails this.
+        #expect(
+            kinds.last(where: { $0 != .reasoning }) == .response,
+            "the turn should end with its answer; kinds were \(kinds.map(\.rawValue))"
+        )
+        // And that answer comes after the tool work it reports, rather than
+        // before it — the ordering `kinds.last` used to carry on its own.
+        let lastResponseIndex = try #require(kinds.lastIndex(of: .response))
+        let lastToolOutputIndex = try #require(kinds.lastIndex(of: .toolOutput))
+        #expect(lastResponseIndex > lastToolOutputIndex)
     }
 }

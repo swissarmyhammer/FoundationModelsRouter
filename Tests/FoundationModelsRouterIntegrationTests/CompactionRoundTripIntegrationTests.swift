@@ -270,8 +270,20 @@ struct CompactionRoundTripIntegrationTests {
     /// live run measured 846 and stalled at a `contextFill` of 0.41, less than
     /// half the trigger, because the suite had never actually executed against
     /// real hardware to find out (task 5m97h14).
-    /// `ScriptedTurnSizingTests` pins the size so it cannot silently shrink
-    /// again.
+    ///
+    /// The list grew from eight turns to ten for the same reason a second time
+    /// (task ^wnj3ka3). Eight turns estimated 1836 tokens, which reads as a
+    /// comfortable margin over the 1638-token trigger and is not one: the live
+    /// run measured 1633 and stopped at a `contextFill` of 0.79736328125, five
+    /// tokens short. The estimate counts about 1.23 tokens for each token the
+    /// model's own tokenizer counts, so the two added turns are what carry the
+    /// live run past the trigger rather than up to it. They sit at the end,
+    /// because the first four turns are bounded separately — see
+    /// ``ScriptedTurnSizingTests/triggerIsNotReachedBeforeAnOldSpanExists()``.
+    ///
+    /// `ScriptedTurnSizingTests` holds both bounds mechanically, in the tokens
+    /// a live run measures, so the fixture can neither shrink below the trigger
+    /// nor grow past the working context without a red `swift test`.
     fileprivate static let scriptedTurns: [String] = [
         """
         Project brief: this session's internal vault code is CRIMSON-77.
@@ -403,6 +415,36 @@ struct CompactionRoundTripIntegrationTests {
         which is finished apart from the lazy secondary-index rebuilds.
         Reply with one short sentence acknowledging this.
         """,
+        """
+        Storage notes: the archive lives in one file for each outpost, with a
+        shared index file beside them, and a copy of the whole set is written
+        to a second disk every night. The nightly copy is verified by
+        comparing a checksum of each file, not by comparing file sizes,
+        because a truncated write can leave a file with the correct size and
+        the wrong content. Two copies of the index are kept, one written by
+        the ingest process and one rebuilt from the outpost files, and a
+        difference between them stops the ingest until a person looks at it.
+        Nightly copies older than thirty days are removed, which is longer
+        than any ingest pass has needed so far. Nothing in the archive is
+        stored compressed, because the readers open the files with a memory
+        map and a compressed file would have to be expanded first, which
+        costs more time than the disk space it saves. Reply with one short
+        sentence acknowledging this.
+        """,
+        """
+        Query notes: a reader asks the archive for readings by outpost, by
+        date range, or by both, and every answer carries the ingestion-pass
+        state of each outpost it draws on. A query that names no outpost
+        reads every file, which is slow on the first call of a process and
+        fast after that, because the index for each decade stays in memory
+        once it is built. A query for a date range that starts before 1800
+        skips the secondary index and scans the pre-1800 volumes directly,
+        since those volumes are few and are not indexed at all. The answer
+        to a query is a list of readings in date order, and readings that
+        share a date keep the order they had in the source volume, so a
+        reader can compare two answers without sorting either one again.
+        Reply with one short sentence acknowledging this.
+        """,
     ]
 
     @Test(
@@ -521,16 +563,24 @@ struct CompactionRoundTripIntegrationTests {
 // MARK: - Ungated fixture sizing
 
 /// Ungated proof that ``CompactionRoundTripIntegrationTests``' own scripted
-/// turns are still sized to reach the 0.80 compaction trigger (task 5m97h14).
+/// turns are still sized to reach the 0.80 compaction trigger (tasks 5m97h14
+/// and ^wnj3ka3).
 ///
 /// The gated suite above is the real end-to-end proof, but it only runs with
 /// `FM_ROUTER_INTEGRATION_TESTS` set and a GPU present, so nothing under a
 /// plain `swift test` noticed when its fixtures were less than half the size
 /// the trigger needs — the suite's own doc comment claimed "a handful of
 /// scripted turns crosses the 0.80 compaction trigger" and a live run measured
-/// a `contextFill` of 0.41 against a 0.80 trigger. These two assertions are
+/// a `contextFill` of 0.41 against a 0.80 trigger. These assertions are
 /// mechanical, need no model, and fail loudly if the fixtures shrink or grow
 /// out of range again.
+///
+/// They are stated in the token count a live run MEASURES, not in the
+/// character-ratio estimate. That difference is what this suite missed the
+/// second time: the fixture cleared the trigger by 12 % in estimated tokens,
+/// and the live run still stopped at a `contextFill` of 0.797, because the
+/// estimate counts about 1.23 tokens for each token the model's own tokenizer
+/// counts. See ``realTokensPerEstimatedToken``.
 @Suite("CompactionRoundTripIntegrationTests fixture sizing (ungated)")
 struct ScriptedTurnSizingTests {
     /// The measured usage, in tokens, the gated suite's loop waits to see —
@@ -539,6 +589,44 @@ struct ScriptedTurnSizingTests {
     /// `fillBeforeCompaction >= 0.80` assertion checks.
     private static var triggerTokens: Int {
         TokenBudget(limit: CompactionRoundTripIntegrationTests.context).triggerTokens
+    }
+
+    /// What one estimated token is worth in tokens the model really counts.
+    ///
+    /// ``Compactor/estimatedTokenCount(of:)`` divides UTF-8 bytes by a flat
+    /// 4.0. The gated model's own tokenizer reads the English prose of the
+    /// scripted turns at about 4.9 bytes for each token, so the estimate runs
+    /// high. Measured over the turns below with that tokenizer: 1836 estimated
+    /// tokens against 1496 real ones.
+    private static let realTokensPerEstimatedToken = 0.815
+
+    /// The tokens a live run measures on top of the scripted prompt text.
+    ///
+    /// Measured usage covers the whole rendered conversation, not the prompts
+    /// alone: the instructions entry, the chat template's own tokens for each
+    /// message, and the reply of the turn that was just made. The replies add
+    /// almost nothing, because ``CompactionRoundTripIntegrationTests/replyMaxTokens``
+    /// is small and this model spends that budget on a `<think>` block the
+    /// template does not carry forward. Measured on the gated run of the
+    /// scripted turns: 1633 tokens against 1496 real prompt tokens.
+    private static let liveOverheadTokens = 137
+
+    /// How far past the trigger the fixture must carry the live run.
+    ///
+    /// The fixture missed the trigger by 5 tokens once (task ^wnj3ka3). A
+    /// tenth of the trigger is 164 tokens, which no small change in how the
+    /// model replies can give back.
+    private static let triggerClearance = 1.10
+
+    /// The tokens a live run is expected to measure once every scripted turn
+    /// has run: the prompt text converted out of the estimate, plus the
+    /// overhead every live turn carries.
+    ///
+    /// The gated loop stops at the first turn that crosses the trigger, so it
+    /// normally measures less than this. This is the figure both bounds below
+    /// are stated against, because both are about the fixture as a whole.
+    private static var predictedLiveTokens: Int {
+        Int(Double(perTurnTokens.reduce(0, +)) * realTokensPerEstimatedToken) + liveOverheadTokens
     }
 
     /// How many of the newest turns the deterministic stages must leave
@@ -553,38 +641,30 @@ struct ScriptedTurnSizingTests {
         CompactionRoundTripIntegrationTests.scriptedTurns.map(Compactor.estimatedTokenCount(of:))
     }
 
-    @Test("the scripted turns carry more prompt tokens between them than the 0.80 trigger needs")
-    func scriptedTurnsExceedTheTrigger() throws {
-        // Prompt text only: a live transcript also carries the instructions and
-        // every reply, so this is the conservative bound — the real run crosses
-        // the trigger strictly sooner than these numbers alone would.
-        let total = Self.perTurnTokens.reduce(0, +)
+    @Test("the scripted turns carry the live run past the 0.80 trigger, with margin")
+    func scriptedTurnsReachTheTriggerWithMargin() throws {
+        // The lower bound of the band the fixture must sit in. Stated in
+        // measured tokens, and with a margin, because the estimate alone
+        // cleared the trigger on a fixture the live run left below it — the
+        // whole defect of task ^wnj3ka3.
+        let required = Int(Double(Self.triggerTokens) * Self.triggerClearance)
         #expect(
-            total > Self.triggerTokens,
-            "the scripted turns estimate \(total) prompt tokens, which does not exceed the trigger's \(Self.triggerTokens)"
+            Self.predictedLiveTokens > required,
+            "the scripted turns predict \(Self.predictedLiveTokens) measured tokens, which does not clear the trigger's \(Self.triggerTokens) by \(Self.triggerClearance)"
         )
     }
 
-    @Test("the prefix that first crosses the trigger still fits inside the working context")
-    func crossingPrefixFitsTheContext() throws {
-        // The turn that crosses the trigger is submitted with everything before
-        // it as its prompt, so that prefix has to fit the window or the turn
-        // dies instead of folding. Replies push the real crossing earlier,
-        // making this the worst case for prompt size.
-        var cumulative = 0
-        var crossingPrefix: Int?
-        for tokens in Self.perTurnTokens {
-            cumulative += tokens
-            if cumulative > Self.triggerTokens {
-                crossingPrefix = cumulative
-                break
-            }
-        }
-        let prefix = try #require(
-            crossingPrefix, "no prefix of the scripted turns crosses the trigger at all")
+    @Test("the whole fixture still fits the working context, so no scripted turn can die of overflow")
+    func theWholeFixtureFitsTheWorkingContext() throws {
+        // The upper bound of the same band. The gated loop stops at the first
+        // turn that crosses the trigger, so it normally never submits the last
+        // turn — but a run that needs every turn must still fit the window, or
+        // that turn fails instead of folding. Bounding the whole fixture
+        // subsumes the crossing-prefix bound this replaces, because a prefix is
+        // never larger than the whole.
         #expect(
-            prefix <= CompactionRoundTripIntegrationTests.context,
-            "the prefix that crosses the trigger estimates \(prefix) tokens, over the \(CompactionRoundTripIntegrationTests.context)-token working context"
+            Self.predictedLiveTokens <= CompactionRoundTripIntegrationTests.context,
+            "the scripted turns predict \(Self.predictedLiveTokens) measured tokens, over the \(CompactionRoundTripIntegrationTests.context)-token working context"
         )
     }
 

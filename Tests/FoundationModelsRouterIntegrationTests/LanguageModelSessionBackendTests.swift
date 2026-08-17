@@ -172,18 +172,50 @@ struct LanguageModelSessionBackendIntegrationTests {
         await container.model.evict()
     }
 
-    // MARK: - Transcript growth and fork seeding (exact counts)
+    // MARK: - Transcript growth and fork seeding (per-turn entry kinds)
+
+    /// The entry kinds a turn is permitted to leave in the transcript.
+    ///
+    /// A turn owes exactly one `.prompt` and one `.response`. A reasoning
+    /// model leaves a third kind: the gated model writes a `<think>` block,
+    /// which lands as a `.reasoning` entry (see ``GatedRealModelBudget``).
+    /// It does not write one on every turn — a measured pair of turns left 5
+    /// entries where the same pair once left 4 — so a total entry count is
+    /// not a function of the turn count, and the checks below hold the
+    /// per-kind counts instead. Naming the permitted kinds here keeps an
+    /// unexpected extra kind from going unnoticed.
+    private static let permittedTurnEntryKinds: Set<TranscriptEvent.Kind> = [
+        .prompt, .response, .reasoning,
+    ]
+
+    /// Checks that `backend`'s live transcript holds what `turns` turns owe:
+    /// one `.prompt` and one `.response` for each turn, and no kind outside
+    /// ``permittedTurnEntryKinds``.
+    ///
+    /// - Parameters:
+    ///   - backend: The live backend whose session transcript is read.
+    ///   - turns: How many turns the transcript is expected to hold.
+    private static func expectTranscriptHolds(
+        _ backend: MLXFoundationModelsSessionBackend,
+        turns: Int
+    ) {
+        let kinds = backend.session.transcript.map { TranscriptEntryMapper.event(from: $0).kind }
+        #expect(kinds.filter { $0 == .prompt }.count == turns, "prompt entries in \(kinds)")
+        #expect(kinds.filter { $0 == .response }.count == turns, "response entries in \(kinds)")
+        #expect(
+            kinds.allSatisfy { permittedTurnEntryKinds.contains($0) },
+            "an entry kind outside the permitted set in \(kinds)"
+        )
+    }
 
     @Test(
-        "the transcript grows by exactly two entries (prompt + response) per turn across two respond() calls"
+        "each respond() call leaves exactly one prompt entry and one response entry across two turns"
     )
-    func transcriptGrowsByTwoEntriesPerTurn() async throws {
+    func eachTurnLeavesOnePromptAndOneResponse() async throws {
         let container = try await makeContainer()
         // No instructions: an instructions-carrying session's transcript opens
-        // with an extra `.instructions` entry, which would make the exact
-        // per-turn arithmetic below (`.prompt` + `.response` == 2 entries/turn)
-        // off by one. Omitting instructions isolates the count this test
-        // checks to turn-driven entries only.
+        // with an extra `.instructions` entry, which no turn owes. Omitting
+        // instructions leaves only turn-driven entries to check.
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
@@ -191,14 +223,14 @@ struct LanguageModelSessionBackendIntegrationTests {
         _ = try await backend.respond(to: "Say 'hi' briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
         _ = try await backend.respond(to: "Say 'hi' again, briefly.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
 
-        // Two turns × (one `.prompt` entry + one `.response` entry) == 4.
-        #expect(backend.session.transcript.count == 4)
+        let drivenTurns = 2
+        Self.expectTranscriptHolds(backend, turns: drivenTurns)
 
         await container.model.evict()
     }
 
-    @Test("a fork taken after one turn begins holding exactly that turn's two transcript entries")
-    func forkAfterOneTurnHasExactlyTwoEntries() async throws {
+    @Test("a fork taken after one turn begins holding exactly that turn's entries")
+    func forkAfterOneTurnHoldsThatTurnsEntries() async throws {
         let container = try await makeContainer()
         let parent = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
@@ -208,8 +240,8 @@ struct LanguageModelSessionBackendIntegrationTests {
 
         let child = try #require(parent.makeFork() as? MLXFoundationModelsSessionBackend)
 
-        // One turn × (one `.prompt` entry + one `.response` entry) == 2.
-        #expect(child.session.transcript.count == 2)
+        let drivenTurns = 1
+        Self.expectTranscriptHolds(child, turns: drivenTurns)
 
         await container.model.evict()
     }

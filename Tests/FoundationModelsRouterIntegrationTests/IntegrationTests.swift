@@ -22,10 +22,15 @@ private var integrationEnabled: Bool {
 // MARK: - Real models
 
 /// The profile the suite resolves, over ``RealModels``' `standard`/`flash`/
-/// `embedding` repos — two distinct real generation models plus an embedder,
-/// all co-resident, so the resolution/generation/embedding/guided-generation/
-/// fork assertions below exercise genuinely different models per slot rather
-/// than one tiny repo filling both generation slots.
+/// `embedding` repos — a real generation model in both generation slots plus a
+/// real embedder, all co-resident, so the resolution/generation/embedding/
+/// guided-generation/fork assertions below run against real weights rather
+/// than one tiny placeholder repo.
+///
+/// Both generation slots name one repository today, because only one Muse
+/// Glimmer repository is published — see ``RealModels/flash``. The two slots
+/// therefore share one resident container, which is what
+/// ``realProfileResidentContainerCount`` counts.
 private let realProfile = ProfileDefinition(
     name: "integration-real",
     description: "Real mlx-community models for the gated integration suite.",
@@ -34,6 +39,25 @@ private let realProfile = ProfileDefinition(
     embedding: [RealModels.embedding],
     context: RealModels.context
 )
+
+/// How many resident containers ``realProfile`` asks the loader to build, and
+/// so how many times the loader below records a load and a preload.
+///
+/// Read off the resolve path, not off a measured run. `Router.acquireModel`
+/// reads its pool before it reaches the loader and returns an already-resident
+/// entry, so the loader runs one time for each distinct residency key rather
+/// than one time for each slot; the preload loop guards itself the same way
+/// with its own set of already-preloaded keys. A generation key is the chosen
+/// reference together with the working context, and ``realProfile`` gives one
+/// context to every slot, so two generation slots that name one repository
+/// build one key and load one container. An embedding key carries a different
+/// role, so it never merges with a generation key however the references are
+/// named.
+private var realProfileResidentContainerCount: Int {
+    let generationRefs = Set([RealModels.standard, RealModels.flash])
+    let embeddingRefs = Set([RealModels.embedding])
+    return generationRefs.count + embeddingRefs.count
+}
 
 // MARK: - Phase-recording decorators
 
@@ -266,9 +290,12 @@ struct IntegrationTests {
         }
         #expect(await source.observedPhases.contains(.sizing))
         #expect(await loader.observedLoadPhases.allSatisfy { $0 == .downloading })
-        #expect(await loader.observedLoadPhases.count == 3)
+        // One load and one preload for each resident container the profile
+        // asks for — see `realProfileResidentContainerCount`, which reads that
+        // number off the profile rather than restating it.
+        #expect(await loader.observedLoadPhases.count == realProfileResidentContainerCount)
         #expect(await loader.observedPreloadPhases.allSatisfy { $0 == .loading })
-        #expect(await loader.observedPreloadPhases.count == 3)
+        #expect(await loader.observedPreloadPhases.count == realProfileResidentContainerCount)
 
         // 1b. The live byte percentage is real: every slot that downloaded
         //     observed a known byte total (> 0) and its byte count reached that

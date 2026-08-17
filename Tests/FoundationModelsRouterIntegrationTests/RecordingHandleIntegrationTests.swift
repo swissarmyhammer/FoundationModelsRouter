@@ -319,7 +319,19 @@ struct RecordingHandleIntegrationTests {
                 of: afterSync.map(\.kind)
             )
         )
-        #expect(afterSync.map(\.kind).last == .response)
+        // The turn's final answer is now on disk, and nothing of the turn
+        // stands after it except the model's own reasoning: the gated model
+        // writes a `<think>` block, which the SDK appends as a `.reasoning`
+        // entry after the `.response` (see `GatedRealModelBudget`). So this
+        // reads "the last entry that is not reasoning is the response". A
+        // missing final answer — the one gap `sync` exists to close — leaves
+        // `.toolOutput` there instead and still fails, and a `.prompt` or a
+        // `.toolCalls` after the answer fails it too.
+        let afterSyncKinds = afterSync.map(\.kind)
+        #expect(
+            afterSyncKinds.last(where: { $0 != .reasoning }) == .response,
+            "the turn should end with its final response; kinds were \(afterSyncKinds)"
+        )
 
         // The handle's own directory carries its sidecar, with the right
         // slot/model.

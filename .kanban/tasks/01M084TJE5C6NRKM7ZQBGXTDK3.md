@@ -190,7 +190,38 @@ comments:
     - blocker: two acceptance criteria are unreachable inside this card. `factInSummary=true` on the large majority of seeds needs `^vjf3mdm` — 8 of 9 folds are now discarded by `Compactor.compact`'s did-not-shrink guard, because the seeds are too small for a REAL summary to shrink them, and they only ever shrank because the summary was empty. Measuring the whole dataset needs `^fz49qds` — the suite hit its 20-minute limit at 9 of ~20 samples now that generations are real. `CompactionRoundTripIntegrationTests` recall of CRIMSON-77 is unverified: the dispatching instruction limited gated verification to the fact-retention eval, once.
     - next: a person decides the seed sizing (`^vjf3mdm`) and the gated time budget (`^fz49qds`); this card's own code is complete and green.
   timestamp: 2026-08-17T16:15:17.429972+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m088nksfmh4hamrspty4gm47
+  text: |-
+    ### review — stuck
+    - evidence: `review sha bbba644~1..bbba644` — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. Zero new findings on the code.
+    - next: the code change is sound. Two acceptance criteria are not demonstrated — the `CRIMSON-77` real-model round-trip recall, and the gated eval `factRetention >= 0.9` over the seed set (9 of 19 samples completed; 8 of those 9 folds discarded by `Compactor.compact`'s did-not-shrink guard). Follow-ups `^vjf3mdm` and `^fz49qds` cover the measurement. A person must decide whether this card closes with the measurement deferred. Task stays in `review`.
+  timestamp: 2026-08-17T16:25:27.599661+00:00
+- actor: claude-code
+  id: 01m088q586aaq1jmqyk8yvp49w
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: stuck — 6 files. `reasoningTokenHeadroom` added beside the summary allowance; `SummarizationError.emptySummary` thrown from `summarizeOnce`; the eval's classifier and report corrected.
+    - test: green — swift test 973 + 27 + 27, 0 failures, 10 new ungated tests
+    - commit: bbba644 (breaking)
+    - review: stuck — ZERO code findings over 7 validators; two acceptance criteria not demonstrated
+
+    **The code is sound and the fix is proven.** The targeted gated run gives `foldProducedNoSummary=0`, `summaryLostFact=0`, and factRetention 1.0 on 9 of 9 completed samples, against 0.0 before. The one applied fold produced real text carrying its planted fact. The review confirmed the two properties that mattered: the summary text is still bounded by a constant regardless of span length (the `min(maximumSummaryTokens, ...)` clamp survives the rename intact), and every caller degrades safely on the new error.
+
+    **Why the card stays open.** Two criteria are not demonstrated:
+
+    1. `CompactionRoundTripIntegrationTests` recall of `CRIMSON-77` against the real model — no result recorded. The gated verification was deliberately limited to the fact-retention eval, once.
+    2. `factInSummary=true` on the large majority of seeds, with `factRetention >= 0.9`. The run completed 9 of 19 samples, and 8 of those 9 folds were discarded by the did-not-shrink guard.
+
+    **The reason for point 2 is the interesting part, and it is not a regression.** Fixing the empty summary made the fold arithmetic honest. Those seeds only ever "shrank" because the stored summary held zero characters — a boundary carrying nothing is smaller than the span it replaces. With a real summary, `tokensAfter >= tokensBefore` and `Compactor.compact` correctly discards the fold. The guard is right; the seeds are too small to benefit from folding. That is `^vjf3mdm`.
+
+    The eval was measuring a fold that only appeared to work because it was broken.
+
+    **Also worth carrying**, recorded by the review as an assessment rather than a finding: the ceiling is a hard stop on the whole generation, so a summarizer that emits no reasoning may spend the headroom on summary text — worst-case summary text goes from 500 tokens to 4596. The doc comment states it, and the did-not-shrink guard already exists for that case.
+
+    Two follow-ups carry the rest: `^vjf3mdm` (seed sizing) and `^fz49qds` (the gated eval time limit). Whether this card closes with that measurement deferred to them is a person's decision, not one the loop should make.
+  timestamp: 2026-08-17T16:26:18.246439+00:00
+position_column: review
 position_ordinal: '80'
 title: Compaction writes an empty summary against an always-reasoning model — the summarizer budget has no room for the think block
 ---
@@ -239,4 +270,32 @@ The budget arithmetic keeps a summary short on purpose. Do not simply delete the
 - [ ] `Summarization` does not silently accept an empty summary — an empty summarizer answer is reported, not stored as a fold result
 - [ ] A unit test covers an empty summarizer answer, so the stub tier can see this class of fault
 - [ ] `CompactionRoundTripIntegrationTests` recall of `CRIMSON-77` passes against the real model
-- [ ] The gated evals report `factInSummary=true` on the large majority of seeds, and `factRetention >= 0.9` passes #defect #real-model #compaction
+- [ ] The gated evals report `factInSummary=true` on the large majority of seeds, and `factRetention >= 0.9` passes
+
+## Review Findings (2026-08-17 11:19)
+
+> Scope: `review sha bbba644~1..bbba644` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 8 not reviewed.
+
+> 8 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 8 file(s)
+
+The engine reported zero findings. No checklist item is open against the code.
+
+### Assessment of the code
+
+The three points the review examined:
+
+1. The summary text stays bounded by a constant. `outputTokenCeiling(condensing:)` is now `summaryTokenAllowance(condensing:) + reasoningTokenHeadroom`. The allowance keeps its `min(maximumSummaryTokens, ...)` clamp, so it stays at or below 500 tokens, and the headroom is a constant 4096. Every call's ceiling is therefore at or below 4596 tokens, whatever the length of the span, at every recursion depth. The bound does not grow with the span, which is the property `summaryTokenRatio` exists to hold. That property is not weakened.
+
+2. A note on the size of that constant, not a finding. The ceiling is a hard stop on the whole generation, so a model that writes no reasoning may spend the headroom on summary text. For such a model the worst-case summary text grows from 500 tokens to 4596 tokens. The behaviour is stated in the doc comment of `reasoningTokenHeadroom`, and `Compactor.compact` discards any fold that failed to shrink the transcript, which catches the case where the larger text would do damage.
+
+3. Every caller degrades safely. `RoutedSessionActor.performAutoCompaction(prompt:budget:)` catches an untyped `error` at the flash tier and at the own-model tier, then folds with `summarizer: nil`, which makes no model call and cannot raise this error. `SummarizationError.emptySummary` therefore degrades exactly as a summarizer that throws. The caller-driven `RoutedSessionActor.compact(prompt:budget:)` reports the error to its caller, which is what acceptance criterion 2 asks for. `Compactor.compact` throws before it applies the fold, so the session transcript and the backend are unchanged and no partial state is left.
+
+### Acceptance criteria not yet met
+
+The code change is sound. Two criteria are not demonstrated:
+
+- `CompactionRoundTripIntegrationTests` recall of `CRIMSON-77` against the real model. No result for this test is recorded.
+- The gated evals report `factInSummary=true` on the large majority of seeds, and `factRetention >= 0.9` passes. The targeted run completed 9 of 19 samples, and `Compactor.compact` discarded 8 of those 9 folds with its did-not-shrink guard. The seed set does not yet measure what this criterion asks for.
+
+Follow-ups `^vjf3mdm` (seed sizing) and `^fz49qds` (eval time limit) are filed against the measurement. A person must decide whether this card closes on the code fix with the measurement deferred to those two cards. #compaction #defect #real-model
