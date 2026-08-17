@@ -300,12 +300,16 @@ struct CompactionEvaluationHermeticTests {
     /// Every assistant reply in `seed`'s built transcript, in order — the text
     /// content of each `.response` entry.
     ///
+    /// Flattened by ``Summarization/text(of:)``, the production function a fold
+    /// itself reads an entry's segments with, so what this measures is the text
+    /// a summarizer really sees rather than a test's own idea of it.
+    ///
     /// - Parameter seed: The built seed to read.
     /// - Returns: The replies, in transcript order.
     private static func assistantReplies(of seed: CompactionEvalSeed) -> [String] {
         seed.entries.compactMap { entry -> String? in
             guard case .response(let response) = entry else { return nil }
-            return text(of: response.segments)
+            return Summarization.text(of: response.segments)
         }
     }
 
@@ -316,32 +320,23 @@ struct CompactionEvaluationHermeticTests {
     /// (`recordFact`, `noted`, `recorded`) that no fixture's own content ever
     /// reaches, so leaving them out changes no answer this is asked for.
     ///
+    /// Flattened by ``Summarization/text(of:)``, for the reason
+    /// ``assistantReplies(of:)`` states.
+    ///
     /// - Parameter seed: The built seed to read.
     /// - Returns: The joined text, in transcript order.
     private static func transcriptText(of seed: CompactionEvalSeed) -> String {
         seed.entries.compactMap { entry -> String? in
             switch entry {
             case .prompt(let prompt):
-                return text(of: prompt.segments)
+                return Summarization.text(of: prompt.segments)
             case .response(let response):
-                return text(of: response.segments)
+                return Summarization.text(of: response.segments)
             case .instructions, .toolCalls, .toolOutput, .reasoning:
                 return nil
             @unknown default:
                 return nil
             }
-        }
-        .joined(separator: "\n")
-    }
-
-    /// The joined content of every `.text` segment in `segments`, in order.
-    ///
-    /// - Parameter segments: The segments to flatten.
-    /// - Returns: The joined text content.
-    private static func text(of segments: [Transcript.Segment]) -> String {
-        segments.compactMap { segment -> String? in
-            guard case .text(let content) = segment else { return nil }
-            return content.content
         }
         .joined(separator: "\n")
     }

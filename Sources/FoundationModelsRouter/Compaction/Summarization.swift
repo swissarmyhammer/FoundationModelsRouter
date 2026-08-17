@@ -694,12 +694,19 @@ public struct Summarization: Sendable, Equatable, Codable {
 
     /// The joined content of every `.text` segment in `segments`, in order —
     /// the rendering counterpart of ``TranscriptEntryMapper``'s own
-    /// `flattenedText(_:)`, kept local since it operates on live
+    /// `flattenedText(_:)`, kept in this module since it operates on live
     /// `Transcript.Segment` values rather than persisted `SegmentPayload`s.
+    ///
+    /// `internal` rather than `private`, and load-bearing at that width: the
+    /// compaction eval dataset (`Tests/FoundationModelsRouterEvals`) reads its
+    /// seed transcripts through this same function via `@testable import`, so
+    /// what the dataset measures is the text a fold really shows the model.
+    /// Narrowing it again would put a second copy of this flattening back in
+    /// the test target, which is the duplication that width removes.
     ///
     /// - Parameter segments: The segments to flatten.
     /// - Returns: The joined text content.
-    private static func text(of segments: [Transcript.Segment]) -> String {
+    static func text(of segments: [Transcript.Segment]) -> String {
         segments.compactMap { segment -> String? in
             guard case .text(let text) = segment else { return nil }
             return text.content

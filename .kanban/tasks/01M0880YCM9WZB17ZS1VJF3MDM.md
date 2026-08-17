@@ -106,6 +106,91 @@ comments:
     - 39 skipped items, all gated real-model integration suites (require `FM_ROUTER_INTEGRATION_TESTS=1`, not run per constraint; tracked separately under ^fz49qds)
     - next: gated real-model run still owed (blocked on ^fz49qds's 20-minute limit fix), otherwise clean
   timestamp: 2026-08-17T17:37:47.962124+00:00
+- actor: claude-code
+  id: 01m08cvztkkn83y2g95pj924ea
+  text: |-
+    ### commit — changed
+    - evidence: 1397279 fix(evals): grow compaction eval seeds so real summaries actually shrink them (^vjf3mdm)
+    - next: /review
+  timestamp: 2026-08-17T17:38:50.835304+00:00
+- actor: claude-code
+  id: 01m08d6r75snxy70xargvq421s
+  text: |-
+    ### review — findings
+    - evidence: 1 finding (1 confirmed, 1 refuted, 7 attempted) — Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift:341
+    - scope: review sha HEAD~1..HEAD (checkpoint 1397279 only)
+    - next: remove the `text(of:)` duplication cause across the file — call `Summarization.text` directly if it is visible to tests, or extract one shared utility. Acceptance criterion 3 (gated `factInSummary=true`) stays open until ^fz49qds settles the gated 20-minute limit.
+  timestamp: 2026-08-17T17:44:43.493650+00:00
+- actor: claude-code
+  id: 01m08d7c2tjbktft9rnrknykj8
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 5 files in Tests/FoundationModelsRouterEvals/; 24 background paragraphs added, sized against the real tokenizer at 4.81 bytes per token; two new ungated gates; a `<discarded>` marker in the table
+    - test: green — swift build clean, swift build --build-tests -Xswiftc -warnings-as-errors clean, swift test 973 + 27 + 33 tests, 0 failures, 1 pre-existing known issue
+    - commit: 1397279
+    - review: findings — Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift:341, reuse/reuse, the new `text(of:)` helper repeats production logic at 0.99 similarity
+    - note: acceptance criterion 3 stays open by design. It needs `^fz49qds`.
+  timestamp: 2026-08-17T17:45:03.834029+00:00
+- actor: claude-code
+  id: 01m08dpbpfjjkbw0959x2812s4
+  text: |-
+    Review finding fixed. What was decided and why.
+
+    ## The choice: raise the production helper's visibility
+
+    The finding offered two answers — call `Summarization.text` directly if it is visible to tests, or extract one shared utility. I took the first: `Summarization.text(of:)` went from `private static` to `static` (internal), and the eval target now calls it through the `@testable import FoundationModelsRouter` it already carries.
+
+    Three reasons this beats a new shared utility:
+
+    1. **It is already the prevailing pattern of that exact file.** `Summarization.chunk(_:maxTokens:)`, `chunkStrings(_:maxTokens:)` and `estimatedTokens(of:)` are all internal statics for precisely this reason, and `SummarizationStageTests` says so in a comment on `chunkStrings`: "the same function production code uses". `text(of:)` was the odd one out.
+    2. **`Summarization` is the right owner.** `transcriptText(of:)`'s own doc calls what it builds "the text a summarizer reading the folded span is shown". `Summarization.text(of:)` is the function that really builds that text, reached through `renderLine(_:)`. Calling it is not borrowing a lookalike — it is reading the same function under test.
+    3. **A new utility adds production surface for no production caller.** Extracting `TranscriptSegments.flattenedText(_:)` would move the code away from its one production user and leave a type nothing in the module needs.
+
+    The `swift` validator's `access-control` rule states the standard this rests on word for word: "A test target is a caller. A Swift test target reads a library's `internal` members through `@testable import` ... That `internal` is load-bearing and correct as written." The doc comment now records it, so nobody re-privatizes the function and forces a copy back into the test target.
+
+    ## The sweep
+
+    The finding named line 341. The cause was swept across the whole file and the whole target, not that line alone:
+
+    - `CompactionEvaluationTests.swift` — the copied `text(of:)` is deleted; BOTH callers (`assistantReplies(of:)` and `transcriptText(of:)`, three call sites between them) now go to `Summarization.text(of:)`.
+    - Every other file of `Tests/FoundationModelsRouterEvals` was searched for segment/entry text flattening — `case .text(let`, `.segments`, `flatten`, `compactMap`, `joined(separator:` — and holds none. The two calls above are now the target's only flattening.
+
+    Out of scope and deliberately untouched: `TranscriptDiffer.swift` flattens `instructions.segments` inline into a `[String]`, and several pre-existing suites in `FoundationModelsRouterTests`/`FoundationModelsRouterTestSupport` carry their own small flatteners. All are production or pre-existing test code outside this change and outside the finding's file.
+
+    ## TDD
+
+    RED first, and it was a real red. `SummarizationStageTests/flatteningJoinsTextSegmentsAndDropsTheRest` was written before the visibility changed, and `swift build --build-tests` rejected it:
+
+    ```
+    SummarizationStageTests.swift:319:31: error: 'text' is inaccessible due to 'private' protection level
+    FoundationModelsRouter.Summarization.text:2:21: note: 'text(of:)' declared here
+    ```
+
+    The test asserts the contract the eval target now depends on: text segments joined in order by a newline, and a `.structure` segment between them dropped. Two callers make that worth stating outright instead of inferring it from an assembled prompt. No existing test was deleted and no assertion was weakened — the only edits to existing code are the three call sites and their doc comments.
+
+    ## Acceptance criteria
+
+    AC1 and AC2 are now checked. Both were met by the previous iteration and are proved by the ungated suite; the previous agent left them unchecked only out of caution about `update task` corrupting a long description. That update was made and verified this time: newlines intact, all three tags intact.
+
+    AC3 stays open, unchanged. It needs the gated run, which is blocked on `^fz49qds`.
+  timestamp: 2026-08-17T17:53:14.959827+00:00
+- actor: claude-code
+  id: 01m08dpkztmsjvthdqheqrjhc5
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Compaction/Summarization.swift (`text(of:)` `private static` -> `static`, doc records why the width is load-bearing), Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift (duplicate `text(of:)` deleted; `assistantReplies(of:)` and `transcriptText(of:)` call `Summarization.text(of:)`), Tests/FoundationModelsRouterTests/SummarizationStageTests.swift (new `flatteningJoinsTextSegmentsAndDropsTheRest`, RED first on `'text' is inaccessible due to 'private' protection level`)
+    - finding: `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift:341` `reuse/reuse` — fixed and checked on the card. Cause swept across the whole file and the whole Evals target; no segment/entry text flattening remains in the target outside the two calls into production.
+    - verification: `swift build` exit 0; `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0, zero warnings; `swift test` — 974 tests in 91 suites (was 973, +1 new) with 1 pre-existing known issue, 27 tests in 11 suites, 33 tests in 6 suites. Zero failures.
+    - acceptance: AC1 and AC2 checked. AC3 open and not claimed — it needs the gated run, blocked on `^fz49qds`. The gated suite was deliberately not run.
+    - next: /review
+  timestamp: 2026-08-17T17:53:23.450663+00:00
+- actor: claude-code
+  id: 01m08dt69w22302s97mc01s6es
+  text: |-
+    ### test — green
+    - evidence: `swift build` — build complete, 0 errors. `swift build --build-tests -Xswiftc -warnings-as-errors` — build complete, 0 warnings. `swift test` (ungated) — 1034 tests in 108 suites passed (974/91 + 27/11 + 33/6), 1 known issue (pre-existing, expected). 0 failures, 0 skipped outside the gated real-model suite (not run, per policy).
+    - next: ready for review.
+  timestamp: 2026-08-17T17:55:20.508796+00:00
 position_column: doing
 position_ordinal: '80'
 title: Compaction eval seeds are too small for a real summary to shrink them, so 8 of 9 gated folds are discarded and factInSummary cannot be measured
@@ -152,6 +237,19 @@ Prefer 1, and add a hermetic assertion beside `defaultBudgetForcesSummarizationS
 
 ## Acceptance Criteria
 
-- [ ] Every seed's fold is APPLIED, not discarded: a hermetic test holds each seed to `stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"]` against a summarizer whose answer is the length a real one writes, not a two-word stub
-- [ ] A discarded fold is legible in the eval table rather than reported as `<none>`, which reads the same as a stage that never ran
-- [ ] The gated eval reports `factInSummary=true` on the large majority of seeds #compaction #defect #real-model
+- [x] Every seed's fold is APPLIED, not discarded: a hermetic test holds each seed to `stagesApplied == ["ToolOutputElision", "TurnTruncation", "Summarization"]` against a summarizer whose answer is the length a real one writes, not a two-word stub
+- [x] A discarded fold is legible in the eval table rather than reported as `<none>`, which reads the same as a stage that never ran
+- [ ] The gated eval reports `factInSummary=true` on the large majority of seeds
+
+## Review Findings (2026-08-17 12:39)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 8 not reviewed.
+
+> 8 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 8 file(s)
+
+- [x] `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift:341` `reuse/reuse` — Function `text(of:)` reinvents existing functionality that already exists in production code. The function extracts text segments using identical logic to an existing implementation. Verify if `Summarization.text` is accessible to tests and call it directly, or extract a shared utility. At 0.99 similarity, this appears to be the same operation in different contexts.
+
+### Open criterion (not a code finding)
+
+The third acceptance criterion — the gated eval reporting `factInSummary=true` on the large majority of seeds — cannot be measured yet. The gated eval exceeds its 20-minute limit, which is card `^fz49qds`. This criterion stays open until `^fz49qds` settles the time limit. #compaction #defect #real-model

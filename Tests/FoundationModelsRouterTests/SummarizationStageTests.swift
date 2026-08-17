@@ -300,6 +300,25 @@ struct SummarizationStageTests {
         #expect(compaction.content.promptName == "my-custom-prompt-v7")
     }
 
+    // MARK: - Segment flattening: the text a fold reads out of an entry
+
+    @Test("flattening an entry's segments joins every text segment in order with a newline and drops the segments that carry no text")
+    func flatteningJoinsTextSegmentsAndDropsTheRest() throws {
+        // `Summarization.text(of:)` is what turns an entry into the line a
+        // summarizer reads, and the compaction eval dataset reads its seed
+        // transcripts through the same function so it measures the text a fold
+        // really shows the model. Two callers make the contract worth stating
+        // outright rather than inferring it from an assembled prompt.
+        let structureContent = try GeneratedContent(json: #"{"tempF":72}"#)
+        let segments: [Transcript.Segment] = [
+            .text(Transcript.TextSegment(id: "s-1", content: "first line")),
+            .structure(Transcript.StructuredSegment(id: "s-2", schemaName: "Weather", content: structureContent)),
+            .text(Transcript.TextSegment(id: "s-3", content: "second line")),
+        ]
+
+        #expect(Summarization.text(of: segments) == "first line\nsecond line")
+    }
+
     // MARK: - Map-reduce chunking
 
     @Test("a folded span exceeding maxChunkTokens is split into multiple chunks, each summarized, then the chunk summaries are re-summarized into one final summary")
