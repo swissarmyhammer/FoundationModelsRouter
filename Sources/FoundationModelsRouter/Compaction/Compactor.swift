@@ -170,7 +170,10 @@ public enum Compactor {
     /// - Returns: The folded transcript (unchanged from `transcript` when no
     ///   stage helped enough) and a report of what happened.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified, when
-    ///   ``Summarization`` runs and the summarizer call fails.
+    ///   ``Summarization`` runs and the summarizer call fails. Also
+    ///   ``SummarizationError/emptySummary`` when that call answers with text
+    ///   that holds no characters — a fold cannot store a boundary carrying no
+    ///   summary, so it is reported rather than applied.
     public static func compact(
         _ transcript: Transcript,
         prompt: CompactionPrompt = .default,

@@ -783,7 +783,7 @@ struct RoutedSessionCompactTests {
     }
 
     @Test(
-        "compact() folds with the Summarization the session was vended with: a doubled summaryTokenRatio doubles the output ceiling every summarizer call is made under"
+        "compact() folds with the Summarization the session was vended with: a doubled summaryTokenRatio doubles the summary allowance every summarizer call is made under"
     )
     @MainActor
     func compactFoldsWithTheSessionsOwnSummaryTokenRatio() async throws {
@@ -800,12 +800,17 @@ struct RoutedSessionCompactTests {
         let unturnedCalls = try await Self.summarizerCallsOfForcedFold(
             unturned.session, container: unturned.container)
 
-        let doubledCeiling = try #require(doubledCalls.compactMap(\.maxTokens).max())
-        let unturnedCeiling = try #require(unturnedCalls.compactMap(\.maxTokens).max())
-        #expect(doubledCeiling == unturnedCeiling * 2)
-        // Read off the ratio and not the floor: a ceiling squeezed down to
+        // Each ceiling is a summary allowance plus the reasoning headroom, and
+        // the ratio sizes the allowance alone — so the allowance is what the
+        // knob doubles. Both stages carry the default headroom, so subtracting
+        // it reads each allowance back off the number the summarizer was given.
+        let headroom = Summarization().reasoningTokenHeadroom
+        let doubledAllowance = try #require(doubledCalls.compactMap(\.maxTokens).max()) - headroom
+        let unturnedAllowance = try #require(unturnedCalls.compactMap(\.maxTokens).max()) - headroom
+        #expect(doubledAllowance == unturnedAllowance * 2)
+        // Read off the ratio and not the floor: an allowance squeezed down to
         // `minimumSummaryTokens` would be the same number whatever the ratio is.
-        #expect(unturnedCeiling > Summarization.minimumSummaryTokens)
+        #expect(unturnedAllowance > Summarization.minimumSummaryTokens)
     }
 
     // MARK: - A deterministic-only fold records its checkpoint (task ^h1008kb)

@@ -1,7 +1,196 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01m0851vdj01vhmr11bd7jsgf7
+  text: |-
+    Sharpened evidence from the same run, and a second finding.
+
+    ## The summary is an empty string, not a missing one
+
+    `CompactionEvalFactRetentionReport.classify(summary:answer:factKeyPhrase:)` reads:
+
+    ```swift
+    if answer.localizedCaseInsensitiveContains(factKeyPhrase) { return .retained }
+    guard let summary else { return .foldProducedNoSummary }
+    return summary.localizedCaseInsensitiveContains(factKeyPhrase)
+        ? .answerMissedFactSummaryCarriedIt
+        : .summaryLostFact
+    ```
+
+    The printer renders a missing summary as a word, not as nothing:
+
+    ```swift
+    "  summary=\(finding.diagnostic.summary ?? "<none>")",
+    ```
+
+    The log prints `summary=` with nothing after it, never `summary=<none>`. So the summary is `Optional.some("")`. The fold does return a summary. That summary holds no characters.
+
+    This confirms the token-ceiling reading. A refused or failed call would give `nil`. An empty string is what a generation gives when it stops before it writes any answer text.
+
+    ## Second finding — the eval cannot see this fault
+
+    The run counts read:
+
+    ```
+    counts: retained=0 answerMissedFactSummaryCarriedIt=0 summaryLostFact=19 foldProducedNoSummary=0 unrecognizedSample=0
+    ```
+
+    `foldProducedNoSummary` is 0 while every summary is empty. The `guard let summary` test catches `nil` only. An empty string passes that guard, then `"".localizedCaseInsensitiveContains(phrase)` is false, so the sample lands in `summaryLostFact`.
+
+    The report therefore says the summarizer wrote a summary that forgot the fact. The truth is that the summarizer wrote nothing. The one bucket that names this condition stayed at zero and hid it.
+
+    `factRetention` mean is `0.0`, not merely below the `0.9` threshold.
+
+    ## Extra acceptance criterion
+
+    - [ ] `CompactionEvalFactRetentionReport` puts an empty summary in `foldProducedNoSummary`, or in a case of its own. An empty summary must not be reported as a summary that lost a fact.
+  timestamp: 2026-08-17T15:22:14.322477+00:00
+- actor: claude-code
+  id: 01m086rvnc5c03rhkd0y7b374z
+  text: |-
+    Implementation landed. Both parts of the defect are closed.
+
+    ## Part 1 — the summarizer budget now has room to reason
+
+    `Summarization` gains `reasoningTokenHeadroom` (public var, default `4096`), and every call's ceiling is now the SUM of two amounts rather than one:
+
+    ```
+    maxTokens = summaryTokenAllowance(condensing: content) + reasoningTokenHeadroom
+    ```
+
+    The old `outputTokenCeiling(condensing:)`/`maximumOutputTokens`/`outputTokenCeiling(ingesting:)` are renamed `summaryTokenAllowance(condensing:)`/`maximumSummaryTokens`/`summaryTokenAllowance(ingesting:)`, because that arithmetic now sizes the summary TEXT alone.
+
+    ### Why a sum and not a larger fraction
+
+    The two amounts scale with different things.
+
+    - The summary allowance scales with the content. That is the compression a fold exists for, and `summaryTokenRatio` states it. A quarter of the span is still a quarter of the span.
+    - The reasoning does NOT scale with the content. How much a model thinks before it answers is a property of the model. A fraction of a small span leaves a reasoning model no room at all; a fraction of a large span hands it more than it can use.
+
+    So a fixed amount beside the fraction says exactly what is true. Raising the ratio, or raising `maxChunkTokens`, would have paid for the think block out of the summary budget and made a long span buy a long summary — the defect `summaryTokenRatio` was added to close.
+
+    The bound the fold cares about is unchanged in kind: `maximumSummaryTokens` still caps the summary allowance at what a full `maxChunkTokens` earns, so the final summary of a span of ANY length stays bounded by a constant. The headroom is never summary text, and `Compactor.compact` still discards a fold that failed to shrink the transcript.
+
+    `4096` is this repository's own measurement, not a guess: `GatedRealModelBudget.responseTokenCeiling` records that `512` leaves this model's response empty and `4096` does not. A unit test pins `Summarization().reasoningTokenHeadroom >= GatedRealModelBudget.responseTokenCeiling`, so lowering the headroom under the measured value fails the ungated suite.
+
+    `CompactionSummarizer.summarize(_:maxTokens:)`'s contract is restated: `maxTokens` bounds the WHOLE generation, the reasoning and the answer together. A conformer passes the sum straight down.
+
+    ## Part 2 — an empty summary is refused at the source
+
+    New `public enum SummarizationError: Error, Equatable, LocalizedError` with `case emptySummary`.
+
+    `Summarization.summarizeOnce(_:prompt:summarizer:)` now rejects an answer that trims to nothing. That is the ONE method every call of a fold goes through — each map call and each reduce round — so the check covers all of them with no list to keep current.
+
+    Throwing is the right shape and not a new hazard: `RoutedSessionActor.performAutoCompaction(prompt:budget:)` already degrades a throwing summarizer tier to the flash tier, then the own-model tier, then the deterministic pipeline. An empty answer now takes that same path instead of writing a boundary that erases the folded span.
+
+    ## Part 3 — the eval can see it
+
+    `CompactionEvalFactRetentionClass.classify` had `guard let summary else { return .foldProducedNoSummary }`, which an empty string walks straight past. It now reads:
+
+    ```swift
+    guard let summary, CompactionEvalFactRetentionReport.carriesText(summary) else {
+        return .foldProducedNoSummary
+    }
+    ```
+
+    The printer wrote the summary text itself, so an empty one rendered as `summary=` with nothing after it — a line that reads as truncated rather than as a measurement. `stanza(for:)` now renders `<empty>` for it, beside the existing `<none>` for a missing one. One shared `carriesText(_:)` answers the question, so the classification and the table can never disagree.
+
+    ## Coverage the stub tier can see
+
+    The card is right that a stub summarizer hides the token-ceiling defect. These are the tests that do NOT depend on any model:
+
+    - an empty summarizer answer makes the fold throw `emptySummary`
+    - a whitespace-only answer does too
+    - an empty answer from the REDUCE round does too (proves every call is checked, not just the map calls)
+    - `Compactor.compact` reports it rather than apply the fold
+    - a call's ceiling equals its allowance plus the headroom, and is strictly greater than the allowance
+    - a non-default headroom reaches the call
+    - the default headroom is at least `GatedRealModelBudget.responseTokenCeiling`
+    - an empty summary classifies as `foldProducedNoSummary`, not `summaryLostFact`
+    - a whitespace-only summary does too
+    - the rendered table states `summary=<empty>`
+
+    ## One existing test changed, and why
+
+    `RoutedSessionCompactTests.compactFoldsWithTheSessionsOwnSummaryTokenRatio` asserted `doubledCeiling == unturnedCeiling * 2`. The ratio now sizes the ALLOWANCE, so the whole ceiling no longer doubles. The assertion reads each allowance back off the ceiling the summarizer was given (both stages carry the default headroom) and holds the same claim about the same knob. Nothing was weakened: the test still separates two live folds and still refuses to read the `minimumSummaryTokens` floor.
+
+    Several assertions in `SummarizationStageTests` moved the same way — `ceiling - stage.reasoningTokenHeadroom < ...` in place of `ceiling < ...` — because the bound they state is on the summary text and the headroom is not summary text.
+  timestamp: 2026-08-17T15:52:16.812929+00:00
+- actor: claude-code
+  id: 01m0882nbjxt3p0wb1p2f2cks8
+  text: |-
+    Gated verification — run ONCE, targeted, not repeated.
+
+    ```
+    FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter CompactionEvaluationIntegrationTests
+    ```
+
+    ## The defect this card names is GONE
+
+    Zero samples produced an empty summary. Not one `summary=<empty>` line, and:
+
+    ```
+    counts: retained=9 answerMissedFactSummaryCarriedIt=0 summaryLostFact=0 foldProducedNoSummary=0 unrecognizedSample=0
+    ```
+
+    Against the run this card was written from — `summaryLostFact=19`, `factRetention` mean `0.0`, `summary=` empty on 19 of 19 — every completed sample now retains the fact. `factRetention` is `1.0` on all 9 samples that ran.
+
+    The one sample whose fold was APPLIED proves the whole path end to end:
+
+    ```
+    - seed=codename class=retained factInSummary=true folded=true summarizerCalls=1 stages=ToolOutputElision,TurnTruncation,Summarization
+      summary=2. Stated facts
+    - the internal codename for the new feature is "Project Longbow".
+    ```
+
+    Real summary text, carrying the planted fact, from a summarizer call that used to come back empty.
+
+    ## What the run did NOT establish, and why
+
+    Two acceptance criteria on this card are not met by this run, and neither can be met inside this card's scope. Both are recorded as their own tasks rather than decided here.
+
+    ### 8 of 9 folds were discarded — `^vjf3mdm`
+
+    ```
+    - seed=allergy class=retained factInSummary=false folded=false summarizerCalls=1 stages=
+      summary=<none>
+    ```
+
+    `summarizerCalls=1` beside an EMPTY `stages` list is `Compactor.compact`'s shortfall exit: the summarizer ran and answered, and the fold was then discarded because `tokensAfter >= tokensBefore`.
+
+    The guard is right. The seeds are what changed meaning. A fold trades one or two old turns for a summary entry that also carries a `CompactionSegment` of ids and counts, and on a seed this small the recency window is most of the transcript — so the margin was always thin. It only ever cleared because the stored summary held ZERO characters. Fixing the summary made the arithmetic honest.
+
+    So `retained=9` is a pass for the wrong reason on 8 of them: the transcript came back unchanged and the resumed session answered from the original turns. `factInSummary=true` on 1 of 9, not the large majority the card asks for — because there is no summary on the other 8 to look in.
+
+    Resizing the seeds, or teaching the eval to name a discarded fold, is a decision this card records nothing about. Filed as `^vjf3mdm`.
+
+    ### The suite hit its 20-minute time limit at 9 of ~20 samples — `^fz49qds`
+
+    ```
+    ✘ Test "Compaction retains pre-fold facts" recorded an issue at CompactionEvaluationTests.swift:458:6: Time limit was exceeded: 1200.000 seconds
+    ```
+
+    The old ceiling is what made the suite fit, and it fit because it produced nothing: a generation that stops at 500 tokens is fast. Real reasoning plus a real answer costs real time, twice per sample. The limit did not become wrong; what it bounded became honest. Raising it, or shrinking the gated tier, is filed as `^fz49qds`.
+
+    ### `CompactionRoundTripIntegrationTests` recall of CRIMSON-77
+
+    Not run. The dispatching instruction narrowed gated verification to the fact-retention eval, once, and forbade the full suite. That criterion is unverified rather than failed.
+
+    ## Blocker
+
+    The implementation on this card is complete and green in the ungated suite. The card's last acceptance criterion — `factInSummary=true` on the large majority of seeds — cannot be reached without `^vjf3mdm`, and the dataset cannot be measured whole without `^fz49qds`. A person decides those; I am not choosing seed sizes or a time budget on this card's behalf.
+  timestamp: 2026-08-17T16:15:06.610028+00:00
+- actor: claude-code
+  id: 01m0882zxnnj3bsqbn8rm95y6k
+  text: |-
+    ### implement — stuck
+    - evidence: 6 files — Sources/FoundationModelsRouter/Compaction/Summarization.swift, Sources/FoundationModelsRouter/Compaction/Compactor.swift, Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift, Tests/FoundationModelsRouterTests/SummarizationStageTests.swift, Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift. `swift build` complete; `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0, zero errors, zero warnings; `swift test` 973 + 27 + 27 tests passed, 0 failures (1 pre-existing `withKnownIssue` in BoundedWait). 10 new ungated tests, all passing. Gated `--filter CompactionEvaluationIntegrationTests` run once: empty summaries gone (`foldProducedNoSummary=0`, `summaryLostFact=0`, no `summary=<empty>`), `factRetention` 1.0 on all 9 completed samples against 0.0 before.
+    - blocker: two acceptance criteria are unreachable inside this card. `factInSummary=true` on the large majority of seeds needs `^vjf3mdm` — 8 of 9 folds are now discarded by `Compactor.compact`'s did-not-shrink guard, because the seeds are too small for a REAL summary to shrink them, and they only ever shrank because the summary was empty. Measuring the whole dataset needs `^fz49qds` — the suite hit its 20-minute limit at 9 of ~20 samples now that generations are real. `CompactionRoundTripIntegrationTests` recall of CRIMSON-77 is unverified: the dispatching instruction limited gated verification to the fact-retention eval, once.
+    - next: a person decides the seed sizing (`^vjf3mdm`) and the gated time budget (`^fz49qds`); this card's own code is complete and green.
+  timestamp: 2026-08-17T16:15:17.429972+00:00
+position_column: doing
 position_ordinal: '80'
 title: Compaction writes an empty summary against an always-reasoning model — the summarizer budget has no room for the think block
 ---

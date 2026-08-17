@@ -68,6 +68,13 @@ enum CompactionEvalFactRetentionClass: String, Sendable, CaseIterable {
 
     /// The fold produced no summary at all, so the resumed session was never
     /// given anything to answer from.
+    ///
+    /// Covers a missing summary and an empty one alike. The gated run of
+    /// 2026-08-17 recorded `Optional("")` on 19 of 19 seeds — the fold ran, the
+    /// summarizer answered, and the answer held no characters — and a `nil`
+    /// test alone filed every one of them under ``summaryLostFact``, which
+    /// reads as a summary that forgot the fact. A summary with no text carries
+    /// nothing to forget, so it belongs here.
     case foldProducedNoSummary
 
     /// The recorded sample's question matched no seed, so its key phrase is
@@ -92,7 +99,11 @@ enum CompactionEvalFactRetentionClass: String, Sendable, CaseIterable {
         // `FactRetention` evaluator applies, so this case's count and the
         // metric's mean can never disagree.
         if answer.localizedCaseInsensitiveContains(factKeyPhrase) { return .retained }
-        guard let summary else { return .foldProducedNoSummary }
+        // A summary with no text is a fold that produced none, whether it
+        // arrived as `nil` or as `""` — see `foldProducedNoSummary`.
+        guard let summary, CompactionEvalFactRetentionReport.carriesText(summary) else {
+            return .foldProducedNoSummary
+        }
         return summary.localizedCaseInsensitiveContains(factKeyPhrase)
             ? .answerMissedFactSummaryCarriedIt
             : .summaryLostFact
@@ -135,6 +146,29 @@ enum CompactionEvalFactRetentionReport {
     /// The ``CompactionEvalFactRetentionFinding/seedID`` stamped on a recorded
     /// sample whose question matched no seed.
     static let unmatchedSeedID = "<unmatched>"
+
+    /// What ``stanza(for:)`` renders in place of a fold that produced no
+    /// summary at all.
+    static let absentSummaryMarker = "<none>"
+
+    /// What ``stanza(for:)`` renders in place of a summary that holds no text.
+    ///
+    /// The printer wrote the text itself, so an empty summary rendered as
+    /// `summary=` with nothing after it — which reads as a truncated line
+    /// rather than as the measurement it is. A marker states it.
+    static let emptySummaryMarker = "<empty>"
+
+    /// Whether `summary` holds any text at all.
+    ///
+    /// The one place this question is answered, so the classification and the
+    /// rendered table can never disagree about which summaries are empty.
+    ///
+    /// - Parameter summary: The summary text to read.
+    /// - Returns: `true` when the text holds at least one character that is
+    ///   not whitespace.
+    static func carriesText(_ summary: String) -> Bool {
+        !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// Classifies every recorded sample against its seed.
     ///
@@ -250,7 +284,19 @@ enum CompactionEvalFactRetentionReport {
             "  key=\(finding.factKeyPhrase)",
             "  question=\(finding.diagnostic.question)",
             "  answer=\(finding.diagnostic.answer)",
-            "  summary=\(finding.diagnostic.summary ?? "<none>")",
+            "  summary=\(renderedSummary(of: finding.diagnostic))",
         ]
+    }
+
+    /// Renders a sample's summary for the table: the text itself, or a marker
+    /// naming what the fold stored instead.
+    ///
+    /// - Parameter diagnostic: The sample's recorded evidence.
+    /// - Returns: The summary text, ``absentSummaryMarker`` when the fold
+    ///   produced none, or ``emptySummaryMarker`` when it stored text holding
+    ///   no characters.
+    private static func renderedSummary(of diagnostic: CompactionEvalSampleDiagnostic) -> String {
+        guard let summary = diagnostic.summary else { return absentSummaryMarker }
+        return carriesText(summary) ? summary : emptySummaryMarker
     }
 }

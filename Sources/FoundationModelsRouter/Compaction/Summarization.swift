@@ -30,14 +30,55 @@ public protocol CompactionSummarizer: Sendable {
     /// discards a fold that failed to shrink the transcript, so an ignored
     /// ceiling costs a wasted call, never a worse transcript.
     ///
+    /// `maxTokens` bounds the whole generation, not the summary text alone. A
+    /// reasoning model writes a `<think>` block before its answer, and those
+    /// tokens are generated under the same limit. So a fold sizes `maxTokens`
+    /// as two amounts added together — what the summary text may occupy
+    /// (``Summarization/summaryTokenRatio``) plus what the reasoning before it
+    /// may occupy (``Summarization/reasoningTokenHeadroom``) — and a conformer
+    /// passes the sum straight down to its model. A conformer that subtracts
+    /// from it, or that measures the answer alone against it, takes the
+    /// reasoning room away again.
+    ///
     /// - Parameters:
     ///   - prompt: The assembled compaction instructions plus content to
     ///     condense.
-    ///   - maxTokens: The ceiling, in tokens, on this call's own answer — see
-    ///     ``Summarization/summaryTokenRatio`` for how a fold sizes it.
+    ///   - maxTokens: The ceiling, in tokens, on everything this call
+    ///     generates — the reasoning and the answer together. See
+    ///     ``Summarization/summaryTokenRatio`` and
+    ///     ``Summarization/reasoningTokenHeadroom`` for how a fold sizes it.
     /// - Returns: The model's complete text response.
     /// - Throws: If summarization fails.
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String
+}
+
+/// A failure of the model-assisted ``Summarization`` stage that the summarizer
+/// itself did not raise.
+public enum SummarizationError: Error, Equatable, LocalizedError {
+    /// A summarizer call returned successfully and its answer held no text —
+    /// it was empty, or it was whitespace alone.
+    ///
+    /// This is a fold failure, not a summary that lost content. A fold replaces
+    /// a span of real conversation with the text it stores, so a boundary that
+    /// carries no text erases that span and gives the resumed session nothing
+    /// to read. It is reported rather than stored, so the caller can degrade —
+    /// `RoutedSessionActor.performAutoCompaction(prompt:budget:)` falls through
+    /// to its next summarizer tier, and then to the deterministic pipeline,
+    /// exactly as it does for a summarizer that throws.
+    ///
+    /// A reasoning model produces this answer when its output ceiling has room
+    /// for the summary text alone: the `<think>` block spends the whole
+    /// ceiling, generation stops inside the reasoning, and the turn records an
+    /// empty response. ``Summarization/reasoningTokenHeadroom`` is what keeps
+    /// that ceiling wide enough.
+    case emptySummary
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptySummary:
+            return "the summarizer returned no text, so the fold has no summary to store"
+        }
+    }
 }
 
 /// The model-assisted compaction stage (compaction_plan.md §1.3 stage 3):
@@ -101,14 +142,15 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// no-progress fallback deliberately hands one call everything left. Those
     /// are examples of a call ingesting more than this, not a complete list of
     /// them. What holds for *every* call regardless is the output bound:
-    /// ``maximumOutputTokens`` caps what any one call may answer, however much
-    /// it was handed.
+    /// ``maximumSummaryTokens`` caps what any one call's summary text may
+    /// occupy, however much it was handed.
     public var maxChunkTokens: Int
 
-    /// The fraction of the content a single summarizer call condenses that
-    /// its own answer may occupy — the compression a fold is run for, turned
-    /// into the ceiling every call generates under
-    /// (``CompactionSummarizer/summarize(_:maxTokens:)``'s `maxTokens`).
+    /// The fraction of the content a single summarizer call condenses that its
+    /// own summary text may occupy — the compression a fold is run for, and one
+    /// of the two amounts that make the ceiling every call generates under
+    /// (``CompactionSummarizer/summarize(_:maxTokens:)``'s `maxTokens`; the
+    /// other is ``reasoningTokenHeadroom``).
     ///
     /// Defaults to `0.25`. The number this replaces was no number at all: the
     /// call went out unbounded and resolved to the generation path's generic
@@ -126,19 +168,47 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// arbitrarily long span unbounded, because a call can be handed more than
     /// ``maxChunkTokens`` (see that property — neither packer splits a single
     /// item), and a quarter of *that* grows with the span.
-    /// ``maximumOutputTokens`` closes it without having to know which calls
-    /// those are: it caps every call's ceiling at what a full
+    /// ``maximumSummaryTokens`` closes it without having to know which calls
+    /// those are: it caps every call's summary allowance at what a full
     /// ``maxChunkTokens`` of content earns, so the bound holds for every call
     /// a fold makes, and therefore for the final summary of a span of any
     /// length.
     public var summaryTokenRatio: Double
 
-    /// The floor, in tokens, no call's ceiling is squeezed below — `128`,
-    /// roughly a few dense sentences.
+    /// The tokens, in addition to the summary allowance, every summarizer call
+    /// is given for the reasoning a model writes before its answer.
     ///
-    /// ``summaryTokenRatio`` alone would hand a small span a ceiling too tight
-    /// to say anything in, and a generation cut off mid-sentence is worse than
-    /// a slightly larger one: the ceiling is a hard stop, not a target the
+    /// Defaults to `4096`. The two amounts are added rather than shared,
+    /// because they scale with different things. The summary allowance scales
+    /// with the content, which is what ``summaryTokenRatio`` states. The
+    /// reasoning does not: how much a model thinks before it answers is a
+    /// property of the model, not of the span, so taking a fraction of a small
+    /// span would leave a reasoning model no room at all while a large span
+    /// would hand it more than it can use. A fixed amount beside the fraction
+    /// says exactly that.
+    ///
+    /// Measurement gives the default, and it is this repository's own:
+    /// `Tests/FoundationModelsRouterTestSupport/GatedRealModelBudget.swift`
+    /// records that the gated model always writes a `<think>` block first, that
+    /// a ceiling of `512` leaves the response empty, and that `4096` does not.
+    /// Before this amount existed, the largest ceiling a summarizer call could
+    /// ask for was `500` — under the value already known to fail — and every
+    /// gated fold stored an empty summary as a result.
+    ///
+    /// It is a ceiling, not a target. Generation still stops at the model's
+    /// end-of-sequence token, so a model that reasons briefly, or not at all,
+    /// pays only for the tokens it writes. The bound a fold cares about stays
+    /// on the summary text: this amount is never summary text, and
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// discards any fold that failed to shrink the transcript regardless.
+    public var reasoningTokenHeadroom: Int
+
+    /// The floor, in tokens, no call's summary allowance is squeezed below —
+    /// `128`, roughly a few dense sentences.
+    ///
+    /// ``summaryTokenRatio`` alone would hand a small span an allowance too
+    /// tight to say anything in, and a generation cut off mid-sentence is worse
+    /// than a slightly larger one: the ceiling is a hard stop, not a target the
     /// model aims at. A fold that still fails to shrink the transcript is
     /// caught where it should be —
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`` returns
@@ -153,11 +223,21 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///   - maxChunkTokens: The estimated-token ceiling per summarizer call
     ///     before chunking kicks in. Defaults to `2000`.
     ///   - summaryTokenRatio: The fraction of the content it condenses a
-    ///     single summarizer call's answer may occupy. Defaults to `0.25`.
-    public init(keepRecentTurns: Int = 4, maxChunkTokens: Int = 2000, summaryTokenRatio: Double = 0.25) {
+    ///     single summarizer call's summary text may occupy. Defaults to
+    ///     `0.25`.
+    ///   - reasoningTokenHeadroom: The tokens every call is given on top of
+    ///     that allowance, for the reasoning a model writes before its answer.
+    ///     Defaults to `4096`.
+    public init(
+        keepRecentTurns: Int = 4,
+        maxChunkTokens: Int = 2000,
+        summaryTokenRatio: Double = 0.25,
+        reasoningTokenHeadroom: Int = 4096
+    ) {
         self.keepRecentTurns = keepRecentTurns
         self.maxChunkTokens = maxChunkTokens
         self.summaryTokenRatio = summaryTokenRatio
+        self.reasoningTokenHeadroom = reasoningTokenHeadroom
     }
 
     /// What folding `transcript` down to a summary produced: the resulting
@@ -215,7 +295,10 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///   shortfall, since summarizing nothing cannot help either.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified — a
     ///   summarizer failure is a real error, never silently swallowed into a
-    ///   degraded result.
+    ///   degraded result. Also ``SummarizationError/emptySummary`` when a
+    ///   summarizer call returns text that holds no characters: a boundary
+    ///   carrying no summary is a fold failure, so it is reported here rather
+    ///   than stored (see that case).
     public func apply(
         _ transcript: Transcript,
         prompt: CompactionPrompt,
@@ -307,9 +390,9 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// recurses, not only in the no-progress fallback below, where one call
     /// deliberately takes everything left. The bound that matters does not
     /// turn on which rounds those are: every call here goes through
-    /// ``summarizeOnce(_:prompt:summarizer:)``, whose ceiling is clamped to
-    /// ``maximumOutputTokens``, so no round's answer grows with the span
-    /// however much that round ingests.
+    /// ``summarizeOnce(_:prompt:summarizer:)``, whose summary allowance is
+    /// clamped to ``maximumSummaryTokens``, so no round's summary grows with
+    /// the span however much that round ingests.
     ///
     /// When the joined `summaries` don't fit, they are grouped into
     /// turn-aligned-style batches via ``chunkStrings(_:maxTokens:)`` (never
@@ -351,9 +434,9 @@ public struct Summarization: Sendable, Equatable, Codable {
             // summary, so no two adjacent summaries fit together under
             // maxChunkTokens. Recursing further would never terminate —
             // a single flat reduce, over budget or not, is the only option
-            // left. Over budget on its *input* only: this call's answer is
-            // still capped at `maximumOutputTokens`, so a span shaped this way
-            // cannot buy a final summary that grows with it.
+            // left. Over budget on its *input* only: this call's summary
+            // allowance is still capped at `maximumSummaryTokens`, so a span
+            // shaped this way cannot buy a final summary that grows with it.
             return try await summarizeOnce(joined, prompt: prompt, summarizer: summarizer)
         }
 
@@ -387,23 +470,62 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// Every call made through here is bounded by ``outputTokenCeiling(condensing:)``,
     /// so a summary can never come back the size of what it condenses — the
-    /// defect ``summaryTokenRatio`` records — and never larger than
-    /// ``maximumOutputTokens``, however much content the call was handed.
+    /// defect ``summaryTokenRatio`` records — and its summary allowance is
+    /// never larger than ``maximumSummaryTokens``, however much content the
+    /// call was handed.
+    ///
+    /// Every call is also checked here, and one answer is refused: text that
+    /// holds no characters. A fold stores what a summarizer answers, so a
+    /// boundary carrying no text erases the span it replaced and leaves the
+    /// resumed session nothing to read. That is a fold failure, and
+    /// ``SummarizationError/emptySummary`` reports it. The check stands here
+    /// rather than at each call site because every call of a fold — the map
+    /// calls and every reduce round alike — is made through this one method.
+    ///
+    /// - Parameters:
+    ///   - content: The content this call condenses — a rendered chunk of
+    ///     turns, or a batch of prior summaries.
+    ///   - prompt: The compaction prompt sent to `summarizer` verbatim.
+    ///   - summarizer: The model called to condense text.
+    /// - Returns: The summarizer's answer, unchanged.
+    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws,
+    ///   unmodified, or ``SummarizationError/emptySummary`` when that answer
+    ///   holds no characters.
     private func summarizeOnce(
         _ content: String,
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
     ) async throws -> String {
-        try await summarizer.summarize(
+        let summary = try await summarizer.summarize(
             "\(prompt.text)\n\n---\n\n\(content)",
             maxTokens: outputTokenCeiling(condensing: content)
         )
+        guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SummarizationError.emptySummary
+        }
+        return summary
     }
 
-    /// The ceiling, in tokens, a single summarizer call condensing `content`
-    /// may answer within: ``summaryTokenRatio`` of `content`'s own estimated
-    /// size, never below ``minimumSummaryTokens`` and never above
-    /// ``maximumOutputTokens``.
+    /// The ceiling, in tokens, one summarizer call condensing `content`
+    /// generates under: the summary allowance that content earns
+    /// (``summaryTokenAllowance(condensing:)``) plus
+    /// ``reasoningTokenHeadroom``.
+    ///
+    /// The sum is what the call is given, because a reasoning model spends the
+    /// same ceiling on its `<think>` block and on the answer after it. Passing
+    /// the allowance alone leaves the answer no room at all — see
+    /// ``reasoningTokenHeadroom`` for the measurement that states it.
+    ///
+    /// - Parameter content: The content the call will condense — a rendered
+    ///   chunk of turns, or a batch of prior summaries.
+    /// - Returns: The output ceiling for that call, in tokens.
+    private func outputTokenCeiling(condensing content: String) -> Int {
+        summaryTokenAllowance(condensing: content) + reasoningTokenHeadroom
+    }
+
+    /// The part of that ceiling the summary text itself may occupy:
+    /// ``summaryTokenRatio`` of `content`'s own estimated size, never below
+    /// ``minimumSummaryTokens`` and never above ``maximumSummaryTokens``.
     ///
     /// Measured on the content alone, never on the assembled prompt: the
     /// compaction instructions are the same however small the span is, and
@@ -412,36 +534,37 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// - Parameter content: The content the call will condense — a rendered
     ///   chunk of turns, or a batch of prior summaries.
-    /// - Returns: The output ceiling for that call, in tokens.
-    private func outputTokenCeiling(condensing content: String) -> Int {
-        min(maximumOutputTokens, outputTokenCeiling(ingesting: Self.estimatedTokens(of: content)))
+    /// - Returns: The summary allowance for that call, in tokens.
+    private func summaryTokenAllowance(condensing content: String) -> Int {
+        min(maximumSummaryTokens, summaryTokenAllowance(ingesting: Self.estimatedTokens(of: content)))
     }
 
-    /// The ceiling no single summarizer call's answer may exceed, however much
-    /// content that call was handed: what a full ``maxChunkTokens`` of content
-    /// earns under ``summaryTokenRatio``.
+    /// The allowance no single summarizer call's summary text may exceed,
+    /// however much content that call was handed: what a full
+    /// ``maxChunkTokens`` of content earns under ``summaryTokenRatio``.
     ///
     /// Chunking already keeps most calls at or under ``maxChunkTokens``, so for
     /// them this cap never binds. It is applied to every call all the same —
-    /// ``outputTokenCeiling(condensing:)`` clamps to it, and every call reaches
-    /// that through ``summarizeOnce(_:prompt:summarizer:)`` — rather than to a
-    /// listed set of calls, because a call can be handed more than
+    /// ``summaryTokenAllowance(condensing:)`` clamps to it, and every call
+    /// reaches that through ``summarizeOnce(_:prompt:summarizer:)`` — rather
+    /// than to a listed set of calls, because a call can be handed more than
     /// ``maxChunkTokens`` in more than one way (see ``maxChunkTokens``).
     /// Clamping unconditionally is what keeps the final summary of a long
     /// conversation bounded, the defect ``summaryTokenRatio`` exists to close,
     /// without the bound depending on any such list being complete.
-    private var maximumOutputTokens: Int {
-        outputTokenCeiling(ingesting: maxChunkTokens)
+    private var maximumSummaryTokens: Int {
+        summaryTokenAllowance(ingesting: maxChunkTokens)
     }
 
     /// ``summaryTokenRatio`` of `tokens`, floored at ``minimumSummaryTokens`` —
-    /// the one place the ceiling arithmetic lives, shared by the per-call
-    /// ceiling and the cap it is clamped to.
+    /// the one place the allowance arithmetic lives, shared by the per-call
+    /// allowance and the cap it is clamped to.
     ///
     /// - Parameter tokens: The estimated size, in tokens, of what a call
     ///   ingests.
-    /// - Returns: The share of it that call's answer may occupy, in tokens.
-    private func outputTokenCeiling(ingesting tokens: Int) -> Int {
+    /// - Returns: The share of it that call's summary text may occupy, in
+    ///   tokens.
+    private func summaryTokenAllowance(ingesting tokens: Int) -> Int {
         max(Self.minimumSummaryTokens, Int((Double(tokens) * summaryTokenRatio).rounded(.up)))
     }
 

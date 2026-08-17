@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -71,22 +72,47 @@ struct SummarizationStageTests {
     }
 
     /// The output ceiling ``Summarization`` should have computed for a call
-    /// condensing `content`: that content's own estimated size scaled by
-    /// `ratio`, never below ``Summarization/minimumSummaryTokens`` and never
-    /// above what a full `maxChunkTokens` of content would earn. Restated here
-    /// rather than read off the stage, so these tests pin the arithmetic
-    /// instead of comparing it against itself.
+    /// condensing `content`: the summary allowance that content earns, plus the
+    /// reasoning headroom every call is given. Restated here rather than read
+    /// off the stage, so these tests pin the arithmetic instead of comparing it
+    /// against itself.
     ///
     /// - Parameters:
     ///   - content: The content the call was asked to condense.
     ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
     ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
+    ///   - headroom: The stage's ``Summarization/reasoningTokenHeadroom``.
     /// - Returns: The expected ceiling, in tokens.
-    private static func expectedCeiling(condensing content: String, ratio: Double, maxChunkTokens: Int) -> Int {
-        func ceiling(ingesting tokens: Int) -> Int {
+    private static func expectedCeiling(
+        condensing content: String,
+        ratio: Double,
+        maxChunkTokens: Int,
+        headroom: Int
+    ) -> Int {
+        expectedSummaryAllowance(condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens) + headroom
+    }
+
+    /// The part of that ceiling the summary text itself may occupy: the
+    /// content's own estimated size scaled by `ratio`, never below
+    /// ``Summarization/minimumSummaryTokens`` and never above what a full
+    /// `maxChunkTokens` of content earns.
+    ///
+    /// - Parameters:
+    ///   - content: The content the call was asked to condense.
+    ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
+    ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
+    /// - Returns: The expected summary allowance, in tokens.
+    private static func expectedSummaryAllowance(
+        condensing content: String,
+        ratio: Double,
+        maxChunkTokens: Int
+    ) -> Int {
+        func allowance(ingesting tokens: Int) -> Int {
             max(Summarization.minimumSummaryTokens, Int((Double(tokens) * ratio).rounded(.up)))
         }
-        return min(ceiling(ingesting: maxChunkTokens), ceiling(ingesting: Summarization.estimatedTokens(of: content)))
+        return min(
+            allowance(ingesting: maxChunkTokens),
+            allowance(ingesting: Summarization.estimatedTokens(of: content)))
     }
 
     /// The content a summarizer call was asked to condense, recovered from the
@@ -479,10 +505,16 @@ struct SummarizationStageTests {
         #expect(
             ceiling
                 == Self.expectedCeiling(
-                    condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
+                    condensing: condensed,
+                    ratio: stage.summaryTokenRatio,
+                    maxChunkTokens: stage.maxChunkTokens,
+                    headroom: stage.reasoningTokenHeadroom))
         // The point of the bound: a summary can never come back the size of
         // the span it replaces, which is what made a fold save almost nothing.
-        #expect(ceiling < Summarization.estimatedTokens(of: condensed))
+        // The bound is on the summary allowance, read back off the ceiling the
+        // call was given — the reasoning headroom beside it is never summary
+        // text, so it cannot make a summary longer.
+        #expect(ceiling - stage.reasoningTokenHeadroom < Summarization.estimatedTokens(of: condensed))
     }
 
     @Test("a span too small to compress still gets the minimum a usable summary needs, not a truncated fragment")
@@ -505,7 +537,8 @@ struct SummarizationStageTests {
         let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
         let share = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
         #expect(share < Summarization.minimumSummaryTokens)  // sanity: this span's share really is below the floor
-        #expect(summarizer.receivedMaxTokens == [Summarization.minimumSummaryTokens])
+        #expect(
+            summarizer.receivedMaxTokens == [Summarization.minimumSummaryTokens + stage.reasoningTokenHeadroom])
     }
 
     @Test("every call a chunked fold makes is bounded by its own content, the reduce round over the chunk summaries included")
@@ -534,7 +567,10 @@ struct SummarizationStageTests {
             #expect(
                 ceiling
                     == Self.expectedCeiling(
-                        condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
+                        condensing: condensed,
+                        ratio: stage.summaryTokenRatio,
+                        maxChunkTokens: stage.maxChunkTokens,
+                        headroom: stage.reasoningTokenHeadroom))
         }
     }
 
@@ -583,12 +619,15 @@ struct SummarizationStageTests {
         #expect(
             ceiling
                 == Self.expectedCeiling(
-                    condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
-        // The ratio alone would let this one call's ceiling grow with the
-        // number of chunk summaries joined into it, which is exactly how the
+                    condensing: condensed,
+                    ratio: stage.summaryTokenRatio,
+                    maxChunkTokens: stage.maxChunkTokens,
+                    headroom: stage.reasoningTokenHeadroom))
+        // The ratio alone would let this one call's summary allowance grow with
+        // the number of chunk summaries joined into it, which is exactly how the
         // final summary of an arbitrarily long span escaped its bound.
         let unbounded = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
-        #expect(ceiling < unbounded)
+        #expect(ceiling - stage.reasoningTokenHeadroom < unbounded)
     }
 
     @Test(
@@ -629,9 +668,79 @@ struct SummarizationStageTests {
         #expect(
             ceiling
                 == Self.expectedCeiling(
-                    condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens))
+                    condensing: condensed,
+                    ratio: stage.summaryTokenRatio,
+                    maxChunkTokens: stage.maxChunkTokens,
+                    headroom: stage.reasoningTokenHeadroom))
         let unbounded = Int((Double(Summarization.estimatedTokens(of: condensed)) * stage.summaryTokenRatio).rounded(.up))
-        #expect(ceiling < unbounded)
+        #expect(ceiling - stage.reasoningTokenHeadroom < unbounded)
+    }
+
+    // MARK: - Reasoning headroom: a call's ceiling holds the think block as well as the answer
+
+    @Test(
+        "a summarizer call is given the reasoning headroom on top of its summary allowance, so a model that thinks before it answers still reaches the answer"
+    )
+    func summarizerCallCarriesReasoningHeadroomAboveItsSummaryAllowance() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let bigText = String(repeating: "old span content ", count: 400)
+        let turns = try (1...5).map {
+            try TranscriptFixtures.makeTurn(index: $0, promptText: bigText, toolOutputText: bigText, responseText: bigText)
+        }
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let summarizer = ScriptedSummarizer(responses: ["summary"])
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
+
+        _ = try await stage.apply(
+            transcript,
+            prompt: .default,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+
+        let ceiling = try #require(summarizer.receivedMaxTokens.first)
+        let condensed = try Self.condensedContent(of: try #require(summarizer.receivedPrompts.first))
+        let allowance = Self.expectedSummaryAllowance(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        // The two amounts are separate, and the ceiling is their sum: the ratio
+        // sizes the summary text, and the headroom pays for the reasoning a
+        // model writes before that text starts.
+        #expect(ceiling == allowance + stage.reasoningTokenHeadroom)
+        #expect(ceiling > allowance)
+    }
+
+    @Test("a non-default reasoningTokenHeadroom reaches the ceiling every summarizer call is given")
+    func nonDefaultReasoningHeadroomReachesTheSummarizerCall() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(5)
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let summarizer = ScriptedSummarizer(responses: ["summary"])
+        let headroom = 777
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000, reasoningTokenHeadroom: headroom)
+
+        _ = try await stage.apply(
+            transcript,
+            prompt: .default,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+
+        // This span is small enough that the floor decides the allowance, so
+        // the number the summarizer was handed states the headroom exactly.
+        #expect(summarizer.receivedMaxTokens == [Summarization.minimumSummaryTokens + headroom])
+    }
+
+    @Test("the default reasoning headroom is at least the ceiling this repository measured a reasoning turn needs")
+    func defaultReasoningHeadroomMeetsTheMeasuredCeiling() {
+        // `GatedRealModelBudget` records the measurement: the gated model always
+        // writes a `<think>` block first, a ceiling of 512 leaves its answer
+        // empty, and 4096 does not. A summarizer call is one such turn, so its
+        // headroom may never be smaller than the value that measurement names.
+        #expect(Summarization().reasoningTokenHeadroom >= GatedRealModelBudget.responseTokenCeiling)
     }
 
     // MARK: - Nothing to fold: Summarization is a no-op (Compactor's fallback path)
@@ -676,6 +785,72 @@ struct SummarizationStageTests {
                 summarizer: ThrowingSummarizer()
             )
         }
+    }
+
+    // MARK: - An empty summarizer answer is a fold failure
+
+    @Test("a summarizer answer with no text is reported as a fold failure, never stored as the fold's summary")
+    func emptySummarizerAnswerIsReported() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6)
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let summarizer = ScriptedSummarizer(responses: [""])
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
+
+        await #expect(throws: SummarizationError.emptySummary) {
+            _ = try await stage.apply(
+                transcript,
+                prompt: .default,
+                tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                priorStagesApplied: [],
+                summarizer: summarizer
+            )
+        }
+    }
+
+    @Test("a summarizer answer of whitespace alone is reported the same way: it carries no summary either")
+    func whitespaceOnlySummarizerAnswerIsReported() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try TranscriptFixtures.makeTurns(6)
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        let summarizer = ScriptedSummarizer(responses: ["  \n\t  "])
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
+
+        await #expect(throws: SummarizationError.emptySummary) {
+            _ = try await stage.apply(
+                transcript,
+                prompt: .default,
+                tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                priorStagesApplied: [],
+                summarizer: summarizer
+            )
+        }
+    }
+
+    @Test("an empty answer from the reduce round is reported too, so every call of a chunked fold is checked")
+    func emptyReduceRoundAnswerIsReported() async throws {
+        let instructions = TranscriptFixtures.makeInstructions()
+        let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
+        let transcript = Transcript(entries: [instructions] + turns.flatMap { $0 })
+
+        // One old turn per chunk (as `longSpanMapReducesAcrossChunks` sets up):
+        // 2 map calls that answer, then 1 reduce call that answers nothing.
+        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let summarizer = ScriptedSummarizer(responses: ["chunk-summary-A", "chunk-summary-B", ""])
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
+
+        await #expect(throws: SummarizationError.emptySummary) {
+            _ = try await stage.apply(
+                transcript,
+                prompt: .default,
+                tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+                priorStagesApplied: [],
+                summarizer: summarizer
+            )
+        }
+        #expect(summarizer.receivedPrompts.count == 3)
     }
 
     // MARK: - Compactor-level integration: Summarization wired in as the final stage
@@ -815,6 +990,18 @@ struct SummarizationStageTests {
         #expect(result.tokensAfter == tokensBefore)
     }
 
+    @Test("Compactor.compact reports an empty summary rather than apply a fold whose boundary would carry no text")
+    func compactorReportsAnEmptySummaryRatherThanApplyIt() async throws {
+        // The same fixture `compactorWiresInSummarizationAsFinalStage` folds,
+        // differing only in what the summarizer answers: nothing at all.
+        let (_, transcript, budget) = try Self.makeModelAssistedFoldFixture()
+        let summarizer = ScriptedSummarizer(responses: [""])
+
+        await #expect(throws: SummarizationError.emptySummary) {
+            _ = try await Compactor.compact(transcript, budget: budget, summarizer: summarizer)
+        }
+    }
+
     @Test("a supplied summarizer is never invoked when the deterministic stages alone already land under target")
     func summarizerNotInvokedWhenDeterministicStagesSuffice() async throws {
         let instructions = TranscriptFixtures.makeInstructions()
@@ -861,12 +1048,19 @@ struct SummarizationStageTests {
         let firstCeiling = try #require(summarizer.receivedMaxTokens.first)
         #expect(
             firstCeiling
-                == Self.expectedCeiling(condensing: firstContent, ratio: ratio, maxChunkTokens: defaults.maxChunkTokens))
+                == Self.expectedCeiling(
+                    condensing: firstContent,
+                    ratio: ratio,
+                    maxChunkTokens: defaults.maxChunkTokens,
+                    headroom: defaults.reasoningTokenHeadroom))
         // And it is that knob, not the default, that produced it.
         #expect(
             firstCeiling
                 != Self.expectedCeiling(
-                    condensing: firstContent, ratio: defaults.summaryTokenRatio, maxChunkTokens: defaults.maxChunkTokens))
+                    condensing: firstContent,
+                    ratio: defaults.summaryTokenRatio,
+                    maxChunkTokens: defaults.maxChunkTokens,
+                    headroom: defaults.reasoningTokenHeadroom))
     }
 
     @Test("a non-default maxChunkTokens set through Compactor.compact reaches the fold's map-reduce chunking")

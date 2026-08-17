@@ -280,6 +280,43 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(classification == .foldProducedNoSummary)
     }
 
+    @Test("a summary with no text is a fold failure, not a summary that lost the fact")
+    func emptySummaryIsAFoldFailure() {
+        // The gated run of 2026-08-17 recorded `Optional("")` on 19 of 19 seeds:
+        // the fold ran, the summarizer answered, and the answer held no
+        // characters. A `nil` guard alone filed every one of them under
+        // `summaryLostFact`, which reads as a summary that forgot the fact.
+        let classification = CompactionEvalFactRetentionClass.classify(
+            summary: "",
+            answer: "I do not have that information.",
+            factKeyPhrase: Self.seed.factKeyPhrase
+        )
+        #expect(classification == .foldProducedNoSummary)
+    }
+
+    @Test("a summary of whitespace alone is a fold failure too: it carries no summary either")
+    func whitespaceOnlySummaryIsAFoldFailure() {
+        let classification = CompactionEvalFactRetentionClass.classify(
+            summary: "  \n\t  ",
+            answer: "I do not have that information.",
+            factKeyPhrase: Self.seed.factKeyPhrase
+        )
+        #expect(classification == .foldProducedNoSummary)
+    }
+
+    @Test("the rendered table names an empty summary, so a fold that stored no text is legible in the log")
+    func renderedTableNamesAnEmptySummary() {
+        // The printer wrote `summary=` with nothing after it, which reads as a
+        // truncated line rather than as the measurement it is.
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [Self.diagnostic(summary: "", answer: "Noted.")],
+            seeds: [Self.seed]
+        )
+        let table = CompactionEvalFactRetentionReport.lines(of: findings).joined(separator: "\n")
+        #expect(table.contains("summary=<empty>"))
+        #expect(table.contains(CompactionEvalFactRetentionClass.foldProducedNoSummary.rawValue))
+    }
+
     @Test("the key-phrase check is case-insensitive, exactly as the FactRetention metric's is")
     func keyPhraseMatchingIsCaseInsensitive() {
         let classification = CompactionEvalFactRetentionClass.classify(
