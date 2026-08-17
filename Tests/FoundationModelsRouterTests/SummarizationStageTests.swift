@@ -115,6 +115,57 @@ struct SummarizationStageTests {
             allowance(ingesting: Summarization.estimatedTokens(of: content)))
     }
 
+    /// The character bound ``Summarization`` states to a call condensing
+    /// `content`: that call's summary allowance, converted back into the
+    /// characters ``Compactor/estimatedTokenCount(of:)`` measures a transcript
+    /// in.
+    ///
+    /// - Parameters:
+    ///   - content: The content the call was asked to condense.
+    ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
+    ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
+    /// - Returns: The expected bound, in characters.
+    private static func expectedSummaryCharacters(
+        condensing content: String,
+        ratio: Double,
+        maxChunkTokens: Int
+    ) -> Int {
+        let allowance = expectedSummaryAllowance(condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens)
+        return Int(Double(allowance) * Compactor.charsPerTokenEstimate)
+    }
+
+    /// Folds `turns` with `stage` and `prompt`, and returns the assembled
+    /// prompt of every summarizer call the fold made, in call order.
+    ///
+    /// The turns come in rather than being built here because a caller sizing
+    /// `stage.maxChunkTokens` against one turn has to measure that turn before
+    /// the fold runs.
+    ///
+    /// - Parameters:
+    ///   - turns: The turns to fold, each as its own entries.
+    ///   - stage: The stage to fold with.
+    ///   - prompt: The compaction prompt to fold with.
+    ///   - responses: What the scripted summarizer answers, one per call.
+    /// - Returns: The assembled prompts, in call order.
+    /// - Throws: Whatever the fold throws.
+    private static func assembledPrompts(
+        folding turns: [[Transcript.Entry]],
+        with stage: Summarization,
+        prompt: CompactionPrompt,
+        answering responses: [String]
+    ) async throws -> [String] {
+        let transcript = Transcript(entries: [TranscriptFixtures.makeInstructions()] + turns.flatMap { $0 })
+        let summarizer = ScriptedSummarizer(responses: responses)
+        _ = try await stage.apply(
+            transcript,
+            prompt: prompt,
+            tokensBefore: Compactor.estimatedTokenCount(of: transcript),
+            priorStagesApplied: [],
+            summarizer: summarizer
+        )
+        return summarizer.receivedPrompts
+    }
+
     /// The content a summarizer call was asked to condense, recovered from the
     /// assembled prompt it received — the compaction instructions, then the
     /// separator, then the content (see `Summarization.summarizeOnce`).
@@ -558,6 +609,107 @@ struct SummarizationStageTests {
         #expect(share < Summarization.minimumSummaryTokens)  // sanity: this span's share really is below the floor
         #expect(
             summarizer.receivedMaxTokens == [Summarization.minimumSummaryTokens + stage.reasoningTokenHeadroom])
+    }
+
+    @Test("every summarizer call is told, in characters, how long its own summary may be")
+    func summarizerCallIsToldItsSummaryCharacterBound() async throws {
+        // `maxTokens` bounds the WHOLE generation — the reasoning and the answer
+        // together — so it tells a model nothing about how long the ANSWER may
+        // be. The gated run of 2026-08-17 measured what that costs (task
+        // ^fm5ddk9): every one of 7 seeds was called at a ceiling of 4224
+        // tokens against a summary allowance of 128, and every one answered
+        // with 374 to 698 real tokens of summary — 1.30x to 2.07x the estimated
+        // size of the span it was condensing. `Compactor.compact` discarded all
+        // 7 folds, correctly, and the eval then measured nothing about
+        // compaction at all.
+        //
+        // The allowance has to reach the model, and the assembled prompt is the
+        // only channel that carries it.
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
+        let prompts = try await Self.assembledPrompts(
+            folding: try TranscriptFixtures.makeTurns(5),
+            with: stage,
+            prompt: .default,
+            answering: ["summary"]
+        )
+
+        let assembled = try #require(prompts.first)
+        let condensed = try Self.condensedContent(of: assembled)
+        let bound = Self.expectedSummaryCharacters(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        #expect(assembled.contains("at most \(bound) characters"))
+        // Stated in the same currency `Compactor.estimatedTokenCount(of:)`
+        // measures a transcript in, so the number the model is given is the
+        // number the did-not-shrink guard will judge its answer by.
+        #expect(bound == Int(Double(Summarization.minimumSummaryTokens) * Compactor.charsPerTokenEstimate))
+    }
+
+    @Test("a chunked fold tells each call the bound its own chunk earns, never one bound for the whole span")
+    func eachCallOfAChunkedFoldIsToldItsOwnCharacterBound() async throws {
+        // The same property `everyCallOfAChunkedFoldIsBounded` holds for the
+        // ceiling, held for the bound the model is told. A directive computed
+        // once over the whole span would over-state what a single chunk's
+        // summary may occupy, and the reduce round's would be wrong in the
+        // other direction.
+        let turns = try (1...6).map { try TranscriptFixtures.makeTurn(index: $0, toolOutputText: "result-\($0)") }
+        let oneTurnTokens = Compactor.estimatedTokenCount(of: Transcript(entries: turns[0]))
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: oneTurnTokens)
+        let prompts = try await Self.assembledPrompts(
+            folding: turns,
+            with: stage,
+            prompt: .default,
+            answering: ["chunk-summary-A", "chunk-summary-B", "final-combined-summary"]
+        )
+
+        #expect(prompts.count == 3)
+        for assembled in prompts {
+            let condensed = try Self.condensedContent(of: assembled)
+            let bound = Self.expectedSummaryCharacters(
+                condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+            #expect(assembled.contains("at most \(bound) characters"))
+        }
+    }
+
+    @Test("the assembled prompt states the size of the span the summary has to beat")
+    func summarizerCallIsToldTheSizeOfTheSpanItMustBeat() async throws {
+        // A bound on its own is a number with no scale. `Compactor.compact`
+        // keeps a fold only when it shrank the transcript, so the span's own
+        // size is what makes the bound mean something — and the gated model's
+        // summaries were 1.3x to 2.1x the span precisely because nothing ever
+        // told it what it was competing with.
+        let prompts = try await Self.assembledPrompts(
+            folding: try TranscriptFixtures.makeTurns(5),
+            with: Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000),
+            prompt: .default,
+            answering: ["summary"]
+        )
+
+        let assembled = try #require(prompts.first)
+        let condensed = try Self.condensedContent(of: assembled)
+        #expect(assembled.contains("\(condensed.utf8.count) characters"))
+    }
+
+    @Test("a caller's own compaction prompt still carries the length bound")
+    func aCustomPromptStillCarriesTheLengthBound() async throws {
+        // The bound belongs to the stage, not to the prompt: `CompactionPrompt`
+        // is a caller-supplied value whose text is sent verbatim, and a caller
+        // specializing the instructions for its own domain cannot be expected
+        // to restate arithmetic it has no access to.
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: 1_000_000)
+        let custom = CompactionPrompt(name: "caller-own", text: "Summarize however you like.")
+        let prompts = try await Self.assembledPrompts(
+            folding: try TranscriptFixtures.makeTurns(5),
+            with: stage,
+            prompt: custom,
+            answering: ["summary"]
+        )
+
+        let assembled = try #require(prompts.first)
+        let condensed = try Self.condensedContent(of: assembled)
+        let bound = Self.expectedSummaryCharacters(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        #expect(assembled.contains(custom.text))
+        #expect(assembled.contains("at most \(bound) characters"))
     }
 
     @Test("every call a chunked fold makes is bounded by its own content, the reduce round over the chunk summaries included")

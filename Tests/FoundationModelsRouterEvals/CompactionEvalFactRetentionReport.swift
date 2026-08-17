@@ -2,6 +2,29 @@ import Foundation
 
 @testable import FoundationModelsRouter
 
+/// What one summarizer call of a fold asked the model for, and what it
+/// answered.
+///
+/// Recorded because a discarded fold leaves no other trace of its summary.
+/// `Compactor.compact` throws such a fold away and reports the shortfall exit's
+/// `nil` summary, so the size of the summary that lost — the one number that
+/// says whether the fold missed by a few percent or by a multiple — survives
+/// nowhere else. The summarizer holds it at the moment it answers, so it is
+/// kept there.
+struct CompactionEvalSummarizerCall: Sendable {
+    /// The ceiling, in tokens, the fold gave this call.
+    ///
+    /// ``Summarization``'s summary allowance plus its
+    /// ``Summarization/reasoningTokenHeadroom``, and it bounds the WHOLE
+    /// generation — the reasoning and the answer together — rather than the
+    /// summary text alone. Recorded beside the answer so a run can read the two
+    /// against each other.
+    let maxTokens: Int
+
+    /// The model's complete answer to this call.
+    let answer: String
+}
+
 /// One gated sample's raw `FactRetention` evidence, recorded by
 /// ``CompactionEvalRealSubjectRunner`` as each sample runs.
 ///
@@ -30,11 +53,20 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// (``CompactionResult/stagesApplied``).
     let stagesApplied: [String]
 
+    /// Every summarizer call the fold made, in call order — what each asked the
+    /// model for and what the model answered.
+    ///
+    /// The whole list rather than a count, because a discarded fold's summary
+    /// text survives nowhere else — see ``CompactionEvalSummarizerCall``.
+    let summarizerCalls: [CompactionEvalSummarizerCall]
+
     /// How many round trips to the model the fold's summarizer made. One fold
     /// makes more than one call when ``Summarization`` chunks a long span into
     /// several map calls plus a reduce call, so this distinguishes a
     /// single-shot fold from a chunked one.
-    let summarizerCallCount: Int
+    var summarizerCallCount: Int {
+        summarizerCalls.count
+    }
 
     /// Whether this sample's compaction reached the model-assisted
     /// ``Summarization`` stage — the one stage that leaves a summary a later
@@ -57,6 +89,18 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// pair.
     var foldDiscarded: Bool {
         summarizerCallCount > 0 && !folded
+    }
+
+    /// The call whose answer a discarded fold would have stored, or `nil` when
+    /// this sample's fold was not discarded.
+    ///
+    /// The LAST call, because that is the summary a fold stores: a span inside
+    /// ``Summarization/maxChunkTokens`` takes one call, and a longer one takes
+    /// several map calls and then reduce rounds whose final call produces the
+    /// single summary the boundary carries.
+    var discardedSummary: CompactionEvalSummarizerCall? {
+        guard foldDiscarded else { return nil }
+        return summarizerCalls.last
     }
 }
 
@@ -155,6 +199,15 @@ struct CompactionEvalFactRetentionFinding: Sendable {
 
     /// The case this sample landed in.
     let classification: CompactionEvalFactRetentionClass
+
+    /// The span this sample's fold was to replace, in the estimated tokens
+    /// `Compactor` measures a transcript in — `0` when the sample matched no
+    /// seed, since no span is then known.
+    ///
+    /// The other half of a discarded fold's measurement. `Compactor.compact`
+    /// keeps a fold only when it leaves the transcript smaller, so a summary
+    /// that lost is only legible beside the span it was meant to replace.
+    let foldableSpanEstimatedTokens: Int
 }
 
 /// Turns the gated run's recorded per-sample evidence into a classified table
@@ -197,6 +250,28 @@ enum CompactionEvalFactRetentionReport {
     /// when it had names to print would leave a reader unable to tell a complete
     /// run from a printer that never states one.
     static let everySeedReachedMarker = "<none>"
+
+    /// How many characters of a discarded fold's summary ``stanza(for:)``
+    /// prints before it cuts the text off.
+    ///
+    /// A discarded summary is bounded only by the ceiling the whole generation
+    /// ran under — ``Summarization/reasoningTokenHeadroom`` on top of the
+    /// summary allowance — so it can run to tens of thousands of characters,
+    /// and a table that printed one whole for every sample would bury the rest
+    /// of the run's evidence. `1000` is nearly twice the largest summary the
+    /// allowance itself buys (``Summarization/minimumSummaryTokens`` at
+    /// ``Compactor/charsPerTokenEstimate`` is 512 characters), so a summary
+    /// that stayed inside its allowance prints whole, and one that did not is
+    /// visibly cut with its real size stated on the line above.
+    static let discardedSummaryPrefixCharacters = 1000
+
+    /// What ``stanza(for:)`` appends to a discarded summary it cut short at
+    /// ``discardedSummaryPrefixCharacters``.
+    ///
+    /// Stated rather than left to the reader to infer from the byte count on
+    /// the line above: a printed summary that simply stopped mid-sentence reads
+    /// as a model that stopped mid-sentence, which is a different defect.
+    static let discardedSummaryTruncationMarker = "<cut>"
 
     /// Whether `summary` holds any text at all.
     ///
@@ -334,7 +409,8 @@ enum CompactionEvalFactRetentionReport {
                 summary: diagnostic.summary,
                 answer: diagnostic.answer,
                 factKeyPhrase: seed.factKeyPhrase
-            )
+            ),
+            foldableSpanEstimatedTokens: seed.foldableSpanEstimatedTokens
         )
     }
 
@@ -352,7 +428,8 @@ enum CompactionEvalFactRetentionReport {
             factKeyPhrase: "",
             factInSummary: false,
             diagnostic: diagnostic,
-            classification: .unrecognizedSample
+            classification: .unrecognizedSample,
+            foldableSpanEstimatedTokens: 0
         )
     }
 
@@ -361,7 +438,7 @@ enum CompactionEvalFactRetentionReport {
     /// - Parameter finding: The classified sample to render.
     /// - Returns: The stanza's lines — the verdict line, then each text the
     ///   verdict was read from, one per line so a multi-line summary stays
-    ///   legible.
+    ///   legible, then the measurement of a discarded fold when there is one.
     private static func stanza(for finding: CompactionEvalFactRetentionFinding) -> [String] {
         [
             "- seed=\(finding.seedID) class=\(finding.classification.rawValue)"
@@ -374,7 +451,39 @@ enum CompactionEvalFactRetentionReport {
             "  question=\(finding.diagnostic.question)",
             "  answer=\(finding.diagnostic.answer)",
             "  summary=\(renderedSummary(of: finding.diagnostic))",
+        ] + discardedLines(for: finding)
+    }
+
+    /// Renders the lines a discarded fold adds to its stanza, or none at all
+    /// for a sample whose fold was applied or never ran.
+    ///
+    /// ``discardedSummaryMarker`` alone says a fold ran and was thrown away, and
+    /// not by how much. These lines say by how much: the size of the summary
+    /// that lost, the span it was to replace, and the ceiling the call that
+    /// wrote it ran under — the three numbers `Compactor.compact`'s
+    /// did-not-shrink guard is decided by — and then the text itself, bounded.
+    ///
+    /// - Parameter finding: The classified sample to render.
+    /// - Returns: The two lines, or an empty array.
+    private static func discardedLines(for finding: CompactionEvalFactRetentionFinding) -> [String] {
+        guard let discarded = finding.diagnostic.discardedSummary else { return [] }
+        return [
+            "  discarded=\(discarded.answer.utf8.count) bytes"
+                + " summaryTokens=\(Summarization.estimatedTokens(of: discarded.answer))"
+                + " spanTokens=\(finding.foldableSpanEstimatedTokens)"
+                + " ceiling=\(discarded.maxTokens)",
+            "  discardedText=\(boundedText(of: discarded.answer))",
         ]
+    }
+
+    /// `text`, cut to ``discardedSummaryPrefixCharacters`` and marked with
+    /// ``discardedSummaryTruncationMarker`` when it is longer than that.
+    ///
+    /// - Parameter text: The text to bound.
+    /// - Returns: The whole text, or its bounded prefix plus the marker.
+    private static func boundedText(of text: String) -> String {
+        guard text.count > discardedSummaryPrefixCharacters else { return text }
+        return String(text.prefix(discardedSummaryPrefixCharacters)) + discardedSummaryTruncationMarker
     }
 
     /// Renders a sample's summary for the table: the text itself, or a marker

@@ -1,6 +1,8 @@
 import Foundation
 import FoundationModels
 
+@testable import FoundationModelsRouter
+
 /// A built seed transcript ready to hand to the compaction pipeline: the raw
 /// entries (instructions header, the fixture's background turn, fact-bearing
 /// "old" turns, filler "recent" turns), the fact under test, and the question
@@ -33,6 +35,24 @@ struct CompactionEvalSeed: Sendable {
 
     /// The question asked of the resumed, post-compaction session.
     let question: String
+
+    /// The estimated token count of this seed's foldable span — every turn
+    /// ``Summarization`` replaces with one summary entry.
+    ///
+    /// Partitioned through the same ``TranscriptTurns`` split the stage itself
+    /// uses, at the stage's own ``Summarization/keepRecentTurns``, so this
+    /// measures what a fold really replaces rather than a model of it.
+    ///
+    /// Read by two callers that must agree: `CompactionEvalSeedSizingTests`
+    /// holds every seed's span above the largest real summary of it, and
+    /// ``CompactionEvalFactRetentionReport`` prints the span beside the summary
+    /// a discarded fold produced. A second copy of the partitioning would let
+    /// the bound and the evidence measure different spans.
+    var foldableSpanEstimatedTokens: Int {
+        let (_, turns) = TranscriptTurns.split(entries)
+        let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: Summarization().keepRecentTurns)
+        return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
+    }
 
     /// Builds a seed from a hand-written fixture spec: the fixture's
     /// ``CompactionEvalFixtureSpec/context`` turn, then one turn per fact

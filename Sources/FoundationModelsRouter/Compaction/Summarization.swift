@@ -468,11 +468,24 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// cancellation in general.) Parallelize either loop above only together with that
     /// registration.
     ///
-    /// Every call made through here is bounded by ``outputTokenCeiling(condensing:)``,
-    /// so a summary can never come back the size of what it condenses — the
-    /// defect ``summaryTokenRatio`` records — and its summary allowance is
-    /// never larger than ``maximumSummaryTokens``, however much content the
-    /// call was handed.
+    /// Every call made through here is bounded twice over, because the two
+    /// bounds reach different things.
+    ///
+    /// ``outputTokenCeiling(forSummaryAllowance:)`` bounds what the model may
+    /// GENERATE, and its summary allowance is never larger than
+    /// ``maximumSummaryTokens`` however much content the call was handed. But
+    /// that ceiling covers the reasoning and the answer together (see
+    /// ``reasoningTokenHeadroom``), so it never tells a model how long the
+    /// ANSWER may be. ``lengthDirective(summaryCharacters:contentCharacters:)``
+    /// is what states that, and it is the only channel that can: a decoder has
+    /// one stop, and it is already spoken for by the `<think>` block.
+    ///
+    /// The gated run of 2026-08-17 measured the difference. Every one of 7
+    /// seeds was called at a ceiling of 4224 tokens against a summary allowance
+    /// of 128, and every one answered with 374 to 698 real tokens of summary —
+    /// 1.30x to 2.07x the estimated size of the span it was condensing, so
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// discarded all 7 folds. The model was never told the allowance existed.
     ///
     /// Every call is also checked here, and one answer is refused: text that
     /// holds no characters. A fold stores what a summarizer answers, so a
@@ -496,9 +509,14 @@ public struct Summarization: Sendable, Equatable, Codable {
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
     ) async throws -> String {
+        let allowance = summaryTokenAllowance(condensing: content)
+        let directive = Self.lengthDirective(
+            summaryCharacters: Self.characters(forEstimatedTokens: allowance),
+            contentCharacters: content.utf8.count
+        )
         let summary = try await summarizer.summarize(
-            "\(prompt.text)\n\n---\n\n\(content)",
-            maxTokens: outputTokenCeiling(condensing: content)
+            "\(prompt.text)\n\n\(directive)\n\n---\n\n\(content)",
+            maxTokens: outputTokenCeiling(forSummaryAllowance: allowance)
         )
         guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SummarizationError.emptySummary
@@ -506,9 +524,66 @@ public struct Summarization: Sendable, Equatable, Codable {
         return summary
     }
 
-    /// The ceiling, in tokens, one summarizer call condensing `content`
-    /// generates under: the summary allowance that content earns
-    /// (``summaryTokenAllowance(condensing:)``) plus
+    /// The paragraph appended to a caller's compaction instructions naming how
+    /// long this call's summary text itself may be.
+    ///
+    /// Stated in characters rather than tokens, because characters are the unit
+    /// the bound is really enforced in:
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// keeps a fold only when the resulting transcript is smaller, and it
+    /// measures a transcript as UTF-8 content bytes over
+    /// ``Compactor/charsPerTokenEstimate``. So the number the model is given is
+    /// the number its answer is judged by, with no currency conversion in
+    /// between. (Bytes and characters part company on non-ASCII text; for the
+    /// English prose a continuation summary is written in they agree, and
+    /// naming bytes to a model would be less useful, not more.)
+    ///
+    /// It names `contentCharacters` too. A bound on its own is a number with no
+    /// scale, and the fold's whole purpose — replace this span with something
+    /// clearly smaller — is what makes the bound worth honoring. It also states
+    /// what to cut FIRST, because the caller's instructions ask for every
+    /// stated value and a model resolving that tension the wrong way drops the
+    /// values and keeps the prose.
+    ///
+    /// This lives on the stage rather than in ``CompactionPrompt/default``
+    /// because the numbers are per call: they come from
+    /// ``summaryTokenAllowance(condensing:)`` over that call's own content, at
+    /// every level of the map-reduce tree. A caller's own prompt is sent
+    /// verbatim and cannot restate arithmetic it has no access to, so every
+    /// prompt gets this bound and none of them has to know it exists.
+    ///
+    /// - Parameters:
+    ///   - summaryCharacters: The characters this call's summary text may
+    ///     occupy.
+    ///   - contentCharacters: The characters of the content this call
+    ///     condenses.
+    /// - Returns: The directive, placed between the caller's instructions and
+    ///   the content.
+    private static func lengthDirective(summaryCharacters: Int, contentCharacters: Int) -> String {
+        """
+        Length limit: write at most \(summaryCharacters) characters. The conversation below is \
+        \(contentCharacters) characters, and this summary REPLACES it — a summary that is not \
+        clearly shorter than what it replaces saves nothing and is thrown away. Compress hard: \
+        keep every stated value word for word, and cut the prose around the values first.
+        """
+    }
+
+    /// `tokens` of ``Compactor/estimatedTokenCount(of:)``'s estimate, converted
+    /// back into the characters that estimate divides.
+    ///
+    /// The inverse of ``estimatedTokens(of:)``, and the one place the
+    /// conversion lives, so the bound the model is told and the size the
+    /// did-not-shrink guard measures cannot drift apart.
+    ///
+    /// - Parameter tokens: A size in estimated tokens.
+    /// - Returns: That size in characters.
+    private static func characters(forEstimatedTokens tokens: Int) -> Int {
+        Int(Double(tokens) * Compactor.charsPerTokenEstimate)
+    }
+
+    /// The ceiling, in tokens, one summarizer call generates under:
+    /// `allowance` — what that call's own content earns, from
+    /// ``summaryTokenAllowance(condensing:)`` — plus
     /// ``reasoningTokenHeadroom``.
     ///
     /// The sum is what the call is given, because a reasoning model spends the
@@ -516,11 +591,15 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// the allowance alone leaves the answer no room at all — see
     /// ``reasoningTokenHeadroom`` for the measurement that states it.
     ///
-    /// - Parameter content: The content the call will condense — a rendered
-    ///   chunk of turns, or a batch of prior summaries.
+    /// The sum is also why the ceiling cannot be the bound on the summary
+    /// TEXT: it has to be wide enough for reasoning the answer never uses.
+    /// ``lengthDirective(summaryCharacters:contentCharacters:)`` carries the
+    /// allowance itself to the model.
+    ///
+    /// - Parameter allowance: The summary allowance the call's content earns.
     /// - Returns: The output ceiling for that call, in tokens.
-    private func outputTokenCeiling(condensing content: String) -> Int {
-        summaryTokenAllowance(condensing: content) + reasoningTokenHeadroom
+    private func outputTokenCeiling(forSummaryAllowance allowance: Int) -> Int {
+        allowance + reasoningTokenHeadroom
     }
 
     /// The part of that ceiling the summary text itself may occupy:

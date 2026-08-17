@@ -92,8 +92,26 @@ comments:
     - evidence: a58f55c test(evals): split the compaction eval into a subset and full-dataset tier (^fz49qds)
     - next: local commit only, not pushed.
   timestamp: 2026-08-17T21:25:51.930917+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m08t36386z3q6xx3kdjp68b1
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 21a32d2) — 0 findings, 0 confirmed, 0 refuted; 7 validators attempted, 0 failed. 4 files reviewed, 6 `.kanban/` files excluded by `.reviewignore`.
+    - next: none. No prior review section, and all acceptance criteria are checked. Task moved to done.
+  timestamp: 2026-08-17T21:29:58.120991+00:00
+- actor: claude-code
+  id: 01m08t41pk53mhewpjb42kcqf5
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files in Tests/FoundationModelsRouterEvals/; a 7-of-24 representative subset with ungated coverage tests, a second opt-in variable for the whole dataset, an "N of M seeds measured" head with the unreached seeds named, and both limits stating their basis
+    - test: green — swift build clean, swift build --build-tests -Xswiftc -warnings-as-errors clean, swift test 1046 tests, 0 failures, 1 pre-existing known issue
+    - commit: 21a32d2
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - measurement: the subset run passed in 1644.7 s (27.4 minutes), 7 of 7 seeds, mean FactRetention 1.0. The 30-minute limit is measured. The 120-minute full-dataset limit is derived from that rate and says so.
+    - carried forward: the same run reported `factInSummary=false` on 7 of 7 seeds, because folds are still discarded against the real model. A follow-up card carries it.
+  timestamp: 2026-08-17T21:30:26.387164+00:00
+position_column: done
+position_ordinal: ffb280
 title: 'The gated compaction eval no longer finishes inside gatedEvalSuiteTimeLimitMinutes: 9 of ~20 samples in 1200 seconds'
 ---
 Found by the targeted gated run of `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter CompactionEvaluationIntegrationTests` while verifying `^bgxtdk3`.

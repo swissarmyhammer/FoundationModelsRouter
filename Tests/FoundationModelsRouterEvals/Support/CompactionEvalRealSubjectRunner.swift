@@ -32,16 +32,23 @@ enum CompactionEvalRealModel {
 /// target has no `RoutedSession`/`RoutedSessionActor` in play — the eval
 /// drives the bare-session recipe (compaction_plan.md §1.5) directly.
 ///
-/// An `actor` rather than a `struct` so it can count its own calls: one fold
+/// An `actor` rather than a `struct` so it can record its own calls: one fold
 /// makes more than one summarizer call when ``Summarization`` chunks a long
 /// span into several map calls plus a reduce call, and
-/// ``CompactionEvalSampleDiagnostic/summarizerCallCount`` reports that.
+/// ``CompactionEvalSampleDiagnostic/summarizerCalls`` reports every one of them
+/// with the answer it produced.
 private actor BlankSlateSummarizer: CompactionSummarizer {
     /// The resident container every call opens a fresh, empty session over.
     private let container: MLXFoundationModelsContainer
 
-    /// How many times ``summarize(_:maxTokens:)`` has been called.
-    private(set) var callCount = 0
+    /// Every call ``summarize(_:maxTokens:)`` completed, in call order.
+    ///
+    /// Recorded after the model answers, so a call the model failed leaves no
+    /// row. That costs the record nothing: the failure propagates out of
+    /// `Compactor.compact` and out of ``CompactionEvalRealSubjectRunner/run(entries:prompt:budget:question:)``
+    /// before any diagnostic is appended, so no sample ever reads this list
+    /// with a failed call missing from it.
+    private(set) var calls: [CompactionEvalSummarizerCall] = []
 
     /// Creates a summarizer over a resident container.
     ///
@@ -51,9 +58,10 @@ private actor BlankSlateSummarizer: CompactionSummarizer {
     }
 
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-        callCount += 1
-        return try await container.makeSession(transcript: Transcript(entries: []))
+        let answer = try await container.makeSession(transcript: Transcript(entries: []))
             .respond(to: prompt, maxTokens: maxTokens)
+        calls.append(CompactionEvalSummarizerCall(maxTokens: maxTokens, answer: answer))
+        return answer
     }
 }
 
@@ -150,7 +158,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
                 summary: result.summary,
                 answer: answer,
                 stagesApplied: result.stagesApplied,
-                summarizerCallCount: await summarizer.callCount
+                summarizerCalls: await summarizer.calls
             )
         )
         return (
