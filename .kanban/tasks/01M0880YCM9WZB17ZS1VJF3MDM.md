@@ -191,8 +191,33 @@ comments:
     - evidence: `swift build` — build complete, 0 errors. `swift build --build-tests -Xswiftc -warnings-as-errors` — build complete, 0 warnings. `swift test` (ungated) — 1034 tests in 108 suites passed (974/91 + 27/11 + 33/6), 1 known issue (pre-existing, expected). 0 failures, 0 skipped outside the gated real-model suite (not run, per policy).
     - next: ready for review.
   timestamp: 2026-08-17T17:55:20.508796+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m08dvgsga2gzczb19wpsbnbv
+  text: |-
+    ### commit — changed
+    - evidence: a1bb7fc refactor(compaction): call Summarization.text(of:) instead of copying it (^vjf3mdm)
+    - next: local commit only, not pushed.
+  timestamp: 2026-08-17T17:56:04.016579+00:00
+- actor: claude-code
+  id: 01m08e377b1zqgwf51kdgkpt7m
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (checkpoint a1bb7fc) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed; 3 files reviewed, 2 skipped by `.reviewignore`
+    - verified: the prior `reuse/reuse` finding is really corrected. `Summarization.text(of:)` is now `static` (internal) in `Sources/FoundationModelsRouter/Compaction/Summarization.swift`, the copy in `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift` is deleted, both call sites call the production function, and a new test in `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift` holds the flattening contract
+    - next: the third acceptance criterion stays open — the gated eval cannot report `factInSummary` until `^fz49qds` corrects the 20-minute limit. It is an open criterion, not a code finding, and no review finding is open on this card.
+  timestamp: 2026-08-17T18:00:16.363946+00:00
+- actor: claude-code
+  id: 01m08e43vvsah2vqah54w4wgj5
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 3 files. `Summarization.text(of:)` raised from `private static` to `static`; the copy in the eval target deleted; a new test pins the flattening contract
+    - test: green — swift build clean, swift build --build-tests -Xswiftc -warnings-as-errors clean, swift test 1034 tests, 0 failures, 1 pre-existing known issue
+    - commit: a1bb7fc
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted; the prior reuse/reuse finding verified corrected at Summarization.swift:709, not taken on trust
+    - card: `done`. Acceptance criteria 1 and 2 are met and checked. Criterion 3 stays open by design and needs `^fz49qds`.
+  timestamp: 2026-08-17T18:00:45.691332+00:00
+position_column: done
+position_ordinal: ffb180
 title: Compaction eval seeds are too small for a real summary to shrink them, so 8 of 9 gated folds are discarded and factInSummary cannot be measured
 ---
 Found by the targeted gated run of `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter CompactionEvaluationIntegrationTests` while verifying `^bgxtdk3`.

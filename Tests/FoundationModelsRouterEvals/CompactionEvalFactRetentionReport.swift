@@ -190,6 +190,14 @@ enum CompactionEvalFactRetentionReport {
     /// pipeline then threw away, is a different measurement and says so.
     static let discardedSummaryMarker = "<discarded>"
 
+    /// What ``lines(of:expecting:)`` renders in place of the unreached seed ids
+    /// when the run reached every seed of its tier.
+    ///
+    /// Stated rather than left out. A table that printed the unreached line only
+    /// when it had names to print would leave a reader unable to tell a complete
+    /// run from a printer that never states one.
+    static let everySeedReachedMarker = "<none>"
+
     /// Whether `summary` holds any text at all.
     ///
     /// The one place this question is answered, so the classification and the
@@ -242,19 +250,68 @@ enum CompactionEvalFactRetentionReport {
         return counts
     }
 
-    /// Renders the classified samples as the per-sample table a run's
-    /// attribution is read from — one stanza per sample, then the counts.
+    /// The ids of the seeds `findings` covers none of — the seeds the run never
+    /// reached.
     ///
-    /// - Parameter findings: The classified samples to render, in sample order.
+    /// A gated run ends on its suite time limit as readily as on its own
+    /// assertion, and it records evidence only for the samples that ran. The
+    /// seeds it never got to leave nothing behind at all, so the difference
+    /// against the tier's own seed set is the only place they are visible.
+    ///
+    /// - Parameters:
+    ///   - findings: The classified samples the run recorded.
+    ///   - seeds: The seeds the tier was to measure, in the order it states
+    ///     them.
+    /// - Returns: The ids of the seeds no finding names, in `seeds` order.
+    static func unreachedSeedIDs(
+        in findings: [CompactionEvalFactRetentionFinding],
+        expecting seeds: [CompactionEvalSeed]
+    ) -> [String] {
+        let reached = Set(findings.map(\.seedID))
+        return seeds.map(\.id).filter { !reached.contains($0) }
+    }
+
+    /// Renders the classified samples as the per-sample table a run's
+    /// attribution is read from — one stanza per sample, then the counts, then
+    /// the seeds the run never reached.
+    ///
+    /// - Parameters:
+    ///   - findings: The classified samples to render, in sample order.
+    ///   - seeds: The seeds the tier was to measure. The head and the closing
+    ///     line are read against this, so a run cut short states what it never
+    ///     got to rather than reading as a whole measurement of a smaller tier.
     /// - Returns: The table's lines, ready to print one per line.
-    static func lines(of findings: [CompactionEvalFactRetentionFinding]) -> [String] {
+    static func lines(
+        of findings: [CompactionEvalFactRetentionFinding],
+        expecting seeds: [CompactionEvalSeed]
+    ) -> [String] {
         let tallied = counts(of: findings)
         let tally = CompactionEvalFactRetentionClass.allCases.map { classification in
             "\(classification.rawValue)=\(tallied[classification] ?? 0)"
         }
-        return ["FactRetention per-sample evidence — \(findings.count) samples"]
+        return ["FactRetention per-sample evidence — \(findings.count) of \(seeds.count) seeds measured"]
             + findings.flatMap(stanza(for:))
             + ["counts: " + tally.joined(separator: " ")]
+            + [unreachedLine(of: findings, expecting: seeds)]
+    }
+
+    /// Renders the closing line naming the seeds the run never reached.
+    ///
+    /// - Parameters:
+    ///   - findings: The classified samples the run recorded.
+    ///   - seeds: The seeds the tier was to measure.
+    /// - Returns: The line, naming each unreached seed, or stating
+    ///   ``everySeedReachedMarker`` when the run reached them all.
+    private static func unreachedLine(
+        of findings: [CompactionEvalFactRetentionFinding],
+        expecting seeds: [CompactionEvalSeed]
+    ) -> String {
+        let unreached = unreachedSeedIDs(in: findings, expecting: seeds)
+        guard !unreached.isEmpty else {
+            return "unreached: \(everySeedReachedMarker) — every one of the \(seeds.count) seeds ran"
+        }
+        return "unreached: \(unreached.count) of \(seeds.count) seeds never ran — "
+            + unreached.joined(separator: " ")
     }
 
     /// Builds the finding for a recorded sample that matched a seed.

@@ -786,3 +786,55 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
 /// points at the same dataset, differing only in the ``CompactionPrompt``
 /// under test).
 let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(CompactionEvalSeed.build(from:))
+
+/// The fixtures the DEFAULT gated tier measures — a representative subset of
+/// ``compactionEvalFixtureSpecs``, not its first few.
+///
+/// Every seed costs two real generations, one summarizer call inside the fold
+/// and one answering turn on the resumed session, so the whole dataset does not
+/// fit a wall-clock limit anyone runs by habit. `FM_ROUTER_INTEGRATION_TESTS=1`
+/// therefore measures these seeds, and the whole dataset moves behind the second
+/// opt-in variable `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` (task ^fz49qds).
+///
+/// What that costs is stated plainly: `factRetention >= 0.9` is measured over
+/// this subset by default, and the whole-dataset number comes only from the
+/// opt-in run.
+///
+/// Chosen for coverage. The dataset varies four things — how many facts the
+/// foldable head states, which of them the question probes, whether the probed
+/// fact arrives as tool traffic or as a plain reply, and how many filler turns
+/// pad the untouchable recency window. Each member is here for a property it
+/// carries, and together they span all four:
+///
+/// | fixture | head | probed fact | delivery | recency window |
+/// |---|---|---|---|---|
+/// | `env-file` | one fact | the only one | plain reply | 4 — the dataset's shortest |
+/// | `db-port` | one fact | the only one | tool traffic | 4 |
+/// | `encryption-algorithm` | one fact | the only one | tool traffic | 5 |
+/// | `license-key-and-region` | two facts | the second, so the last of its head | plain reply | 4 |
+/// | `budget-cap-tool-and-owner` | two facts | the first, so a fact the summary must reach past its sibling for | tool traffic | 6 |
+/// | `three-facts-support-escalation` | three facts | the first of three | plain reply | 7 — the dataset's longest |
+/// | `three-facts-long-project-brief` | three facts | the third, so the last of its head | plain reply | 6 |
+///
+/// `CompactionEvalRepresentativeSubsetTests` holds that coverage mechanically,
+/// against the whole dataset rather than against this list, so a fixture that
+/// widens the dataset widens what this subset must carry.
+let compactionEvalRepresentativeSubsetIDs: [String] = [
+    "env-file",
+    "db-port",
+    "encryption-algorithm",
+    "license-key-and-region",
+    "budget-cap-tool-and-owner",
+    "three-facts-support-escalation",
+    "three-facts-long-project-brief",
+]
+
+/// The built seeds of ``compactionEvalRepresentativeSubsetIDs``, in the order
+/// ``compactionEvalFixtureSpecs`` states them.
+///
+/// Filtered out of ``compactionEvalSeeds`` rather than built from a second list
+/// of specs, so a subset member is the same seed the full tier folds and the two
+/// tiers can never measure two different transcripts under one fixture id.
+let compactionEvalRepresentativeSeeds: [CompactionEvalSeed] = compactionEvalSeeds.filter {
+    compactionEvalRepresentativeSubsetIDs.contains($0.id)
+}

@@ -18,6 +18,78 @@ private var compactionEvalsIntegrationEnabled: Bool {
     ProcessInfo.processInfo.environment[compactionEvalsIntegrationEnvVar] != nil
 }
 
+/// The SECOND opt-in environment variable, which moves the gated compaction
+/// eval off its representative subset and onto the whole hand-written dataset.
+///
+/// Read exactly as `compactionEvalsIntegrationEnvVar` is read, and beside it, so
+/// the target has one gating mechanism rather than two. It never enables
+/// anything on its own: an unset `FM_ROUTER_INTEGRATION_TESTS` still skips both
+/// tiers, as it does for every other real-model suite in this repository.
+///
+/// The two tiers are exclusive. Set alone, `FM_ROUTER_INTEGRATION_TESTS` runs
+/// the subset; set together with this one, the whole dataset runs and the subset
+/// tier steps aside rather than measuring the same seeds again ahead of it.
+private let compactionEvalsFullDatasetEnvVar = "FM_ROUTER_COMPACTION_EVAL_FULL_DATASET"
+
+private var compactionEvalsFullDatasetEnabled: Bool {
+    ProcessInfo.processInfo.environment[compactionEvalsFullDatasetEnvVar] != nil
+}
+
+// MARK: - Measured tier limits
+
+/// The wall-clock ceiling the DEFAULT gated tier's `@Test` runs under, in
+/// minutes.
+///
+/// Measurement gives this value. `FM_ROUTER_INTEGRATION_TESTS=1 swift test
+/// --filter CompactionEvaluationIntegrationTests`, run on 2026-08-17 against
+/// the seven seeds of ``compactionEvalRepresentativeSubsetIDs``, passed in
+/// **1644.7 seconds — 27.4 minutes**, with all seven samples measured and a
+/// mean `FactRetention` of 1.0. That is 235 seconds for each sample, and the
+/// model load is inside it: ``CompactionEvalRealSubjectRunner`` resolves
+/// ``CompactionEvalRealModel/ref`` on the first sample's own call.
+///
+/// Each sample pays for two real generations — one summarizer call inside the
+/// fold and one answering turn on the resumed session — and each is bounded in
+/// thousands of output tokens rather than hundreds, because the gated model
+/// always writes a `<think>` block first. See
+/// ``GatedRealModelBudget/responseTokenCeiling`` and
+/// ``Summarization/reasoningTokenHeadroom``. That is what a seed really costs,
+/// and it is why a subset of seven costs what the whole dataset used to appear
+/// to.
+///
+/// The margin over the measurement is 2.6 minutes, and it is stated rather than
+/// hidden. Two things can spend it. ``CompactionEvalRealSubjectRunner``
+/// deliberately leaves the provider's own sampling in place rather than pinning
+/// `.greedy`, so two runs of identical code generate answers of different
+/// lengths; and a machine that has never fetched the model pays that download
+/// inside this limit. A run that ends on the limit now names the seeds it never
+/// reached — see ``CompactionEvalFactRetentionReport/lines(of:expecting:)`` —
+/// so an overrun reads as an overrun rather than as a smaller clean sheet.
+///
+/// The 20 minutes ``gatedEvalSuiteTimeLimitMinutes`` states, which this suite
+/// ran under before, is below the measurement. That is the limit the gated run
+/// of 2026-08-17 exceeded, nine seeds into the whole dataset (task ^fz49qds).
+let compactionEvalSubsetTimeLimitMinutes = 30
+
+/// The wall-clock ceiling the opt-in whole-dataset tier's `@Test` runs under,
+/// in minutes.
+///
+/// DERIVED, not measured. Timing this tier costs the hour and a half the
+/// constant exists to bound, so the value is computed from the subset
+/// measurement above instead, and this comment says so rather than letting a
+/// reader take it for a measured one.
+///
+/// The arithmetic: 1644.7 seconds over seven samples is 235 seconds for each,
+/// and twenty-four samples at that rate is 5639 seconds — 94 minutes. That rate
+/// carries the one-time model load spread across seven samples, so multiplying
+/// it by twenty-four charges the load more than three times over. The derived
+/// figure therefore over-states the work, which is the right direction for a
+/// ceiling.
+///
+/// 120 leaves 26 minutes over the derived 94. The first run of this tier should
+/// record its real duration here in place of the derivation.
+let compactionEvalFullDatasetTimeLimitMinutes = 120
+
 // MARK: - Measured sizing
 
 /// What one token of this dataset's own English prose costs in UTF-8 bytes,
@@ -385,6 +457,23 @@ struct CompactionEvalFactRetentionReportTests {
         question: "What is the exact vault code for this project?"
     )
 
+    /// A second seed, used by the tests that need a tier of more than one seed
+    /// so a run can reach some of it and not the rest.
+    ///
+    /// Its question differs from ``seed``'s, which is what lets a recorded
+    /// sample join back to exactly one of the two.
+    private static let unreachedSeed = CompactionEvalSeed(
+        id: "probe-seed-two",
+        entries: [],
+        plantedFact: "The staging database listens on port 6543.",
+        factKeyPhrase: "PORT-6543",
+        question: "Which port does the staging database listen on?"
+    )
+
+    /// Both probe seeds, in the order a tier would state them — the seed set
+    /// the unreached-seed tests hold a run against.
+    private static let bothSeeds = [seed, unreachedSeed]
+
     /// Builds a recorded sample against ``seed``'s question.
     ///
     /// - Parameters:
@@ -480,7 +569,8 @@ struct CompactionEvalFactRetentionReportTests {
             for: [Self.diagnostic(summary: "", answer: "Noted.")],
             seeds: [Self.seed]
         )
-        let table = CompactionEvalFactRetentionReport.lines(of: findings).joined(separator: "\n")
+        let table = CompactionEvalFactRetentionReport.lines(of: findings, expecting: [Self.seed])
+            .joined(separator: "\n")
         #expect(table.contains("summary=<empty>"))
         #expect(table.contains(CompactionEvalFactRetentionClass.foldProducedNoSummary.rawValue))
     }
@@ -530,7 +620,8 @@ struct CompactionEvalFactRetentionReportTests {
     /// - Returns: The rendered table, one line per newline.
     private static func renderedTable(for diagnostic: CompactionEvalSampleDiagnostic) -> String {
         CompactionEvalFactRetentionReport.lines(
-            of: CompactionEvalFactRetentionReport.findings(for: [diagnostic], seeds: [seed])
+            of: CompactionEvalFactRetentionReport.findings(for: [diagnostic], seeds: [seed]),
+            expecting: [seed]
         )
         .joined(separator: "\n")
     }
@@ -596,7 +687,8 @@ struct CompactionEvalFactRetentionReportTests {
             for: [Self.diagnostic(summary: "The vault code is CRIMSON-77.", answer: "Noted.")],
             seeds: [Self.seed]
         )
-        let table = CompactionEvalFactRetentionReport.lines(of: findings).joined(separator: "\n")
+        let table = CompactionEvalFactRetentionReport.lines(of: findings, expecting: [Self.seed])
+            .joined(separator: "\n")
         #expect(table.contains(Self.seed.id))
         #expect(table.contains(Self.seed.plantedFact))
         #expect(table.contains(Self.seed.question))
@@ -624,6 +716,73 @@ struct CompactionEvalFactRetentionReportTests {
     func everySeedQuestionIsUnique() {
         let questions = compactionEvalSeeds.map(\.question)
         #expect(Set(questions).count == questions.count)
+    }
+
+    @Test("the table heads itself with the seeds it measured out of the seeds it was given")
+    func tableStatesHowManyOfTheTiersSeedsItMeasured() {
+        // A run the suite time limit cut short recorded a sample for some of its
+        // seeds and none for the rest. The head counted the samples alone —
+        // "9 samples" — which reads as a whole measurement of a nine-seed tier
+        // rather than as a third of a 24-seed one (task ^fz49qds).
+        let table = CompactionEvalFactRetentionReport.lines(
+            of: CompactionEvalFactRetentionReport.findings(
+                for: [Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
+                seeds: Self.bothSeeds
+            ),
+            expecting: Self.bothSeeds
+        )
+        .joined(separator: "\n")
+        #expect(table.contains("1 of 2 seeds measured"))
+    }
+
+    @Test("a run cut short names the seeds it never reached, so a partial table cannot read as a whole one")
+    func runCutShortNamesTheSeedsItNeverReached() {
+        // The evidence a run leaves behind is the samples that ran. Nothing in
+        // the table said the rest never ran, so the `counts:` tally summed to
+        // the samples present and read as a clean sheet over the whole dataset.
+        let table = CompactionEvalFactRetentionReport.lines(
+            of: CompactionEvalFactRetentionReport.findings(
+                for: [Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
+                seeds: Self.bothSeeds
+            ),
+            expecting: Self.bothSeeds
+        )
+        .joined(separator: "\n")
+        #expect(table.contains("unreached: 1 of 2 seeds never ran"))
+        #expect(table.contains(Self.unreachedSeed.id))
+        #expect(!table.contains(CompactionEvalFactRetentionReport.everySeedReachedMarker))
+    }
+
+    @Test("a run that reached every seed says so, so the absence of a name is stated rather than inferred")
+    func completeRunStatesThatEverySeedRan() {
+        // The other half of the same property. A table with no unreached line at
+        // all would leave a reader unable to tell a complete run from a printer
+        // that never states one.
+        let table = CompactionEvalFactRetentionReport.lines(
+            of: CompactionEvalFactRetentionReport.findings(
+                for: [
+                    Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77."),
+                    Self.diagnostic(
+                        summary: "PORT-6543", answer: "It is PORT-6543.", question: Self.unreachedSeed.question),
+                ],
+                seeds: Self.bothSeeds
+            ),
+            expecting: Self.bothSeeds
+        )
+        .joined(separator: "\n")
+        #expect(table.contains("unreached: \(CompactionEvalFactRetentionReport.everySeedReachedMarker)"))
+        #expect(table.contains("2 of 2 seeds measured"))
+    }
+
+    @Test("an unreached seed is named by id, and a reached one is not")
+    func unreachedSeedIDsNameOnlyTheSeedsNoSampleCovered() {
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
+            seeds: Self.bothSeeds
+        )
+        #expect(
+            CompactionEvalFactRetentionReport.unreachedSeedIDs(in: findings, expecting: Self.bothSeeds)
+                == [Self.unreachedSeed.id])
     }
 }
 
@@ -731,6 +890,111 @@ struct CompactionEvalSeedSizingTests {
     }
 }
 
+// MARK: - Ungated gated-subset coverage
+
+/// Ungated proof that the seed subset the default gated tier measures still
+/// spans every property the whole dataset varies (task ^fz49qds).
+///
+/// The default tier runs a subset because the whole dataset does not fit a
+/// short wall-clock limit, and a subset is only worth running when it is
+/// representative. "Representative" is a property of the fixtures, so it is
+/// checked against the fixtures rather than argued for in a comment: an edit
+/// that drops the subset's last tool-traffic seed, or its longest recency
+/// window, fails under a plain `swift test` instead of silently narrowing what
+/// the gated tier measures.
+///
+/// Every bound below is read from ``compactionEvalFixtureSpecs`` itself, never
+/// restated as a literal, so a fixture that widens the dataset widens what the
+/// subset must cover.
+@Suite("CompactionEvaluation gated subset coverage (ungated)")
+struct CompactionEvalRepresentativeSubsetTests {
+    /// How many seeds the subset may hold.
+    ///
+    /// The lower bound keeps the subset wide enough for a mean over it to mean
+    /// anything, and the upper bound is what
+    /// ``compactionEvalSubsetTimeLimitMinutes`` was measured against — a subset
+    /// that grew past it would no longer fit the limit that measurement bought.
+    private static let subsetSizeBand = 6...8
+
+    /// The fixture specs the subset names, in dataset order.
+    ///
+    /// Read back out of ``compactionEvalFixtureSpecs`` because
+    /// ``CompactionEvalSeed`` carries none of the properties this suite checks —
+    /// the built seed keeps its entries, its planted fact and its question, and
+    /// drops the fact count, the delivery and the recency-window size.
+    private static let subsetSpecs = compactionEvalFixtureSpecs.filter {
+        compactionEvalRepresentativeSubsetIDs.contains($0.id)
+    }
+
+    @Test("every id the subset names is a fixture the dataset holds")
+    func everySubsetIDNamesAFixture() {
+        let datasetIDs = Set(compactionEvalFixtureSpecs.map(\.id))
+        for id in compactionEvalRepresentativeSubsetIDs {
+            #expect(datasetIDs.contains(id), "the gated subset names \"\(id)\", which is no fixture of this dataset")
+        }
+    }
+
+    @Test("the built subset seeds are exactly the seeds the subset names")
+    func subsetSeedsAreTheSeedsTheSubsetNames() {
+        #expect(
+            Set(compactionEvalRepresentativeSeeds.map(\.id)) == Set(compactionEvalRepresentativeSubsetIDs),
+            "the built subset seeds are \(compactionEvalRepresentativeSeeds.map(\.id))"
+        )
+    }
+
+    @Test("the subset stays inside the size band its time limit was measured against")
+    func subsetStaysInsideItsSizeBand() {
+        #expect(
+            Self.subsetSizeBand.contains(compactionEvalRepresentativeSeeds.count),
+            "the gated subset holds \(compactionEvalRepresentativeSeeds.count) seeds, outside \(Self.subsetSizeBand)"
+        )
+    }
+
+    @Test("the subset carries every head size the dataset varies, so a multi-fact fold is measured")
+    func subsetCarriesEveryFactCount() {
+        // A single-fact head gives the summarizer one thing to keep. A three-fact
+        // head makes it choose what to keep, which is the harder measurement, and
+        // a subset of single-fact heads alone would never make it.
+        let datasetCounts = Set(compactionEvalFixtureSpecs.map(\.facts.count))
+        let subsetCounts = Set(Self.subsetSpecs.map(\.facts.count))
+        #expect(subsetCounts == datasetCounts, "the gated subset carries head sizes \(subsetCounts.sorted())")
+    }
+
+    @Test("the subset carries both tool-traffic and plain-reply delivery")
+    func subsetCarriesBothDeliveries() {
+        // `ToolOutputElision` runs before `Summarization` and only has work to do
+        // on a head that carries tool traffic, so a subset of plain-reply seeds
+        // alone would leave the first stage of the pipeline unmeasured.
+        let deliveries = Set(Self.subsetSpecs.map(\.probedFactViaTool))
+        #expect(deliveries == [true, false], "the gated subset carries deliveries \(deliveries)")
+    }
+
+    @Test("the subset spans the dataset's whole recency-window range")
+    func subsetSpansTheWholeRecentTurnRange() {
+        // The recency window is what `Summarization` keeps verbatim, so it decides
+        // how much of the transcript the fold leaves alone. The shortest and the
+        // longest window in the dataset are the two ends of that, and the subset
+        // carries both.
+        let dataset = compactionEvalFixtureSpecs.map(\.recentTurnCount)
+        let subset = Self.subsetSpecs.map(\.recentTurnCount)
+        #expect(subset.min() == dataset.min(), "the gated subset's shortest recency window is \(subset.min() ?? 0)")
+        #expect(subset.max() == dataset.max(), "the gated subset's longest recency window is \(subset.max() ?? 0)")
+    }
+
+    @Test("the subset probes a first fact, a fact that is not first, and a last fact")
+    func subsetProbesEveryPositionInTheHead() {
+        // Where the probed fact sits in the head decides what the summary has to
+        // reach past to carry it. A subset that only ever probed the first fact
+        // would measure a summary that never had to choose between facts.
+        #expect(Self.subsetSpecs.contains { $0.probedFactIndex == 0 }, "the gated subset probes no first fact")
+        #expect(Self.subsetSpecs.contains { $0.probedFactIndex > 0 }, "the gated subset probes no later fact")
+        #expect(
+            Self.subsetSpecs.contains { $0.probedFactIndex == $0.facts.count - 1 },
+            "the gated subset probes no last fact"
+        )
+    }
+}
+
 // MARK: - Gated real-model eval
 
 /// Loads ``CompactionEvalRealModel`` at most once for the gated `@Test`
@@ -739,27 +1003,100 @@ struct CompactionEvalSeedSizingTests {
 /// evaluated synchronously when the test is registered, long before this
 /// runner's own model load (deferred to its first `run(entries:prompt:budget:question:)`
 /// call, well inside the async `run()` the trait drives).
-private let compactionEvalRealSubjectRunner = CompactionEvalRealSubjectRunner()
+private let compactionEvalSubsetRunner = CompactionEvalRealSubjectRunner()
 
-/// The gated evaluation itself: points at every hand-written fixture with the
-/// router's default compaction prompt, folding against a budget whose target
-/// is small enough to force the model-assisted `Summarization` stage (see
+/// The whole-dataset tier's own runner, for the same reason
+/// ``compactionEvalSubsetRunner`` is declared at file scope.
+///
+/// A second instance rather than a shared one. A runner accumulates its own
+/// per-sample evidence, and the two tiers report separate tables, so sharing one
+/// would let a table carry samples the other tier ran. Only one of the two
+/// suites is ever enabled, and a runner that never runs loads no model.
+private let compactionEvalFullDatasetRunner = CompactionEvalRealSubjectRunner()
+
+/// Builds a gated tier's evaluation: `seeds` folded with the router's default
+/// compaction prompt against a budget whose target is small enough to force the
+/// model-assisted `Summarization` stage (see
 /// ``CompactionEvaluation/init(prompt:budget:seeds:runSubject:)``'s own doc
 /// comment).
-private let compactionEvalRealEvaluation = CompactionEvaluation { entries, prompt, budget, question in
-    try await compactionEvalRealSubjectRunner.run(entries: entries, prompt: prompt, budget: budget, question: question)
+///
+/// - Parameters:
+///   - seeds: The tier's seeds.
+///   - runner: The runner whose resident model folds them and answers.
+/// - Returns: The evaluation, ready to hand to `.evaluates(...)`.
+private func compactionEvalRealEvaluation(
+    over seeds: [CompactionEvalSeed],
+    driving runner: CompactionEvalRealSubjectRunner
+) -> CompactionEvaluation {
+    CompactionEvaluation(seeds: seeds) { entries, prompt, budget, question in
+        try await runner.run(entries: entries, prompt: prompt, budget: budget, question: question)
+    }
 }
 
-/// The gated real-model eval (compaction_plan.md §5's `@Test(.evaluates(...))`
-/// sketch): folds every hand-written seed transcript with the router's
-/// default compaction prompt, resumes a session over each result, asks its
-/// question, and asserts mean `FactRetention` across the whole dataset is at
-/// least 0.9.
+/// The default tier's evaluation, over ``compactionEvalRepresentativeSeeds``.
+private let compactionEvalSubsetEvaluation = compactionEvalRealEvaluation(
+    over: compactionEvalRepresentativeSeeds, driving: compactionEvalSubsetRunner)
+
+/// The opt-in tier's evaluation, over every hand-written fixture.
+private let compactionEvalFullDatasetEvaluation = compactionEvalRealEvaluation(
+    over: compactionEvalSeeds, driving: compactionEvalFullDatasetRunner)
+
+/// The mean `FactRetention` a gated tier's samples must reach.
+///
+/// compaction_plan.md §5's own bar, and the same value both tiers are held to —
+/// the tiers differ in which seeds they measure, never in how well those seeds
+/// have to do.
+private let compactionEvalFactRetentionFloor = 0.9
+
+/// Prints one tier's per-sample evidence, then asserts its mean
+/// `FactRetention`.
+///
+/// Shared by both tiers so the two can never drift into measuring the same
+/// metric two ways.
+///
+/// - Parameters:
+///   - runner: The tier's runner, holding the evidence its samples recorded.
+///   - seeds: The tier's seeds — the set a run is read against, so a run the
+///     time limit cut short states the seeds it never reached.
+private func expectFactRetention(
+    of runner: CompactionEvalRealSubjectRunner,
+    over seeds: [CompactionEvalSeed]
+) async {
+    // Printed before the assertion so a run that misses the bar still
+    // leaves the evidence behind: the mean alone cannot say whether a
+    // failing sample lost its fact in the fold or in the answering turn,
+    // and this table classifies every sample on exactly that question.
+    let findings = CompactionEvalFactRetentionReport.findings(
+        for: await runner.recordedDiagnostics(),
+        seeds: seeds
+    )
+    for line in CompactionEvalFactRetentionReport.lines(of: findings, expecting: seeds) {
+        print(line)
+    }
+
+    let result = EvaluationContext.current.result
+    #expect(
+        result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention)) >= compactionEvalFactRetentionFloor)
+}
+
+/// The DEFAULT gated real-model eval (compaction_plan.md §5's
+/// `@Test(.evaluates(...))` sketch): folds each seed of
+/// ``compactionEvalRepresentativeSeeds`` with the router's default compaction
+/// prompt, resumes a session over each result, asks its question, and asserts
+/// mean `FactRetention` over the subset is at least
+/// ``compactionEvalFactRetentionFloor``.
 ///
 /// Runtime-gated on `FM_ROUTER_INTEGRATION_TESTS`, exactly like every other
 /// real-model suite in this repository — never runs on a network/GPU-less
 /// box. The target itself, and this file's hermetic tests above, always build
 /// and run.
+///
+/// It measures a subset rather than the whole dataset because the whole dataset
+/// does not fit a limit anyone runs by habit — see
+/// ``compactionEvalRepresentativeSubsetIDs`` for what the subset carries and
+/// ``compactionEvalSubsetTimeLimitMinutes`` for the measurement behind its
+/// limit. ``CompactionEvalFullDatasetIntegrationTests`` is the whole-dataset
+/// tier, and this suite steps aside while that one is opted in.
 ///
 /// This suite was long described here as blocked by an MLX `default.metallib`
 /// load failure that no gated suite in this repository could get past. That
@@ -768,37 +1105,53 @@ private let compactionEvalRealEvaluation = CompactionEvaluation { entries, promp
 /// ``GatedEvalResidencyTrait``, this suite's own trait.
 ///
 /// ``GatedEvalResidencyTrait`` holds this suite's real model exclusive against
-/// the other gated eval suite and evicts it when the suite ends, and
-/// ``gatedEvalSuiteTimeLimitMinutes`` bounds a hung real-model load — see
+/// every other gated eval suite and evicts it when the suite ends, and
+/// ``compactionEvalSubsetTimeLimitMinutes`` bounds a hung real-model load — see
 /// ``GatedEvalSerialGate`` for why the target needs both.
 @Suite(
-    .enabled(if: compactionEvalsIntegrationEnabled),
-    .exclusiveResidentModel(of: compactionEvalRealSubjectRunner),
-    .timeLimit(.minutes(gatedEvalSuiteTimeLimitMinutes))
+    .enabled(if: compactionEvalsIntegrationEnabled && !compactionEvalsFullDatasetEnabled),
+    .exclusiveResidentModel(of: compactionEvalSubsetRunner),
+    .timeLimit(.minutes(compactionEvalSubsetTimeLimitMinutes))
 )
 struct CompactionEvaluationIntegrationTests {
     @Test(
         "Compaction retains pre-fold facts",
         .evaluates(
-            compactionEvalRealEvaluation,
+            compactionEvalSubsetEvaluation,
             info: ["promptName": CompactionPrompt.default.name]
         )
     )
-    func evaluateCompaction() async throws {
-        let result = EvaluationContext.current.result
+    func evaluateCompaction() async {
+        await expectFactRetention(of: compactionEvalSubsetRunner, over: compactionEvalRepresentativeSeeds)
+    }
+}
 
-        // Printed before the assertion so a run that misses the bar still
-        // leaves the evidence behind: the mean alone cannot say whether a
-        // failing sample lost its fact in the fold or in the answering turn,
-        // and this table classifies every sample on exactly that question.
-        let findings = CompactionEvalFactRetentionReport.findings(
-            for: await compactionEvalRealSubjectRunner.recordedDiagnostics(),
-            seeds: compactionEvalSeeds
+/// The opt-in whole-dataset tier of the same eval: every hand-written fixture,
+/// held to the same ``compactionEvalFactRetentionFloor``.
+///
+/// Gated on `FM_ROUTER_INTEGRATION_TESTS` and on
+/// `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` together, so an ordinary gated run
+/// never pays for it. Its dataset is a superset of the default tier's, and its
+/// limit is ``compactionEvalFullDatasetTimeLimitMinutes``.
+///
+/// Named so it does not carry `CompactionEvaluationIntegrationTests` as a
+/// substring: `swift test --filter` takes a regular expression, and a name that
+/// contained the default tier's would make the everyday targeted command select
+/// both tiers.
+@Suite(
+    .enabled(if: compactionEvalsIntegrationEnabled && compactionEvalsFullDatasetEnabled),
+    .exclusiveResidentModel(of: compactionEvalFullDatasetRunner),
+    .timeLimit(.minutes(compactionEvalFullDatasetTimeLimitMinutes))
+)
+struct CompactionEvalFullDatasetIntegrationTests {
+    @Test(
+        "Compaction retains pre-fold facts across the whole dataset",
+        .evaluates(
+            compactionEvalFullDatasetEvaluation,
+            info: ["promptName": CompactionPrompt.default.name]
         )
-        for line in CompactionEvalFactRetentionReport.lines(of: findings) {
-            print(line)
-        }
-
-        #expect(result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention)) >= 0.9)
+    )
+    func evaluateCompactionOverEverySeed() async {
+        await expectFactRetention(of: compactionEvalFullDatasetRunner, over: compactionEvalSeeds)
     }
 }
