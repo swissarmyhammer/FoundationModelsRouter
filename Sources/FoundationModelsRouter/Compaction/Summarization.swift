@@ -476,7 +476,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// ``maximumSummaryTokens`` however much content the call was handed. But
     /// that ceiling covers the reasoning and the answer together (see
     /// ``reasoningTokenHeadroom``), so it never tells a model how long the
-    /// ANSWER may be. ``lengthDirective(summaryCharacters:contentCharacters:)``
+    /// ANSWER may be. ``makeLengthDirective(summaryCharacters:contentCharacters:)``
     /// is what states that, and it is the only channel that can: a decoder has
     /// one stop, and it is already spoken for by the `<think>` block.
     ///
@@ -510,7 +510,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         summarizer: any CompactionSummarizer
     ) async throws -> String {
         let allowance = summaryTokenAllowance(condensing: content)
-        let directive = Self.lengthDirective(
+        let directive = Self.makeLengthDirective(
             summaryCharacters: Self.characters(forEstimatedTokens: allowance),
             contentCharacters: content.utf8.count
         )
@@ -559,7 +559,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     condenses.
     /// - Returns: The directive, placed between the caller's instructions and
     ///   the content.
-    private static func lengthDirective(summaryCharacters: Int, contentCharacters: Int) -> String {
+    private static func makeLengthDirective(summaryCharacters: Int, contentCharacters: Int) -> String {
         """
         Length limit: write at most \(summaryCharacters) characters. The conversation below is \
         \(contentCharacters) characters, and this summary REPLACES it — a summary that is not \
@@ -593,8 +593,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// The sum is also why the ceiling cannot be the bound on the summary
     /// TEXT: it has to be wide enough for reasoning the answer never uses.
-    /// ``lengthDirective(summaryCharacters:contentCharacters:)`` carries the
-    /// allowance itself to the model.
+    /// ``makeLengthDirective(summaryCharacters:contentCharacters:)`` carries
+    /// the allowance itself to the model.
     ///
     /// - Parameter allowance: The summary allowance the call's content earns.
     /// - Returns: The output ceiling for that call, in tokens.

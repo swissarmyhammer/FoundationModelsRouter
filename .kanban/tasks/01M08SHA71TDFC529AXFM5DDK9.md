@@ -187,6 +187,92 @@ comments:
     - evidence: `swift build` clean; `swift build --build-tests -Xswiftc -warnings-as-errors` clean; `swift test` (ungated, no `FM_ROUTER_INTEGRATION_TESTS`/`FM_ROUTER_COMPACTION_EVAL_FULL_DATASET`) — 3 targets, 978+27+46 = 1051 tests, 0 failed, 0 new warnings, 1 known issue (pre-existing `BoundedWait.swift` `withKnownIssue`, expected)
     - next: none
   timestamp: 2026-08-17T22:32:22.747315+00:00
+- actor: claude-code
+  id: 01m08xss7sr94bkp0v0dze6yhq
+  text: |-
+    ### commit — changed
+    - evidence: c26fbbe fix(compaction): state the summary's own length allowance to the model — 12 files, 785 insertions(+), 58 deletions(-)
+    - next: local commit only, not pushed. Whether the real model honours the length directive is NOT yet verified; needs a second gated run.
+  timestamp: 2026-08-17T22:34:44.345278+00:00
+- actor: claude-code
+  id: 01m08y9tbczk1yg01qg2e7r80z
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (c26fbbe) — 2 findings, 2 confirmed, 1 refuted, 7 attempted; Sources/FoundationModelsRouter/Compaction/Summarization.swift:562, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift:510
+    - next: rename both factory methods to the `make` prefix, then re-run `/review ^fm5ddk9`. Both findings are the same cause — sweep every factory method in the two files, not only the two lines named.
+  timestamp: 2026-08-17T22:43:29.772321+00:00
+- actor: claude-code
+  id: 01m08yanf5x65tq37tnk7azf7n
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 6 files. The gated run measured the cause: summaries ran 1.30x to 2.07x the span they replaced, because the summary allowance never reached the model. The fix states that bound in the assembled prompt, in characters.
+    - test: green — swift build clean, swift build --build-tests -Xswiftc -warnings-as-errors clean, swift test 1051 tests, 0 failures, 1 pre-existing known issue
+    - commit: c26fbbe
+    - review: findings — 2 findings, both `swift/fluent-usage`: Sources/FoundationModelsRouter/Compaction/Summarization.swift:562 and Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift:510, factory methods with no `make` prefix
+    - correction to the earlier hypothesis: the model does NOT spend the reasoning headroom. It writes 374 to 698 real tokens, 9 to 17 percent of the 4224 ceiling. What it overruns is the 128-token allowance, by 2.9x to 5.5x, because nothing named it.
+    - not verified: whether the real model honours the new directive. That needs a second gated run, which was not spent.
+  timestamp: 2026-08-17T22:43:57.541123+00:00
+- actor: claude-code
+  id: 01m08yr8awf4x2bhy4afa84s44
+  text: |-
+    Both `swift/fluent-usage` findings are fixed, and the sweep found a THIRD factory method the findings did not name.
+
+    ## The rule, read before the fix
+
+    `swift/fluent-usage`: "Factory methods begin with `make`; don't let an initializer's first argument form a phrase with the base name. DO: `x.makeIterator()`. DON'T: `x.iterator()` as a factory." The same rule also states that side-effect-free operations are noun phrases and that a non-mutating verb form takes `ed`/`ing`. Those two clauses are what separate a factory from an accessor here.
+
+    ## Every factory method in the two files, and the line I drew
+
+    A factory CONSTRUCTS a fresh value and names the thing it constructs. An accessor DERIVES from data it was handed and names what it reads. Renamed the three factories; left the accessors alone.
+
+    Renamed:
+
+    - `Summarization.lengthDirective(summaryCharacters:contentCharacters:)` -> `makeLengthDirective(...)`. Builds the directive text from two integers.
+    - `CompactionEvalFactRetentionReportTests.summarizerCall(answering:)` -> `makeSummarizerCall(answering:)`. Its own doc comment already said "Builds one recorded summarizer call".
+    - `CompactionEvalFactRetentionReportTests.diagnostic(summary:answer:question:)` -> `makeDiagnostic(...)`. **NOT named by either finding** — same cause, same file, same shape: the name IS the type it constructs (`CompactionEvalSampleDiagnostic`), and its doc comment says "Builds a recorded sample". 12 call sites.
+
+    Left alone, with the reason:
+
+    - `apply`, `summarize`, `summarizeOnce`, `reduce`, `chunk`, `chunkStrings`, `binPack`, `render`, `renderLine` — imperative verb phrases already. The rule asks for a clear verb phrase at the call site; these have one.
+    - `characters(forEstimatedTokens:)`, `outputTokenCeiling(forSummaryAllowance:)`, `summaryTokenAllowance(condensing:)`, `summaryTokenAllowance(ingesting:)`, `estimatedTokens(of:)` — pure computations returning a quantity, the `x.distance(to: y)` shape the rule names as a DO.
+    - `text(of:)`, `assistantReplies(of:)`, `transcriptText(of:)`, `occurrences(of:in:)`, `firstSample(of:)` — accessors over data they are handed, not construction.
+    - `renderedTable(for:)` — the `ed` participle is the non-mutating verb form the rule sanctions (`sorted`, `reversed`), and it transforms an input rather than constructing a named type. `makeRenderedTable` would read worse, not better.
+    - `makeSummaryEntry(tokensAfter:)` — already `make`.
+
+    ## The DocC links the rename carried
+
+    The review named this consequence and it is real: a stale DocC symbol link does not fail the build. Two links in `Summarization.swift` referenced the old name — one in `summarizeOnce`'s doc comment, one in `outputTokenCeiling(forSummaryAllowance:)`'s. Both now read ``makeLengthDirective(summaryCharacters:contentCharacters:)``. A DocC link takes EXTERNAL labels; both parameters here have no separate external label, so `summaryCharacters:contentCharacters:` is unchanged and correct. A repo-wide grep for the lowercase `lengthDirective` returns nothing.
+
+    Nothing in the Evals file linked to `summarizerCall(answering:)` or `diagnostic(...)` by DocC, so no link followed those two renames.
+
+    ## A tooling note for the next agent
+
+    `files` `edit file` does NOT honour `replace_all` in this workspace — a call with `replace_all: true` over 4 matches replaced exactly 1, silently. Every multi-site rename here had to be issued once per site. Verify with grep after each one; do not trust the replacement count.
+
+    ## What did NOT change
+
+    Rename only. No behaviour changed, no assertion weakened, no test touched beyond the call sites of the renamed helpers. No gated run was spent: `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. AC1 and AC2 stay open for the same reason as before — only a gated run can answer them.
+  timestamp: 2026-08-17T22:51:22.844516+00:00
+- actor: claude-code
+  id: 01m08yrg8s0jewe5ftqbjhwc3x
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Compaction/Summarization.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift
+    - findings closed: both `swift/fluent-usage` items are `- [x]`. `lengthDirective` -> `makeLengthDirective`; `summarizerCall(answering:)` -> `makeSummarizerCall(answering:)`
+    - sweep: a third factory the findings did not name, `diagnostic(summary:answer:question:)` -> `makeDiagnostic(...)`, 12 call sites. Every other method in both files was checked against the rule and left alone with a stated reason
+    - doc links: 2 DocC symbol links to the renamed method updated; external labels unchanged (`summaryCharacters:contentCharacters:`); grep for the lowercase `lengthDirective` returns nothing repo-wide
+    - verification: `swift build` complete; `swift build --build-tests -Xswiftc -warnings-as-errors` complete, zero warnings; `swift test` — 978 + 27 + 46 = 1051 tests, 0 failures, 1 pre-existing known issue (`BoundedWait.swift` `withKnownIssue`)
+    - not spent: no gated run. `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set
+    - next: `/review ^fm5ddk9`
+  timestamp: 2026-08-17T22:51:30.969454+00:00
+- actor: claude-code
+  id: 01m08yw4v149kz0wt2syqb3bvy
+  text: |-
+    ### test — green
+    - evidence: swift build (clean); swift build --build-tests -Xswiftc -warnings-as-errors (clean, zero warnings); swift test — 978 tests/91 suites (1 known issue, pre-existing expected withKnownIssue), 27 tests/11 suites, 46 tests/8 suites, all passed, zero failures
+    - rename check: grepped Sources/FoundationModelsRouter/Compaction/Summarization.swift and Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift plus the whole repo for lowercase lengthDirective, summarizerCall(, and diagnostic(summary: — no stray sites found, every call site and DocC symbol link uses makeLengthDirective, makeSummarizerCall, makeDiagnostic
+    - next: ready for review
+  timestamp: 2026-08-17T22:53:30.337852+00:00
 position_column: doing
 position_ordinal: '80'
 title: The real model still discards every compaction eval fold — 7 of 7 gated seeds report factInSummary=false with an empty stage list
@@ -250,4 +336,13 @@ The summary is 1.30x to 2.07x the span it was meant to replace, so `Compactor.co
 - [ ] The gated eval reports `factInSummary=true` on the large majority of seeds, so `factRetention` measures a summary rather than the original turns
 - [ ] The hermetic gate agrees with the real model: a seed the hermetic suite says folds is a seed the gated run folds
 - [x] A discarded fold states the size it missed by, not only that it was discarded
-#compaction #defect #real-model #eval
+
+## Review Findings (2026-08-17 17:35)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 6 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:562` `swift/fluent-usage` — Factory methods should begin with `make` to form a clear grammatical phrase at the call site. The method `lengthDirective` creates and returns a new String (the directive), making it a factory method. The current name does not indicate construction and the call `Self.lengthDirective(summaryCharacters:contentCharacters:)` lacks a clear verb phrase. Rename the method to `makeDirective` or `makeLengthDirective` so the call reads as `Self.makeDirective(summaryCharacters:contentCharacters:)`, forming a clear verb phrase.
+- [x] `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift:510` `swift/fluent-usage` — Factory methods should begin with `make` to clearly indicate creation. The method `summarizerCall` creates and returns a new instance of `CompactionEvalSummarizerCall` (line 511), making it a factory method that should use the `make` prefix. The current name does not indicate construction. Rename the method to `makeSummarizerCall` so the call reads as `Self.makeSummarizerCall(answering:)`, clearly indicating that the method creates and returns a new instance. #compaction #defect #real-model #eval

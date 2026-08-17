@@ -507,7 +507,7 @@ struct CompactionEvalFactRetentionReportTests {
     ///
     /// - Parameter answer: The text the summarizer answered.
     /// - Returns: The recorded call.
-    private static func summarizerCall(answering answer: String) -> CompactionEvalSummarizerCall {
+    private static func makeSummarizerCall(answering answer: String) -> CompactionEvalSummarizerCall {
         CompactionEvalSummarizerCall(maxTokens: summarizerCeiling, answer: answer)
     }
 
@@ -524,7 +524,7 @@ struct CompactionEvalFactRetentionReportTests {
     ///   - question: The question recorded for the sample. Defaults to
     ///     ``seed``'s own, which joins back to it.
     /// - Returns: The recorded sample.
-    private static func diagnostic(
+    private static func makeDiagnostic(
         summary: String?,
         answer: String,
         question: String = seed.question
@@ -534,7 +534,7 @@ struct CompactionEvalFactRetentionReportTests {
             summary: summary,
             answer: answer,
             stagesApplied: ["ToolOutputElision", "TurnTruncation", "Summarization"],
-            summarizerCalls: [summarizerCall(answering: summary ?? "")]
+            summarizerCalls: [makeSummarizerCall(answering: summary ?? "")]
         )
     }
 
@@ -607,7 +607,7 @@ struct CompactionEvalFactRetentionReportTests {
         // The printer wrote `summary=` with nothing after it, which reads as a
         // truncated line rather than as the measurement it is.
         let findings = CompactionEvalFactRetentionReport.findings(
-            for: [Self.diagnostic(summary: "", answer: "Noted.")],
+            for: [Self.makeDiagnostic(summary: "", answer: "Noted.")],
             seeds: [Self.seed]
         )
         let table = CompactionEvalFactRetentionReport.lines(of: findings, expecting: [Self.seed])
@@ -629,7 +629,7 @@ struct CompactionEvalFactRetentionReportTests {
             summary: nil,
             answer: "I do not have that information.",
             stagesApplied: [],
-            summarizerCalls: [Self.summarizerCall(answering: "a summary the pipeline threw away")]
+            summarizerCalls: [Self.makeSummarizerCall(answering: "a summary the pipeline threw away")]
         )
         #expect(discarded.foldDiscarded)
         let table = Self.renderedTable(for: discarded)
@@ -676,7 +676,7 @@ struct CompactionEvalFactRetentionReportTests {
             summary: nil,
             answer: "I do not have that information.",
             stagesApplied: [],
-            summarizerCalls: [Self.summarizerCall(answering: answer)]
+            summarizerCalls: [Self.makeSummarizerCall(answering: answer)]
         )
         let table = CompactionEvalFactRetentionReport.lines(
             of: CompactionEvalFactRetentionReport.findings(for: [discarded], seeds: [seed]),
@@ -719,7 +719,7 @@ struct CompactionEvalFactRetentionReportTests {
     @Test("a recorded sample joins back to its seed's planted fact and summary evidence")
     func findingCarriesTheSeedsGroundTruth() throws {
         let findings = CompactionEvalFactRetentionReport.findings(
-            for: [Self.diagnostic(summary: "The vault code is CRIMSON-77.", answer: "Noted.")],
+            for: [Self.makeDiagnostic(summary: "The vault code is CRIMSON-77.", answer: "Noted.")],
             seeds: [Self.seed]
         )
         let finding = try #require(findings.first)
@@ -733,7 +733,7 @@ struct CompactionEvalFactRetentionReportTests {
     @Test("a recorded sample matching no seed is still classified, so no sample is dropped")
     func unmatchedSampleIsStillClassified() {
         let findings = CompactionEvalFactRetentionReport.findings(
-            for: [Self.diagnostic(summary: "anything", answer: "anything", question: "a question no seed asks")],
+            for: [Self.makeDiagnostic(summary: "anything", answer: "anything", question: "a question no seed asks")],
             seeds: [Self.seed]
         )
         #expect(findings.count == 1)
@@ -744,10 +744,10 @@ struct CompactionEvalFactRetentionReportTests {
     func countsCoverEveryClassAndSumToTheSampleCount() {
         let findings = CompactionEvalFactRetentionReport.findings(
             for: [
-                Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77."),
-                Self.diagnostic(summary: "CRIMSON-77", answer: "Noted."),
-                Self.diagnostic(summary: "no code here", answer: "Noted."),
-                Self.diagnostic(summary: nil, answer: "Noted."),
+                Self.makeDiagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77."),
+                Self.makeDiagnostic(summary: "CRIMSON-77", answer: "Noted."),
+                Self.makeDiagnostic(summary: "no code here", answer: "Noted."),
+                Self.makeDiagnostic(summary: nil, answer: "Noted."),
             ],
             seeds: [Self.seed]
         )
@@ -764,7 +764,7 @@ struct CompactionEvalFactRetentionReportTests {
     @Test("the rendered table states each sample's fact, question, answer and summary")
     func renderedTableStatesEverySamplesEvidence() {
         let findings = CompactionEvalFactRetentionReport.findings(
-            for: [Self.diagnostic(summary: "The vault code is CRIMSON-77.", answer: "Noted.")],
+            for: [Self.makeDiagnostic(summary: "The vault code is CRIMSON-77.", answer: "Noted.")],
             seeds: [Self.seed]
         )
         let table = CompactionEvalFactRetentionReport.lines(of: findings, expecting: [Self.seed])
@@ -789,7 +789,7 @@ struct CompactionEvalFactRetentionReportTests {
             summarizerCalls: []
         )
         #expect(unfolded.folded == false)
-        #expect(Self.diagnostic(summary: "s", answer: "a").folded == true)
+        #expect(Self.makeDiagnostic(summary: "s", answer: "a").folded == true)
     }
 
     @Test("every seed's question is unique, so a recorded sample joins back to exactly one seed")
@@ -806,7 +806,7 @@ struct CompactionEvalFactRetentionReportTests {
         // rather than as a third of a 24-seed one (task ^fz49qds).
         let table = CompactionEvalFactRetentionReport.lines(
             of: CompactionEvalFactRetentionReport.findings(
-                for: [Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
+                for: [Self.makeDiagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
                 seeds: Self.bothSeeds
             ),
             expecting: Self.bothSeeds
@@ -822,7 +822,7 @@ struct CompactionEvalFactRetentionReportTests {
         // the samples present and read as a clean sheet over the whole dataset.
         let table = CompactionEvalFactRetentionReport.lines(
             of: CompactionEvalFactRetentionReport.findings(
-                for: [Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
+                for: [Self.makeDiagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
                 seeds: Self.bothSeeds
             ),
             expecting: Self.bothSeeds
@@ -841,8 +841,8 @@ struct CompactionEvalFactRetentionReportTests {
         let table = CompactionEvalFactRetentionReport.lines(
             of: CompactionEvalFactRetentionReport.findings(
                 for: [
-                    Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77."),
-                    Self.diagnostic(
+                    Self.makeDiagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77."),
+                    Self.makeDiagnostic(
                         summary: "PORT-6543", answer: "It is PORT-6543.", question: Self.unreachedSeed.question),
                 ],
                 seeds: Self.bothSeeds
@@ -857,7 +857,7 @@ struct CompactionEvalFactRetentionReportTests {
     @Test("an unreached seed is named by id, and a reached one is not")
     func unreachedSeedIDsNameOnlyTheSeedsNoSampleCovered() {
         let findings = CompactionEvalFactRetentionReport.findings(
-            for: [Self.diagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
+            for: [Self.makeDiagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77.")],
             seeds: Self.bothSeeds
         )
         #expect(
