@@ -42,8 +42,32 @@ comments:
     - evidence: 6 files — Sources/FoundationModelsRouter/Session/GenerationReentry.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActor.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/Session/LanguageModelSessionBackend.swift, Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift. `swift build` clean; `swift build --build-tests -Xswiftc -warnings-as-errors` clean; `swift test` 966 + 27 + 24 pass, 0 failures, 1 pre-existing known issue in BoundedWait's own suite.
     - next: ready for /review
   timestamp: 2026-08-16T20:50:59.761559+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0663ga02r57q140swk7dmvq
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 1944077) — 9 validators attempted, 0 failed, 0 skipped; counts findings 0 / confirmed 0 / refuted 0. 7 files reviewed, 2 `.kanban/` files excluded by `.reviewignore`.
+    - checked by hand, as the caller asked:
+      - `RoutedSessionActorTurnGating.swift` `isInsideOwnTurnToolCall` -> `GenerationPermitLoan.isSuspendedInToolCall(ofSession:)` needs session identity AND `toolCallDepth > 0`. Depth is raised only in `withGenerationSuspendedForToolCall(_:)`, which the tool wrappers put around the await the SDK itself is suspended on, and it is lowered by `defer` and zeroed by `close()`. The read and the write both go through the loan `Mutex`, so the model call's appends before the tool call are published to the reader. A detached run keeps the task local but sees depth 0, so it takes the lock.
+      - `RoutedSessionActorForking.swift` `fork(workingDirectory:)` — the `guard` is the first statement of the body, before the fork-admission gate and before `turnLock.wait()`. Nothing is acquired on the refusal path, so nothing leaks.
+      - `SessionReentryError` — no `switch` over this type anywhere holds a `default`. The only one is the enum's own `errorDescription`, which lists both cases. A future case breaks that build instead of being swallowed.
+    - next: none — task moves to done.
+  timestamp: 2026-08-16T21:02:08.192181+00:00
+- actor: claude-code
+  id: 01m0664krj2kjv889qj5fb8g49
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files. `fork()` on the session's own turn is refused with `SessionReentryError.forkDuringSameSessionTurn`; the `transcript` getter is served without the lock in that one case. Both ask one shared question, `isInsideOwnTurnToolCall`.
+    - test: green — swift test, 1017 tests, 0 failures; `swift build --build-tests -Xswiftc -warnings-as-errors` clean; the three new tests run in 0.030s each under a 30-second bound, so they fail rather than hang
+    - commit: 1944077 (breaking — `SessionReentryError` gains a case)
+    - review: clean — zero new findings over 9 validators; task moved to done
+
+    The review pressed the risky part hardest — the lock-free transcript read — and could not manufacture a case where the guard is true while this session's model call is appending. The guard needs the loan to name this session AND a tool-call depth above zero, depth is raised in one place only and lowered by `defer`, and both the write and the read go through the loan's `Mutex`, so the reader gets a publication edge.
+
+    One residual the reviewer stated as an observation rather than a finding, and it is worth carrying: if the SDK ever ran two tool calls of one turn concurrently AND appended as each returned, a sibling tool still holding depth could read during that append. Confirming that needs the vendored SDK's internals. It is the same window `GenerationPermitLoan`'s own documentation already records as the one it does not close.
+  timestamp: 2026-08-16T21:02:44.498853+00:00
+position_column: done
+position_ordinal: ffae80
 title: fork() and transcript park forever when called from inside the session's own tool body
 ---
 Found while fixing `^1zt7vyg`. The generation gate no longer deadlocks a tool body that generates on another session (a turn now lends its permit), and a tool body that generates on **its own** session is now refused with `SessionReentryError`. Two neighbours of that shape are still silent parks.
