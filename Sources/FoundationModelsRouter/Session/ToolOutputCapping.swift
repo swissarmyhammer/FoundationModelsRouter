@@ -37,41 +37,8 @@ enum ToolOutputCapping {
         guard totalTokens > limit else { return text }
 
         let keepBytes = max(0, Int((Double(limit) * Compactor.charsPerTokenEstimate).rounded(.down)))
-        let kept = Self.prefix(of: text, keepingAtMostUTF8Bytes: keepBytes)
+        let kept = UTF8Budget.prefix(of: text, keepingAtMostBytes: keepBytes)
         return "\(kept)… [truncated: \(limit) of \(totalTokens) tokens]"
-    }
-
-    /// Returns the longest prefix of the given text whose UTF-8 encoding is
-    /// at most `keepingAtMostUTF8Bytes` bytes — the same unit
-    /// ``Compactor/estimatedTokenCount(of:)``
-    /// measures the text's own total size in, so the kept prefix and the
-    /// reported totals in ``capped(text:toTokenLimit:)``'s marker stay
-    /// consistent with each other regardless of the text's script (ASCII,
-    /// multi-byte UTF-8, or a mix).
-    ///
-    /// Always cuts on a `Character` (extended grapheme cluster) boundary —
-    /// never mid-scalar or mid-emoji — by walking whole characters and
-    /// stopping before the one that would exceed `keepingAtMostUTF8Bytes`.
-    ///
-    /// - Parameters:
-    ///   - text: The text to take a prefix of.
-    ///   - maxBytes: The maximum UTF-8 byte count the
-    ///     returned prefix may have.
-    /// - Returns: The longest valid `Character`-boundary prefix of the given
-    ///   text whose UTF-8 encoding is at most `keepingAtMostUTF8Bytes`
-    ///   bytes; empty when `keepingAtMostUTF8Bytes` is `0` or negative.
-    private static func prefix(of text: String, keepingAtMostUTF8Bytes maxBytes: Int) -> String {
-        guard maxBytes > 0 else { return "" }
-
-        var byteCount = 0
-        var endIndex = text.startIndex
-        for character in text {
-            let characterByteCount = character.utf8.count
-            guard byteCount + characterByteCount <= maxBytes else { break }
-            byteCount += characterByteCount
-            endIndex = text.index(after: endIndex)
-        }
-        return String(text[text.startIndex..<endIndex])
     }
 
     /// Wraps `tool` in a ``TokenCappingTool`` that caps its output to

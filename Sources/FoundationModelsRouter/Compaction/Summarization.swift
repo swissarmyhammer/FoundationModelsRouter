@@ -215,6 +215,51 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// the original transcript rather than apply it.
     public static let minimumSummaryTokens = 128
 
+    /// The largest share of a call's own content its summary text may KEEP —
+    /// the bound ``cut(_:toCharacters:)`` applies, and deliberately not
+    /// ``summaryTokenRatio``.
+    ///
+    /// The two ratios have two different jobs, and `^azd033m` measured what it
+    /// costs to make one number do both.
+    ///
+    /// ``summaryTokenRatio`` is the COMPRESSION a fold is run for. It sizes
+    /// what the call is given room to generate
+    /// (``outputTokenCeiling(forSummaryAllowance:)``) and it sizes
+    /// ``maximumSummaryTokens``, the cap that keeps the final summary of a
+    /// conversation of any length bounded. Both of those stay as they were.
+    ///
+    /// This ratio is the SAFETY bound, and all it has to guarantee is what
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``'s
+    /// did-not-shrink guard requires: a summary smaller than the span it
+    /// replaces, so the fold is applied rather than discarded. Nothing more.
+    /// Every byte a cut removes past that point is content the model chose to
+    /// write and the fold then threw away, chosen by position rather than by
+    /// meaning, because a prefix cut keeps what was said first.
+    ///
+    /// Cutting to the compression target instead measured exactly that loss.
+    /// One fold of `Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift`'s
+    /// fixture against a real 1B model answered 330 estimated tokens over a
+    /// 643-token span — already comfortably inside what the guard needs — and
+    /// the cut stored 160 of them. The answer named a fact stated at the end of
+    /// the span twice; the stored summary named it not at all.
+    ///
+    /// `0.8` states the guarantee with a margin, and the margin covers the one
+    /// place the two sides disagree. The bound is measured against the RENDERED
+    /// content of the call, which carries a `User: `/`Assistant: ` label per
+    /// entry and a line break between them, while the guard measures the span's
+    /// entries; on the fixture above rendering came to 1.01x the span. A fifth
+    /// covers that many times over, and states the rest as a floor on what a
+    /// fold saves: a fold that could not save a fifth of the span it replaced
+    /// was not worth the generation it cost.
+    ///
+    /// Raising this ratio does not widen the final summary of a long
+    /// conversation, because ``maximumSummaryTokens`` clamps this bound too and
+    /// is computed from ``summaryTokenRatio`` alone. A call handed a full
+    /// ``maxChunkTokens`` is cut to exactly what it was cut to before; only
+    /// calls whose content is small enough that the cap does not bind — the
+    /// band this defect was measured in — keep more of their answer.
+    public static let summaryRetentionRatio = 0.8
+
     /// Creates a summarization stage.
     ///
     /// - Parameters:
@@ -505,8 +550,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     turns, or a batch of prior summaries.
     ///   - prompt: The compaction prompt sent to `summarizer` verbatim.
     ///   - summarizer: The model called to condense text.
-    /// - Returns: The summarizer's answer, cut down to the allowance this
-    ///   call's own content earned — see ``cut(_:toCharacters:)``.
+    /// - Returns: The summarizer's answer, cut down to the share of this
+    ///   call's own content it may retain — see ``cut(_:toCharacters:)``.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws,
     ///   unmodified, or ``SummarizationError/emptySummary`` when that answer
     ///   holds no characters. The refusal reads the answer as the model wrote
@@ -517,7 +562,8 @@ public struct Summarization: Sendable, Equatable, Codable {
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
     ) async throws -> String {
-        let allowance = summaryTokenAllowance(condensing: content)
+        let allowance = summaryTokenAllowance(condensing: content, atRatio: summaryTokenRatio)
+        let retained = summaryTokenAllowance(condensing: content, atRatio: Self.summaryRetentionRatio)
         let summary = try await summarizer.summarize(
             "\(prompt.text)\n\n---\n\n\(content)",
             maxTokens: outputTokenCeiling(forSummaryAllowance: allowance)
@@ -525,7 +571,7 @@ public struct Summarization: Sendable, Equatable, Codable {
         guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SummarizationError.emptySummary
         }
-        return Self.cut(summary, toCharacters: Self.characters(forEstimatedTokens: allowance))
+        return Self.cut(summary, toCharacters: Self.characters(forEstimatedTokens: retained))
     }
 
     /// The characters that end a sentence, and so mark a place a summary can be
@@ -557,9 +603,21 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// `^fm5ddk9`.
     ///
     /// A cut in code answers both. It needs nothing from the model, it holds
-    /// whatever the model writes, and it makes "a fold's summary occupies at
-    /// most its allowance" a property of this file rather than a hope about a
-    /// generation.
+    /// whatever the model writes, and it makes "a fold's summary is smaller
+    /// than the span it replaces" a property of this file rather than a hope
+    /// about a generation.
+    ///
+    /// It is a SAFETY bound and not the compression device, and `limit` says
+    /// so: it is ``summaryRetentionRatio`` of the call's content, not
+    /// ``summaryTokenRatio`` of it. The reason is that this cut keeps a PREFIX,
+    /// so it is content-blind — it keeps what the model said first and drops
+    /// what it said last, and the last thing a span states is usually the last
+    /// thing its summary states. Every byte cut past what the did-not-shrink
+    /// guard requires is a fact discarded by position rather than by meaning,
+    /// and a fold that shrank the transcript and dropped the fact it existed to
+    /// carry has not worked. So the bound sits as close to that requirement as
+    /// it safely can, and the compression a fold is run for is left to the
+    /// prompt and to the generation ceiling.
     ///
     /// `limit` is in the unit
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
@@ -591,7 +649,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     private static func cut(_ summary: String, toCharacters limit: Int) -> String {
         guard summary.utf8.count > limit else { return summary }
 
-        let budgeted = prefix(of: summary, withinCharacters: limit)
+        let budgeted = UTF8Budget.prefix(of: summary, keepingAtMostBytes: limit)
         if let boundary = lastSentenceBoundary(in: budgeted) {
             let sentences = String(budgeted[...boundary])
             if !sentences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return sentences }
@@ -601,28 +659,6 @@ public struct Summarization: Sendable, Equatable, Codable {
             if !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return words }
         }
         return budgeted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? summary : budgeted
-    }
-
-    /// The longest prefix of `text` whose UTF-8 size is at most `limit`.
-    ///
-    /// Accumulated one `Character` at a time rather than sliced at a byte
-    /// offset, because a byte offset can land inside a multi-byte scalar or
-    /// inside a grapheme cluster, and neither is a place a string can be split.
-    ///
-    /// - Parameters:
-    ///   - text: The text to take a prefix of.
-    ///   - limit: The characters that prefix may occupy.
-    /// - Returns: The prefix.
-    private static func prefix(of text: String, withinCharacters limit: Int) -> String {
-        var budgeted = ""
-        var used = 0
-        for character in text {
-            let size = String(character).utf8.count
-            guard used + size <= limit else { break }
-            budgeted.append(character)
-            used += size
-        }
-        return budgeted
     }
 
     /// The last index of `text` holding a character a summary can end on: a
@@ -678,7 +714,9 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// The sum is also why the ceiling cannot be the bound on the summary
     /// TEXT: it has to be wide enough for reasoning the answer never uses.
-    /// ``cut(_:toCharacters:)`` applies the allowance itself, to the answer.
+    /// ``cut(_:toCharacters:)`` is what bounds the answer, at
+    /// ``summaryRetentionRatio`` of the same content rather than at this
+    /// allowance — see that constant for why the two numbers differ.
     ///
     /// - Parameter allowance: The summary allowance the call's content earns.
     /// - Returns: The output ceiling for that call, in tokens.
@@ -695,11 +733,16 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// charging a summary for the length of the instructions asking for it
     /// would let a short span buy a long summary.
     ///
-    /// - Parameter content: The content the call will condense — a rendered
-    ///   chunk of turns, or a batch of prior summaries.
-    /// - Returns: The summary allowance for that call, in tokens.
-    private func summaryTokenAllowance(condensing content: String) -> Int {
-        min(maximumSummaryTokens, summaryTokenAllowance(ingesting: Self.estimatedTokens(of: content)))
+    /// - Parameters:
+    ///   - content: The content the call will condense — a rendered chunk of
+    ///     turns, or a batch of prior summaries.
+    ///   - ratio: The share of `content` to take, either ``summaryTokenRatio``
+    ///     for the generation ceiling or ``summaryRetentionRatio`` for the cut.
+    ///     Stated by the caller rather than fixed here, because one arithmetic
+    ///     serves both bounds and the two differ only in this number.
+    /// - Returns: That share of the call's content, in tokens.
+    private func summaryTokenAllowance(condensing content: String, atRatio ratio: Double) -> Int {
+        min(maximumSummaryTokens, summaryTokenAllowance(ingesting: Self.estimatedTokens(of: content), atRatio: ratio))
     }
 
     /// The allowance no single summarizer call's summary text may exceed,
@@ -715,20 +758,24 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// Clamping unconditionally is what keeps the final summary of a long
     /// conversation bounded, the defect ``summaryTokenRatio`` exists to close,
     /// without the bound depending on any such list being complete.
+    /// It is computed from ``summaryTokenRatio`` alone, never from
+    /// ``summaryRetentionRatio``, and both bounds clamp to it. That is what
+    /// keeps raising the retention ratio a change to small folds only: a call
+    /// handed a full ``maxChunkTokens`` reaches this cap either way.
     private var maximumSummaryTokens: Int {
-        summaryTokenAllowance(ingesting: maxChunkTokens)
+        summaryTokenAllowance(ingesting: maxChunkTokens, atRatio: summaryTokenRatio)
     }
 
     /// ``summaryTokenRatio`` of `tokens`, floored at ``minimumSummaryTokens`` —
     /// the one place the allowance arithmetic lives, shared by the per-call
     /// allowance and the cap it is clamped to.
     ///
-    /// - Parameter tokens: The estimated size, in tokens, of what a call
-    ///   ingests.
-    /// - Returns: The share of it that call's summary text may occupy, in
-    ///   tokens.
-    private func summaryTokenAllowance(ingesting tokens: Int) -> Int {
-        max(Self.minimumSummaryTokens, Int((Double(tokens) * summaryTokenRatio).rounded(.up)))
+    /// - Parameters:
+    ///   - tokens: The estimated size, in tokens, of what a call ingests.
+    ///   - ratio: The share of `tokens` to take.
+    /// - Returns: That share of it, in tokens.
+    private func summaryTokenAllowance(ingesting tokens: Int, atRatio ratio: Double) -> Int {
+        max(Self.minimumSummaryTokens, Int((Double(tokens) * ratio).rounded(.up)))
     }
 
     // MARK: - Chunking

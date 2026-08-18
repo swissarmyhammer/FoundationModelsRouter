@@ -107,12 +107,61 @@ struct SummarizationStageTests {
         ratio: Double,
         maxChunkTokens: Int
     ) -> Int {
-        func allowance(ingesting tokens: Int) -> Int {
+        expectedBound(condensing: content, atRatio: ratio, cappedAtRatio: ratio, maxChunkTokens: maxChunkTokens)
+    }
+
+    /// The bound the CUT should have stated for a call condensing `content`:
+    /// ``Summarization/summaryRetentionRatio`` of that content, floored and
+    /// capped exactly as the generation allowance above is.
+    ///
+    /// The CAP is still computed from `ratio` — the stage's own
+    /// ``Summarization/summaryTokenRatio`` — and not from the retention ratio,
+    /// because ``Summarization/maximumSummaryTokens`` is what keeps the final
+    /// summary of a conversation of any length bounded, and raising the
+    /// retention ratio must not widen it.
+    ///
+    /// - Parameters:
+    ///   - content: The content the call was asked to condense.
+    ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
+    ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
+    /// - Returns: The expected cut bound, in tokens.
+    private static func expectedRetainedAllowance(
+        condensing content: String,
+        ratio: Double,
+        maxChunkTokens: Int
+    ) -> Int {
+        expectedBound(
+            condensing: content,
+            atRatio: Summarization.summaryRetentionRatio,
+            cappedAtRatio: ratio,
+            maxChunkTokens: maxChunkTokens
+        )
+    }
+
+    /// The arithmetic both bounds above share: `contentRatio` of `content`'s
+    /// own estimated size, never below ``Summarization/minimumSummaryTokens``
+    /// and never above what a full `maxChunkTokens` of content earns at
+    /// `capRatio`. Restated here rather than read off the stage, so these tests
+    /// pin the arithmetic instead of comparing it against itself.
+    ///
+    /// - Parameters:
+    ///   - content: The content the call was asked to condense.
+    ///   - contentRatio: The share of `content` this bound takes.
+    ///   - capRatio: The share a full `maxChunkTokens` earns, which caps it.
+    ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
+    /// - Returns: The expected bound, in tokens.
+    private static func expectedBound(
+        condensing content: String,
+        atRatio contentRatio: Double,
+        cappedAtRatio capRatio: Double,
+        maxChunkTokens: Int
+    ) -> Int {
+        func allowance(ingesting tokens: Int, atRatio ratio: Double) -> Int {
             max(Summarization.minimumSummaryTokens, Int((Double(tokens) * ratio).rounded(.up)))
         }
         return min(
-            allowance(ingesting: maxChunkTokens),
-            allowance(ingesting: Summarization.estimatedTokens(of: content)))
+            allowance(ingesting: maxChunkTokens, atRatio: capRatio),
+            allowance(ingesting: Summarization.estimatedTokens(of: content), atRatio: contentRatio))
     }
 
     /// The character bound ``Summarization`` states to a call condensing
@@ -161,7 +210,7 @@ struct SummarizationStageTests {
     /// stored and the assembled prompt of every summarizer call it made.
     ///
     /// What a fold STORES is not what its summarizer ANSWERED — the stage cuts
-    /// an answer down to the allowance its call earned — so a test about that
+    /// an answer down to the share of its content that call may retain — so a test about that
     /// bound has to read the fold's own result rather than the scripted answer
     /// it started from.
     ///
@@ -639,7 +688,7 @@ struct SummarizationStageTests {
     // MARK: - The summary bound is enforced in code, never requested in the prompt
 
     /// One sentence a scripted summarizer answers with, repeated to build an
-    /// answer that overruns the allowance its call earned.
+    /// answer that overruns the share of its content its call may retain.
     ///
     /// It ends in a period and a space, so a cut at a sentence boundary has
     /// somewhere to land.
@@ -650,6 +699,26 @@ struct SummarizationStageTests {
     /// — enough that the answer runs past the 512-character bound a
     /// minimum-allowance call earns.
     private static let summarySentenceRepeats = 12
+
+    /// The tool-output text that makes a folded span large enough for the two
+    /// bounds a call carries to part company.
+    ///
+    /// Both bounds floor at ``Summarization/minimumSummaryTokens``, so over a
+    /// small span the generation allowance and the cut bound are the same
+    /// number and neither test below could tell them apart. At this size the
+    /// generation allowance is roughly a quarter of the content and the cut
+    /// bound roughly four fifths of it, which is the band `^azd033m` measured
+    /// the fold losing facts in.
+    private static let largeSpanToolOutput = String(repeating: summarySentence, count: 40)
+
+    /// How many times ``summarySentence`` repeats to make an answer that
+    /// overruns the cut bound a ``largeSpanToolOutput`` span earns.
+    private static let overRetentionAnswerRepeats = 40
+
+    /// How many times ``summarySentence`` repeats to make an answer that sits
+    /// ABOVE the generation allowance and BELOW the cut bound — the band the
+    /// cut used to take and now leaves alone.
+    private static let insideRetentionAnswerRepeats = 20
 
     @Test("the assembled prompt carries the caller's instructions and the content, and asks the model for nothing else")
     func theAssembledPromptAsksTheModelForNoLength() async throws {
@@ -680,7 +749,7 @@ struct SummarizationStageTests {
         #expect(assembled == "\(CompactionPrompt.default.text)\n\n---\n\n\(condensed)")
     }
 
-    @Test("a summary longer than the allowance its call earned is cut down to it before the fold stores it")
+    @Test("a summary longer than the share of its content its call may retain is cut down to it before the fold stores it")
     func aSummaryOverItsAllowanceIsCutToIt() async throws {
         // `maxTokens` bounds the WHOLE generation — the reasoning and the
         // answer together — so it can never bound the summary TEXT, and the
@@ -703,7 +772,7 @@ struct SummarizationStageTests {
         )
 
         let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
-        let allowance = Self.expectedSummaryAllowance(
+        let allowance = Self.expectedRetainedAllowance(
             condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
         #expect(Summarization.estimatedTokens(of: answer) > allowance)  // sanity: the answer really does overrun
         let summary = try #require(outcome.folded).summary
@@ -729,7 +798,7 @@ struct SummarizationStageTests {
         #expect(summary.hasSuffix("."))
     }
 
-    @Test("a summary already inside the allowance its call earned is stored word for word")
+    @Test("a summary already inside the share of its content its call may retain is stored word for word")
     func aSummaryInsideItsAllowanceIsStoredUnchanged() async throws {
         // The cut is a bound, not a rewrite. A summarizer that stays inside its
         // allowance gets its answer stored exactly as it wrote it.
@@ -743,6 +812,72 @@ struct SummarizationStageTests {
         )
 
         #expect(try #require(outcome.folded).summary == answer)
+    }
+
+    @Test("a summary over the allowance its call generated under, but inside the share it may retain, is stored word for word")
+    func aSummaryInsideItsRetentionBoundIsStoredUnchanged() async throws {
+        // The property `^azd033m` reopened this card for. The cut keeps a
+        // PREFIX, so every byte it takes is a fact dropped by position rather
+        // than by meaning — and the fold measured on this card dropped a fact
+        // stated at the end of the span while `Compactor`'s did-not-shrink
+        // guard would have accepted the whole answer with room to spare.
+        //
+        // So the cut binds at `summaryRetentionRatio` of the call's content,
+        // which is what that guard requires, and not at `summaryTokenRatio` of
+        // it, which is what the call GENERATED under. An answer between the two
+        // is stored exactly as the model wrote it.
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.largeSpanToolOutput)
+        let answer = String(repeating: Self.summarySentence, count: Self.insideRetentionAnswerRepeats)
+        let outcome = try await Self.foldOutcome(
+            folding: turns,
+            with: stage,
+            prompt: .default,
+            answering: [answer]
+        )
+
+        let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
+        let generationAllowance = Self.expectedSummaryAllowance(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        let retained = Self.expectedRetainedAllowance(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        // Sanity: the fixture really does put the answer between the two
+        // bounds, so a cut at either one is observable.
+        let answerTokens = Summarization.estimatedTokens(of: answer)
+        #expect(answerTokens > generationAllowance)
+        #expect(answerTokens <= retained)
+
+        #expect(try #require(outcome.folded).summary == answer)
+    }
+
+    @Test("an answer past the share it may retain is cut to that share, which is larger than the allowance it generated under")
+    func aSummaryOverItsRetentionBoundIsCutToThatBound() async throws {
+        // The bound is a bound, not a suggestion: an answer past it is still
+        // cut. What changed is WHERE it lands — at the share the did-not-shrink
+        // guard requires rather than at the compression target, so the fold
+        // keeps as much of what the model wrote as it can afford to.
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let turns = try TranscriptFixtures.makeTurns(5, toolOutputText: Self.largeSpanToolOutput)
+        let answer = String(repeating: Self.summarySentence, count: Self.overRetentionAnswerRepeats)
+        let outcome = try await Self.foldOutcome(
+            folding: turns,
+            with: stage,
+            prompt: .default,
+            answering: [answer]
+        )
+
+        let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
+        let generationAllowance = Self.expectedSummaryAllowance(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        let retained = Self.expectedRetainedAllowance(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        #expect(generationAllowance < retained)  // sanity: the two bounds really are different here
+
+        let summary = try #require(outcome.folded).summary
+        let summaryTokens = Summarization.estimatedTokens(of: summary)
+        #expect(summaryTokens <= retained)
+        #expect(summaryTokens > generationAllowance)
+        #expect(answer.hasPrefix(summary))
     }
 
     @Test("a summary holding no sentence boundary is cut at a word boundary rather than through a word")
@@ -761,7 +896,7 @@ struct SummarizationStageTests {
         )
 
         let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
-        let allowance = Self.expectedSummaryAllowance(
+        let allowance = Self.expectedRetainedAllowance(
             condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
         let summary = try #require(outcome.folded).summary
         #expect(Summarization.estimatedTokens(of: summary) <= allowance)
@@ -786,7 +921,7 @@ struct SummarizationStageTests {
         )
 
         let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
-        let allowance = Self.expectedSummaryAllowance(
+        let allowance = Self.expectedRetainedAllowance(
             condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
         let summary = try #require(outcome.folded).summary
         #expect(!summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -820,7 +955,7 @@ struct SummarizationStageTests {
         #expect(chunkSummaries.count == expectedCallCount - 1)
         for (index, chunkSummary) in chunkSummaries.enumerated() {
             let chunkContent = try Self.condensedContent(of: outcome.prompts[index])
-            let allowance = Self.expectedSummaryAllowance(
+            let allowance = Self.expectedRetainedAllowance(
                 condensing: chunkContent, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
             #expect(Summarization.estimatedTokens(of: chunkSummary) <= allowance)
         }
@@ -1209,9 +1344,10 @@ struct SummarizationStageTests {
     /// ``Summarization/minimumSummaryTokens``, so a span UNDER that floor buys
     /// a summary larger than itself and the fold grows the transcript however
     /// well the summarizer behaves. That is the shape the guard still has to
-    /// catch now that the stage cuts every answer down to its allowance: a
-    /// summary can no longer overrun the allowance, but the allowance itself
-    /// can overrun a small enough span.
+    /// catch now that the stage cuts every answer down to the share of its
+    /// content that call may retain: a summary can no longer overrun that
+    /// bound, but ``Summarization/minimumSummaryTokens`` floors it, and the
+    /// floor itself can overrun a small enough span.
     ///
     /// - Returns: The turns in order, the transcript over them, and the budget
     ///   to fold it against.
@@ -1296,9 +1432,10 @@ struct SummarizationStageTests {
     func foldThatDoesNotShrinkTheTranscriptIsNotApplied() async throws {
         // A span smaller than `Summarization.minimumSummaryTokens`, so the
         // allowance floor alone buys a summary larger than what it replaces.
-        // The stage now cuts every answer down to its allowance, so this is the
-        // shape that still reaches the guard: the summary cannot overrun the
-        // allowance, and the allowance overruns the span.
+        // The stage now cuts every answer down to the share of its content that
+        // call may retain, so this is the shape that still reaches the guard:
+        // the summary cannot overrun that bound, and the bound's own floor
+        // overruns the span.
         let (turns, transcript, budget) = try Self.makeUnshrinkableFoldFixture()
         let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
         let foldedSpan = Transcript(

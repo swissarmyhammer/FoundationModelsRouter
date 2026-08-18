@@ -143,6 +143,102 @@ comments:
     - new cards: `^hx1smew` — two eval-target doc comments still describe the bound as a hope rather than a cut; they live in the file this card was told to leave alone.
     - next: `/review ^azd033m`. The gated tier still has to run before `^fm5ddk9` AC1/AC2 and `^bgxtdk3` criterion 5 can close.
   timestamp: 2026-08-18T14:23:49.068825+00:00
+- actor: claude-code
+  id: 01m0amk915v5wffwksm8dc9562
+  text: |-
+    ### review — findings
+    - evidence: 2 findings — Sources/FoundationModelsRouter/Compaction/Summarization.swift:591, Sources/FoundationModelsRouter/Compaction/Summarization.swift:616. Engine: `review sha 6fc9bb1~1..6fc9bb1`, counts findings=1 confirmed=1 refuted=0 attempted=7 failed=0.
+    - The engine confirmed one finding: `prefix(of:withinCharacters:)` duplicates `ToolOutputCapping.prefix(of:keepingAtMostUTF8Bytes:)`.
+    - The directed verification of `cut(_:toCharacters:)` cleared three of its four questions: the empty-summary refusal runs before the cut, the cut's fallbacks return the uncut summary rather than an empty string, the character walk cannot split a scalar or a grapheme cluster, and the cut and the did-not-shrink guard both measure UTF-8 bytes.
+    - The fourth question did not clear. The cut keeps a prefix, so it is content-blind. `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` passed in 4.1 s and measured the loss: summarizerCalls=1 ceilings=[281] answerTokens=[332] spanTokens=600 summaryTokens=136 tokensBefore=670 tokensAfter=206.
+    - next: resolve both checklist items, then re-review. The prefix cut needs a recall measurement against the planted-fact eval seeds before it is relied on.
+  timestamp: 2026-08-18T14:32:22.821987+00:00
+- actor: claude-code
+  id: 01m0ap56pqt6z7w0hkya1ktfxm
+  text: |-
+    Both findings closed. The second one needed a decision, and here is what I chose and why.
+
+    ## Finding 1 — the duplicated UTF-8 walk
+
+    Swept before extracting: `grep utf8.count` over `Sources/` finds six sites, and only TWO of them are the walk — `ToolOutputCapping.prefix(of:keepingAtMostUTF8Bytes:)` and `Summarization.prefix(of:withinCharacters:)`. The other four are plain byte counts (`TranscriptEntryPayload.utf8ByteCount(of:)`, `Compactor.estimatedTokenCount(of:)`, `Summarization.estimatedTokens(of:)`, and the cut's own `summary.utf8.count > limit` test), which are not this shape. There is no third copy.
+
+    Extracted to `Sources/FoundationModelsRouter/Core/UTF8Budget.swift` — `UTF8Budget.prefix(of:keepingAtMostBytes:)` — and both callers now call it. `Core` rather than either caller's own directory because the two callers sit in different areas of the module, `Session` and `Compaction`, and a string operation is not a reason for one of those to depend on the other. `Core` already holds this module's shared value types (`JSONValue`, `ModelRef`, `ULID`).
+
+    The finding's alternative — make `ToolOutputCapping.prefix` internal and call it from `Summarization` — was refused for that reason: it would point a `Compaction` file at a `Session` file for a byte walk.
+
+    ## Finding 2 — the content-blind cut
+
+    ### What I chose
+
+    The cut stays a prefix cut, and it stays in code. What changed is WHERE it binds: it now binds at a new `Summarization.summaryRetentionRatio` (0.8) of the call's own content, rather than at `summaryTokenRatio` (0.25) of it. The two ratios now name two different jobs, and `summarizeOnce` computes both:
+
+    - `summaryTokenRatio` is the COMPRESSION the fold is run for. It still sizes the generation ceiling (`outputTokenCeiling(forSummaryAllowance:)`) and it still sizes `maximumSummaryTokens`. Neither number moved.
+    - `summaryRetentionRatio` is the SAFETY bound. All it has to guarantee is what `Compactor`'s did-not-shrink guard requires — a summary smaller than the span it replaces — and nothing more.
+
+    ### Why, and what I weighed
+
+    A prefix cut is content-blind by construction. It cannot be made content-aware without a model, and a cut that sampled the middle instead would break coherence rather than fix recall, so the mechanism is not the thing to change. What IS wrong is how much it takes: every byte it removes past the guard's requirement is a fact discarded by POSITION rather than by meaning. So the bound belongs as close to that requirement as it safely can, and the compression a fold is run for is left to the prompt and to the generation ceiling.
+
+    **The growth cap is untouched, and that was the constraint to respect.** `maximumSummaryTokens` is still `summaryTokenRatio * maxChunkTokens` = 500 estimated tokens, and the retention bound clamps to it too. That has a consequence worth stating plainly, because it is what makes this change small: for content of 625 estimated tokens or more the cap binds either way, so a call handed a full `maxChunkTokens` is cut to EXACTLY what it was cut to before. The reduce rounds of a long conversation ingest joined chunk summaries at that same scale, so they are unchanged as well. Only calls whose content is small enough that the cap does not bind — the band this defect was measured in — keep more of their answer.
+
+    **0.8 rather than something closer to 1.0.** The bound is measured against the RENDERED content of the call, which carries a `User: `/`Assistant: ` label per entry and a line break between them, while the guard measures the span's entries. On the smoke fixture rendering came to 1.01x the span (ceiling 291 → allowance 163 → about 650 rendered tokens against a 643-token span). A fifth covers that many times over, and states the rest as a floor on what a fold saves.
+
+    **Why the generation ceiling keeps the 0.25-derived allowance.** Two reasons, and the second is this card's own lesson. A bound that is not going to be enforced should not be paid for — the ceiling bounds COST. And this whole card thread is about a summarizer that outran an 1800-second limit; raising the gated tier's ceiling from 4224 would have been the wrong direction. The measured consequence is good either way: the 1B writes to its stop, so a tight ceiling plus a generous cut means nothing is cut at all.
+
+    ### What I did NOT do, and why
+
+    - **Raise `maximumSummaryTokens`.** It would widen the final summary of an arbitrarily long conversation, which is the property the card said must not be lost.
+    - **Re-summarize an over-long answer instead of cutting it.** It is a second generation with no bound on how many, against a card whose defect is a summarizer that never returned.
+    - **Touch `Compactor`.** Not one line changed. The guard is byte-identical and still reachable: `minimumSummaryTokens` floors BOTH bounds at 128, so a span under that floor still buys a summary larger than itself, which is the fixture `foldThatDoesNotShrinkTheTranscriptIsNotApplied` folds.
+
+    ### The four things the card said to keep, each held
+
+    - `Compactor`'s did-not-shrink guard — untouched and still reachable (above).
+    - The empty-summary refusal still reads the model's own answer, before any cut — `summarizeOnce` is unchanged in that ordering; only the number handed to `cut` moved.
+    - The reasoning ceiling — `outputTokenCeiling(forSummaryAllowance:)` and `reasoningTokenHeadroom` are unchanged, and the allowance fed to the ceiling is the same one as before.
+    - The cut cannot return empty from a non-empty answer — the three fallbacks are unchanged, and `theCutNeverStoresAnEmptySummary` still drives an answer with no boundary in it at all.
+
+    ## The fast cover, and what it measured
+
+    `^w1cz46m`'s smoke suite now folds the fixture TWICE, once per test, at 4.1 s each and 6.2 s for the pair. The second test is `aPlantedFactLateInTheSpanSurvivesTheFold`: the fixture's second folded turn now ends with a sentence naming a coined proper noun, and the test asserts the stored summary carries it.
+
+    **It was RED first, for exactly the right reason.** At the old bound: `answerTokens=[330] spanTokens=643 summaryTokens=160 tokensBefore=713 tokensAfter=230`. The model's ANSWER named the fact twice — "The cut-over for every station is authorised by the Kestrel board", "The comparison job refuses to run for a station the Kestrel board has not approved" — and the stored summary named it not once. The fold shrank the transcript and dropped the fact it existed to carry, on a real model, in four seconds.
+
+    At the new bound: `answerTokens=[330] summaryTokens=330 tokensBefore=713 tokensAfter=400`, fold applied, fact present. The answer is now stored whole and the transcript still nearly halves.
+
+    ### One measurement worth keeping, about the fixture rather than the fold
+
+    The first version of the planted fact was a release ticket, `REL-8842`. The 1B reproduced the SENTENCE — "the cut-over is authorised by exactly one release ticket" — and dropped the identifier, exactly as it dropped every other value in the span (the rejects file name, the batch sizes). A 1B paraphrases values and copies names. An identifier would have made the test measure the model's weakness rather than the fold's, so the planted value is a coined proper noun. That is recorded on the constant so the next reader does not re-try the identifier.
+
+    ## Hermetic cover, also RED first
+
+    Two new tests in `SummarizationStageTests`, over a fixture whose folded span is large enough that the two bounds part company (both floor at `minimumSummaryTokens` over a small span, which is why the pre-existing cut tests could not tell them apart):
+
+    - `aSummaryInsideItsRetentionBoundIsStoredUnchanged` — an answer above the generation allowance and below the retention bound is stored word for word. This is the unit-level statement of the property finding 2 is about.
+    - `aSummaryOverItsRetentionBoundIsCutToThatBound` — an answer past the bound is still cut, and lands above the generation allowance.
+
+    Both were verified RED by temporarily pointing `cut` back at the generation allowance: `Expectation failed: try #require(outcome.folded).summary == answer` and `Expectation failed: summaryTokens > generationAllowance`. That experiment is reverted.
+
+    The four pre-existing cut tests now read `expectedRetainedAllowance` rather than `expectedSummaryAllowance`. Their VALUES are identical over their own fixtures — the floor decides both there — so this is not a weakened assertion; it names the quantity the cut actually applies.
+
+    ## What is still not claimed
+
+    The gated tier was NOT run, so `^fm5ddk9`'s AC1/AC2 and `^bgxtdk3`'s criterion 5 stay open. And the residual is worth stating: where `maximumSummaryTokens` binds — content of 625 estimated tokens or more — the cut is still a prefix cut and a verbose model's tail is still dropped. That is the growth cap doing the job the card protected, and it is inherent to condensing thousands of tokens into 500; but it means the planted-fact property is proved for small folds and argued, not measured, for large ones.
+  timestamp: 2026-08-18T14:59:38.839738+00:00
+- actor: claude-code
+  id: 01m0ap5r711hf49q831mfykr46
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Sources/FoundationModelsRouter/Core/UTF8Budget.swift (new), Sources/FoundationModelsRouter/Compaction/Summarization.swift, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift, Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift, Tests/FoundationModelsRouterTests/SummarizationStageTests.swift, Tests/FoundationModelsRouterTests/AutoCompactionTests.swift. `Tests/FoundationModelsRouterEvals/` was NOT touched.
+    - finding 1 — swept first: only two copies of the UTF-8 byte-budget walk exist in `Sources/`; the other four `utf8.count` sites are plain byte counts. Extracted `UTF8Budget.prefix(of:keepingAtMostBytes:)` into `Core`, because the two callers sit in `Session` and `Compaction` and neither should depend on the other for a string operation.
+    - finding 2 — the cut now binds at a new `Summarization.summaryRetentionRatio` (0.8) of the call's own content instead of `summaryTokenRatio` (0.25) of it. `maximumSummaryTokens` still clamps it and is still computed from `summaryTokenRatio`, so a call handed a full `maxChunkTokens` is cut to exactly what it was before; only calls under the cap keep more of their answer.
+    - kept, as the card required: `Compactor` untouched (zero lines) and its did-not-shrink guard still reachable through the `minimumSummaryTokens` floor; the empty-summary refusal still reads the model's own answer before the cut; `outputTokenCeiling(forSummaryAllowance:)` and `reasoningTokenHeadroom` untouched; the cut's three fallbacks unchanged, so it cannot return empty from a non-empty answer.
+    - fast cover: `aPlantedFactLateInTheSpanSurvivesTheFold` in the `FM_ROUTER_COMPACTION_SMOKE` suite, 4.1 s per fold and 6.2 s for the pair. RED first at the old bound — `answerTokens=[330] spanTokens=643 summaryTokens=160 tokensBefore=713 tokensAfter=230`, the model named the fact twice and the stored summary named it not once. GREEN after — `summaryTokens=330 tokensAfter=400`, fold applied, fact present.
+    - hermetic cover: `aSummaryInsideItsRetentionBoundIsStoredUnchanged` and `aSummaryOverItsRetentionBoundIsCutToThatBound`, both verified RED by temporarily pointing `cut` back at the generation allowance; that experiment is reverted.
+    - verification: `swift build` complete; `swift build --build-tests -Xswiftc -warnings-as-errors` complete, zero warnings; `swift test` — 984 + 29 + 58 = 1071 tests, 0 failures, 1 pre-existing known issue. FoundationModelsRouterTests 982 -> 984. `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` — 2 tests, 0 failures, 6.2 s.
+    - not spent: `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. No `swift format`. `grep TEMPORARY Sources Tests` returns nothing, and the smoke suite still names the 1B, context 4096, headroom 128, greedy, 1-minute limit.
+    - next: `/review ^azd033m`. The gated tier still has to run before `^fm5ddk9` AC1/AC2 and `^bgxtdk3` criterion 5 can close, and the planted-fact property is measured for folds under the growth cap and argued for folds above it.
+  timestamp: 2026-08-18T14:59:56.769308+00:00
 position_column: doing
 position_ordinal: '8280'
 title: The c26fbbe length directive stalls the compaction summarizer — 7 of 7 folds unfinished in 1796 s, where 7 folds plus 7 answers took 1686 s before it
@@ -217,4 +313,24 @@ Do not raise `compactionEvalSubsetTimeLimitMinutes` to make the run fit. The lim
 - `^9cw5g6n` — the concurrency finding from the same trail, which changes how every per-sample figure on this tier must be read.
 - `^bgxtdk3` — its acceptance criterion 5 stays open for the same reason.
 
-#compaction #eval #real-model #defect
+
+
+## Review Findings (2026-08-18 09:24)
+
+> Scope: `review sha 6fc9bb1~1..6fc9bb1` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 18 not reviewed.
+
+> 18 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 18 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:616` `duplication/duplication` — The `prefix(of:withinCharacters:)` function duplicates logic already present in `ToolOutputCapping.prefix(of:keepingAtMostUTF8Bytes:)`. Both functions take a string and a UTF-8 byte limit, iterate through characters accumulating byte counts, and return the prefix before the limit is exceeded. The implementations differ only in variable names and approach (index-based vs string-building), but perform identical operations. Extract a shared utility function to a common location (e.g., a new `StringUtilities` or to an existing utilities module) that both `ToolOutputCapping` and `Summarization` can call. Alternatively, if appropriate for the architecture, make `ToolOutputCapping.prefix` public and call it from `Summarization`. Avoid keeping duplicate logic that will need to be maintained in lockstep.
+
+## Directed verification of `cut(_:toCharacters:)` (2026-08-18 09:24)
+
+The review brief asked four questions about the new cut on the production path. Three hold. One does not, and is recorded as an open item.
+
+- Ordering of the empty-summary refusal — **holds.** `summarizeOnce` throws `SummarizationError.emptySummary` on `summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty` and only then returns `Self.cut(summary, toCharacters:)`. The refusal reads the model's own answer, before the cut.
+- The cut's own fallbacks cannot make an empty string from a non-empty answer — **holds.** When the byte-budget prefix returns empty, `lastSentenceBoundary` gives `nil` and `lastIndex(where: \.isWhitespace)` gives `nil`, so the final line `budgeted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? summary : budgeted` returns the uncut `summary`. Each earlier branch is guarded by its own non-empty check before it returns.
+- Multi-byte scalar and grapheme cluster safety — **holds.** The byte-budget prefix iterates `for character in text` and accumulates `character.utf8.count`, so it never slices at a byte offset. `lastSentenceBoundary` and `lastIndex(where:)` return `String.Index` values taken from that same character walk.
+- Unit agreement with `Compactor`'s did-not-shrink guard — **holds.** The cut binds on `summary.utf8.count > limit`, with `limit = Int(Double(allowance) * Compactor.charsPerTokenEstimate)`. `Compactor.estimatedTokenCount(bytes:)` is `Int((Double(bytes) / charsPerTokenEstimate).rounded(.up))` over UTF-8 bytes. Both sides measure UTF-8 bytes, so they cannot drift.
+
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:591` `correctness` — `cut(_:toCharacters:)` keeps a PREFIX of the summary, so it is content-blind: a fact the model states late in its answer is removed, and every fact stated before it is kept. The gated smoke run of this commit measured the loss — `answerTokens=[332]` cut to `summaryTokens=136`, so 59% of the model's answer was discarded. The eval seeds this thread of cards is measured by are planted-fact recall seeds, and three of them (`three-facts-long-project-brief`, `three-facts-support-escalation`, `license-key-and-region`) plant more than one fact, so the later facts are the ones a prefix cut drops. State the risk on the card and measure recall against the eval tier before this cut is relied on: the fold now shrinks the transcript, but shrinking it is not the same as carrying the fact the summary exists to carry. #compaction #defect #eval #real-model
