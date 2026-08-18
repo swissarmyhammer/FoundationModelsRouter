@@ -243,21 +243,49 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// the cut stored 160 of them. The answer named a fact stated at the end of
     /// the span twice; the stored summary named it not at all.
     ///
-    /// `0.8` states the guarantee with a margin, and the margin covers the one
-    /// place the two sides disagree. The bound is measured against the RENDERED
-    /// content of the call, which carries a `User: `/`Assistant: ` label per
-    /// entry and a line break between them, while the guard measures the span's
-    /// entries; on the fixture above rendering came to 1.01x the span. A fifth
-    /// covers that many times over, and states the rest as a floor on what a
-    /// fold saves: a fold that could not save a fifth of the span it replaced
-    /// was not worth the generation it cost.
+    /// `0.8` states the guarantee with a margin. The margin has to cover the
+    /// one place the two sides disagree: this bound is measured against the
+    /// RENDERED content of the call, which carries a `User: `/`Assistant: `
+    /// label per entry and a line break between them, while the guard measures
+    /// the span's entries. On the fixture above rendering came to 1.01x the
+    /// span, and a fifth covers that many times over.
+    ///
+    /// **That 1.01x is a property of that one fixture, not of this ratio.** The
+    /// labels and the separator cost about 19 bytes per prompt/response turn
+    /// however short the turn is. So a span of many very short turns — entries
+    /// averaging under roughly 40 bytes of text, a line of a few words each —
+    /// renders past 1.25x the span, and past 1.25x this ratio of the rendered
+    /// content EXCEEDS the span it replaces. This bound then guarantees
+    /// nothing on its own, and
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``'s
+    /// did-not-shrink guard is the only thing left standing. That guard is why
+    /// a fixture-measured margin is safe to ship: the worst this bound can do
+    /// is let a fold be discarded, which is the state that preceded it.
+    ///
+    /// The rest of the margin is a floor on what a fold saves: a fold that
+    /// could not save a fifth of the span it replaced was not worth the
+    /// generation it cost.
     ///
     /// Raising this ratio does not widen the final summary of a long
     /// conversation, because ``maximumSummaryTokens`` clamps this bound too and
     /// is computed from ``summaryTokenRatio`` alone. A call handed a full
-    /// ``maxChunkTokens`` is cut to exactly what it was cut to before; only
-    /// calls whose content is small enough that the cap does not bind — the
-    /// band this defect was measured in — keep more of their answer.
+    /// ``maxChunkTokens`` is cut to exactly what it was cut to before.
+    ///
+    /// The band that DID change is far wider than that, and naming it "the
+    /// calls where the cap does not bind" was wrong: the cap binding on THIS
+    /// ratio does not mean it bound on the old one. At the defaults —
+    /// ``maxChunkTokens`` `2000` and ``summaryTokenRatio`` `0.25`, so
+    /// ``maximumSummaryTokens`` `500` — this bound reaches the cap at content
+    /// of 624 estimated tokens, while the old bound reached it only at 1997.
+    /// So every call from 161 estimated tokens (under that both bounds sit on
+    /// ``minimumSummaryTokens``) up to 1996 keeps strictly more than it did,
+    /// and a call in the middle of that band keeps several times more: at 650
+    /// estimated tokens the old bound was 163 tokens and this one is 500.
+    /// The fixture this defect was measured on sits inside that band, and it
+    /// shows why the cap is the wrong thing to reason from — at about 650
+    /// estimated tokens of rendered content the cap DOES bind on retention
+    /// (`0.8 * 650` is 520, clamped to 500), and the stored summary still went
+    /// from 160 tokens to 330.
     public static let summaryRetentionRatio = 0.8
 
     /// Creates a summarization stage.
@@ -704,7 +732,7 @@ public struct Summarization: Sendable, Equatable, Codable {
 
     /// The ceiling, in tokens, one summarizer call generates under:
     /// `allowance` — what that call's own content earns, from
-    /// ``summaryTokenAllowance(condensing:)`` — plus
+    /// ``summaryTokenAllowance(condensing:atRatio:)`` — plus
     /// ``reasoningTokenHeadroom``.
     ///
     /// The sum is what the call is given, because a reasoning model spends the
@@ -751,7 +779,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// Chunking already keeps most calls at or under ``maxChunkTokens``, so for
     /// them this cap never binds. It is applied to every call all the same —
-    /// ``summaryTokenAllowance(condensing:)`` clamps to it, and every call
+    /// ``summaryTokenAllowance(condensing:atRatio:)`` clamps to it, and every call
     /// reaches that through ``summarizeOnce(_:prompt:summarizer:)`` — rather
     /// than to a listed set of calls, because a call can be handed more than
     /// ``maxChunkTokens`` in more than one way (see ``maxChunkTokens``).
@@ -760,15 +788,28 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// without the bound depending on any such list being complete.
     /// It is computed from ``summaryTokenRatio`` alone, never from
     /// ``summaryRetentionRatio``, and both bounds clamp to it. That is what
-    /// keeps raising the retention ratio a change to small folds only: a call
-    /// handed a full ``maxChunkTokens`` reaches this cap either way.
+    /// held the final summary of a long conversation where it already was when
+    /// the retention ratio went up: a call handed a full ``maxChunkTokens``
+    /// reaches this cap under either ratio.
+    ///
+    /// It does NOT make that change a small-fold one, and reading it that way
+    /// is the mistake ``summaryRetentionRatio`` records. Reaching this cap
+    /// under the retention ratio is not the same as reaching it under
+    /// ``summaryTokenRatio``: at the defaults the first happens at content of
+    /// 624 estimated tokens and the second only at 1997, so every call between
+    /// the two keeps more than it did before.
     private var maximumSummaryTokens: Int {
         summaryTokenAllowance(ingesting: maxChunkTokens, atRatio: summaryTokenRatio)
     }
 
-    /// ``summaryTokenRatio`` of `tokens`, floored at ``minimumSummaryTokens`` —
-    /// the one place the allowance arithmetic lives, shared by the per-call
+    /// `ratio` of `tokens`, rounded UP and floored at ``minimumSummaryTokens``
+    /// — the one place the allowance arithmetic lives, shared by the per-call
     /// allowance and the cap it is clamped to.
+    ///
+    /// The rounding up is why a bound reaches a cap one token of content
+    /// earlier than a division suggests. A `ratio` of `0.8` reaches a cap of
+    /// `500` as soon as `0.8 * tokens` passes `499`, which is at 624 tokens
+    /// and not at 625.
     ///
     /// - Parameters:
     ///   - tokens: The estimated size, in tokens, of what a call ingests.

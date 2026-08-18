@@ -239,6 +239,113 @@ comments:
     - not spent: `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. No `swift format`. `grep TEMPORARY Sources Tests` returns nothing, and the smoke suite still names the 1B, context 4096, headroom 128, greedy, 1-minute limit.
     - next: `/review ^azd033m`. The gated tier still has to run before `^fm5ddk9` AC1/AC2 and `^bgxtdk3` criterion 5 can close, and the planted-fact property is measured for folds under the growth cap and argued for folds above it.
   timestamp: 2026-08-18T14:59:56.769308+00:00
+- actor: claude-code
+  id: 01m0b72bya6vd6e5vy4qb67xby
+  text: |-
+    ## Verification of `94ca5e9` — the code is sound, three stated claims are not
+
+    An independent verification pass checked the arithmetic rather than taking the implement report at its word. Recording it here because the review agent died on an API limit before it could file findings.
+
+    ### What holds
+
+    - **No path escapes the growth cap.** `cut(_:toCharacters:)` has exactly ONE call site, inside `summarizeOnce`, and every caller reaches it there — map single-chunk, map loop, reduce flat, reduce no-progress fallback, reduce round. `maximumSummaryTokens` is computed from `summaryTokenRatio` alone and the `min(...)` sits in the shared function, so it clamps the retention bound identically to the generation bound. A final summary of a span of ANY length stays bounded at 500 estimated tokens, 2000 bytes. The property `summaryTokenRatio` exists to protect is intact.
+    - **The cut cannot return empty from a non-empty answer.** `UTF8Budget.prefix` CAN return `""` — a single grapheme larger than the budget, or `maxBytes <= 0` — and the cut absorbs it: both early returns are guarded by their own non-blank test, and the last line hands back the uncut `summary`. Traced against a 25-byte ZWJ emoji at limit 4, whitespace-only input, and a non-positive limit.
+    - **The empty-summary refusal still reads the model's own answer, before the cut.**
+    - **`Compactor` has zero changed lines**, and its guard is still reachable two ways: the `minimumSummaryTokens` floor of 128 lets a span under that floor buy a summary larger than itself, and the cut measures RENDERED content while the guard measures entries.
+    - **`aPlantedFactLateInTheSpanSurvivesTheFold` is load-bearing.** It searches `result.summary` — the post-cut string — for a coined proper noun that appears nowhere else in the fixture, with case-sensitive `contains`. A discarded fold fails hard at the `#require`.
+
+    ### Three claims that are wrong, and one of them is in the commit message
+
+    1. **The crossover is 624, not 625.** `.rounded(.up)` puts saturation at `0.8C > 499`, so `C >= 624`.
+    2. **"At 625+ behaviour is unchanged" is FALSE.** The OLD cut bound at the 0.25 allowance, which saturates at `C >= 1998`. So the band **624 to 1997 keeps strictly more than before** — up to 3.2x more. At C = 650: old 163 tokens, new 500.
+    3. **The doc comment at `Summarization.swift:257-260` is false for the very fixture it cites.** It says only calls where the cap does NOT bind keep more of their answer. At the smoke fixture's C of about 650 the cap DOES bind on retention (520 clamped to 500) and the call still went from 160 to 330 stored tokens. The correct statement is "calls whose content is under `maxChunkTokens`".
+
+    The neighbouring sentence — a call handed a full `maxChunkTokens` is cut to exactly what it was before — is correct.
+
+    > **Re-derived on 2026-08-18 while correcting the docs, and item 2 above is itself off by one at both edges.** The old bound saturates at `C >= 1997`, not 1998 (`0.25` is exact in binary, and `0.25 * 1996` is exactly `499.0`), so the two bounds agree from 1997. And the band starts at 161, not 624: below 161 both bounds sit on the `minimumSummaryTokens` floor, and from 161 up the retention bound leaves that floor while the old one stays on it. So the calls that keep strictly more are **161 through 1996**. The ratio at C = 650 is 3.07x, not 3.2x — 3.2x is `520/163`, and 520 is clamped to 500 before it is used. Item 1 and item 3 hold exactly as written.
+
+    ### Also worth carrying
+
+    The margin argument at `:246-253` rests on rendering being 1.01x the span, measured on ONE fixture. A span of many very short turns renders well past 1.25x, at which point `0.8 x rendered > span` and the did-not-shrink guard is the only thing standing. That margin is fixture-specific, not structural.
+
+    ### What this means
+
+    The change is safe to keep. The defects are in what the code and the commit message SAY about it, and the same false claim is in `94ca5e9`'s message, so it cannot be edited without a rewrite. Correct the doc comments and record the correction here.
+
+    ## Open, not done
+
+    - [x] Correct `Summarization.swift:257-260`, and the 625 figure, to the measured 624 and the real 1997 crossover
+    - [x] State the rendering margin as fixture-specific rather than structural
+    - [ ] `/review` never completed on `94ca5e9` — the agent died on an API limit. This card has NOT passed review.
+  timestamp: 2026-08-18T19:55:11.690891+00:00
+- actor: claude-code
+  id: 01m0b8ea62wzn04cpzwpn1c1re
+  text: |-
+    ## Documentation corrected in `Summarization.swift`, and two of the verifier's own numbers corrected with it
+
+    Scope was documentation only. `summaryRetentionRatio`, `summaryTokenRatio`, `maximumSummaryTokens`, the cut and every test assertion are byte-identical. `git diff --stat` touches one file.
+
+    ### I re-derived every figure before I wrote it
+
+    The arithmetic is `min(maximumSummaryTokens, max(minimumSummaryTokens, ceil(C * ratio)))`, with `maximumSummaryTokens = max(128, ceil(2000 * 0.25)) = 500` at the defaults. I evaluated it over the whole range rather than at the points named.
+
+    | content C, estimated tokens | old bound, ratio 0.25 | new bound, ratio 0.8 |
+    |---|---|---|
+    | 160 | 128 | 128 |
+    | 161 | 128 | 129 |
+    | 623 | 156 | 499 |
+    | 624 | 156 | **500 — the new bound reaches the cap** |
+    | 650 | 163 | 500 |
+    | 1996 | 499 | 500 |
+    | 1997 | **500 — the old bound reaches the cap** | 500 |
+
+    ### Claim 1 holds. Claims 2 and 3 needed correction, in the direction of MORE change, not less
+
+    - **624, not 625 — confirmed.** `ceil(0.8C) >= 500` needs `0.8C > 499`, so `C > 623.75`, so `C >= 624`. C=623 gives 499 and C=624 gives 500, exactly as stated.
+    - **The old crossover is 1997, not 1998.** `0.25` is exact in binary, so `ceil(0.25C) >= 500` needs `0.25C > 499`, i.e. `C > 1996`, i.e. `C >= 1997`. At C=1996 the product is exactly `499.0` and `ceil` leaves it at 499; at C=1997 it is `499.25` and `ceil` gives 500. So the two bounds agree from **1997**, and the band where the new cut keeps strictly more ends at **1996**.
+    - **The band also starts far lower than 624.** Below C=161 both bounds sit on the `minimumSummaryTokens` floor of 128 and are equal. From C=161 the new bound leaves the floor while the old one stays on it until C=513. So the calls that keep strictly more are **161 through 1996**, not 624 through 1997. The 624 figure marks where the CAP starts binding on retention, which is a different event from where the two bounds part company.
+    - **At C=650 the ratio is about 3.1x, not 3.2x.** Old 163, new 500, so 3.07x. 3.2x is `520/163` — the unclamped retention bound over the old one, and 520 is clamped to 500 before it is used.
+
+    ### Claim 3 holds, and the smoke run confirms it end to end
+
+    `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` reports `ceilings=[291]`, so the generation allowance is `291 - 128 = 163`, so `ceil(0.25C) = 163` and C is between 649 and 652. Retention on that content is `ceil(0.8 * 650) = 520`, which the cap clamps to 500 — **the cap does bind** — and the same call still moved from 160 stored tokens to 330. The sentence that said only calls where the cap does not bind keep more of their answer was therefore false for the one fixture it cited.
+
+    I did not write "calls whose content is under `maxChunkTokens`" as the replacement, because that is off by three at the top: content of 1997, 1998 and 1999 estimated tokens is under `maxChunkTokens` of 2000 and is cut to exactly what it was cut to before. The doc now states the band by its measured edges instead.
+
+    ### What changed in the file
+
+    1. **The margin paragraph on `summaryRetentionRatio`.** The 1.01x rendering figure is now stated as a property of that one fixture. The labels and the separator cost about 19 bytes per prompt/response turn however short the turn is, so entries averaging under roughly 40 bytes of text render past 1.25x the span; past 1.25x this ratio of the rendered content EXCEEDS the span, this bound guarantees nothing on its own, and `Compactor`'s did-not-shrink guard is the only thing standing. The doc says why a fixture-measured margin is still safe to ship: the worst this bound can then do is let a fold be discarded, which is the state that preceded it.
+    2. **The false sentence on `summaryRetentionRatio`.** The sentence about a call handed a full `maxChunkTokens` is kept word for word, because it is correct. The claim after it is replaced by the measured band — 624 where the cap starts binding on retention, 1997 where the old bound reached it, 161 where the floor stops deciding both — and by the fixture that shows the cap binding while the stored summary still trebled.
+    3. **The same false reading on `maximumSummaryTokens`.** That doc said the cap "keeps raising the retention ratio a change to small folds only". Same cause, same file, so it is corrected rather than left standing: reaching the cap under one ratio is not reaching it under the other.
+    4. **`summaryTokenAllowance(ingesting:atRatio:)`.** Its summary still said "`summaryTokenRatio` of `tokens`" although the ratio has been a parameter since `94ca5e9`. It now says `ratio` of `tokens`, and states the rounding up that puts the crossover at 624 and not 625 — the root cause of the off-by-one, recorded where the rounding lives.
+    5. **Two stale symbol links.** ``summaryTokenAllowance(condensing:)`` names no symbol; the function is `summaryTokenAllowance(condensing:atRatio:)`. Both sites fixed.
+
+    ### What I did NOT change
+
+    `94ca5e9`'s commit message carries the same false claim and cannot be edited without a rewrite. It stands, and this comment is the record that supersedes it.
+
+    ### Verification
+
+    - `swift build` — complete, 10.9 s.
+    - `swift build --build-tests -Xswiftc -warnings-as-errors` — complete, zero warnings.
+    - `swift test` — 984 + 29 + 58 = 1071 tests, 0 failures, 1 pre-existing known issue (`BoundedWait.swift`).
+    - `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` — 2 tests, 0 failures, 8.0 s, and it printed the numbers the doc now cites: `ceilings=[291] answerTokens=[330] spanTokens=643 summaryTokens=330 tokensBefore=713 tokensAfter=400`.
+    - `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. No `swift format`.
+  timestamp: 2026-08-18T20:19:11.682579+00:00
+- actor: claude-code
+  id: 01m0b8gjpqdj3jr8jc8fjeq9dy
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — `Sources/FoundationModelsRouter/Compaction/Summarization.swift`, 58 insertions and 17 deletions, all of them doc comment. No source line, no test line, no constant changed. `git diff --stat -- Sources Tests` names that one file.
+    - checklist: items 1 and 2 of the verification pass are flipped on the comment that carries them. Item 3 stays open, because `/review` still has not run on this work.
+    - the three claims: item 1 (624, not 625) holds and is now in the doc. Item 3 (the sentence is false for the fixture it cites) holds and the sentence is replaced. Item 2 is off by one at BOTH edges and is corrected in place on the verification comment: the old bound saturates at C >= 1997, not 1998, and the band where the new cut keeps strictly more starts at 161, not 624, because below 161 both bounds sit on the `minimumSummaryTokens` floor. The 3.2x figure is 3.07x — 3.2x divides the UNCLAMPED 520 by 163.
+    - I did not use the suggested replacement wording "calls whose content is under `maxChunkTokens`": content of 1997 to 1999 estimated tokens is under `maxChunkTokens` and is cut to exactly what it was cut to before, so that phrasing is off by three at the top. The doc states the band by its measured edges.
+    - swept the same cause through the file rather than only the cited lines: `maximumSummaryTokens` carried the same false reading ("a change to small folds only") and is corrected; `summaryTokenAllowance(ingesting:atRatio:)` still said "`summaryTokenRatio` of `tokens`" although the ratio is a parameter, and now states the rounding up that puts the crossover at 624 and not 625; two stale ``summaryTokenAllowance(condensing:)`` symbol links name the real symbol.
+    - no number changed. `summaryRetentionRatio` is still `0.8`, `summaryTokenRatio` still `0.25`, `maximumSummaryTokens` still computed from `summaryTokenRatio` alone, the cut untouched, every test assertion untouched.
+    - verification: `swift build` complete; `swift build --build-tests -Xswiftc -warnings-as-errors` complete, zero warnings; `swift test` — 984 + 29 + 58 = 1071 tests, 0 failures, 1 pre-existing known issue (`BoundedWait.swift`). `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` — 2 tests, 0 failures, 8.0 s, printing `ceilings=[291] answerTokens=[330] spanTokens=643 summaryTokens=330 tokensBefore=713 tokensAfter=400`, which is the measurement the corrected doc cites.
+    - not spent: `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. No `swift format`.
+    - next: `/review ^azd033m`. The gated tier still has to run before `^fm5ddk9` AC1/AC2 and `^bgxtdk3` criterion 5 can close.
+  timestamp: 2026-08-18T20:20:25.943578+00:00
 position_column: doing
 position_ordinal: '8280'
 title: The c26fbbe length directive stalls the compaction summarizer — 7 of 7 folds unfinished in 1796 s, where 7 folds plus 7 answers took 1686 s before it
