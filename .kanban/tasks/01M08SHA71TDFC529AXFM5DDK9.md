@@ -273,8 +273,36 @@ comments:
     - rename check: grepped Sources/FoundationModelsRouter/Compaction/Summarization.swift and Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift plus the whole repo for lowercase lengthDirective, summarizerCall(, and diagnostic(summary: — no stray sites found, every call site and DocC symbol link uses makeLengthDirective, makeSummarizerCall, makeDiagnostic
     - next: ready for review
   timestamp: 2026-08-17T22:53:30.337852+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m08yxa82j12y3tx2494cskbe
+  text: |-
+    ### commit — changed
+    - evidence: 08ef6c8 refactor(compaction): add make prefix to Summarization factory methods (^fm5ddk9)
+    - files: Sources/FoundationModelsRouter/Compaction/Summarization.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift, .kanban task records
+    - next: local commit only, not pushed
+  timestamp: 2026-08-17T22:54:08.642686+00:00
+- actor: claude-code
+  id: 01m08z3dkbp8t5pwg4xpdyc02h
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (08ef6c8) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 2 files reviewed (`Sources/FoundationModelsRouter/Compaction/Summarization.swift`, `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`); 2 `.kanban/` files excluded by `.reviewignore`.
+    - verified: both prior `swift/fluent-usage` findings are fixed in the code, not only on the card. `makeLengthDirective(summaryCharacters:contentCharacters:)` declared at Summarization.swift:562, called at :513, and both DocC symbol links updated at :479 and :596. `makeSummarizerCall(answering:)` declared at CompactionEvaluationTests.swift:510, called at :537, :632, :679. No un-prefixed `lengthDirective` or `summarizerCall` remains anywhere in the repository.
+    - sweep: the same cause was swept to `makeDiagnostic(summary:answer:question:)` at CompactionEvaluationTests.swift:527 with all ten call sites renamed. Every remaining function in the two files is an accessor, an extractor, or a computation — none constructs and returns a new instance — so the `fluent-usage` cause is fully removed from both files.
+    - diff: a rename only. Every hunk changes an identifier; no statement, condition, literal, or signature type changed.
+    - next: two acceptance criteria stay open on the card and need a separate gated run — `factInSummary=true` on the large majority of seeds, and the hermetic gate agreeing with the real model. The related observation is filed as ^xscp198. Neither is a code finding.
+  timestamp: 2026-08-17T22:57:28.683134+00:00
+- actor: claude-code
+  id: 01m08z4berbw74t9nx1r92t0ed
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 2 files, a rename only. `makeLengthDirective`, `makeSummarizerCall`, `makeDiagnostic`, with every call site and two DocC symbol links. The sweep found the third method, which neither finding named.
+    - test: green — swift build clean, swift build --build-tests -Xswiftc -warnings-as-errors clean, swift test 1051 tests, 0 failures, 1 pre-existing known issue
+    - commit: 08ef6c8
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted; both prior findings verified corrected in the code, not taken on trust
+    - card: `done` on the review verdict. Two acceptance criteria stay unchecked and need a second gated run: `factInSummary=true` on the large majority of seeds, and the hermetic gate agreeing with the real model. `^xscp198` holds a separate observation about the 7-seed tier and the 0.9 mean.
+  timestamp: 2026-08-17T22:57:59.256375+00:00
+position_column: done
+position_ordinal: ffb380
 title: The real model still discards every compaction eval fold — 7 of 7 gated seeds report factInSummary=false with an empty stage list
 ---
 Found by the sanctioned gated measurement run of `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter CompactionEvaluationIntegrationTests` on 2026-08-17, while measuring the time limit for `^fz49qds`.
