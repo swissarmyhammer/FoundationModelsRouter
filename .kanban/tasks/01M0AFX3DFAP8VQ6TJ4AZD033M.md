@@ -346,6 +346,89 @@ comments:
     - not spent: `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. No `swift format`.
     - next: `/review ^azd033m`. The gated tier still has to run before `^fm5ddk9` AC1/AC2 and `^bgxtdk3` criterion 5 can close.
   timestamp: 2026-08-18T20:20:25.943578+00:00
+- actor: claude-code
+  id: 01m0b93vbb1kx9cgsmvfvvx6v5
+  text: |-
+    ### review — findings
+    - evidence: `review sha 6fc9bb1~1..240c0b6` — engine clean (14 validator passes attempted, 0 findings, 0 refuted, 0 failed). Directed verification raised 1 finding — Sources/FoundationModelsRouter/Compaction/Summarization.swift:246. First review of `94ca5e9` and `240c0b6`; the earlier attempt on `94ca5e9` died on an API limit and filed nothing.
+    - doc arithmetic: every figure `240c0b6` wrote is correct — 624, 1997, the contiguous 161–1996 band, 650 → 163 and 500, and 3.07x (which is in the commit message only, not in any doc comment). The earlier 625 / 1998 / 3.2x are gone.
+    - `summaryRetentionRatio = 0.8`: sufficient if and only if rendered / span < 1.25, which the doc states and quantifies correctly (about 19 bytes per prompt/response turn, exact crossover at entries averaging 38 bytes). The sub-161-token floor regime is covered by `minimumSummaryTokens`' own doc. The one unnamed margin consumer is the pending-runs rendering the replacement entry carries — that is the finding.
+    - next: correct the "one place the two sides disagree" sentence to name both disagreements and to state the pending-runs cost. Task stays in `review`.
+  timestamp: 2026-08-18T20:30:57.387634+00:00
+- actor: claude-code
+  id: 01m0b9d9sz9t05scarqmghv33j
+  text: |-
+    ## The pending-runs cost, measured rather than taken on trust
+
+    The card told me not to trust the reviewer's 134 and 40. I re-derived both from `CompactionSegment.swift` and then ran a byte-identical copy of `renderedPendingRuns(_:)` to confirm.
+
+    ### The mechanism holds exactly as the finding states it
+
+    - `Summarization.apply(...)` builds the replacement entry through `CompactionSegment.boundaryEntry(id:summaryText:content:)`, with `pendingRuns: pendingRuns.isEmpty ? nil : pendingRuns`.
+    - `boundaryEntry` appends a second `.text` segment holding `renderedPendingRuns(_:)` exactly when `content.pendingRuns` is non-`nil`.
+    - `SegmentPayload.contentByteCount` returns `utf8ByteCount(of: [content])` for `.text` — the full text — while the `.structure` manifest returns `0` because `CompactionSegment`'s schema name is in `RouterSegmentSchemaNames.all`.
+    - `Compactor`'s guard is `tokensAfter < tokensBefore` over `estimatedTokenCount(of: folded.transcript)`, which sums `contentByteCount` over every entry.
+
+    So the guard sees summary text PLUS the pending-runs rendering, and the cut bounded only the summary text. Second disagreement confirmed.
+
+    ### The header figure is right. The per-run figure is wrong, and by more than half
+
+    Measured with a byte-identical copy of the function, a 26-character ULID completion token (`SessionMailbox.makeCompletionToken()` returns `ULID.generate().description`):
+
+    | parked runs | op | progress | bytes |
+    |---|---|---|---|
+    | 0 | — | — | 134 |
+    | 1 | `run tool` | none | 217 |
+    | 2 | `run tool` | none | 301 |
+    | 3 | `run tool` | none | 385 |
+    | 5 | `run tool` | none | 553 |
+    | 10 | `run tool` | none | 973 |
+    | 1 | `generate completion` | 40 characters | 261 |
+    | 10 | `generate completion` | 40 characters | 1413 |
+
+    - **134 bytes of fixed heading — correct**, and it includes the line break before the first run line.
+    - **"about 40 per parked run" — wrong.** A run line is 20 bytes of framing (`- completionToken ` and `: `), the 26-character token, the op, and a progress clause of 29 bytes when none was reported or 22 bytes plus the detail when one was. The cheapest line a run can produce is 76 bytes, and the marginal cost of one more run is that plus a line break. With an 8-byte op and no progress it is 84 bytes per run — 2.1x the figure on the card.
+    - **The heading never appears alone**, because the segment exists only when there is at least one run. The floor for a session with parked runs is 210 bytes, not 134.
+
+    ### The percentages, recomputed
+
+    The cut's byte bound is `retained * Compactor.charsPerTokenEstimate`, so the `minimumSummaryTokens` floor gives 512 bytes and the `maximumSummaryTokens` cap gives 2000.
+
+    | | against the 512-byte floor bound | against the 2000-byte cap bound |
+    |---|---|---|
+    | one parked run (217 bytes) | 42% | 11% |
+    | six parked runs (637 bytes) | **124% — more than the whole bound** | 32% |
+    | ten parked runs (973 bytes) | 190% | 49% |
+
+    The card's 26% and 6.7% were the 134-byte heading alone against those two bounds. Both are understatements, because the heading cannot occur without a run.
+
+    ### The judgement the card asked for
+
+    This is more than a documentation gap, so it is filed as its own card rather than buried in the doc comment. The finding's own doc correction is still made here, because the false claim is on a line this span wrote.
+
+    The reason: unlike the `User: `/`Assistant: ` labels, this cost does not scale with the span. It is charged per parked run. The margin `summaryRetentionRatio` leaves is about a fifth of the rendered content, so the pending-runs rendering fits inside it only while `pendingRunsBytes < 0.2 * spanBytes` — one parked run needs a span above roughly 1085 bytes, and ten need one above roughly 4865. Under `minimumSummaryTokens`' flat 512-byte bound, six parked runs exceed the entire bound on their own, so no summary however short can make that fold shrink the transcript.
+
+    The consequence is bounded — `Compactor` discards the fold, which is the safe failure the doc already names — but a session that parks background runs and then compacts a modest span can be unable to fold at all, and that is exactly the case the pending-runs feature exists for.
+  timestamp: 2026-08-18T20:36:07.103573+00:00
+- actor: claude-code
+  id: 01m0b9v4z481wmn9tjaeq93gda
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — `Sources/FoundationModelsRouter/Compaction/Summarization.swift`, 34 insertions and 5 deletions. Every changed line is a `///` line: `git diff -U0 -- Sources | grep -E '^[+-]' | grep -v '^[+-][+-]' | grep -vE '^[+-][[:space:]]*///'` returns 0 lines. No constant, no test, no signature changed.
+    - checklist: the open finding on `summaryRetentionRatio` is flipped. Flipped by editing the checkbox in `.kanban/tasks/01M0AFX3DFAP8VQ6TJ4AZD033M.md` directly rather than through `update task`, because that op flattens this description's newlines and zeroes its tags. Verified after: `progress` 1.0, tags `compaction`/`defect`/`eval`/`real-model` intact, description intact, column `doing`.
+    - the doc now names BOTH disagreements and says which side of the comparison each sits on. The first is the rendering, which changes what this bound is measured against. The second is the pending runs, which changes what the guard measures.
+    - **I did not take 134 and 40 on trust, and one of them is wrong.** Measured by running a byte-identical copy of `renderedPendingRuns(_:)` with a 26-character `ULID` completion token. 134 bytes of heading is CORRECT. "About 40 bytes per parked run" is WRONG — a run line is 20 bytes of framing plus the 26-character token plus the op plus 29 bytes for the no-progress clause (or 22 plus the detail), so the cheapest possible line is 76 bytes and a realistic one is 84. That is 2.1x the figure the finding stated.
+    - the heading also never occurs alone: `Summarization.apply` passes `pendingRuns.isEmpty ? nil : pendingRuns`, so the segment exists only when there is at least one run. One parked run renders 217 bytes, not 134.
+    - measured, not extrapolated: 1 run 217 bytes, 2 runs 301, 3 runs 385, 4 runs 469, 5 runs 553, 6 runs 637, 7 runs 721, 10 runs 973. With a 19-byte op and a 40-character progress detail, 10 runs come to 1413.
+    - the finding's 26% and 6.7% were the 134-byte heading alone against the 512-byte floor bound and the 2000-byte cap bound. The doc now states the real figures instead: six parked runs come to 637 bytes, which is more than the whole 512-byte bound and 32% of the 2000-byte bound.
+    - **the judgement the card asked for: this is a real hazard, not only a documentation gap, and it is filed as `^64f3hnv`.** Unlike the labels, the cost is charged per parked run and does not shrink against a larger span. The margin holds only while the rendering is under a fifth of the span, so one parked run needs a span above roughly 1085 bytes and ten need one above roughly 4865. Under the `minimumSummaryTokens` floor's flat 512-byte bound, six parked runs exceed the bound on their own and no summary can make that fold shrink the transcript. The consequence is bounded — `Compactor` discards the fold — but a session that parks background runs and folds a modest span cannot compact at all, which is the case the pending-runs feature exists for.
+    - `summaryRetentionRatio` is still `0.8`, as the card required. `CompactionSegment.swift` and `Compactor.swift` are untouched.
+    - every name the new prose uses resolves: `cut(_:toCharacters:)`, `CompactionSegment/boundaryEntry(id:summaryText:content:)`, `CompactionSegment/renderedPendingRuns(_:)`, `SegmentPayload/contentByteCount`, `ULID/stringLength`, `minimumSummaryTokens`, `maximumSummaryTokens`. `ULID/stringLength` follows the precedent in `DetachingTool.swift`, which cites it for the same kind of byte arithmetic. Task ids in `///` blocks follow the four existing sites in this file.
+    - verification: `swift build` complete; `swift build --build-tests -Xswiftc -warnings-as-errors` complete, zero warnings; `swift test` — 984 + 29 + 58 = 1071 tests, 0 failures, 1 pre-existing known issue. Identical to the baseline before this edit.
+    - `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` — 2 tests, 0 failures, 6.2 s, and the fixture figures the doc cites are unchanged: `ceilings=[291] answerTokens=[330] spanTokens=643 summaryTokens=330 tokensBefore=713 tokensAfter=400`.
+    - not spent: `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. No `swift format`, no `swiftformat`.
+    - next: `/review ^azd033m`. The gated tier still has to run before `^fm5ddk9` AC1/AC2 and `^bgxtdk3` criterion 5 can close.
+  timestamp: 2026-08-18T20:43:40.900772+00:00
 position_column: doing
 position_ordinal: '8280'
 title: The c26fbbe length directive stalls the compaction summarizer — 7 of 7 folds unfinished in 1796 s, where 7 folds plus 7 answers took 1686 s before it
@@ -440,4 +523,41 @@ The review brief asked four questions about the new cut on the production path. 
 - Multi-byte scalar and grapheme cluster safety — **holds.** The byte-budget prefix iterates `for character in text` and accumulates `character.utf8.count`, so it never slices at a byte offset. `lastSentenceBoundary` and `lastIndex(where:)` return `String.Index` values taken from that same character walk.
 - Unit agreement with `Compactor`'s did-not-shrink guard — **holds.** The cut binds on `summary.utf8.count > limit`, with `limit = Int(Double(allowance) * Compactor.charsPerTokenEstimate)`. `Compactor.estimatedTokenCount(bytes:)` is `Int((Double(bytes) / charsPerTokenEstimate).rounded(.up))` over UTF-8 bytes. Both sides measure UTF-8 bytes, so they cannot drift.
 
-- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:591` `correctness` — `cut(_:toCharacters:)` keeps a PREFIX of the summary, so it is content-blind: a fact the model states late in its answer is removed, and every fact stated before it is kept. The gated smoke run of this commit measured the loss — `answerTokens=[332]` cut to `summaryTokens=136`, so 59% of the model's answer was discarded. The eval seeds this thread of cards is measured by are planted-fact recall seeds, and three of them (`three-facts-long-project-brief`, `three-facts-support-escalation`, `license-key-and-region`) plant more than one fact, so the later facts are the ones a prefix cut drops. State the risk on the card and measure recall against the eval tier before this cut is relied on: the fold now shrinks the transcript, but shrinking it is not the same as carrying the fact the summary exists to carry. #compaction #defect #eval #real-model
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:591` `correctness` — `cut(_:toCharacters:)` keeps a PREFIX of the summary, so it is content-blind: a fact the model states late in its answer is removed, and every fact stated before it is kept. The gated smoke run of this commit measured the loss — `answerTokens=[332]` cut to `summaryTokens=136`, so 59% of the model's answer was discarded. The eval seeds this thread of cards is measured by are planted-fact recall seeds, and three of them (`three-facts-long-project-brief`, `three-facts-support-escalation`, `license-key-and-region`) plant more than one fact, so the later facts are the ones a prefix cut drops. State the risk on the card and measure recall against the eval tier before this cut is relied on: the fold now shrinks the transcript, but shrinking it is not the same as carrying the fact the summary exists to carry.
+
+## Review Findings (2026-08-18 15:22)
+
+> Scope: `review sha 6fc9bb1~1..240c0b6` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 18 not reviewed.
+
+> 18 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 18 file(s)
+
+The engine raised nothing on the accumulated span of `6fc9bb1`, `94ca5e9`, and `240c0b6`: 14 validator passes attempted, 0 findings, 0 refuted, 0 failed, 0 skipped. This is the first review of `94ca5e9` and `240c0b6`; the earlier attempt on `94ca5e9` died on an API limit and filed nothing.
+
+- [x] `Sources/FoundationModelsRouter/Compaction/Summarization.swift:246` `correctness` — The `summaryRetentionRatio` doc says the margin "has to cover the one place the two sides disagree" and then names only the rendering labels. There is a second disagreement it does not name, and it sits on the other side of the comparison: `cut(_:toCharacters:)` bounds the summary TEXT, while the guard measures the whole replacement ENTRY. `CompactionSegment.boundaryEntry(id:summaryText:content:)` appends a second `.text` segment carrying `renderedPendingRuns(_:)` whenever the session has parked runs, and `SegmentPayload.contentByteCount` counts a `.text` segment in full. That is 134 bytes of fixed header plus about 40 bytes per parked run that the guard sees and the cut never bounded — 26% of the margin against the flat 512-byte bound the `minimumSummaryTokens` floor produces, and 6.7% of it against the 2000-byte bound the cap produces. Name both disagreements in that sentence, and state the pending-runs cost in the margin arithmetic the same way the roughly 19 bytes per prompt/response turn is already stated.
+
+## Directed verification of the `240c0b6` doc numbers and of `summaryRetentionRatio = 0.8` (2026-08-18 15:22)
+
+### The arithmetic — every figure `240c0b6` wrote is correct
+
+Derived from the code and then confirmed by evaluating the same expressions. The code is `summaryTokenAllowance(ingesting:atRatio:)` = `max(128, ceil(tokens * ratio))`, clamped by `summaryTokenAllowance(condensing:atRatio:)` to `maximumSummaryTokens`, which is itself `max(128, ceil(2000 * 0.25))` = `500`.
+
+- **624** — the retention bound reaches the cap at 624 and not at 623: `ceil(0.8 * 623)` is 499, `ceil(0.8 * 624)` is 500. Correct, and the doc gives the right reason — the rounding up.
+- **1997** — the old bound reaches the cap at 1997 and not at 1996: `ceil(0.25 * 1996)` is 499, `ceil(0.25 * 1997)` is 500. Correct.
+- **161–1996** — the set of content sizes where the retention bound keeps strictly more than the old one is exactly `[161, 1996]`, and it is contiguous. At 160 both sit on `minimumSummaryTokens`, because `0.8 * 160` is exactly `128.0` as a `Double`. Correct.
+- **650 → 163 and 500** — `ceil(0.25 * 650)` is 163, and `0.8 * 650` is 520 clamped to 500. Both supporting figures in that sentence are correct.
+- **3.07x** — `500 / 163` is 3.0675, so the figure is right. It is not in any doc comment, though: it appears only in the `240c0b6` commit message and on this card. The source says "several times more".
+
+The earlier 625 / 1998 / 3.2x were wrong and are gone. Nothing in the touched doc comments is off.
+
+### Is a fifth of the rendered content a sufficient margin?
+
+Not universally, and the doc already says so and quantifies it correctly.
+
+- **The stated condition is right.** The cut bounds at `0.8 * rendered`; the guard needs `summary < span`. So the guarantee holds if and only if `rendered / span < 1.25`. The labels and separator cost about 19 bytes per prompt/response turn (`"User: "` 6, `"Assistant: "` 11, two line breaks), and the exact crossover is entries averaging 38 bytes of text or fewer. The doc says "under roughly 40 bytes", which is the right order.
+- **Past that crossover the bound guarantees nothing, and the doc says that too**, and names the did-not-shrink guard as the only thing left standing. The outcome is that the fold is discarded, which is the state that preceded the change. That reasoning holds.
+- **A second regime the retention doc does not cover — but the floor's own doc does.** Below 161 estimated tokens of rendered content, `retained` pins to `minimumSummaryTokens` and the character bound is a flat 512 bytes whatever the span's size, so any span of 512 content bytes or less has a bound at or above itself with a perfectly ordinary overhead ratio. `minimumSummaryTokens`' own doc names the same escape — "A fold that still fails to shrink the transcript is caught where it should be" — so this is documented, in the right place. Not a finding.
+- **Rounding takes a little of the margin.** `estimatedTokenCount(bytes:)` divides by 4 and rounds up, so the summary has to beat the span by enough to cross a 4-byte bucket. Up to 4 bytes go to that.
+- **The one unnamed gap is the finding above** — the pending-runs rendering the replacement entry carries.
+
+`CompactionSegment.swift` and `Compactor.swift` have zero changed lines in this span, so the pending-runs behaviour itself is out of scope for a diff review. The claim about it is on a line this span wrote, and that is what the finding is against. #compaction #defect #eval #real-model

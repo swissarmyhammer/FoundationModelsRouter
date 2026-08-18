@@ -244,11 +244,15 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// the span twice; the stored summary named it not at all.
     ///
     /// `0.8` states the guarantee with a margin. The margin has to cover the
-    /// one place the two sides disagree: this bound is measured against the
-    /// RENDERED content of the call, which carries a `User: `/`Assistant: `
-    /// label per entry and a line break between them, while the guard measures
-    /// the span's entries. On the fixture above rendering came to 1.01x the
-    /// span, and a fifth covers that many times over.
+    /// TWO places the two sides disagree, and they sit on opposite sides of
+    /// the comparison: the first changes what this bound is measured against,
+    /// the second changes what the guard measures.
+    ///
+    /// The first is the rendering. This bound is measured against the RENDERED
+    /// content of the call, which carries a `User: `/`Assistant: ` label per
+    /// entry and a line break between them, while the guard measures the
+    /// span's entries. On the fixture above rendering came to 1.01x the span,
+    /// and a fifth covers that many times over.
     ///
     /// **That 1.01x is a property of that one fixture, not of this ratio.** The
     /// labels and the separator cost about 19 bytes per prompt/response turn
@@ -261,6 +265,31 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// did-not-shrink guard is the only thing left standing. That guard is why
     /// a fixture-measured margin is safe to ship: the worst this bound can do
     /// is let a fold be discarded, which is the state that preceded it.
+    ///
+    /// The second is the pending runs, and it sits on the guard's side of the
+    /// comparison: ``cut(_:toCharacters:)`` bounds the summary TEXT, while the
+    /// guard measures the whole replacement ENTRY.
+    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` appends a
+    /// second `.text` segment carrying
+    /// ``CompactionSegment/renderedPendingRuns(_:)`` whenever the session has
+    /// parked runs, and ``SegmentPayload/contentByteCount`` counts a `.text`
+    /// segment in full, so the guard weighs those bytes against the span and
+    /// this bound never saw them. Measured: 134 bytes of heading — never on
+    /// their own, because that segment exists only when there is at least one
+    /// run — plus, per run, 20 bytes of framing, the run's
+    /// ``ULID/stringLength``-character completion token, its op, and either 29
+    /// bytes for the no-progress clause or 22 bytes plus the progress detail.
+    /// One parked run with an eight-byte op and no progress reported renders
+    /// 217 bytes, and each further such run adds 84.
+    ///
+    /// **That cost is charged per parked run, so unlike the labels it does not
+    /// shrink against a larger span.** Six such runs come to 637 bytes — more
+    /// than the whole 512-byte bound the ``minimumSummaryTokens`` floor
+    /// produces, and 32% of the 2000-byte bound the ``maximumSummaryTokens``
+    /// cap produces — so a small span with several parked runs can spend the
+    /// margin on that rendering alone, and the fold is discarded whatever the
+    /// summary says. `^64f3hnv` carries that behaviour; this ratio is not the
+    /// place to fix it.
     ///
     /// The rest of the margin is a floor on what a fold saves: a fold that
     /// could not save a fifth of the span it replaced was not worth the
