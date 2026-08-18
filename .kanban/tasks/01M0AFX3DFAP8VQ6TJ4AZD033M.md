@@ -429,8 +429,54 @@ comments:
     - not spent: `FM_ROUTER_INTEGRATION_TESTS` and `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` were never set. No `swift format`, no `swiftformat`.
     - next: `/review ^azd033m`. The gated tier still has to run before `^fm5ddk9` AC1/AC2 and `^bgxtdk3` criterion 5 can close.
   timestamp: 2026-08-18T20:43:40.900772+00:00
-position_column: doing
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01m0baq7hszmjmf0en8fmdn6f8
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha 3b433fb~1..3b433fb` — 7 validator passes attempted, 0 findings, 0 confirmed, 0 refuted, 0 failed, 0 skipped. 1 file reviewed, 4 skipped by `.reviewignore` (`.kanban/`). Every prior finding on this card is checked: the two from 2026-08-18 09:24 and the one from 2026-08-18 15:22.
+    - next: none. Task moved to `done`.
+
+    The description is not rewritten, because there is no new finding for an implementer to act on. This comment carries the directed verification the review brief asked for.
+
+    ## Directed verification of `3b433fb` (2026-08-18 15:44)
+
+    ### The commit is documentation only — confirmed
+
+    `git show 3b433fb -- Sources/` gives 34 added and 5 removed lines. Every one of them is a `///` line: filtering the diff for added or removed lines that are not `///` returns nothing. Only `Summarization.swift` is touched; `CompactionSegment.swift` and `Compactor.swift` have no changed line. `summaryRetentionRatio` is still `0.8` at `Summarization.swift:318`, and both hunks sit in the doc comment above that line, not on it. `swift build` completes with no warning from this module.
+
+    ### Every byte figure is correct
+
+    Recomputed from `CompactionSegment.renderedPendingRuns(_:)` itself, not from the commit message, with `ULID.stringLength = 26` (`Core/ULID.swift:22`).
+
+    | the doc comment says | measured | verdict |
+    |---|---|---|
+    | heading 134 bytes | 133 bytes of text plus the line break that joins it to the run lines | correct |
+    | 20 bytes of framing per run | `"- completionToken "` 18 plus `": "` 2 | correct |
+    | 29 bytes for the no-progress clause | `" — no progress reported yet"` — 27 characters, em dash 3 bytes | correct |
+    | 22 bytes plus the detail for a progress clause | `" — latest progress: "` | correct |
+    | a `ULID/stringLength`-character token | `ULID.stringLength = 26` | correct |
+    | 1 run with an 8-byte op and no progress is 217 bytes | 134 + 83 | correct |
+    | each further such run adds 84 | 83 bytes of line plus one line break | correct |
+    | 6 such runs come to 637 bytes | 134 + 6x83 + 5 line breaks | correct |
+    | 637 is more than the 512-byte floor bound | `minimumSummaryTokens` 128 x `charsPerTokenEstimate` 4.0 | correct |
+    | 637 is 32% of the 2000-byte cap bound | 637 / 2000 = 31.85% | correct |
+
+    The commit message's extra figures also hold: 3 runs 385 bytes (134 + 3x83 + 2), 10 runs 973 bytes (134 + 10x83 + 9). Its "a run line is 76 bytes at its cheapest" reads as 75 bytes of framing, token and no-progress clause with a zero-length op, plus one line break. That figure is only in the commit message; the shipped doc comment states the parts rather than a total, and each part is right. The finding's "about 40" was wrong, and the correction is sound.
+
+    ### The two supporting mechanisms hold
+
+    - `SegmentPayload.contentByteCount` counts a `.text` segment in full: `case .text(_, let content): return utf8ByteCount(of: [content])` in `Recording/TranscriptEntryPayload.swift`.
+    - `CompactionSegment.boundaryEntry(id:summaryText:content:)` appends the second `.text` segment under `if let pendingRuns = content.pendingRuns`, carrying `renderedPendingRuns(pendingRuns)`.
+    - "never on their own, because that segment exists only when there is at least one run" holds at every live call site. `Summarization.swift:437` and `RoutedSessionActorCompaction.swift:537` both pass `pendingRuns.isEmpty ? nil : pendingRuns`, and `RecordingLanguageModel.swift:513` passes `nil`. A non-nil empty array never reaches `boundaryEntry`, so the heading is never rendered alone.
+    - The doc link ``ULID/stringLength`` resolves to `Core/ULID.swift:22` and matches the existing use in `Hosting/DetachingTool.swift`.
+
+    ### Filing `^64f3hnv` was the right call
+
+    The behaviour lives in `CompactionSegment.boundaryEntry` and in `Compactor`'s did-not-shrink guard. Neither file has a changed line in this span, so a behaviour change here could not have been reviewed as part of it. The failure is safe while the card waits: the guard discards the fold and returns the original transcript, so no transcript is corrupted. And the fix needs a choice among three designs that only a measurement can settle. `^64f3hnv` names all three, forbids raising `summaryRetentionRatio` to hide the symptom, requires a reproduction first, and repeats the four properties this card protects. A behaviour change on this card was not warranted.
+  timestamp: 2026-08-18T20:59:01.049997+00:00
+position_column: done
+position_ordinal: ffb480
 title: The c26fbbe length directive stalls the compaction summarizer — 7 of 7 folds unfinished in 1796 s, where 7 folds plus 7 answers took 1686 s before it
 ---
 Measured by the instrumented gated run of 2026-08-18, the one run `^h2xxsse` sanctioned. Log: `/private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/606aa1c2-1180-4d8b-96da-9a3c34d5a1b0/scratchpad/gated-run-3.log`.
