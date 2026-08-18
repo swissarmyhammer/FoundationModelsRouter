@@ -73,67 +73,6 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// own doc comment for the measured run behind it.
 private let compactionSmokeTimeLimitMinutes = 1
 
-// MARK: - Summarizer
-
-/// The summarizer this suite hands ``Compactor``: one blank-slate session per
-/// call over the resident smoke model, and a record of every call made.
-///
-/// The blank slate matters for the same reason it does in production
-/// (`RoutedSessionActorCompaction.swift`'s own summarizer): a fold's summarizer
-/// call must not be added to an already-full transcript, must not write the
-/// fold's own prompt into the real history, and must not leak one chunk into
-/// the next.
-///
-/// The record is what lets this suite assert the summarizer ran at all, which
-/// is one of the five facts it exists to prove. It keeps the generation ceiling
-/// of each call rather than a bare count, so the count and the ceiling the fold
-/// arithmetic produced are one measurement rather than two.
-private actor CountingBlankSlateSummarizer: CompactionSummarizer {
-    /// The resident smoke model each call opens its own session over.
-    private let container: MLXFoundationModelsContainer
-
-    /// One completed summarizer call.
-    struct Call {
-        /// The generation ceiling ``Summarization`` computed for this call.
-        let ceiling: Int
-
-        /// The text the model answered with, unchanged.
-        let answer: String
-    }
-
-    /// Every call made, in call order — so `calls.count` is the number of
-    /// generations this fold cost.
-    ///
-    /// The ANSWER is kept beside the ceiling, and not only the ceiling, because
-    /// a fold that gets discarded returns no summary at all: the size the model
-    /// really wrote is then readable nowhere else. That size is the one number
-    /// that separates "the summarizer misbehaved" from "the guard is wrong",
-    /// and `^azd033m` needed it.
-    private(set) var calls: [Call] = []
-
-    /// Creates a summarizer over `container`.
-    ///
-    /// - Parameter container: The resident smoke model to generate with.
-    init(container: MLXFoundationModelsContainer) {
-        self.container = container
-    }
-
-    /// Condenses `prompt` in one generation over a session that has seen
-    /// nothing else.
-    ///
-    /// - Parameters:
-    ///   - prompt: The assembled compaction instructions and content.
-    ///   - maxTokens: The generation ceiling ``Summarization`` computed.
-    /// - Returns: The model's answer, unchanged.
-    /// - Throws: Whatever the backend throws.
-    func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-        let answer = try await container.makeSession(transcript: Transcript(entries: []))
-            .respond(to: prompt, maxTokens: maxTokens)
-        calls.append(Call(ceiling: maxTokens, answer: answer))
-        return answer
-    }
-}
-
 // MARK: - Suite
 
 /// The fast answer to one question: does the compaction path work end to end
@@ -264,26 +203,8 @@ struct CompactionSmokeIntegrationTests {
     /// inside the ceiling rather than always ending at it.
     private static let reasoningTokenHeadroom = 128
 
-    /// The scale ``makeBudget(forcingSummarizationOf:)`` states its fold target
-    /// against.
-    ///
-    /// ``TokenBudget`` takes its target as a FRACTION of a limit, and this
-    /// suite needs a target at a particular token COUNT read off the fixture.
-    /// A large limit makes the fraction resolve back to that count exactly
-    /// rather than to a rounding of it. Nothing else reads this limit:
-    /// ``Compactor`` compares against ``TokenBudget/targetTokens`` alone.
-    private static let budgetLimit = 1_000_000
-
-    /// Where the fold target sits, as a share of what the deterministic stages
-    /// can reach on their own.
-    ///
-    /// The target has one job here: be low enough that ``ToolOutputElision``
-    /// and ``TurnTruncation`` cannot land the transcript under it, so the
-    /// pipeline falls through to ``Summarization``. Half of the floor those two
-    /// reach is unreachable by construction, whatever the fixture below grows
-    /// or shrinks to — which is why the target is derived from the fixture
-    /// rather than written down beside it.
-    private static let foldTargetShareOfDeterministicFloor = 0.5
+    /// The tag every printed line of this suite's fold carries.
+    private static let foldLabel = "compactionSmoke"
 
     // MARK: - The fixture
 
@@ -433,86 +354,25 @@ struct CompactionSmokeIntegrationTests {
         return Transcript(entries: entries)
     }
 
-    /// The budget that forces `transcript` all the way through the
-    /// model-assisted stage.
-    ///
-    /// Derived from the transcript rather than written down: the target sits at
-    /// ``foldTargetShareOfDeterministicFloor`` of what ``ToolOutputElision``
-    /// and ``TurnTruncation`` reach between them, so neither of them can land
-    /// the transcript under it and ``Compactor`` must fall through to
-    /// ``Summarization``. A fixture that changes size carries its own budget
-    /// with it.
-    ///
-    /// - Parameter transcript: The transcript the budget is measured against.
-    /// - Returns: The budget to fold with.
-    private static func makeBudget(forcingSummarizationOf transcript: Transcript) -> TokenBudget {
-        let deterministicFloor = Compactor.estimatedTokenCount(
-            of: TurnTruncation().apply(ToolOutputElision().apply(transcript)))
-        let targetTokens = Int(Double(deterministicFloor) * foldTargetShareOfDeterministicFloor)
-        return TokenBudget(limit: budgetLimit, target: Double(targetTokens) / Double(budgetLimit))
-    }
-
-    /// The estimated token count of the span `transcript`'s fold replaces — the
-    /// turns outside the recency window, partitioned exactly as
-    /// ``Summarization`` partitions them.
-    ///
-    /// - Parameters:
-    ///   - transcript: The transcript about to be folded.
-    ///   - keepRecentTurns: The recency window the fold leaves untouched.
-    /// - Returns: The folded span's size, in the estimated tokens
-    ///   ``Compactor``'s did-not-shrink guard measures.
-    private static func foldedSpanTokens(of transcript: Transcript, keepRecentTurns: Int) -> Int {
-        let (_, turns) = TranscriptTurns.split(Array(transcript))
-        let (old, _) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
-        return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
-    }
-
     // MARK: - One folded run
 
-    /// What one folded run of the fixture produced — everything both tests
-    /// below read, measured once so neither of them has to restate the wiring.
-    private struct FoldOutcome {
-        /// The transcript that was folded.
-        let transcript: Transcript
-
-        /// The stage the fold ran with.
-        let summarization: Summarization
-
-        /// What ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-        /// reported.
-        let result: CompactionResult
-
-        /// Every summarizer call the fold made, in call order.
-        let calls: [CountingBlankSlateSummarizer.Call]
-
-        /// The generation ceiling of each call, in call order.
-        var ceilings: [Int] { calls.map(\.ceiling) }
-
-        /// The estimated size of each call's ANSWER, before the cut, in call
-        /// order.
-        var answerTokens: [Int] { calls.map { Compactor.estimatedTokenCount(of: $0.answer) } }
-
-        /// The estimated size of the span the fold replaced, in the tokens
-        /// ``Compactor``'s did-not-shrink guard measures.
-        var spanTokens: Int {
-            CompactionSmokeIntegrationTests.foldedSpanTokens(
-                of: transcript, keepRecentTurns: summarization.keepRecentTurns)
-        }
-    }
-
-    /// Loads the smoke model, folds the fixture once, evicts the model, and
-    /// puts the run's own numbers on the record before any assertion reads
-    /// them — so a red run states what it went red on rather than only which
-    /// assertion failed.
+    /// Loads the smoke model, folds the fixture once through ``CompactionFold``,
+    /// evicts the model, and puts this suite's own wall clock on the record — so
+    /// a red run states what it went red on rather than only which assertion
+    /// failed.
+    ///
+    /// Everything after the load is ``CompactionFold``'s, which prints the fold
+    /// numbers themselves. This function owns the model's lifetime because it is
+    /// the only thing that knows this suite loads once per test.
     ///
     /// - Returns: Everything the run measured.
     /// - Throws: Whatever the load or the fold throws.
-    private static func foldTheFixture() async throws -> FoldOutcome {
+    private static func foldTheFixture() async throws -> CompactionFoldOutcome {
         let startedAt = Date()
         var modelLoadSeconds = 0.0
         defer {
             print(
-                "[compactionSmoke] wallClockSeconds=\(String(format: "%.1f", Date().timeIntervalSince(startedAt))) "
+                "[\(foldLabel)] wallClockSeconds=\(String(format: "%.1f", Date().timeIntervalSince(startedAt))) "
                     + "modelLoadSeconds=\(String(format: "%.1f", modelLoadSeconds))"
             )
         }
@@ -525,33 +385,13 @@ struct CompactionSmokeIntegrationTests {
         )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
 
-        let transcript = makeTranscript()
-        let summarization = Summarization(reasoningTokenHeadroom: reasoningTokenHeadroom)
-        let summarizer = CountingBlankSlateSummarizer(container: container)
-
-        let (_, result) = try await Compactor.compact(
-            transcript,
-            budget: makeBudget(forcingSummarizationOf: transcript),
-            summarizer: summarizer,
-            summarization: summarization
+        let outcome = try await CompactionFold.run(
+            makeTranscript(),
+            summarization: Summarization(reasoningTokenHeadroom: reasoningTokenHeadroom),
+            container: container,
+            label: foldLabel
         )
-
         await container.model.evict()
-
-        let outcome = FoldOutcome(
-            transcript: transcript,
-            summarization: summarization,
-            result: result,
-            calls: await summarizer.calls
-        )
-        print(
-            "[compactionSmoke] summarizerCalls=\(outcome.ceilings.count) ceilings=\(outcome.ceilings) "
-                + "answerTokens=\(outcome.answerTokens) "
-                + "spanTokens=\(outcome.spanTokens) "
-                + "summaryTokens=\(Compactor.estimatedTokenCount(of: result.summary ?? "")) "
-                + "tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
-                + "stages=\(result.stagesApplied)"
-        )
         return outcome
     }
 

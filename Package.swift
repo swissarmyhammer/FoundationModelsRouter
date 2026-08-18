@@ -131,7 +131,16 @@ let package = Package(
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
             ] + mlxProducts + hubProducts,
-            path: "Tests/\(packageName)IntegrationTests"
+            path: "Tests/\(packageName)IntegrationTests",
+            // The checked-in recording `RecordedTranscriptCompactionIntegrationTests`
+            // folds (task ^pfdrppj). `.copy` rather than `.process`, because the
+            // directory nesting IS the recording's structure —
+            // `TranscriptTree.load(under:)` reads a session's id from its own
+            // directory name and its parent from the directory it nests under,
+            // so a rule that flattened or renamed anything would make the
+            // fixture unreadable. `Fixtures/CompactionRecording/README.md`
+            // states the layout, the recipe and the redaction review.
+            resources: [.copy("Fixtures")]
         ),
         // Runnable demo (live twin of the offline `ExamplesTests` example): one
         // `Router.resolve` makes two local generation models co-resident and the
