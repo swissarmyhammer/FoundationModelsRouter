@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -219,24 +215,6 @@ struct PropagationProbeIntegrationTests {
         )
     }
 
-    /// Loads the real `.standard` model directly through a real
-    /// ``LiveModelLoader`` and returns its concrete
-    /// ``MLXFoundationModelsContainer`` — the same technique the rest of
-    /// this target's gated suites use.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
-            ref: propagationProbeModel,
-            slot: .standard,
-            context: RealModels.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
-
     /// Loads ``propagationProbeModel`` after dropping whatever another gated
     /// suite left cached for it, so this turn's generation depends on nothing
     /// but this turn's own prompt.
@@ -273,9 +251,9 @@ struct PropagationProbeIntegrationTests {
     ///   prompt-cache state.
     /// - Throws: If either load fails.
     private func makeUncontaminatedContainer() async throws -> MLXFoundationModelsContainer {
-        let inherited = try await makeContainer()
+        let inherited = try await RealModelContainer.load(ref: propagationProbeModel)
         await inherited.model.evict()
-        return try await makeContainer()
+        return try await RealModelContainer.load(ref: propagationProbeModel)
     }
 
     // MARK: - One turn's measured facts

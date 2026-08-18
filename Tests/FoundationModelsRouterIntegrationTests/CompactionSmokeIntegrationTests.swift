@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -59,6 +55,17 @@ private let compactionSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruc
 /// directive, the folded span, and the generation ceiling below. That fits well
 /// inside this window, and a smaller window costs less to allocate.
 private let compactionSmokeContext = 4096
+
+/// The decoding this suite loads ``compactionSmokeModel`` with.
+///
+/// Pinned to argmax, for the reason ``CompactionRoundTripIntegrationTests``
+/// pins it: the provider default samples from MLX's process-global PRNG, which
+/// seeds itself from the clock, so the summary — and therefore the fold
+/// arithmetic this suite asserts on — would differ on every run of identical
+/// code. Argmax decoding consumes no randomness, which is what lets a red run
+/// here be attributed to the change under test, and it is why the three runs
+/// tabulated on the suite below reported identical fold numbers.
+private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greedy
 
 /// The wall-clock bound this suite runs under, in minutes.
 ///
@@ -167,8 +174,8 @@ private actor CountingBlankSlateSummarizer: CompactionSummarizer {
 ///
 /// All three reported identical fold numbers — one summarizer call at a
 /// ceiling of 281, a 600-token span, a 304-token summary, and a transcript
-/// folded from 670 tokens to 374 — which is the greedy decoding of
-/// ``makeContainer()`` doing its job.
+/// folded from 670 tokens to 374 — which is
+/// ``compactionSmokeSamplingMode`` doing its job.
 ///
 /// The gate is what those numbers rest on, and it was measured the same way.
 /// `FM_ROUTER_COMPACTION_SMOKE=1 swift test`, with NO filter, ran the whole
@@ -386,35 +393,6 @@ struct CompactionSmokeIntegrationTests {
         return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
     }
 
-    /// Loads ``compactionSmokeModel`` through a real ``LiveModelLoader`` and
-    /// returns its concrete ``MLXFoundationModelsContainer``.
-    ///
-    /// Decoding is pinned to
-    /// ``FoundationModels/GenerationOptions/SamplingMode/greedy``, for the
-    /// reason ``CompactionRoundTripIntegrationTests`` pins it: the provider
-    /// default samples from MLX's process-global PRNG, which seeds itself from
-    /// the clock, so the summary — and therefore the fold arithmetic this suite
-    /// asserts on — would differ on every run of identical code. Argmax
-    /// decoding consumes no randomness, which is what lets a red run here be
-    /// attributed to the change under test.
-    ///
-    /// - Returns: The loaded container.
-    /// - Throws: Whatever loading throws.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader(),
-            samplingMode: .greedy
-        )
-        let loaded = try await loader.loadLLM(
-            ref: compactionSmokeModel,
-            slot: .standard,
-            context: compactionSmokeContext,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
-
     // MARK: - The test
 
     @Test(
@@ -431,7 +409,11 @@ struct CompactionSmokeIntegrationTests {
         }
 
         let loadStartedAt = Date()
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(
+            ref: compactionSmokeModel,
+            context: compactionSmokeContext,
+            samplingMode: compactionSmokeSamplingMode
+        )
         modelLoadSeconds = Date().timeIntervalSince(loadStartedAt)
 
         let transcript = Self.makeTranscript()

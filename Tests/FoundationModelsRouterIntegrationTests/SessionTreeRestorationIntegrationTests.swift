@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -99,24 +95,6 @@ struct SessionTreeRestorationIntegrationTests {
         func call(arguments: EchoArguments) async throws -> String {
             "echoed: \(arguments.text)"
         }
-    }
-
-    /// Loads the tiny model directly through a real ``LiveModelLoader`` and
-    /// returns its concrete ``MLXFoundationModelsContainer``. Called once per
-    /// simulated "process" — the second call models a fresh process reloading
-    /// the same model from the Hub cache.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
-            ref: sessionTreeRestorationTinyModel,
-            slot: .standard,
-            context: RealModels.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
     }
 
     /// Builds a real ``LanguageModelProfile`` directly over `container`,
@@ -253,7 +231,7 @@ struct SessionTreeRestorationIntegrationTests {
     /// goes out of scope with it, simulating discarding the router and every
     /// in-memory session.
     private func driveOriginalTree(cacheDir: URL, recordingsDir: URL) async throws -> OriginalTree {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
         let (router, profile) = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
 
         let root = profile.standard.makeSession(instructions: "You are a terse, literal assistant.")
@@ -316,7 +294,7 @@ struct SessionTreeRestorationIntegrationTests {
         // Step 5: a brand-new Router/profile over the same recordings
         // directory and the same router id — a fresh process continuing the
         // same recording root, with a freshly (re-)loaded model container.
-        let container2 = try await makeContainer()
+        let container2 = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
         let (_, profile2) = buildProfile(
             id: original.routerId,
             container: container2,
@@ -391,7 +369,7 @@ struct SessionTreeRestorationIntegrationTests {
         // Record a root session with no tools at all, then discard everything
         // that built it, mirroring `driveOriginalTree`'s teardown discipline.
         let (routerId, rootId): (ULID, ULID) = try await {
-            let container = try await makeContainer()
+            let container = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
             let (router, profile) = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
             let root = profile.standard.makeSession()
             _ = try await root.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
@@ -401,7 +379,7 @@ struct SessionTreeRestorationIntegrationTests {
 
         // A fresh process continuing the same recording root, restoring with
         // a real tool this time — the seam that used to hardcode `tools: []`.
-        let container2 = try await makeContainer()
+        let container2 = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
         let (_, profile2) = buildProfile(
             id: routerId, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let restored = try await profile2.standard.restoreSessionTree(root: rootId, tools: [EchoTool()])

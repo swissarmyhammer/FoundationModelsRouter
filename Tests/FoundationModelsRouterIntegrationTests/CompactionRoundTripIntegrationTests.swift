@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -139,33 +135,15 @@ struct CompactionRoundTripIntegrationTests {
     /// where it happened to reach stage 3.
     fileprivate static let foldBudget = TokenBudget(limit: context, target: 0.25)
 
-    /// Loads the tiny model directly through a real ``LiveModelLoader`` and
-    /// returns its concrete ``MLXFoundationModelsContainer``. Called once per
-    /// simulated "process" — the second call models a fresh process reloading
-    /// the same model from the Hub cache.
+    /// The decoding both of this suite's loads pin.
     ///
-    /// Decoding is pinned to
-    /// ``FoundationModels/GenerationOptions/SamplingMode/greedy``. The provider
-    /// default samples at temperature `0.6` from MLX's process-global PRNG,
-    /// which seeds itself from the clock, so this suite's own scripted replies
-    /// — and therefore its transcript sizes, its fold, and its recall answer —
-    /// differed on every run of identical code (task f80n046). Argmax decoding
-    /// consumes no randomness at all, which is what lets a red run here be
-    /// attributed to the change under test.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader(),
-            samplingMode: .greedy
-        )
-        let loaded = try await loader.loadLLM(
-            ref: compactionRoundTripTinyModel,
-            slot: .standard,
-            context: Self.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
+    /// Argmax. The provider default samples at temperature `0.6` from MLX's
+    /// process-global PRNG, which seeds itself from the clock, so this suite's
+    /// own scripted replies — and therefore its transcript sizes, its fold, and
+    /// its recall answer — differed on every run of identical code (task
+    /// f80n046). Argmax decoding consumes no randomness at all, which is what
+    /// lets a red run here be attributed to the change under test.
+    private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
     /// Builds a real ``LanguageModelProfile`` directly over `container`,
     /// stamped with `id` (pass the first router's `id` to continue the same
@@ -462,7 +440,8 @@ struct CompactionRoundTripIntegrationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(
+            ref: compactionRoundTripTinyModel, context: Self.context, samplingMode: Self.samplingMode)
         let (router, profile) = buildProfile(
             container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
 
@@ -534,7 +513,8 @@ struct CompactionRoundTripIntegrationTests {
         //    recording root, simulating a new process — yields the
         //    checkpointed live window: fewer entries than the full
         //    recorded history.
-        let container2 = try await makeContainer()
+        let container2 = try await RealModelContainer.load(
+            ref: compactionRoundTripTinyModel, context: Self.context, samplingMode: Self.samplingMode)
         let (_, profile2) = buildProfile(
             id: router.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir
         )

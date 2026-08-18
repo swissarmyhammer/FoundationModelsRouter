@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -49,22 +45,6 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct TranscriptReconstructionIntegrationTests {
-    /// Loads the tiny model directly through a real ``LiveModelLoader`` and
-    /// returns its concrete ``MLXFoundationModelsContainer``.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
-            ref: transcriptReconstructionTinyModel,
-            slot: .standard,
-            context: RealModels.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
-
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
     /// `.embedding` slot the ``LanguageModelProfile`` this suite builds must
     /// still carry — never exercised here, only present to satisfy the type.
@@ -88,7 +68,7 @@ struct TranscriptReconstructionIntegrationTests {
     /// transcript can be reloaded through ``TranscriptTree/load(under:)``
     /// after the turn completes.
     private func makeHarness() async throws -> Harness {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: transcriptReconstructionTinyModel)
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )

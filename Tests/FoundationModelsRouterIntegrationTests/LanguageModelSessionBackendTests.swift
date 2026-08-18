@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -53,25 +49,9 @@ private let sessionBackendTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct LanguageModelSessionBackendIntegrationTests {
-    /// Loads the tiny model directly through a real ``LiveModelLoader`` and
-    /// returns its concrete ``MLXFoundationModelsContainer``.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
-            ref: sessionBackendTinyModel,
-            slot: .standard,
-            context: RealModels.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
-
     @Test("a second respond() call on the same backend sees the first turn's content in context")
     func secondRespondSeesPriorTurn() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
@@ -100,7 +80,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("makeFork() seeds the child's transcript from the parent's at fork time")
     func makeForkSeedsFromParentTranscript() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let parent = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
@@ -145,7 +125,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript"
     )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let prior = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
@@ -212,7 +192,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "each respond() call leaves exactly one prompt entry and one response entry across two turns"
     )
     func eachTurnLeavesOnePromptAndOneResponse() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         // No instructions: an instructions-carrying session's transcript opens
         // with an extra `.instructions` entry, which no turn owes. Omitting
         // instructions leaves only turn-driven entries to check.
@@ -231,7 +211,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("a fork taken after one turn begins holding exactly that turn's entries")
     func forkAfterOneTurnHoldsThatTurnsEntries() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let parent = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
@@ -250,7 +230,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("transcriptEntries().count equals session.transcript.count and grows across turns")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
@@ -301,7 +281,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     /// Builds a ``ChokepointHarness`` over a freshly loaded tiny model.
     private func makeChokepointHarness() async throws -> ChokepointHarness {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
@@ -565,7 +545,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2's usage.input.cachedTokenCount is positive and approximates everything turn 1 processed — the KV cache is reused, not recomputed"
     )
     func secondTurnReusesFirstTurnsKVCache() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
@@ -627,7 +607,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2 tends to be faster than turn 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
     )
     func secondTurnTendsToBeFasterThanFirst() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         // A long instruction makes the fixed, cacheable prefix turn 2 should
         // reuse a much larger share of the input than a short one would, so a
         // real speed-up (if the cache is working) is more likely to be

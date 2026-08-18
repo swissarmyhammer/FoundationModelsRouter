@@ -1,11 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -56,22 +52,6 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct CompactionSpikeIntegrationTests {
-    /// Loads the tiny model directly through a real ``LiveModelLoader`` and
-    /// returns its concrete ``MLXFoundationModelsContainer``.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
-            ref: compactionSpikeTinyModel,
-            slot: .standard,
-            context: RealModels.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
-
     /// The same synthesized shape ``CompactionSpikeTests`` proves round-trips
     /// through the recording mirror: instructions, a real `.toolCalls` entry,
     /// an elision-placeholder `.toolOutput` entry that reuses the old tool
@@ -138,7 +118,7 @@ struct CompactionSpikeIntegrationTests {
     /// see the assertion below and this test's own inline result.
     @Test("a live LanguageModelSession rebuilt over a transcript containing a synthesized summary entry and an elision-placeholder entry completes one turn without error")
     func rebuiltSessionOverSynthesizedTranscriptCompletesATurn() async throws {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: compactionSpikeTinyModel)
 
         let synthesizedTranscript = try Self.makeSynthesizedTranscript()
         let synthesizedIds = Array(synthesizedTranscript).map(\.id)

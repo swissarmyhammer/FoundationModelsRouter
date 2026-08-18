@@ -1,12 +1,8 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
 import MLXFoundationModels
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -137,24 +133,6 @@ struct RealToolTurnComparisonTests {
 
     // MARK: - Harness
 
-    /// Loads the real model directly through a live ``LiveModelLoader``.
-    ///
-    /// - Returns: The loaded container.
-    /// - Throws: Whatever loading throws.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
-            ref: realToolTurnModel,
-            slot: .standard,
-            context: RealModels.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
-
     /// Builds a `RoutedSession` over the loaded real model with the scenario's
     /// two tools mounted.
     ///
@@ -272,7 +250,7 @@ struct RealToolTurnComparisonTests {
     /// - Returns: The run's answer and normalized transcript.
     /// - Throws: Whatever loading or the turn throws.
     private func respondRun() async throws -> ToolTurnRunOutcome {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: realToolTurnModel)
         let (session, profile, directory) = makeSession(over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
@@ -295,7 +273,7 @@ struct RealToolTurnComparisonTests {
     /// - Returns: The run's answers, ids, and normalized transcript.
     /// - Throws: Whatever loading or the turn throws.
     private func streamRun() async throws -> ToolTurnRunOutcome {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: realToolTurnModel)
         let (session, profile, directory) = makeSession(over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile

@@ -1,10 +1,6 @@
 import Foundation
 import FoundationModels
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
 import Testing
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -109,29 +105,13 @@ struct RecordingHandleIntegrationTests {
         let cacheDir: URL
     }
 
-    /// Loads the tiny model directly through a real ``LiveModelLoader`` and
-    /// returns its concrete ``MLXFoundationModelsContainer``.
-    private func makeContainer() async throws -> MLXFoundationModelsContainer {
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let loaded = try await loader.loadLLM(
-            ref: recordingHandleTinyModel,
-            slot: .standard,
-            context: RealModels.context,
-            reporting: { _ in }
-        )
-        return try #require(loaded as? MLXFoundationModelsContainer)
-    }
-
     /// Builds a real ``LanguageModelProfile`` directly over a freshly loaded
     /// tiny model, recording into a durable temp `recordingsDir` so its
     /// transcript can be reloaded through ``TranscriptTree``/``MergedTranscript``
     /// after the turn completes — the same manual-harness technique this
     /// target's other gated suites use.
     private func makeHarness() async throws -> Harness {
-        let container = try await makeContainer()
+        let container = try await RealModelContainer.load(ref: recordingHandleTinyModel)
 
         let recordingsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(
