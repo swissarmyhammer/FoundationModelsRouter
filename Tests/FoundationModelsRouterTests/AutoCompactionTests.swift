@@ -322,9 +322,16 @@ struct AutoCompactionTests {
             return
         }
         #expect(result.stagesApplied.contains("Summarization"))
-        // The summary text is the session's own canned response, not
-        // flash's — proof the own-model tier, not flash, produced it.
-        #expect(result.summary == Self.cannedText)
+        // The summary text is the session's own canned response, not flash's —
+        // proof the own-model tier, not flash, produced it. A PREFIX of it,
+        // because `Summarization` cuts every answer down to the allowance its
+        // call earned, and this canned answer runs past that; the cut falls on
+        // a sentence boundary, so what is stored is a whole number of the
+        // canned sentences.
+        let summary = try #require(result.summary)
+        #expect(!summary.isEmpty)
+        #expect(Self.cannedText.hasPrefix(summary))
+        #expect(summary.hasSuffix("lazy dog."))
 
         // The triggering turn's own work still ran normally afterward.
         #expect(events.contains(.textDelta(Self.cannedText)))

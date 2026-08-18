@@ -121,6 +121,127 @@ comments:
     - evidence: 1 file — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift (new). `swift build` clean; `swift build --build-tests -Xswiftc -warnings-as-errors` zero diagnostics; `swift test` 978 + 28 + 58 pass with the one pre-existing `BoundedWait` known issue. Gated run `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests`: passed in 4.1 s wall clock, 1.9 s of it the model load — `summarizerCalls=1 spanTokens=600 summaryTokens=304 tokensBefore=670 tokensAfter=374 stages=["ToolOutputElision", "TurnTruncation", "Summarization"]`. Red step first: the same test with the fixture order reversed reported `spanTokens=33 tokensBefore=670 tokensAfter=670 stages=[]` and failed on the nil summary, which is `^fm5ddk9`'s shortfall exit.
     - next: ready for /review. 12 of 12 acceptance criteria checked. Nothing open.
   timestamp: 2026-08-18T12:34:44.885634+00:00
+- actor: claude-code
+  id: 01m0afp56ar0fh1bgsc96ynvfj
+  text: |
+    ### review — findings
+    - evidence: 1 finding (1 confirmed, 2 refuted, 7 attempted) — `review sha 160ca9e~1..160ca9e` — Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift:403
+    - directed checks, both verified in the file: `reasoningTokenHeadroom = 128` is tied to the chosen model in writing — the model constant records that `Llama-3.2-1B-Instruct-4bit` writes no `<think>` block and that `Qwen3-1.7B-4bit` was rejected because it reasons, and the property doc states the consequence openly, that the ceiling makes the shrink arithmetic hold by construction rather than by the model's restraint. The scope claim is written down too: the suite doc says it proves the path works and does NOT measure fact retention, and names `FoundationModelsRouterEvals` as the tier that does.
+    - measured independently: `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` passed in 12.4 s of command time, of which the test body was 4.0 s and the model load 1.9 s. Identical fold numbers to the card — summarizerCalls=1 ceilings=[281] spanTokens=600 summaryTokens=304 tokensBefore=670 tokensAfter=374.
+    - next: extract `makeContainer()` into shared test support, then re-review.
+  timestamp: 2026-08-18T13:06:34.314594+00:00
+- actor: claude-code
+  id: 01m0ag51brz141a9kgm14qhvb0
+  text: |-
+    Picked up for the open `reuse/reuse` finding. Research done, before any edit.
+
+    ## Every copy, not only the four the finding named
+
+    The finding named four sites and said "and others". There are NINE, all in `FoundationModelsRouterIntegrationTests`, all with the same three-step body:
+
+    | file | line | `ref` | `context` | `samplingMode` |
+    |---|---|---|---|---|
+    | `SessionTreeRestorationIntegrationTests.swift` | 108 | `sessionTreeRestorationTinyModel` | `RealModels.context` | provider default |
+    | `CompactionSpikeIntegrationTests.swift` | 61 | `compactionSpikeTinyModel` | `RealModels.context` | provider default |
+    | `LanguageModelSessionBackendTests.swift` | 58 | `sessionBackendTinyModel` | `RealModels.context` | provider default |
+    | `TranscriptReconstructionIntegrationTests.swift` | 54 | `transcriptReconstructionTinyModel` | `RealModels.context` | provider default |
+    | `RealToolTurnComparisonTests.swift` | 144 | `realToolTurnModel` | `RealModels.context` | provider default |
+    | `RecordingHandleIntegrationTests.swift` | 114 | `recordingHandleTinyModel` | `RealModels.context` | provider default |
+    | `PropagationProbeIntegrationTests.swift` | 226 | `propagationProbeModel` | `RealModels.context` | provider default |
+    | `CompactionRoundTripIntegrationTests.swift` | 155 | `compactionRoundTripTinyModel` | `Self.context` | `.greedy` |
+    | `CompactionSmokeIntegrationTests.swift` | 403 | `compactionSmokeModel` | `compactionSmokeContext` | `.greedy` |
+
+    ## What actually differs, and what does not
+
+    The similarity scores below 1.00 are explained by exactly three things: the model ref, the context length, and the sampling mode. Those three become the parameters. Everything else is byte-identical in all nine: the two Hub macros, `slot: .standard`, `reporting: { _ in }`, and `try #require(loaded as? MLXFoundationModelsContainer)`.
+
+    Two differences are real and MUST survive the merge, so neither is flattened:
+
+    - `.greedy` on the two compaction suites. Both suites' doc comments record why (task `f80n046`): the provider default samples at temperature 0.6 from MLX's process-global PRNG, which seeds from the clock, so their fold arithmetic differed on every run of identical code. Merging that away would make both suites non-repeatable.
+    - `compactionSmokeContext` and `CompactionRoundTrip.context`, each sized for its own fixture, against `RealModels.context = 8192` for the other seven.
+
+    Eight of the nine refs are aliases of `RealModels.standard`; the smoke suite's is `Llama-3.2-1B-Instruct-4bit`. The per-file constants stay where they are — each suite keeps stating its own model.
+
+    ## Why the shared home is this target's `Support/`, not `FoundationModelsRouterTestSupport`
+
+    `FoundationModelsRouterTestSupport` was the first candidate, and it does not work. Two independent blockers, both verified in the source:
+
+    1. **The return type cannot be public.** `MLXFoundationModelsContainer` is declared `struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable` in `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` — INTERNAL, with no `public`. Every one of the nine files reaches it through `@testable import FoundationModelsRouter`. `FoundationModelsRouterTestSupport` is a plain `.target`, not a `.testTarget`, and a `public` function there cannot name an internal type in its signature at all.
+    2. **The macros are not linked there.** `#hubDownloader()` and `#huggingFaceTokenizerLoader()` expand to code referencing `HuggingFace.HubClient` and `Tokenizers.AutoTokenizer`. `Package.swift` gives `FoundationModelsRouterTestSupport` exactly one dependency, `.target(name: packageName)`. It links neither `MLXHuggingFace` nor the two Hub products. Adding them would also push that linkage into the ungated unit-test target, against the manifest's own written intent that "Only the integration test target links these."
+
+    So the helper goes in `Tests/FoundationModelsRouterIntegrationTests/Support/`, beside `RealModels` and `GatedSuiteSerialGate` — the directory this target already uses for shared suite support, and the one place `@testable import` and the Hub macros both reach. That satisfies the finding's own second option word for word: "or refactor to call through an existing shared helper", and its stated goal, "so all integration tests call the same implementation". All nine callers are in this one target, so all nine reach it.
+
+    ## A dead-import consequence
+
+    In all nine files, `HuggingFace`, `MLXHuggingFace`, `MLXLMCommon` and `Tokenizers` are imported for the macro expansion and for nothing else — no symbol from any of the four is named anywhere else in those files. Once the macros move to the shared helper, those four imports are dead in each of the nine and go with them.
+
+    ## Out of scope, and filed instead
+
+    `Tests/FoundationModelsRouterEvals/Support/CompactionEvalRealSubjectRunner.swift:146` and `CompactionContinuityEvalRealSubjectRunner.swift:57` carry the same loader-plus-`loadLLM` sequence in the OTHER test target. They are not merged here: they cache the container in a stored property, they map the bad cast to their own domain error rather than `#require`, one emits progress lines around the load, and `git status` shows another session holds uncommitted changes under `Tests/FoundationModelsRouterEvals/`. A separate card carries them.
+  timestamp: 2026-08-18T13:14:41.912263+00:00
+- actor: claude-code
+  id: 01m0aghx7a67gzpe1wvc3fzxxk
+  text: |-
+    Extraction landed in the four files handled by hand. Recording the two decisions a later reader will ask about, because neither is mechanical.
+
+    ## The shared helper
+
+    `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelContainer.swift`, one `enum` namespace beside `RealModels` and `GatedSuiteSerialGate`:
+
+    ```
+    RealModelContainer.load(
+        ref: ModelRef,
+        context: Int = RealModels.context,
+        samplingMode: GenerationOptions.SamplingMode? = nil
+    ) async throws -> MLXFoundationModelsContainer
+    ```
+
+    Three parameters, one for each thing that differed across the nine copies. `slot: .standard` and `reporting: { _ in }` are deliberately NOT parameters: all nine passed exactly those, and the doc comment says so, so a suite that needs a different slot or real progress reporting is asking for something this function does not describe. `IntegrationTests.swift` is the file that DOES need both, and it builds its own instrumented `PhaseRecordingLoader`/`DownloadObservingLoader` stack; it was never part of this clone family and is untouched.
+
+    `context` defaults to `RealModels.context` because that is the budget seven of the nine ask for and the constant already documents itself as "the context budget every gated suite in this target requests". `samplingMode` defaults to `nil`, mirroring `LiveModelLoader.init`'s own default.
+
+    The helper keeps `try #require(loaded as? MLXFoundationModelsContainer)` exactly as the nine copies had it. Nothing was turned into a `guard`/`throw`, so no assertion changed.
+
+    ## Where the greedy rationale went, and why it is not lost
+
+    Two suites pinned `.greedy`, and each carried a paragraph on `makeContainer()` explaining what its own run loses without it. Deleting the function would have deleted the reason, so each reason moved to a named constant in its own file — the shape both files already use for every other measured fixture value:
+
+    - `CompactionSmokeIntegrationTests.compactionSmokeSamplingMode`, beside `compactionSmokeModel` and `compactionSmokeContext`.
+    - `CompactionRoundTripIntegrationTests.samplingMode`, beside `context`, `replyMaxTokens` and `foldBudget`.
+
+    This also repaired a doc link the extraction would otherwise have broken. The smoke suite's measurement section said its three runs' identical fold numbers were "the greedy decoding of ``makeContainer()`` doing its job" — a symbol link to a function that no longer exists. It now points at ``compactionSmokeSamplingMode``, which is the thing that actually carries the property.
+
+    The generic half of the reason — the provider default drawing from MLX's clock-seeded process-global PRNG, task `f80n046`, and what argmax buys — is stated once on the shared helper's `samplingMode` parameter. Each constant keeps only what is specific to its own suite.
+
+    ## The other fact that was on a doc comment
+
+    `SessionTreeRestorationIntegrationTests` and `CompactionRoundTripIntegrationTests` both said `makeContainer()` was "called once per simulated 'process' — the second call models a fresh process reloading the same model from the Hub cache". That fact is already written at the call sites in both files ("a fresh process continuing the same recording root, with a freshly (re-)loaded model container", and "Restore from disk — a fresh Router/profile over the same recording root, simulating a new process"), so it survives where it is actually load-bearing.
+
+    ## Rules read before writing, and what they changed
+
+    `get validator reuse`, then the whole matched rule set for `.swift`. Three of them decided something here:
+
+    - `swift/naming` warns against abbreviations, which put the `ref:` label in question. It stays `ref:` because it is the router's own term, not a shortening invented here: the type is `ModelRef` and the function this wraps is `LiveModelLoader.loadLLM(ref:slot:context:reporting:)`. The same rule's "do not repeat the enclosing type's name in a static member" is why the method is `load` rather than `loadContainer`, and its "factory methods begin with `make`" carve-out does not apply because this call performs real I/O.
+    - `swift/access-control`: the helper is `internal`, not `public`. It cannot be `public` — `MLXFoundationModelsContainer` is internal — and it must be more than `private`, since nine files call it.
+    - `magic-numbers-swift` does report inside a Swift Testing suite (its `test_parent_classes` names `XCTestCase` and `QuickSpec` only, neither of which a `@Suite` is). The helper introduces no bare literal: its one default is the named `RealModels.context`.
+
+    ## Measured so far
+
+    `swift build` clean in 2.84 s.
+  timestamp: 2026-08-18T13:21:43.658019+00:00
+- actor: claude-code
+  id: 01m0agq7aapr2z4ttpkf4aw38m
+  text: |-
+    ### implement — changed
+    - evidence: 10 files — 1 new (`Tests/FoundationModelsRouterIntegrationTests/Support/RealModelContainer.swift`) and 9 modified (`CompactionRoundTripIntegrationTests.swift`, `CompactionSmokeIntegrationTests.swift`, `CompactionSpikeIntegrationTests.swift`, `LanguageModelSessionBackendTests.swift`, `PropagationProbeIntegrationTests.swift`, `RealToolTurnComparisonTests.swift`, `RecordingHandleIntegrationTests.swift`, `SessionTreeRestorationIntegrationTests.swift`, `TranscriptReconstructionIntegrationTests.swift`), all under `Tests/FoundationModelsRouterIntegrationTests/`.
+    - the finding, swept whole rather than at the named line: the finding named four sites and said "and others". There were NINE. `rg -l makeContainer Tests/FoundationModelsRouterIntegrationTests/ | wc -l` now returns **0**. 23 call sites converted to `RealModelContainer.load(ref:context:samplingMode:)` — 9 in `LanguageModelSessionBackendTests`, 4 in `SessionTreeRestoration`, 2 each in `RealToolTurnComparison`/`PropagationProbe`/`CompactionRoundTrip`, 1 each in `TranscriptReconstruction`/`RecordingHandle`/`CompactionSpike`/`CompactionSmoke`. `#hubDownloader` now appears in exactly two files of the target: the shared helper, and `IntegrationTests.swift`, which was never part of the clone family because it builds its own instrumented `PhaseRecordingLoader`/`DownloadObservingLoader` stack.
+    - verification: `swift build` exit 0. `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0, and a `grep -E "error:|warning:"` over the full log returns exactly one line — SwiftPM's pre-existing build-graph note `missing creator for mutated node: (…/mlx-swift_Cmlx.bundle/Contents/MacOS)`, which the same grep finds on a plain `swift build` of the unmodified tree. Zero compiler diagnostics. `swift test` exit 0: 978 + 28 + 58 tests pass with the one expected pre-existing `withKnownIssue`.
+    - the extraction is proved behaviour-neutral, not argued: `FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests` passed in 4.284 s and reported fold numbers BYTE-IDENTICAL to this card's own record — `summarizerCalls=1 ceilings=[281] spanTokens=600 summaryTokens=304 tokensBefore=670 tokensAfter=374 stages=["ToolOutputElision", "TurnTruncation", "Summarization"]`, `wallClockSeconds=4.3 modelLoadSeconds=2.1`. Same model, same context, same greedy decoding: had the merge flattened any of the three parameters, those numbers would have moved.
+    - one real defect the compiler found, and it is worth knowing: the shared helper first shipped without `import Foundation`. The `#hubDownloader()` / `#huggingFaceTokenizerLoader()` expansions name `Foundation.Progress` and `URL` in their own signatures, so the macro expansion failed to type-check even though nothing in the hand-written body mentions either. `--build-tests` caught it; a plain `swift build` never would, because it does not compile test targets.
+    - not mine, do not attribute: `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift` is modified in the working tree by the other session running the gated eval suite on this box. This card touched nothing under `FoundationModelsRouterEvals/`.
+    - new work found and filed: `^we8n8nk` — the same loader-plus-`loadLLM` sequence exists twice more in `FoundationModelsRouterEvals/Support/`. It is out of this card's reach (separate test target, separate module) and out of its scope, and the card records what differs between those two copies so the next agent does not flatten their typed errors or their progress lines.
+    - next: ready for /review. 12 of 12 acceptance criteria checked, 1 of 1 review finding checked. Nothing open.
+  timestamp: 2026-08-18T13:24:37.834969+00:00
 position_column: doing
 position_ordinal: '8180'
 title: A compaction smoke test that answers "does compaction work at all" against a real model in under 90 seconds
@@ -176,4 +297,12 @@ The test proves the path WORKS. It does NOT prove fact retention quality — tha
 ```
 FM_ROUTER_COMPACTION_SMOKE=1 swift test --filter CompactionSmokeIntegrationTests
 ```
-#compaction #real-model #eval
+
+## Review Findings (2026-08-18 07:37)
+
+> Scope: `review sha 160ca9e~1..160ca9e` — reviewed the diffs only — lines this change added or modified. 1 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift:403` `reuse/reuse` — The `makeContainer()` function reimplements code that already exists in multiple test files identically. Per clone-siblings probe: CompactionRoundTripIntegrationTests.swift:154 at 1.00 similarity, CompactionSpikeIntegrationTests.swift:60 at 0.99, LanguageModelSessionBackendTests.swift:57 at 0.98, and others. This function should be extracted to a shared test utility module or the existing implementation should be reused. Extract `makeContainer()` into a shared test utility (e.g., `Tests/FoundationModelsRouterTestSupport/ModelLoaderTestHelpers.swift`) so all integration tests call the same implementation, or refactor to call through an existing shared helper. — Fixed. All NINE copies in `FoundationModelsRouterIntegrationTests` (not only the four named) now call one `RealModelContainer.load(ref:context:samplingMode:)` in `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelContainer.swift`. `grep makeContainer` over the target returns 0. The helper could not go in `FoundationModelsRouterTestSupport`: `MLXFoundationModelsContainer` is internal to `FoundationModelsRouter` and that plain `.target` links neither `@testable import` nor the Hub macros — see the comment thread. #compaction #eval #real-model

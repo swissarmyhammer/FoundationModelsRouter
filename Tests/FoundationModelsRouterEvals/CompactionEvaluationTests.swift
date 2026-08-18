@@ -44,9 +44,23 @@ private var compactionEvalsFullDatasetEnabled: Bool {
 /// --filter CompactionEvaluationIntegrationTests`, run on 2026-08-17 against
 /// the seven seeds of ``compactionEvalRepresentativeSubsetIDs``, passed in
 /// **1644.7 seconds — 27.4 minutes**, with all seven samples measured and a
-/// mean `FactRetention` of 1.0. That is 235 seconds for each sample, and the
-/// model load is inside it: ``CompactionEvalRealSubjectRunner`` resolves
-/// ``CompactionEvalRealModel/ref`` on the first sample's own call.
+/// mean `FactRetention` of 1.0.
+///
+/// That figure is a WHOLE-RUN figure, and it must not be divided by seven. The
+/// instrumented run of 2026-08-18 (task ^h2xxsse) printed `fold started
+/// elapsed=0.0s` for all seven samples, one after another with nothing between
+/// them, so `Evaluations` drives this tier's samples CONCURRENTLY: seven
+/// generations share one resident model, and every sample's wall clock runs for
+/// very nearly the whole tier. An earlier version of this comment read "235
+/// seconds for each sample", which is 1644.7 over seven; that arithmetic
+/// assumes samples run one after another and the trail refutes it.
+///
+/// Two consequences a reader needs. The tier has far less headroom than the
+/// margin below suggests, because seven concurrent samples all finish near the
+/// end — so a small slowdown pushes ALL SEVEN past the limit at once and the
+/// table reports `0 of 7`, which reads like a catastrophic regression and need
+/// not be one. And the model load is NOT a meaningful part of the total: the
+/// same instrumented run measured it at 3.6 seconds.
 ///
 /// Each sample pays for two real generations — one summarizer call inside the
 /// fold and one answering turn on the resumed session — and each is bounded in
@@ -85,6 +99,16 @@ let compactionEvalSubsetTimeLimitMinutes = 30
 /// it by twenty-four charges the load more than three times over. The derived
 /// figure therefore over-states the work, which is the right direction for a
 /// ceiling.
+///
+/// One INPUT to that arithmetic is now known wrong, and the direction it errs
+/// in is stated rather than left for a reader to work out. The 235 seconds
+/// treats the subset's samples as running one after another, and the
+/// instrumented run of 2026-08-18 showed they run concurrently — see
+/// ``compactionEvalSubsetTimeLimitMinutes``. Concurrency makes 24 samples cost
+/// LESS than 24 times a sample's wall clock, never more, so the derived 94
+/// minutes still over-states the work and 120 is still a ceiling. The value is
+/// left alone because the first real run of this tier is what should replace
+/// it, exactly as the line below already says.
 ///
 /// 120 leaves 26 minutes over the derived 94. The first run of this tier should
 /// record its real duration here in place of the derivation.

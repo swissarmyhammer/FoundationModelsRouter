@@ -1,0 +1,28 @@
+---
+assignees:
+- claude-code
+position_column: todo
+position_ordinal: 8a80
+title: The eval target's two worst-case-summary docs understate the bound now that Summarization cuts every answer
+---
+`^azd033m` made the summary allowance a bound enforced in CODE — `Summarization.cut(_:toCharacters:)` cuts every summarizer answer down to the allowance its call earned, so a summary can no longer exceed it at all.
+
+Two doc comments in `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift` still describe the world before that, where the bound was a hope:
+
+- `RealisticSummaryLengthSummarizer` — records that an answer filling the allowance "is the largest a summarizer TOLD its allowance writes", and that it deliberately answers about 20% over the stated character bound (the allowance at 4.81 real bytes per token against a 4.0 estimate). Nothing is told an allowance any more, and an answer 20% over the bound is now cut back to it, so what this summarizer stands in for has changed.
+- `CompactionEvalSeedSizingTests.worstCaseSummaryEstimatedTokens` — same correction. Its 154-token worst case is now a real ceiling rather than a claim about a well-behaved model, and the sizing gate it feeds can state that.
+
+Neither is wrong about arithmetic and neither breaks a test — the whole ungated suite is green, and the hermetic gate `everySeedFoldSurvivesARealisticSummary` still passes, because the cut only ever makes a summary smaller. This is a documentation correction, and the reason it is a card rather than part of `^azd033m` is that `CompactionEvaluationTests.swift` was already dirty in the working tree from `^w1cz46m`'s session when `^azd033m` ran, so that card left it alone.
+
+## What to do
+
+Re-read both doc comments against `Summarization.cut(_:toCharacters:)` and state what the bound now IS: a cut applied to the answer, in the UTF-8 content bytes `Compactor`'s did-not-shrink guard measures, at a sentence boundary, never producing an empty summary.
+
+Consider while you are there whether `RealisticSummaryLengthSummarizer` should stop answering 20% over the bound. It was sized that way to model a model that overruns a request; overrunning is no longer possible downstream of the cut, so the fake is now modelling a case the production path cannot produce.
+
+## Related
+
+- `^azd033m` — the card that added the cut, and the 30B measurement behind it.
+- `^fm5ddk9` — the card whose 7-of-7 discarded folds the cut closes.
+
+#compaction #eval #docs

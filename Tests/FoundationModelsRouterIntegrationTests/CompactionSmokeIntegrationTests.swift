@@ -51,9 +51,9 @@ private let compactionSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruc
 /// The working context this suite loads ``compactionSmokeModel`` at.
 ///
 /// Deliberately smaller than ``RealModels/context`` (8192). The largest call
-/// this suite makes is one summarizer call: the compaction prompt, the length
-/// directive, the folded span, and the generation ceiling below. That fits well
-/// inside this window, and a smaller window costs less to allocate.
+/// this suite makes is one summarizer call: the compaction prompt, the folded
+/// span, and the generation ceiling below. That fits well inside this window,
+/// and a smaller window costs less to allocate.
 private let compactionSmokeContext = 4096
 
 /// The decoding this suite loads ``compactionSmokeModel`` with.
@@ -92,9 +92,24 @@ private actor CountingBlankSlateSummarizer: CompactionSummarizer {
     /// The resident smoke model each call opens its own session over.
     private let container: MLXFoundationModelsContainer
 
-    /// The `maxTokens` ceiling of every call made, in call order — so
-    /// `ceilings.count` is the number of generations this fold cost.
-    private(set) var ceilings: [Int] = []
+    /// One completed summarizer call.
+    struct Call {
+        /// The generation ceiling ``Summarization`` computed for this call.
+        let ceiling: Int
+
+        /// The text the model answered with, unchanged.
+        let answer: String
+    }
+
+    /// Every call made, in call order — so `calls.count` is the number of
+    /// generations this fold cost.
+    ///
+    /// The ANSWER is kept beside the ceiling, and not only the ceiling, because
+    /// a fold that gets discarded returns no summary at all: the size the model
+    /// really wrote is then readable nowhere else. That size is the one number
+    /// that separates "the summarizer misbehaved" from "the guard is wrong",
+    /// and `^azd033m` needed it.
+    private(set) var calls: [Call] = []
 
     /// Creates a summarizer over `container`.
     ///
@@ -107,14 +122,15 @@ private actor CountingBlankSlateSummarizer: CompactionSummarizer {
     /// nothing else.
     ///
     /// - Parameters:
-    ///   - prompt: The assembled compaction prompt, directive and content.
+    ///   - prompt: The assembled compaction instructions and content.
     ///   - maxTokens: The generation ceiling ``Summarization`` computed.
     /// - Returns: The model's answer, unchanged.
     /// - Throws: Whatever the backend throws.
     func summarize(_ prompt: String, maxTokens: Int) async throws -> String {
-        ceilings.append(maxTokens)
-        return try await container.makeSession(transcript: Transcript(entries: []))
+        let answer = try await container.makeSession(transcript: Transcript(entries: []))
             .respond(to: prompt, maxTokens: maxTokens)
+        calls.append(Call(ceiling: maxTokens, answer: answer))
+        return answer
     }
 }
 
@@ -172,10 +188,13 @@ private actor CountingBlankSlateSummarizer: CompactionSummarizer {
 /// | 2 | 4.0 s | 1.9 s | 10.4 s |
 /// | 3 | 4.1 s | 2.0 s | 10.2 s |
 ///
-/// All three reported identical fold numbers — one summarizer call at a
-/// ceiling of 281, a 600-token span, a 304-token summary, and a transcript
-/// folded from 670 tokens to 374 — which is
-/// ``compactionSmokeSamplingMode`` doing its job.
+/// All three reported identical fold numbers, which is
+/// ``compactionSmokeSamplingMode`` doing its job. `^azd033m` then moved them,
+/// and the run above is the measurement it moved: one summarizer call at a
+/// ceiling of 281 over a 600-token span, an answer of 332 estimated tokens cut
+/// to a 136-token summary, and a transcript folded from 670 tokens to 206.
+/// Before that card's `Summarization.cut(_:toCharacters:)` the same three runs
+/// stored the answer whole, at 304 estimated tokens, and folded 670 to 374.
 ///
 /// The gate is what those numbers rest on, and it was measured the same way.
 /// `FM_ROUTER_COMPACTION_SMOKE=1 swift test`, with NO filter, ran the whole
@@ -214,10 +233,15 @@ struct CompactionSmokeIntegrationTests {
     ///
     /// The measurement says the model really does write to that stop, so the
     /// worst case is the case. Over three identical runs ``Summarization``
-    /// computed a ceiling of 281 tokens, and the summary that came back
-    /// measured 304 estimated tokens against the 600-token span it replaced —
-    /// so the fold is under half the span it stands in for, and the margin is
-    /// the ceiling's rather than the model's restraint.
+    /// computed a ceiling of 281 tokens, and the answer that came back measured
+    /// 332 estimated tokens against the 600-token span it replaced.
+    ///
+    /// Since `^azd033m` that answer is no longer what gets STORED:
+    /// ``Summarization/cut(_:toCharacters:)`` takes it down to the allowance
+    /// the call earned, 136 estimated tokens, so the fold is now under a
+    /// quarter of the span it stands in for. The margin here is the cut's, and
+    /// the ceiling above it bounds what the run can COST rather than what it
+    /// stores.
     ///
     /// Not zero, so a summary has a little room to finish its last sentence
     /// inside the ceiling rather than always ending at it.
@@ -273,14 +297,14 @@ struct CompactionSmokeIntegrationTests {
     ///   that count, so the fixture cannot grow past it in silence.
     /// - Large enough that the fold cannot fail to shrink the transcript.
     ///   ``Summarization`` allows a call's summary a quarter of what it
-    ///   condenses, plus ``reasoningTokenHeadroom``, and that sum is a hard
-    ///   stop on the generation rather than a request. Measured over this
-    ///   fixture: a 600-token span bought a ceiling of 281, and the summary
-    ///   came back at 304 estimated tokens — a little over half the span, and
-    ///   the whole transcript went from 670 tokens to 374. `^fm5ddk9` measured
-    ///   the 30B model writing summaries 1.30x to 2.07x the size of the spans
-    ///   it was given, and `Compactor` was right to discard all seven; the
-    ///   ceiling a span this size buys puts that outcome out of reach here.
+    ///   condenses, and since `^azd033m` it CUTS the answer down to that
+    ///   allowance rather than asking for it. Measured over this fixture: a
+    ///   600-token span bought a ceiling of 281, the answer came back at 332
+    ///   estimated tokens, the cut stored 136, and the whole transcript went
+    ///   from 670 tokens to 206. `^fm5ddk9` measured the 30B model writing
+    ///   summaries 1.30x to 2.07x the size of the spans it was given, and
+    ///   `Compactor` was right to discard all seven; the cut puts that outcome
+    ///   out of reach for a span this size.
     ///
     /// The last four turns are short. They are the recency window, which no
     /// stage may touch, and their only job is to exist — the deterministic
@@ -432,11 +456,14 @@ struct CompactionSmokeIntegrationTests {
         // The evidence, on the record, before the assertions read it — so a red
         // run states the numbers it went red on rather than only the assertion
         // that failed.
-        let ceilings = await summarizer.ceilings
+        let calls = await summarizer.calls
+        let ceilings = calls.map(\.ceiling)
+        let answerTokens = calls.map { Compactor.estimatedTokenCount(of: $0.answer) }
         let spanTokens = Self.foldedSpanTokens(
             of: transcript, keepRecentTurns: summarization.keepRecentTurns)
         print(
             "[compactionSmoke] summarizerCalls=\(ceilings.count) ceilings=\(ceilings) "
+                + "answerTokens=\(answerTokens) "
                 + "spanTokens=\(spanTokens) summaryTokens=\(Compactor.estimatedTokenCount(of: result.summary ?? "")) "
                 + "tokensBefore=\(result.tokensBefore) tokensAfter=\(result.tokensAfter) "
                 + "stages=\(result.stagesApplied)"

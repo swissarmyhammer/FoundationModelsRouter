@@ -475,17 +475,22 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// GENERATE, and its summary allowance is never larger than
     /// ``maximumSummaryTokens`` however much content the call was handed. But
     /// that ceiling covers the reasoning and the answer together (see
-    /// ``reasoningTokenHeadroom``), so it never tells a model how long the
-    /// ANSWER may be. ``makeLengthDirective(summaryCharacters:contentCharacters:)``
-    /// is what states that, and it is the only channel that can: a decoder has
-    /// one stop, and it is already spoken for by the `<think>` block.
+    /// ``reasoningTokenHeadroom``), so it never bounds the ANSWER: a decoder
+    /// has one stop, and it is already spoken for by the `<think>` block.
+    /// ``cut(_:toCharacters:)`` is what bounds the answer, and it does it to
+    /// the text the call came back with rather than to the generation.
     ///
-    /// The gated run of 2026-08-17 measured the difference. Every one of 7
-    /// seeds was called at a ceiling of 4224 tokens against a summary allowance
-    /// of 128, and every one answered with 374 to 698 real tokens of summary —
-    /// 1.30x to 2.07x the estimated size of the span it was condensing, so
+    /// The gated run of 2026-08-17 measured why the second bound is needed.
+    /// Every one of 7 seeds was called at a ceiling of 4224 tokens against a
+    /// summary allowance of 128, and every one answered with 374 to 698 real
+    /// tokens of summary — 1.30x to 2.07x the estimated size of the span it was
+    /// condensing, so
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-    /// discarded all 7 folds. The model was never told the allowance existed.
+    /// discarded all 7 folds.
+    ///
+    /// The assembled prompt states no length of its own. `^azd033m` measured
+    /// what stating one cost against that same model, and
+    /// ``cut(_:toCharacters:)`` records the two numbers.
     ///
     /// Every call is also checked here, and one answer is refused: text that
     /// holds no characters. A fold stores what a summarizer answers, so a
@@ -500,72 +505,152 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     turns, or a batch of prior summaries.
     ///   - prompt: The compaction prompt sent to `summarizer` verbatim.
     ///   - summarizer: The model called to condense text.
-    /// - Returns: The summarizer's answer, unchanged.
+    /// - Returns: The summarizer's answer, cut down to the allowance this
+    ///   call's own content earned — see ``cut(_:toCharacters:)``.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws,
     ///   unmodified, or ``SummarizationError/emptySummary`` when that answer
-    ///   holds no characters.
+    ///   holds no characters. The refusal reads the answer as the model wrote
+    ///   it, before the cut, so a fold that produced nothing is reported as
+    ///   such rather than cut to nothing.
     private func summarizeOnce(
         _ content: String,
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
     ) async throws -> String {
         let allowance = summaryTokenAllowance(condensing: content)
-        let directive = Self.makeLengthDirective(
-            summaryCharacters: Self.characters(forEstimatedTokens: allowance),
-            contentCharacters: content.utf8.count
-        )
         let summary = try await summarizer.summarize(
-            "\(prompt.text)\n\n\(directive)\n\n---\n\n\(content)",
+            "\(prompt.text)\n\n---\n\n\(content)",
             maxTokens: outputTokenCeiling(forSummaryAllowance: allowance)
         )
         guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SummarizationError.emptySummary
         }
-        return summary
+        return Self.cut(summary, toCharacters: Self.characters(forEstimatedTokens: allowance))
     }
 
-    /// The paragraph appended to a caller's compaction instructions naming how
-    /// long this call's summary text itself may be.
+    /// The characters that end a sentence, and so mark a place a summary can be
+    /// cut without ending it mid-thought.
+    private static let sentenceTerminators: Set<Character> = [".", "!", "?"]
+
+    /// `summary`, cut down to at most `limit` characters at the last sentence
+    /// or list-item boundary that fits inside them.
     ///
-    /// Stated in characters rather than tokens, because characters are the unit
-    /// the bound is really enforced in:
+    /// This is the bound on the summary TEXT, and it is applied in code rather
+    /// than asked of the model, for two measured reasons.
+    ///
+    /// Asking does not work, and it costs. Commit `c26fbbe` stated the bound in
+    /// the assembled prompt — "write at most N characters ... a summary that is
+    /// not clearly shorter than what it replaces saves nothing and is thrown
+    /// away. Compress hard" — and `^azd033m` measured one fold of that prompt
+    /// against `Muse-Glimmer-30B-4bit` at a ceiling of 4249 tokens. Without the
+    /// directive the model answered with 839 estimated tokens in 205.3 s; with
+    /// it the model spent the whole ceiling inside its `<think>` block and
+    /// answered with nothing at all, in 283.6 s. A length stated as a
+    /// requirement reads as an optimisation problem, and a reasoning model
+    /// optimises until the hard stop.
+    ///
+    /// Not asking does not work either, on its own. The same control run — the
+    /// prompt with no directive, which is what shipped before `c26fbbe` — wrote
+    /// 839 estimated tokens against the 600-token span it was replacing, so
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-    /// keeps a fold only when the resulting transcript is smaller, and it
-    /// measures a transcript as UTF-8 content bytes over
-    /// ``Compactor/charsPerTokenEstimate``. So the number the model is given is
-    /// the number its answer is judged by, with no currency conversion in
-    /// between. (Bytes and characters part company on non-ASCII text; for the
-    /// English prose a continuation summary is written in they agree, and
-    /// naming bytes to a model would be less useful, not more.)
+    /// discarded the fold, exactly as it discarded 7 of 7 gated seeds in
+    /// `^fm5ddk9`.
     ///
-    /// It names `contentCharacters` too. A bound on its own is a number with no
-    /// scale, and the fold's whole purpose — replace this span with something
-    /// clearly smaller — is what makes the bound worth honoring. It also states
-    /// what to cut FIRST, because the caller's instructions ask for every
-    /// stated value and a model resolving that tension the wrong way drops the
-    /// values and keeps the prose.
+    /// A cut in code answers both. It needs nothing from the model, it holds
+    /// whatever the model writes, and it makes "a fold's summary occupies at
+    /// most its allowance" a property of this file rather than a hope about a
+    /// generation.
     ///
-    /// This lives on the stage rather than in ``CompactionPrompt/default``
-    /// because the numbers are per call: they come from
-    /// ``summaryTokenAllowance(condensing:)`` over that call's own content, at
-    /// every level of the map-reduce tree. A caller's own prompt is sent
-    /// verbatim and cannot restate arithmetic it has no access to, so every
-    /// prompt gets this bound and none of them has to know it exists.
+    /// `limit` is in the unit
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// really measures — UTF-8 content bytes over
+    /// ``Compactor/charsPerTokenEstimate``, from
+    /// ``characters(forEstimatedTokens:)`` — so the size cut to here and the
+    /// size the did-not-shrink guard reads are the same number. (Bytes and
+    /// characters part company on non-ASCII text, and the byte count is the one
+    /// that binds, which cuts a little shorter rather than a little longer.)
+    ///
+    /// The cut falls on a boundary rather than on the byte the budget runs out
+    /// on, because a summary is what a resumed session READS. Three fallbacks,
+    /// in order, and the last one is what keeps the result non-empty:
+    ///
+    /// 1. The last sentence terminator or line end inside the budget.
+    /// 2. Failing that, the last word boundary inside it.
+    /// 3. Failing that, the budget itself.
+    ///
+    /// An empty result would erase the span the fold replaced — the defect
+    /// ``SummarizationError/emptySummary`` exists for — so a cut that finds no
+    /// text at all gives `summary` back unchanged and leaves the did-not-shrink
+    /// guard to judge it.
     ///
     /// - Parameters:
-    ///   - summaryCharacters: The characters this call's summary text may
-    ///     occupy.
-    ///   - contentCharacters: The characters of the content this call
-    ///     condenses.
-    /// - Returns: The directive, placed between the caller's instructions and
-    ///   the content.
-    private static func makeLengthDirective(summaryCharacters: Int, contentCharacters: Int) -> String {
-        """
-        Length limit: write at most \(summaryCharacters) characters. The conversation below is \
-        \(contentCharacters) characters, and this summary REPLACES it — a summary that is not \
-        clearly shorter than what it replaces saves nothing and is thrown away. Compress hard: \
-        keep every stated value word for word, and cut the prose around the values first.
-        """
+    ///   - summary: The summarizer's answer, unchanged.
+    ///   - limit: The characters that answer may occupy.
+    /// - Returns: `summary` when it already fits, and otherwise a prefix of it
+    ///   that does.
+    private static func cut(_ summary: String, toCharacters limit: Int) -> String {
+        guard summary.utf8.count > limit else { return summary }
+
+        let budgeted = prefix(of: summary, withinCharacters: limit)
+        if let boundary = lastSentenceBoundary(in: budgeted) {
+            let sentences = String(budgeted[...boundary])
+            if !sentences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return sentences }
+        }
+        if let space = budgeted.lastIndex(where: \.isWhitespace) {
+            let words = String(budgeted[..<space])
+            if !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return words }
+        }
+        return budgeted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? summary : budgeted
+    }
+
+    /// The longest prefix of `text` whose UTF-8 size is at most `limit`.
+    ///
+    /// Accumulated one `Character` at a time rather than sliced at a byte
+    /// offset, because a byte offset can land inside a multi-byte scalar or
+    /// inside a grapheme cluster, and neither is a place a string can be split.
+    ///
+    /// - Parameters:
+    ///   - text: The text to take a prefix of.
+    ///   - limit: The characters that prefix may occupy.
+    /// - Returns: The prefix.
+    private static func prefix(of text: String, withinCharacters limit: Int) -> String {
+        var budgeted = ""
+        var used = 0
+        for character in text {
+            let size = String(character).utf8.count
+            guard used + size <= limit else { break }
+            budgeted.append(character)
+            used += size
+        }
+        return budgeted
+    }
+
+    /// The last index of `text` holding a character a summary can end on: a
+    /// line end, or a ``sentenceTerminators`` member that stands at the end of
+    /// the text or before whitespace.
+    ///
+    /// The whitespace condition is what keeps the cut off a period inside a
+    /// value — `.env.example`, `3.5`, `v1.2` — where a break would leave the
+    /// value half-written. A line end counts on its own because a fold's
+    /// summary is usually a list, and a list item ends at its line rather than
+    /// at a full stop.
+    ///
+    /// - Parameter text: The text to search.
+    /// - Returns: The index, or `nil` when the text holds no boundary.
+    private static func lastSentenceBoundary(in text: String) -> String.Index? {
+        var boundary: String.Index?
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(after: index)
+            let character = text[index]
+            if character.isNewline {
+                boundary = index
+            } else if sentenceTerminators.contains(character), next == text.endIndex || text[next].isWhitespace {
+                boundary = index
+            }
+            index = next
+        }
+        return boundary
     }
 
     /// `tokens` of ``Compactor/estimatedTokenCount(of:)``'s estimate, converted
@@ -593,8 +678,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// The sum is also why the ceiling cannot be the bound on the summary
     /// TEXT: it has to be wide enough for reasoning the answer never uses.
-    /// ``makeLengthDirective(summaryCharacters:contentCharacters:)`` carries
-    /// the allowance itself to the model.
+    /// ``cut(_:toCharacters:)`` applies the allowance itself, to the answer.
     ///
     /// - Parameter allowance: The summary allowance the call's content earns.
     /// - Returns: The output ceiling for that call, in tokens.
