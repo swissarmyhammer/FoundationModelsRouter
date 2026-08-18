@@ -76,9 +76,44 @@ private actor BlankSlateSummarizer: CompactionSummarizer {
 actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     private var loaded: MLXFoundationModelsContainer?
 
+    /// The seeds this runner's tier measures, in the order the tier states
+    /// them.
+    ///
+    /// Held here rather than passed beside the runner at every call site, so
+    /// one tier cannot evaluate one seed set while its progress lines and its
+    /// unreached list are read against another. Both the tier's evaluation and
+    /// ``expectFactRetention(of:)`` take the set from here.
+    ///
+    /// `nonisolated` because a `let` of `Sendable` elements is fixed for the
+    /// actor's whole life: the evaluation is constructed synchronously, as a
+    /// `.evaluates(...)` trait argument requires, long before any `await` on
+    /// this actor is possible.
+    nonisolated let seeds: [CompactionEvalSeed]
+
+    /// ``seeds``, keyed by the question a recorded sample carries — the join
+    /// that names the seed a running sample is measuring.
+    private nonisolated let seedsByQuestion: [String: CompactionEvalSeed]
+
     /// Every sample's recorded `FactRetention` evidence, appended by
     /// ``run(entries:prompt:budget:question:)`` in the order the samples ran.
     private var diagnostics: [CompactionEvalSampleDiagnostic] = []
+
+    /// How many samples have entered ``run(entries:prompt:budget:question:)``,
+    /// including the ones still running.
+    ///
+    /// Counted apart from ``diagnostics``, which holds only the samples that
+    /// finished BOTH their fold and their answering turn. A sample the time
+    /// limit cut short is counted here and recorded nowhere else, which is what
+    /// lets its progress lines state where in the tier it stood.
+    private var startedSampleCount = 0
+
+    /// Creates a runner over one tier's seeds.
+    ///
+    /// - Parameter seeds: The tier's seeds, in the order the tier states them.
+    init(seeds: [CompactionEvalSeed]) {
+        self.seeds = seeds
+        self.seedsByQuestion = CompactionEvalSeed.keyedByQuestion(seeds)
+    }
 
     /// The evidence recorded so far, for the gated `@Test` to classify once
     /// the evaluation has finished running every sample.
@@ -91,6 +126,12 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// The resident container, loading it on first access and caching it for
     /// every later call.
     ///
+    /// The load is timed and stated on its own two progress lines, so it is
+    /// never charged to the first sample. A tier that spends its whole limit
+    /// here leaves the started line and no returned line, which is the trail
+    /// ``compactionEvalSubsetTimeLimitMinutes`` exists to bound and which the
+    /// run of 2026-08-18 could not show (task ^h2xxsse).
+    ///
     /// - Returns: The cached container, if one was already loaded, or the
     ///   newly-loaded and now-cached container otherwise.
     /// - Throws: ``CompactionEvaluationError/unexpectedContainerType`` if the
@@ -99,6 +140,9 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
     private func container() async throws -> MLXFoundationModelsContainer {
         if let loaded { return loaded }
+        let modelName = CompactionEvalRealModel.ref.stringValue
+        CompactionEvalProgressLog.emit(CompactionEvalProgressLog.makeModelLoadStartedLine(ref: modelName))
+        let startedAt = Date()
         let loader = LiveModelLoader(
             downloader: #hubDownloader(),
             tokenizerLoader: #huggingFaceTokenizerLoader()
@@ -113,7 +157,29 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
             throw CompactionEvaluationError.unexpectedContainerType
         }
         loaded = mlxContainer
+        CompactionEvalProgressLog.emit(
+            CompactionEvalProgressLog.makeModelLoadReturnedLine(
+                ref: modelName, seconds: Date().timeIntervalSince(startedAt)))
         return mlxContainer
+    }
+
+    /// Names the sample now entering ``run(entries:prompt:budget:question:)``,
+    /// and counts it.
+    ///
+    /// Advances ``startedSampleCount``, so each call names the next position in
+    /// the tier. Called once per sample, at the top of its run.
+    ///
+    /// - Parameter question: The question this sample asks, which resolves the
+    ///   seed it runs.
+    /// - Returns: The label every one of this sample's progress lines carries.
+    private func makeSampleLabel(forQuestion question: String) -> CompactionEvalSampleLabel {
+        startedSampleCount += 1
+        return CompactionEvalSampleLabel(
+            ordinal: startedSampleCount,
+            of: seeds.count,
+            question: question,
+            in: seedsByQuestion
+        )
     }
 
     /// Runs one sample's real subject work (compaction_plan.md §1.4/§1.5's bare-session
@@ -136,6 +202,12 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// ``recordedDiagnostics()``. The evaluation's own outcome type carries no
     /// summary text, so without this the gated run cannot tell a fact the fold
     /// dropped from a fact the fold preserved into an answer that ignored it.
+    ///
+    /// A diagnostic is appended only once BOTH real model calls have returned,
+    /// so a sample the suite time limit cut short leaves no record at all. The
+    /// ``CompactionEvalProgressLog`` lines emitted around each call are what
+    /// that sample does leave: they name it, and they name the call it was
+    /// inside when the run stopped.
     func run(
         entries: [Transcript.Entry],
         prompt: CompactionPrompt,
@@ -143,6 +215,11 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         question: String
     ) async throws -> (answer: String, tokensBefore: Int, tokensAfter: Int, stagesApplied: [String]) {
         let container = try await self.container()
+        let label = makeSampleLabel(forQuestion: question)
+        let sampleStartedAt = Date()
+
+        CompactionEvalProgressLog.emit(
+            CompactionEvalProgressLog.makeStepStartedLine(.fold, sample: label, elapsedSeconds: 0))
         let summarizer = BlankSlateSummarizer(container: container)
         let (folded, result) = try await Compactor.compact(
             Transcript(entries: entries),
@@ -150,15 +227,41 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
             budget: budget,
             summarizer: summarizer
         )
+        let foldReturnedAt = Date()
+        let summarizerCalls = await summarizer.calls
+        let foldSeconds = foldReturnedAt.timeIntervalSince(sampleStartedAt)
+        CompactionEvalProgressLog.emit(
+            CompactionEvalProgressLog.makeStepReturnedLine(
+                .fold,
+                sample: label,
+                elapsedSeconds: foldSeconds,
+                stepSeconds: foldSeconds,
+                detail: CompactionEvalProgressLog.makeFoldDetail(
+                    stagesApplied: result.stagesApplied, summarizerCalls: summarizerCalls)
+            ))
+
+        CompactionEvalProgressLog.emit(
+            CompactionEvalProgressLog.makeStepStartedLine(
+                .answer, sample: label, elapsedSeconds: foldSeconds))
         let answer = try await container.makeSession(transcript: folded)
             .respond(to: question, maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        let answerReturnedAt = Date()
+        CompactionEvalProgressLog.emit(
+            CompactionEvalProgressLog.makeStepReturnedLine(
+                .answer,
+                sample: label,
+                elapsedSeconds: answerReturnedAt.timeIntervalSince(sampleStartedAt),
+                stepSeconds: answerReturnedAt.timeIntervalSince(foldReturnedAt),
+                detail: CompactionEvalProgressLog.makeAnswerDetail(answer: answer)
+            ))
+
         diagnostics.append(
             CompactionEvalSampleDiagnostic(
                 question: question,
                 summary: result.summary,
                 answer: answer,
                 stagesApplied: result.stagesApplied,
-                summarizerCalls: await summarizer.calls
+                summarizerCalls: summarizerCalls
             )
         )
         return (

@@ -113,6 +113,15 @@ let compactionEvalFullDatasetTimeLimitMinutes = 120
 /// sizes this feeds are never under-stated.
 let compactionEvalMeasuredBytesPerToken = 4.81
 
+/// The ceiling one summarizer call of an eval-sized fold is really given:
+/// ``Summarization/minimumSummaryTokens`` — the allowance every seed's span
+/// earns — plus ``Summarization/reasoningTokenHeadroom``.
+///
+/// Read off the stage's own values rather than restated as a literal, so a
+/// recorded sample here can never claim a ceiling the stage does not hand out.
+let compactionEvalSummarizerCeiling =
+    Summarization.minimumSummaryTokens + Summarization().reasoningTokenHeadroom
+
 /// A summarizer whose answer is the length a real one writes.
 ///
 /// A stub answering `"fake summary"` shrinks a fold whatever the seed holds, so
@@ -492,23 +501,13 @@ struct CompactionEvalFactRetentionReportTests {
     /// the unreached-seed tests hold a run against.
     private static let bothSeeds = [seed, unreachedSeed]
 
-    /// The ceiling one summarizer call of an eval-sized fold is really given:
-    /// ``Summarization/minimumSummaryTokens`` — the allowance every seed's span
-    /// earns — plus ``Summarization/reasoningTokenHeadroom``.
-    ///
-    /// Read off the stage's own values rather than restated as a literal, so a
-    /// recorded sample here can never claim a ceiling the stage does not hand
-    /// out.
-    private static let summarizerCeiling =
-        Summarization.minimumSummaryTokens + Summarization().reasoningTokenHeadroom
-
     /// Builds one recorded summarizer call answering `answer` at
-    /// ``summarizerCeiling``.
+    /// ``compactionEvalSummarizerCeiling``.
     ///
     /// - Parameter answer: The text the summarizer answered.
     /// - Returns: The recorded call.
     private static func makeSummarizerCall(answering answer: String) -> CompactionEvalSummarizerCall {
-        CompactionEvalSummarizerCall(maxTokens: summarizerCeiling, answer: answer)
+        CompactionEvalSummarizerCall(maxTokens: compactionEvalSummarizerCeiling, answer: answer)
     }
 
     /// Builds a recorded sample against ``seed``'s question.
@@ -687,7 +686,7 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(table.contains("discarded=\(answer.utf8.count) bytes"))
         #expect(table.contains("summaryTokens=\(Summarization.estimatedTokens(of: answer))"))
         #expect(table.contains("spanTokens=\(seed.foldableSpanEstimatedTokens)"))
-        #expect(table.contains("ceiling=\(Self.summarizerCeiling)"))
+        #expect(table.contains("ceiling=\(compactionEvalSummarizerCeiling)"))
         // The text itself, bounded: enough of it to read what the model wrote,
         // and never the whole of a summary that ran to thousands of bytes.
         #expect(table.contains(CompactionEvalFactRetentionReport.discardedSummaryTruncationMarker))
@@ -863,6 +862,220 @@ struct CompactionEvalFactRetentionReportTests {
         #expect(
             CompactionEvalFactRetentionReport.unreachedSeedIDs(in: findings, expecting: Self.bothSeeds)
                 == [Self.unreachedSeed.id])
+    }
+}
+
+// MARK: - Hermetic progress-line rendering
+
+/// Hermetic proof that a gated tier leaves a live trail naming where a run
+/// stopped (task ^h2xxsse).
+///
+/// ``CompactionEvalRealSubjectRunner`` records a sample only once its fold AND
+/// its answering turn have both finished, and ``expectFactRetention(of:)``
+/// prints its table once at the very end. So a run the suite time limit cut
+/// short reported one bit — "not finished". The gated run of 2026-08-18 hit the
+/// subset tier's own 1800-second limit with 0 of 7 seeds measured, against two
+/// earlier runs of the same tier that measured 7 of 7 in 1644.7 s and 1685.9 s,
+/// and nothing it printed could say whether the model load, one fold, or one
+/// answering turn had spent the time.
+///
+/// These tests pin the lines that answer that question: the model load stated
+/// apart from any sample, and each sample naming the step it entered and the
+/// step it left, with the seconds each one took.
+@Suite("CompactionEvaluation progress lines")
+struct CompactionEvalProgressLogTests {
+    /// Where in its tier the sample ``label`` names stands — the middle, so a
+    /// rendered ordinal that silently used the total (or the reverse) shows.
+    private static let sampleOrdinal = 3
+
+    /// How many seeds the tier ``label`` names states.
+    private static let tierSeedCount = compactionEvalRepresentativeSeeds.count
+
+    /// The seed id ``label`` names.
+    private static let sampleSeedID = "probe-seed"
+
+    /// A sample label in the middle of its tier.
+    private static let label = CompactionEvalSampleLabel(
+        ordinal: sampleOrdinal, total: tierSeedCount, seedID: sampleSeedID)
+
+    /// The model reference the model-load lines name.
+    private static let ref = CompactionEvalRealModel.ref.stringValue
+
+    /// A duration with a fractional part the rendering must keep, so a
+    /// whole-second truncation is visible.
+    ///
+    /// Deliberately not a value that sits exactly half way between two rendered
+    /// places: `96.25` is not representable in binary, and `%.1f` rounds it
+    /// down to `96.2` rather than up. A fixture on that edge would measure the
+    /// C library's rounding rule instead of this eval's own rendering.
+    private static let stepSeconds = 96.24
+
+    /// A larger duration, standing for the sample's elapsed total at the point
+    /// a step returned.
+    private static let elapsedSeconds = 214.68
+
+    /// A duration under one second, which a whole-second rendering would state
+    /// as a zero.
+    private static let subSecondSeconds = 0.44
+
+    /// The subset tier's own measured run of 2026-08-17 — the largest duration
+    /// a progress line of this eval ever has to state.
+    private static let measuredSubsetRunSeconds = 1644.7
+
+    @Test("every progress line opens with the one prefix a reader greps for")
+    func everyProgressLineCarriesTheSharedPrefix() {
+        var lines = [
+            CompactionEvalProgressLog.makeModelLoadStartedLine(ref: Self.ref),
+            CompactionEvalProgressLog.makeModelLoadReturnedLine(ref: Self.ref, seconds: Self.stepSeconds),
+        ]
+        for step in CompactionEvalProgressStep.allCases {
+            lines.append(
+                CompactionEvalProgressLog.makeStepStartedLine(
+                    step, sample: Self.label, elapsedSeconds: Self.elapsedSeconds))
+            lines.append(
+                CompactionEvalProgressLog.makeStepReturnedLine(
+                    step,
+                    sample: Self.label,
+                    elapsedSeconds: Self.elapsedSeconds,
+                    stepSeconds: Self.stepSeconds,
+                    detail: ""
+                ))
+        }
+        for line in lines {
+            #expect(line.hasPrefix(CompactionEvalProgressLog.linePrefix))
+        }
+    }
+
+    @Test("the model load is timed on its own, apart from any sample")
+    func modelLoadIsStatedApartFromTheSamples() {
+        let started = CompactionEvalProgressLog.makeModelLoadStartedLine(ref: Self.ref)
+        let returned = CompactionEvalProgressLog.makeModelLoadReturnedLine(
+            ref: Self.ref, seconds: Self.stepSeconds)
+
+        #expect(started.contains("ref=\(Self.ref)"))
+        #expect(returned.contains("ref=\(Self.ref)"))
+        #expect(returned.contains("took=\(CompactionEvalProgressLog.makeSecondsText(Self.stepSeconds))"))
+        // A load that has not finished has no duration to state, and a load
+        // that has is not a sample — a reader who sees one number must never
+        // read it as a seed's cost.
+        #expect(!started.contains("took="))
+        #expect(!started.contains("sample="))
+        #expect(!returned.contains("sample="))
+    }
+
+    @Test("a started line names the step it entered and states no duration for it")
+    func startedLineNamesTheStepAndStatesNoDuration() {
+        let line = CompactionEvalProgressLog.makeStepStartedLine(
+            .fold, sample: Self.label, elapsedSeconds: Self.elapsedSeconds)
+
+        #expect(line.contains("\(CompactionEvalProgressStep.fold.rawValue) \(CompactionEvalProgressLog.startedMarker)"))
+        #expect(line.contains("elapsed=\(CompactionEvalProgressLog.makeSecondsText(Self.elapsedSeconds))"))
+        // The step has not finished, so it has no duration of its own yet.
+        #expect(!line.contains("took="))
+    }
+
+    @Test("a returned line states the step's own duration beside the sample's elapsed total")
+    func returnedLineStatesTheStepsOwnDurationBesideTheElapsedTotal() {
+        let line = CompactionEvalProgressLog.makeStepReturnedLine(
+            .answer,
+            sample: Self.label,
+            elapsedSeconds: Self.elapsedSeconds,
+            stepSeconds: Self.stepSeconds,
+            detail: ""
+        )
+
+        #expect(
+            line.contains("\(CompactionEvalProgressStep.answer.rawValue) \(CompactionEvalProgressLog.returnedMarker)"))
+        #expect(line.contains("elapsed=\(CompactionEvalProgressLog.makeSecondsText(Self.elapsedSeconds))"))
+        #expect(line.contains("took=\(CompactionEvalProgressLog.makeSecondsText(Self.stepSeconds))"))
+    }
+
+    @Test("a sample is named by its seed and by its position in the tier")
+    func sampleIsNamedByItsSeedAndItsPositionInTheTier() {
+        let line = CompactionEvalProgressLog.makeStepStartedLine(
+            .fold, sample: Self.label, elapsedSeconds: 0)
+
+        #expect(line.contains("sample=\(Self.sampleOrdinal)/\(Self.tierSeedCount)"))
+        #expect(line.contains("seed=\(Self.sampleSeedID)"))
+    }
+
+    @Test("a label built from a seed's question names that seed")
+    func labelBuiltFromASeedsQuestionNamesThatSeed() throws {
+        let seeds = compactionEvalRepresentativeSeeds
+        let seed = try #require(seeds.last)
+        let label = CompactionEvalSampleLabel(
+            ordinal: seeds.count,
+            of: seeds.count,
+            question: seed.question,
+            in: CompactionEvalSeed.keyedByQuestion(seeds)
+        )
+
+        #expect(label.seedID == seed.id)
+        #expect(label.ordinal == seeds.count)
+        #expect(label.total == seeds.count)
+    }
+
+    @Test("a label whose question matches no seed is still named, by the report's own marker")
+    func labelWhoseQuestionMatchesNoSeedIsStillNamed() {
+        let seeds = compactionEvalRepresentativeSeeds
+        let label = CompactionEvalSampleLabel(
+            ordinal: 1,
+            of: seeds.count,
+            question: "a question no seed asks",
+            in: CompactionEvalSeed.keyedByQuestion(seeds)
+        )
+
+        #expect(label.seedID == CompactionEvalFactRetentionReport.unmatchedSeedID)
+    }
+
+    @Test("keying the seeds by question keeps every seed")
+    func keyingTheSeedsByQuestionKeepsEverySeed() {
+        let seeds = compactionEvalSeeds
+        let keyed = CompactionEvalSeed.keyedByQuestion(seeds)
+
+        #expect(keyed.count == seeds.count)
+        for seed in seeds {
+            #expect(keyed[seed.question]?.id == seed.id)
+        }
+    }
+
+    @Test("a fold's returned line states what its summarizer produced")
+    func foldReturnedLineStatesWhatTheSummarizerProduced() {
+        let summary = "2. Stated facts — the staging database listens on port 6543."
+        let detail = CompactionEvalProgressLog.makeFoldDetail(
+            stagesApplied: [Summarization.stageName],
+            summarizerCalls: [
+                CompactionEvalSummarizerCall(maxTokens: compactionEvalSummarizerCeiling, answer: summary)
+            ]
+        )
+
+        #expect(detail.contains("stages=\(Summarization.stageName)"))
+        #expect(detail.contains("summarizerCalls=1"))
+        #expect(detail.contains("summarizerBytes=\(summary.utf8.count)"))
+    }
+
+    @Test("a fold that called no summarizer states zero bytes rather than nothing")
+    func foldThatCalledNoSummarizerStatesZeroBytes() {
+        let detail = CompactionEvalProgressLog.makeFoldDetail(
+            stagesApplied: [ToolOutputElision.stageName], summarizerCalls: [])
+
+        #expect(detail.contains("summarizerCalls=0"))
+        #expect(detail.contains("summarizerBytes=0"))
+    }
+
+    @Test("an answering turn's returned line states the answer's size")
+    func answerReturnedLineStatesTheAnswersSize() {
+        let answer = "The staging database listens on port 6543."
+        let detail = CompactionEvalProgressLog.makeAnswerDetail(answer: answer)
+
+        #expect(detail.contains("answerBytes=\(answer.utf8.count)"))
+    }
+
+    @Test("seconds are stated to one decimal place, so a step under a second is not a zero")
+    func secondsAreStatedToOneDecimalPlace() {
+        #expect(CompactionEvalProgressLog.makeSecondsText(Self.subSecondSeconds) == "0.4s")
+        #expect(CompactionEvalProgressLog.makeSecondsText(Self.stepSeconds) == "96.2s")
+        #expect(CompactionEvalProgressLog.makeSecondsText(Self.measuredSubsetRunSeconds) == "1644.7s")
     }
 }
 
@@ -1076,7 +1289,8 @@ struct CompactionEvalRepresentativeSubsetTests {
 /// evaluated synchronously when the test is registered, long before this
 /// runner's own model load (deferred to its first `run(entries:prompt:budget:question:)`
 /// call, well inside the async `run()` the trait drives).
-private let compactionEvalSubsetRunner = CompactionEvalRealSubjectRunner()
+private let compactionEvalSubsetRunner = CompactionEvalRealSubjectRunner(
+    seeds: compactionEvalRepresentativeSeeds)
 
 /// The whole-dataset tier's own runner, for the same reason
 /// ``compactionEvalSubsetRunner`` is declared at file scope.
@@ -1085,34 +1299,36 @@ private let compactionEvalSubsetRunner = CompactionEvalRealSubjectRunner()
 /// per-sample evidence, and the two tiers report separate tables, so sharing one
 /// would let a table carry samples the other tier ran. Only one of the two
 /// suites is ever enabled, and a runner that never runs loads no model.
-private let compactionEvalFullDatasetRunner = CompactionEvalRealSubjectRunner()
+private let compactionEvalFullDatasetRunner = CompactionEvalRealSubjectRunner(seeds: compactionEvalSeeds)
 
-/// Builds a gated tier's evaluation: `seeds` folded with the router's default
-/// compaction prompt against a budget whose target is small enough to force the
-/// model-assisted `Summarization` stage (see
+/// Builds a gated tier's evaluation: the runner's own seeds folded with the
+/// router's default compaction prompt against a budget whose target is small
+/// enough to force the model-assisted `Summarization` stage (see
 /// ``CompactionEvaluation/init(prompt:budget:seeds:runSubject:)``'s own doc
 /// comment).
 ///
-/// - Parameters:
-///   - seeds: The tier's seeds.
-///   - runner: The runner whose resident model folds them and answers.
+/// The seed set comes from the runner rather than from a second argument, so
+/// one tier can never evaluate one set of seeds while its runner numbers its
+/// progress lines and reads its unreached list against another.
+///
+/// - Parameter runner: The runner whose resident model folds its seeds and
+///   answers their questions.
 /// - Returns: The evaluation, ready to hand to `.evaluates(...)`.
-private func compactionEvalRealEvaluation(
-    over seeds: [CompactionEvalSeed],
+private func makeCompactionEvalRealEvaluation(
     driving runner: CompactionEvalRealSubjectRunner
 ) -> CompactionEvaluation {
-    CompactionEvaluation(seeds: seeds) { entries, prompt, budget, question in
+    CompactionEvaluation(seeds: runner.seeds) { entries, prompt, budget, question in
         try await runner.run(entries: entries, prompt: prompt, budget: budget, question: question)
     }
 }
 
 /// The default tier's evaluation, over ``compactionEvalRepresentativeSeeds``.
-private let compactionEvalSubsetEvaluation = compactionEvalRealEvaluation(
-    over: compactionEvalRepresentativeSeeds, driving: compactionEvalSubsetRunner)
+private let compactionEvalSubsetEvaluation = makeCompactionEvalRealEvaluation(
+    driving: compactionEvalSubsetRunner)
 
 /// The opt-in tier's evaluation, over every hand-written fixture.
-private let compactionEvalFullDatasetEvaluation = compactionEvalRealEvaluation(
-    over: compactionEvalSeeds, driving: compactionEvalFullDatasetRunner)
+private let compactionEvalFullDatasetEvaluation = makeCompactionEvalRealEvaluation(
+    driving: compactionEvalFullDatasetRunner)
 
 /// The mean `FactRetention` a gated tier's samples must reach.
 ///
@@ -1127,18 +1343,15 @@ private let compactionEvalFactRetentionFloor = 0.9
 /// Shared by both tiers so the two can never drift into measuring the same
 /// metric two ways.
 ///
-/// - Parameters:
-///   - runner: The tier's runner, holding the evidence its samples recorded.
-///   - seeds: The tier's seeds — the set a run is read against, so a run the
-///     time limit cut short states the seeds it never reached.
-private func expectFactRetention(
-    of runner: CompactionEvalRealSubjectRunner,
-    over seeds: [CompactionEvalSeed]
-) async {
+/// - Parameter runner: The tier's runner, holding the evidence its samples
+///   recorded and the seed set that evidence is read against — so a run the
+///   time limit cut short states the seeds it never reached.
+private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) async {
     // Printed before the assertion so a run that misses the bar still
     // leaves the evidence behind: the mean alone cannot say whether a
     // failing sample lost its fact in the fold or in the answering turn,
     // and this table classifies every sample on exactly that question.
+    let seeds = runner.seeds
     let findings = CompactionEvalFactRetentionReport.findings(
         for: await runner.recordedDiagnostics(),
         seeds: seeds
@@ -1195,7 +1408,7 @@ struct CompactionEvaluationIntegrationTests {
         )
     )
     func evaluateCompaction() async {
-        await expectFactRetention(of: compactionEvalSubsetRunner, over: compactionEvalRepresentativeSeeds)
+        await expectFactRetention(of: compactionEvalSubsetRunner)
     }
 }
 
@@ -1225,6 +1438,6 @@ struct CompactionEvalFullDatasetIntegrationTests {
         )
     )
     func evaluateCompactionOverEverySeed() async {
-        await expectFactRetention(of: compactionEvalFullDatasetRunner, over: compactionEvalSeeds)
+        await expectFactRetention(of: compactionEvalFullDatasetRunner)
     }
 }

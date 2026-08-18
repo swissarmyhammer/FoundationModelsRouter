@@ -255,6 +255,41 @@ comments:
 
     Criterion 5 only: `factInSummary=true` on the large majority of seeds, with `factRetention >= 0.9`. It cannot be measured until `^vjf3mdm` (seed sizing) and `^fz49qds` (the gated time limit) are settled. That is unchanged and still needs a person.
   timestamp: 2026-08-17T17:09:03.850501+00:00
+- actor: claude-code
+  id: 01m0abgbh7d02vq41gjbxwtxt7
+  text: |-
+    Acceptance criterion 5 is **NOT met**, and this run could not test it.
+
+    The sanctioned gated run of 2026-08-18 06:16 local, made to verify `^fm5ddk9`'s length directive, gave no measurement at all:
+
+    ```
+    FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter CompactionEvaluationIntegrationTests
+    ```
+
+    - HEAD `35a1fad`, tree clean, `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` NOT set.
+    - 1800.146 s, which is the tier's own 30-minute limit. The limit was exceeded.
+    - `FactRetention per-sample evidence — 0 of 7 seeds measured`
+    - `unreached: 7 of 7 seeds never ran`
+    - Mean `FactRetention` = `-1.0` against the `0.9` floor. `-1.0` is the value an empty sample set gives.
+    - The suite FAILED with 2 issues.
+
+    ## What that means for criterion 5
+
+    Criterion 5 asks for `factInSummary=true` on the large majority of seeds, with `factRetention >= 0.9`.
+
+    - `factInSummary` has no value on any seed. No sample completed, so the table printed no seed line.
+    - `factRetention` is `-1.0`, which is `>= 0.9` false, but it is not a measurement of the product. It is the sentinel for zero samples.
+
+    So the criterion is **open**, and it is open for a new reason. Before this run it was open because every fold was discarded (`^fm5ddk9`, 7 of 7 seeds at `folded=false`). Now it is open because the tier measured nothing.
+
+    **Nothing on this card is flipped.** Criterion 5 stays unchecked. Criterion 4 (`CRIMSON-77` recall) stays as it was recorded on 2026-08-17 17:09, and this run does not touch it.
+
+    ## The new blocker for the measurement
+
+    `^h2xxsse` holds it: the subset tier prints nothing until it ends, so a run that hits its limit cannot say if the time went to the model load, to a summarizer call, or to an answering turn. The two runs before this one measured 7 of 7 seeds in 1644.7 s and 1685.9 s, about 235 to 240 s for each sample. This run did not finish one sample in about 7 times that time. The model was cached in full and nothing was downloaded, and the machine had 512 GB RAM with no swap in use.
+
+    Criterion 5 cannot be judged until a gated run measures at least one seed.
+  timestamp: 2026-08-18T11:53:29.895154+00:00
 position_column: review
 position_ordinal: '80'
 title: Compaction writes an empty summary against an always-reasoning model — the summarizer budget has no room for the think block

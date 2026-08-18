@@ -54,6 +54,26 @@ struct CompactionEvalSeed: Sendable {
         return Compactor.estimatedTokenCount(of: Transcript(entries: old.flatMap(\.entries)))
     }
 
+    /// `seeds` keyed by ``question``, the join key a recorded sample carries
+    /// back to the seed it ran.
+    ///
+    /// The one place that join is built. Two readers depend on it and must
+    /// never disagree about which seed a sample ran:
+    /// ``CompactionEvalFactRetentionReport/findings(for:seeds:)`` classifies a
+    /// recorded sample against it once the run has ended, and
+    /// ``CompactionEvalSampleLabel/init(ordinal:of:question:in:)`` names the
+    /// sample in the progress lines a run emits while it is still going.
+    ///
+    /// `CompactionEvalFactRetentionReportTests.everySeedQuestionIsUnique` pins
+    /// the key as unique across the dataset. The first seed wins for a
+    /// duplicate, which is what the report has always taken.
+    ///
+    /// - Parameter seeds: The seeds to key.
+    /// - Returns: One entry for each distinct question.
+    static func keyedByQuestion(_ seeds: [CompactionEvalSeed]) -> [String: CompactionEvalSeed] {
+        Dictionary(seeds.map { ($0.question, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
     /// Builds a seed from a hand-written fixture spec: the fixture's
     /// ``CompactionEvalFixtureSpec/context`` turn, then one turn per fact
     /// (the probed fact's turn optionally delivered as a tool call/output

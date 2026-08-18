@@ -301,6 +301,87 @@ comments:
     - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted; both prior findings verified corrected in the code, not taken on trust
     - card: `done` on the review verdict. Two acceptance criteria stay unchecked and need a second gated run: `factInSummary=true` on the large majority of seeds, and the hermetic gate agreeing with the real model. `^xscp198` holds a separate observation about the 7-seed tier and the 0.9 mean.
   timestamp: 2026-08-17T22:57:59.256375+00:00
+- actor: claude-code
+  id: 01m0abfxs7edk485bzhx8rcm6y
+  text: |-
+    Gated verification of the length directive — run ONE time, as sanctioned. **The run gave NO measurement.**
+
+    ```
+    FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter CompactionEvaluationIntegrationTests
+    ```
+
+    HEAD `35a1fad`, tree clean, `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` NOT set. Start 2026-08-18 06:16:00 local, end 06:46:12 local. Build 5.80 s, test 1800.146 s, command total 1812 s.
+
+    ## What the run stated
+
+    ```
+    ✘ Test "Compaction retains pre-fold facts" recorded an issue at CompactionEvaluationTests.swift:1190:6: Time limit was exceeded: 1800.000 seconds
+    FactRetention per-sample evidence — 0 of 7 seeds measured
+    counts: retained=0 answerMissedFactSummaryCarriedIt=0 summaryLostFact=0 foldProducedNoSummary=0 unrecognizedSample=0
+    unreached: 7 of 7 seeds never ran — env-file db-port license-key-and-region budget-cap-tool-and-owner three-facts-support-escalation encryption-algorithm three-facts-long-project-brief
+    ✘ Test "Compaction retains pre-fold facts" failed after 1800.144 seconds with 2 issues.
+    ```
+
+    Mean `FactRetention` = `-1.0` against the `0.9` floor. `-1.0` is the value an empty sample set gives. **The suite FAILED**, with 2 issues: the time limit, and the aggregate assertion.
+
+    ## Per seed
+
+    There is no per-seed value. Not one `folded=`, `factInSummary=`, `discarded=`, `summaryTokens=` or `spanTokens=` line was printed, because no sample completed.
+
+    The zero is a true zero, not a lost record. `CompactionEvalRealSubjectRunner.run(entries:prompt:budget:question:)` appends its diagnostic only after the fold AND the answering turn finish, and `expectFactRetention` prints the table from that live list. An empty list therefore states that not one sample completed both steps in about 1740 s of model time.
+
+    ## Against the run before this one
+
+    | | before (2026-08-17 21:42) | now (2026-08-18 06:16) |
+    |---|---|---|
+    | seeds measured | 7 of 7 | 0 of 7 |
+    | wall clock | 1685.9 s | 1800.1 s, the limit |
+    | summary est. tokens | 450 to 840 | not measured |
+    | span est. tokens | 345 to 444 | not measured |
+    | ratio | 1.30x to 2.07x | not measured |
+    | ceiling | 4224 against an allowance of 128 | not measured |
+    | mean FactRetention | 0.857 (6 of 7) | -1.0 (0 of 0) |
+
+    **"Did the summaries get smaller?" has NO answer from this run.** No summary was measured. The directive is neither confirmed nor refuted.
+
+    `^xscp198` records a third run of the same tier at 1644.7 s for 7 of 7. So the two earlier runs took about 235 to 240 s for each sample, and this run did not finish ONE sample in about 7 times that time.
+
+    ## The environment, checked after the run
+
+    - **Model** — `mlx-community/Muse-Glimmer-30B-4bit` is cached in full, 18 GB, and no file in its cache directory changed after 2026-08-14. No download occurred.
+    - **Machine** — 512 GB RAM, 0 swap in use, so no memory pressure. Load average about 10, with two `sourcekit-lsp` processes at about 100% CPU each and a StorageManagement index task. The box was not quiet, but it has cores to spare and did not page.
+    - **Code** — the only difference from the 1685.9 s run is `c26fbbe` (this card's length directive) and `08ef6c8` (a rename). No dependency changed; the 5.80 s build shows nothing was refetched or rebuilt.
+
+    ## What I do NOT claim
+
+    I cannot say where the 1800 s went. The tier prints nothing until it ends, so a run that hits its limit gives one bit. Three explanations fit the evidence equally, and each costs a 30-minute run to test:
+
+    1. The directive makes each summarizer call much slower. It tells the model to compress hard, and a reasoning model can spend much more of its 4096-token reasoning headroom to obey a hard bound. The 4224-token ceiling is a hard stop, not a target.
+    2. The model load stopped and did not continue — the condition the suite's own doc comment says the limit exists to bound.
+    3. One sample stopped inside its answering turn.
+
+    Explanation 1 is the one the change makes newly possible, and it is a hypothesis, not a measurement.
+
+    ## Acceptance criteria
+
+    **Nothing is flipped.** AC1 (`factInSummary=true` on the large majority of seeds) and AC2 (the hermetic gate agrees with the real model) stay open and unchecked. Only a run that measures a seed can close them. AC3 stays checked, and is untouched by this run.
+
+    ## New card
+
+    `^h2xxsse` — the subset tier measured 0 of 7 seeds inside its 30-minute limit and prints nothing that says where the time went. No code was changed in this measurement task.
+
+    The full log of this run is at `/private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/606aa1c2-1180-4d8b-96da-9a3c34d5a1b0/scratchpad/gated-run-2.log` (63 lines).
+  timestamp: 2026-08-18T11:53:15.815284+00:00
+- actor: claude-code
+  id: 01m0abh0rbfypyy5gd0ydpmh3j
+  text: |-
+    ### implement — no-change
+    - evidence: no file changed. This was a measurement only. `FM_ROUTER_INTEGRATION_TESTS=1 swift test --filter CompactionEvaluationIntegrationTests` at HEAD `35a1fad`, run ONCE, `FM_ROUTER_COMPACTION_EVAL_FULL_DATASET` never set — 1800.146 s (the tier's own 30-minute limit, exceeded), 0 of 7 seeds measured, `unreached: 7 of 7 seeds never ran`, counts all zero, mean `FactRetention` = -1.0 against the 0.9 floor, suite FAILED with 2 issues. Log: `/private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/606aa1c2-1180-4d8b-96da-9a3c34d5a1b0/scratchpad/gated-run-2.log`
+    - measurement: no per-seed `folded=` or `factInSummary=` value exists, because no sample completed. The directive is neither confirmed nor refuted. The two runs before it measured 7 of 7 seeds in 1644.7 s and 1685.9 s.
+    - acceptance: nothing flipped. AC1 and AC2 stay open on this card; criterion 5 stays open on `^bgxtdk3`, and a comment there states it.
+    - new cards: `^h2xxsse` — the subset tier measured 0 of 7 seeds inside its limit and prints nothing that says where the time went
+    - next: a person decides whether to spend another gated run, and whether `^h2xxsse` (per-sample progress and timing) comes first so that the next run can say where its time goes.
+  timestamp: 2026-08-18T11:53:51.627346+00:00
 position_column: done
 position_ordinal: ffb380
 title: The real model still discards every compaction eval fold — 7 of 7 gated seeds report factInSummary=false with an empty stage list

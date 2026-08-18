@@ -300,7 +300,7 @@ enum CompactionEvalFactRetentionReport {
         for diagnostics: [CompactionEvalSampleDiagnostic],
         seeds: [CompactionEvalSeed]
     ) -> [CompactionEvalFactRetentionFinding] {
-        let seedsByQuestion = Dictionary(seeds.map { ($0.question, $0) }, uniquingKeysWith: { first, _ in first })
+        let seedsByQuestion = CompactionEvalSeed.keyedByQuestion(seeds)
         return diagnostics.map { diagnostic in
             guard let seed = seedsByQuestion[diagnostic.question] else {
                 return unrecognizedFinding(for: diagnostic)
