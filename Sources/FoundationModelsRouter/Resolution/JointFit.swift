@@ -45,10 +45,26 @@ public struct JointResolution: Sendable, Equatable {
 /// substituted, only accepted or skipped.
 ///
 /// The fit margin lives here, not in ``Footprint``: a candidate is viable in
-/// `remaining` iff `footprint × 1.2 <= remaining`. The `× 1.2` is applied
-/// exactly once, at the conversion from raw footprint to the figure recorded in
-/// ``CandidateReport/estimatedFootprintBytes`` and used for both the fit test
+/// `remaining` iff `charge × 1.2 <= remaining`. The `× 1.2` is applied exactly
+/// once, at the conversion from the raw bytes a candidate charges to the figure
+/// recorded in ``CandidateReport/chargedBytes`` and used for both the fit test
 /// and the budget reservation.
+///
+/// ## One resident container, one reservation
+///
+/// The router pools a loaded model on `(ModelRef, role)`, and `standard` and
+/// `flash` load the same role, so two slots naming one reference share one
+/// resident container. Charging that reference twice sizes the box for a copy
+/// the router never allocates, and rejects profiles the box can comfortably run.
+///
+/// So the **weights** are charged one time. What a repeated slot still pays for
+/// is its **KV cache**, which is per session rather than per container: two
+/// slots on one resident model open their own sessions, and each materializes
+/// its own cache. The dedupe covers the weights and nothing else — see
+/// `SharedBudget` for the reservation, `ReservationKey` for what makes two
+/// candidates one container, and
+/// ``sessionBytes(_:context:residentBytes:footprint:)`` for the half that is
+/// still charged again.
 ///
 /// ## Deriving the working context
 ///
@@ -80,13 +96,16 @@ public enum JointFit {
     /// The overhead margin denominator.
     private static let marginDenominator: Int64 = 5
 
-    /// The order slots are allocated in: embedding reserves first, then standard,
-    /// then flash sees what remains.
-    private static let allocationOrder: [ModelSlot] = [.embedding, .standard, .flash]
-
     /// The context step-down rungs a standard-slot candidate's ladder tries
     /// below its own native max context, in descending order.
     private static let ladderStepDowns: [Int] = [131_072, 65_536, 32_768, 16_384, 8_192, 4_096]
+
+    /// The context a candidate is sized at to read its weights alone.
+    ///
+    /// ``Footprint/footprint(context:)`` is `weightBytes + kvBytes(context:)`,
+    /// and ``Footprint/kvBytes(context:)`` scales linearly with the context, so
+    /// the KV term is exactly zero here and what comes back is the weights.
+    private static let weightsOnlyContext = 0
 
     /// Applies the `× 1.2` overhead margin to a raw footprint, rounding up so the
     /// budgeted figure is never an under-estimate.
@@ -95,6 +114,86 @@ public enum JointFit {
     /// - Returns: `ceil(rawBytes × 1.2)`.
     static func withMargin(_ rawBytes: Int64) -> Int64 {
         (rawBytes * marginNumerator + marginDenominator - 1) / marginDenominator
+    }
+
+    // MARK: - Reserving one resident container once
+
+    /// The role a slot loads its chosen model under, which is the axis that
+    /// decides whether two slots share one resident container.
+    ///
+    /// `standard` and `flash` both load a generation container, so they share
+    /// one. The embedding slot loads an embedder — a different container type,
+    /// under a different pool key — so it shares nothing with a generation slot
+    /// even when both slots name the identical reference.
+    private enum ResidentRole: Hashable {
+        /// Loaded as a generation model, for the `standard` and `flash` slots.
+        case generation
+
+        /// Loaded as an embedder, for the `embedding` slot.
+        case embedding
+
+        /// The role `slot` loads its chosen model under.
+        ///
+        /// - Parameter slot: The slot doing the loading.
+        init(slot: ModelSlot) {
+            switch slot {
+            case .standard, .flash:
+                self = .generation
+            case .embedding:
+                self = .embedding
+            }
+        }
+    }
+
+    /// The unit a model's weights are reserved on, exactly once.
+    ///
+    /// It is the reference **as the author wrote it** — the repository plus the
+    /// optional pinned revision — beside the role it is loaded under, because
+    /// that pair is what the router keys its resident pool on.
+    ///
+    /// Two references spelled differently are two keys even when the two would
+    /// resolve to one commit: the pool never resolves the spelling, so it loads
+    /// two containers. Deduping on a resolved identity would reserve for one of
+    /// them and let a box accept a profile it cannot hold.
+    private struct ReservationKey: Hashable {
+        /// The candidate reference, exactly as the profile spells it.
+        let ref: ModelRef
+
+        /// The role the slot loads that reference under.
+        let role: ResidentRole
+    }
+
+    /// The shared budget as the slots consume it, in allocation order.
+    ///
+    /// A chosen candidate is charged one time. A later slot naming a key an
+    /// earlier slot already charged is charged its per-session KV cache alone,
+    /// because the router loads one container for both — see
+    /// ``sessionBytes(_:context:residentBytes:footprint:)``.
+    private struct SharedBudget {
+        /// The bytes still available to the next slot.
+        private(set) var remainingBytes: Int64
+
+        /// Every key whose weights an earlier slot already charged.
+        private(set) var chargedKeys: Set<ReservationKey> = []
+
+        /// Creates a budget with nothing charged yet.
+        ///
+        /// - Parameter totalBytes: The whole shared budget the trio must co-fit.
+        init(totalBytes: Int64) {
+            remainingBytes = totalBytes
+        }
+
+        /// Charges a resolved slot's chosen candidate, and records its weights
+        /// as reserved. A slot that chose nothing charges nothing.
+        ///
+        /// - Parameter resolution: The slot resolution to charge.
+        mutating func charge(_ resolution: SlotResolution) {
+            guard let report = chosenReport(resolution) else { return }
+            remainingBytes -= report.chargedBytes ?? 0
+            chargedKeys.insert(
+                ReservationKey(ref: report.ref, role: ResidentRole(slot: resolution.slot))
+            )
+        }
     }
 
     /// Resolves a profile's three slots against one shared budget.
@@ -149,33 +248,23 @@ public enum JointFit {
         context: Int,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) throws -> JointResolution {
-        var remaining = budgetBytes
-        var resolutions: [SlotResolution] = []
-
-        for slot in allocationOrder {
-            let candidates = profile.candidatesBySlot[slot] ?? []
-            let resolution = resolveSlot(
-                slot,
-                candidates: candidates,
-                remaining: remaining,
-                context: context,
-                footprint: footprint
-            )
-            resolutions.append(resolution)
-            // Reserve the chosen candidate's margined footprint so later slots
-            // see a smaller budget. Nothing chosen reserves nothing.
-            remaining -= reservedBytes(resolution)
-        }
+        let attempt = attemptTrio(
+            profile: profile,
+            standardCandidates: profile.standard,
+            budgetBytes: budgetBytes,
+            context: context,
+            footprint: footprint
+        )
 
         guard
-            let embedding = chosen(in: resolutions, for: .embedding),
-            let standard = chosen(in: resolutions, for: .standard),
-            let flash = chosen(in: resolutions, for: .flash)
+            let embedding = attempt.embedding.chosen,
+            let standard = attempt.standard.chosen,
+            let flash = attempt.flash.chosen
         else {
             throw ResolutionFailure(
                 profileName: profile.name,
                 budgetBytes: budgetBytes,
-                slots: resolutions
+                slots: attempt.slots
             )
         }
 
@@ -183,7 +272,7 @@ public enum JointFit {
             embedding: embedding,
             standard: standard,
             flash: flash,
-            slots: resolutions
+            slots: attempt.slots
         )
     }
 
@@ -193,7 +282,8 @@ public enum JointFit {
     /// - Parameters:
     ///   - slot: The slot being resolved.
     ///   - candidates: The slot's candidates, in author preference order.
-    ///   - remaining: The budget available to this slot.
+    ///   - budget: The shared budget as earlier slots left it, carrying both
+    ///     what remains and which keys they already reserved.
     ///   - context: The working context to size every candidate at.
     ///   - footprint: The injected per-candidate raw footprint at `context`.
     /// - Returns: The slot's resolution, with one ``CandidateReport`` per
@@ -201,7 +291,7 @@ public enum JointFit {
     private static func resolveSlot(
         _ slot: ModelSlot,
         candidates: [ModelRef],
-        remaining: Int64,
+        budget: SharedBudget,
         context: Int,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) -> SlotResolution {
@@ -213,12 +303,23 @@ public enum JointFit {
             // are recorded as skipped and never sized.
             guard chosen == nil else {
                 considered.append(
-                    CandidateReport(ref: ref, estimatedFootprintBytes: nil, verdict: .skippedHigherPreferenceChosen)
+                    CandidateReport(
+                        ref: ref,
+                        estimatedFootprintBytes: nil,
+                        chargedBytes: nil,
+                        verdict: .skippedHigherPreferenceChosen
+                    )
                 )
                 continue
             }
 
-            let report = evaluateCandidate(ref, context: context, remaining: remaining, footprint: footprint)
+            let report = evaluateCandidate(
+                ref,
+                role: ResidentRole(slot: slot),
+                context: context,
+                budget: budget,
+                footprint: footprint
+            )
             considered.append(report)
             if report.verdict == .chosen {
                 chosen = ref
@@ -227,7 +328,7 @@ public enum JointFit {
 
         return SlotResolution(
             slot: slot,
-            remainingBudgetBytes: remaining,
+            remainingBudgetBytes: budget.remainingBytes,
             chosen: chosen,
             considered: considered,
             contextTokens: context
@@ -237,49 +338,103 @@ public enum JointFit {
     /// Sizes one candidate against the remaining budget at a given context,
     /// producing its verdict.
     ///
-    /// This is the success-case logic factored out of ``resolveSlot(_:candidates:remaining:context:footprint:)``:
-    /// a candidate is `.chosen` when its margined footprint fits `remaining`,
-    /// `.tooLarge` when it doesn't, and `.metadataUnavailable` when it could
+    /// This is the success-case logic factored out of ``resolveSlot(_:candidates:budget:context:footprint:)``:
+    /// a candidate is `.chosen` when the bytes it charges fit what remains,
+    /// `.tooLarge` when they don't, and `.metadataUnavailable` when it could
     /// not be sized at all.
+    ///
+    /// A candidate whose key an earlier slot already reserved charges its
+    /// per-session KV cache alone, because the router loads one container for
+    /// both slots. Its report still carries the whole footprint, so a reader
+    /// sees both the size of the model and what it cost.
     ///
     /// - Parameters:
     ///   - ref: The candidate being sized.
+    ///   - role: The role the slot loads the candidate under.
     ///   - context: The working context to size the candidate at.
-    ///   - remaining: The budget available to size against.
+    ///   - budget: The shared budget as earlier slots left it.
     ///   - footprint: The injected per-candidate raw footprint at `context`.
-    /// - Returns: The candidate's report, with its verdict and (when sized)
-    ///   its `× 1.2` footprint.
+    /// - Returns: The candidate's report, with its verdict and (when sized) its
+    ///   `× 1.2` footprint and charge.
     private static func evaluateCandidate(
         _ ref: ModelRef,
+        role: ResidentRole,
         context: Int,
-        remaining: Int64,
+        budget: SharedBudget,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) -> CandidateReport {
         switch footprint(ref, context) {
         case .failure(.metadataUnavailable(let reason)):
-            return CandidateReport(ref: ref, estimatedFootprintBytes: nil, verdict: .metadataUnavailable(reason))
+            return CandidateReport(
+                ref: ref,
+                estimatedFootprintBytes: nil,
+                chargedBytes: nil,
+                verdict: .metadataUnavailable(reason)
+            )
         case .success(let rawBytes):
-            let scaled = withMargin(rawBytes)
-            let verdict: Verdict = scaled <= remaining ? .chosen : .tooLarge
-            return CandidateReport(ref: ref, estimatedFootprintBytes: scaled, verdict: verdict)
+            let sharesWeights = budget.chargedKeys.contains(ReservationKey(ref: ref, role: role))
+            let rawCharge = sharesWeights
+                ? sessionBytes(ref, context: context, residentBytes: rawBytes, footprint: footprint)
+                : rawBytes
+            let charged = withMargin(rawCharge)
+            let verdict: Verdict = charged <= budget.remainingBytes ? .chosen : .tooLarge
+            return CandidateReport(
+                ref: ref,
+                estimatedFootprintBytes: withMargin(rawBytes),
+                chargedBytes: charged,
+                verdict: verdict
+            )
         }
     }
 
-    /// The chosen candidate's margined footprint reserved from the shared
-    /// budget, or `0` when nothing was chosen.
-    private static func reservedBytes(_ resolution: SlotResolution) -> Int64 {
-        resolution.considered.first(where: { $0.verdict == .chosen })?.estimatedFootprintBytes ?? 0
+    /// The per-session part of a candidate's raw footprint at `context` — its KV
+    /// cache — which a slot pays for even when an earlier slot already reserved
+    /// the same container's weights.
+    ///
+    /// Sizing the same reference at ``weightsOnlyContext`` yields its weights
+    /// alone, so the difference is the KV term. The injected closure answers
+    /// both questions, which is why the dedupe needs no second closure and no
+    /// change to ``resolve(profile:budgetBytes:footprint:nativeMaxContext:)``.
+    ///
+    /// The result is clamped at zero because the injected closure is free to
+    /// report a *marginal* cost rather than an absolute one — the router charges
+    /// nothing for a model already resident in its pool — which makes the figure
+    /// at `context` smaller than the figure at a context of zero. Zero is the
+    /// right charge there as well: reusing a resident model costs nothing.
+    ///
+    /// - Parameters:
+    ///   - ref: The candidate sharing an already-reserved container.
+    ///   - context: The working context the candidate is sized at.
+    ///   - residentBytes: The candidate's whole raw footprint at `context`.
+    ///   - footprint: The injected per-candidate raw footprint at a context.
+    /// - Returns: The raw KV bytes, or the whole footprint when the candidate
+    ///   cannot be sized at a context of zero.
+    private static func sessionBytes(
+        _ ref: ModelRef,
+        context: Int,
+        residentBytes: Int64,
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+    ) -> Int64 {
+        guard case .success(let weightBytes) = footprint(ref, weightsOnlyContext) else {
+            // Sizable at `context` and not at zero is not a shape the router
+            // produces. Charge the whole footprint rather than guess a share.
+            return residentBytes
+        }
+        return max(0, residentBytes - weightBytes)
     }
 
-    /// The chosen reference for a slot among resolved slots, if any.
-    private static func chosen(in resolutions: [SlotResolution], for slot: ModelSlot) -> ModelRef? {
-        resolutions.first { $0.slot == slot }?.chosen
+    /// The report for the candidate a slot chose, or `nil` when it chose none.
+    ///
+    /// - Parameter resolution: The slot resolution to read.
+    /// - Returns: The chosen candidate's report, if there is one.
+    private static func chosenReport(_ resolution: SlotResolution) -> CandidateReport? {
+        resolution.considered.first { $0.verdict == .chosen }
     }
 
     // MARK: - Derived context (ladder)
 
-    /// One attempt at resolving the full trio — embedding, one specific
-    /// standard candidate, and flash — at one context rung.
+    /// One attempt at resolving the full trio — embedding, the standard
+    /// candidates on offer, and flash — at one working context.
     ///
     /// Kept as full ``SlotResolution``s (not just a pass/fail bit) so a
     /// failing attempt still yields the standard candidate's own footprint at
@@ -290,42 +445,71 @@ public enum JointFit {
         let standard: SlotResolution
         let flash: SlotResolution
 
+        /// The three resolutions in allocation order: embedding reserves first,
+        /// then standard, then flash sees what is left.
+        var slots: [SlotResolution] { [embedding, standard, flash] }
+
         /// Whether every slot found a viable candidate at this rung.
-        var isSucceeded: Bool {
-            embedding.chosen != nil && standard.chosen != nil && flash.chosen != nil
+        var isSucceeded: Bool { blockedSlot == nil }
+
+        /// The slot that stopped this rung, or `nil` when the whole trio co-fit.
+        ///
+        /// The standard slot answers first, ahead of allocation order. A rung
+        /// prints the standard candidate's own footprint, so "this candidate
+        /// did not fit" is the fact a reader needs before any other slot's.
+        /// Only when this candidate did fit does another slot's failure become
+        /// the reason the rung failed.
+        var blockedSlot: ModelSlot? {
+            if standard.chosen == nil {
+                return .standard
+            }
+            return slots.first { $0.chosen == nil }?.slot
         }
     }
 
-    /// Resolves the full trio at one context rung, with the standard slot
-    /// restricted to a single candidate — the one the ladder's outer loop is
-    /// currently trying — rather than the profile's full standard list.
+    /// Resolves the full trio at one working context against one shared budget,
+    /// charging each slot's choice before the next slot sees what is left.
+    ///
+    /// Every path through joint fit runs through here: the explicit-context path
+    /// offers the profile's whole standard list, and each ladder rung offers the
+    /// one candidate its outer loop is currently trying. One body keeps the
+    /// deduped reservation in one place.
+    ///
+    /// - Parameters:
+    ///   - profile: The authored profile supplying embedding/flash candidates.
+    ///   - standardCandidates: The standard-slot candidates on offer here.
+    ///   - budgetBytes: The shared memory budget the trio must co-fit.
+    ///   - context: The working context to size every candidate at.
+    ///   - footprint: The injected per-candidate raw footprint at `context`.
+    /// - Returns: The three slot resolutions, in allocation order.
     private static func attemptTrio(
         profile: ProfileDefinition,
-        standardCandidate: ModelRef,
+        standardCandidates: [ModelRef],
         budgetBytes: Int64,
         context: Int,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) -> TrioAttempt {
+        var budget = SharedBudget(totalBytes: budgetBytes)
         let embedding = resolveSlot(
             .embedding,
             candidates: profile.embedding,
-            remaining: budgetBytes,
+            budget: budget,
             context: context,
             footprint: footprint
         )
-        let afterEmbedding = budgetBytes - reservedBytes(embedding)
+        budget.charge(embedding)
         let standard = resolveSlot(
             .standard,
-            candidates: [standardCandidate],
-            remaining: afterEmbedding,
+            candidates: standardCandidates,
+            budget: budget,
             context: context,
             footprint: footprint
         )
-        let afterStandard = afterEmbedding - reservedBytes(standard)
+        budget.charge(standard)
         let flash = resolveSlot(
             .flash,
             candidates: profile.flash,
-            remaining: afterStandard,
+            budget: budget,
             context: context,
             footprint: footprint
         )
@@ -363,8 +547,8 @@ public enum JointFit {
         /// Every rung tried, largest first, in the order attempted.
         let attempts: [LadderAttempt]
 
-        /// The rung the candidate won at, or `nil` when every rung was too
-        /// large.
+        /// The rung the candidate won at, or `nil` when no rung co-fit the
+        /// trio.
         let winner: LadderWinner?
     }
 
@@ -392,7 +576,7 @@ public enum JointFit {
         for context in contextLadder(nativeMaxContext: native) {
             let attempt = attemptTrio(
                 profile: profile,
-                standardCandidate: candidate,
+                standardCandidates: [candidate],
                 budgetBytes: budgetBytes,
                 context: context,
                 footprint: footprint
@@ -401,7 +585,7 @@ public enum JointFit {
                 LadderAttempt(
                     contextTokens: context,
                     estimatedFootprintBytes: attempt.standard.considered.first?.estimatedFootprintBytes,
-                    fits: attempt.isSucceeded
+                    blockedSlot: attempt.blockedSlot
                 )
             )
 
@@ -432,7 +616,8 @@ public enum JointFit {
     ///     so lower-preference candidates after it can be recorded as skipped.
     ///   - profile: The authored profile supplying the full standard list.
     ///   - standardConsidered: The reports for standard candidates tried
-    ///     before this one (all `.metadataUnavailable` or `.tooLarge`).
+    ///     before this one (all `.metadataUnavailable`, `.tooLarge`, or
+    ///     `.trioBlocked`).
     ///   - ladderAttempts: Every rung tried for the winning candidate.
     ///   - winner: The winning rung's trio attempt.
     /// - Returns: The resolved trio and per-slot reasoning.
@@ -444,20 +629,27 @@ public enum JointFit {
         ladderAttempts: [LadderAttempt],
         winner: LadderWinner
     ) -> JointResolution {
-        let chosenReport = CandidateReport(
+        let winningReport = chosenReport(winner.attempt.standard)
+        let report = CandidateReport(
             ref: candidate,
-            estimatedFootprintBytes: reservedBytes(winner.attempt.standard),
+            estimatedFootprintBytes: winningReport?.estimatedFootprintBytes,
+            chargedBytes: winningReport?.chargedBytes,
             verdict: .chosen,
             ladderAttempts: ladderAttempts
         )
         let skipped = profile.standard[(index + 1)...].map {
-            CandidateReport(ref: $0, estimatedFootprintBytes: nil, verdict: .skippedHigherPreferenceChosen)
+            CandidateReport(
+                ref: $0,
+                estimatedFootprintBytes: nil,
+                chargedBytes: nil,
+                verdict: .skippedHigherPreferenceChosen
+            )
         }
         let standardResolution = SlotResolution(
             slot: .standard,
             remainingBudgetBytes: winner.attempt.standard.remainingBudgetBytes,
             chosen: candidate,
-            considered: standardConsidered + [chosenReport] + skipped,
+            considered: standardConsidered + [report] + skipped,
             contextTokens: winner.attempt.standard.contextTokens
         )
 
@@ -525,7 +717,12 @@ public enum JointFit {
             switch nativeMaxContext(candidate) {
             case .failure(.metadataUnavailable(let reason)):
                 standardConsidered.append(
-                    CandidateReport(ref: candidate, estimatedFootprintBytes: nil, verdict: .metadataUnavailable(reason))
+                    CandidateReport(
+                        ref: candidate,
+                        estimatedFootprintBytes: nil,
+                        chargedBytes: nil,
+                        verdict: .metadataUnavailable(reason)
+                    )
                 )
             case .success(let native):
                 let walk = walkLadder(
@@ -541,7 +738,13 @@ public enum JointFit {
 
                 guard let winner = walk.winner else {
                     standardConsidered.append(
-                        CandidateReport(ref: candidate, estimatedFootprintBytes: nil, verdict: .tooLarge, ladderAttempts: walk.attempts)
+                        CandidateReport(
+                            ref: candidate,
+                            estimatedFootprintBytes: nil,
+                            chargedBytes: nil,
+                            verdict: exhaustedLadderVerdict(walk.attempts),
+                            ladderAttempts: walk.attempts
+                        )
                     )
                     continue
                 }
@@ -561,17 +764,18 @@ public enum JointFit {
         // Re-resolve embedding/flash once more at the smallest context
         // actually tried, so the failure's diagnostics show what those slots
         // looked like at the context resolution gave up at.
+        var budget = SharedBudget(totalBytes: budgetBytes)
         let embeddingResolution = resolveSlot(
             .embedding,
             candidates: profile.embedding,
-            remaining: budgetBytes,
+            budget: budget,
             context: lastTriedContext,
             footprint: footprint
         )
-        let afterEmbedding = budgetBytes - reservedBytes(embeddingResolution)
+        budget.charge(embeddingResolution)
         let standardResolution = SlotResolution(
             slot: .standard,
-            remainingBudgetBytes: afterEmbedding,
+            remainingBudgetBytes: budget.remainingBytes,
             chosen: nil,
             considered: standardConsidered,
             contextTokens: lastTriedContext
@@ -579,7 +783,7 @@ public enum JointFit {
         let flashResolution = resolveSlot(
             .flash,
             candidates: profile.flash,
-            remaining: afterEmbedding,
+            budget: budget,
             context: lastTriedContext,
             footprint: footprint
         )
@@ -588,5 +792,28 @@ public enum JointFit {
             budgetBytes: budgetBytes,
             slots: [embeddingResolution, standardResolution, flashResolution]
         )
+    }
+
+    /// The verdict for a standard-slot candidate whose whole context ladder
+    /// failed.
+    ///
+    /// The candidate is ``Verdict/tooLarge`` only when it is what blocked the
+    /// smallest rung tried — the rung it had the most budget at, and so its best
+    /// chance. When a different slot blocked that rung the candidate itself fit,
+    /// and the verdict names the slot that ran out instead. Reporting `tooLarge`
+    /// there would put that word against a candidate a later slot can accept.
+    ///
+    /// - Parameter attempts: Every rung the candidate tried, largest first.
+    /// - Returns: ``Verdict/tooLarge``, or ``Verdict/trioBlocked(_:)`` naming
+    ///   the slot that had no viable candidate.
+    private static func exhaustedLadderVerdict(_ attempts: [LadderAttempt]) -> Verdict {
+        guard
+            let smallestRung = attempts.last,
+            let blocked = smallestRung.blockedSlot,
+            blocked != .standard
+        else {
+            return .tooLarge
+        }
+        return .trioBlocked(blocked)
     }
 }

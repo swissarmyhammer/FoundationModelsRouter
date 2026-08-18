@@ -11,14 +11,27 @@ public enum Verdict: Sendable, Equatable {
     /// This candidate fit the remaining budget and was selected for the slot.
     case chosen
 
-    /// This candidate's `× 1.2` footprint exceeded the budget remaining when it
-    /// was considered.
+    /// The bytes this candidate would charge the shared budget exceeded the
+    /// budget remaining when it was considered.
     ///
     /// For a standard-slot candidate resolved via the context ladder (see
-    /// ``CandidateReport/ladderAttempts``), this means *every* rung the ladder
-    /// tried was too large — the per-rung detail lives in `ladderAttempts`,
-    /// not in a single ``CandidateReport/estimatedFootprintBytes`` figure.
+    /// ``CandidateReport/ladderAttempts``), this means the candidate itself was
+    /// what blocked the smallest rung the ladder tried — the rung it had the
+    /// most budget at. A rung another slot blocked carries ``trioBlocked(_:)``
+    /// instead, because this candidate fit there. The per-rung detail lives in
+    /// `ladderAttempts`, not in a single
+    /// ``CandidateReport/estimatedFootprintBytes`` figure.
     case tooLarge
+
+    /// This standard-slot candidate fit every budget it was measured against,
+    /// and the trio still did not co-fit at any rung. The associated value is
+    /// the slot that had no viable candidate at the smallest rung tried.
+    ///
+    /// Recorded only for a standard-slot candidate resolved via the context
+    /// ladder. It exists so a candidate that fit is never reported ``tooLarge``
+    /// at a budget a later slot then accepts the identical candidate at — the
+    /// contradiction that made this verdict necessary.
+    case trioBlocked(ModelSlot)
 
     /// A higher-preference candidate was already chosen for this slot, so this
     /// lower-preference candidate was not sized or selected.
@@ -37,10 +50,10 @@ public enum Verdict: Sendable, Equatable {
 /// ``ProfileDefinition/context`` was `nil` — an explicit profile context
 /// bypasses the ladder entirely, so no ``LadderAttempt``s exist for that
 /// resolution. `estimatedFootprintBytes` is this *one* candidate's own `× 1.2`
-/// footprint at this rung; `fits` is whether the **whole trio** — embedding,
-/// this standard candidate, and flash — co-fit the budget at this context, not
-/// just this candidate alone, since a rung can fail because a different slot
-/// didn't fit even when this candidate itself did.
+/// footprint at this rung; `blockedSlot` names the slot that stopped the
+/// **whole trio** — embedding, this standard candidate, and flash — from
+/// co-fitting the budget at this context, which need not be the standard slot
+/// at all.
 public struct LadderAttempt: Sendable, Equatable {
     /// The context size in tokens tried at this rung.
     public let contextTokens: Int
@@ -49,9 +62,18 @@ public struct LadderAttempt: Sendable, Equatable {
     /// could not be sized.
     public let estimatedFootprintBytes: Int64?
 
+    /// The first slot, in allocation order, that found no viable candidate at
+    /// this rung, or `nil` when the whole trio co-fit.
+    ///
+    /// It is recorded rather than reduced to a pass/fail bit because a rung can
+    /// fail on `embedding` or `flash` while this candidate itself fit the budget
+    /// it was measured against. A renderer that knows only that the rung failed
+    /// puts "too large" against a candidate that was not.
+    public let blockedSlot: ModelSlot?
+
     /// Whether the full trio (embedding, this candidate, flash) co-fit the
     /// budget at this rung.
-    public let fits: Bool
+    public var fits: Bool { blockedSlot == nil }
 
     /// Creates a ladder attempt record.
     ///
@@ -59,31 +81,45 @@ public struct LadderAttempt: Sendable, Equatable {
     ///   - contextTokens: The context size in tokens tried at this rung.
     ///   - estimatedFootprintBytes: This candidate's own `× 1.2` footprint at
     ///     this rung, or `nil` when unsized.
-    ///   - fits: Whether the full trio co-fit the budget at this rung.
-    public init(contextTokens: Int, estimatedFootprintBytes: Int64?, fits: Bool) {
+    ///   - blockedSlot: The slot that found no viable candidate at this rung,
+    ///     or `nil` when the whole trio co-fit.
+    public init(contextTokens: Int, estimatedFootprintBytes: Int64?, blockedSlot: ModelSlot?) {
         self.contextTokens = contextTokens
         self.estimatedFootprintBytes = estimatedFootprintBytes
-        self.fits = fits
+        self.blockedSlot = blockedSlot
     }
 }
 
-/// One candidate's contribution to a slot's resolution: the reference, its
-/// `× 1.2` footprint estimate, and the verdict explaining its fate.
+/// One candidate's contribution to a slot's resolution: the reference, what it
+/// would cost, and the verdict explaining its fate.
 ///
-/// `estimatedFootprintBytes` is the conservative figure used at the fit
-/// comparison — already multiplied by the `1.2` overhead margin — so it can be
-/// rendered against the budget directly. It is `nil` when the candidate was
+/// `estimatedFootprintBytes` is the candidate's whole resident footprint —
+/// already multiplied by the `1.2` overhead margin — and `chargedBytes` is what
+/// the shared budget was actually asked for, which is the figure the fit
+/// comparison used. The two differ only when an earlier slot already reserved
+/// the same resident container, where the weights are paid for once and this
+/// slot is charged its own KV cache alone. Both are `nil` when the candidate was
 /// never sized: either because its metadata was unavailable, because a
 /// higher-preference candidate had already won the slot, or because it is a
-/// standard-slot candidate resolved via the context ladder whose every rung
-/// was too large (see ``ladderAttempts`` for the per-rung figures instead).
+/// standard-slot candidate resolved via the context ladder that won no rung
+/// (see ``ladderAttempts`` for the per-rung figures instead).
 public struct CandidateReport: Sendable, Equatable {
     /// The candidate model reference.
     public let ref: ModelRef
 
-    /// The candidate's footprint with the `× 1.2` margin already applied, or
-    /// `nil` when the candidate was not sized.
+    /// The candidate's whole resident footprint with the `× 1.2` margin already
+    /// applied, or `nil` when the candidate was not sized.
     public let estimatedFootprintBytes: Int64?
+
+    /// The bytes this candidate asked the shared budget for, with the `× 1.2`
+    /// margin already applied, or `nil` when the candidate was not sized.
+    ///
+    /// Equal to ``estimatedFootprintBytes`` for a candidate no earlier slot has
+    /// already reserved. When an earlier slot in the same resolution named this
+    /// reference in the same role, the router loads one container for both, so
+    /// the weights are already reserved and only the per-session KV cache is
+    /// charged here.
+    public let chargedBytes: Int64?
 
     /// Why this candidate was or was not chosen.
     public let verdict: Verdict
@@ -104,17 +140,21 @@ public struct CandidateReport: Sendable, Equatable {
     /// - Parameters:
     ///   - ref: The candidate model reference.
     ///   - estimatedFootprintBytes: The `× 1.2` footprint, or `nil` when unsized.
+    ///   - chargedBytes: The `× 1.2` bytes charged against the shared budget, or
+    ///     `nil` when unsized.
     ///   - verdict: Why the candidate was or was not chosen.
     ///   - ladderAttempts: The per-rung ladder attempts for this candidate, or
     ///     `[]` when the ladder was not used (the default).
     public init(
         ref: ModelRef,
         estimatedFootprintBytes: Int64?,
+        chargedBytes: Int64?,
         verdict: Verdict,
         ladderAttempts: [LadderAttempt] = []
     ) {
         self.ref = ref
         self.estimatedFootprintBytes = estimatedFootprintBytes
+        self.chargedBytes = chargedBytes
         self.verdict = verdict
         self.ladderAttempts = ladderAttempts
     }
@@ -229,19 +269,38 @@ public struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
         return lines.joined(separator: "\n")
     }
 
-    /// Renders one candidate as `<ref> — <footprint> bytes: <verdict>`.
+    /// Renders one candidate as `<ref> — <footprint> bytes: <verdict>`, with the
+    /// charged bytes named as well when they are smaller than the footprint.
     private static func line(for candidate: CandidateReport) -> String {
         let footprint = candidate.estimatedFootprintBytes
             .map { "\($0) bytes" } ?? "unsized"
-        return "\(candidate.ref.stringValue) — \(footprint): \(verdictText(candidate.verdict))"
+        return "\(candidate.ref.stringValue) — \(footprint)\(sharedWeightsNote(for: candidate)): "
+            + verdictText(candidate.verdict)
     }
 
-    /// Renders one ladder rung as `context <n> tokens — <footprint> bytes: <fit|too large>`.
+    /// Names the smaller figure the shared budget was actually charged, and why,
+    /// or the empty string when the candidate paid its whole footprint.
+    ///
+    /// Without it the arithmetic of the report does not add up: a slot reusing
+    /// an earlier slot's resident container shows a footprint far larger than
+    /// the budget it was accepted at.
+    private static func sharedWeightsNote(for candidate: CandidateReport) -> String {
+        guard
+            let footprint = candidate.estimatedFootprintBytes,
+            let charged = candidate.chargedBytes,
+            charged < footprint
+        else {
+            return ""
+        }
+        return " (\(charged) bytes charged; an earlier slot already reserved the weights)"
+    }
+
+    /// Renders one ladder rung as `context <n> tokens — <footprint> bytes: <outcome>`.
     private static func line(for attempt: LadderAttempt) -> String {
         let footprint = attempt.estimatedFootprintBytes
             .map { "\($0) bytes" } ?? "unsized"
-        let fit = attempt.fits ? "fit" : "too large"
-        return "context \(attempt.contextTokens) tokens — \(footprint): \(fit)"
+        return "context \(attempt.contextTokens) tokens — \(footprint): "
+            + blockedText(attempt.blockedSlot)
     }
 
     /// A short human-readable label for a verdict.
@@ -251,10 +310,32 @@ public struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
             return "chosen"
         case .tooLarge:
             return "too large"
+        case .trioBlocked(let slot):
+            return "trio blocked by \(slot.rawValue)"
         case .skippedHigherPreferenceChosen:
             return "skipped (higher-preference candidate chosen)"
         case .metadataUnavailable(let reason):
             return "metadata unavailable (\(reason))"
+        }
+    }
+
+    /// A short human-readable label for what stopped a ladder rung.
+    ///
+    /// Only a rung the standard slot itself blocked reads `too large`. A rung
+    /// another slot blocked names that slot, because the candidate the rung
+    /// prints a footprint for did fit the budget it was measured against.
+    ///
+    /// - Parameter blockedSlot: The slot that found no viable candidate, or
+    ///   `nil` when the whole trio co-fit.
+    /// - Returns: `fit`, `too large`, or `trio blocked by <slot>`.
+    private static func blockedText(_ blockedSlot: ModelSlot?) -> String {
+        switch blockedSlot {
+        case nil:
+            return "fit"
+        case .standard:
+            return "too large"
+        case .some(let slot):
+            return "trio blocked by \(slot.rawValue)"
         }
     }
 }

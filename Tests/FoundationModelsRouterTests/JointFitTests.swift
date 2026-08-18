@@ -464,4 +464,315 @@ struct JointFitTests {
         // No ladder attempts are recorded for an explicit-context resolution.
         #expect(std.considered[0].ladderAttempts.isEmpty)
     }
+
+    // MARK: - One reference named by two slots
+
+    /// A reference named by both the `standard` and the `flash` slot. The two
+    /// slots load one resident container for it, so its weights cost the
+    /// budget one time.
+    private static let sharedGeneration: ModelRef = "org/shared-standard-flash"
+
+    /// The same repository as ``sharedGeneration``, pinned to a revision. The
+    /// pool keys on the reference as the author wrote it, so this is a second
+    /// container whatever commit the two resolve to.
+    private static let sharedGenerationPinned: ModelRef = "org/shared-standard-flash@abc123"
+
+    /// The embedding candidate the shared-reference profiles pair with.
+    private static let sharedEmbedding: ModelRef = "org/shared-emb"
+
+    /// The explicit working context the shared-reference profiles are authored
+    /// at, which keeps the ladder out of the arithmetic below.
+    private static let sharedContext = 100
+
+    /// ``sharedGeneration``'s architecture: 20 KV bytes for each token
+    /// (`2 × layers 1 × kvHeads 1 × headDim 5 × 2`) over 10_000 weight bytes.
+    private static let sharedGenerationFootprint = Footprint(
+        weightBytes: 10_000, layers: 1, kvHeads: 1, headDim: 5
+    )
+
+    /// ``sharedEmbedding``'s raw footprint: weights alone, no KV cache.
+    private static let sharedEmbeddingRawBytes: Int64 = 500
+
+    /// ``sharedGeneration``'s whole raw footprint at ``sharedContext``: 10_000
+    /// weight bytes plus a 2_000-byte KV cache.
+    private static let sharedGenerationRawBytes: Int64 = 12_000
+
+    /// ``sharedGeneration``'s raw KV cache at ``sharedContext``, which is the
+    /// part a second slot on the same container still pays for.
+    private static let sharedSessionRawBytes: Int64 = 2_000
+
+    /// The budget that fits the trio once the shared weights are reserved a
+    /// single time: `(500 + 12_000 + 2_000) × 1.2`.
+    private static let sharedDedupedBudget: Int64 = 17_400
+
+    /// The budget the trio needs when the two generation slots are charged for
+    /// two separate containers: `600 + 14_400 + 14_400`.
+    private static let sharedSeparateBudget: Int64 = 29_400
+
+    /// The footprint table the shared-reference profiles are sized against.
+    private static let sharedFootprints: [ModelRef: Footprint] = [
+        sharedGeneration: sharedGenerationFootprint,
+        sharedGenerationPinned: sharedGenerationFootprint,
+        sharedEmbedding: Footprint.embedder(weightBytes: sharedEmbeddingRawBytes),
+    ]
+
+    /// A profile whose two generation slots each name one reference, sized at
+    /// ``sharedContext``.
+    private static func sharedProfile(standard: ModelRef, flash: ModelRef) -> ProfileDefinition {
+        ProfileDefinition(
+            name: "shared-generation",
+            description: "one reference can serve both generation slots",
+            standard: [standard],
+            flash: [flash],
+            embedding: [sharedEmbedding],
+            context: sharedContext
+        )
+    }
+
+    @Test("a reference named by two slots reserves its weights once and its KV cache twice")
+    func sharedReferenceReservesWeightsOnce() throws {
+        let result = try JointFit.resolve(
+            profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
+            budgetBytes: Self.sharedDedupedBudget,
+            footprint: Self.ladderFootprint(Self.sharedFootprints),
+            nativeMaxContext: Self.neverCalledNativeMaxContext
+        )
+        #expect(result.standard == Self.sharedGeneration)
+        #expect(result.flash == Self.sharedGeneration)
+
+        // One byte below the deduped total, the second slot's own KV cache no
+        // longer fits — so the KV term really is charged a second time.
+        #expect(throws: ResolutionFailure.self) {
+            try JointFit.resolve(
+                profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
+                budgetBytes: Self.sharedDedupedBudget - 1,
+                footprint: Self.ladderFootprint(Self.sharedFootprints),
+                nativeMaxContext: Self.neverCalledNativeMaxContext
+            )
+        }
+    }
+
+    @Test("the margin is applied once to the deduped total, not twice to the shared weights")
+    func marginIsAppliedOnceToTheDedupedTotal() throws {
+        let result = try JointFit.resolve(
+            profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
+            budgetBytes: Self.sharedDedupedBudget,
+            footprint: Self.ladderFootprint(Self.sharedFootprints),
+            nativeMaxContext: Self.neverCalledNativeMaxContext
+        )
+        let standard = Self.resolution(result, for: .standard)
+        let flash = Self.resolution(result, for: .flash)
+        let standardCharge = try #require(standard.considered[0].chargedBytes)
+        let flashCharge = try #require(flash.considered[0].chargedBytes)
+
+        // Standard pays for the whole container. Flash pays for its own KV
+        // cache alone, while its report still names the whole footprint, so a
+        // reader sees the size of the model beside what it cost.
+        #expect(standardCharge == JointFit.withMargin(Self.sharedGenerationRawBytes))
+        #expect(flashCharge == JointFit.withMargin(Self.sharedSessionRawBytes))
+        #expect(
+            flash.considered[0].estimatedFootprintBytes
+                == JointFit.withMargin(Self.sharedGenerationRawBytes)
+        )
+
+        // The two charges together are one margin over the deduped raw total,
+        // so the shared weights carry the × 1.2 exactly once.
+        #expect(
+            standardCharge + flashCharge
+                == JointFit.withMargin(Self.sharedGenerationRawBytes + Self.sharedSessionRawBytes)
+        )
+    }
+
+    @Test("a slot reusing an earlier slot's container renders both its footprint and its charge")
+    func sharedReferenceRendersBothFootprintAndCharge() throws {
+        let error = try #require(throws: ResolutionFailure.self) {
+            try JointFit.resolve(
+                profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
+                budgetBytes: Self.sharedDedupedBudget - 1,
+                footprint: Self.ladderFootprint(Self.sharedFootprints),
+                nativeMaxContext: Self.neverCalledNativeMaxContext
+            )
+        }
+        let charge = JointFit.withMargin(Self.sharedSessionRawBytes)
+        #expect(
+            error.description.contains(
+                "\(charge) bytes charged; an earlier slot already reserved the weights"
+            )
+        )
+        #expect(error.description.contains("\(JointFit.withMargin(Self.sharedGenerationRawBytes)) bytes"))
+    }
+
+    @Test("two differently spelled references at one repository are reserved separately")
+    func differentlySpelledReferencesAreReservedSeparately() throws {
+        // The pool never resolves the spelling, so a pinned revision and an
+        // unpinned one are two containers and cost two full footprints.
+        #expect(throws: ResolutionFailure.self) {
+            try JointFit.resolve(
+                profile: Self.sharedProfile(
+                    standard: Self.sharedGeneration, flash: Self.sharedGenerationPinned
+                ),
+                budgetBytes: Self.sharedDedupedBudget,
+                footprint: Self.ladderFootprint(Self.sharedFootprints),
+                nativeMaxContext: Self.neverCalledNativeMaxContext
+            )
+        }
+        let result = try JointFit.resolve(
+            profile: Self.sharedProfile(
+                standard: Self.sharedGeneration, flash: Self.sharedGenerationPinned
+            ),
+            budgetBytes: Self.sharedSeparateBudget,
+            footprint: Self.ladderFootprint(Self.sharedFootprints),
+            nativeMaxContext: Self.neverCalledNativeMaxContext
+        )
+        #expect(result.standard == Self.sharedGeneration)
+        #expect(result.flash == Self.sharedGenerationPinned)
+    }
+
+    // MARK: - The profile the field report failed on
+
+    /// The `multitool-cli-demo` generation model, named in both the `standard`
+    /// and the `flash` slot.
+    private static let multitoolGeneration: ModelRef = "org/Qwen3.8-27B-mxfp4"
+
+    /// The `multitool-cli-demo` embedding model.
+    private static let multitoolEmbedding: ModelRef = "org/Qwen3-Embedding-0.6B-4bit-DWQ"
+
+    /// The generation model's architecture, reconstructed from the ladder the
+    /// field report printed. It reproduces every rung of that report to the
+    /// byte: 38872712722 at 262144 tokens down to 18578992248 at 4096.
+    private static let multitoolGenerationFootprint = Footprint(
+        weightBytes: 15_214_058_084, layers: 64, kvHeads: 8, headDim: 32
+    )
+
+    /// The embedding model's raw weight bytes, which margin to the 402356108
+    /// the field report printed.
+    private static let multitoolEmbeddingWeightBytes: Int64 = 335_296_756
+
+    /// The host budget the field report failed against.
+    private static let multitoolBudgetBytes: Int64 = 26_800_603_136
+
+    /// The generation model's native max context, anchoring its ladder.
+    private static let multitoolNativeMaxContext = 262_144
+
+    /// The rung the deduped ladder settles on: 65536 is the first rung the
+    /// flash slot blocks, and 131072 is still too large for standard itself.
+    private static let multitoolResolvedContext = 32_768
+
+    /// The footprint table the `multitool-cli-demo` profile is sized against.
+    private static let multitoolFootprints: [ModelRef: Footprint] = [
+        multitoolGeneration: multitoolGenerationFootprint,
+        multitoolEmbedding: Footprint.embedder(weightBytes: multitoolEmbeddingWeightBytes),
+    ]
+
+    /// The reported profile: one generation model in both generation slots,
+    /// one embedding model, and a derived context.
+    private static func multitoolProfile() -> ProfileDefinition {
+        ProfileDefinition(
+            name: "multitool-cli-demo",
+            description: "one generation model serves both generation slots",
+            standard: [multitoolGeneration],
+            flash: [multitoolGeneration],
+            embedding: [multitoolEmbedding],
+            context: nil
+        )
+    }
+
+    @Test("the reported multitool-cli-demo profile co-fits the budget it failed against")
+    func multitoolProfileCoFitsItsReportedBudget() throws {
+        let result = try JointFit.resolve(
+            profile: Self.multitoolProfile(),
+            budgetBytes: Self.multitoolBudgetBytes,
+            footprint: Self.ladderFootprint(Self.multitoolFootprints),
+            nativeMaxContext: Self.ladderNativeMax(
+                [Self.multitoolGeneration: Self.multitoolNativeMaxContext]
+            )
+        )
+        #expect(result.standard == Self.multitoolGeneration)
+        #expect(result.flash == Self.multitoolGeneration)
+        #expect(result.embedding == Self.multitoolEmbedding)
+        #expect(Self.resolution(result, for: .standard).contextTokens == Self.multitoolResolvedContext)
+    }
+
+    // MARK: - Verdicts that contradict each other
+
+    /// An embedding candidate too large for ``blockedByEmbeddingBudget``, so
+    /// the embedding slot blocks the trio at every rung.
+    private static let oversizedEmbedding: ModelRef = "org/oversized-emb"
+
+    /// The raw footprint of ``oversizedEmbedding``, which margins to 1_200_000.
+    private static let oversizedEmbeddingRawBytes: Int64 = 1_000_000
+
+    /// A budget the generation model fits comfortably and the embedding model
+    /// does not.
+    private static let blockedByEmbeddingBudget: Int64 = 500_000
+
+    /// The generation candidate's native max context, giving a two-rung ladder
+    /// of 8192 and 4096.
+    private static let blockedByEmbeddingNativeMax = 8_192
+
+    /// The footprint table for the embedding-blocked profile.
+    private static let blockedByEmbeddingFootprints: [ModelRef: Footprint] = [
+        sharedGeneration: sharedGenerationFootprint,
+        oversizedEmbedding: Footprint.embedder(weightBytes: oversizedEmbeddingRawBytes),
+    ]
+
+    /// A profile whose embedding slot cannot fit, while the one reference both
+    /// generation slots name fits at every rung.
+    private static func blockedByEmbeddingProfile() -> ProfileDefinition {
+        ProfileDefinition(
+            name: "blocked-by-embedding",
+            description: "the embedding slot is what blocks the trio",
+            standard: [sharedGeneration],
+            flash: [sharedGeneration],
+            embedding: [oversizedEmbedding],
+            context: nil
+        )
+    }
+
+    /// Resolves ``blockedByEmbeddingProfile()`` and returns the failure it
+    /// always throws, so both tests below read one scenario.
+    private static func blockedByEmbeddingFailure() throws -> ResolutionFailure {
+        try #require(throws: ResolutionFailure.self) {
+            try JointFit.resolve(
+                profile: blockedByEmbeddingProfile(),
+                budgetBytes: blockedByEmbeddingBudget,
+                footprint: ladderFootprint(blockedByEmbeddingFootprints),
+                nativeMaxContext: ladderNativeMax([sharedGeneration: blockedByEmbeddingNativeMax])
+            )
+        }
+    }
+
+    /// Records an issue for every candidate one slot reported too large while a
+    /// later slot reported the identical candidate chosen at a budget no
+    /// smaller. The two verdicts cannot both be right, and that contradictory
+    /// pair is what the field report on this defect carried.
+    private static func expectNoContradictoryVerdicts(_ slots: [SlotResolution]) {
+        for (index, slot) in slots.enumerated() {
+            let rejected = slot.considered.filter { $0.verdict == .tooLarge }.map(\.ref)
+            for later in slots[(index + 1)...]
+            where later.remainingBudgetBytes >= slot.remainingBudgetBytes {
+                guard let accepted = later.chosen, rejected.contains(accepted) else { continue }
+                let message: String = """
+                    \(slot.slot.rawValue) reported \(accepted.stringValue) too large at \
+                    \(slot.remainingBudgetBytes) bytes, and \(later.slot.rawValue) chose it at \
+                    \(later.remainingBudgetBytes) bytes
+                    """
+                Issue.record(Comment(rawValue: message))
+            }
+        }
+    }
+
+    @Test("no slot is reported too large at a budget a later slot accepts the same candidate at")
+    func noSlotIsTooLargeWhereALaterSlotAcceptsTheSameCandidate() throws {
+        let error = try Self.blockedByEmbeddingFailure()
+        Self.expectNoContradictoryVerdicts(error.slots)
+    }
+
+    @Test("a rung another slot blocked is not rendered as this candidate being too large")
+    func rungBlockedByAnotherSlotIsNotRenderedAsTooLarge() throws {
+        let error = try Self.blockedByEmbeddingFailure()
+        let text = error.description
+        #expect(text.contains("trio blocked by embedding"))
+        #expect(!text.contains("\(Self.sharedGeneration.stringValue) — unsized: too large"))
+    }
 }
