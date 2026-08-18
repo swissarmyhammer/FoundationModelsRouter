@@ -432,11 +432,15 @@ struct AutoCompactionTriggerIntegrationTests {
         )
 
         // Two priming turns, and neither is the turn under test. A fresh
-        // session has measured nothing yet (`ContextUsageState.none`), so its
-        // FIRST turn can never fold whatever the trigger is, and the fold needs
-        // a turn outside the recency window to summarize. Two turns is the
-        // smallest transcript the automatic path can fold at
-        // `foldKeepRecentTurns`.
+        // session measures 0 tokens: `ContextUsageState.none` gives a
+        // `measuredTokens` of 0, not `nil`. Only `.unknown` gives `nil` and
+        // stops the comparison. So the pre-turn check DOES run on the FIRST
+        // turn, and it compares 0 against `budget.triggerTokens`. 0 is below
+        // any POSITIVE trigger, and `syntheticTriggerShareOfContext` sets a
+        // positive one — a trigger of 0.0 resolves to 0 tokens, and the check
+        // would fire on turn one. The fold also needs a turn outside the
+        // recency window to summarize. Two turns is the smallest transcript
+        // the automatic path can fold at `foldKeepRecentTurns`.
         _ = try await Self.drive(session, prompt: Self.openingBrief)
         _ = try await Self.drive(session, prompt: Self.followUpPrompt)
 

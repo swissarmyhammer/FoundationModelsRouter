@@ -86,6 +86,44 @@ comments:
     - evidence: 2 files — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterIntegrationTests/AutoCompactionTriggerIntegrationTests.swift, /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterIntegrationTests/Support/RealModelHarness.swift. `FM_ROUTER_COMPACTION_SMOKE=1 swift test` — 984 unit tests, 30 integration tests, 58 evals, all passed, 0 failures, 0 warnings, 22.5 s for the whole package. The new suite alone: 4.7 s, 5.0 s, 5.0 s over three runs.
     - next: /review
   timestamp: 2026-08-18T22:03:40.137136+00:00
+- actor: claude-code
+  id: 01m0bewyjgnwtgthfcmq5esds7
+  text: |
+    ### review — findings
+    - evidence: 1 finding — Tests/FoundationModelsRouterIntegrationTests/AutoCompactionTriggerIntegrationTests.swift:434. The validator fleet on `review sha HEAD~1..HEAD` was clean (0 findings, 0 confirmed, 0 refuted, 7 pairs attempted); the finding comes from the directed doc-accuracy check.
+    - next: correct the priming-turn comment's stated reason. `ContextUsageState.none` gives `measuredTokens` 0, not nil, so the turn-one check runs and fails only because the trigger is positive. The recency-window reason, the `RealModelHarness` extraction, and acceptance criterion 4 were all verified correct and need no change.
+  timestamp: 2026-08-18T22:12:02.768674+00:00
+- actor: claude-code
+  id: 01m0bf2v0s4pcsh87v0e2smx5r
+  text: |-
+    The one open finding is corrected. I read both sources before the edit, and the finding is correct on both facts.
+
+    ## What the source says
+
+    1. `Sources/FoundationModelsRouter/Compaction/TokenBudget.swift` — `ContextUsageState.measuredTokens` gives `0` for `.none` and `nil` only for `.unknown`. `tokens(for:)` is `Int((Double(limit) * fraction).rounded())`, so a trigger of `0.0` does resolve to `0` tokens.
+    2. `Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift` — the pre-turn check is `if let budget = autoCompactionBudget, let measuredTokens = usageState.measuredTokens, measuredTokens >= budget.triggerTokens`. `.none` gives a non-nil 0, so the `let` binding holds and the check DOES run on turn one. It compares `0 >= 82` and that is false.
+
+    So the old comment gave a false mechanism. The turn-one fold is stopped by the SIZE of the trigger, not by the absence of a measurement.
+
+    ## The correction
+
+    The comment now states that a fresh session measures 0 tokens, that `.none` gives 0 and only `.unknown` gives `nil` and stops the comparison, that the check runs on turn one against `budget.triggerTokens`, and that 0 is below any POSITIVE trigger. It keeps the edge case rather than hiding it: a trigger of 0.0 resolves to 0 tokens and would fire on turn one. The recency-window half of the sentence is unchanged, because the finding confirms it is correct.
+
+    ## The sweep
+
+    I searched the whole file for the same mistaken reading of `.none`. There is one site only, and it is the one corrected. Two other files carry the phrase "measured nothing", but both are about a summarizer that answered too long, not about `ContextUsageState`, so neither is the same defect.
+
+    ## The run
+
+    `FM_ROUTER_COMPACTION_SMOKE=1 swift test` — 984 unit tests, 30 integration tests, 58 evals, 0 failures, 28.5 s. The `1 known issue` in the unit run is the pre-existing `withKnownIssue` in `BoundedWait.swift`, and its test passed. The gated suite reported the same numbers as the recorded measurement: triggerTokens 82, targetTokens 4, fill 0.167 -> 0.107, one applied fold, 733 -> 369 tokens, 4.7 s.
+  timestamp: 2026-08-18T22:15:15.737073+00:00
+- actor: claude-code
+  id: 01m0bf30a0j72mqpa666e0kby6
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterIntegrationTests/AutoCompactionTriggerIntegrationTests.swift. `FM_ROUTER_COMPACTION_SMOKE=1 swift test` — 984 unit, 30 integration, 58 evals, 0 failures, exit 0, 28.5 s. The finding's checkbox is checked; 0 findings are open.
+    - next: /review
+  timestamp: 2026-08-18T22:15:21.152228+00:00
 position_column: doing
 position_ordinal: '8380'
 title: Test auto-compaction with a synthetic trigger threshold, so no fixture has to be grown to trip it
@@ -139,4 +177,20 @@ They are already injectable, through the PUBLIC surface. No production code chan
 - [x] One test drives a real turn, trips the trigger synthetically, and asserts the fold happened without the caller asking
 - [x] It runs in seconds against a small model, and prints its own wall clock the way `^w1cz46m` does
 - [x] It states in its doc comment what it proves and what it does not
-- [x] If a production surface had to change to allow injection, that change is stated and justified rather than slipped in — none had to, and the suite's doc comment says so #compaction #eval #real-model
+- [x] If a production surface had to change to allow injection, that change is stated and justified rather than slipped in — none had to, and the suite's doc comment says so
+
+## Review Findings (2026-08-18 17:06)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 6 not reviewed (`.kanban/`, excluded by `.reviewignore`).
+
+The validator fleet returned zero findings over the two new files (7 validator/file pairs attempted, 0 failed, 0 skipped). The item below comes from the directed accuracy check this pass was asked to make, not from a validator.
+
+- [x] `Tests/FoundationModelsRouterIntegrationTests/AutoCompactionTriggerIntegrationTests.swift:434` `directed-check/doc-accuracy` — the comment above the two priming turns in `aSyntheticTriggerFoldsInsideTheTurn` states a false reason: "A fresh session has measured nothing yet (`ContextUsageState.none`), so its FIRST turn can never fold whatever the trigger is". `ContextUsageState.measuredTokens` answers `0` for `.none`, not `nil` — only `.unknown` answers `nil` and skips the comparison (`Sources/FoundationModelsRouter/Compaction/TokenBudget.swift`, `case .none: return 0`). So the pre-turn check in `RoutedSessionActorTurnExecution.runTurn` DOES run on turn one, and it compares `0 >= budget.triggerTokens`. Turn one does not fold here because `triggerTokens` is 82, a positive number — not because nothing was measured, and not "whatever the trigger is": `triggerTokens` is `Int((Double(limit) * fraction).rounded())`, so a trigger of `0.0` resolves to `0`, `0 >= 0` holds, and the check fires on turn one. State the reason the source supports — a fresh session measures `0` tokens, which is under any positive trigger — and drop the "whatever the trigger is" universal. Sweep the file for the same mistaken reading of `.none`; the second half of the same sentence, and the `foldKeepRecentTurns` doc, both state the recency-window reason correctly and need no change.
+
+### Verified in this pass, no change needed
+
+- `Summarization.apply` does return `nil` when no turn sits outside the recency window — `guard !old.isEmpty else { return nil }` after `TranscriptTurns.partition(turns, keepRecentTurns:)`. The doc comment's second mechanical reason is correct as written.
+- `RealModelHarness.make` is a faithful extraction of the copy in `CompactionRoundTripIntegrationTests.buildProfile` for its one caller: same `noopResolution`, same root-plus-writer `DurableRecording` pair, same one `ResidentModelGates` set shared by `.standard` and `.flash` with a separate set for `.embedding`, same `UnusedEmbeddingContainer` stand-in. It differs only in `definitionName` and in taking `context` directly rather than reading it back off `noopResolution(slot).contextTokens` — the same value either way. The router id it deliberately does not take is needed only by a caller that restores a session tree across two routers, which this caller is not.
+- Acceptance criterion 4 is met. The suite doc carries a "What this suite does NOT prove" section that states the synthetic threshold proves the wiring fires, not that 0.80 of a real window is the right moment to fold, and it also disclaims summary quality and fixture-size coverage.
+- Every number the doc comments cite checks out against source: `Summarization` defaults `keepRecentTurns` 4, `maxChunkTokens` 2000, `summaryTokenRatio` 0.25, `reasoningTokenHeadroom` 4096; `minimumSummaryTokens` 128, so the floor binds under 512 estimated tokens; `Compactor.stages` is a fixed `static let` of `ToolOutputElision()` and `TurnTruncation()` at their own default of 4; `Compactor.charsPerTokenEstimate` is 4.0, so the 2556-byte `openingBrief` does estimate 639 tokens.
+- `RoutedModel/makeSession(...)` is the right symbol for the doc link — `RoutedModel` is the public generic class in `LanguageModelProfile.swift` that `RoutedLLM` names. #compaction #eval #real-model
