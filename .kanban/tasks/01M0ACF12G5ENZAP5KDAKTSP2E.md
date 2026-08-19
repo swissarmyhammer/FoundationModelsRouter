@@ -1,8 +1,65 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8480'
+comments:
+- actor: claude-code
+  id: 01m0bjqcra1cem29mfqt2cyzjy
+  text: |-
+    ## Audit at `dd55fcd2c` — LIVE
+
+    Re-checked, and the claim holds.
+
+    `CompactionEvalProgressLog` has 39 references across 3 files. `Tests/FoundationModelsRouterEvals/Support/CompactionContinuityEvalRealSubjectRunner.swift` is not one of them. Its `container()` (lines 47-73) and its `run(...)` (lines 172-260) emit no progress at all.
+
+    `CompactionEvalProgressStep` is still a String-raw enum (`CompactionEvalProgressLog.swift:12`), so the plan on this card to extend it still applies.
+  timestamp: 2026-08-18T23:18:54.986074+00:00
+- actor: claude-code
+  id: 01m0by9rqzax5s4v817yzw0591
+  text: |-
+    ## Done
+
+    `CompactionContinuityEvalRealSubjectRunner` now writes a live trail.
+
+    ### The step vocabulary
+
+    `CompactionEvalProgressStep` gained two cases beside `fold`/`answer`: `step` and `finalInstruction` (raw value `final-instruction`). The prefix, the started/returned markers and `makeSecondsText(_:)` are untouched and shared, so one `grep` still reads both tiers.
+
+    The label needed one more fact than it carried. `CompactionEvalSampleLabel.seedID` became `fixtureID` beside a new `CompactionEvalFixtureKind` (`seed` / `task`), so a line renders `sample=2/10 task=vault-code-and-outpost` for this tier and `sample=3/7 seed=...` for the other. The question-keyed initializer went away; each runner now resolves its own fixture and hands the label the answer, which is why the continuity runner gained `tasks` and `CompactionContinuitySeed.keyedByFinalInstruction(_:)` — the final instruction is the join key a sample already carries.
+
+    ### The model load
+
+    Timed on its own two lines by the shared `CompactionEvalRealModelContainer.load` (task `^we8n8nk`), exactly as the fact-retention runner does. A tier that spends its whole limit loading leaves the started line and no returned line.
+
+    ### The `elapsed=0.0s` literal is gone from BOTH runners
+
+    `makeStepStartedLine` now takes `elapsedSeconds: Double?` and states NO `elapsed=` clause when it is `nil`. A sample's first step passes `nil` — it has measured nothing, and a zero there reads as a measurement while carrying none.
+
+    That change reaches `CompactionEvalRealSubjectRunner` too, which passed the literal `0` at fold start. Leaving it would have kept a false measurement in a function this change rewrote, so the fold-start call now passes `nil`. It is one line, and it is the same defect, not a second card's work.
+
+    A step's started line also carries `step=4/13`, because a continuity task drives a dozen steps that all render the same `step` word — without it a cut-short run names the sample and not the step. Its returned line carries `replyBytes=… folds=…`, so the trail states WHICH step folded rather than leaving the count to be read at the end.
+
+    ### Covered hermetically
+
+    `CompactionContinuityEvalProgressLogTests`, beside `CompactionEvalProgressLogTests` — 8 tests, 1 ms, no model. Each was proved able to fail: the renderer was broken four ways (the nil guard back to a zero, the label borrowing `seed=`, the fold count dropped, the step position dropped) and 7 issues were recorded across 4 tests. All restored, all green.
+
+    ### Acceptance criteria
+
+    - [x] A continuity run states its model load time apart from its sample time.
+    - [x] One line per sample while it runs, so a run that hits its limit names the sample it stopped in — and the step.
+    - [x] Each sample states the time of each step it drove.
+    - [x] Both tiers share one line prefix and one seconds rendering, pinned by `bothTiersShareOnePrefixAndOneSecondsRendering`.
+
+    `swift test` 1099 pass; `FM_ROUTER_COMPACTION_SMOKE=1 swift test` 1099 pass; `-warnings-as-errors` clean; `review working` 0 findings.
+  timestamp: 2026-08-19T02:41:11.423318+00:00
+- actor: claude-code
+  id: 01m0byaz84g8pp4ac27rzct100
+  text: |-
+    ### implement — changed
+    - evidence: 13 files across the three cards done in one session. This card's own: `Tests/FoundationModelsRouterEvals/CompactionEvalProgressLog.swift`, `Support/CompactionContinuityEvalRealSubjectRunner.swift`, `Support/CompactionEvalRealSubjectRunner.swift`, `CompactionContinuityDataset.swift`, `CompactionContinuityEvaluationTests.swift`, `CompactionEvaluationTests.swift`, `Support/SequenceKeyedByFirst.swift`. `swift test` 1099 pass; `FM_ROUTER_COMPACTION_SMOKE=1 swift test` 1099 pass; `review working` 0 findings.
+    - next: `/review`.
+  timestamp: 2026-08-19T02:41:50.852243+00:00
+position_column: doing
+position_ordinal: '8580'
 title: The gated compaction continuity eval has the same one-bit defect — it prints nothing until it ends
 ---
 Found while instrumenting the fact-retention tier for `^h2xxsse`.

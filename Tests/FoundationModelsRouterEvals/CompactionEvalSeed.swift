@@ -61,7 +61,7 @@ struct CompactionEvalSeed: Sendable {
     /// never disagree about which seed a sample ran:
     /// ``CompactionEvalFactRetentionReport/findings(for:seeds:)`` classifies a
     /// recorded sample against it once the run has ended, and
-    /// ``CompactionEvalSampleLabel/init(ordinal:of:question:in:)`` names the
+    /// ``CompactionEvalSampleLabel/init(ordinal:of:fixture:id:)`` names the
     /// sample in the progress lines a run emits while it is still going.
     ///
     /// `CompactionEvalFactRetentionReportTests.everySeedQuestionIsUnique` pins
@@ -71,7 +71,7 @@ struct CompactionEvalSeed: Sendable {
     /// - Parameter seeds: The seeds to key.
     /// - Returns: One entry for each distinct question.
     static func keyedByQuestion(_ seeds: [CompactionEvalSeed]) -> [String: CompactionEvalSeed] {
-        Dictionary(seeds.map { ($0.question, $0) }, uniquingKeysWith: { first, _ in first })
+        seeds.keyedByFirst(\.question)
     }
 
     /// Builds a seed from a hand-written fixture spec: the fixture's

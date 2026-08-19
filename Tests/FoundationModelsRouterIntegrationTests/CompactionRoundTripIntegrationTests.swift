@@ -68,14 +68,6 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct CompactionRoundTripIntegrationTests {
-    /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
-    /// `.embedding` slot the ``LanguageModelProfile`` this suite builds must
-    /// still carry — never exercised here, only present to satisfy the type.
-    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension = 1
-        func embed(texts: [String]) async throws -> [[Float]] { [] }
-    }
-
     /// The working context this suite resolves the tiny model at — smaller
     /// than ``RealModels/context`` so scripted turns cross the 0.80
     /// compaction trigger without needing huge prompts. See this type's own
@@ -144,95 +136,6 @@ struct CompactionRoundTripIntegrationTests {
     /// f80n046). Argmax decoding consumes no randomness at all, which is what
     /// lets a red run here be attributed to the change under test.
     private static let samplingMode: GenerationOptions.SamplingMode = .greedy
-
-    /// Builds a real ``LanguageModelProfile`` directly over `container`,
-    /// stamped with `id` (pass the first router's `id` to continue the same
-    /// recording root) and `recordingsDir` — the same manual-harness
-    /// technique ``SessionTreeRestorationIntegrationTests`` uses, so this
-    /// suite reaches `Router.resolve(_:reporting:)`-adjacent behavior without
-    /// downloading the `.flash`/`.embedding` slots too.
-    private func buildProfile(
-        id: ULID = .generate(),
-        container: MLXFoundationModelsContainer,
-        cacheDir: URL,
-        recordingsDir: URL
-    ) -> (router: Router, profile: LanguageModelProfile) {
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let router = Router(id: id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-
-        func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(
-                slot: slot,
-                remainingBudgetBytes: 0,
-                chosen: compactionRoundTripTinyModel,
-                considered: [],
-                contextTokens: Self.context
-            )
-        }
-        // The same root-plus-writer pair `Router.makeDurableRecording` builds:
-        // every session vended below writes its `session.json` through this, so
-        // the tree this suite restores from carries the facts to interpret it
-        // by.
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            DurableRecording(
-                root: recordingsDir,
-                sidecarWriter: SessionSidecarWriter(
-                    slot: slot,
-                    model: compactionRoundTripTinyModel,
-                    context: noopResolution(slot).contextTokens,
-                    recordingLevel: .full,
-                    profile: nil,
-                    routerId: router.id
-                )
-            )
-        }
-        // Both generation handles wrap the one `container`, so both take the
-        // one gate set it carries, as they would from a pool entry. Two sets
-        // would let two generations run inside the one container at once.
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        let standard = RoutedLLM(
-            slot: .standard,
-            chosen: compactionRoundTripTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.standard),
-            container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.standard),
-            gates: generationGates
-        )
-        let flash = RoutedLLM(
-            slot: .flash,
-            chosen: compactionRoundTripTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.flash),
-            container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.flash),
-            gates: generationGates
-        )
-        let embedding = RoutedEmbedder(
-            slot: .embedding,
-            chosen: compactionRoundTripTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.embedding),
-            container: UnusedEmbeddingContainer(),
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        )
-        let profile = LanguageModelProfile(
-            definitionName: "test",
-            standard: standard,
-            flash: flash,
-            embedding: embedding,
-            router: router,
-            residencyToken: .generate()
-        )
-        return (router, profile)
-    }
 
     /// Long, distinct scripted documents fed into the session one per turn —
     /// enough cumulative text, against ``context``'s small 2048-token budget,
@@ -442,8 +345,17 @@ struct CompactionRoundTripIntegrationTests {
 
         let container = try await RealModelContainer.load(
             ref: compactionRoundTripTinyModel, context: Self.context, samplingMode: Self.samplingMode)
-        let (router, profile) = buildProfile(
-            container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile = RealModelHarness.make(
+            model: compactionRoundTripTinyModel,
+            context: Self.context,
+            container: container,
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
+        // The router's own id, read off the handle it stamped. The harness
+        // returns no `Router`, because this is the only fact a caller needs of
+        // one and every handle already carries it.
+        let routerId = profile.standard.routerId
 
         let session = profile.standard.makeSession(instructions: Self.instructions)
         let sessionId = session.id
@@ -496,7 +408,7 @@ struct CompactionRoundTripIntegrationTests {
         #expect(fillAfterCompaction < fillBeforeCompaction)
         #expect(session.id == sessionId)
         #expect(session.recordingDirectory == recordingDirectoryBefore)
-        #expect(session.routerId == router.id)
+        #expect(session.routerId == routerId)
 
         // 3. A turn after compaction succeeds and recalls the folded
         //    fact — proof the summary, not just the mechanism, worked.
@@ -515,14 +427,24 @@ struct CompactionRoundTripIntegrationTests {
         //    recorded history.
         let container2 = try await RealModelContainer.load(
             ref: compactionRoundTripTinyModel, context: Self.context, samplingMode: Self.samplingMode)
-        let (_, profile2) = buildProfile(
-            id: router.id, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir
+        let profile2 = RealModelHarness.make(
+            model: compactionRoundTripTinyModel,
+            context: Self.context,
+            container: container2,
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            routerId: routerId
         )
         let restoredTree = try await profile2.standard.restoreSessionTree(root: sessionId)
         let restoredSession = restoredTree.root
         #expect(restoredSession.id == sessionId)
+        // The restored session continues the FIRST router's recording root,
+        // which is the whole reason `RealModelHarness.make` takes a `routerId`.
+        // Asserted here as well as on the pre-compaction session above, so a
+        // profile built with a fresh id cannot pass by restoring nothing.
+        #expect(restoredSession.routerId == routerId)
 
-        let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
+        let routerDirectory = recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         let checkpointedWindow = try tree.effectiveTranscript(forSession: sessionId)
         let fullHistory = try tree.effectiveTranscript(forSession: sessionId, view: .fullHistory)

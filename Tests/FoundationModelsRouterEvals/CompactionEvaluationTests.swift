@@ -975,7 +975,7 @@ struct CompactionEvalProgressLogTests {
 
     /// A sample label in the middle of its tier.
     private static let label = CompactionEvalSampleLabel(
-        ordinal: sampleOrdinal, total: tierSeedCount, seedID: sampleSeedID)
+        ordinal: sampleOrdinal, total: tierSeedCount, fixture: .seed, fixtureID: sampleSeedID)
 
     /// The model reference the model-load lines name.
     private static let ref = CompactionEvalRealModel.ref.stringValue
@@ -1072,10 +1072,21 @@ struct CompactionEvalProgressLogTests {
     @Test("a sample is named by its seed and by its position in the tier")
     func sampleIsNamedByItsSeedAndItsPositionInTheTier() {
         let line = CompactionEvalProgressLog.makeStepStartedLine(
-            .fold, sample: Self.label, elapsedSeconds: 0)
+            .fold, sample: Self.label, elapsedSeconds: nil)
 
         #expect(line.contains("sample=\(Self.sampleOrdinal)/\(Self.tierSeedCount)"))
         #expect(line.contains("seed=\(Self.sampleSeedID)"))
+    }
+
+    @Test("a sample's first step states no elapsed clause, rather than a zero that reads as a measurement")
+    func firstStepOfASampleStatesNoElapsedClause() {
+        let first = CompactionEvalProgressLog.makeStepStartedLine(
+            .fold, sample: Self.label, elapsedSeconds: nil)
+        let later = CompactionEvalProgressLog.makeStepStartedLine(
+            .answer, sample: Self.label, elapsedSeconds: Self.elapsedSeconds)
+
+        #expect(!first.contains("elapsed="))
+        #expect(later.contains("elapsed=\(CompactionEvalProgressLog.makeSecondsText(Self.elapsedSeconds))"))
     }
 
     @Test("a label built from a seed's question names that seed")
@@ -1085,13 +1096,14 @@ struct CompactionEvalProgressLogTests {
         let label = CompactionEvalSampleLabel(
             ordinal: seeds.count,
             of: seeds.count,
-            question: seed.question,
-            in: CompactionEvalSeed.keyedByQuestion(seeds)
+            fixture: .seed,
+            id: CompactionEvalSeed.keyedByQuestion(seeds)[seed.question]?.id
         )
 
-        #expect(label.seedID == seed.id)
+        #expect(label.fixtureID == seed.id)
         #expect(label.ordinal == seeds.count)
         #expect(label.total == seeds.count)
+        #expect(label.rendered.contains("seed=\(seed.id)"))
     }
 
     @Test("a label whose question matches no seed is still named, by the report's own marker")
@@ -1100,11 +1112,11 @@ struct CompactionEvalProgressLogTests {
         let label = CompactionEvalSampleLabel(
             ordinal: 1,
             of: seeds.count,
-            question: "a question no seed asks",
-            in: CompactionEvalSeed.keyedByQuestion(seeds)
+            fixture: .seed,
+            id: CompactionEvalSeed.keyedByQuestion(seeds)["a question no seed asks"]?.id
         )
 
-        #expect(label.seedID == CompactionEvalFactRetentionReport.unmatchedSeedID)
+        #expect(label.fixtureID == CompactionEvalFactRetentionReport.unmatchedSeedID)
     }
 
     @Test("keying the seeds by question keeps every seed")

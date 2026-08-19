@@ -1,10 +1,6 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -140,27 +136,13 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
     private func container() async throws -> MLXFoundationModelsContainer {
         if let loaded { return loaded }
-        let modelName = CompactionEvalRealModel.ref.stringValue
-        CompactionEvalProgressLog.emit(CompactionEvalProgressLog.makeModelLoadStartedLine(ref: modelName))
-        let startedAt = Date()
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader()
-        )
-        let container = try await loader.loadLLM(
-            ref: CompactionEvalRealModel.ref,
-            slot: .standard,
-            context: CompactionEvalRealModel.context,
-            reporting: { _ in }
-        )
-        guard let mlxContainer = container as? MLXFoundationModelsContainer else {
-            throw CompactionEvaluationError.unexpectedContainerType
-        }
-        loaded = mlxContainer
-        CompactionEvalProgressLog.emit(
-            CompactionEvalProgressLog.makeModelLoadReturnedLine(
-                ref: modelName, seconds: Date().timeIntervalSince(startedAt)))
-        return mlxContainer
+        // Decoding is the provider's own default here. This tier scores a
+        // key-phrase search over an answer rather than the answer's exact text,
+        // so it does not need the argmax pin the continuity tier carries.
+        let container = try await CompactionEvalRealModelContainer.load(
+            unexpectedContainerType: CompactionEvaluationError.unexpectedContainerType)
+        loaded = container
+        return container
     }
 
     /// Names the sample now entering ``run(entries:prompt:budget:question:)``,
@@ -177,8 +159,8 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         return CompactionEvalSampleLabel(
             ordinal: startedSampleCount,
             of: seeds.count,
-            question: question,
-            in: seedsByQuestion
+            fixture: .seed,
+            id: seedsByQuestion[question]?.id
         )
     }
 
@@ -219,7 +201,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let sampleStartedAt = Date()
 
         CompactionEvalProgressLog.emit(
-            CompactionEvalProgressLog.makeStepStartedLine(.fold, sample: label, elapsedSeconds: 0))
+            CompactionEvalProgressLog.makeStepStartedLine(.fold, sample: label, elapsedSeconds: nil))
         let summarizer = BlankSlateSummarizer(container: container)
         let (folded, result) = try await Compactor.compact(
             Transcript(entries: entries),

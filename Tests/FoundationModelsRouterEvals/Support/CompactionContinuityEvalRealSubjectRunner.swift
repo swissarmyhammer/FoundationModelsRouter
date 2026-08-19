@@ -1,9 +1,5 @@
 import Foundation
 import FoundationModelsRouterTestSupport
-import HuggingFace
-import MLXHuggingFace
-import MLXLMCommon
-import Tokenizers
 
 @testable import FoundationModelsRouter
 
@@ -18,25 +14,70 @@ import Tokenizers
 /// one fold-then-ask call.
 ///
 /// Builds a fresh ``LanguageModelProfile``/``Router`` per call over the one
-/// cached, already-loaded ``MLXFoundationModelsContainer`` — the same
-/// manual-harness technique ``CompactionRoundTripIntegrationTests.buildProfile``
-/// uses (reimplemented here since that type lives in a different test target
-/// with no dependency in either direction) — so every sample gets its own
-/// isolated recording root without paying for a second model download.
+/// cached, already-loaded ``MLXFoundationModelsContainer``, so every sample gets
+/// its own isolated recording root without paying for a second model download.
 actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     private var loaded: MLXFoundationModelsContainer?
 
+    /// The tasks this runner's tier measures, in the order the tier states them.
+    ///
+    /// Held here rather than passed beside the runner at every call site, for
+    /// the reason ``CompactionEvalRealSubjectRunner/seeds`` is: one tier cannot
+    /// evaluate one task set while its progress lines are read against another.
+    private nonisolated let tasks: [CompactionContinuitySeed]
+
+    /// ``tasks``, keyed by the final instruction a running sample carries — the
+    /// join that names the task a sample is driving.
+    ///
+    /// The final instruction is the key the sample already carries into
+    /// ``run(steps:finalInstruction:prompt:budget:)``, and it is what
+    /// ``CompactionContinuityEvaluation/dataset`` stamps as each sample's own
+    /// prompt, so a live line and the tier's own sample list name one task the
+    /// same way.
+    private nonisolated let tasksByFinalInstruction: [String: CompactionContinuitySeed]
+
+    /// How many samples have entered
+    /// ``run(steps:finalInstruction:prompt:budget:)``, including the ones still
+    /// running.
+    ///
+    /// A sample the time limit cut short is counted here and recorded nowhere
+    /// else, which is what lets its progress lines state where in the tier it
+    /// stood.
+    private var startedSampleCount = 0
+
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
     /// `.embedding` slot every ``LanguageModelProfile`` built here must still
-    /// carry — never exercised, only present to satisfy the type. Mirrors
-    /// `CompactionRoundTripIntegrationTests.UnusedEmbeddingContainer`.
+    /// carry — never exercised, only present to satisfy the type.
     private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
+        /// The dimension of a vector this container never makes.
         let dimension = 1
+
+        /// Answers with no vectors, because nothing calls this.
+        ///
+        /// - Parameter texts: The texts to embed. Ignored.
+        /// - Returns: An empty array.
         func embed(texts: [String]) async throws -> [[Float]] { [] }
+    }
+
+    /// Creates a runner over one tier's tasks.
+    ///
+    /// - Parameter tasks: The tier's tasks, in the order the tier states them.
+    ///   Defaults to ``compactionContinuitySeeds``, which is the same default
+    ///   ``CompactionContinuityEvaluation/init(prompt:budget:tasks:runSubject:)``
+    ///   takes, so a runner and the evaluation beside it measure one set.
+    init(tasks: [CompactionContinuitySeed] = compactionContinuitySeeds) {
+        self.tasks = tasks
+        self.tasksByFinalInstruction = CompactionContinuitySeed.keyedByFinalInstruction(tasks)
     }
 
     /// The resident container, loading it on first access and caching it for
     /// every later call.
+    ///
+    /// The load is timed and stated on its own two progress lines by
+    /// ``CompactionEvalRealModelContainer/load(samplingMode:unexpectedContainerType:)``,
+    /// so it is never charged to the first sample. A tier that spends its whole
+    /// limit here leaves the started line and no returned line, which is the
+    /// trail ``gatedEvalSuiteTimeLimitMinutes`` exists to bound (task ^aktsp2e).
     ///
     /// - Returns: The cached container, if one was already loaded, or the
     ///   newly-loaded and now-cached container otherwise.
@@ -54,29 +95,53 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // flip against a 0.8 threshold rather than a measurement of the prompt
         // under test (task f80n046). Argmax decoding consumes no randomness at
         // all, so a run's score is a fact about the prompt and the fixtures.
-        let loader = LiveModelLoader(
-            downloader: #hubDownloader(),
-            tokenizerLoader: #huggingFaceTokenizerLoader(),
-            samplingMode: .greedy
+        let container = try await CompactionEvalRealModelContainer.load(
+            samplingMode: .greedy,
+            unexpectedContainerType: CompactionContinuityEvaluationError.unexpectedContainerType
         )
-        let container = try await loader.loadLLM(
-            ref: CompactionEvalRealModel.ref,
-            slot: .standard,
-            context: CompactionEvalRealModel.context,
-            reporting: { _ in }
+        loaded = container
+        return container
+    }
+
+    /// Names the sample now entering
+    /// ``run(steps:finalInstruction:prompt:budget:)``, and counts it.
+    ///
+    /// Advances ``startedSampleCount``, so each call names the next position in
+    /// the tier. Called once per sample, at the top of its run.
+    ///
+    /// - Parameter finalInstruction: The final instruction this sample asks,
+    ///   which resolves the task it drives.
+    /// - Returns: The label every one of this sample's progress lines carries.
+    private func makeSampleLabel(forFinalInstruction finalInstruction: String) -> CompactionEvalSampleLabel {
+        startedSampleCount += 1
+        return CompactionEvalSampleLabel(
+            ordinal: startedSampleCount,
+            of: tasks.count,
+            fixture: .task,
+            id: tasksByFinalInstruction[finalInstruction]?.id
         )
-        guard let mlxContainer = container as? MLXFoundationModelsContainer else {
-            throw CompactionContinuityEvaluationError.unexpectedContainerType
-        }
-        loaded = mlxContainer
-        return mlxContainer
     }
 
     /// Builds a real ``LanguageModelProfile`` directly over `container`, with
-    /// a fresh, isolated recording root — the same manual-harness technique
-    /// `CompactionRoundTripIntegrationTests.buildProfile` uses, minus the
-    /// restore-across-two-routers machinery this evaluation doesn't need
-    /// (every sample is driven start to finish within one call).
+    /// a fresh, isolated recording root.
+    ///
+    /// ## Why this is not `RealModelHarness.make`
+    ///
+    /// `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelHarness.swift`
+    /// is the same consolidation for the integration target, and this target
+    /// cannot call it, for the reason
+    /// ``CompactionEvalRealModelContainer`` states in full: the shared function
+    /// needs `@testable import FoundationModelsRouter` — ``LanguageModelProfile``'s
+    /// own initializer is internal — and `@testable` reaches only a LEAF test
+    /// target, which SwiftPM cannot share source between. Measured: hosting it
+    /// in `FoundationModelsRouterTestSupport` builds under
+    /// `swift build --build-tests` and breaks `swift build -c release`.
+    ///
+    /// - Parameters:
+    ///   - container: The model that is already loaded and resident.
+    ///   - cacheDir: The directory the router caches under.
+    ///   - recordingsDir: The directory the router records under.
+    /// - Returns: The profile to vend this sample's session from.
     private func buildProfile(
         container: MLXFoundationModelsContainer,
         cacheDir: URL,
@@ -158,6 +223,12 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// session's own durable recording afterward to report how many entries
     /// it actually persisted.
     ///
+    /// Every one of those generations states itself on a
+    /// ``CompactionEvalProgressLog`` line as it happens, so a run the suite time
+    /// limit cuts short names the sample it stopped in AND the step of that
+    /// sample. Nothing else survives such a run: the tier's own outcome is
+    /// returned only once every step has finished (task ^aktsp2e).
+    ///
     /// - Parameters:
     ///   - steps: The setup/filler steps to send, in order, before
     ///     `finalInstruction`.
@@ -179,6 +250,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         modelName: String
     ) {
         let container = try await self.container()
+        let label = makeSampleLabel(forFinalInstruction: finalInstruction)
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("CompactionContinuityEval-cache-\(UUID().uuidString)", isDirectory: true)
         let recordingsDir = FileManager.default.temporaryDirectory
@@ -238,12 +310,58 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
             }
         }
 
-        for step in steps {
-            accumulate(try await driveStep(session, step))
+        // Timed from here rather than from the top of this call, so `elapsed`
+        // measures the generations alone. Everything above is one temporary
+        // directory and one profile build, which cost nothing a reader of the
+        // trail is trying to account for.
+        let sampleStartedAt = Date()
+
+        for (offset, step) in steps.enumerated() {
+            let stepStartedAt = Date()
+            CompactionEvalProgressLog.emit(
+                CompactionEvalProgressLog.makeStepStartedLine(
+                    .step,
+                    sample: label,
+                    // The first step has measured nothing yet, so it states no
+                    // elapsed clause at all rather than a zero that reads as a
+                    // measurement.
+                    elapsedSeconds: offset == 0 ? nil : stepStartedAt.timeIntervalSince(sampleStartedAt),
+                    detail: CompactionEvalProgressLog.makeStepPositionDetail(ordinal: offset + 1, of: steps.count)
+                ))
+            let stepResult = try await driveStep(session, step)
+            accumulate(stepResult)
+            let stepReturnedAt = Date()
+            CompactionEvalProgressLog.emit(
+                CompactionEvalProgressLog.makeStepReturnedLine(
+                    .step,
+                    sample: label,
+                    elapsedSeconds: stepReturnedAt.timeIntervalSince(sampleStartedAt),
+                    stepSeconds: stepReturnedAt.timeIntervalSince(stepStartedAt),
+                    detail: CompactionEvalProgressLog.makeDrivenStepDetail(
+                        reply: stepResult.reply, foldCount: stepResult.foldCount)
+                ))
         }
+
+        let finalStartedAt = Date()
+        CompactionEvalProgressLog.emit(
+            CompactionEvalProgressLog.makeStepStartedLine(
+                .finalInstruction,
+                sample: label,
+                elapsedSeconds: finalStartedAt.timeIntervalSince(sampleStartedAt)
+            ))
         let finalStepResult = try await driveStep(session, finalInstruction)
         accumulate(finalStepResult)
         let finalAnswer = finalStepResult.reply
+        let finalReturnedAt = Date()
+        CompactionEvalProgressLog.emit(
+            CompactionEvalProgressLog.makeStepReturnedLine(
+                .finalInstruction,
+                sample: label,
+                elapsedSeconds: finalReturnedAt.timeIntervalSince(sampleStartedAt),
+                stepSeconds: finalReturnedAt.timeIntervalSince(finalStartedAt),
+                detail: CompactionEvalProgressLog.makeDrivenStepDetail(
+                    reply: finalAnswer, foldCount: finalStepResult.foldCount)
+            ))
 
         let routerDirectory = recordingsDir.appendingPathComponent(profile.standard.routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)

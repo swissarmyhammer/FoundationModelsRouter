@@ -68,14 +68,6 @@ private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct SessionTreeRestorationIntegrationTests {
-    /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
-    /// `.embedding` slot the ``LanguageModelProfile`` this suite builds must
-    /// still carry — never exercised here, only present to satisfy the type.
-    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension = 1
-        func embed(texts: [String]) async throws -> [[Float]] { [] }
-    }
-
     // MARK: - Test tool (task jkdae4b: tools threaded through restoreSessionTree)
 
     /// The scripted tool argument schema the turn's prompt reliably drives —
@@ -97,87 +89,42 @@ struct SessionTreeRestorationIntegrationTests {
         }
     }
 
-    /// Builds a real ``LanguageModelProfile`` directly over `container`,
-    /// stamped with `id` (pass the first router's `id` to continue the same
-    /// recording root) and `recordingsDir` — the same manual-harness
-    /// technique this target's other gated suites use, so this suite reaches
-    /// `Router.resolve(_:reporting:)`-adjacent behavior without downloading
-    /// the `.flash`/`.embedding` slots too.
-    private func buildProfile(
-        id: ULID = .generate(),
+
+    /// This suite's own ``RealModelHarness`` call: the same real
+    /// ``LanguageModelProfile`` build every other gated suite of this target
+    /// uses, over an already-loaded container, so this suite reaches
+    /// `Router.resolve(_:reporting:)`-adjacent behavior without downloading the
+    /// `.flash`/`.embedding` slots too.
+    ///
+    /// A wrapper rather than four spelled-out calls, because this suite's model
+    /// and context are the same at each of its four sites and only the container
+    /// and the router id move.
+    ///
+    /// - Parameters:
+    ///   - container: The model that is already loaded and resident.
+    ///   - cacheDir: The directory the router caches under.
+    ///   - recordingsDir: The directory the router records under.
+    ///   - routerId: The id to stamp the router with. Pass the FIRST router's id
+    ///     to continue the same recording root; a fresh one starts a new root.
+    /// - Returns: The profile to vend sessions from.
+    private static func makeProfile(
         container: MLXFoundationModelsContainer,
         cacheDir: URL,
-        recordingsDir: URL
-    ) -> (router: Router, profile: LanguageModelProfile) {
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let router = Router(id: id, cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-
-        func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: sessionTreeRestorationTinyModel, considered: [])
-        }
-        // The same root-plus-writer pair `Router.makeDurableRecording` builds:
-        // every session vended below writes its `session.json` through this, so
-        // the tree this suite reloads and restores from carries the facts to
-        // interpret it by.
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            DurableRecording(
-                root: recordingsDir,
-                sidecarWriter: SessionSidecarWriter(
-                    slot: slot,
-                    model: sessionTreeRestorationTinyModel,
-                    context: noopResolution(slot).contextTokens,
-                    recordingLevel: .full,
-                    profile: nil,
-                    routerId: router.id
-                )
-            )
-        }
-        // Both generation handles wrap the one `container`, so both take the
-        // one gate set it carries, as they would from a pool entry. Two sets
-        // would let two generations run inside the one container at once.
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        let standard = RoutedLLM(
-            slot: .standard,
-            chosen: sessionTreeRestorationTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.standard),
+        recordingsDir: URL,
+        routerId: ULID = .generate()
+    ) -> LanguageModelProfile {
+        RealModelHarness.make(
+            model: sessionTreeRestorationTinyModel,
+            // The window this suite's own hand-built profile resolved at before
+            // it moved onto the harness: it stated no `contextTokens` at all, so
+            // every slot took `SlotResolution`'s own default. Stated explicitly
+            // here, because the harness has no default of its own to inherit.
+            context: ProfileDefinition.defaultContext,
             container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.standard),
-            gates: generationGates
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir,
+            routerId: routerId
         )
-        let flash = RoutedLLM(
-            slot: .flash,
-            chosen: sessionTreeRestorationTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.flash),
-            container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.flash),
-            gates: generationGates
-        )
-        let embedding = RoutedEmbedder(
-            slot: .embedding,
-            chosen: sessionTreeRestorationTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.embedding),
-            container: UnusedEmbeddingContainer(),
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        )
-        let profile = LanguageModelProfile(
-            definitionName: "test",
-            standard: standard,
-            flash: flash,
-            embedding: embedding,
-            router: router,
-            residencyToken: .generate()
-        )
-        return (router, profile)
     }
 
     /// Decodes every event from a session directory's `transcript.jsonl`, or
@@ -232,7 +179,11 @@ struct SessionTreeRestorationIntegrationTests {
     /// in-memory session.
     private func driveOriginalTree(cacheDir: URL, recordingsDir: URL) async throws -> OriginalTree {
         let container = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
-        let (router, profile) = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile = Self.makeProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        // The router's own id, read off the handle it stamped. The harness
+        // returns no `Router`, because this is the only fact this suite needs of
+        // one and every handle already carries it.
+        let routerId = profile.standard.routerId
 
         let root = profile.standard.makeSession(instructions: "You are a terse, literal assistant.")
         _ = try await root.respond(
@@ -255,7 +206,7 @@ struct SessionTreeRestorationIntegrationTests {
             #expect(events.contains { entryKinds.contains($0.kind) })
         }
 
-        let routerDirectory = recordingsDir.appendingPathComponent(router.id.description, isDirectory: true)
+        let routerDirectory = recordingsDir.appendingPathComponent(routerId.description, isDirectory: true)
         let tree = try TranscriptTree.load(under: routerDirectory)
         let effectiveEntryCounts = try [root.id, forkA.id, forkB.id, grandfork.id].reduce(into: [ULID: Int]()) { acc, id in
             acc[id] = try tree.effectiveEntryEvents(forSession: id).count
@@ -266,7 +217,7 @@ struct SessionTreeRestorationIntegrationTests {
         await container.model.evict()
 
         return OriginalTree(
-            routerId: router.id,
+            routerId: routerId,
             rootId: root.id,
             forkAId: forkA.id,
             forkBId: forkB.id,
@@ -295,11 +246,11 @@ struct SessionTreeRestorationIntegrationTests {
         // directory and the same router id — a fresh process continuing the
         // same recording root, with a freshly (re-)loaded model container.
         let container2 = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
-        let (_, profile2) = buildProfile(
-            id: original.routerId,
+        let profile2 = Self.makeProfile(
             container: container2,
             cacheDir: cacheDir,
-            recordingsDir: recordingsDir
+            recordingsDir: recordingsDir,
+            routerId: original.routerId
         )
 
         // Step 6: restore, passing only the root session's id.
@@ -307,6 +258,9 @@ struct SessionTreeRestorationIntegrationTests {
 
         // Step 7: structure matches.
         #expect(restored.root.id == original.rootId)
+        // The restored tree continues the FIRST router's recording root, which
+        // is the whole reason `RealModelHarness.make` takes a `routerId`.
+        #expect(restored.root.routerId == original.routerId)
         #expect(restored.root.parentId == nil)
         let childIds = Set(restored.children(of: original.rootId).map(\.id))
         #expect(childIds == [original.forkAId, original.forkBId])
@@ -370,19 +324,22 @@ struct SessionTreeRestorationIntegrationTests {
         // that built it, mirroring `driveOriginalTree`'s teardown discipline.
         let (routerId, rootId): (ULID, ULID) = try await {
             let container = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
-            let (router, profile) = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+            let profile = Self.makeProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
             let root = profile.standard.makeSession()
             _ = try await root.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
             await container.model.evict()
-            return (router.id, root.id)
+            return (profile.standard.routerId, root.id)
         }()
 
         // A fresh process continuing the same recording root, restoring with
         // a real tool this time — the seam that used to hardcode `tools: []`.
         let container2 = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
-        let (_, profile2) = buildProfile(
-            id: routerId, container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let profile2 = Self.makeProfile(
+            container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir, routerId: routerId)
         let restored = try await profile2.standard.restoreSessionTree(root: rootId, tools: [EchoTool()])
+        // The same invariant the tree-restoration test above asserts: this
+        // profile continues the first router's recording root.
+        #expect(restored.root.routerId == routerId)
 
         let reply = try await restored.root.respond(
             to: "Call the echo tool with the text 'ping', then report its result.",

@@ -357,4 +357,27 @@ struct CompactionContinuitySeed: Sendable {
             expectedMinimumRecordedEntries: 1 + totalStepCount * 2
         )
     }
+
+    /// Keys `tasks` by ``finalInstruction``, the join a running sample already
+    /// carries back to the task it is driving.
+    ///
+    /// ``CompactionContinuityEvaluation/dataset`` stamps each sample's prompt
+    /// with its task's own final instruction, and
+    /// ``CompactionContinuityEvalRealSubjectRunner/run(steps:finalInstruction:prompt:budget:)``
+    /// receives that same string, so this is what lets a live progress line name
+    /// the task a sample is running. Mirrors
+    /// ``CompactionEvalSeed/keyedByQuestion(_:)``.
+    ///
+    /// Two tasks stating one final instruction would be a fixture defect rather
+    /// than something to resolve here, so the first wins — see
+    /// ``Swift/Sequence/keyedByFirst(_:)``, the one body both tiers build their
+    /// join through.
+    ///
+    /// - Parameter tasks: The tasks to key.
+    /// - Returns: One entry for each distinct final instruction.
+    static func keyedByFinalInstruction(
+        _ tasks: [CompactionContinuitySeed]
+    ) -> [String: CompactionContinuitySeed] {
+        tasks.keyedByFirst(\.finalInstruction)
+    }
 }

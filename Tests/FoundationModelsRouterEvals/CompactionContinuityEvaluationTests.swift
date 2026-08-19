@@ -204,6 +204,187 @@ struct CompactionContinuityEvaluationHermeticTests {
     }
 }
 
+// MARK: - Hermetic progress-line rendering
+
+/// Hermetic proof that the continuity tier leaves a live trail naming where a
+/// run stopped (task ^aktsp2e).
+///
+/// This tier costs 20 minutes against a 30B model and used to print nothing at
+/// all until it ended, so a run that hit its own limit reported one bit — "not
+/// finished" — and no reading of its output could say whether the model load,
+/// one of a task's dozen-odd steps, or the final instruction had spent the time.
+///
+/// These tests pin the lines that answer that question, and they pin the one
+/// property the two tiers share: ``CompactionEvalProgressLog/linePrefix`` and
+/// ``CompactionEvalProgressLog/makeSecondsText(_:)`` are the same for both, so
+/// one `grep` reads either trail.
+@Suite("CompactionContinuityEvaluation progress lines")
+struct CompactionContinuityEvalProgressLogTests {
+    /// Where in its tier the sample ``label`` names stands — the middle, so a
+    /// rendered ordinal that silently used the total (or the reverse) shows.
+    private static let sampleOrdinal = 2
+
+    /// How many tasks the tier ``label`` names states.
+    private static let tierTaskCount = compactionContinuitySeeds.count
+
+    /// The task id ``label`` names.
+    private static let sampleTaskID = "probe-task"
+
+    /// A sample label in the middle of its tier.
+    private static let label = CompactionEvalSampleLabel(
+        ordinal: sampleOrdinal, total: tierTaskCount, fixture: .task, fixtureID: sampleTaskID)
+
+    /// Where in its task the step these tests render stands — again the middle.
+    private static let stepOrdinal = 4
+
+    /// How many steps the task these tests render drives.
+    private static let taskStepCount = 13
+
+    /// A duration with a fractional part the rendering must keep.
+    private static let stepSeconds = 41.62
+
+    /// The sample's elapsed total at the point a step returned.
+    private static let elapsedSeconds = 173.45
+
+    @Test("a continuity line names the task, not a seed, and states its position in the tier")
+    func continuityLineNamesTheTaskAndItsPositionInTheTier() {
+        let line = CompactionEvalProgressLog.makeStepStartedLine(
+            .step,
+            sample: Self.label,
+            elapsedSeconds: Self.elapsedSeconds,
+            detail: CompactionEvalProgressLog.makeStepPositionDetail(
+                ordinal: Self.stepOrdinal, of: Self.taskStepCount)
+        )
+
+        #expect(line.contains("sample=\(Self.sampleOrdinal)/\(Self.tierTaskCount)"))
+        #expect(line.contains("task=\(Self.sampleTaskID)"))
+        // The fact-retention tier's own key, which this tier must not borrow.
+        #expect(!line.contains("seed="))
+    }
+
+    @Test("a step's started line names which step of the task it is, so a hung run says where it stopped")
+    func stepStartedLineNamesWhichStepOfTheTask() {
+        let line = CompactionEvalProgressLog.makeStepStartedLine(
+            .step,
+            sample: Self.label,
+            elapsedSeconds: Self.elapsedSeconds,
+            detail: CompactionEvalProgressLog.makeStepPositionDetail(
+                ordinal: Self.stepOrdinal, of: Self.taskStepCount)
+        )
+
+        #expect(line.contains("step=\(Self.stepOrdinal)/\(Self.taskStepCount)"))
+        #expect(line.contains("elapsed=\(CompactionEvalProgressLog.makeSecondsText(Self.elapsedSeconds))"))
+        // The step has not finished, so it has no duration of its own yet.
+        #expect(!line.contains("took="))
+    }
+
+    @Test("a sample's first step states no elapsed clause, rather than a zero that reads as a measurement")
+    func firstStepOfASampleStatesNoElapsedClause() {
+        let first = CompactionEvalProgressLog.makeStepStartedLine(
+            .step,
+            sample: Self.label,
+            elapsedSeconds: nil,
+            detail: CompactionEvalProgressLog.makeStepPositionDetail(ordinal: 1, of: Self.taskStepCount)
+        )
+
+        #expect(!first.contains("elapsed="))
+        // The position is still stated, so the line still names where it is.
+        #expect(first.contains("step=1/\(Self.taskStepCount)"))
+    }
+
+    @Test("a driven step's returned line states its reply size and whether it folded")
+    func drivenStepReturnedLineStatesItsReplyAndItsFolds() {
+        let reply = "Understood."
+        let foldedDetail = CompactionEvalProgressLog.makeDrivenStepDetail(reply: reply, foldCount: 1)
+        let unfoldedDetail = CompactionEvalProgressLog.makeDrivenStepDetail(reply: reply, foldCount: 0)
+
+        #expect(foldedDetail.contains("replyBytes=\(reply.utf8.count)"))
+        // The fold count is what this tier exists to watch: the trail must say
+        // which step folded, not merely that some step did.
+        #expect(foldedDetail.contains("folds=1"))
+        #expect(unfoldedDetail.contains("folds=0"))
+    }
+
+    @Test("the final instruction is a step of its own, with its own duration")
+    func finalInstructionIsAStepOfItsOwn() {
+        let line = CompactionEvalProgressLog.makeStepReturnedLine(
+            .finalInstruction,
+            sample: Self.label,
+            elapsedSeconds: Self.elapsedSeconds,
+            stepSeconds: Self.stepSeconds,
+            detail: CompactionEvalProgressLog.makeDrivenStepDetail(reply: "CRIMSON-77 at Delta-9.", foldCount: 0)
+        )
+
+        #expect(
+            line.contains(
+                "\(CompactionEvalProgressStep.finalInstruction.rawValue) "
+                    + "\(CompactionEvalProgressLog.returnedMarker)"))
+        #expect(line.contains("took=\(CompactionEvalProgressLog.makeSecondsText(Self.stepSeconds))"))
+        #expect(line.contains("elapsed=\(CompactionEvalProgressLog.makeSecondsText(Self.elapsedSeconds))"))
+    }
+
+    @Test("both gated tiers share one line prefix and one seconds rendering, so one grep reads either")
+    func bothTiersShareOnePrefixAndOneSecondsRendering() {
+        let factRetentionLine = CompactionEvalProgressLog.makeStepReturnedLine(
+            .fold,
+            sample: CompactionEvalSampleLabel(
+                ordinal: 1, total: 1, fixture: .seed, fixtureID: "probe-seed"),
+            elapsedSeconds: Self.elapsedSeconds,
+            stepSeconds: Self.stepSeconds,
+            detail: ""
+        )
+        let continuityLine = CompactionEvalProgressLog.makeStepReturnedLine(
+            .step,
+            sample: Self.label,
+            elapsedSeconds: Self.elapsedSeconds,
+            stepSeconds: Self.stepSeconds,
+            detail: ""
+        )
+
+        for line in [factRetentionLine, continuityLine] {
+            #expect(line.hasPrefix(CompactionEvalProgressLog.linePrefix))
+            #expect(line.contains("took=\(CompactionEvalProgressLog.makeSecondsText(Self.stepSeconds))"))
+        }
+    }
+
+    @Test("every task's final instruction resolves to that task, so no line can mislabel the sample it names")
+    func everyTasksFinalInstructionResolvesToThatTask() {
+        // Asserted through the RENDERED label rather than through the keyed
+        // dictionary. The dictionary is a means; what a run cut short leaves
+        // behind is the line, so the line is what has to name the right task. A
+        // join that dropped a task renders
+        // `CompactionEvalFactRetentionReport.unmatchedSeedID` here and fails.
+        let tasks = compactionContinuitySeeds
+        let keyed = CompactionContinuitySeed.keyedByFinalInstruction(tasks)
+
+        for (offset, task) in tasks.enumerated() {
+            let ordinal = offset + 1
+            let label = CompactionEvalSampleLabel(
+                ordinal: ordinal,
+                of: tasks.count,
+                fixture: .task,
+                id: keyed[task.finalInstruction]?.id
+            )
+
+            #expect(label.rendered.contains("task=\(task.id)"))
+            #expect(label.rendered.contains("sample=\(ordinal)/\(tasks.count)"))
+        }
+    }
+
+    @Test("a label whose final instruction matches no task is still named, by the report's own marker")
+    func labelWhoseFinalInstructionMatchesNoTaskIsStillNamed() {
+        let tasks = compactionContinuitySeeds
+        let label = CompactionEvalSampleLabel(
+            ordinal: 1,
+            of: tasks.count,
+            fixture: .task,
+            id: CompactionContinuitySeed.keyedByFinalInstruction(tasks)["an instruction no task asks"]?.id
+        )
+
+        #expect(label.fixtureID == CompactionEvalFactRetentionReport.unmatchedSeedID)
+    }
+}
+
 // MARK: - Gated real-model eval
 
 /// Loads ``CompactionContinuityEvalRealSubjectRunner`` at most once for the
