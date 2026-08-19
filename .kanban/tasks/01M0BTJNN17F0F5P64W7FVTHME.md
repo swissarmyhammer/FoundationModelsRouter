@@ -30,8 +30,24 @@ comments:
     - evidence: `swift build --build-tests -Xswiftc -warnings-as-errors` — build complete, exit code 0. No warning.
     - next: hand off to the review step.
   timestamp: 2026-08-19T20:52:52.907974+00:00
-position_column: doing
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m0dx0qtmmknj5a83eb13t04f
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 386be31, local backend) — 0 findings, 0 confirmed, 0 refuted; 1 file reviewed (`Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`), 4 `.kanban/` files excluded by `.reviewignore`. No prior open findings on the card.
+    - next: none — the card moved to done.
+  timestamp: 2026-08-19T20:57:15.860100+00:00
+- actor: claude-code
+  id: 01m0dx1s3m66tb83cetadkpxe1
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — the original defect was already repaired under ^k0d30s4; this iteration ran the tier a third time (53.6 s of 120 s, 24 of 24 seeds) and recorded the three measured runs in the limit's doc comment
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 1018 + 75 tests passed; warnings-as-errors build clean
+    - commit: 386be31
+    - review: clean — 0 findings over 1 file; task moved to `done`
+  timestamp: 2026-08-19T20:57:49.940550+00:00
+position_column: done
+position_ordinal: ffc580
 title: The whole-dataset compaction eval limit is derived with 11.6 minutes of room and has never been run
 ---
 `compactionEvalFullDatasetTimeLimitMinutes` is `120`, and no run of that tier has ever measured it. Commit `2525f29` re-derived the figure it stands against from directly timed samples instead of a division, and the derived cost moved from 94 minutes to 108.4. The margin went with it: 26 minutes of room became 11.6.
