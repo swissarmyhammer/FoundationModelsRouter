@@ -46,8 +46,25 @@ comments:
     - evidence: `swift build --build-tests -Xswiftc -warnings-as-errors` — build OK, no warnings. `Scripts/swift-test.sh --skip IntegrationTests` — 1021 tests in 96 suites passed (1 known issue, the pre-existing BoundedWaitTests issue), plus 77 tests in 9 suites passed. No fail. No skip.
     - next: ready for review.
   timestamp: 2026-08-19T23:26:32.570896+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0e5ttsq3wzmnxy7bc1t5dnh
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 19c6a52) — 0 findings, 0 confirmed, 0 refuted; 3 files reviewed, 2 excluded by .reviewignore (.kanban/)
+    - next: none. The task moved to done.
+  timestamp: 2026-08-19T23:31:19.479838+00:00
+- actor: claude-code
+  id: 01m0e5vv3np2sf5wtewc13gz05
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — `Router.footprintBytes` now charges a resident generation key one session KV cache instead of zero; TDD red-first regression test; stale doc comments corrected in `Router.swift` and `JointFit.swift`
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 1021 + 77 tests passed; warnings-as-errors build clean
+    - commit: 19c6a52
+    - review: clean — 0 findings over 3 files; task moved to `done`
+    - note: a first implement attempt died on a server error before it changed any file; this iteration is the completed retry
+  timestamp: 2026-08-19T23:31:52.565551+00:00
+position_column: done
+position_ordinal: ffc880
 title: '[Router] A later resolve that reuses a resident generation model is priced at zero, including the KV cache its own new sessions add'
 ---
 Found while implementing `^pq5w87d`. That card made the pool hold exactly what `JointFit` reserved for each trio, so the two figures now agree. But the reservation itself has a sibling gap ACROSS resolves.
