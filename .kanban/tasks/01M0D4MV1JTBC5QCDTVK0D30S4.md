@@ -48,6 +48,42 @@ comments:
     - evidence: `swift build --build-tests -Xswiftc -warnings-as-errors` gave a clean build. No errors. No warnings.
     - next: none. All checks are green.
   timestamp: 2026-08-19T17:12:25.809151+00:00
+- actor: claude-code
+  id: 01m0dgk3g89p7zchgydd1q7bkm
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` gave 1 finding — Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift:511 (code-hygiene/magic-numbers-swift)
+    - note: nine suites in FoundationModelsRouterIntegrationTests stay over the 2-minute budget. They wait for a sanctioned recording run. The first acceptance criterion covers them, so the card cannot go to done in this pass.
+    - next: replace the magic numbers with named constants in the whole file, then run the review again
+  timestamp: 2026-08-19T17:20:06.152299+00:00
+- actor: claude-code
+  id: 01m0dh7rzv1k6nq7he7tjvcwdg
+  text: |-
+    Work on the review finding `code-hygiene/magic-numbers-swift` at CompactionContinuityDataset.swift:511.
+
+    What I did:
+    - I read the rule text. The rule runs swiftlint's `no_magic_numbers` with `allowed_numbers: [0, 1, -1, 100]`. A named declaration is exempt. A literal in a call argument or in an arithmetic expression is not exempt.
+    - I ran swiftlint with the rule's exact configuration on all Swift files that commit efd3b58 touched. Only line 511 was in code from efd3b58. The same file held 12 more sites from older commits: ten `fillerStepCount:` literals and the `* 2` at the seed builder.
+    - I swept the whole file. I added four named constants with doc comments: `compactionContinuityShortFillerStepCount` (10), `compactionContinuityMediumFillerStepCount` (11), `compactionContinuityLongFillerStepCount` (12), and `compactionContinuityRecordedEntriesPerStep` (2). All 13 sites now use the constants. No value changed. swiftlint now reports 0 findings on the file.
+    - Sites in CompactionEvaluation.swift (lines 31-33, 99) and CompactionContinuityEvaluation.swift (line 90) come from older commits, not from efd3b58. They are outside this sweep's scope.
+    - The first full hermetic run showed 12 issues in the DetachingTool and Generation-stall suites. These suites do not read the dataset file. A direct run of those suites passed, and a full rerun passed. The issues were timing flake under load, not an effect of this change.
+  timestamp: 2026-08-19T17:31:23.515161+00:00
+- actor: claude-code
+  id: 01m0dh84jrpn2nvasy7zrah7yz
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift (13 magic-number sites now use 4 named constants); `Scripts/swift-test.sh --skip IntegrationTests` green — 1008 tests in 93 suites pass (1 known issue) and 75 tests in 8 suites pass, 0 failures, 0 warnings; `swift build --build-tests -Xswiftc -warnings-as-errors` clean; swiftlint `no_magic_numbers` reports 0 findings on the file
+    - next: /review
+  timestamp: 2026-08-19T17:31:35.384292+00:00
+- actor: claude-code
+  id: 01m0dhc9tedem2zgwqv77mdm0c
+  text: |-
+    ### test — green
+    - evidence: `Scripts/swift-test.sh --skip IntegrationTests` — target 1: 1008 tests, 93 suites, pass, 1 known issue (pre-existing BoundedWaitTests item, accepted as green). Target 2: 75 tests, 8 suites, pass, 0 issues. No FAIL lines. No skipped tests.
+    - evidence: `swift build --build-tests -Xswiftc -warnings-as-errors` — exit 0, "Build complete!" with no warning or error lines.
+    - No env vars set. FoundationModelsRouterIntegrationTests target was not run.
+    - next: none. Suite is clean.
+  timestamp: 2026-08-19T17:33:51.822436+00:00
 position_column: doing
 position_ordinal: '8380'
 title: Every integration test must run in under 2 minutes — boot from a recording, or make the test smarter
@@ -102,4 +138,13 @@ The same continuity property is reachable inside the budget: boot a recorded tra
 
 A cheaper test that quietly measures less is a worse test, not a better one. `^pfdrppj`'s doc comment is the standard to match: it states plainly that booting from a recording proves the fold applies to real traffic and does NOT prove the automatic path fires. Every conversion here owes the same sentence.
 
-#test-debt #compaction #eval
+
+
+## Review Findings (2026-08-19 12:13)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 12 file(s) reviewed, 8 not reviewed.
+
+> 8 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 8 file(s)
+
+- [x] `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift:511` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants. #compaction #eval #test-debt

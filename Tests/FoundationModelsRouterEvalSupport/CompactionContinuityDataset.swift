@@ -166,6 +166,22 @@ let compactionContinuityFillerSteps: [String] = [
     """,
 ]
 
+/// The smallest filler padding a fixture carries between its setup steps
+/// and its final instruction. Ten steps size a task past
+/// ``compactionContinuityDefaultBudget``'s trigger —
+/// `CompactionContinuityEvaluationTests.everyTaskIsSizedToForceAFold` holds
+/// that property by token estimate, never by step count.
+let compactionContinuityShortFillerStepCount = 10
+
+/// The middle filler padding some fixtures carry — one step more than
+/// ``compactionContinuityShortFillerStepCount``, so the dataset's tasks do
+/// not all have the same length.
+let compactionContinuityMediumFillerStepCount = 11
+
+/// The largest filler padding a fixture carries — two steps more than
+/// ``compactionContinuityShortFillerStepCount``.
+let compactionContinuityLongFillerStepCount = 12
+
 /// Every hand-written multi-step task fixture (task 4ce0a1k): each requires
 /// at least one live fold to complete, since ``fillerStepCount`` pads every
 /// task well past ``CompactionContinuityEvaluation``'s own small default
@@ -178,7 +194,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "The vault is physically located at outpost Delta-9.",
         ],
         factKeyPhrases: ["CRIMSON-77", "Delta-9"],
-        fillerStepCount: 10,
+        fillerStepCount: compactionContinuityShortFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state this project's exact vault code and which outpost the vault is located at."
     ),
@@ -189,7 +205,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "The staging database's region is eu-west-2.",
         ],
         factKeyPhrases: ["6543", "eu-west-2"],
-        fillerStepCount: 10,
+        fillerStepCount: compactionContinuityShortFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state the exact port the staging database listens on and which region it runs in."
     ),
@@ -200,7 +216,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "Every release needs sign-off from Priya before it ships.",
         ],
         factKeyPhrases: ["release/stable", "Priya"],
-        fillerStepCount: 12,
+        fillerStepCount: compactionContinuityLongFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state which branch releases are cut from and whose sign-off a release needs before shipping."
     ),
@@ -211,7 +227,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "That flight departs from gate 12.",
         ],
         factKeyPhrases: ["BA-249", "gate 12"],
-        fillerStepCount: 10,
+        fillerStepCount: compactionContinuityShortFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state the user's exact return flight number and which gate it departs from."
     ),
@@ -222,7 +238,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "Project Longbow's owner is Marcus.",
         ],
         factKeyPhrases: ["Longbow", "Marcus"],
-        fillerStepCount: 11,
+        fillerStepCount: compactionContinuityMediumFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state the internal codename for the new feature and who owns it."
     ),
@@ -233,7 +249,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "That server lives in the eastern datacenter.",
         ],
         factKeyPhrases: ["stg-node-07", "eastern"],
-        fillerStepCount: 10,
+        fillerStepCount: compactionContinuityShortFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state the internal staging server's exact hostname and which datacenter it lives in."
     ),
@@ -244,7 +260,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "Its rollback script lives at `scripts/rollback_2026_07.sql`.",
         ],
         factKeyPhrases: ["migrate_2026_07", "rollback_2026_07"],
-        fillerStepCount: 12,
+        fillerStepCount: compactionContinuityLongFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state the exact path to the migration script and the exact path to its rollback script."
     ),
@@ -255,7 +271,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "Any spend increase above the cap needs written approval from Marcus.",
         ],
         factKeyPhrases: ["4,200", "Marcus"],
-        fillerStepCount: 11,
+        fillerStepCount: compactionContinuityMediumFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state the exact monthly cloud spend cap and who must approve any increase above it."
     ),
@@ -266,7 +282,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "Guests must sign in at the front desk before receiving it.",
         ],
         factKeyPhrases: ["router", "front desk"],
-        fillerStepCount: 10,
+        fillerStepCount: compactionContinuityShortFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state where the office wifi password is printed and where guests must sign in before receiving it."
     ),
@@ -277,7 +293,7 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
             "The on-call escalation contact this week is Dana.",
         ],
         factKeyPhrases: ["2 hours", "Dana"],
-        fillerStepCount: 12,
+        fillerStepCount: compactionContinuityLongFillerStepCount,
         finalInstruction:
             "Without re-reading anything, state how long before a tier-1 ticket escalates and who this week's on-call escalation contact is."
     ),
@@ -289,6 +305,13 @@ let compactionContinuityTaskSpecs: [CompactionContinuityTaskSpec] = [
 /// target (each points at the same dataset, differing only in the
 /// ``CompactionPrompt`` under test).
 let compactionContinuitySeeds: [CompactionContinuitySeed] = compactionContinuityTaskSpecs.map(CompactionContinuitySeed.build(from:))
+
+/// How many durable transcript entries one driven step records: the prompt
+/// entry and the response entry of its prompt/response pair. Each seed
+/// builder multiplies its step count by this value, and adds the one leading
+/// `.instructions` entry, to state
+/// ``CompactionContinuitySeed/expectedMinimumRecordedEntries``.
+let compactionContinuityRecordedEntriesPerStep = 2
 
 /// A built multi-step task ready to hand to a session-driving subject: the
 /// ordered steps to send before the final instruction, the final instruction
@@ -354,7 +377,7 @@ struct CompactionContinuitySeed: Sendable {
             finalInstruction: spec.finalInstruction,
             factKeyPhrases: spec.factKeyPhrases,
             expectedKeyPhrases: spec.expectedKeyPhrases,
-            expectedMinimumRecordedEntries: 1 + totalStepCount * 2
+            expectedMinimumRecordedEntries: 1 + totalStepCount * compactionContinuityRecordedEntriesPerStep
         )
     }
 
@@ -508,6 +531,6 @@ let compactionContinuityFastSeeds: [CompactionContinuitySeed] = compactionContin
         finalInstruction: spec.finalInstruction,
         factKeyPhrases: spec.factKeyPhrases,
         expectedKeyPhrases: spec.expectedKeyPhrases,
-        expectedMinimumRecordedEntries: 1 + (steps.count + 1) * 2
+        expectedMinimumRecordedEntries: 1 + (steps.count + 1) * compactionContinuityRecordedEntriesPerStep
     )
 }
