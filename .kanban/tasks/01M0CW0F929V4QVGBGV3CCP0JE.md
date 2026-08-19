@@ -1,8 +1,29 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '9480'
+comments:
+- actor: claude-code
+  id: 01m0dr6h1h4jg5qp0asvgydne0
+  text: |-
+    Commit efd3b58 (task ^k0d30s4) repaired this defect before this card started. That commit moved the gated tiers to the small model and made new derivations. The evidence from the source and from one run follows.
+
+    Criterion 1 — one rule sizes the two limits. `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift` derives the two limits with one function, `compactionEvalDerivedTimeLimitMinutes(forSamples:)`. The function charges each sample at the dearest measured sample (3.5 s) and adds one model load (2.0 s). The subset limit is 1 minute (7 x 3.5 s + 2.0 s = 26.5 s = 0.44 min, and 1 minute is the smallest limit Swift Testing accepts). The whole-dataset limit is 2 minutes (24 x 3.5 s + 2.0 s = 86.0 s = 1.43 min). The card's 30B numbers (271.0 s mean, 352.0 s dearest, 140.8 min) do not apply now, because the tiers no longer drive the 30B model.
+
+    Criterion 2 — the bar test holds the two tiers. `CompactionEvalTierBarTests.tierLimits` in `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift` holds the subset pair AND the whole-dataset pair. The two time-limit tests loop over that list and hold each limit from two sides: the limit must be at or above its derived bound, and the limit must be below the next whole minute above that bound.
+
+    Run evidence. I ran the whole-dataset tier one time: `Scripts/swift-test.sh --filter CompactionEvalFullDataset` passed in 52.4 s of suite wall clock against the 120 s limit. All 24 seeds ran (`unreached: <none>`). Retention agreed with the recorded baselines: summary 17 of 24, answer 13 of 24.
+
+    No code change was necessary. The card's option 1 (one rule for the two tiers) is what efd3b58 put in place, and option 3 (time the tier) now has a measurement: 52.4 s.
+  timestamp: 2026-08-19T19:33:02.641224+00:00
+- actor: claude-code
+  id: 01m0dr6wdn6smdysr14m50r76q
+  text: |-
+    ### implement — no-change
+    - evidence: 0 source files changed; the card's two criteria were checked in the description. Verified: `Scripts/swift-test.sh --filter CompactionEvalFullDataset` passed (1 test, 52.4 s against the 120 s limit, 24 of 24 seeds); `Scripts/swift-test.sh --skip IntegrationTests` passed (1008 tests in 93 suites + 75 tests in 8 suites, 0 failures, 1 known issue that a `withKnownIssue` test expects); `swift build --build-tests -Xswiftc -warnings-as-errors` completed with no compiler warning.
+    - next: the card is ready for /review. Commit efd3b58 (task ^k0d30s4) already put one dearest-rate rule under the two tier limits, and `CompactionEvalTierBarTests` holds the two tiers to it.
+  timestamp: 2026-08-19T19:33:14.293115+00:00
+position_column: doing
+position_ordinal: '8480'
 title: The whole-dataset time limit rests on the mean of six samples, where the subset's now rests on the dearest — 24 samples at that rate is 140.8 minutes against a 120-minute limit
 ---
 Found while implementing `^6ssbakk`, which re-derived `compactionEvalSubsetTimeLimitMinutes`.
@@ -34,7 +55,6 @@ The choice is a person's, and the evidence is the spread:
 
 ## Acceptance Criteria
 
-- [ ] The two limits are sized by one stated rule, or each states why its rule differs from the other's
-- [ ] `CompactionEvalTierBarTests` holds the whole-dataset tier to the same derivation it holds the subset tier to, or names the measurement that releases it
-
+- [x] The two limits are sized by one stated rule, or each states why its rule differs from the other's
+- [x] `CompactionEvalTierBarTests` holds the whole-dataset tier to the same derivation it holds the subset tier to, or names the measurement that releases it
 #compaction #eval #real-model #test-debt
