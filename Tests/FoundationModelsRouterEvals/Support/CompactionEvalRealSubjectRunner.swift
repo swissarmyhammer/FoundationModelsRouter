@@ -136,10 +136,21 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
     private func container() async throws -> MLXFoundationModelsContainer {
         if let loaded { return loaded }
-        // Decoding is the provider's own default here. This tier scores a
-        // key-phrase search over an answer rather than the answer's exact text,
-        // so it does not need the argmax pin the continuity tier carries.
+        // Decoding is pinned to greedy. The provider default samples at
+        // temperature 0.6 from MLX's process-global PRNG, which seeds itself
+        // from the clock, so two runs of identical code drew different answers:
+        // the runs of 2026-08-17 scored 7 of 7 and 6 of 7 against the same fold
+        // code, and the one seed that moved, `env-file`, answered with its key
+        // phrase once and refused once.
+        //
+        // This tier scores a key-phrase search over an answer rather than the
+        // answer's exact text, and that was once the reason the pin was left
+        // off. It is not a reason: the draw decides whether the model states the
+        // phrase at all. Argmax consumes no randomness, so a red run here is a
+        // fact about the prompt and the fixtures rather than a coin flip
+        // (task ^xscp198).
         let container = try await CompactionEvalRealModelContainer.load(
+            samplingMode: .greedy,
             unexpectedContainerType: CompactionEvaluationError.unexpectedContainerType)
         loaded = container
         return container

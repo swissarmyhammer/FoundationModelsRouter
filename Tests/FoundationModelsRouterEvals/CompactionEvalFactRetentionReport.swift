@@ -335,6 +335,44 @@ enum CompactionEvalFactRetentionReport {
         return counts
     }
 
+    /// How many of `findings` had a fold that wrote a summary carrying the
+    /// seed's key phrase.
+    ///
+    /// The COMPACTION side of what a gated tier measures. `FactRetention` reads
+    /// the answer, so it scores a fold that kept the fact and an answering turn
+    /// that then ignored it exactly as it scores a fold that dropped the fact.
+    /// This counts the other side: what the summary held, whatever the answer
+    /// went on to do with it. The gated run of 2026-08-18 measured 4 of 6 here
+    /// against 2 of 6 there, and reported the second alone (task ^xscp198).
+    ///
+    /// A sample whose fold produced no summary at all counts against this,
+    /// because a summary that does not exist carries nothing. The table's own
+    /// `counts:` line separates that case out — see
+    /// ``CompactionEvalFactRetentionClass/foldProducedNoSummary``.
+    ///
+    /// - Parameter findings: The classified samples to count.
+    /// - Returns: How many of them carried the key phrase in their summary.
+    static func summaryFactRetentionCount(of findings: [CompactionEvalFactRetentionFinding]) -> Int {
+        findings.filter(\.factInSummary).count
+    }
+
+    /// `count` as a share of `total`.
+    ///
+    /// The one place a share of this eval's samples is computed, so the table's
+    /// numbers and the gated tier's assertions can never divide differently.
+    ///
+    /// - Parameters:
+    ///   - count: How many samples met the condition.
+    ///   - total: How many samples were measured at all.
+    /// - Returns: The share, in `0...1`, or `0` when nothing was measured. A
+    ///   plain division would answer `NaN` there, which reads as a broken run
+    ///   rather than as the verdict it is: a run that recorded no sample
+    ///   measured nothing, and must never read as a clean sheet.
+    static func share(of count: Int, over total: Int) -> Double {
+        guard total > 0 else { return 0 }
+        return Double(count) / Double(total)
+    }
+
     /// The ids of the seeds `findings` covers none of — the seeds the run never
     /// reached.
     ///
@@ -358,7 +396,8 @@ enum CompactionEvalFactRetentionReport {
 
     /// Renders the classified samples as the per-sample table a run's
     /// attribution is read from — one stanza per sample, then the counts, then
-    /// the seeds the run never reached.
+    /// the two shares the tier's bars are read against, then the seeds the run
+    /// never reached.
     ///
     /// - Parameters:
     ///   - findings: The classified samples to render, in sample order.
@@ -377,7 +416,36 @@ enum CompactionEvalFactRetentionReport {
         return ["FactRetention per-sample evidence — \(findings.count) of \(seeds.count) seeds measured"]
             + findings.flatMap(stanza(for:))
             + ["counts: " + tally.joined(separator: " ")]
+            + [retentionLine(of: findings, counts: tallied)]
             + [unreachedLine(of: findings, expecting: seeds)]
+    }
+
+    /// Renders the line stating what the FOLDS carried beside what the ANSWERS
+    /// carried.
+    ///
+    /// The two are different measurements of different steps, and a tier that
+    /// reported the answer share alone said nothing about which step lost a
+    /// fact. The gated run of 2026-08-18 measured 4 of 6 and 2 of 6 (task
+    /// ^xscp198).
+    ///
+    /// Stated as counts rather than as decimals, so the line is exact and a
+    /// reader can see the denominator the shares were taken over: a run the time
+    /// limit cut short divides by the samples that ran, and the `unreached:`
+    /// line below is what states the rest.
+    ///
+    /// - Parameters:
+    ///   - findings: The classified samples the run recorded.
+    ///   - counts: ``counts(of:)`` over the same findings, passed in rather than
+    ///     tallied twice.
+    /// - Returns: The line.
+    private static func retentionLine(
+        of findings: [CompactionEvalFactRetentionFinding],
+        counts tallied: [CompactionEvalFactRetentionClass: Int]
+    ) -> String {
+        let summaryCarried = summaryFactRetentionCount(of: findings)
+        let answerCarried = tallied[.retained] ?? 0
+        return "retention: summary=\(summaryCarried) of \(findings.count)"
+            + " answer=\(answerCarried) of \(findings.count)"
     }
 
     /// Renders the closing line naming the seeds the run never reached.

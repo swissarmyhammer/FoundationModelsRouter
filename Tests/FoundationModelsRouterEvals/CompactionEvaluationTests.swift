@@ -37,31 +37,128 @@ private var compactionEvalsFullDatasetEnabled: Bool {
 
 // MARK: - Measured tier limits
 
+/// The dearest of the samples the gated subset run of 2026-08-18 timed apart,
+/// in seconds.
+///
+/// One sample's own work — its fold and its answering turn together — read off
+/// that sample's own progress lines. Never a run's wall clock divided by a
+/// sample count: `^9cw5g6n` forbids that division, and this trail makes it
+/// unnecessary, because the run drove its samples one at a time and printed each
+/// sample's four lines complete before the next sample's first line.
+///
+/// The six samples that finished cost 197.4, 250.7, 260.9, 269.9, 295.1 and
+/// 352.0 seconds. They add to 1626.0 seconds of an 1800-second run, they average
+/// 271.0 seconds, and the dearest is 1.78 times the cheapest.
+///
+/// The DEAREST sizes a limit, not the mean, because that spread is what a limit
+/// has to survive. Seven samples at the mean is 31.7 minutes and seven at this
+/// rate is 41.1 minutes, and a tier that has to end on its own assertion cannot
+/// be sized at the lower of the two (task ^6ssbakk).
+private let compactionEvalMeasuredDearestSampleSeconds = 352.0
+
+/// What the same run's model load cost, in seconds.
+///
+/// ``CompactionEvalRealModelContainer/load(samplingMode:unexpectedContainerType:)``
+/// times the load on its own two progress lines, so it is charged to no sample
+/// and has to be added back when a whole tier is sized. It is small and it is
+/// stable: the run of 2026-08-18 08:05 measured 3.6 seconds (task ^h2xxsse) and
+/// the run of 2026-08-18 16:38 measured 3.5 (task ^6ssbakk).
+private let compactionEvalMeasuredModelLoadSeconds = 3.5
+
+/// How many seconds a minute holds.
+///
+/// The eval's progress lines measure in seconds and Swift Testing's
+/// `.timeLimit(.minutes(_:))` takes whole minutes, so every derivation below
+/// crosses this rate once.
+private let compactionEvalSecondsPerMinute = 60.0
+
+/// The wall clock a gated tier of `sampleCount` samples is bounded by, in
+/// minutes, derived from the samples the gated run of 2026-08-18 timed apart.
+///
+/// Every sample is charged ``compactionEvalMeasuredDearestSampleSeconds``, and
+/// the tier is charged one ``compactionEvalMeasuredModelLoadSeconds`` on top.
+/// That is a BOUND rather than an expected cost: it is what a tier takes when
+/// every one of its samples lands at the dearest cost anything has measured.
+///
+/// The sum is the right arithmetic, and not the largest sample and not the mean.
+/// The samples do not generate together whatever shape a run takes, because MLX
+/// gives the one resident container serial access — see
+/// ``compactionEvalSubsetTimeLimitMinutes``. So a tier of `sampleCount` samples
+/// costs about `sampleCount` times one sample rather than less.
+///
+/// - Parameter sampleCount: How many samples the tier runs.
+/// - Returns: The derived bound, in minutes.
+private func compactionEvalDerivedTimeLimitMinutes(forSamples sampleCount: Int) -> Double {
+    (Double(sampleCount) * compactionEvalMeasuredDearestSampleSeconds
+        + compactionEvalMeasuredModelLoadSeconds) / compactionEvalSecondsPerMinute
+}
+
 /// The wall-clock ceiling the DEFAULT gated tier's `@Test` runs under, in
 /// minutes.
 ///
-/// Measurement gives this value. `FM_ROUTER_INTEGRATION_TESTS=1 swift test
-/// --filter CompactionEvaluationIntegrationTests`, run on 2026-08-17 against
-/// the seven seeds of ``compactionEvalRepresentativeSubsetIDs``, passed in
-/// **1644.7 seconds — 27.4 minutes**, with all seven samples measured and a
-/// mean `FactRetention` of 1.0.
+/// The next whole minute above
+/// ``compactionEvalDerivedTimeLimitMinutes(forSamples:)`` at the seven seeds of
+/// ``compactionEvalRepresentativeSubsetIDs``: 7 x 352.0 s plus 3.5 s is 2467.5
+/// seconds, which is 41.1 minutes. `CompactionEvalTierBarTests` holds this value
+/// against that derivation from both sides, so a subset that outgrew its limit,
+/// or a limit that stopped stating a measurement, fails a plain `swift test`
+/// rather than a gated run.
 ///
-/// That figure is a WHOLE-RUN figure, and it must not be divided by seven to
-/// give the cost of one sample. Two measured facts say why, and an earlier
-/// version of this comment stated each of them wrongly.
+/// ## The margin, and what can spend it
+///
+/// 0.9 minutes over the derived bound, and 9.0 minutes over what the run of
+/// 2026-08-18 really measured — its six finished samples cost 1626.0 seconds,
+/// and charging the seventh, which nothing has ever timed, at the dearest
+/// measured sample gives 1981.5 seconds with the load, or 33.0 minutes.
+///
+/// One thing can still spend the margin: a machine that has never fetched the
+/// model pays that download inside this limit. Sampling cannot, any more —
+/// ``CompactionEvalRealSubjectRunner`` now pins
+/// ``FoundationModels/GenerationOptions/SamplingMode/greedy``, so two runs of
+/// identical code generate the same answers at the same lengths (task ^xscp198).
+/// A run that ends on the limit names the seeds it never reached — see
+/// ``CompactionEvalFactRetentionReport/lines(of:expecting:)`` — so an overrun
+/// reads as an overrun rather than as a smaller clean sheet.
+///
+/// ## Why the rate rose, and why 1644.7 seconds is stale
+///
+/// Each sample pays for two real generations — one summarizer call inside the
+/// fold, and one answering turn on the resumed session — and each is bounded in
+/// thousands of output tokens rather than hundreds, because the gated model
+/// always writes a `<think>` block first. See
+/// ``GatedRealModelBudget/responseTokenCeiling`` and
+/// ``Summarization/reasoningTokenHeadroom``.
+///
+/// What changed is the second generation. Until `^azd033m` every fold was
+/// DISCARDED: the summarizer ran, `Compactor.compact`'s did-not-shrink guard
+/// threw the result away, and the answering turn then read the original
+/// transcript. The gated run of 2026-08-17 measured 7 of 7 seeds in 1644.7
+/// seconds that way (task ^fz49qds). Once the fold applies, the answering turn
+/// reads a folded transcript instead, and the per-sample cost rose with it.
+///
+/// The run of 2026-08-18 is the first where every measured fold applied — 6 of 6
+/// report `folded=true` with the full stage list — and it measured six samples in
+/// 1800 seconds and left the seventh in its fold. So 1644.7 seconds is stale
+/// because the work changed, not because the machine did, and the 30 minutes
+/// this value used to state was measured against a rate that no longer exists.
+///
+/// ## Read one sample's cost off the trail, and never divide a run's wall clock
+///
+/// The division charges each sample a share of the model load and of every gap
+/// between samples, and it hides the real spread: the six samples above differ
+/// by a factor of 1.78 between the cheapest and the dearest.
 ///
 /// How many samples `Evaluations` drives at once is NOT stated anywhere, and
 /// this tier cannot state it: `Evaluation.run(info:)` and the
-/// `.evaluates(_:info:recordTranscripts:)` trait each take an evaluation and
-/// its info, and neither takes a concurrency limit. No other value in this
-/// target states one either. What the framework really does is not stable from
-/// run to run, and two trails of the same tier show both shapes. The
-/// instrumented run of 2026-08-18 08:05 (task ^h2xxsse) printed six `fold
-/// started` lines one after another with no `fold returned` line between them,
-/// and the seventh only after the limit fired, so six samples were in flight
-/// together. The gated run of 2026-08-18 16:38 (task ^6ssbakk) ran the same
-/// dispatch code and printed each sample's four lines complete before the next
-/// sample's first line, so those samples ran one at a time.
+/// `.evaluates(_:info:recordTranscripts:)` trait each take an evaluation and its
+/// info, and neither takes a concurrency limit. What the framework really does
+/// is not stable from run to run, and two trails of the same tier show both
+/// shapes. The instrumented run of 2026-08-18 08:05 (task ^h2xxsse) printed six
+/// `fold started` lines one after another with no `fold returned` line between
+/// them, so six samples were in flight together. The gated run of 2026-08-18
+/// 16:38 (task ^6ssbakk) ran the same dispatch code and printed each sample's
+/// four lines complete before the next sample's first line, so those samples ran
+/// one at a time.
 ///
 /// Whichever shape a run takes, the samples do NOT generate together. Every
 /// sample generates through the one resident container
@@ -72,50 +169,16 @@ private var compactionEvalsFullDatasetEnabled: Bool {
 /// this here — the eval drives the bare-session recipe and builds no
 /// ``RoutedSession``.
 ///
-/// So a run's wall clock is close to the SUM of its samples' costs, and not to
-/// the largest of them and not to the mean. ^6ssbakk timed every sample apart:
-/// six of them cost 197.4, 250.7, 260.9, 269.9, 295.1 and 352.0 seconds, which
-/// add to 1626.0 seconds of an 1800-second run, and the seventh was still in
-/// its fold when the limit fired.
+/// What a run past the limit reports depends on the shape that run took.
+/// ^6ssbakk finished six samples one at a time and named the seventh unreached;
+/// ^h2xxsse held six in flight together, finished none of them, and reported
+/// `0 of 7`, which reads like a total regression and was not one.
 ///
-/// Read one sample's cost off that trail, which states each one, and never
-/// divide a run's wall clock by the sample count. The division charges each
-/// sample a share of the model load and of every gap between samples, and it
-/// hides a real spread: the six samples above differ by a factor of 1.8 between
-/// the cheapest and the dearest.
-///
-/// Two consequences a reader needs. What a run past the limit reports depends
-/// on the shape that run took. ^6ssbakk finished six samples one at a time and
-/// named the seventh unreached; ^h2xxsse held six in flight together, finished
-/// none of them, and reported `0 of 7`, which reads like a total regression and
-/// was not one. And the model load is NOT a meaningful part of the total:
-/// ^h2xxsse measured it at 3.6 seconds and ^6ssbakk at 3.5 seconds, each stated
-/// apart from every sample.
-///
-/// Each sample pays for two real generations — one summarizer call inside the
-/// fold and one answering turn on the resumed session — and each is bounded in
-/// thousands of output tokens rather than hundreds, because the gated model
-/// always writes a `<think>` block first. See
-/// ``GatedRealModelBudget/responseTokenCeiling`` and
-/// ``Summarization/reasoningTokenHeadroom``. That is what a seed really costs,
-/// and it is why a subset of seven costs what the whole dataset used to appear
-/// to.
-///
-/// The margin over the measurement is 2.6 minutes, and it is stated rather than
-/// hidden. Two things can spend it. ``CompactionEvalRealSubjectRunner``
-/// deliberately leaves the provider's own sampling in place rather than pinning
-/// `.greedy`, so two runs of identical code generate answers of different
-/// lengths; and a machine that has never fetched the model pays that download
-/// inside this limit. A run that ends on the limit now names the seeds it never
-/// reached — see ``CompactionEvalFactRetentionReport/lines(of:expecting:)`` —
-/// so an overrun reads as an overrun rather than as a smaller clean sheet. A
-/// later run has already spent that margin: task ^6ssbakk measured six of the
-/// seven samples inside the limit and left the seventh unfinished.
-///
-/// The 20 minutes ``gatedEvalSuiteTimeLimitMinutes`` states, which this suite
-/// ran under before, is below the measurement. That is the limit the gated run
-/// of 2026-08-17 exceeded, nine seeds into the whole dataset (task ^fz49qds).
-let compactionEvalSubsetTimeLimitMinutes = 30
+/// The 20 minutes ``gatedEvalSuiteTimeLimitMinutes`` states, which this suite ran
+/// under before, is below every one of these measurements. That is the limit the
+/// gated run of 2026-08-17 exceeded, nine seeds into the whole dataset (task
+/// ^fz49qds).
+let compactionEvalSubsetTimeLimitMinutes = 42
 
 /// The wall-clock ceiling the opt-in whole-dataset tier's `@Test` runs under,
 /// in minutes.
@@ -144,7 +207,83 @@ let compactionEvalSubsetTimeLimitMinutes = 30
 /// this value appeared to have while a divided rate made the derived figure 94
 /// minutes. The first run of this tier should record its real duration here in
 /// place of the derivation.
+///
+/// This value rests on the MEAN of those six samples, where
+/// ``compactionEvalSubsetTimeLimitMinutes`` rests on the DEAREST of them, and
+/// the two bases do not agree: twenty-four samples at the dearest rate is 140.8
+/// minutes, over this limit. `CompactionEvalTierBarTests` therefore holds the
+/// subset tier to its derivation and does not hold this one, which stays as
+/// ^6ssbakk left it until its own card re-derives it.
 let compactionEvalFullDatasetTimeLimitMinutes = 120
+
+// MARK: - Measured tier bars
+
+/// The mean `FactRetention` a gated tier's samples must reach.
+///
+/// compaction_plan.md §5's own bar, and the same value both tiers are held to —
+/// the tiers differ in which seeds they measure, never in how well those seeds
+/// have to do.
+///
+/// ## What a seed count makes of it
+///
+/// `FactRetention` scores one bit per sample, so a tier of `n` samples can only
+/// produce the means `k/n`. This floor is therefore not the bar a tier of any
+/// size really applies. The bar is the smallest `k` whose `k/n` clears it, and
+/// `k/n` is usually ABOVE 0.9 rather than equal to it:
+///
+/// | tier | seeds | must retain | which is a mean of | may lose |
+/// |---|---|---|---|---|
+/// | the representative subset | 7 | 7 | 1.000 | 0 |
+/// | the whole dataset | 24 | 22 | 0.917 | 2 |
+///
+/// So the stated bar of "at least 0.9" is, on the subset, "every seed, every
+/// run": 6 of 7 is 0.857, under the floor.
+/// ``compactionEvalFactRetentionRequiredSamples(of:)`` computes that,
+/// `CompactionEvalTierBarTests` holds it, and ``expectFactRetention(of:)``
+/// states it in the message of a failing run — so a subset whose size cannot
+/// express the bar can no longer be chosen silently (task ^xscp198).
+///
+/// A bar with no tolerance is only worth having against a measurement that does
+/// not move on its own. That is why ``CompactionEvalRealSubjectRunner`` pins
+/// ``FoundationModels/GenerationOptions/SamplingMode/greedy``: two runs of
+/// 2026-08-17 drove identical fold code to 7 of 7 and to 6 of 7, and the seed
+/// that moved answered with its key phrase once and refused once.
+///
+/// ## Two bars, one number
+///
+/// ``expectFactRetention(of:)`` applies this floor twice — once to the share of
+/// samples whose FOLD wrote a summary carrying the key phrase, and once to the
+/// share whose ANSWER carried it. One number for both, because the first is a
+/// necessary condition for the second: an answer can only carry a fact its own
+/// transcript holds, so a tier that missed the summary bar can never make the
+/// answer bar.
+///
+/// One number is not one measurement. The gated run of 2026-08-18 measured 4 of
+/// 6 summaries carrying the fact and 2 of 6 answers carrying it, and reported
+/// the second alone. The two failures behind that gap belong to different steps
+/// and to different tasks: `summaryLostFact` is the fold's, and
+/// `answerMissedFactSummaryCarriedIt` is the resumed session's (task ^e814b60).
+private let compactionEvalFactRetentionFloor = 0.9
+
+/// The smallest number of a tier's samples that must retain the fact for the
+/// tier's mean to clear ``compactionEvalFactRetentionFloor``.
+///
+/// Found by the same `>=` comparison ``expectFactRetention(of:)`` applies, over
+/// the counts a tier can really produce, so this arithmetic and that assertion
+/// can never disagree. Computing `ceil(floor * n)` instead would disagree: the
+/// nearest `Double` to 0.9 is a shade above 0.9, so `ceil(0.9 * 10)` is 10 where
+/// 9 of 10 already clears the bar.
+///
+/// - Parameter sampleCount: How many samples the tier runs.
+/// - Returns: The smallest count that clears the floor. `0` for a tier of no
+///   samples, which has no count to reach; `sampleCount` for a floor above 1.0,
+///   which no count clears.
+private func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int) -> Int {
+    guard sampleCount > 0 else { return 0 }
+    return (0...sampleCount).first {
+        CompactionEvalFactRetentionReport.share(of: $0, over: sampleCount) >= compactionEvalFactRetentionFloor
+    } ?? sampleCount
+}
 
 // MARK: - Measured sizing
 
@@ -580,6 +719,13 @@ struct CompactionEvalFactRetentionReportTests {
     /// the unreached-seed tests hold a run against.
     private static let bothSeeds = [seed, unreachedSeed]
 
+    /// One of the two probe seeds, as a share.
+    ///
+    /// The value `CompactionEvalFactRetentionReport/share(of:over:)` must answer
+    /// for one sample in two, and the case that separates a real division from a
+    /// guard answering zero whatever it is given.
+    private static let halfShare = 0.5
+
     /// Builds one recorded summarizer call answering `answer` at
     /// ``compactionEvalSummarizerCeiling``.
     ///
@@ -942,6 +1088,47 @@ struct CompactionEvalFactRetentionReportTests {
             CompactionEvalFactRetentionReport.unreachedSeedIDs(in: findings, expecting: Self.bothSeeds)
                 == [Self.unreachedSeed.id])
     }
+
+    @Test("the table states what the folds carried beside what the answers carried")
+    func tableStatesTheFoldShareBesideTheAnswerShare() {
+        // The two are different measurements, and the tier used to report the
+        // second alone. The gated run of 2026-08-18 measured 4 of 6 summaries
+        // carrying the fact against 2 of 6 answers, and one mean hid that
+        // (task ^xscp198).
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [
+                Self.makeDiagnostic(summary: "CRIMSON-77", answer: "It is CRIMSON-77."),
+                Self.makeDiagnostic(
+                    summary: "PORT-6543", answer: "Noted.", question: Self.unreachedSeed.question),
+            ],
+            seeds: Self.bothSeeds
+        )
+        #expect(CompactionEvalFactRetentionReport.summaryFactRetentionCount(of: findings) == findings.count)
+        let table = CompactionEvalFactRetentionReport.lines(of: findings, expecting: Self.bothSeeds)
+            .joined(separator: "\n")
+        #expect(table.contains("retention: summary=2 of 2 answer=1 of 2"))
+    }
+
+    @Test("a fold that produced no summary counts against the fold share, because it carries nothing")
+    func foldThatProducedNoSummaryCountsAgainstTheFoldShare() {
+        let findings = CompactionEvalFactRetentionReport.findings(
+            for: [Self.makeDiagnostic(summary: nil, answer: "I do not have that information.")],
+            seeds: [Self.seed]
+        )
+        #expect(CompactionEvalFactRetentionReport.summaryFactRetentionCount(of: findings) == 0)
+        let table = CompactionEvalFactRetentionReport.lines(of: findings, expecting: [Self.seed])
+            .joined(separator: "\n")
+        #expect(table.contains("retention: summary=0 of 1 answer=0 of 1"))
+    }
+
+    @Test("a share over no samples is zero, so a run that recorded nothing never reads as a clean sheet")
+    func shareOverNoSamplesIsZero() {
+        #expect(CompactionEvalFactRetentionReport.share(of: 0, over: 0) == 0)
+        // And a real division still divides. One of the two probe seeds is a
+        // half, which a guard answering zero for every input would miss.
+        #expect(
+            CompactionEvalFactRetentionReport.share(of: 1, over: Self.bothSeeds.count) == Self.halfShare)
+    }
 }
 
 // MARK: - Hermetic progress-line rendering
@@ -1303,10 +1490,13 @@ struct CompactionEvalRepresentativeSubsetTests {
     /// How many seeds the subset may hold.
     ///
     /// The lower bound keeps the subset wide enough for a mean over it to mean
-    /// anything, and the upper bound is what
-    /// ``compactionEvalSubsetTimeLimitMinutes`` was measured against — a subset
-    /// that grew past it would no longer fit the limit that measurement bought.
-    private static let subsetSizeBand = 6...8
+    /// anything, and the upper bound is the seed count
+    /// ``compactionEvalSubsetTimeLimitMinutes`` was derived for — a subset that
+    /// grew past it would no longer fit that limit. The band used to reach 8,
+    /// which stopped being true when the applied fold raised the per-sample rate:
+    /// 8 samples at the rate `CompactionEvalTierBarTests` derives the limit from
+    /// is 46.9 minutes, over the 42 the limit states (task ^6ssbakk).
+    private static let subsetSizeBand = 6...7
 
     /// The fixture specs the subset names, in dataset order.
     ///
@@ -1387,6 +1577,98 @@ struct CompactionEvalRepresentativeSubsetTests {
     }
 }
 
+// MARK: - Ungated tier thresholds
+
+/// Ungated proof that each gated tier's two thresholds — the wall clock it runs
+/// under and the `FactRetention` bar it is held to — state the measurement they
+/// rest on, and that the seed count can express that bar (tasks ^6ssbakk,
+/// ^xscp198).
+///
+/// Both thresholds used to be prose alone. A limit stated 30 minutes against a
+/// per-sample rate that had since risen, and a floor stated 0.9 against a seed
+/// count that could only produce 0.857 or 1.0. Neither could be read off the
+/// value, so neither failed when it stopped being true. These tests make each
+/// one an arithmetic over values the eval measures, so a subset that outgrew its
+/// limit, or a floor its seed count cannot express, fails a plain `swift test`.
+@Suite("CompactionEvaluation tier thresholds (ungated)")
+struct CompactionEvalTierBarTests {
+    /// How many samples the default gated tier runs.
+    private static let subsetSampleCount = compactionEvalRepresentativeSeeds.count
+
+    /// How many samples the opt-in whole-dataset tier runs.
+    private static let fullDatasetSampleCount = compactionEvalSeeds.count
+
+    /// How many of the whole dataset's seeds must retain the fact for its mean
+    /// to clear ``compactionEvalFactRetentionFloor`` — 22, because 22 of 24 is
+    /// 0.917 and 21 of 24 is 0.875.
+    private static let fullDatasetRequiredSamples = 22
+
+    /// The tier sizes the required-count property below is held over: every size
+    /// from a single sample up to the whole dataset, so the property covers the
+    /// two tiers this eval really runs and every size between them.
+    private static let checkedSampleCounts = 1...compactionEvalSeeds.count
+
+    @Test("the subset's time limit clears the bound its own measured samples derive")
+    func subsetTimeLimitClearsItsDerivedBound() {
+        let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: Self.subsetSampleCount)
+        #expect(
+            Double(compactionEvalSubsetTimeLimitMinutes) >= derived,
+            """
+            the subset tier holds \(Self.subsetSampleCount) seeds, which derive \(derived) minutes, \
+            against a limit of \(compactionEvalSubsetTimeLimitMinutes)
+            """
+        )
+    }
+
+    @Test("the subset's time limit is the next whole minute above that bound, so it states a measurement")
+    func subsetTimeLimitIsTheNextWholeMinuteAboveItsBound() {
+        // The other half of the same property. A limit far above the derivation
+        // passes the test above and states nothing, which is the defect ^6ssbakk
+        // records against the 30 minutes this value replaced: a number nobody
+        // can read a measurement out of.
+        let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: Self.subsetSampleCount)
+        #expect(
+            Double(compactionEvalSubsetTimeLimitMinutes) < derived + 1,
+            """
+            the subset tier derives \(derived) minutes and states \(compactionEvalSubsetTimeLimitMinutes), \
+            which is more than the next whole minute above it
+            """
+        )
+    }
+
+    @Test("the floor needs every seed of the subset, and 22 of the whole dataset")
+    func eachTiersFloorIsTheSampleCountItReallyNeeds() {
+        // `FactRetention` scores one bit per sample, so a tier of n samples can
+        // only produce the means k/n. A 7-seed tier held to 0.9 passes at 7 of 7
+        // and at no other count, because 6 of 7 is 0.857.
+        #expect(
+            compactionEvalFactRetentionRequiredSamples(of: Self.subsetSampleCount) == Self.subsetSampleCount,
+            "the subset holds \(Self.subsetSampleCount) seeds and can lose none of them")
+        #expect(
+            compactionEvalFactRetentionRequiredSamples(of: Self.fullDatasetSampleCount)
+                == Self.fullDatasetRequiredSamples,
+            "the whole dataset holds \(Self.fullDatasetSampleCount) seeds")
+    }
+
+    @Test("the required count is the smallest count that clears the floor, at every tier size")
+    func requiredCountIsTheSmallestCountThatClearsTheFloor() {
+        for sampleCount in Self.checkedSampleCounts {
+            let required = compactionEvalFactRetentionRequiredSamples(of: sampleCount)
+            #expect(
+                Double(required) / Double(sampleCount) >= compactionEvalFactRetentionFloor,
+                "a tier of \(sampleCount) samples needs \(required), which does not clear the floor")
+            #expect(
+                Double(required - 1) / Double(sampleCount) < compactionEvalFactRetentionFloor,
+                "a tier of \(sampleCount) samples needs \(required), but \(required - 1) already clears the floor")
+        }
+    }
+
+    @Test("a tier of no samples needs no sample, so the arithmetic never divides by zero")
+    func tierOfNoSamplesNeedsNoSample() {
+        #expect(compactionEvalFactRetentionRequiredSamples(of: 0) == 0)
+    }
+}
+
 // MARK: - Gated real-model eval
 
 /// Loads ``CompactionEvalRealModel`` at most once for the gated `@Test`
@@ -1436,25 +1718,25 @@ private let compactionEvalSubsetEvaluation = makeCompactionEvalRealEvaluation(
 private let compactionEvalFullDatasetEvaluation = makeCompactionEvalRealEvaluation(
     driving: compactionEvalFullDatasetRunner)
 
-/// The mean `FactRetention` a gated tier's samples must reach.
-///
-/// compaction_plan.md §5's own bar, and the same value both tiers are held to —
-/// the tiers differ in which seeds they measure, never in how well those seeds
-/// have to do.
-private let compactionEvalFactRetentionFloor = 0.9
-
-/// Prints one tier's per-sample evidence, then asserts its mean
-/// `FactRetention`.
+/// Prints one tier's per-sample evidence, then asserts the two bars its samples
+/// are held to.
 ///
 /// Shared by both tiers so the two can never drift into measuring the same
 /// metric two ways.
+///
+/// Two assertions rather than one, because the tier spans two steps. The FOLD
+/// has to write a summary carrying the planted fact, and the resumed session has
+/// then to ANSWER with it. Both are held to
+/// ``compactionEvalFactRetentionFloor`` — see that value for why one number
+/// serves both — and each states, in its own message, how many samples cleared
+/// it and how many the seed count really needs.
 ///
 /// - Parameter runner: The tier's runner, holding the evidence its samples
 ///   recorded and the seed set that evidence is read against — so a run the
 ///   time limit cut short states the seeds it never reached.
 private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) async {
-    // Printed before the assertion so a run that misses the bar still
-    // leaves the evidence behind: the mean alone cannot say whether a
+    // Printed before the assertions so a run that misses a bar still
+    // leaves the evidence behind: a mean alone cannot say whether a
     // failing sample lost its fact in the fold or in the answering turn,
     // and this table classifies every sample on exactly that question.
     let seeds = runner.seeds
@@ -1466,9 +1748,27 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
         print(line)
     }
 
-    let result = EvaluationContext.current.result
+    let measured = findings.count
+    let required = compactionEvalFactRetentionRequiredSamples(of: seeds.count)
+    let bar = "a floor of \(compactionEvalFactRetentionFloor) over \(seeds.count) seeds needs \(required) of them"
+
+    // The COMPACTION side, asserted first because it is the necessary
+    // condition: a tier whose folds dropped the fact can never answer with it.
+    let summaryCarried = CompactionEvalFactRetentionReport.summaryFactRetentionCount(of: findings)
     #expect(
-        result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention)) >= compactionEvalFactRetentionFloor)
+        CompactionEvalFactRetentionReport.share(of: summaryCarried, over: measured)
+            >= compactionEvalFactRetentionFloor,
+        "\(summaryCarried) of \(measured) folds wrote a summary carrying the fact, and \(bar)"
+    )
+
+    // The end-to-end bar, read off the framework's own metric rather than off
+    // the table, so this assertion and `FactRetention` can never disagree.
+    let result = EvaluationContext.current.result
+    let answerCarried = CompactionEvalFactRetentionReport.counts(of: findings)[.retained] ?? 0
+    #expect(
+        result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention)) >= compactionEvalFactRetentionFloor,
+        "\(answerCarried) of \(measured) answers carried the fact, and \(bar)"
+    )
 }
 
 /// The DEFAULT gated real-model eval (compaction_plan.md §5's
