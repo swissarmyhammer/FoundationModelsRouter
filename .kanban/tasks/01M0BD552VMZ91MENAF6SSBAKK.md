@@ -62,7 +62,51 @@ comments:
     - open: criterion 1 needs a gated run. Criterion 3 moved to `^bkdm97c`. `^3ccp0je` carries the whole-dataset limit, which is sized on the mean where this one is now sized on the dearest.
     - next: `/review`
   timestamp: 2026-08-19T11:23:30.536458+00:00
-position_column: doing
+- actor: claude-code
+  id: 01m0cwwtkxzja003nr9fstchrr
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` over `ace1d44`, 1 finding (1 confirmed, 0 refuted, 7 attempted) — Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift:438
+    - source check: all four claims for this card CONFIRMED against source. The derivation is real arithmetic (7 x 352.0 + 3.5 = 2467.5 s = 41.125 min, limit 42). `CompactionEvalTierBarTests` binds the limit from BOTH sides — `limit >= derived` and `limit < derived + 1` — so the limit cannot drift up silently. The band is `6...7` because 8 samples is 46.99 min.
+    - next: fix the doc parameter key, then the card still needs a gated run for acceptance criterion 1. Card held in `review` — it must NOT advance to `done` on a clean review while that criterion is open.
+  timestamp: 2026-08-19T11:35:53.213374+00:00
+- actor: claude-code
+  id: 01m0cy3cjddfh628aa20w51w74
+  text: |-
+    Findings pass, 2026-08-19. The `swift/doc-parameter-naming` finding is fixed and swept, and the size-band observation this card recorded is resolved.
+
+    ## The finding, and the sweep behind it
+
+    `CompactionEvalFactRetentionReport.swift` — `retentionLine(of:counts:)` declares `counts tallied:`, so the doc key must be `tallied`, the internal name. Changed `- counts:` to `- tallied:`.
+
+    A finding samples a cause, so the whole eval target was swept rather than the one line. The sweep parses each doc block above a `func`/`init`, reads the `- Parameter` and `- Parameters:` keys out of it, and compares them with the internal and external names of the declaration below it. Over `Tests/FoundationModelsRouterEvals` it parsed 70 documented declarations and 112 doc parameter keys, left 0 blocks unparsed, and reported this one site only. After the fix it reports 0.
+
+    DocC symbol links were deliberately left alone: ``counts(of:)`` on the same line correctly names the external label, and the rule states that symbol links follow the declaration rather than this rule.
+
+    ## The size band, which is now one size
+
+    The card recorded this as an observation of the two-sided limit binding: the band permitted 6 seeds, and at 6 seeds the derived bound is 35.26 minutes, so `42 < 36.26` is false and `subsetTimeLimitIsTheNextWholeMinuteAboveItsBound` fails while the band test passes. The band's lower end was unreachable, and the two tests disagreed about which sizes are legal.
+
+    Resolved by making the band state what is really reachable, NOT by loosening the limit derivation. The evidence:
+
+    - The upper assertion exists precisely to refuse a limit that sits far above its derivation, because such a limit "states nothing" — the defect this card records against the 30 minutes it replaced. Deriving the bound from a band's upper end instead of from the real seed count would let 42 stand at 6 seeds, 5.7 minutes above the 35.26 bound. That is the same defect again.
+    - `subsetSampleCount` deliberately reads `compactionEvalRepresentativeSeeds.count` rather than a literal, so the derivation follows the real seed count. A band-driven derivation would undo that choice.
+    - The band's lower end bought no tolerance on the floor side either: `compactionEvalFactRetentionRequiredSamples(of: 6)` is 6, so a 6-seed tier can still lose no seed.
+
+    So `subsetSizeBand = 6...7` is now `subsetSeedCount = 7`, and `subsetStaysInsideItsSizeBand` is now `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst`. It stays a literal, and is not read back from `compactionEvalRepresentativeSeeds`, so the test compares two independent statements rather than a value with itself. A subset moved to any other count now fails the size test and the limit binding together, until the limit is measured again and edited with it.
+
+    ## Not done, and why
+
+    Acceptance criterion 1 is untouched. Only a gated run can show the tier ends on its own assertion, and a gated run is ruled out. The card stays in `review`.
+  timestamp: 2026-08-19T11:56:56.781174+00:00
+- actor: claude-code
+  id: 01m0cy7mpswhes8sj4afz2mac9
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift. `swift test`: 995 + 37 + 75 = 1107 tests in 117 suites passed, 0 failures, 1 known issue in the untouched main bundle. A forced rebuild of the eval target gave 0 compiler warnings. The doc parameter sweep over `Tests/FoundationModelsRouterEvals` reports 0 over 70 declarations and 112 keys.
+    - next: stays in `review`. Acceptance criterion 1 needs a gated run, which is ruled out, so this card cannot finish here.
+  timestamp: 2026-08-19T11:59:16.185710+00:00
+position_column: review
 position_ordinal: '8380'
 title: The gated compaction subset no longer fits its 30-minute limit now that every fold applies — 6 of 7 seeds in 1800 s
 ---
@@ -142,4 +186,33 @@ Answer 1 of the three above, sized on the DEAREST measured sample rather than on
 - [ ] The gated subset ends on its own assertion, not on the time limit, with every fold applied — OPEN. Only a gated run can show it, and a gated run is ruled out for now.
 - [x] The limit states the per-sample rate it was measured against, and names the applied fold as the reason for the rate
 - [ ] A time-limit cancellation does not abort the process on a Metal assertion — moved to `^bkdm97c`, which owns it. It is not a threshold question, it needs a gated run to verify, and any fix touches the MLX generation path rather than an eval constant.
-#compaction #eval #real-model #test-debt
+
+## Review Findings (2026-08-19 06:26)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 8 not reviewed.
+
+> 8 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 8 file(s)
+
+- [x] `Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift:438` `swift/doc-parameter-naming` — Doc parameter key uses the external argument label `counts` instead of the internal parameter name `tallied`. Per the rule, `- Parameter` entries must name the internal (local) parameter that callers inside the function use, not the external label used at call sites. Change line 438 from `- counts:` to `- tallied:` to reference the internal parameter name.
+
+## Review hold, 2026-08-19
+
+This card stays in `review` and must NOT move to `done` on a clean review. Acceptance criterion 1 is open: the tier must end on its own assertion rather than on the limit, and only a gated run can show it. A gated run is ruled out for now. The review pass verified the code, not the criterion.
+
+Source verification of this card's claims, made against `ace1d44` (all CONFIRMED):
+
+- `compactionEvalDerivedTimeLimitMinutes(forSamples:)` is real arithmetic over the two measured constants, not a stated number — `CompactionEvaluationTests.swift:91-94`. 7 x 352.0 + 3.5 = 2467.5 s = 41.125 min, so 42 is the next whole minute. `compactionEvalSubsetTimeLimitMinutes` is 42 at `:181`, and `subsetSampleCount` reads `compactionEvalRepresentativeSeeds.count` rather than a literal, so the derivation follows the real seed count.
+- The binding is two-sided. `CompactionEvaluationTests.swift:1614` asserts `Double(limit) >= derived`, and `:1630` asserts `Double(limit) < derived + 1`. 41.125 <= 42 < 42.125, so 42 is the only integer that clears both. A limit that drifts up to 43 fails the second test. The limit cannot drift up silently.
+- The band is `6...7` at `CompactionEvaluationTests.swift:1499`, down from `6...8`. 8 x 352.0 + 3.5 = 2819.5 s = 46.99 min, over 42.
+- Observation from the two-sided binding, not a finding: the upper assertion pins the subset at exactly 7 seeds. At 6 seeds the derived bound is 35.26 min, and `42 < 36.26` is false, so `subsetTimeLimitIsTheNextWholeMinuteAboveItsBound` fails while `subsetStaysInsideItsSizeBand` passes. The band's lower end of 6 is not reachable without also editing the limit.
+- Observation, not a finding: the doc prose says "41.1 minutes" where the derived value is 41.125. Prose rounding only; the tests use the computed value.
+
+## What landed, 2026-08-19 (findings pass)
+
+The finding above is fixed, and the band observation is resolved.
+
+- `retentionLine(of:counts:)` declares `counts tallied:`, so its doc key is now `- tallied:`. The whole eval target was swept for the same cause rather than the one line: 70 documented declarations and 112 doc parameter keys read against their declarations, 0 unparsed, this one site only, and 0 after the fix. DocC symbol links were left alone, because the rule says a symbol link follows the declaration.
+- The band and the limit binding no longer disagree. `subsetSizeBand = 6...7` becomes `subsetSeedCount = 7`, and `subsetStaysInsideItsSizeBand` becomes `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst`. The band was made to state what is reachable, rather than the limit derivation made to tolerate the band, because deriving the bound from a band's upper end would let 42 stand at 6 seeds — 5.7 minutes above that size's 35.26 bound — which is the very defect the two-sided binding exists to refuse. The size stays a literal, so the test still compares two independent statements.
+
+Acceptance criterion 1 is untouched: only a gated run can close it. #compaction #eval #real-model #test-debt

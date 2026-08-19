@@ -435,8 +435,8 @@ enum CompactionEvalFactRetentionReport {
     ///
     /// - Parameters:
     ///   - findings: The classified samples the run recorded.
-    ///   - counts: ``counts(of:)`` over the same findings, passed in rather than
-    ///     tallied twice.
+    ///   - tallied: ``counts(of:)`` over the same findings, passed in rather
+    ///     than tallied twice.
     /// - Returns: The line.
     private static func retentionLine(
         of findings: [CompactionEvalFactRetentionFinding],

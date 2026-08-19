@@ -268,11 +268,22 @@ private let compactionEvalFactRetentionFloor = 0.9
 /// The smallest number of a tier's samples that must retain the fact for the
 /// tier's mean to clear ``compactionEvalFactRetentionFloor``.
 ///
-/// Found by the same `>=` comparison ``expectFactRetention(of:)`` applies, over
-/// the counts a tier can really produce, so this arithmetic and that assertion
-/// can never disagree. Computing `ceil(floor * n)` instead would disagree: the
-/// nearest `Double` to 0.9 is a shade above 0.9, so `ceil(0.9 * 10)` is 10 where
-/// 9 of 10 already clears the bar.
+/// Found by the same `>=` comparison ``expectFactRetention(of:)`` applies to its
+/// SUMMARY share, over the counts a tier can really produce, so this arithmetic
+/// and that one assertion can never disagree.
+///
+/// The guarantee reaches that assertion and no further, because the two sides
+/// read different recordings on purpose. The answer side reads the Evaluations
+/// framework's own `.mean(of:)` rather than
+/// ``CompactionEvalFactRetentionReport/share(of:over:)``, so the tier's
+/// end-to-end verdict IS the framework's verdict rather than a second derivation
+/// of it that could drift from the metric it reports. The floor and the `>=` are
+/// the same on both sides, so the bar is the same; what differs is which
+/// recording each share is taken over (task ^xscp198).
+///
+/// Computing `ceil(floor * n)` instead would disagree: the nearest `Double` to
+/// 0.9 is a shade above 0.9, so `ceil(0.9 * 10)` is 10 where 9 of 10 already
+/// clears the bar.
 ///
 /// - Parameter sampleCount: How many samples the tier runs.
 /// - Returns: The smallest count that clears the floor. `0` for a tier of no
@@ -1487,16 +1498,29 @@ struct CompactionEvalSeedSizingTests {
 /// subset must cover.
 @Suite("CompactionEvaluation gated subset coverage (ungated)")
 struct CompactionEvalRepresentativeSubsetTests {
-    /// How many seeds the subset may hold.
+    /// How many seeds the subset holds.
     ///
-    /// The lower bound keeps the subset wide enough for a mean over it to mean
-    /// anything, and the upper bound is the seed count
-    /// ``compactionEvalSubsetTimeLimitMinutes`` was derived for — a subset that
-    /// grew past it would no longer fit that limit. The band used to reach 8,
-    /// which stopped being true when the applied fold raised the per-sample rate:
-    /// 8 samples at the rate `CompactionEvalTierBarTests` derives the limit from
-    /// is 46.9 minutes, over the 42 the limit states (task ^6ssbakk).
-    private static let subsetSizeBand = 6...7
+    /// ONE size, and not a band. `CompactionEvalTierBarTests` holds
+    /// ``compactionEvalSubsetTimeLimitMinutes`` to the next whole minute above
+    /// the bound its own seed count derives, from BOTH sides, so the limit as it
+    /// stands states a measurement for exactly one seed count. At eight seeds
+    /// the derived bound rises to 46.9 minutes and the 42 the limit states no
+    /// longer covers it. At six seeds the bound falls to 35.3 minutes and 42 is
+    /// no longer the next whole minute above it.
+    ///
+    /// So the `6...8` band this replaced, and the `6...7` it first narrowed to,
+    /// each permitted a size the limit binding refuses: a subset really moved to
+    /// six seeds passed this test and failed
+    /// `subsetTimeLimitIsTheNextWholeMinuteAboveItsBound`. Two tests that
+    /// disagree about which sizes are legal state no property, so the size is
+    /// stated once, and a subset moved to any other count fails here and there
+    /// together until the limit is measured again and edited with it (tasks
+    /// ^6ssbakk, ^xscp198).
+    ///
+    /// Written as a literal rather than read back from
+    /// ``compactionEvalRepresentativeSeeds``, so the test below compares two
+    /// independent statements rather than a value with itself.
+    private static let subsetSeedCount = 7
 
     /// The fixture specs the subset names, in dataset order.
     ///
@@ -1524,11 +1548,14 @@ struct CompactionEvalRepresentativeSubsetTests {
         )
     }
 
-    @Test("the subset stays inside the size band its time limit was measured against")
-    func subsetStaysInsideItsSizeBand() {
+    @Test("the subset holds the one seed count its time limit was measured against")
+    func subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst() {
         #expect(
-            Self.subsetSizeBand.contains(compactionEvalRepresentativeSeeds.count),
-            "the gated subset holds \(compactionEvalRepresentativeSeeds.count) seeds, outside \(Self.subsetSizeBand)"
+            compactionEvalRepresentativeSeeds.count == Self.subsetSeedCount,
+            """
+            the gated subset holds \(compactionEvalRepresentativeSeeds.count) seeds, not the \
+            \(Self.subsetSeedCount) its time limit was measured against
+            """
         )
     }
 
@@ -1718,6 +1745,35 @@ private let compactionEvalSubsetEvaluation = makeCompactionEvalRealEvaluation(
 private let compactionEvalFullDatasetEvaluation = makeCompactionEvalRealEvaluation(
     driving: compactionEvalFullDatasetRunner)
 
+/// States the bar ``expectFactRetention(of:)`` really applied.
+///
+/// Both of that function's assertions divide by the samples the run MEASURED,
+/// and a run its time limit cuts short measures fewer samples than its tier
+/// holds seeds. A message that quoted the TIER's seed count alone would name a
+/// bar the assertion never used: at six measured samples the floor needs six,
+/// where the seven-seed tier needs seven, so a reader of the failing message
+/// counted the shortfall against the wrong denominator (task ^xscp198).
+///
+/// The assertions themselves are right to divide by what ran. A run cut short
+/// already fails on its own time limit, so applying the tier's bar to a partial
+/// measurement would report a fact-retention defect for a run that only ran out
+/// of clock. The defect was in the message, and this states what was applied.
+///
+/// - Parameters:
+///   - measured: How many samples the run recorded.
+///   - total: How many seeds the tier holds.
+/// - Returns: The sentence, which names the tier's own bar as well when the run
+///   recorded fewer samples than the tier holds.
+private func compactionEvalFactRetentionBar(measured: Int, of total: Int) -> String {
+    let required = compactionEvalFactRetentionRequiredSamples(of: measured)
+    let applied = "a floor of \(compactionEvalFactRetentionFloor)"
+        + " over the \(measured) samples this run measured needs \(required) of them"
+    guard measured < total else { return applied }
+    let whole = compactionEvalFactRetentionRequiredSamples(of: total)
+    return applied
+        + ", and the run stopped short of the tier's \(total) seeds, which need \(whole)"
+}
+
 /// Prints one tier's per-sample evidence, then asserts the two bars its samples
 /// are held to.
 ///
@@ -1729,7 +1785,9 @@ private let compactionEvalFullDatasetEvaluation = makeCompactionEvalRealEvaluati
 /// then to ANSWER with it. Both are held to
 /// ``compactionEvalFactRetentionFloor`` — see that value for why one number
 /// serves both — and each states, in its own message, how many samples cleared
-/// it and how many the seed count really needs.
+/// it beside the bar the assertion really applied. See
+/// ``compactionEvalFactRetentionBar(measured:of:)`` for why that bar is read off
+/// the measured count rather than off the tier's seed count.
 ///
 /// - Parameter runner: The tier's runner, holding the evidence its samples
 ///   recorded and the seed set that evidence is read against — so a run the
@@ -1749,8 +1807,7 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
     }
 
     let measured = findings.count
-    let required = compactionEvalFactRetentionRequiredSamples(of: seeds.count)
-    let bar = "a floor of \(compactionEvalFactRetentionFloor) over \(seeds.count) seeds needs \(required) of them"
+    let bar = compactionEvalFactRetentionBar(measured: measured, of: seeds.count)
 
     // The COMPACTION side, asserted first because it is the necessary
     // condition: a tier whose folds dropped the fact can never answer with it.
