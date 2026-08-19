@@ -362,7 +362,7 @@ A small executable beside `MultiModelGeneration` proving the loop end to end:
 ## 5. Testing
 
 Family conventions: swift-testing, hermetic unit tests, real-model tests in
-their own targets (`swift test --filter FoundationModelsRouterRealModel`).
+their own targets (`swift test --filter IntegrationTests`).
 
 - **Stage unit tests** — fixture transcripts covering every §1.3 invariant,
   plus: compaction entry round-trips through the recording mirror and the
@@ -468,7 +468,7 @@ their own targets (`swift test --filter FoundationModelsRouterRealModel`).
    → JSONL → `TranscriptTree.effectiveTranscript(forSession:)` with identical
    structure and ids, using nothing beyond the mapper/reconstruction code
    already in place — no production changes were needed for this half.
-   `Tests/FoundationModelsRouterRealModelTests/CompactionSpikeIntegrationTests.swift`
+   `Tests/FoundationModelsRouterIntegrationTests/CompactionSpikeIntegrationTests.swift`
    (in the real-model target) covers the live-session half: it
    rebuilds a real `LanguageModelSession` via
    `MLXFoundationModelsContainer.makeSession(transcript:)` — the exact factory
@@ -490,7 +490,7 @@ their own targets (`swift test --filter FoundationModelsRouterRealModel`).
    half of this verdict — whether `LanguageModelSession(transcript:)` itself
    preserves ids on ingest — is now empirically confirmed too:
    `CompactionSpikeIntegrationTests` passes against a real model under
-   `swift test --filter FoundationModelsRouterRealModel`.
+   `swift test --filter IntegrationTests`.
 
 2. **`CompactionSegment` + registry default registration**; recording
    round-trip tests.

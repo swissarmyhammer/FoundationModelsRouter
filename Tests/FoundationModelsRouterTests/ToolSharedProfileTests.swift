@@ -19,7 +19,7 @@ import Testing
 /// canned LLM container that returns fixed text, a stub embedding container, and
 /// an ``InMemoryRecorder`` — so the suite needs no network and no GPU.
 @Suite("Tool integration: shared-profile constructor pattern")
-struct ToolIntegrationTests {
+struct ToolSharedProfileTests {
     // MARK: - Stub containers
 
     /// A stand-in for a loaded LLM container that returns canned text, with no
@@ -147,7 +147,7 @@ struct ToolIntegrationTests {
 
     private static func makeTempDir() -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ToolIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("ToolSharedProfileTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

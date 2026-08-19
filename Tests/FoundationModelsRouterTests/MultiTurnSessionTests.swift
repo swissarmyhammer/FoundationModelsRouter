@@ -14,7 +14,7 @@ import Testing
 /// session's turn lock — never concurrently with it.
 ///
 /// The companion gated integration suite
-/// (`Tests/FoundationModelsRouterRealModelTests/LanguageModelSessionBackendTests.swift`)
+/// (`Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`)
 /// proves the same properties against a real `LanguageModelSession`, plus the
 /// harder KV-cache-reuse claim (`cachedTokenCount > 0` on a second turn) that
 /// only a real model can demonstrate. This suite needs no network and no GPU.

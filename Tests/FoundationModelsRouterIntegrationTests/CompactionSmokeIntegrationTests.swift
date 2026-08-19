@@ -129,14 +129,13 @@ private let compactionSmokeTimeLimitMinutes = 1
 /// discarded half of what the model wrote — including the fact planted at the
 /// end of the span, which is why the second test below exists.
 ///
-/// The smoke tier is what those numbers rest on, and it is selected by NAME
-/// rather than by a variable: this suite, ``CompactionSmokeAutoTriggerTests``
-/// and ``CompactionSmokeRecordedTranscriptTests`` all carry `CompactionSmoke`,
-/// so `swift test --filter CompactionSmoke` runs the three of them and none of
-/// the 15-to-30-minute suites beside them. All three answer one question — does
-/// compaction work at all against a real model — and all three answer it in
-/// seconds. Measured under the variable this tier used to read: the whole
-/// package, this suite's real model included, in 18.0 seconds.
+/// The smoke tier is what those numbers rest on: this suite,
+/// ``AutoCompactionTriggerIntegrationTests`` and
+/// ``RecordedTranscriptCompactionIntegrationTests``. All three answer one
+/// question — does compaction work at all against a real model — and all
+/// three answer it in seconds. Measured under the variable this tier used to
+/// read: the whole package, this suite's real model included, in 18.0
+/// seconds.
 ///
 /// The limit is one minute, roughly nine times the measured run of the pair and
 /// the smallest `.timeLimit` Swift Testing accepts.

@@ -91,7 +91,7 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 1
 /// one model, one fold.
 ///
 /// **It does not prove the automatic path fires.** This suite calls
-/// ``Compactor`` directly. ``CompactionSmokeAutoTriggerTests`` is where a
+/// ``Compactor`` directly. ``AutoCompactionTriggerIntegrationTests`` is where a
 /// session folds itself.
 ///
 /// ## Why the transcript is recorded rather than built in Swift
@@ -152,17 +152,17 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 1
 ///
 /// The limit is one minute, roughly six times the measured run and the smallest
 /// `.timeLimit` Swift Testing accepts.
-/// One of the three `CompactionSmoke` suites, which answer one question — does
-/// compaction work at all against a real model — and answer it in seconds.
-/// `swift test --filter CompactionSmoke` runs the three of them without the
-/// 15-to-30-minute suites beside them in this target.
+/// One of the three compaction smoke suites, with
+/// ``CompactionSmokeIntegrationTests`` and
+/// ``AutoCompactionTriggerIntegrationTests``. The three answer one
+/// question — does compaction work at all against a real model — in seconds.
 ///
 @Suite(
     "Real-model smoke test: a recorded transcript boots the compaction fold (task ^pfdrppj)",
     .timeLimit(.minutes(recordedTranscriptCompactionTimeLimitMinutes)),
     .exclusiveRealModel
 )
-struct CompactionSmokeRecordedTranscriptTests {
+struct RecordedTranscriptCompactionIntegrationTests {
     // MARK: - The recording
 
     /// The directory under the test bundle's resources that holds the checked-in

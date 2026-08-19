@@ -58,7 +58,7 @@ import Testing
 /// ingest (rather than reassigning them) is a separate, runtime-only question
 /// this hermetic suite cannot answer by construction — see the gated
 /// `CompactionSpikeIntegrationTests` suite in
-/// `Tests/FoundationModelsRouterRealModelTests/` (`swift test --filter FoundationModelsRouterRealModel`)
+/// `Tests/FoundationModelsRouterIntegrationTests/` (`swift test --filter IntegrationTests`)
 /// for that half, and its own header comment for the verdict once run.
 @Suite("Compaction spike: synthesized Transcript.Entry round-trip through the recording mirror")
 struct CompactionSpikeTests {

@@ -128,7 +128,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///
     /// ## Why this is not `RealModelHarness.make`
     ///
-    /// `Tests/FoundationModelsRouterRealModelTests/Support/RealModelHarness.swift`
+    /// `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelHarness.swift`
     /// is the same consolidation for the integration target, and this target
     /// cannot call it, for the reason
     /// ``CompactionEvalRealModelContainer`` states in full: the shared function

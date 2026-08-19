@@ -92,6 +92,14 @@ comments:
         - `profileStampedWithAnExistingRouterIdContinuesThatRoot` checks a passed-in id comes back out AND that an unstamped build differs, so a `make` that ignored the parameter fails.
     - next: a session that is allowed to set `FM_ROUTER_INTEGRATION_TESTS` runs both gated suites once, green, and records the wall clock here. The card then re-reviews and closes. It stays in `review` until then.
   timestamp: 2026-08-19T03:05:41.997526+00:00
+- actor: claude-code
+  id: 01m0d64n8tw25fhhgrfkg5hrv5
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: no-change — the code criteria are closed, and the last review returned 0 findings
+    - blocker: acceptance criterion 3 needs both gated suites run once with `FM_ROUTER_INTEGRATION_TESTS`, green, with the wall clock recorded here. The card records that such a run is a sanctioned event, and this session has no sanction for it.
+    - next: a person sanctions the gated run of `CompactionRoundTripIntegrationTests` and `SessionTreeRestorationIntegrationTests`, then the card re-reviews and closes
+  timestamp: 2026-08-19T14:17:27.066512+00:00
 position_column: review
 position_ordinal: '8280'
 title: Move the three hand-built gated-model profile copies onto the shared RealModelHarness

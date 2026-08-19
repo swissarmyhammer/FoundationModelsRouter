@@ -16,7 +16,7 @@ import Testing
 /// this target holds this single value-1 permit for its duration, making the
 /// whole gated tier serial across files, not just within one.
 ///
-/// The permit covers this target only. `FoundationModelsRouterRealModelEvals`
+/// The permit covers this target only. `FoundationModelsRouterEvalIntegrationTests`
 /// is a separate test target — a separate module and a separate `swift test`
 /// process — so it cannot see this gate, and its own real-model evals are not
 /// serialized against these suites.
@@ -27,15 +27,16 @@ import Testing
 /// variable and none carries an `.enabled(if:)`, so a suite that is selected
 /// runs and a suite that is not selected is not built into the run at all:
 ///
-/// - `swift test --skip FoundationModelsRouterRealModel` is the everyday
+/// - `swift test --skip IntegrationTests` is the everyday
 ///   hermetic run, and it leaves this target and
-///   `FoundationModelsRouterRealModelEvals` out through the one prefix both
-///   names share.
-/// - `swift test --filter FoundationModelsRouterRealModel` is what asks for
+///   `FoundationModelsRouterEvalIntegrationTests` out through the one
+///   `IntegrationTests` suffix both names share.
+/// - `swift test --filter IntegrationTests` is what asks for
 ///   them, and it is what CI runs.
-/// - `swift test --filter CompactionSmoke` runs the three `CompactionSmoke`
-///   suites alone — the seconds-long tier that answers "does compaction work at
-///   all against a real model" without the 15-to-30-minute suites beside it.
+/// - `swift test --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'`
+///   runs the three compaction smoke suites alone — the seconds-long tier that
+///   answers "does compaction work at all against a real model" without the
+///   15-to-30-minute suites beside it.
 ///
 /// `swift test` exits 0 when a `--filter` matches nothing, so a selector that
 /// named a target no longer present would report green having measured nothing.

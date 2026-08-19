@@ -45,7 +45,7 @@ import Testing
 /// - **`.serialized`** cannot close it at all. Swift Testing's parallelization
 ///   trait serializes *within* a `@Suite`; two different suites still overlap.
 ///   That is the same sentence
-///   `FoundationModelsRouterRealModelTests`'s own `GatedSuiteSerialGate`
+///   `FoundationModelsRouterIntegrationTests`'s own `GatedSuiteSerialGate`
 ///   records, and each eval suite holds exactly one `@Test` anyway.
 /// - **A target-wide value-1 permit** is what is left, and it mirrors the
 ///   house pattern that target already uses.
@@ -72,8 +72,8 @@ import Testing
 ///
 /// By the TARGET, and by nothing else. No suite here reads an environment
 /// variable and none carries an `.enabled(if:)`.
-/// `FoundationModelsRouterRealModelTests` shares the
-/// `FoundationModelsRouterRealModel` prefix with this target's name, so one
+/// `FoundationModelsRouterIntegrationTests` shares the
+/// `IntegrationTests` suffix with this target's name, so one
 /// `--filter` asks for both and one `--skip` leaves both out — see
 /// `GatedSuiteSerialGate` for those two commands and for the guard that fails a
 /// run whose selectors matched nothing.
@@ -87,13 +87,13 @@ import Testing
 /// ## Relationship to the integration target's gate
 ///
 /// This permit covers this target only, and the sibling permit covers that one
-/// only — `FoundationModelsRouterRealModelTests` is a separate module in a
+/// only — `FoundationModelsRouterIntegrationTests` is a separate module in a
 /// separate `swift test` process, so neither gate can see the other, and
 /// ``MetalLibraryTestBootstrap`` has to run once in each of them. Both targets
 /// now run it from the same place: the suite-scoped trait every gated suite
 /// carries. See
 /// ``GatedEvalResidencyTrait/provideScope(for:testCase:performing:)``, and
-/// `GatedRealModelSuiteTrait` in `FoundationModelsRouterRealModelTests`.
+/// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests`.
 enum GatedEvalSerialGate {
     /// The target-wide permit every gated eval suite holds for its duration.
     static let shared = AsyncSemaphore(value: 1)

@@ -26,7 +26,7 @@ import Tokenizers
 /// This is a human-run demo, not a test: nothing here is asserted, only
 /// printed for a person reading the terminal. The real-model
 /// `CompactionRoundTripIntegrationTests` (`swift test --filter
-/// FoundationModelsRouterRealModel`)
+/// IntegrationTests`)
 /// asserts the same five steps mechanically, with real measured token
 /// counts, against a real model.
 ///

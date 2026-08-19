@@ -135,17 +135,17 @@ private let autoCompactionTriggerTimeLimitMinutes = 1
 ///
 /// The limit is one minute, roughly twelve times the measured run and the
 /// smallest `.timeLimit` Swift Testing accepts.
-/// One of the three `CompactionSmoke` suites, which answer one question — does
-/// compaction work at all against a real model — and answer it in seconds.
-/// `swift test --filter CompactionSmoke` runs the three of them without the
-/// 15-to-30-minute suites beside them in this target.
+/// One of the three compaction smoke suites, with
+/// ``CompactionSmokeIntegrationTests`` and
+/// ``RecordedTranscriptCompactionIntegrationTests``. The three answer one
+/// question — does compaction work at all against a real model — in seconds.
 ///
 @Suite(
     "Real-model smoke test: a synthetic trigger folds a short transcript inside its own turn (task ^d02ryqj)",
     .timeLimit(.minutes(autoCompactionTriggerTimeLimitMinutes)),
     .exclusiveRealModel
 )
-struct CompactionSmokeAutoTriggerTests {
+struct AutoCompactionTriggerIntegrationTests {
     // MARK: - The synthetic threshold
 
     /// Where this suite puts the compaction trigger, as a share of
@@ -383,10 +383,10 @@ struct CompactionSmokeAutoTriggerTests {
 
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "CompactionSmokeAutoTriggerTests-cache-\(UUID().uuidString)", isDirectory: true)
+                "AutoCompactionTriggerIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
         let recordingsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(
-                "CompactionSmokeAutoTriggerTests-recordings-\(UUID().uuidString)", isDirectory: true)
+                "AutoCompactionTriggerIntegrationTests-recordings-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: cacheDir)
             try? FileManager.default.removeItem(at: recordingsDir)

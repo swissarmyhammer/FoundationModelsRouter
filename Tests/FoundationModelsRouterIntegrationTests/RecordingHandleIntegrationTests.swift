@@ -33,14 +33,14 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// is no GPU/Apple Silicon and no network access here to download
 /// `recordingHandleTinyModel`, so a real-model run was never
 /// actually set against a real run. Everything below is verified to *compile*
-/// and to be left out by `swift test --skip FoundationModelsRouterRealModel`.
+/// and to be left out by `swift test --skip IntegrationTests`.
 /// To finish verifying the acceptance criteria that need an actual
 /// live run — the exact on-disk event sequence, the mid-turn back-fill
 /// snapshot before `sync`, the `session.json` sidecar fields, and the
 /// `MergedTranscript`/`TranscriptTree` reconstruction all matching a real
 /// session's live transcript — someone needs to run this suite on a real
 /// Apple Silicon Mac with network access to the Hub (so the tiny model can be
-/// downloaded/cached) under `swift test --filter FoundationModelsRouterRealModel`, then confirm
+/// downloaded/cached) under `swift test --filter IntegrationTests`, then confirm
 /// the assertions below hold and report back.
 @Suite(
     "Gated real-model integration: a tool-using turn over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",

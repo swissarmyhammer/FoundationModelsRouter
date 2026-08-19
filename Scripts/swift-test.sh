@@ -12,8 +12,8 @@
 # means a run that measured something.
 #
 # Usage: Scripts/swift-test.sh [swift test options...]
-#   Scripts/swift-test.sh --skip FoundationModelsRouterRealModel
-#   Scripts/swift-test.sh --filter FoundationModelsRouterRealModel
+#   Scripts/swift-test.sh --skip IntegrationTests
+#   Scripts/swift-test.sh --filter IntegrationTests
 
 set -euo pipefail
 

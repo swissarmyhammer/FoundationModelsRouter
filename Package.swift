@@ -126,19 +126,20 @@ let package = Package(
         // The real-model suites (milestone 7): they download real models and run
         // them end to end. The TARGET is what selects them, and no suite inside
         // reads an environment variable — `swift test --filter
-        // FoundationModelsRouterRealModel` asks for them and `swift test --skip
-        // FoundationModelsRouterRealModel` leaves them out, one name for the
-        // whole set because `FoundationModelsRouterRealModelEvals` below shares
-        // the prefix. See `README.md` for the exact commands and for what CI
+        // IntegrationTests` asks for them and `swift test --skip
+        // IntegrationTests` leaves them out, one name for the whole set
+        // because `FoundationModelsRouterEvalIntegrationTests` below shares
+        // the `IntegrationTests` suffix. See `README.md` for the exact
+        // commands and for what CI
         // runs. It links the Hub client + tokenizer products to construct a live
         // `LiveModelLoader` through the `MLXHuggingFace` macros.
         .testTarget(
-            name: "\(packageName)RealModelTests",
+            name: "\(packageName)IntegrationTests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
             ] + mlxProducts + hubProducts,
-            path: "Tests/\(packageName)RealModelTests",
-            // The checked-in recording `CompactionSmokeRecordedTranscriptTests`
+            path: "Tests/\(packageName)IntegrationTests",
+            // The checked-in recording `RecordedTranscriptCompactionIntegrationTests`
             // folds (task ^pfdrppj). `.copy` rather than `.process`, because the
             // directory nesting IS the recording's structure —
             // `TranscriptTree.load(under:)` reads a session's id from its own
@@ -219,8 +220,8 @@ let package = Package(
             path: "Tests/FoundationModelsRouterEvals"
         ),
         // The evals' real-model tiers, selected by target exactly as
-        // `FoundationModelsRouterRealModelTests` is: this name shares the
-        // `FoundationModelsRouterRealModel` prefix, so one `--filter` asks for
+        // `FoundationModelsRouterIntegrationTests` is: this name shares the
+        // `IntegrationTests` suffix, so one `--filter` asks for
         // both targets and one `--skip` leaves both out. A target of its own
         // rather than suites inside the target above, because each `.xctest`
         // runs in its own process and `GatedEvalSerialGate` bounds residency
@@ -229,12 +230,12 @@ let package = Package(
         // + tokenizer products as the other real-model target, since a real eval
         // also resolves a real profile through `LiveModelLoader`.
         .testTarget(
-            name: "\(packageName)RealModelEvals",
+            name: "\(packageName)EvalIntegrationTests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
                 .target(name: "\(packageName)EvalSupport"),
             ] + mlxProducts + hubProducts,
-            path: "Tests/\(packageName)RealModelEvals"
+            path: "Tests/\(packageName)EvalIntegrationTests"
         ),
     ]
 )

@@ -11,9 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 # The real-model suites are selected by TARGET, never by an environment
-# variable. `FoundationModelsRouterRealModelTests` and
-# `FoundationModelsRouterRealModelEvals` share one prefix, so the two commands
-# below name that prefix once each: `--skip` for the hermetic run, `--filter`
+# variable. `FoundationModelsRouterIntegrationTests` and
+# `FoundationModelsRouterEvalIntegrationTests` share the `IntegrationTests`
+# suffix, so the two commands below name that suffix once each: `--skip` for
+# the hermetic run, `--filter`
 # for the real-model run. `Scripts/swift-test.sh` fails a run whose selectors
 # matched no test, because `swift test` reports such a run as a clean exit 0.
 #
@@ -42,7 +43,7 @@ jobs:
         run: swift build --build-tests
 
       - name: Run the hermetic tests
-        run: Scripts/swift-test.sh --skip FoundationModelsRouterRealModel
+        run: Scripts/swift-test.sh --skip IntegrationTests
 
   real-model:
     name: Real-model tests
@@ -73,5 +74,5 @@ jobs:
       - name: Run the real-model tests
         run: |
           Scripts/swift-test.sh \
-            --filter FoundationModelsRouterRealModel \
+            --filter IntegrationTests \
             --skip CompactionEvalFullDataset

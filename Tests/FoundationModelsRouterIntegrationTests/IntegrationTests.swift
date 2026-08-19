@@ -211,7 +211,7 @@ private struct DownloadObservingLoader: ModelLoader {
 /// package's deployment floor is macOS 27 (so the macOS-27 availability the
 /// milestone calls for is guaranteed structurally — Swift Testing's
 /// `@Suite`/`@Test` macros reject a redundant `@available` attribute on the
-/// type), and `swift test --skip FoundationModelsRouterRealModel` leaves the
+/// type), and `swift test --skip IntegrationTests` leaves the
 /// whole target out. `.serialized` so the heavy load happens once at a time, under a generous
 /// `.timeLimit`. Downloads are cached on disk by the Hub client and reused across
 /// runs.

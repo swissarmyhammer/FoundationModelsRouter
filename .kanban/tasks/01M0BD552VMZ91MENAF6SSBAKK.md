@@ -106,6 +106,15 @@ comments:
     - evidence: 2 files — Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift. `swift test`: 995 + 37 + 75 = 1107 tests in 117 suites passed, 0 failures, 1 known issue in the untouched main bundle. A forced rebuild of the eval target gave 0 compiler warnings. The doc parameter sweep over `Tests/FoundationModelsRouterEvals` reports 0 over 70 declarations and 112 keys.
     - next: stays in `review`. Acceptance criterion 1 needs a gated run, which is ruled out, so this card cannot finish here.
   timestamp: 2026-08-19T11:59:16.185710+00:00
+- actor: claude-code
+  id: 01m0d63ve73ry82b03n2qv4n31
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: no-change — all review findings are checked, and the last findings pass is complete
+    - review: not run — the card's own review hold forbids a move to `done` while acceptance criterion 1 is open
+    - blocker: criterion 1 needs a sanctioned gated run, and the card records that a gated run is ruled out for now. Only a person can sanction that run.
+    - next: a person runs the gated subset, then closes criterion 1 on its evidence
+  timestamp: 2026-08-19T14:17:00.615116+00:00
 position_column: review
 position_ordinal: '8380'
 title: The gated compaction subset no longer fits its 30-minute limit now that every fold applies — 6 of 7 seeds in 1800 s

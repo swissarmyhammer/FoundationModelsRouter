@@ -78,31 +78,31 @@ than an environment variable, so one command names one target.
 
 ```sh
 # Everyday: hermetic, no network, no GPU, seconds.
-swift test --skip FoundationModelsRouterRealModel
+swift test --skip IntegrationTests
 
 # Real models: downloads weights and generates on the GPU. Tens of minutes.
-swift test --filter FoundationModelsRouterRealModel --skip CompactionEvalFullDataset
+swift test --filter IntegrationTests --skip CompactionEvalFullDataset
 
 # The real-model smoke tier alone — does compaction work at all? Seconds.
-swift test --filter CompactionSmoke
+swift test --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'
 
 # The whole-dataset compaction eval, a superset of the tier the line above
 # measures. Its own limit is two hours.
 swift test --filter CompactionEvalFullDataset
 ```
 
-`FoundationModelsRouterRealModelTests` and `FoundationModelsRouterRealModelEvals`
+`FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests`
 hold every suite that reaches a real model, and no suite in either one reads an
 environment variable or can skip itself. `--filter` and `--skip` take a regular
 expression over `<test-target>.<test-case>`, so the shared
-`FoundationModelsRouterRealModel` prefix selects both targets at once.
+`IntegrationTests` suffix selects both targets at once.
 
 `swift test` answers 0 when a `--filter` matches nothing, printing only
 `warning: No matching test cases were run`. Run the commands through
 `Scripts/swift-test.sh`, as CI does, to turn that warning into a failure:
 
 ```sh
-Scripts/swift-test.sh --skip FoundationModelsRouterRealModel
+Scripts/swift-test.sh --skip IntegrationTests
 ```
 
 ## License

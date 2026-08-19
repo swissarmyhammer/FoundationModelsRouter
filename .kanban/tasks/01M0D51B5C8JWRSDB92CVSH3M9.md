@@ -7,13 +7,13 @@ title: Nine hermetic tests of the real-model target run only under the real-mode
 ---
 Found while landing ^ryb01x7, which moved the real-model suites behind a target selector.
 
-`Tests/FoundationModelsRouterRealModelTests` holds two suites that need no model at all:
+`Tests/FoundationModelsRouterIntegrationTests` holds two suites that need no model at all:
 
 - `RealModelHarnessTests` — 5 tests, builds a whole `LanguageModelProfile` over a stub container and reads back every fact `RealModelHarness.make(...)` stamps.
 - `ScriptedTurnSizingTests` — 4 tests, holds `CompactionRoundTripIntegrationTests.scriptedTurns` to the token band the live run needs.
 
-Both run in milliseconds. Both are now left out by the everyday `swift test --skip FoundationModelsRouterRealModel`, and reach a runner only through the CI real-model job or through an explicit
-`swift test --filter 'FoundationModelsRouterRealModelTests\.(RealModelHarnessTests|ScriptedTurnSizingTests)'`.
+Both run in milliseconds. Both are now left out by the everyday `swift test --skip IntegrationTests`, and reach a runner only through the CI real-model job or through an explicit
+`swift test --filter 'FoundationModelsRouterIntegrationTests\.(RealModelHarnessTests|ScriptedTurnSizingTests)'`.
 
 ## Why they could not move, measured
 
@@ -34,8 +34,7 @@ Count the initializers before committing to it: about a dozen, each needing a do
 
 - [ ] The declarations `RealModelHarness` needs are `package`, each with a stated reason
 - [ ] `RealModelHarness` and the scripted-turn fixture live in a plain target both the real-model target and a hermetic target can depend on
-- [ ] `RealModelHarnessTests` and `ScriptedTurnSizingTests` run under `swift test --skip FoundationModelsRouterRealModel`
+- [ ] `RealModelHarnessTests` and `ScriptedTurnSizingTests` run under `swift test --skip IntegrationTests`
 - [ ] `swift build -c release` stays clean
 - [ ] The library's public surface is unchanged
-
 #test-debt

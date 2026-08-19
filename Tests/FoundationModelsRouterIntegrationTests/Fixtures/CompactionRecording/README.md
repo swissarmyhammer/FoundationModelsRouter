@@ -1,7 +1,7 @@
 # The checked-in compaction recording
 
 This directory holds one recorded conversation, exactly as the router wrote it.
-`CompactionSmokeRecordedTranscriptTests` reads it back into a
+`RecordedTranscriptCompactionIntegrationTests` reads it back into a
 `FoundationModels.Transcript` and folds it. Nothing else reads it.
 
 ## Why a recording, and not a transcript written in Swift

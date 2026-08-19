@@ -25,7 +25,7 @@ import Tokenizers
 ///
 /// ## Why this is not `RealModelContainer`
 ///
-/// `Tests/FoundationModelsRouterRealModelTests/Support/RealModelContainer.swift`
+/// `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelContainer.swift`
 /// is the same consolidation for the integration target, and this target cannot
 /// call it. A helper returning ``MLXFoundationModelsContainer`` needs
 /// `@testable import FoundationModelsRouter`, because that type is internal to

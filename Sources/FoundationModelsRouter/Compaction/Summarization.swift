@@ -237,7 +237,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// meaning, because a prefix cut keeps what was said first.
     ///
     /// Cutting to the compression target instead measured exactly that loss.
-    /// One fold of `Tests/FoundationModelsRouterRealModelTests/CompactionSmokeIntegrationTests.swift`'s
+    /// One fold of `Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift`'s
     /// fixture against a real 1B model answered 330 estimated tokens over a
     /// 643-token span — already comfortably inside what the guard needs — and
     /// the cut stored 160 of them. The answer named a fact stated at the end of

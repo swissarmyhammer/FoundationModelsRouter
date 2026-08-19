@@ -97,7 +97,7 @@ struct CompactionFoldOutcome {
 /// already holds against a model it has already loaded.
 ///
 /// Two suites wrote this same body before this type — ``CompactionSmokeIntegrationTests``
-/// over a transcript built in Swift, and ``CompactionSmokeRecordedTranscriptTests``
+/// over a transcript built in Swift, and ``RecordedTranscriptCompactionIntegrationTests``
 /// over a transcript read back from a recording — and they differ only in where
 /// the transcript came from. This type is the same consolidation
 /// ``RealModelContainer`` and ``RealModelHarness`` are, and for the same reason.
