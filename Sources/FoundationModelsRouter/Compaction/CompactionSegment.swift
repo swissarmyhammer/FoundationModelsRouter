@@ -190,10 +190,13 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
     /// - Parameter pendingRuns: The parked runs' summaries, in park order.
     /// - Returns: The rendered pending-run text.
     ///
-    /// Deliberately `internal`: its only caller is
-    /// ``boundaryEntry(id:summaryText:content:)``, matching the repo's pattern
-    /// of internal statics on public types (e.g.
-    /// `Compactor.estimatedTokenCount(of:)`).
+    /// Deliberately `internal`, matching the repo's pattern of internal
+    /// statics on public types (e.g. `Compactor.estimatedTokenCount(of:)`).
+    /// Two callers in this module: ``boundaryEntry(id:summaryText:content:)``
+    /// renders the segment itself, and ``Summarization``'s
+    /// `boundaryBoundedSummary(_:folding:pendingRuns:)` measures the
+    /// rendering's byte count so the summary cut leaves room for it (task
+    /// ^64f3hnv).
     internal static func renderedPendingRuns(_ pendingRuns: [PendingRunSummary]) -> String {
         let lines = pendingRuns.map { run in
             let progress = run.latestProgressDetail.map { " — latest progress: \($0)" } ?? " — no progress reported yet"

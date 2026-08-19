@@ -1326,9 +1326,27 @@ struct SummarizationStageTests {
     private static func makeModelAssistedFoldFixture() throws -> (
         turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
     ) {
+        try makeSizedFoldFixture(phrase: "large content", repeatsPerText: foldFixtureRepeatsPerTurn)
+    }
+
+    /// The one construction every sized fold fixture here shares: a header,
+    /// ``foldFixtureTurnCount`` turns whose three text fields each repeat
+    /// `"<phrase> turn-<index> "` `repeatsPerText` times, and the usual
+    /// fold-forcing budget. The phrase names the fixture in a summarizer's
+    /// assembled prompt, and the repeat count sets the span's size.
+    ///
+    /// - Parameters:
+    ///   - phrase: The text each turn's fields open with.
+    ///   - repeatsPerText: How many times each field repeats its phrase.
+    /// - Returns: The turns in order, the transcript over them, and the budget
+    ///   to fold it against.
+    /// - Throws: Whatever the fixture construction throws.
+    private static func makeSizedFoldFixture(phrase: String, repeatsPerText: Int) throws -> (
+        turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
+    ) {
         let instructions = TranscriptFixtures.makeInstructions()
         let turns = try (1...foldFixtureTurnCount).map { index -> [Transcript.Entry] in
-            let text = String(repeating: "large content turn-\(index) ", count: foldFixtureRepeatsPerTurn)
+            let text = String(repeating: "\(phrase) turn-\(index) ", count: repeatsPerText)
             return try TranscriptFixtures.makeTurn(
                 index: index, promptText: text, toolOutputText: text, responseText: text)
         }
@@ -1375,6 +1393,76 @@ struct SummarizationStageTests {
             trigger: foldFixtureTrigger,
             target: Double(afterBoth / targetShareOfDeterministicFloor) / Double(foldFixtureBudgetLimit)
         )
+    }
+
+    // MARK: - Parked-runs fold fixtures (task ^64f3hnv)
+
+    /// How many runs ``makeParkedRuns()`` parks — the shape task ^64f3hnv
+    /// measured: ten runs with an eight-byte op and no progress render 973
+    /// bytes, a cost the fold pays per run rather than per span byte.
+    private static let parkedRunCount = 10
+
+    /// How many times each text field of a ``makeParkedRunsFoldFixture()``
+    /// turn repeats its phrase — sized so the folded span comes to roughly 580
+    /// estimated tokens: large enough that the retention bound sits under the
+    /// span, and small enough that the ten parked runs' rendering eats the
+    /// whole margin between the two.
+    private static let parkedRunsFixtureRepeatsPerText = 20
+
+    /// How many times each text field of an
+    /// ``makeOverwhelmedSpanFoldFixture()`` turn repeats its phrase — sized so
+    /// the retention bound stays UNDER the parked runs' rendering while the
+    /// span itself stays over it, the geometry where only the did-not-shrink
+    /// guard can answer.
+    private static let overwhelmedSpanRepeatsPerText = 10
+
+    /// How many times the parked-runs tests' scripted answer repeats its
+    /// phrase — far past every retention bound in these fixtures, so the cut
+    /// always runs.
+    private static let parkedRunsAnswerRepeats = 200
+
+    /// Parked-run summaries in the shape task ^64f3hnv measured:
+    /// ``parkedRunCount`` runs, each with a 26-character completion token, an
+    /// eight-byte op, and no progress reported yet.
+    ///
+    /// - Returns: The parked runs, in park order.
+    private static func makeParkedRuns() -> [CompactionSegment.PendingRunSummary] {
+        (1...parkedRunCount).map { index in
+            CompactionSegment.PendingRunSummary(
+                completionToken: String(format: "01ARZ3NDEKTSV4RRFFQ69G5F%02d", index),
+                op: "run tool",
+                latestProgressDetail: nil
+            )
+        }
+    }
+
+    /// The fixture `aFoldWithParkedRunsOverAModestSpanIsStillApplied` folds: a
+    /// header, six MODEST turns, and the usual fold-forcing budget. Modest is
+    /// the point — the span is small enough that the parked runs' rendering
+    /// spends the whole retention margin, and large enough that a summary cut
+    /// down for that rendering still shrinks the transcript.
+    ///
+    /// - Returns: The turns in order, the transcript over them, and the budget
+    ///   to fold it against.
+    /// - Throws: Whatever the fixture construction throws.
+    private static func makeParkedRunsFoldFixture() throws -> (
+        turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
+    ) {
+        try makeSizedFoldFixture(phrase: "modest span", repeatsPerText: parkedRunsFixtureRepeatsPerText)
+    }
+
+    /// The fixture whose span the parked runs' rendering overwhelms: small
+    /// enough that the rendering alone reaches the retention bound, and still
+    /// larger than the rendering — so a cut that (wrongly) emptied the summary
+    /// would make the fold shrink and be applied carrying no text at all.
+    ///
+    /// - Returns: The turns in order, the transcript over them, and the budget
+    ///   to fold it against.
+    /// - Throws: Whatever the fixture construction throws.
+    private static func makeOverwhelmedSpanFoldFixture() throws -> (
+        turns: [[Transcript.Entry]], transcript: Transcript, budget: TokenBudget
+    ) {
+        try makeSizedFoldFixture(phrase: "tiny span", repeatsPerText: overwhelmedSpanRepeatsPerText)
     }
 
     @Test("Compactor.compact wires Summarization in as the final stage when the deterministic stages alone aren't enough")
@@ -1481,6 +1569,105 @@ struct SummarizationStageTests {
         #expect(result.tokensAfter < tokensBefore)
         let summary = try #require(result.summary)
         #expect(summarizer.summary.hasPrefix(summary))
+    }
+
+    @Test(
+        "a fold over a modest span with parked runs is applied: the cut leaves room for the pending-runs rendering the boundary entry carries"
+    )
+    func aFoldWithParkedRunsOverAModestSpanIsStillApplied() async throws {
+        // The shape task ^64f3hnv measured. The per-call cut bounds the summary
+        // TEXT, the did-not-shrink guard measures the whole replacement ENTRY,
+        // and the boundary entry carries the pending-runs rendering as a second
+        // .text segment. On a modest span the rendering alone used to spend the
+        // retention margin, so the fold was discarded whatever the summary said
+        // — and a session that parks background runs is the case the rendering
+        // exists for. The cut now charges the rendering against the bound.
+        let (turns, transcript, budget) = try Self.makeParkedRunsFoldFixture()
+        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let pendingRuns = Self.makeParkedRuns()
+        let rendering = CompactionSegment.renderedPendingRuns(pendingRuns)
+        let renderingTokens = Summarization.estimatedTokens(of: rendering)
+        let spanEntries = turns.prefix(Self.foldFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
+        let spanTokens = Compactor.estimatedTokenCount(of: Transcript(entries: spanEntries))
+
+        let answer = String(repeating: "verbose summary ", count: Self.parkedRunsAnswerRepeats)
+        let summarizer = ScriptedSummarizer(responses: [answer])
+        let (_, result) = try await Compactor.compact(
+            transcript, budget: budget, summarizer: summarizer, pendingRuns: pendingRuns)
+
+        // The scenario really is the defect's shape, pinned from the fold's own
+        // single-chunk call in the guard's own units: a bounded summary alone
+        // fits under the span, the old bound plus the rendering does not, and
+        // the rendering leaves room under the bound, so the fold is rescuable.
+        let defaults = Summarization()
+        let rendered = try Self.condensedContent(of: #require(summarizer.receivedPrompts.first))
+        let retainedTokens = Self.expectedRetainedAllowance(
+            condensing: rendered, ratio: defaults.summaryTokenRatio, maxChunkTokens: defaults.maxChunkTokens)
+        #expect(retainedTokens < spanTokens)
+        #expect(retainedTokens + renderingTokens > spanTokens)
+        #expect(renderingTokens < retainedTokens)
+
+        // Applied, not discarded: the whole entry stays under the span.
+        #expect(result.stagesApplied.last == Summarization.stageName)
+        #expect(result.tokensBefore == tokensBefore)
+        #expect(result.tokensAfter < tokensBefore)
+
+        // What the fold stored is a prefix of the answer, and the stored
+        // summary plus the rendering stay inside the retention bound.
+        let summary = try #require(result.summary)
+        #expect(answer.hasPrefix(summary))
+        let retainedCharacters = Int(Double(retainedTokens) * Compactor.charsPerTokenEstimate)
+        #expect(summary.utf8.count + rendering.utf8.count <= retainedCharacters)
+
+        // Control: the same fold with no parked runs is applied too, so the
+        // pending-runs rendering is the one variable in this scenario.
+        let controlSummarizer = ScriptedSummarizer(responses: [answer])
+        let (_, control) = try await Compactor.compact(transcript, budget: budget, summarizer: controlSummarizer)
+        #expect(control.stagesApplied.last == Summarization.stageName)
+        #expect(control.tokensAfter < tokensBefore)
+    }
+
+    @Test(
+        "a fold whose parked runs' rendering alone reaches the retention bound is discarded whole — never applied with an emptied summary"
+    )
+    func aFoldWhosePendingRunsRenderingAloneReachesTheBoundIsDiscarded() async throws {
+        // Below this bound no summary of any length can pay for the rendering,
+        // so the safe answer is the guard's: discard the fold and return the
+        // original transcript. The dangerous wrong answer is a cut that empties
+        // the summary to make the arithmetic work — the rendering is smaller
+        // than the span, so an emptied entry WOULD shrink the transcript, and
+        // the fold would be applied carrying no summary text at all.
+        let (turns, transcript, budget) = try Self.makeOverwhelmedSpanFoldFixture()
+        let tokensBefore = Compactor.estimatedTokenCount(of: transcript)
+        let pendingRuns = Self.makeParkedRuns()
+        let rendering = CompactionSegment.renderedPendingRuns(pendingRuns)
+        let renderingTokens = Summarization.estimatedTokens(of: rendering)
+        let spanEntries = turns.prefix(Self.foldFixtureTurnCount - Summarization().keepRecentTurns).flatMap { $0 }
+        let spanTokens = Compactor.estimatedTokenCount(of: Transcript(entries: spanEntries))
+
+        let answer = String(repeating: "verbose summary ", count: Self.parkedRunsAnswerRepeats)
+        let summarizer = ScriptedSummarizer(responses: [answer])
+        let (resultTranscript, result) = try await Compactor.compact(
+            transcript, budget: budget, summarizer: summarizer, pendingRuns: pendingRuns)
+
+        // The geometry: the rendering alone reaches the retention bound, and it
+        // still sits under the span — which is what lets this test tell an
+        // emptied summary (the fold applies) from the safe failure (it does
+        // not).
+        let defaults = Summarization()
+        let rendered = try Self.condensedContent(of: #require(summarizer.receivedPrompts.first))
+        let retainedTokens = Self.expectedRetainedAllowance(
+            condensing: rendered, ratio: defaults.summaryTokenRatio, maxChunkTokens: defaults.maxChunkTokens)
+        let retainedCharacters = Int(Double(retainedTokens) * Compactor.charsPerTokenEstimate)
+        #expect(rendering.utf8.count >= retainedCharacters)
+        #expect(renderingTokens < spanTokens)
+
+        // Discarded whole, exactly like every other fold that cannot shrink.
+        #expect(resultTranscript == transcript)
+        #expect(result.stagesApplied.isEmpty)
+        #expect(result.summary == nil)
+        #expect(result.tokensBefore == tokensBefore)
+        #expect(result.tokensAfter == tokensBefore)
     }
 
     @Test("Compactor.compact reports an empty summary rather than apply a fold whose boundary would carry no text")

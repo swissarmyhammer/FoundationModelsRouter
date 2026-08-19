@@ -273,8 +273,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// second `.text` segment carrying
     /// ``CompactionSegment/renderedPendingRuns(_:)`` whenever the session has
     /// parked runs, and ``SegmentPayload/contentByteCount`` counts a `.text`
-    /// segment in full, so the guard weighs those bytes against the span and
-    /// this bound never saw them. Measured: 134 bytes of heading — never on
+    /// segment in full, so the guard weighs those bytes against the span.
+    /// Measured: 134 bytes of heading — never on
     /// their own, because that segment exists only when there is at least one
     /// run — plus, per run, 20 bytes of framing, the run's
     /// ``ULID/stringLength``-character completion token, its op, and either 29
@@ -286,10 +286,13 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// shrink against a larger span.** Six such runs come to 637 bytes — more
     /// than the whole 512-byte bound the ``minimumSummaryTokens`` floor
     /// produces, and 32% of the 2000-byte bound the ``maximumSummaryTokens``
-    /// cap produces — so a small span with several parked runs can spend the
-    /// margin on that rendering alone, and the fold is discarded whatever the
-    /// summary says. `^64f3hnv` carries that behaviour; this ratio is not the
-    /// place to fix it.
+    /// cap produces. This ratio is not where that disagreement is answered:
+    /// ``boundaryBoundedSummary(_:folding:pendingRuns:)`` cuts the fold's final
+    /// summary once more with the rendering's byte count subtracted from this
+    /// bound, so summary and rendering together stay inside it (task
+    /// ^64f3hnv). A rendering that reaches the bound on its own still defeats
+    /// the fold — no summary length can pay for it — and the guard then
+    /// discards the fold, which is the safe failure.
     ///
     /// The rest of the margin is a floor on what a fold saves: a fold that
     /// could not save a fifth of the span it replaced was not worth the
@@ -388,9 +391,12 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     written, in park order. When non-empty they land in the resulting
     ///     ``CompactionSegment/Content/pendingRuns`` and as an additional
     ///     model-visible text segment on the summary entry
-    ///     (``CompactionSegment/renderedPendingRuns(_:)``); when empty —
-    ///     the default, and always the case for the bare-session recipe,
-    ///     which has no mailbox — the boundary is exactly as before.
+    ///     (``CompactionSegment/renderedPendingRuns(_:)``), and the final
+    ///     summary is cut once more to leave room for that segment inside the
+    ///     retention bound — see
+    ///     ``boundaryBoundedSummary(_:folding:pendingRuns:)`` (task ^64f3hnv).
+    ///     When empty — the default, and always the case for the bare-session
+    ///     recipe, which has no mailbox — the boundary is exactly as before.
     /// - Returns: The folded transcript and summary text, or `nil` when there
     ///   is no old span to fold (every turn is inside the recency window) —
     ///   the same "oversized tail" case the deterministic stages report as a
@@ -413,7 +419,8 @@ public struct Summarization: Sendable, Equatable, Codable {
         let (old, recent) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
         guard !old.isEmpty else { return nil }
 
-        let summaryText = try await summarize(old, prompt: prompt, summarizer: summarizer)
+        let answeredSummary = try await summarize(old, prompt: prompt, summarizer: summarizer)
+        let summaryText = boundaryBoundedSummary(answeredSummary, folding: old, pendingRuns: pendingRuns)
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
         let foldedEntryIds = old.flatMap(\.entries).map(\.id)
@@ -448,6 +455,52 @@ public struct Summarization: Sendable, Equatable, Codable {
         let finalTranscript = Transcript(entries: header + [makeSummaryEntry(tokensAfter: tokensAfter)] + recentEntries)
 
         return Folded(transcript: finalTranscript, summary: summaryText, summaryEntryId: entryId)
+    }
+
+    /// Returns `summary`, cut once more so the whole boundary ENTRY — the
+    /// summary text plus the pending-runs rendering — stays inside the
+    /// retention bound of the folded span (task ^64f3hnv).
+    ///
+    /// ``cut(_:toCharacters:)`` inside ``summarizeOnce(_:prompt:summarizer:)``
+    /// bounds each call's answer against that call's own content. The
+    /// did-not-shrink guard in
+    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// measures the whole replacement ENTRY instead, and
+    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` adds a
+    /// second `.text` segment carrying
+    /// ``CompactionSegment/renderedPendingRuns(_:)`` whenever the session has
+    /// parked runs. That rendering costs a fixed amount per parked run — ten
+    /// runs with an eight-byte op and no progress come to 973 bytes — so on a
+    /// modest span it spent the retention margin on its own, and the guard
+    /// discarded the fold whatever the summary said. Charging the rendering
+    /// against the bound here restores the guarantee: summary bytes plus
+    /// rendering bytes stay at or under ``summaryRetentionRatio`` of the
+    /// span's rendered content.
+    ///
+    /// When the rendering alone reaches the bound, the limit here is zero or
+    /// below, ``cut(_:toCharacters:)`` returns `summary` unchanged — never
+    /// empty, see that method — and the guard discards the fold. That is the
+    /// safe failure: no summary of any length can make such a fold shrink,
+    /// because the rendering costs more than the retention share of the span.
+    ///
+    /// - Parameters:
+    ///   - summary: The fold's final summary text, already cut per call.
+    ///   - old: The folded span's turns, rendered here the same way the
+    ///     single-chunk summarizer call renders them, so this bound and the
+    ///     per-call bound measure the same content.
+    ///   - pendingRuns: The parked runs whose rendering shares the boundary
+    ///     entry. Empty — the common path — returns `summary` untouched.
+    /// - Returns: `summary`, or a prefix of it that leaves room for the
+    ///   pending-runs rendering.
+    private func boundaryBoundedSummary(
+        _ summary: String,
+        folding old: [TranscriptTurn],
+        pendingRuns: [CompactionSegment.PendingRunSummary]
+    ) -> String {
+        guard !pendingRuns.isEmpty else { return summary }
+        let retained = summaryTokenAllowance(condensing: Self.render(old), atRatio: Self.summaryRetentionRatio)
+        let renderingByteCount = CompactionSegment.renderedPendingRuns(pendingRuns).utf8.count
+        return Self.cut(summary, toCharacters: Self.characters(forEstimatedTokens: retained) - renderingByteCount)
     }
 
     // MARK: - Map-reduce summarization
@@ -696,7 +749,10 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// An empty result would erase the span the fold replaced — the defect
     /// ``SummarizationError/emptySummary`` exists for — so a cut that finds no
     /// text at all gives `summary` back unchanged and leaves the did-not-shrink
-    /// guard to judge it.
+    /// guard to judge it. A `limit` of zero or below takes the same fallback:
+    /// ``boundaryBoundedSummary(_:folding:pendingRuns:)`` reaches it when the
+    /// pending-runs rendering alone spends the whole retention bound, and the
+    /// answer is the guard's judgment, never an emptied summary.
     ///
     /// - Parameters:
     ///   - summary: The summarizer's answer, unchanged.
