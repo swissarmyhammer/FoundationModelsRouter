@@ -22,11 +22,11 @@ struct CompactionEvalFixtureSpec: Sendable {
     /// taste. `Compactor.compact` discards a fold whose summary entry is no
     /// smaller than the span it replaces, and
     /// ``Summarization/minimumSummaryTokens`` gives every span this small the
-    /// same summary allowance — a floor of 128 tokens, which a real model
-    /// spends on roughly 627 bytes of prose. A head of one fact sentence plus
-    /// its acknowledgement is a few hundred bytes, so the fold cost more than
-    /// it saved and the gated run of 2026-08-17 discarded 8 of 9 of them. This
-    /// paragraph is what carries the head past that floor;
+    /// same summary allowance — a floor of 128 tokens, which is 616 bytes of
+    /// prose at ``compactionEvalMeasuredBytesPerToken``. A head of one fact
+    /// sentence plus its acknowledgement is a few hundred bytes, so the fold
+    /// cost more than it saved and the gated run of 2026-08-17 discarded 8 of
+    /// 9 of them. This paragraph is what carries the head past that floor;
     /// `CompactionEvalSeedSizingTests` holds every fixture to it mechanically.
     ///
     /// Written per fixture rather than shared, and about this fixture's own

@@ -46,21 +46,51 @@ private var compactionEvalsFullDatasetEnabled: Bool {
 /// **1644.7 seconds — 27.4 minutes**, with all seven samples measured and a
 /// mean `FactRetention` of 1.0.
 ///
-/// That figure is a WHOLE-RUN figure, and it must not be divided by seven. The
-/// instrumented run of 2026-08-18 (task ^h2xxsse) printed `fold started
-/// elapsed=0.0s` for all seven samples, one after another with nothing between
-/// them, so `Evaluations` drives this tier's samples CONCURRENTLY: seven
-/// generations share one resident model, and every sample's wall clock runs for
-/// very nearly the whole tier. An earlier version of this comment read "235
-/// seconds for each sample", which is 1644.7 over seven; that arithmetic
-/// assumes samples run one after another and the trail refutes it.
+/// That figure is a WHOLE-RUN figure, and it must not be divided by seven to
+/// give the cost of one sample. Two measured facts say why, and an earlier
+/// version of this comment stated each of them wrongly.
 ///
-/// Two consequences a reader needs. The tier has far less headroom than the
-/// margin below suggests, because seven concurrent samples all finish near the
-/// end — so a small slowdown pushes ALL SEVEN past the limit at once and the
-/// table reports `0 of 7`, which reads like a catastrophic regression and need
-/// not be one. And the model load is NOT a meaningful part of the total: the
-/// same instrumented run measured it at 3.6 seconds.
+/// How many samples `Evaluations` drives at once is NOT stated anywhere, and
+/// this tier cannot state it: `Evaluation.run(info:)` and the
+/// `.evaluates(_:info:recordTranscripts:)` trait each take an evaluation and
+/// its info, and neither takes a concurrency limit. No other value in this
+/// target states one either. What the framework really does is not stable from
+/// run to run, and two trails of the same tier show both shapes. The
+/// instrumented run of 2026-08-18 08:05 (task ^h2xxsse) printed six `fold
+/// started` lines one after another with no `fold returned` line between them,
+/// and the seventh only after the limit fired, so six samples were in flight
+/// together. The gated run of 2026-08-18 16:38 (task ^6ssbakk) ran the same
+/// dispatch code and printed each sample's four lines complete before the next
+/// sample's first line, so those samples ran one at a time.
+///
+/// Whichever shape a run takes, the samples do NOT generate together. Every
+/// sample generates through the one resident container
+/// ``CompactionEvalRealSubjectRunner`` caches, and MLX gives that container
+/// serial access: `ModelContainer.perform` runs its whole call under a
+/// `SerialAccessContainer` mutex, so one generation at a time runs on the model
+/// however many samples wait. ``RoutedModel/generationGate`` is not what does
+/// this here — the eval drives the bare-session recipe and builds no
+/// ``RoutedSession``.
+///
+/// So a run's wall clock is close to the SUM of its samples' costs, and not to
+/// the largest of them and not to the mean. ^6ssbakk timed every sample apart:
+/// six of them cost 197.4, 250.7, 260.9, 269.9, 295.1 and 352.0 seconds, which
+/// add to 1626.0 seconds of an 1800-second run, and the seventh was still in
+/// its fold when the limit fired.
+///
+/// Read one sample's cost off that trail, which states each one, and never
+/// divide a run's wall clock by the sample count. The division charges each
+/// sample a share of the model load and of every gap between samples, and it
+/// hides a real spread: the six samples above differ by a factor of 1.8 between
+/// the cheapest and the dearest.
+///
+/// Two consequences a reader needs. What a run past the limit reports depends
+/// on the shape that run took. ^6ssbakk finished six samples one at a time and
+/// named the seventh unreached; ^h2xxsse held six in flight together, finished
+/// none of them, and reported `0 of 7`, which reads like a total regression and
+/// was not one. And the model load is NOT a meaningful part of the total:
+/// ^h2xxsse measured it at 3.6 seconds and ^6ssbakk at 3.5 seconds, each stated
+/// apart from every sample.
 ///
 /// Each sample pays for two real generations — one summarizer call inside the
 /// fold and one answering turn on the resumed session — and each is bounded in
@@ -78,7 +108,9 @@ private var compactionEvalsFullDatasetEnabled: Bool {
 /// lengths; and a machine that has never fetched the model pays that download
 /// inside this limit. A run that ends on the limit now names the seeds it never
 /// reached — see ``CompactionEvalFactRetentionReport/lines(of:expecting:)`` —
-/// so an overrun reads as an overrun rather than as a smaller clean sheet.
+/// so an overrun reads as an overrun rather than as a smaller clean sheet. A
+/// later run has already spent that margin: task ^6ssbakk measured six of the
+/// seven samples inside the limit and left the seventh unfinished.
 ///
 /// The 20 minutes ``gatedEvalSuiteTimeLimitMinutes`` states, which this suite
 /// ran under before, is below the measurement. That is the limit the gated run
@@ -89,29 +121,29 @@ let compactionEvalSubsetTimeLimitMinutes = 30
 /// in minutes.
 ///
 /// DERIVED, not measured. Timing this tier costs the hour and a half the
-/// constant exists to bound, so the value is computed from the subset
-/// measurement above instead, and this comment says so rather than letting a
+/// constant exists to bound, so the value is computed from the subset tier's
+/// measured samples instead, and this comment says so rather than letting a
 /// reader take it for a measured one.
 ///
-/// The arithmetic: 1644.7 seconds over seven samples is 235 seconds for each,
-/// and twenty-four samples at that rate is 5639 seconds — 94 minutes. That rate
-/// carries the one-time model load spread across seven samples, so multiplying
-/// it by twenty-four charges the load more than three times over. The derived
-/// figure therefore over-states the work, which is the right direction for a
-/// ceiling.
+/// The arithmetic takes a sample's cost from a trail that timed each sample,
+/// and never from a run's wall clock divided by a sample count. The gated run
+/// of 2026-08-18 16:38 (task ^6ssbakk) timed six samples, and they cost 271.0
+/// seconds each on average. Twenty-four samples at that rate is 6504 seconds —
+/// 108.4 minutes.
 ///
-/// One INPUT to that arithmetic is now known wrong, and the direction it errs
-/// in is stated rather than left for a reader to work out. The 235 seconds
-/// treats the subset's samples as running one after another, and the
-/// instrumented run of 2026-08-18 showed they run concurrently — see
-/// ``compactionEvalSubsetTimeLimitMinutes``. Concurrency makes 24 samples cost
-/// LESS than 24 times a sample's wall clock, never more, so the derived 94
-/// minutes still over-states the work and 120 is still a ceiling. The value is
-/// left alone because the first real run of this tier is what should replace
-/// it, exactly as the line below already says.
+/// Three facts hold that derivation up. That run drove its samples one at a
+/// time — see ``compactionEvalSubsetTimeLimitMinutes`` — so each figure is one
+/// sample's own work and carries no wait on another sample. The rate carries no
+/// share of the model load either, because the runner times the load apart from
+/// every sample and that run measured it at 3.5 seconds. And the samples
+/// generate one at a time whatever shape a run takes, because MLX gives the
+/// resident container serial access, so twenty-four samples cost about
+/// twenty-four times one sample rather than less.
 ///
-/// 120 leaves 26 minutes over the derived 94. The first run of this tier should
-/// record its real duration here in place of the derivation.
+/// 120 leaves 11.6 minutes over the derived 108.4. That is far less room than
+/// this value appeared to have while a divided rate made the derived figure 94
+/// minutes. The first run of this tier should record its real duration here in
+/// place of the derivation.
 let compactionEvalFullDatasetTimeLimitMinutes = 120
 
 // MARK: - Measured sizing
@@ -186,7 +218,7 @@ let compactionEvalSummarizerCeiling =
 /// This summarizer answers a little over the allowance converted at
 /// `Compactor.charsPerTokenEstimate` on purpose. 128 tokens at that flat rate of
 /// 4.0 bytes is 512 bytes. This answers the allowance in REAL tokens at
-/// ``compactionEvalMeasuredBytesPerToken`` instead — about 616 bytes. So a seed
+/// ``compactionEvalMeasuredBytesPerToken`` instead — 616 bytes. So a seed
 /// that clears this gate clears a summary 20% larger than the flat estimate
 /// predicts.
 ///
@@ -1202,9 +1234,9 @@ struct CompactionEvalSeedSizingTests {
     func everySeedsFoldableSpanOutweighsARealSummary() {
         // The lower bound of the band. Before task ^vjf3mdm a seed's whole span
         // was one fact sentence and its acknowledgement — a few hundred bytes,
-        // against a 128-token floor a real model spends roughly 615 bytes on. The
-        // fold cost more than it saved, and `Compactor.compact` was right to
-        // throw it away.
+        // against a 128-token floor that is 616 bytes at
+        // `compactionEvalMeasuredBytesPerToken`. The fold cost more than it
+        // saved, and `Compactor.compact` was right to throw it away.
         let worstCase = Self.worstCaseSummaryEstimatedTokens
         let required = Int((Double(worstCase) * Self.summaryShrinkClearance).rounded(.up))
         for seed in compactionEvalSeeds {
