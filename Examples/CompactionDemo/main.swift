@@ -24,8 +24,9 @@ import Tokenizers
 /// actually lost.
 ///
 /// This is a human-run demo, not a test: nothing here is asserted, only
-/// printed for a person reading the terminal. The gated
-/// `CompactionRoundTripIntegrationTests` (`FM_ROUTER_INTEGRATION_TESTS`)
+/// printed for a person reading the terminal. The real-model
+/// `CompactionRoundTripIntegrationTests` (`swift test --filter
+/// FoundationModelsRouterRealModel`)
 /// asserts the same five steps mechanically, with real measured token
 /// counts, against a real model.
 ///

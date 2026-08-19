@@ -10,10 +10,68 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The real-model suites are selected by TARGET, never by an environment
+# variable. `FoundationModelsRouterRealModelTests` and
+# `FoundationModelsRouterRealModelEvals` share one prefix, so the two commands
+# below name that prefix once each: `--skip` for the hermetic run, `--filter`
+# for the real-model run. `Scripts/swift-test.sh` fails a run whose selectors
+# matched no test, because `swift test` reports such a run as a clean exit 0.
+#
+# This repository called `swissarmyhammer/workflows/.github/workflows/swift-ci.yaml`
+# until the real-model suites moved behind a target. That workflow's integration
+# job takes the NAME of a gate variable and runs one `.xctest` bundle found by
+# glob under `<VARIABLE>=1 xcrun xctest`, so it can express neither selector
+# above, and its single-bundle glob had never run the gated eval suites at all.
+# The steps below replace it.
 jobs:
-  ci:
-    uses: swissarmyhammer/workflows/.github/workflows/swift-ci.yaml@main
-    with:
-      integration-gate-env: FM_ROUTER_INTEGRATION_TESTS
-      integration-xctest-glob: "*IntegrationTests.xctest"
-      integration-metallib-glob: "*Cmlx*/default.metallib"
+  test:
+    name: Build & hermetic tests
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          sw_vers
+          swift --version
+
+      - name: Clean build directory
+        run: rm -rf .build
+
+      - name: Build (incl. tests)
+        run: swift build --build-tests
+
+      - name: Run the hermetic tests
+        run: Scripts/swift-test.sh --skip FoundationModelsRouterRealModel
+
+  real-model:
+    name: Real-model tests
+    # After the hermetic job, and not beside it: both run on the self-hosted
+    # macOS pool, and a real-model run holds a multi-gigabyte model resident on
+    # the GPU for the whole of it. A hermetic failure also costs nothing to
+    # learn before that half hour is spent.
+    needs: test
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clean build directory
+        run: rm -rf .build
+
+      - name: Build (incl. tests)
+        run: swift build --build-tests
+
+      # The whole-dataset fact-retention tier is a superset of the subset tier
+      # this run measures, and its own limit is two hours, so it is stepped
+      # aside by name. Ask for it with
+      # `swift test --filter CompactionEvalFullDataset`.
+      #
+      # No metallib is copied beside the test bundle here, as the shared
+      # workflow used to do: `MetalLibraryTestBootstrap` installs that link from
+      # inside each real-model process, and `MetalLibraryBootstrapIntegrationTests`
+      # is the suite that proves the shaders load.
+      - name: Run the real-model tests
+        run: |
+          Scripts/swift-test.sh \
+            --filter FoundationModelsRouterRealModel \
+            --skip CompactionEvalFullDataset

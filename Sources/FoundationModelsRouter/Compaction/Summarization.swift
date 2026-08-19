@@ -237,7 +237,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// meaning, because a prefix cut keeps what was said first.
     ///
     /// Cutting to the compression target instead measured exactly that loss.
-    /// One fold of `Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift`'s
+    /// One fold of `Tests/FoundationModelsRouterRealModelTests/CompactionSmokeIntegrationTests.swift`'s
     /// fixture against a real 1B model answered 330 estimated tokens over a
     /// 643-token span — already comfortably inside what the guard needs — and
     /// the cut stored 160 of them. The answer named a fact stated at the end of
@@ -926,9 +926,14 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// ``reduce(_:prompt:summarizer:)`` to size chunk summaries, which are
     /// plain text, not transcript entries.
     ///
+    /// `package` rather than `internal` because the compaction evals report a
+    /// discarded summary in the SAME estimate the stage sized it by, and they
+    /// report it from `FoundationModelsRouterEvalSupport`, a plain package
+    /// target that cannot reach `internal` through `@testable`.
+    ///
     /// - Parameter text: The text to estimate.
     /// - Returns: The estimated token count.
-    static func estimatedTokens(of text: String) -> Int {
+    package static func estimatedTokens(of text: String) -> Int {
         Int((Double(text.utf8.count) / Compactor.charsPerTokenEstimate).rounded(.up))
     }
 

@@ -103,12 +103,14 @@ let package = Package(
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests"
         ),
-        // Test-only support shared by the two gated targets below. It exists
-        // because `MetalLibraryTestBootstrap` has to run inside *each* gated
+        // Test-only support shared by the two real-model targets below. It
+        // exists because `MetalLibraryTestBootstrap` has to run inside *each*
         // test process — `swift test` builds one `.xctest` per test target and
         // runs each in its own process, and the symlink it installs is placed
         // beside the running binary — while SwiftPM cannot share source
-        // between two `.testTarget`s directly. A plain `.target` both can
+        // between two `.testTarget`s directly, and a `.testTarget` another
+        // target depends on is compiled by `swift build -c release`, where its
+        // `@testable import` cannot resolve. A plain `.target` both can
         // depend on is the only way to keep one copy of that code. It is
         // deliberately not part of any `product`, so nothing outside this
         // package can import it. It also carries `ToolTurnScenario` — the one
@@ -121,18 +123,22 @@ let package = Package(
             dependencies: [.target(name: packageName)],
             path: "Tests/\(packageName)TestSupport"
         ),
-        // Gated, real-model suite (milestone 7): downloads deliberately tiny
-        // real models and runs them end to end, behind an opt-in env var so it
-        // never fires on a network/GPU-less box. It links the Hub client +
-        // tokenizer products to construct a live `LiveModelLoader` through the
-        // `MLXHuggingFace` macros.
+        // The real-model suites (milestone 7): they download real models and run
+        // them end to end. The TARGET is what selects them, and no suite inside
+        // reads an environment variable — `swift test --filter
+        // FoundationModelsRouterRealModel` asks for them and `swift test --skip
+        // FoundationModelsRouterRealModel` leaves them out, one name for the
+        // whole set because `FoundationModelsRouterRealModelEvals` below shares
+        // the prefix. See `README.md` for the exact commands and for what CI
+        // runs. It links the Hub client + tokenizer products to construct a live
+        // `LiveModelLoader` through the `MLXHuggingFace` macros.
         .testTarget(
-            name: "\(packageName)IntegrationTests",
+            name: "\(packageName)RealModelTests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
             ] + mlxProducts + hubProducts,
-            path: "Tests/\(packageName)IntegrationTests",
-            // The checked-in recording `RecordedTranscriptCompactionIntegrationTests`
+            path: "Tests/\(packageName)RealModelTests",
+            // The checked-in recording `CompactionSmokeRecordedTranscriptTests`
             // folds (task ^pfdrppj). `.copy` rather than `.process`, because the
             // directory nesting IS the recording's structure —
             // `TranscriptTree.load(under:)` reads a session's id from its own
@@ -172,31 +178,63 @@ let package = Package(
             path: "Examples/CompactionDemo",
             exclude: ["README.md", "Fixtures"]
         ),
-        // Compaction-quality evals (compaction_plan.md §5), on Apple's
-        // Evaluations framework: `CompactionEvaluation` plants facts in the
-        // head of hand-written seed transcripts, folds with the
-        // `CompactionPrompt` under test, resumes a session over the result,
-        // and asks a question answerable only from the folded content.
-        // `import Evaluations` needs no extra linker/search-path
-        // configuration here — SwiftPM's `.testTarget` automatically adds
-        // the toolchain's test-only framework search path (the same one
-        // that makes `import Testing`/`XCTest` work), which is where
-        // `Evaluations.framework` itself lives (verified empirically: a
-        // throwaway SwiftPM package with a bare `import Evaluations` in a
-        // `.testTarget` builds and runs with zero unsafe flags). The one
-        // real-model `@Test` inside is runtime-gated on
-        // `FM_ROUTER_INTEGRATION_TESTS`, exactly like every other gated
-        // suite in `FoundationModelsRouterIntegrationTests` — the target
-        // itself always builds and its hermetic wiring tests always run
-        // under a plain `swift test`. Links the same Hub client + tokenizer
-        // products as the other gated suites, since the gated eval also
-        // resolves a real profile through `LiveModelLoader`.
+        // The compaction evals' machinery (compaction_plan.md §5):
+        // `CompactionEvaluation` plants facts in the head of hand-written seed
+        // transcripts, folds with the `CompactionPrompt` under test, resumes a
+        // session over the result, and asks a question answerable only from the
+        // folded content — plus the datasets, the fact-retention report, the
+        // progress log and the measured tier limits.
+        //
+        // A plain `.target` rather than part of either eval test target below,
+        // because BOTH of them read it: the hermetic tests hold the machinery to
+        // its own contract, and the real-model tier runs it against a model.
+        // SwiftPM refuses to share a source file between two targets
+        // (`has overlapping sources`), and a `.testTarget` that another target
+        // depends on is compiled by `swift build -c release`, where a
+        // `@testable import` cannot resolve — so a plain target is the only
+        // shape that serves both. Nothing here uses `@testable`; the two router
+        // symbols it needs beyond the public surface — `TranscriptTurns` and
+        // `Compactor.estimatedTokenCount(of:)` — are `package`, which stops at
+        // this package's own boundary.
+        //
+        // `import Evaluations` needs no extra linker/search-path configuration:
+        // the toolchain's test-only framework search path reaches a plain
+        // `.target` as well as a `.testTarget` (measured on a throwaway package,
+        // which builds a bare `import Evaluations` in each with zero unsafe
+        // flags).
+        .target(
+            name: "\(packageName)EvalSupport",
+            dependencies: [.target(name: packageName)],
+            path: "Tests/\(packageName)EvalSupport"
+        ),
+        // The evals' hermetic tests: they hold the machinery above to its own
+        // contract — the dataset's shape, the report's classification, the
+        // progress lines, the seed sizing and the tier thresholds — with no real
+        // model anywhere. They run on every `swift test`.
         .testTarget(
             name: "FoundationModelsRouterEvals",
             dependencies: [
-                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
-            ] + mlxProducts + hubProducts,
+                .target(name: packageName), .target(name: "\(packageName)EvalSupport"),
+            ] + mlxProducts,
             path: "Tests/FoundationModelsRouterEvals"
+        ),
+        // The evals' real-model tiers, selected by target exactly as
+        // `FoundationModelsRouterRealModelTests` is: this name shares the
+        // `FoundationModelsRouterRealModel` prefix, so one `--filter` asks for
+        // both targets and one `--skip` leaves both out. A target of its own
+        // rather than suites inside the target above, because each `.xctest`
+        // runs in its own process and `GatedEvalSerialGate` bounds residency
+        // within a process — one target for the evals keeps that gate covering
+        // exactly the suites it was measured against. Links the same Hub client
+        // + tokenizer products as the other real-model target, since a real eval
+        // also resolves a real profile through `LiveModelLoader`.
+        .testTarget(
+            name: "\(packageName)RealModelEvals",
+            dependencies: [
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+                .target(name: "\(packageName)EvalSupport"),
+            ] + mlxProducts + hubProducts,
+            path: "Tests/\(packageName)RealModelEvals"
         ),
     ]
 )

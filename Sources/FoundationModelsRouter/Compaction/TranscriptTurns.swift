@@ -9,15 +9,27 @@ import FoundationModels
 /// ``ToolOutputElision``, ``TurnTruncation``) to partition a transcript into
 /// "old" turns eligible for folding and a "recent" tail that must survive
 /// verbatim, without ever splitting a turn or orphaning a tool-call pair.
-struct TranscriptTurn {
+///
+/// `package` rather than `internal` for the same reason ``TranscriptTurns`` is:
+/// ``TranscriptTurns/split(_:)`` returns these, so a package target that calls
+/// it must be able to name the type.
+package struct TranscriptTurn {
     /// This turn's entries, in original order, starting with its `.prompt`.
-    var entries: [Transcript.Entry]
+    package var entries: [Transcript.Entry]
 }
 
 /// Splits a transcript's entries into turns and partitions them by recency
 /// (compaction_plan.md §1.3's `keepRecentTurns` window) — the shared
 /// mechanism every deterministic compaction stage builds on.
-enum TranscriptTurns {
+///
+/// `package` rather than `internal` because the compaction evals measure the
+/// span a fold is allowed to touch, and they must measure it with THIS
+/// partitioning rather than a second copy of it — see
+/// `CompactionEvalSeed.foldableSpanEstimatedTokens` in
+/// `FoundationModelsRouterEvalSupport`, which is a plain package target and so
+/// cannot reach `internal` through `@testable`. Nothing outside this package
+/// sees it: `package` stops at the package boundary.
+package enum TranscriptTurns {
     /// Splits `entries` into a leading header — everything before the first
     /// `.prompt` entry, normally just `.instructions` — and the ordered turns
     /// that follow. A transcript with no `.prompt` entry at all (e.g.
@@ -27,7 +39,9 @@ enum TranscriptTurns {
     ///
     /// - Parameter entries: The transcript's entries, in original order.
     /// - Returns: The header entries and the ordered turns.
-    static func split(_ entries: [Transcript.Entry]) -> (header: [Transcript.Entry], turns: [TranscriptTurn]) {
+    package static func split(_ entries: [Transcript.Entry]) -> (
+        header: [Transcript.Entry], turns: [TranscriptTurn]
+    ) {
         var header: [Transcript.Entry] = []
         var turns: [TranscriptTurn] = []
         var current: [Transcript.Entry] = []
@@ -64,7 +78,7 @@ enum TranscriptTurns {
     ///   - keepRecentTurns: How many of the newest turns are the untouchable
     ///     recency window.
     /// - Returns: The old (foldable) turns and the recent (untouchable) tail.
-    static func partition(
+    package static func partition(
         _ turns: [TranscriptTurn],
         keepRecentTurns: Int
     ) -> (old: [TranscriptTurn], recent: [TranscriptTurn]) {

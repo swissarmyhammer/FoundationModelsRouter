@@ -22,7 +22,7 @@ import Foundation
 /// `<Target>.xctest/Contents/Resources/mlx-swift_Cmlx.bundle/…` — every probe
 /// misses, and the first GPU-device `MLXArray` evaluation aborts the whole
 /// test process with "MLX error: Failed to load the default metallib". That is
-/// precisely what `FM_ROUTER_INTEGRATION_TESTS=1 swift test` used to hit the
+/// precisely what a real-model run used to hit the
 /// moment a gated suite resolved a live model.
 ///
 /// This bootstrap closes the gap at its source: it finds the resource bundle
@@ -49,7 +49,7 @@ public enum MetalLibraryTestBootstrap {
     ///
     /// Each gated target reads it from exactly one place, and that place is a
     /// suite-scoped `TestScoping` trait rather than a test body:
-    /// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests`
+    /// `GatedRealModelSuiteTrait` in `FoundationModelsRouterRealModelTests`
     /// and `GatedEvalResidencyTrait` in `FoundationModelsRouterEvals`. A trait
     /// written once on the `@Suite` line cannot be forgotten by a test the
     /// suite later gains, and a suite's scope opens before any child step

@@ -284,9 +284,15 @@ public enum Compactor {
     /// inflated the estimate by roughly 1.8x on a realistic transcript, which
     /// made a fold *raise* measured fill.
     ///
+    /// `package` rather than `internal` because the compaction evals state each
+    /// seed's foldable span in the SAME estimate a fold is judged by, and they
+    /// state it from `FoundationModelsRouterEvalSupport`, a plain package target
+    /// that cannot reach `internal` through `@testable`. The `String` overload
+    /// below stays `internal`: no package target measures a bare string.
+    ///
     /// - Parameter transcript: The transcript to estimate.
     /// - Returns: The estimated token count.
-    static func estimatedTokenCount(of transcript: Transcript) -> Int {
+    package static func estimatedTokenCount(of transcript: Transcript) -> Int {
         let totalBytes = transcript.reduce(into: 0) { total, entry in
             total += contentByteCount(of: entry)
         }

@@ -71,6 +71,40 @@ resolution, sessions, streaming, guided (grammar-constrained) generation,
 embeddings, forking, and residency. A runnable, real-model demo lives in
 [`Examples/MultiModelGeneration`](Examples/MultiModelGeneration).
 
+## Tests
+
+The tests are split by what they need, and the split is a package target rather
+than an environment variable, so one command names one target.
+
+```sh
+# Everyday: hermetic, no network, no GPU, seconds.
+swift test --skip FoundationModelsRouterRealModel
+
+# Real models: downloads weights and generates on the GPU. Tens of minutes.
+swift test --filter FoundationModelsRouterRealModel --skip CompactionEvalFullDataset
+
+# The real-model smoke tier alone — does compaction work at all? Seconds.
+swift test --filter CompactionSmoke
+
+# The whole-dataset compaction eval, a superset of the tier the line above
+# measures. Its own limit is two hours.
+swift test --filter CompactionEvalFullDataset
+```
+
+`FoundationModelsRouterRealModelTests` and `FoundationModelsRouterRealModelEvals`
+hold every suite that reaches a real model, and no suite in either one reads an
+environment variable or can skip itself. `--filter` and `--skip` take a regular
+expression over `<test-target>.<test-case>`, so the shared
+`FoundationModelsRouterRealModel` prefix selects both targets at once.
+
+`swift test` answers 0 when a `--filter` matches nothing, printing only
+`warning: No matching test cases were run`. Run the commands through
+`Scripts/swift-test.sh`, as CI does, to turn that warning into a failure:
+
+```sh
+Scripts/swift-test.sh --skip FoundationModelsRouterRealModel
+```
+
 ## License
 
 No license file is currently published in this repository.

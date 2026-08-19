@@ -644,16 +644,17 @@ so a fork **correctly inherits its parent's conversation history** up to the for
 point, then diverges independently. This is tested against stubs
 (`Tests/FoundationModelsRouterTests/MultiTurnSessionTests.swift`) and, in the gated
 integration suite, against a real model
-(`Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`'s
+(`Tests/FoundationModelsRouterRealModelTests/LanguageModelSessionBackendTests.swift`'s
 `makeForkSeedsFromParentTranscript`) — not aspirational. That same gated file also
 carries `secondTurnReusesFirstTurnsKVCache`, a hard, never-weakened assertion that
 `usage.input.cachedTokenCount > 0` on a session's second turn — written as the
 acceptance test for the upstream compute-reuse fix described below. It is
 currently expected to fail against the pinned revision (every `usage` this
 backend's `Executor` constructs hardcodes `cachedTokenCount: 0` — see the
-compute-reuse discussion just below), and is opt-in
-(`FM_ROUTER_INTEGRATION_TESTS`) precisely so that expected failure never blocks
-CI; it will start passing the moment the upstream fix lands.
+compute-reuse discussion just below), and it lives in the
+`FoundationModelsRouterRealModelTests` target, which an everyday `swift test
+--skip FoundationModelsRouterRealModel` leaves out; it will start passing the
+moment the upstream fix lands.
 
 What is *not* recovered is cheap prefix reuse at the compute layer. Reading the
 pinned `swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor` (branch
@@ -1143,8 +1144,8 @@ a *tree* operation, not per-arbitrary-session: given a **root session's id** (an
 root's — forks are never restored individually), a fresh `Router` pointed at the same
 recordings root reconstructs the whole associated fork tree in memory — the root plus every
 descendant, each node re-seeded with its own effective `Transcript` — synced with what is on
-disk. The proof is a gated integration test (`FM_ROUTER_INTEGRATION_TESTS`, matching the
-existing pattern in `Tests/FoundationModelsRouterIntegrationTests/`): drive real turns on a
+disk. The proof is a real-model test (in `Tests/FoundationModelsRouterRealModelTests/`, the
+target `swift test --filter FoundationModelsRouterRealModel` selects): drive real turns on a
 root, fork it into a genuine branching multi-level tree, fork a fork, assert the on-disk
 state mid-test (turns sync as they happen, not only at teardown), discard the router and
 every in-memory session, construct a **new** `Router` over the same directory, restore by
@@ -1368,8 +1369,10 @@ A separate **integration suite** (Swift Testing, `import Testing`) proves the re
 path end-to-end with **deliberately tiny models** to keep download/CI cost low:
 
 - A small 4-bit generation model and a small embedding model from `mlx-community`.
-- **Gated** (needs real download + GPU): `@available(macOS 27, …)` and an opt-in env
-  var so it never fires on a CI box without network/GPU (`.enabled(if:)`).
+- **In its own target** (needs real download + GPU): `FoundationModelsRouterRealModelTests`,
+  so `swift test --skip FoundationModelsRouterRealModel` never fires it on a box
+  without network/GPU, and `swift test --filter FoundationModelsRouterRealModel` is
+  the whole of what asks for it.
 - **`.serialized`** suite + `.timeLimit` — these load real models under the budget
   and must not run concurrently.
 - Asserts, in one resolved profile: progress advances `sizing → downloading →
