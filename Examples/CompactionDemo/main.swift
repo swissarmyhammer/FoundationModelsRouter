@@ -118,13 +118,15 @@ let demoCompactionPrompt = CompactionPrompt(
 
 // MARK: - One narrated turn
 
-/// Drives one turn and prints any applied fold's checkpoint event the
-/// moment it arrives.
+/// Drives one turn through the library's own event fold —
+/// ``RoutedSession/respond(to:maxTokens:observing:)`` — and prints any
+/// applied fold's checkpoint event the moment it arrives.
 ///
 /// A fold reaches a caller only as ``SessionEvent/compaction(_:)`` on the
-/// turn's own event stream, so printing it here IS step 2 of the demo. A
-/// fold whose ``CompactionResult/stagesApplied`` is empty changed nothing
-/// and wrote no checkpoint, so it is not printed and not returned.
+/// turn's own event stream, so printing it from the `observing` callback IS
+/// step 2 of the demo. A fold whose ``CompactionResult/stagesApplied`` is
+/// empty changed nothing and wrote no checkpoint, so it is not printed and
+/// not returned.
 ///
 /// - Parameters:
 ///   - session: The session to drive the turn on.
@@ -132,32 +134,22 @@ let demoCompactionPrompt = CompactionPrompt(
 /// - Returns: The turn's reply text and every applied fold, in fold order.
 /// - Throws: Whatever the turn throws.
 func runTurn(
-    _ session: RoutedSession, prompt: String
+    on session: RoutedSession, prompt: String
 ) async throws -> (reply: String, folds: [CompactionResult]) {
-    var reply = ""
-    var folds: [CompactionResult] = []
-    let stream = await session.streamEvents(to: prompt, maxTokens: demoReplyTokenCeiling)
-    for try await event in stream {
-        switch event {
-        case .textDelta(let fragment):
-            reply += fragment
-        case .compaction(let result) where !result.stagesApplied.isEmpty:
-            folds.append(result)
-            print(
-                """
+    let outcome = try await session.respond(to: prompt, maxTokens: demoReplyTokenCeiling) { event in
+        guard case .compaction(let result) = event, !result.stagesApplied.isEmpty else { return }
+        print(
+            """
 
-                [checkpoint] the compaction checkpoint event arrived, mid-turn, before this turn generated:
-                [checkpoint]   id             = \(result.id)
-                [checkpoint]   tokensBefore   = \(result.tokensBefore)
-                [checkpoint]   tokensAfter    = \(result.tokensAfter)
-                [checkpoint]   stagesApplied  = \(result.stagesApplied.joined(separator: ", "))
-                [checkpoint]   summaryEntryId = \(result.summaryEntryId ?? "(none)")
-                """)
-        default:
-            break
-        }
+            [checkpoint] the compaction checkpoint event arrived, mid-turn, before this turn generated:
+            [checkpoint]   id             = \(result.id)
+            [checkpoint]   tokensBefore   = \(result.tokensBefore)
+            [checkpoint]   tokensAfter    = \(result.tokensAfter)
+            [checkpoint]   stagesApplied  = \(result.stagesApplied.joined(separator: ", "))
+            [checkpoint]   summaryEntryId = \(result.summaryEntryId ?? "(none)")
+            """)
     }
-    return (reply, folds)
+    return (outcome.reply, outcome.compactions.filter { !$0.stagesApplied.isEmpty })
 }
 
 /// The session's measured context usage, in tokens.
@@ -221,16 +213,15 @@ let demoProfile = ProfileDefinition(
 )
 
 // `progress.phases` yields each phase transition as one element and ends at
-// ready/failed, so a terminal caller needs no polling task.
+// ready/failed, so the resolve runs as a structured `async let` child while
+// this top-level code prints each transition — no stored task handle.
 let progress = ResolutionProgress()
-let progressTask = Task { @MainActor in
-    for await transition in progress.phases {
-        let percent = Int((transition.fraction * 100).rounded())
-        print("[setup] \(transition.phase) \(percent)%")
-    }
+async let resolvedProfile = router.resolve(profile: demoProfile, reporting: progress)
+for await transition in progress.phases {
+    let percent = Int((transition.fraction * 100).rounded())
+    print("[setup] \(transition.phase) \(percent)%")
 }
-let profile = try await router.resolve(profile: demoProfile, reporting: progress)
-await progressTask.value
+let profile = try await resolvedProfile
 
 // The auto-compaction opt-in: a budget on the session is the ONLY thing
 // that makes the fold below automatic. `limit` mirrors the slot's resolved
@@ -296,7 +287,7 @@ var usageTokens = 0
 for fixtureURL in fixtureURLs {
     let contents = try String(contentsOf: fixtureURL, encoding: .utf8)
     let turn = try await runTurn(
-        session, prompt: "Here is \(fixtureURL.lastPathComponent):\n\n\(contents)")
+        on: session, prompt: "Here is \(fixtureURL.lastPathComponent):\n\n\(contents)")
     guard turn.folds.isEmpty else {
         print("[error] a fold fired during the document turns; the trigger crossed earlier than this demo narrates")
         exit(EXIT_FAILURE)
@@ -329,7 +320,7 @@ print(
 // MARK: - 2. Trigger the fold; the checkpoint event prints as it arrives
 
 let triggerTurn = try await runTurn(
-    session, prompt: "In one sentence: what kind of project do these documents describe?")
+    on: session, prompt: "In one sentence: what kind of project do these documents describe?")
 
 guard let fold = triggerTurn.folds.last else {
     print("[error] the trigger turn applied no fold, so there is no checkpoint to show")

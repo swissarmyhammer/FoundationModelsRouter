@@ -59,6 +59,48 @@ comments:
     - No test had a skip mark. No test failed. No re-run was needed.
     - next: send for review.
   timestamp: 2026-08-19T18:21:48.543584+00:00
+- actor: claude-code
+  id: 01m0dms5c22hy9dx4ha6ergdw5
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (backend: local) — 3 findings: Examples/CompactionDemo/main.swift:122 (code-hygiene/dead-code-swift), main.swift:134 (reuse/reuse), main.swift:135 (swift/fluent-usage)
+    - next: correct the three findings, then run the review again
+  timestamp: 2026-08-19T18:33:18.978835+00:00
+- actor: claude-code
+  id: 01m0dns8eepmacqpm721qbt6v8
+  text: |-
+    Correction of the three review findings. All three causes are removed from the whole file, not only the flagged lines.
+
+    Finding 1, dead-code-swift (progressTask): The stored task handle is removed. The resolve call now runs as a structured `async let` child, and the top-level code prints each phase transition from `progress.phases` in its own loop. No global task handle remains. The four "[setup]" phase lines still print (measured in the run below). I read the dead-code-swift rule first: the fix removes the flagged declaration instead of adding a periphery marker, because the demo does not need the handle.
+
+    Finding 2, reuse (runTurn): The similar site TurnOutcome.swift is NOT a test file — it is library code in Sources/FoundationModelsRouter, so the demo can call it. Its `respond(to:observing:)` is the established stream-events/collect pattern, but it lacked the reply-token ceiling the demo must set (48 tokens, the knob that keeps the run under 14 seconds). The reuse rule says: when an existing function is almost what is needed, parameterize the difference. So `respond(to:observing:)` became `respond(to:maxTokens:observing:)` with `maxTokens: Int? = nil` — it now passes the ceiling through to `streamEvents(to:maxTokens:)`. The demo's runTurn now calls that API: it prints the checkpoint from the `observing` callback and returns `outcome.reply` and the applied folds from `outcome.compactions`. The hand-written SessionEvent switch is gone. Existing callers stay correct: the new parameter has a default, and a call without `observing` and without a TurnOutcome type context still resolves to the String overloads (Swift prefers the overload that drops no defaults). No caller referenced the old full name `respond(to:observing:)` outside the doc comments, which are updated.
+
+    Finding 3, fluent-usage (runTurn label): The first parameter now has the label `on` — `runTurn(on:prompt:)` — at the declaration and at both call sites. Sweep result: `measuredTokens(of:against:)` already reads fluently; no other function in the file omits a first label.
+
+    Verification, all on 2026-08-19:
+    - `swift run CompactionDemo`: the run prints the same numbers as the accepted run (checkpoint 1115 -> 498 tokens; usage 976 -> 460; trigger crossed after document 5). Wall clock 13.7 seconds.
+    - `Scripts/swift-test.sh --skip IntegrationTests`: green — 1008 tests in 93 suites (1 pre-existing deliberate known issue in BoundedWait) plus 75 tests in 8 suites, 0 failures.
+    - `swift build --build-tests -Xswiftc -warnings-as-errors`: clean.
+    - git status: only Examples/CompactionDemo/main.swift and Sources/FoundationModelsRouter/Session/TurnOutcome.swift changed.
+
+    The five acceptance criteria stay satisfied: the prior step records prove them, and this run prints the same narration, the same checkpoint event, and the same summary in 13.7 seconds. All five boxes and all three finding boxes are now checked on the card.
+  timestamp: 2026-08-19T18:50:50.702708+00:00
+- actor: claude-code
+  id: 01m0dnsj93gg8mwq46nh37c173
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Examples/CompactionDemo/main.swift (runTurn now calls respond(to:maxTokens:observing:), labeled first parameter `on`, progressTask replaced with a structured `async let`), Sources/FoundationModelsRouter/Session/TurnOutcome.swift (respond gained a defaulted `maxTokens` parameter, docs updated). Demo run: `swift run CompactionDemo`, wall clock 13.7 seconds, same numbers as the accepted run. Tests: `Scripts/swift-test.sh --skip IntegrationTests` green — 1008 tests in 93 suites (1 pre-existing deliberate known issue in BoundedWait) + 75 tests in 8 suites, 0 failures. `swift build --build-tests -Xswiftc -warnings-as-errors` clean. All 3 findings and all 5 acceptance criteria checked.
+    - next: /review
+  timestamp: 2026-08-19T18:51:00.771178+00:00
+- actor: claude-code
+  id: 01m0dnweehn611d5pkmh7m38jd
+  text: |-
+    ### test — green
+    - Command: `Scripts/swift-test.sh --skip IntegrationTests`. Result: 1008 tests in 93 suites passed, plus 75 tests in 8 suites passed. 0 failed. 0 new skips. 1 known issue in BoundedWaitTests (pre-existing, accepted as green).
+    - Command: `swift build --build-tests -Xswiftc -warnings-as-errors`. Result: build complete in 13.35 sec, exit code 0. No compiler warnings found in the log.
+    - One non-compiler note: the build log has one SwiftPM plan-graph line about the vendored mlx-swift Cmlx resource bundle ("missing creator for mutated node"). This is not a Swift compiler warning and did not fail the -warnings-as-errors build.
+    - next: send this task to review.
+  timestamp: 2026-08-19T18:52:35.153399+00:00
 position_column: doing
 position_ordinal: '8380'
 title: 'Refocus the CompactionDemo on compaction alone: narrate the trigger, then show the checkpoint event and the summary'
@@ -77,9 +119,29 @@ Remove every part of the demo that does not serve that sequence. Content that do
 
 ## Acceptance Criteria
 
-- [ ] The demo prints a narration that says why the next turn triggers compaction, before it does
-- [ ] The demo shows the compaction checkpoint event when it fires
-- [ ] The demo shows the compacted summary text
-- [ ] Nothing else remains: each remaining section serves the trigger, the event, or the summary
-- [ ] The demo runs against a small model in well under 2 minutes
-#compaction #demo
+- [x] The demo prints a narration that says why the next turn triggers compaction, before it does
+- [x] The demo shows the compaction checkpoint event when it fires
+- [x] The demo shows the compacted summary text
+- [x] Nothing else remains: each remaining section serves the trigger, the event, or the summary
+- [x] The demo runs against a small model in well under 2 minutes
+
+
+## Review Findings (2026-08-19 13:23)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 8 not reviewed.
+
+> 8 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 8 file(s)
+
+> ⚠️ tool rule 'code-hygiene/function-length-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> function-length-swift found no file at Examples/CompactionDemo/SampleTools.swift, so its bodies are unread
+
+> ⚠️ tool rule 'code-hygiene/magic-numbers-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> magic-numbers-swift found no file at Examples/CompactionDemo/SampleTools.swift, so its literals are unread
+
+> ⚠️ tool rule 'code-hygiene/missing-docs-swift' declined an item — it judged the rest of the code, and this it could not judge:
+> missing-docs-swift found no file at Examples/CompactionDemo/SampleTools.swift, so its declarations are unread
+
+- [x] `Examples/CompactionDemo/main.swift:122` `code-hygiene/dead-code-swift` — var.global `progressTask` is unused.
+- [x] `Examples/CompactionDemo/main.swift:134` `reuse/reuse` — The `runTurn` function reimplements a pattern for streaming session events, collecting text deltas and compaction results that already exists in the codebase with very high similarity (0.93–0.94 across multiple locations). Rather than create a new implementation, reuse the established pattern to avoid duplication. Call the existing event-streaming and collection pattern from TurnOutcome.swift or CompactionContinuityEvalRealSubjectRunner.swift instead of reimplementing it inline. If no public API exists, consider extracting the pattern once to a shared location.
+- [x] `Examples/CompactionDemo/main.swift:135` `swift/fluent-usage` — First parameter lacks a label. Omit the first argument label only for value-preserving conversions; for other functions, add a descriptive label so calls form a grammatical phrase. Add a descriptive label to the first parameter: `func runTurn(on session: RoutedSession, prompt: String)` so calls read fluently. #compaction #demo

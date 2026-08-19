@@ -2,7 +2,7 @@ import Foundation
 
 /// Everything one turn produced, folded from that turn's own
 /// ``RoutedSession/streamEvents(to:maxTokens:)`` stream by
-/// ``RoutedSession/respond(to:observing:)`` — the high-level entry point for a
+/// ``RoutedSession/respond(to:maxTokens:observing:)`` — the high-level entry point for a
 /// caller that wants the reply text *plus* awareness of tools, folds, and
 /// usage without re-implementing the ``SessionEvent`` switch (task ^1s8p8qt).
 ///
@@ -190,12 +190,15 @@ extension RoutedSession {
     /// which cancels the turn and has it recorded as a cancelled turn,
     /// exactly as described on ``streamResponse(to:maxTokens:)``.
     ///
-    /// The existing ``respond(to:)`` keeps returning `String`: a call
-    /// without `observing` and without a `TurnOutcome` type context still
-    /// resolves to that overload, so existing callers are unchanged.
+    /// The existing ``respond(to:)`` and ``respond(to:maxTokens:)`` keep
+    /// returning `String`: a call without `observing` and without a
+    /// `TurnOutcome` type context still resolves to those overloads, so
+    /// existing callers are unchanged.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` (the
+    ///     default) to use the underlying model's own default ceiling.
     ///   - observing: A callback invoked with each raw ``SessionEvent`` as it
     ///     arrives, or `nil` (the default) to only fold.
     /// - Returns: The turn's ``TurnOutcome``.
@@ -203,10 +206,11 @@ extension RoutedSession {
     ///   event the turn yielded first.
     public func respond(
         to prompt: String,
+        maxTokens: Int? = nil,
         observing: (@Sendable (SessionEvent) -> Void)? = nil
     ) async throws -> TurnOutcome {
         var fold = TurnOutcomeFold()
-        for try await event in streamEvents(to: prompt) {
+        for try await event in streamEvents(to: prompt, maxTokens: maxTokens) {
             observing?(event)
             fold.apply(event)
         }
