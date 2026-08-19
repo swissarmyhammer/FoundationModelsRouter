@@ -99,9 +99,12 @@ struct CompactionEvalSeed: Sendable {
     /// - Parameter spec: The fixture to build.
     /// - Returns: The assembled seed.
     static func build(from spec: CompactionEvalFixtureSpec) -> CompactionEvalSeed {
+        // The fold keeps this entry, so the resumed session answers the
+        // seed's question under it — see ``compactionEvalRecallInstructions``
+        // for the measured refusals its register corrects.
         let instructions = Transcript.Entry.instructions(
             Transcript.Instructions(
-                segments: [.text(Transcript.TextSegment(content: "You are a helpful assistant in an ongoing conversation."))],
+                segments: [.text(Transcript.TextSegment(content: compactionEvalRecallInstructions))],
                 toolDefinitions: []
             )
         )

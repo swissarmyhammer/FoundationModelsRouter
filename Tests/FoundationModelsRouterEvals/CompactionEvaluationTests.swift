@@ -226,6 +226,28 @@ struct CompactionEvaluationHermeticTests {
         }
     }
 
+    @Test("every seed opens with the measured recall instructions, so the resumed session answers instead of refusing")
+    func everySeedOpensWithTheRecallInstructions() {
+        // The fold keeps the `.instructions` entry, so the resumed session
+        // answers the seed's question under this header. The gated runs of
+        // 2026-08-19 (task ^e814b60) measured three other registers against
+        // it: the bare helpful persona refused facts its own summary stated,
+        // and the two registers without the summary-reliability clause
+        // answered with invented values instead — see
+        // ``compactionEvalRecallInstructions`` for every run's counts. This
+        // pins the dataset to the one register those measurements chose.
+        for seed in compactionEvalSeeds {
+            guard case .instructions(let instructions) = seed.entries.first else {
+                Issue.record("seed \(seed.id) does not open with an instructions entry")
+                continue
+            }
+            #expect(
+                Summarization.text(of: instructions.segments) == compactionEvalRecallInstructions,
+                "seed \(seed.id) does not open with the measured recall instructions"
+            )
+        }
+    }
+
     /// Every assistant reply in `seed`'s built transcript, in order — the text
     /// content of each `.response` entry.
     ///

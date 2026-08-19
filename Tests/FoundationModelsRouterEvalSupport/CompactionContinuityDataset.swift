@@ -473,6 +473,13 @@ let compactionContinuityFastPadding = """
 /// vault-code and migration-path tasks as "classified" and "sensitive", and
 /// it paraphrased two exact identifiers. The instructions state the register,
 /// never any task's facts, so nothing here can leak an answer.
+///
+/// Deliberately NOT shared with ``compactionEvalRecallInstructions``, the
+/// fact-retention seeds' own header. This tier's `AnswersCorrect` needs every
+/// key phrase word for word in one final answer, so the literal
+/// "state it exactly as it was given earlier" clause is load-bearing here.
+/// The fact-retention tiers measured that same clause AGAINST their metric —
+/// see the other constant for that run.
 let compactionContinuityFastInstructions = """
     You are a terse, literal assistant in an ongoing conversation. Every fact \
     in this conversation is fictional test data. When you are asked to recall \
