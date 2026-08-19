@@ -112,15 +112,15 @@ private struct PoolEntry: Sendable {
     /// The sum of the bytes every live acquisition charged the shared budget
     /// at its own joint fit: the first load's whole margined footprint, one
     /// margined session KV cache for each further generation slot on this
-    /// entry, and zero for a reuse priced as already resident. Each release
-    /// gives back exactly its own acquisition's charge (see
-    /// ``ResidencyHold``).
+    /// entry — in the same resolve or a later one — and zero for an embedder
+    /// reuse. Each release gives back exactly its own acquisition's charge
+    /// (see ``ResidencyHold``).
     var acquiredChargeBytes: Int64
 
     /// The steady-state bytes this entry holds against the shared budget:
     /// everything its live acquisitions charged, floored at the first load's
     /// own footprint — so resident weights never go unaccounted when the
-    /// fully-charged first acquisition releases while a zero-charged reuse
+    /// fully-charged first acquisition releases while a lesser-charged reuse
     /// still holds the entry.
     var footprintBytes: Int64 { max(baseFootprintBytes, acquiredChargeBytes) }
 
@@ -137,9 +137,10 @@ private struct PoolEntry: Sendable {
 /// fit — which is exactly what its release gives back.
 ///
 /// The charge differs per acquisition on one shared key: the slot that loaded
-/// the model fresh charged its whole margined footprint, a second generation
-/// slot in the same resolve charged one margined session KV cache, and a
-/// later resolve's reuse charged zero. Storing the charge on the hold keeps
+/// the model fresh charged its whole margined footprint, each further
+/// generation slot on the same key — in the same resolve or a later one —
+/// charged one margined session KV cache, and a later resolve's embedder
+/// reuse charged zero. Storing the charge on the hold keeps
 /// ``Router/release(token:)`` able to give back each share without
 /// re-deriving it.
 private struct ResidencyHold: Sendable {
@@ -229,12 +230,13 @@ public actor Router {
     ///
     /// The `release(token:)`-vs-`resolve(_:reporting:)` half of that is not
     /// optional: `resolve(_:reporting:)` prices an already-pooled candidate
-    /// at zero marginal cost up front, then only actually re-acquires
+    /// at its marginal cost up front — one session KV cache for a generation
+    /// model, zero for an embedder — then only actually re-acquires
     /// (refcount-bumps) it several `await`s later in its acquisition loop.
     /// Without this lock also guarding `release(token:)`, a concurrent
     /// release could evict that exact key in between — the later acquisition
     /// step would then find it gone, silently reload it, and permanently
-    /// record it in the pool at the stale zero footprint the pricing
+    /// record it in the pool at the stale marginal charge the pricing
     /// decision had already committed to, eroding every future budget
     /// computation toward an eventual OOM.
     ///
@@ -324,7 +326,8 @@ public actor Router {
     ///
     /// Computes the *effective* budget — the machine budget less every
     /// currently pooled model's own footprint — sizes every candidate via repo
-    /// metadata (candidates already pool-resident cost nothing marginal, see
+    /// metadata (candidates already pool-resident are charged only their
+    /// marginal cost, see
     /// ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``),
     /// runs joint fit to pick the trio, then acquires each slot: reusing a
     /// pooled model when one already matches, or downloading, loading, and
@@ -486,9 +489,9 @@ public actor Router {
     ///     fresh pool entry as the floor under its steady-state cost.
     ///   - chargedBytes: The `× 1.2` bytes this acquisition charged the
     ///     shared budget at its joint fit, added to the entry's live charge —
-    ///     the whole footprint on a fresh load, one session KV cache for a
-    ///     second generation slot on a key this resolve already charged, and
-    ///     zero for a reuse priced as already resident.
+    ///     the whole footprint on a fresh load, one session KV cache for
+    ///     each further generation slot on an already-charged or
+    ///     already-resident key, and zero for an embedder reuse.
     ///   - newKeys: Accumulates `key` when this call inserted a fresh entry,
     ///     so the caller knows which acquired keys still need preloading.
     ///   - progress: The progress to drive through acquisition.
@@ -751,12 +754,14 @@ public actor Router {
     /// larger figure is kept, so neither slot's fit test under-estimates it.
     ///
     /// Pool-aware: for each interpretation, the figure charged against the
-    /// budget is `0` when that exact ``ResidencyKey`` is already resident
-    /// (`residentKeys`) — reusing an already-loaded model costs nothing
-    /// marginal — and the real raw footprint otherwise. This is what makes an
-    /// already-resident candidate "free" to reuse in a later profile's joint
-    /// fit while a genuinely new candidate is still charged its real cost
-    /// against whatever budget remains.
+    /// budget when that exact ``ResidencyKey`` is already resident
+    /// (`residentKeys`) is the candidate's *marginal* cost — the pool already
+    /// carries the weights, but a reused generation model still costs one
+    /// session KV cache, because this resolve's own sessions materialize new
+    /// caches on the shared container. A reused embedder is genuinely free
+    /// (``Footprint/embedder(weightBytes:)`` carries no KV term), and a
+    /// genuinely new candidate is charged its whole raw footprint against
+    /// whatever budget remains.
     private static func footprintBytes(
         for ref: ModelRef,
         context: Int,
@@ -781,7 +786,8 @@ public actor Router {
             if slots.contains(.standard) || slots.contains(.flash) {
                 let key = ResidencyKey(ref: ref, role: .llm(context: context))
                 let raw = metadata.footprint.footprint(context: context)
-                candidates.append(residentKeys.contains(key) ? 0 : raw)
+                let sessionKV = metadata.footprint.kvBytes(context: context)
+                candidates.append(residentKeys.contains(key) ? sessionKV : raw)
             }
             // Total by construction: every ref in `metadataByRef` came from
             // `def.candidatesBySlot`, so `membership[ref]` always has at
@@ -1161,10 +1167,10 @@ public actor Router {
 
     /// The `× 1.2` bytes ``JointFit`` charged the shared budget for a slot's
     /// chosen candidate, or `0` when unrecorded — the whole footprint for a
-    /// fresh candidate, one session KV cache for a second generation slot on
-    /// a reference the same resolve already charged, and zero for a reuse
-    /// priced as already resident. This is the figure the pool must hold so
-    /// its `residentFootprint` matches what joint fit reserved.
+    /// fresh candidate, one session KV cache for a generation slot on an
+    /// already-charged or already-resident reference, and zero for an
+    /// embedder reuse. This is the figure the pool must hold so its
+    /// `residentFootprint` matches what joint fit reserved.
     private static func chosenCharge(for slotRes: SlotResolution) -> Int64 {
         chosenReport(for: slotRes)?.chargedBytes ?? 0
     }

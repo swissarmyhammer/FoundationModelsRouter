@@ -232,6 +232,19 @@ struct PooledResidencyTests {
     private static let sharedPairTrioFootprint: Int64 =
         14_516_583 + sessionKVMarginedBytes + 12_000_000
 
+    /// The whole reservation a later profile is charged when it resolves an
+    /// already-resident trio again: one session KV cache for each of its two
+    /// generation slots — its own new sessions materialize new caches on the
+    /// shared containers — and zero for the reused embedder.
+    private static let reusedTrioCharge: Int64 = sessionKVMarginedBytes * 2
+
+    /// The whole reservation a later profile is charged when it reuses a
+    /// resident trio's generation model and embedder but brings its own flash
+    /// model: one session KV cache on the reused generation model
+    /// (``sessionKVMarginedBytes``), its own flash model's whole footprint
+    /// (14_516_583), and zero for the reused embedder.
+    private static let reuseWithOwnFlashCharge: Int64 = sessionKVMarginedBytes + 14_516_583
+
     /// A working context below ``ProfileDefinition/defaultContext``, for the
     /// profile that names an already-resident repo at a second context: the KV
     /// cache is sized into the container at load time, so the same repo at this
@@ -279,9 +292,15 @@ struct PooledResidencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        // Budget generous enough for one trio; the second profile reuses the
-        // very same models, so it costs nothing marginal and must still fit.
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
+        // Fits one trio plus the second profile's reuse charge: the second
+        // profile shares the resident containers, but each of its two
+        // generation slots still pays for its own session KV cache.
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
+                + Self.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let shared = ProfileDefinition(
             name: "shared",
@@ -387,7 +406,13 @@ struct PooledResidencyTests {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        let router = Self.makeRouter(spy: spy, recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes, cacheDir: dir)
+        // Fits one trio plus the second profile's two-KV-cache reuse charge.
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
+                + Self.headroomBufferBytes,
+            cacheDir: dir
+        )
 
         let shared = ProfileDefinition(
             name: "shared", description: "both profiles want the identical models",
@@ -418,9 +443,11 @@ struct PooledResidencyTests {
         let spy = LoadSpy()
         let observer = ConcurrencyObserver()
         let releaseGate = AsyncSemaphore(value: 0)
+        // Fits one trio plus the second profile's two-KV-cache reuse charge.
         let router = Self.makeRouter(
             spy: spy,
-            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.headroomBufferBytes,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
+                + Self.headroomBufferBytes,
             cacheDir: dir,
             llmContainer: { _ in ParkingLLMContainer(observer: observer, releaseGate: releaseGate) }
         )
@@ -580,16 +607,18 @@ struct PooledResidencyTests {
     // MARK: - release() cannot race an in-flight resolve()'s pool mutations.
 
     /// Regression test for a TOCTOU race: `resolve()` prices an
-    /// already-pool-resident candidate at zero marginal cost up front (see
-    /// `footprintBytes`'s `residentKeys` check), then only actually acquires
-    /// (refcount-bumps) that key later in its acquisition loop. If a
-    /// concurrent `release()` were allowed to evict that same key in between
-    /// — because `release()` held no lock against an in-flight `resolve()`
-    /// — the later acquisition step would find the key gone, silently reload
-    /// it, and record it in the pool at the stale (zero) footprint the joint
-    /// fit had already committed to. That corrupts every future budget
-    /// computation: the model would count as free forever after, eroding the
-    /// "single authority over the budget" guarantee toward an eventual OOM.
+    /// already-pool-resident candidate at its marginal cost up front — zero
+    /// for a resident embedder, one session KV cache for a resident
+    /// generation model (see `footprintBytes`'s `residentKeys` check) — then
+    /// only actually acquires (refcount-bumps) that key later in its
+    /// acquisition loop. If a concurrent `release()` were allowed to evict
+    /// that same key in between — because `release()` held no lock against
+    /// an in-flight `resolve()` — the later acquisition step would find the
+    /// key gone, silently reload it, and record it in the pool at the stale
+    /// marginal charge the joint fit had already committed to. That corrupts
+    /// every future budget computation: the model's weights would count as
+    /// free forever after, eroding the "single authority over the budget"
+    /// guarantee toward an eventual OOM.
     ///
     /// `poolLock` must therefore guard `release(token:)` too, not just
     /// `resolve()` — this test proves a `release()` that starts while a
@@ -712,20 +741,20 @@ struct PooledResidencyTests {
     // MARK: - Releasing one holder of a shared key gives back only its own share.
 
     /// The release half of the same accounting (task pq5w87d): a second
-    /// profile reusing a resident shared pair charges only its own flash
-    /// slot's KV cache, and releasing it gives back exactly that share —
-    /// never the first profile's still-live reservation.
+    /// profile reusing a resident shared pair charges one session KV cache
+    /// for each of its two generation slots, and releasing it gives back
+    /// exactly that share — never the first profile's still-live reservation.
     @Test("releasing one of two profiles on a shared generation pair gives back only its own share")
     @MainActor
     func releasingOneHolderOfSharedPairGivesBackOnlyItsShare() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let spy = LoadSpy()
-        // Fits the pair trio, plus the reusing profile's one extra KV cache.
+        // Fits the pair trio, plus the reusing profile's two extra KV caches.
         let router = Self.makeRouter(
             spy: spy,
             recommendedMaxWorkingSetSize: Self.sharedPairTrioFootprint
-                + Self.sessionKVMarginedBytes + Self.headroomBufferBytes,
+                + Self.reusedTrioCharge + Self.headroomBufferBytes,
             cacheDir: dir
         )
 
@@ -734,13 +763,13 @@ struct PooledResidencyTests {
             standard: ["org/share-repo"], flash: ["org/share-repo"], embedding: ["org/share-emb"]
         )
         let holder = try await router.resolve(profile: pair, reporting: ResolutionProgress())
-        // The same trio again: its container reuses are free, and only its
-        // own second generation slot's KV cache is charged.
+        // The same trio again: the containers are shared, and each of its
+        // two generation slots is charged its own session KV cache.
         let reuser = try await router.resolve(profile: pair, reporting: ResolutionProgress())
 
         await reuser.release()
         // The first profile still references everything — nothing is evicted,
-        // and only the reuser's own KV share came back.
+        // and only the reuser's own two KV shares came back.
         #expect(await spy.evictions == 0)
 
         // Pin the released share through the budget a failing resolve sees:
@@ -755,9 +784,66 @@ struct PooledResidencyTests {
             Issue.record("the disjoint profile must not fit beside the pair trio")
         } catch let failure as ResolutionFailure {
             #expect(
-                failure.budgetBytes == Self.sessionKVMarginedBytes + Self.headroomBufferBytes
+                failure.budgetBytes == Self.reusedTrioCharge + Self.headroomBufferBytes
             )
         }
         withExtendedLifetime(holder) {}
+    }
+
+    // MARK: - A later resolve reusing a resident generation model is charged its own KV cache.
+
+    /// Regression test for the residual pricing gap after task pq5w87d (task
+    /// 4pbv8b9): a later resolve that names an already-resident GENERATION
+    /// model must be charged one session KV cache for it — its own new
+    /// sessions materialize new caches on the shared container — while a
+    /// reused EMBEDDER stays free (an embedder carries no KV term). The
+    /// budget a failing third resolve sees pins both charges.
+    @Test("a later resolve reusing a resident generation model is charged one session KV cache, and a reused embedder stays free")
+    @MainActor
+    func reusingResidentGenerationModelChargesOneSessionKVCache() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Exactly A's trio, B's own flash model, and B's one KV cache on A's
+        // reused generation model — and nothing for B's reused embedder.
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reuseWithOwnFlashCharge
+                + Self.headroomBufferBytes,
+            cacheDir: dir
+        )
+
+        let profileA = ProfileDefinition(
+            name: "a", description: "owns the models B will reuse",
+            standard: ["org/reuse-std"], flash: ["org/reuse-flash"], embedding: ["org/reuse-emb"]
+        )
+        let profileB = ProfileDefinition(
+            name: "b", description: "reuses A's generation model and embedder, brings its own flash",
+            standard: ["org/reuse-std"], flash: ["org/reuse-b-flash"], embedding: ["org/reuse-emb"]
+        )
+
+        let resolvedA = try await router.resolve(profile: profileA, reporting: ResolutionProgress())
+        let resolvedB = try await router.resolve(profile: profileB, reporting: ResolutionProgress())
+
+        // The reused models were loaded exactly once — B shares A's containers.
+        #expect(await spy.llmLoads.filter { $0 == "org/reuse-std" }.count == 1)
+        #expect(await spy.embedderLoads.filter { $0 == "org/reuse-emb" }.count == 1)
+
+        // Pin the pool's holdings through the budget a failing third resolve
+        // sees: everything is spoken for except the rounding buffer. A zero
+        // price on B's reused generation model would leave one whole KV cache
+        // of budget here instead.
+        let disjoint = ProfileDefinition(
+            name: "disjoint", description: "cannot fit beside A and B",
+            standard: ["org/reuse-pin-std"], flash: ["org/reuse-pin-flash"],
+            embedding: ["org/reuse-pin-emb"]
+        )
+        do {
+            _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
+            Issue.record("the disjoint profile must not fit beside A and B")
+        } catch let failure as ResolutionFailure {
+            #expect(failure.budgetBytes == Self.headroomBufferBytes)
+        }
+        withExtendedLifetime((resolvedA, resolvedB)) {}
     }
 }

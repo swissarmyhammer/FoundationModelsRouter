@@ -68,14 +68,15 @@ public struct JointResolution: Sendable, Equatable {
 /// difference is what keeps the second session honest.
 ///
 /// - `footprint` answers what a candidate costs the budget **now**. The router
-///   answers zero for a model it already holds resident, because the budget
-///   already carries that model's pool entry.
+///   answers a marginal cost for a model it already holds resident: the pool
+///   carries the weights, but a resident generation model still costs one
+///   session KV cache — this resolve's own sessions materialize new caches on
+///   the shared container — and a resident embedder costs zero.
 /// - `sessionBytes` answers the **absolute** size of one session's KV cache,
 ///   which no residency discounts. A pool entry covers its container and one
 ///   session, so the second slot's cache is always a cost the pool does not
-///   yet hold. Reading that cache out of `footprint` instead would charge zero
-///   for a resident model named by both generation slots, and the box would
-///   accept a profile it cannot hold.
+///   yet hold. Reading that cache out of `footprint` instead would charge the
+///   whole weights again for a fresh model named by both generation slots.
 ///
 /// ## Deriving the working context
 ///
@@ -228,8 +229,9 @@ public enum JointFit {
     ///   - footprint: The injected per-candidate raw footprint at a given
     ///     working context, or ``RepoMetadataError/metadataUnavailable(_:)``
     ///     when a candidate cannot be sized. The caller may answer a *marginal*
-    ///     cost here — the router answers zero for a model it already holds
-    ///     resident.
+    ///     cost here — the router answers one session KV cache for a
+    ///     generation model it already holds resident, and zero for a
+    ///     resident embedder.
     ///   - sessionBytes: The injected per-candidate KV cache bytes for **one**
     ///     session at a given working context. This one is always the absolute
     ///     figure: a cache is materialized per session, so a second slot on one
@@ -397,9 +399,10 @@ public enum JointFit {
     /// A candidate whose key an earlier slot already reserved charges its
     /// per-session KV cache alone, because the router loads one container for
     /// both slots. That cache is read from `sessionBytes` and never derived
-    /// from `footprint`, which may be answering a marginal cost of zero for a
-    /// container the pool already holds. Its report still carries the whole
-    /// footprint, so a reader sees both the size of the model and what it cost.
+    /// from `footprint`, which for a fresh container answers the whole
+    /// weights rather than the cost of one more session. Its report still
+    /// carries the whole footprint, so a reader sees both the size of the
+    /// model and what it cost.
     ///
     /// - Parameters:
     ///   - ref: The candidate being sized.
