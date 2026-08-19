@@ -1,35 +1,13 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
 
-/// Counts how many bodies are inside one section of code at the same time, and
-/// keeps the largest count it saw.
-///
-/// A test reads ``maximumActive`` to learn whether two bodies overlapped, so it
-/// needs no sleep and no clock.
-///
-/// This is the one concurrency counter the test target declares. Every suite
-/// that must measure overlap uses it, so the scaffolding lives in exactly one
-/// place and cannot drift copy from copy.
-actor ConcurrencyPeakObserver {
-    /// How many bodies are inside the section now.
-    private var active = 0
-
-    /// The largest number of bodies that were inside the section at one time.
-    private(set) var maximumActive = 0
-
-    /// Records one body that enters the section.
-    func enter() {
-        active += 1
-        maximumActive = max(maximumActive, active)
-    }
-
-    /// Records one body that leaves the section.
-    func exit() {
-        active -= 1
-    }
-}
+// `ConcurrencyPeakObserver` — the one concurrency counter every suite that
+// must measure overlap uses — lives in `FoundationModelsRouterTestSupport`,
+// because more than one test target reads it and SwiftPM cannot share source
+// between two test targets.
 
 /// A backend that reports each entry into its model call, and each exit from
 /// it, to a ``ConcurrencyPeakObserver``, and that stays inside the call until a

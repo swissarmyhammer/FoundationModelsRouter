@@ -47,6 +47,36 @@ comments:
     - No real-model IntegrationTests suites run. No FM_ROUTER_* env vars used. No swift format run.
     - next: hand off to review step.
   timestamp: 2026-08-19T21:56:26.789817+00:00
+- actor: claude-code
+  id: 01m0e104nfkfmne25tn6fpvfh6
+  text: |-
+    ### review — findings
+    - evidence: `review sha b05508d~1..b05508d` (local backend) — counts: 1 finding, 1 confirmed, 0 refuted. Finding at `Tests/FoundationModelsRouterEvals/CompactionEvalDispatchShapeTests.swift:12` (`reuse/reuse`): the recorder actor duplicates `ConcurrencyPeakObserver`.
+    - next: reuse or extend `ConcurrencyPeakObserver` from `ConcurrencyObservingContainer.swift`, then run the review again. The task stays in `review`.
+  timestamp: 2026-08-19T22:06:50.543590+00:00
+- actor: claude-code
+  id: 01m0e1gks42yhdkb3b5vq3jr8f
+  text: |-
+    The reuse finding is corrected. What changed:
+
+    - `ConcurrencyPeakObserver` moved to a new file `Tests/FoundationModelsRouterTestSupport/ConcurrencyPeakObserver.swift`, made `public`, and given the `enteredCount` property the dispatch-shape test needs. SwiftPM cannot share source between two test targets, so the shared support target is the one place both test targets can read.
+    - `Tests/FoundationModelsRouterTests/Helpers/ConcurrencyObservingContainer.swift` no longer declares the actor. It imports `FoundationModelsRouterTestSupport` and a note points at the shared copy. `SharedGenerationGateContentionTests.swift` gets the same import.
+    - `Tests/FoundationModelsRouterEvals/CompactionEvalDispatchShapeTests.swift` no longer declares the duplicate `CompactionEvalDispatchShapeRecorder`. The test uses the shared `ConcurrencyPeakObserver` (`enter`/`exit`, `maximumActive`, `enteredCount`). The assertions did not change in meaning.
+    - `Package.swift` adds `FoundationModelsRouterTestSupport` to the `FoundationModelsRouterEvals` target, with a comment that states why.
+
+    Sweep for other copies of the pattern: `ForkConcurrencyTests.SerialObserver` and `HumanWaitGateTests.TurnObserver` also count entries, but each records the ORDER of entries in a list, which `ConcurrencyPeakObserver` does not hold. Both actors existed before this change, and no line of this change touches them. The one duplicate this change added is removed.
+
+    ### implement — changed
+    - evidence: 5 files — Tests/FoundationModelsRouterTestSupport/ConcurrencyPeakObserver.swift (new), Tests/FoundationModelsRouterTests/Helpers/ConcurrencyObservingContainer.swift, Tests/FoundationModelsRouterTests/SharedGenerationGateContentionTests.swift, Tests/FoundationModelsRouterEvals/CompactionEvalDispatchShapeTests.swift, Package.swift; Scripts/swift-test.sh --skip IntegrationTests = 1020 tests in 96 suites passed (1 known issue) + 76 tests in 9 suites passed; swift build --build-tests -Xswiftc -warnings-as-errors = exit 0, no compiler warnings
+    - next: review
+  timestamp: 2026-08-19T22:15:50.308853+00:00
+- actor: claude-code
+  id: 01m0e1kpskck8cp1fjcpjzcbtv
+  text: |-
+    ### test — green
+    - evidence: `swift build --build-tests -Xswiftc -warnings-as-errors` builds all targets clean, no warnings. `Scripts/swift-test.sh --skip IntegrationTests` — 1020 tests in 96 suites passed (1 known issue, the pre-existing BoundedWaitTests issue) plus 76 tests in 9 suites passed. No test failed. No test was skipped. No warning was found.
+    - next: hand off to the next step in the pipeline.
+  timestamp: 2026-08-19T22:17:31.699843+00:00
 position_column: doing
 position_ordinal: '8480'
 title: Two gated runs of the same eval code drove the samples two different ways, so the tier's dispatch shape is unmeasured
@@ -114,4 +144,12 @@ A per-sample cost read off a trail is only clean when the samples ran one at a t
 - `^9cw5g6n` — the card whose premise this bounds.
 - `^6ssbakk` — the serial trail, and the per-sample figures both limits now rest on.
 - `^h2xxsse` — the concurrent trail, and the instrumentation that made both legible.
-#compaction #eval #real-model #test-debt
+
+## Review Findings (2026-08-19 16:58)
+
+> Scope: `review sha b05508d~1..b05508d` — reviewed the diffs only — lines this change added or modified. 4 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterEvals/CompactionEvalDispatchShapeTests.swift:12` `reuse/reuse` — CompactionEvalDispatchShapeRecorder reimplements a near-identical observer pattern that already exists as ConcurrencyPeakObserver in the test suite. Both track concurrent entry/exit and peak concurrency, differing only in naming (enter/exit vs recordEntry/recordExit) and the addition of enteredCount. The existing observer should have been extended or reused rather than creating a parallel implementation. Reuse or extend ConcurrencyPeakObserver from ConcurrencyObservingContainer.swift, adding enteredCount tracking if needed, rather than defining a duplicate actor. This keeps one canonical implementation of the concurrent-entry observer pattern. #compaction #eval #real-model #test-debt

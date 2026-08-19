@@ -1,36 +1,10 @@
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterEvalSupport
 
 // MARK: - Dispatch shape (plain `swift test`, no real inference)
-
-/// Counts the samples that are inside their subject work at the same moment.
-///
-/// An `actor`, so two samples that really did overlap can never lose an
-/// update to a data race and report a smaller overlap than the run had.
-private actor CompactionEvalDispatchShapeRecorder {
-    /// How many samples are inside their subject work right now.
-    private var inFlightCount = 0
-
-    /// The largest ``inFlightCount`` any moment of the run reached.
-    private(set) var maxInFlightCount = 0
-
-    /// How many samples entered their subject work over the whole run.
-    private(set) var enteredCount = 0
-
-    /// Records that one sample entered its subject work.
-    func recordEntry() {
-        inFlightCount += 1
-        enteredCount += 1
-        maxInFlightCount = max(maxInFlightCount, inFlightCount)
-    }
-
-    /// Records that one sample left its subject work.
-    func recordExit() {
-        inFlightCount -= 1
-    }
-}
 
 /// Measures the dispatch shape of `Evaluation.run(info:)` itself, hermetically.
 ///
@@ -67,14 +41,14 @@ struct CompactionEvalDispatchShapeTests {
 
     @Test("Evaluation.run(info:) drives the samples one at a time")
     func runDrivesSamplesOneAtATime() async throws {
-        let recorder = CompactionEvalDispatchShapeRecorder()
+        let observer = ConcurrencyPeakObserver()
         let evaluation = CompactionEvaluation(includesJudgedDimensions: false) { _, _, _, _ in
-            await recorder.recordEntry()
+            await observer.enter()
             // Suspends so a concurrent dispatcher has room to start the next
             // sample before this one returns. A subject that returns without
             // suspending would measure every dispatch shape as serial.
             try await Task.sleep(for: .milliseconds(Self.fakeSubjectSuspensionMilliseconds))
-            await recorder.recordExit()
+            await observer.exit()
             return ("the fake answer", 500, 50, ["Summarization"])
         }
 
@@ -82,11 +56,11 @@ struct CompactionEvalDispatchShapeTests {
 
         // Every seed's sample ran — an answer of "one at a time" over a
         // dataset that never dispatched would be vacuous.
-        #expect(await recorder.enteredCount == compactionEvalSeeds.count)
+        #expect(await observer.enteredCount == compactionEvalSeeds.count)
         // THE answer this suite exists to state: the framework drives one
         // sample at a time. A failure here means the framework's dispatch
         // shape changed — re-read the per-sample derivations in
         // `CompactionEvalTiers.swift` before touching this expectation.
-        #expect(await recorder.maxInFlightCount == 1)
+        #expect(await observer.maximumActive == 1)
     }
 }

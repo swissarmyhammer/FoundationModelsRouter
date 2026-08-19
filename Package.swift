@@ -268,11 +268,14 @@ let package = Package(
         // The evals' hermetic tests: they hold the machinery above to its own
         // contract — the dataset's shape, the report's classification, the
         // progress lines, the seed sizing and the tier thresholds — with no real
-        // model anywhere. They run on every `swift test`.
+        // model anywhere. They run on every `swift test`. TestSupport is a
+        // dependency for `ConcurrencyPeakObserver`, the one concurrency counter
+        // every suite that must measure overlap uses.
         .testTarget(
             name: "FoundationModelsRouterEvals",
             dependencies: [
-                .target(name: packageName), .target(name: "\(packageName)EvalSupport"),
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+                .target(name: "\(packageName)EvalSupport"),
             ] + mlxProducts,
             path: "Tests/FoundationModelsRouterEvals"
         ),
