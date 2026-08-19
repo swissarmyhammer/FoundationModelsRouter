@@ -88,8 +88,25 @@ comments:
     - We also ran `swift build --build-tests -Xswiftc -warnings-as-errors`. The build finished with no error and no compiler warning.
     - Next step: proceed to review.
   timestamp: 2026-08-19T15:29:25.379026+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0daprntr75x62b0094zs6nz
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (local backend, commit 82c1404) — 0 findings, 7 validator attempts, 0 failed. 2 files reviewed; 12 `.kanban/` files excluded by `.reviewignore`.
+    - next: none. The task moved to `done`.
+  timestamp: 2026-08-19T15:37:14.682901+00:00
+- actor: claude-code
+  id: 01m0daqenpj4gyqr6rfr83txr4
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 files, `Router.swift` and `PooledResidencyTests.swift`; each acquisition now charges its own joint-fit bytes, with TDD (red first)
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 997 + 72 tests passed, 0 failures; warnings-as-errors build clean
+    - commit: 82c1404
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings over 2 files; task moved to `done`
+    - discovery: `^4pbv8b9` filed for the zero-priced reuse resolve, out of this card's scope
+  timestamp: 2026-08-19T15:37:37.206013+00:00
+position_column: done
+position_ordinal: ffc080
 title: '[Router] A pooled entry shared by two slots records one KV cache, while joint fit now reserves two'
 ---
 Found while implementing `^8hs4wrw`, which made `JointFit` reserve a shared model's weights one time and its KV cache one time for each slot. This card is the `Router` half of the same accounting, and `^8hs4wrw` deliberately left it alone: it is a pool question, not a joint-fit one.

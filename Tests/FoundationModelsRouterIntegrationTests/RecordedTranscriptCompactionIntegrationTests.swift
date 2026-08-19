@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -178,7 +179,11 @@ struct RecordedTranscriptCompactionIntegrationTests {
     /// Nothing here names the session id. ``recordedTranscript()`` reads it off
     /// the loaded tree, so no ULID is written down in Swift and a re-recorded
     /// fixture needs no edit in this file.
-    private static let recordingResourcePath = "Fixtures/CompactionRecording"
+    ///
+    /// Internal rather than private, because
+    /// ``RecordedFixtureRedactionTests`` scans the same directory's bytes and
+    /// the path must not be written down twice.
+    static let recordingResourcePath = "Fixtures/CompactionRecording"
 
     /// The model-assisted stage this suite folds with.
     ///
@@ -234,36 +239,6 @@ struct RecordedTranscriptCompactionIntegrationTests {
         return (try tree.effectiveTranscript(forSession: root.id, view: .fullHistory), root.id)
     }
 
-    /// Every `Transcript.Entry` kind `transcript` carries, each named once, in
-    /// the order the kinds first appear.
-    ///
-    /// Read as a list of names rather than as counts, because the assertion this
-    /// serves is about PRESENCE: a recording that lost its tool traffic
-    /// entirely is the drift worth catching, and how many tool calls it happens
-    /// to hold is a property of one conversation rather than of the format.
-    ///
-    /// - Parameter transcript: The reconstructed conversation.
-    /// - Returns: The distinct entry-kind names, in first-appearance order.
-    private static func entryKinds(of transcript: Transcript) -> [String] {
-        var kinds: [String] = []
-        for entry in transcript {
-            let kind: String
-            switch entry {
-            case .instructions: kind = "instructions"
-            case .prompt: kind = "prompt"
-            case .response: kind = "response"
-            case .toolCalls: kind = "toolCalls"
-            case .toolOutput: kind = "toolOutput"
-            case .reasoning: kind = "reasoning"
-            @unknown default: kind = "unknown"
-            }
-            if !kinds.contains(kind) {
-                kinds.append(kind)
-            }
-        }
-        return kinds
-    }
-
     // MARK: - The tests
 
     @Test(
@@ -271,7 +246,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
     )
     func theRecordingCarriesTheShapeRealTrafficHas() throws {
         let (transcript, sessionId) = try Self.recordedTranscript()
-        let kinds = Self.entryKinds(of: transcript)
+        let kinds = TranscriptEntryKinds.names(of: transcript)
         print(
             "[\(Self.foldLabel)] session=\(sessionId) entries=\(Array(transcript).count) "
                 + "kinds=\(kinds) "
@@ -282,7 +257,7 @@ struct RecordedTranscriptCompactionIntegrationTests {
         // `^wnj3ka3` were both about a fixture that had quietly stopped being
         // what its own doc comment claimed, and this assertion is what makes
         // the same drift loud for a recording.
-        for kind in ["instructions", "prompt", "response", "reasoning", "toolCalls", "toolOutput"] {
+        for kind in TranscriptEntryKinds.realTrafficKinds {
             #expect(
                 kinds.contains(kind),
                 "the recorded transcript carries no \(kind) entry — it holds \(kinds)"

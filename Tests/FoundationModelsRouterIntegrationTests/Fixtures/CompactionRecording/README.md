@@ -59,18 +59,14 @@ other fast suite reaches.
 
 ## How it was made
 
-Recorded on 2026-08-18, on an Apple silicon box, by driving one
-`RoutedSession` through six scripted turns and keeping what the router wrote.
-
-| what | value |
-|---|---|
-| model | `mlx-community/Muse-Glimmer-30B-4bit` (`RealModels.standard`) |
-| working context | 8192 (`RealModels.context`) |
-| decoding | argmax (`GenerationOptions.SamplingMode.greedy`) |
-| reply ceiling per turn | 900 tokens |
-| tools mounted | `lookup-alpha`, `lookup-beta`, each returning `MARKER-7F3A-<step>` |
-| schema version | 2 |
-| wall clock | 253 s |
+Recorded on 2026-08-18, on an Apple silicon box, in 253 s of wall clock, by
+driving one `RoutedSession` through six scripted turns and keeping what the
+router wrote. The recipe is code, not this file: `RecordCompactionFixture` —
+the tool at `Tools/RecordCompactionFixture/` (task `^4bb3mjv`) — carries the
+model, the context, the decoding, the reply ceiling, the two lookup tools and
+the six scripted turns as named constants in
+`Tools/RecordCompactionFixture/RecordingScript.swift`, and speaks the same
+conversation this recording holds.
 
 The conversation is a synthetic engineering discussion — an ingest-path
 replacement for a "station archive" and its migration plan — written for this
@@ -82,46 +78,42 @@ are the recency window.
 The model's own replies, its reasoning, its tool calls and the tool outputs are
 whatever the model produced. Nothing was written by hand into the recording.
 
-### The two settings chosen at record time to keep operator paths out
-
-Both were set before recording rather than edited out afterwards, because
-editing a recording is the hand-maintenance this fixture exists to avoid.
-
-- **`workingDirectory`** was set explicitly to `/recordings/station-archive`. A
-  session defaults its working directory to its own recording directory, which
-  at record time was an absolute path on the recording machine.
-- **`recordingRoot` was left unset**, so the session took the router-level
-  layout. The per-session `recordingRoot:` override is stamped into
-  `session.json` as `configuration.recordingRoot`, and that value is an absolute
-  path on the recording machine.
+The two settings that keep operator paths out of the bytes — the synthetic
+`workingDirectory` and the ABSENT `recordingRoot:` override — are arguments in
+the tool, applied on every run. `RecordingScript.fixtureWorkingDirectory`'s doc
+comment states both, and why.
 
 ## Redaction review
 
-Every byte of both files was reviewed before they were committed. What was
-searched for, and what was found:
+The review is code, not a table: `RecordingRedactionScan` in
+`Tests/FoundationModelsRouterTestSupport/RecordingRedactionScan.swift` names
+every forbidden pattern — operator paths, machine identity, credential shapes,
+remote addresses, and the `recordingRoot` leak. It runs in two places:
 
-| looked for | found |
-|---|---|
-| the operator's user name, home directory, or any `/Users/...` path | none |
-| any path from the recording machine — temporary directories, the repository path, the session directory | none |
-| the Hugging Face cache path, or any model path on disk | none |
-| API keys and token shapes (`sk-`, `pk_`, `api_key`, `Bearer`, `AKIA`) | none |
-| PEM or SSH private key blocks | none |
-| passwords, credentials, connection strings | none |
-| URLs, hostnames, webhook targets | none |
-| private prose — anything a person wrote about anything real | none; every prompt is synthetic and is reproduced in this file's own recipe |
+- `RecordedFixtureRedactionTests`, in this test target, scans this directory's
+  recorded bytes on every integration run, so the committed recording stays
+  proven clean.
+- `RecordCompactionFixture` scans a fresh recording before it hands the
+  recording over, with the recording machine's own user name and directories
+  added to the pattern list, and refuses to hand over a recording with a
+  finding.
 
-One search hit needs stating so a later reader does not re-raise it. The word
+One benign hit needs stating so a later reader does not re-raise it. The word
 `secret` appears once in `session.json`, inside
 `configuration.compactionPrompt.text`. That is the router's own default
 compaction prompt — the line "Preserve safety- or security-relevant instructions
 VERBATIM (files or data to avoid, operations not to perform, secret handling)".
 It is product text, checked into `Sources/` already, and it is not a credential.
+The scan's pattern list deliberately carries no `secret` entry for this reason.
 
 ## Re-recording it
 
-Nothing in the test needs editing if this fixture is replaced: no identifier, no
-size and no count is written down in Swift. Delete this directory's recording,
-record a new conversation with the settings in the table above, put it back in
-the same layout, and re-run the redaction review in this file before committing
-it.
+Run the tool and follow its closing printout:
+
+    swift run RecordCompactionFixture
+
+Nothing in the tests needs editing when this fixture is replaced: no
+identifier, no size and no count is written down in Swift. The tool records
+into a fresh directory of its own — it never writes here — verifies the new
+recording, and states the copy step that replaces the session directory in
+this one. `Tools/RecordCompactionFixture/README.md` has the details.

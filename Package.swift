@@ -146,7 +146,8 @@ let package = Package(
             // directory name and its parent from the directory it nests under,
             // so a rule that flattened or renamed anything would make the
             // fixture unreadable. `Fixtures/CompactionRecording/README.md`
-            // states the layout, the recipe and the redaction review.
+            // states the layout and points at `RecordCompactionFixture`, the
+            // tool that records the fixture again (task ^4bb3mjv).
             resources: [.copy("Fixtures")]
         ),
         // Runnable demo (live twin of the offline `ExamplesTests` example): one
@@ -178,6 +179,25 @@ let package = Package(
             dependencies: [.target(name: packageName)] + mlxProducts + hubProducts,
             path: "Examples/CompactionDemo",
             exclude: ["README.md", "Fixtures"]
+        ),
+        // The regeneration tool for the checked-in compaction recording (task
+        // ^4bb3mjv): `swift run RecordCompactionFixture` records the fixture
+        // under `Tests/.../Fixtures/CompactionRecording/` again — the six
+        // scripted turns, the redaction settings and the redaction scan are
+        // code here rather than prose in the fixture's README. An executable
+        // rather than a test, because the run drives the 30B real model for
+        // minutes, and every integration test must finish in under two. It
+        // depends on the TestSupport target for the shared redaction scan and
+        // entry-kind vocabulary the integration suites also read, and links
+        // the same Hub client + tokenizer products as the demos, since it
+        // resolves a real profile through `LiveModelLoader`.
+        .executableTarget(
+            name: "RecordCompactionFixture",
+            dependencies: [
+                .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+            ] + mlxProducts + hubProducts,
+            path: "Tools/RecordCompactionFixture",
+            exclude: ["README.md"]
         ),
         // The compaction evals' machinery (compaction_plan.md §5):
         // `CompactionEvaluation` plants facts in the head of hand-written seed
