@@ -13,18 +13,14 @@ import FoundationModelsRouter
 /// Three suites wrote that same body before this type: ``CompactionRoundTripIntegrationTests``,
 /// ``SessionTreeRestorationIntegrationTests``, and
 /// `Tests/FoundationModelsRouterEvalIntegrationTests/Support/CompactionContinuityEvalRealSubjectRunner.swift`.
-/// The two integration suites call it. The third wrote its copy when this type
-/// lived inside the integration test target, where only `@testable import`
-/// could reach the router's then-internal initializers and SwiftPM cannot
-/// share source between two leaf test targets. Those initializers are
-/// `package` now and this type lives in the plain
-/// `FoundationModelsRouterRealModelSupport` target (task ^cvsh3m9), so the
-/// constraint is gone; folding the eval runner onto this harness is its own
-/// card.
+/// All three call it now. The eval runner moved onto it last (task ^bh97dp7),
+/// after task ^cvsh3m9 made the router's initializers `package` and moved this
+/// type to the plain `FoundationModelsRouterRealModelSupport` target, which
+/// any test target can import.
 ///
 /// ## What the ungated tests prove, and what they cannot
 ///
-/// Two gated suites call this, each with a 20-minute limit against a 30B model,
+/// The gated suites that call this each drive a real model under a time limit,
 /// so a change here cannot be proved by running them. It is proved instead by
 /// ``RealModelHarnessTests``, which builds a whole profile over a stub container
 /// and reads back every fact this function stamps: the definition name, each
@@ -43,9 +39,10 @@ public enum RealModelHarness {
     ///
     /// A hand-built profile was resolved from no ``ProfileDefinition`` at all,
     /// so this name records how it was made rather than naming a definition a
-    /// reader could go and find. The two suites that moved onto this function
-    /// each wrote `"test"` before, and nothing reads the field — no gated suite,
-    /// and not the sidecar, which is written with `profile: nil`.
+    /// reader could go and find. The suites that moved onto this function wrote
+    /// `"test"` before, and the eval runner wrote `"compaction-continuity-eval"`
+    /// (task ^bh97dp7); nothing reads the field — no gated suite, no eval
+    /// assertion, and not the sidecar, which is written with `profile: nil`.
     public static let definitionName = "real-model-harness"
 
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the `.embedding` slot

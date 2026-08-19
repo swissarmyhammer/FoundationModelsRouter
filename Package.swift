@@ -288,12 +288,15 @@ let package = Package(
         // within a process — one target for the evals keeps that gate covering
         // exactly the suites it was measured against. Links the same Hub client
         // + tokenizer products as the other real-model target, since a real eval
-        // also resolves a real profile through `LiveModelLoader`.
+        // also resolves a real profile through `LiveModelLoader`. Depends on the
+        // RealModelSupport target for `RealModelHarness`, the one real-profile
+        // build every real-model suite uses (task ^bh97dp7).
         .testTarget(
             name: "\(packageName)EvalIntegrationTests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
                 .target(name: "\(packageName)EvalSupport"),
+                .target(name: "\(packageName)RealModelSupport"),
             ] + mlxProducts + hubProducts,
             path: "Tests/\(packageName)EvalIntegrationTests"
         ),

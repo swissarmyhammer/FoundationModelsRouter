@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 
 @testable import FoundationModelsRouter
@@ -57,20 +58,6 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// `CompactionEvalDispatchShapeTests` states what the framework itself
     /// does today.
     private let samplePermit = AsyncSemaphore(value: 1)
-
-    /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
-    /// `.embedding` slot every ``LanguageModelProfile`` built here must still
-    /// carry — never exercised, only present to satisfy the type.
-    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        /// The dimension of a vector this container never makes.
-        let dimension = 1
-
-        /// Answers with no vectors, because nothing calls this.
-        ///
-        /// - Parameter texts: The texts to embed. Ignored.
-        /// - Returns: An empty array.
-        func embed(texts: [String]) async throws -> [[Float]] { [] }
-    }
 
     /// The model-assisted stage every session this runner vends is created
     /// with.
@@ -156,98 +143,6 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         )
     }
 
-    /// Builds a real ``LanguageModelProfile`` directly over `container`, with
-    /// a fresh, isolated recording root.
-    ///
-    /// ## Why this is not `RealModelHarness.make`
-    ///
-    /// `Tests/FoundationModelsRouterRealModelSupport/RealModelHarness.swift`
-    /// is the same consolidation. This copy was written when the harness lived
-    /// inside the integration test target, where only `@testable import` could
-    /// reach the router's then-internal initializers and SwiftPM cannot share
-    /// source between two leaf test targets. Task ^cvsh3m9 widened those
-    /// initializers to `package` and moved the harness to a plain target, so
-    /// the constraint is gone; folding this runner onto the harness is its own
-    /// card.
-    ///
-    /// - Parameters:
-    ///   - container: The model that is already loaded and resident.
-    ///   - cacheDir: The directory the router caches under.
-    ///   - recordingsDir: The directory the router records under.
-    /// - Returns: The profile to vend this sample's session from.
-    private func buildProfile(
-        container: MLXFoundationModelsContainer,
-        cacheDir: URL,
-        recordingsDir: URL
-    ) -> LanguageModelProfile {
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let router = Router(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-
-        func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(
-                slot: slot,
-                remainingBudgetBytes: 0,
-                chosen: CompactionEvalRealModel.ref,
-                considered: [],
-                contextTokens: CompactionEvalRealModel.context
-            )
-        }
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            DurableRecording(
-                root: recordingsDir,
-                sidecarWriter: SessionSidecarWriter(
-                    slot: slot,
-                    model: CompactionEvalRealModel.ref,
-                    context: noopResolution(slot).contextTokens,
-                    recordingLevel: .full,
-                    profile: nil,
-                    routerId: router.id
-                )
-            )
-        }
-        // `.standard` and `.flash` differ only in which slot they're stamped
-        // with — both share the same resident `container`, so a single
-        // helper builds either from its slot alone. Both therefore take the
-        // one gate set that container carries, as they would from a pool
-        // entry: two sets would let two generations run inside the one
-        // container at once.
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        func makeRoutedLLM(_ slot: ModelSlot) -> RoutedLLM {
-            RoutedLLM(
-                slot: slot,
-                chosen: CompactionEvalRealModel.ref,
-                footprintBytes: 0,
-                resolution: noopResolution(slot),
-                container: container,
-                routerId: router.id,
-                recorder: recorder,
-                durableRecording: durableRecording(slot),
-                gates: generationGates
-            )
-        }
-        let standard = makeRoutedLLM(.standard)
-        let flash = makeRoutedLLM(.flash)
-        let embedding = RoutedEmbedder(
-            slot: .embedding,
-            chosen: CompactionEvalRealModel.ref,
-            footprintBytes: 0,
-            resolution: noopResolution(.embedding),
-            container: UnusedEmbeddingContainer(),
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        )
-        return LanguageModelProfile(
-            definitionName: "compaction-continuity-eval",
-            standard: standard,
-            flash: flash,
-            embedding: embedding,
-            router: router,
-            residencyToken: .generate()
-        )
-    }
-
     /// Runs one sample's real subject work (task 4ce0a1k): opens a fresh
     /// session over the resident model vended with `prompt`/`budget`, drives
     /// every one of `steps` through it in order, then asks
@@ -300,7 +195,20 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
-        let profile = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        // `RealModelHarness.make` is the one real-profile build every
+        // real-model suite uses; this runner's own hand-built copy was folded
+        // onto it (task ^bh97dp7). The harness stamps its own
+        // `definitionName`, which replaced this runner's old
+        // "compaction-continuity-eval" literal: nothing reads the field — no
+        // eval assertion, and not the sidecar, which the harness writes with
+        // `profile: nil`.
+        let profile = RealModelHarness.make(
+            model: CompactionEvalRealModel.ref,
+            context: CompactionEvalRealModel.context,
+            container: container,
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
+        )
         let session = profile.standard.makeSession(
             instructions: instructions,
             budget: budget,
