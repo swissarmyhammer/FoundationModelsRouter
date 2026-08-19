@@ -114,7 +114,17 @@ private func makeSessionBackend(
 /// value whose actual weights are loaded once and cached by its own
 /// process-global cache, keyed by model id — building a session over it does
 /// not reload anything.
-struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
+///
+/// `package` rather than `internal`, and deliberately not `public`: the
+/// `FoundationModelsRouterRealModelSupport` target's `RealModelContainer`
+/// narrows every gated suite's loaded `any LoadedLLMContainer` to this
+/// concrete type, and its `CompactionFold` opens blank-slate summarizer
+/// sessions over it — a plain target cannot use `@testable import`, and
+/// `package` stops at this package's own boundary, so the library's public
+/// surface does not move (task ^cvsh3m9). The witnesses below are `package`
+/// for the same reason, and because a witness must be at least as accessible
+/// as the conforming type.
+package struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// The `LanguageModel` conformance wrapping this slot's resident MLX model.
     let model: MLXLanguageModel
 
@@ -144,14 +154,14 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// ``RecordingLanguageModel`` passthrough handle. `MLXLanguageModel` is a
     /// small `Sendable` value (see the type-level doc comment above), so
     /// exposing it here reloads nothing.
-    var languageModel: any FoundationModels.LanguageModel { model }
+    package var languageModel: any FoundationModels.LanguageModel { model }
 
     /// Manufactures a live session backend over ``model``.
     ///
     /// - Parameter instructions: The session's system instructions, or `nil`.
     /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
     ///   ``RoutedSession`` drives for its lifetime.
-    func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
+    package func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions, tools: [])
     }
 
@@ -164,7 +174,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     ///   - tools: The tools the model can call during this session.
     /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
     ///   ``RoutedSession`` drives for its lifetime.
-    func makeSession(instructions: String?, tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
+    package func makeSession(instructions: String?, tools: [any FoundationModels.Tool]) -> any LanguageModelSessionBackend {
         let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
         return MLXFoundationModelsSessionBackend(
             session: session, model: model, instructions: instructions, tools: tools, samplingMode: samplingMode)
@@ -179,7 +189,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     /// - Parameter transcript: The transcript to seed the new session from.
     /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
     ///   ``RoutedSession`` drives for its lifetime.
-    func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
+    package func makeSession(transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
         makeSession(transcript: transcript, tools: [])
     }
 
@@ -206,7 +216,7 @@ struct MLXFoundationModelsContainer: LoadedLLMContainer, Sendable {
     ///   - tools: The tools the model can call during this session.
     /// - Returns: A new ``MLXFoundationModelsSessionBackend`` a vended
     ///   ``RoutedSession`` drives for its lifetime.
-    func makeSession(
+    package func makeSession(
         transcript: FoundationModels.Transcript,
         tools: [any FoundationModels.Tool]
     ) -> any LanguageModelSessionBackend {

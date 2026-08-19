@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -166,25 +167,6 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 1
 struct RecordedTranscriptCompactionIntegrationTests {
     // MARK: - The recording
 
-    /// The directory under the test bundle's resources that holds the checked-in
-    /// recording.
-    ///
-    /// This directory plays the recording root, and the session sits directly
-    /// under it as `<sessionId>/{session.json,transcript.jsonl}` — the shape the
-    /// router writes for a session vended with a per-session `recordingRoot:`.
-    /// ``TranscriptTree/load(under:)`` requires that: it reads a session's id
-    /// from its own directory name and its parent from the directory it nests
-    /// under, so a root session must sit directly under the root it is given.
-    ///
-    /// Nothing here names the session id. ``recordedTranscript()`` reads it off
-    /// the loaded tree, so no ULID is written down in Swift and a re-recorded
-    /// fixture needs no edit in this file.
-    ///
-    /// Internal rather than private, because
-    /// ``RecordedFixtureRedactionTests`` scans the same directory's bytes and
-    /// the path must not be written down twice.
-    static let recordingResourcePath = "Fixtures/CompactionRecording"
-
     /// The model-assisted stage this suite folds with.
     ///
     /// ``Summarization/keepRecentTurns`` stays at its own default of 4, because
@@ -221,15 +203,23 @@ struct RecordedTranscriptCompactionIntegrationTests {
     /// This is the whole boot path the card asks for, and it is two public
     /// calls. Neither needs a `Router`, a model, or a session.
     ///
+    /// The fixture directory arrives through ``CompactionRecordingFixture``:
+    /// it plays the recording root, and the session sits directly under it as
+    /// `<sessionId>/{session.json,transcript.jsonl}` — the shape the router
+    /// writes for a session vended with a per-session `recordingRoot:`, and
+    /// the shape ``TranscriptTree/load(under:)`` requires. Nothing here names
+    /// the session id: this function reads it off the loaded tree, so no ULID
+    /// is written down in Swift and a re-recorded fixture needs no edit in
+    /// this file.
+    ///
     /// - Returns: The recorded session's whole conversation, and its id.
     /// - Throws: An expectation failure when the fixture is missing or holds no
     ///   session, and whatever ``TranscriptTree`` throws for a recording it
     ///   cannot read.
     private static func recordedTranscript() throws -> (transcript: Transcript, sessionId: ULID) {
         let recordingRoot = try #require(
-            Bundle.module.resourceURL?.appendingPathComponent(
-                recordingResourcePath, isDirectory: true),
-            "the test bundle vends no resource directory, so the recording fixture is unreachable"
+            CompactionRecordingFixture.directory,
+            "the support target's bundle vends no resource directory, so the recording fixture is unreachable"
         )
         let tree = try TranscriptTree.load(under: recordingRoot)
         let root = try #require(

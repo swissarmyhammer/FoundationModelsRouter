@@ -149,15 +149,14 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     ///
     /// ## Why this is not `RealModelHarness.make`
     ///
-    /// `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelHarness.swift`
-    /// is the same consolidation for the integration target, and this target
-    /// cannot call it, for the reason
-    /// ``CompactionEvalRealModelContainer`` states in full: the shared function
-    /// needs `@testable import FoundationModelsRouter` — ``LanguageModelProfile``'s
-    /// own initializer is internal — and `@testable` reaches only a LEAF test
-    /// target, which SwiftPM cannot share source between. Measured: hosting it
-    /// in `FoundationModelsRouterTestSupport` builds under
-    /// `swift build --build-tests` and breaks `swift build -c release`.
+    /// `Tests/FoundationModelsRouterRealModelSupport/RealModelHarness.swift`
+    /// is the same consolidation. This copy was written when the harness lived
+    /// inside the integration test target, where only `@testable import` could
+    /// reach the router's then-internal initializers and SwiftPM cannot share
+    /// source between two leaf test targets. Task ^cvsh3m9 widened those
+    /// initializers to `package` and moved the harness to a plain target, so
+    /// the constraint is gone; folding this runner onto the harness is its own
+    /// card.
     ///
     /// - Parameters:
     ///   - container: The model that is already loaded and resident.

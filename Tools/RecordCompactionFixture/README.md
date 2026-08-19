@@ -1,7 +1,7 @@
 # RecordCompactionFixture
 
 Records the checked-in compaction fixture again (task `^4bb3mjv`). The fixture
-lives at `Tests/FoundationModelsRouterIntegrationTests/Fixtures/CompactionRecording/`,
+lives at `Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/`,
 and its own `README.md` states what the recording is and why it is checked in.
 This tool is HOW to make a new one: the recipe is code here, not prose there.
 

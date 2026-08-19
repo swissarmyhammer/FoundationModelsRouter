@@ -10,7 +10,7 @@ import Tokenizers
 /// # RecordCompactionFixture: records the checked-in compaction fixture again
 ///
 /// The recording under
-/// `Tests/FoundationModelsRouterIntegrationTests/Fixtures/CompactionRecording/`
+/// `Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/`
 /// carries `RecordingSchemaVersion` 2. When a schema bump makes the router
 /// refuse it, somebody must record a new one — and the way to do that is this
 /// tool, not a paragraph (task `^4bb3mjv`). Run it with:
@@ -261,7 +261,7 @@ print(
         \(sessionDirectory.path)
     To replace the checked-in fixture:
       1. Delete the old session directory (NOT README.md) under
-         Tests/FoundationModelsRouterIntegrationTests/Fixtures/CompactionRecording/.
+         Tests/FoundationModelsRouterRealModelSupport/Fixtures/CompactionRecording/.
       2. Copy the directory above into Fixtures/CompactionRecording/.
       3. Run: swift test --filter 'RecordedTranscriptCompaction|RecordedFixtureRedaction'
     """)

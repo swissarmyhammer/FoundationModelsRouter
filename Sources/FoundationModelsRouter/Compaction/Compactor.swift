@@ -288,7 +288,7 @@ public enum Compactor {
     /// seed's foldable span in the SAME estimate a fold is judged by, and they
     /// state it from `FoundationModelsRouterEvalSupport`, a plain package target
     /// that cannot reach `internal` through `@testable`. The `String` overload
-    /// below stays `internal`: no package target measures a bare string.
+    /// below is `package` for the matching reason, stated on it.
     ///
     /// - Parameter transcript: The transcript to estimate.
     /// - Returns: The estimated token count.
@@ -305,9 +305,15 @@ public enum Compactor {
     /// (e.g. ``ToolOutputCapping``'s tool-output cap, task 1334fk3) is
     /// measured consistently with the transcript-level one.
     ///
+    /// `package`, like the transcript overload above and for the same reason:
+    /// the plain `FoundationModelsRouterRealModelSupport` target's
+    /// `CompactionFold` measures each summarizer answer with it, and a plain
+    /// target cannot use `@testable import` (task ^cvsh3m9). `package` stops
+    /// at this package's own boundary.
+    ///
     /// - Parameter text: The text to estimate.
     /// - Returns: The estimated token count.
-    static func estimatedTokenCount(of text: String) -> Int {
+    package static func estimatedTokenCount(of text: String) -> Int {
         estimatedTokenCount(bytes: text.utf8.count)
     }
 

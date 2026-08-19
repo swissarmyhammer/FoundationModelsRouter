@@ -96,10 +96,17 @@ let package = Package(
             // consume it, so it is excluded to keep the build warning-free.
             exclude: ["\(packageName).docc"]
         ),
+        // Depends on the RealModelSupport target below as well, because the
+        // hermetic proofs of that target's machinery — `RealModelHarnessTests`,
+        // `ScriptedTurnSizingTests`, `RecordedFixtureRedactionTests` — load no
+        // model and therefore live HERE, where every
+        // `swift test --skip IntegrationTests` run measures them (task
+        // ^cvsh3m9).
         .testTarget(
             name: "\(packageName)Tests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+                .target(name: "\(packageName)RealModelSupport"),
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests"
         ),
@@ -123,6 +130,45 @@ let package = Package(
             dependencies: [.target(name: packageName)],
             path: "Tests/\(packageName)TestSupport"
         ),
+        // Test-only support for the suites that drive a REAL model (task
+        // ^cvsh3m9): the load/profile harness (`RealModelContainer`,
+        // `RealModelHarness`), the model roster (`RealModels`), the fold
+        // wiring (`CompactionFold`), the round-trip script
+        // (`CompactionRoundTripFixture`) and the checked-in recording
+        // (`CompactionRecordingFixture`). A plain `.target` for the same
+        // reason `\(packageName)TestSupport` is one: the two real-model test
+        // targets below and the hermetic unit target all read these, SwiftPM
+        // cannot share source between test targets, and a `.testTarget` that
+        // another target depends on is compiled by `swift build -c release`,
+        // where `@testable import` cannot resolve. The router symbols this
+        // target needs beyond the public surface are `package`, which stops
+        // at this package's own boundary — so, like its two sibling support
+        // targets, it is deliberately not part of any `product` and nothing
+        // outside this package can import it. It links the Hub client +
+        // tokenizer products because `RealModelContainer` constructs a live
+        // `LiveModelLoader` through the `MLXHuggingFace` macros.
+        //
+        // `Fixtures` is the checked-in recording
+        // `RecordedTranscriptCompactionIntegrationTests` folds and
+        // `RecordedFixtureRedactionTests` scans (tasks ^pfdrppj, ^4bb3mjv).
+        // It lives here so both of those suites — one gated, one hermetic,
+        // in two different test targets — read ONE copy through
+        // `CompactionRecordingFixture`. `.copy` rather than `.process`,
+        // because the directory nesting IS the recording's structure —
+        // `TranscriptTree.load(under:)` reads a session's id from its own
+        // directory name and its parent from the directory it nests under,
+        // so a rule that flattened or renamed anything would make the
+        // fixture unreadable. `Fixtures/CompactionRecording/README.md`
+        // states the layout and points at `RecordCompactionFixture`, the
+        // tool that records the fixture again.
+        .target(
+            name: "\(packageName)RealModelSupport",
+            dependencies: [
+                .target(name: packageName)
+            ] + mlxProducts + hubProducts,
+            path: "Tests/\(packageName)RealModelSupport",
+            resources: [.copy("Fixtures")]
+        ),
         // The real-model suites (milestone 7): they download real models and run
         // them end to end. The TARGET is what selects them, and no suite inside
         // reads an environment variable — `swift test --filter
@@ -137,18 +183,9 @@ let package = Package(
             name: "\(packageName)IntegrationTests",
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
+                .target(name: "\(packageName)RealModelSupport"),
             ] + mlxProducts + hubProducts,
-            path: "Tests/\(packageName)IntegrationTests",
-            // The checked-in recording `RecordedTranscriptCompactionIntegrationTests`
-            // folds (task ^pfdrppj). `.copy` rather than `.process`, because the
-            // directory nesting IS the recording's structure —
-            // `TranscriptTree.load(under:)` reads a session's id from its own
-            // directory name and its parent from the directory it nests under,
-            // so a rule that flattened or renamed anything would make the
-            // fixture unreadable. `Fixtures/CompactionRecording/README.md`
-            // states the layout and points at `RecordCompactionFixture`, the
-            // tool that records the fixture again (task ^4bb3mjv).
-            resources: [.copy("Fixtures")]
+            path: "Tests/\(packageName)IntegrationTests"
         ),
         // Runnable demo (live twin of the offline `ExamplesTests` example): one
         // `Router.resolve` makes two local generation models co-resident and the

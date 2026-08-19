@@ -20,7 +20,14 @@
 /// correct and are only slower than one. What the set protects is the
 /// serialization the caller asked for, which the old default took away with no
 /// signal.
-struct ResidentModelGates: Sendable {
+///
+/// `package` rather than `internal`, and deliberately not `public`: the plain
+/// `FoundationModelsRouterRealModelSupport` target's `RealModelHarness` mints
+/// the one gate set its hand-built profile's two generation handles share, and
+/// a plain target cannot use `@testable import` (task ^cvsh3m9). `package`
+/// stops at this package's own boundary, so no consumer outside the package
+/// can mint a second set over an already-resident container.
+package struct ResidentModelGates: Sendable {
     /// The per-container generation gate, a fair FIFO ``AsyncSemaphore`` at
     /// value `1`.
     ///
@@ -49,7 +56,7 @@ struct ResidentModelGates: Sendable {
     ///
     /// - Parameter maxConcurrentForks: The in-flight fork ceiling
     ///   ``forkAdmission`` admits (the router's `maxConcurrentForks`).
-    init(maxConcurrentForks: Int) {
+    package init(maxConcurrentForks: Int) {
         generation = AsyncSemaphore(value: 1)
         forkAdmission = AsyncSemaphore(value: maxConcurrentForks)
     }

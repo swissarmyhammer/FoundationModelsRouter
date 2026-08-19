@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterRealModelSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon

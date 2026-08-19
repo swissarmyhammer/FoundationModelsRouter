@@ -1,4 +1,5 @@
 import FoundationModels
+import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import Testing
 

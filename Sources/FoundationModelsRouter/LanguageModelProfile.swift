@@ -152,16 +152,20 @@ public final class RoutedModel<Container: Sendable>: Sendable {
 
     /// Creates a routed model handle.
     ///
-    /// `internal`, and deliberately so. A handle is meaningful only over a
-    /// container the ``Router`` holds resident: the router owns the residency
-    /// refcount, the eviction, and the gates. A public initializer let a
-    /// consumer build a second handle over an already-resident container with a
-    /// second set of gates, and the two handles then ran two concurrent
+    /// `package`, and deliberately not `public`. A handle is meaningful only
+    /// over a container the ``Router`` holds resident: the router owns the
+    /// residency refcount, the eviction, and the gates. A public initializer
+    /// let a consumer build a second handle over an already-resident container
+    /// with a second set of gates, and the two handles then ran two concurrent
     /// generations over one container — the exact condition the gate exists to
     /// prevent — with no signal. ``Router/resolve(profile:reporting:)`` is the
     /// one way a consumer obtains a handle, and it always passes the container's
-    /// own gates. A suite reaches this initializer through `@testable import`
-    /// and states the gates it joins.
+    /// own gates. `package` rather than `internal` because the plain
+    /// `FoundationModelsRouterRealModelSupport` target's `RealModelHarness`
+    /// builds hand-made handles for the gated suites and cannot use
+    /// `@testable import` (task ^cvsh3m9); `package` stops at this package's
+    /// own boundary, so the consumer-facing guarantee above still holds. A
+    /// caller here states the gates it joins.
     ///
     /// - Parameters:
     ///   - slot: The slot this model fills.
@@ -181,7 +185,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///     so the caller states which set this handle joins rather than minting
     ///     a second one by omission. The embedding handle acquires neither gate
     ///     and takes its own container's set for storage symmetry.
-    init(
+    package init(
         slot: ModelSlot,
         chosen: ModelRef,
         footprintBytes: Int64,
@@ -265,13 +269,17 @@ public final class LanguageModelProfile: Sendable {
 
     /// Creates a resolved profile.
     ///
-    /// `internal`, for the reason ``RoutedModel``'s own initializer is: this
+    /// `package`, for the reason ``RoutedModel``'s own initializer is: this
     /// profile reports a residency the ``Router`` has to own. A hand-built
     /// profile carries a token no pool entry matches, so ``release()`` and
     /// `deinit` free nothing, and its three handles are whatever the caller
     /// passed rather than what the router holds resident.
     /// ``Router/resolve(profile:reporting:)`` is the one way a consumer obtains
-    /// a profile; a suite reaches this initializer through `@testable import`.
+    /// a profile. `package` rather than `internal` because the plain
+    /// `FoundationModelsRouterRealModelSupport` target's `RealModelHarness`
+    /// assembles the gated suites' hand-built profiles and cannot use
+    /// `@testable import` (task ^cvsh3m9); `package` stops at this package's
+    /// own boundary, so no consumer outside the package gains the call.
     ///
     /// - Parameters:
     ///   - definitionName: The source ``ProfileDefinition`` name.
@@ -281,7 +289,7 @@ public final class LanguageModelProfile: Sendable {
     ///   - router: The resolving router, which owns the residency slot and the
     ///     loader eviction runs through.
     ///   - residencyToken: The router-minted token identifying this residency.
-    init(
+    package init(
         definitionName: String,
         standard: RoutedLLM,
         flash: RoutedLLM,
