@@ -82,8 +82,24 @@ comments:
     - No test failed. No test was skipped. No FM_ROUTER_* env vars were used.
     - next: none. The suite is clean.
   timestamp: 2026-08-19T20:35:14.783391+00:00
-position_column: doing
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m0dw2142y72j64kb404bz6tj
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 07435b8) — 0 findings, 0 failed, 7 files reviewed. The engine's tool rules gave warnings only for the files this commit deleted; a tool cannot read a deleted file, and this is not a finding. All 4 prior findings are checked.
+    - next: none. The task moves to done.
+  timestamp: 2026-08-19T20:40:29.570902+00:00
+- actor: claude-code
+  id: 01m0dw35dbd1xfbhfv6jz5mckm
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — the four findings fixed: the half-move completed by deleting the nine stale files in the integration target, and the fold-target literal named `foldTargetShare`
+    - test: green — `swift build --build-tests -Xswiftc -warnings-as-errors` clean over every target; `Scripts/swift-test.sh --skip IntegrationTests`, 1018 + 75 tests passed
+    - commit: 07435b8 (iteration 1 landed as 2d2be00)
+    - review: clean — 0 findings; the dead-code rule that failed on the broken build ran clean; task moved to `done`
+  timestamp: 2026-08-19T20:41:06.731270+00:00
+position_column: done
+position_ordinal: ffc480
 title: Nine hermetic tests of the real-model target run only under the real-model selector
 ---
 Found while landing ^ryb01x7, which moved the real-model suites behind a target selector.

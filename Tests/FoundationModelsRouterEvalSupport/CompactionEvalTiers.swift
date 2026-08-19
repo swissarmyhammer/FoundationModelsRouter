@@ -105,6 +105,13 @@ let compactionEvalSubsetTimeLimitMinutes = 1
 /// container serial access, so twenty-four samples cost about twenty-four
 /// times one sample rather than less.
 ///
+/// The tier itself is measured, not only derived: the gated whole-dataset
+/// runs of 2026-08-19 against ``CompactionEvalRealModel`` measured wall
+/// clocks of 52.5, 52.4 and 53.6 seconds, each over all 24 seeds with none
+/// unreached (tasks ^k0d30s4, ^7fvthme). So the measured tier spends under
+/// half of this limit and sits well inside the 86.0-second bound above,
+/// which confirms the derivation from the tier's own end-to-end runs.
+///
 /// The 120 minutes this value stated before was derived from the 30B model's
 /// 271.0-second mean sample (task ^6ssbakk), a rate the small-model swap
 /// removed. `CompactionEvalTierBarTests` now holds this tier to the same
