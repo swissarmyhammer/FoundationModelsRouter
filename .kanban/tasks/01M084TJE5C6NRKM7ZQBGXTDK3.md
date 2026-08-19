@@ -420,8 +420,48 @@ comments:
 
     `^6ssbakk` — the tier no longer fits its 30-minute limit now that folds apply. `^fz49qds` closed on 1644.7 s for 7 of 7, but that timed 7 DISCARDED folds, so the number is stale. This run measured 6 of 7 in 1800 s and was cut off mid-fold. The card also carries the `_MTLCommandBuffer` assertion that aborts the process on time-limit cancellation; it fired after the report printed, so no measurement was lost this time.
   timestamp: 2026-08-18T21:43:42.070349+00:00
-position_column: doing
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01m0cyndf72qqxeyj6yrwaq6fj
+  text: |-
+    ### finish — closed on criteria 1 to 4, by the user's decision
+
+    The user closed this card on 2026-08-19, after the recommendation recorded above. Criterion 5 is NOT met and is not being marked met. This is a scope decision, and it is stated as one.
+
+    ## What this card's own defect was, and that it is fixed
+
+    The title names it: compaction wrote an empty summary against an always-reasoning model, because the summarizer budget had no room for the think block. The gated run at `3b433fb` measured `foldProducedNoSummary=0`, with all 6 measured seeds folding through the full stage list. That defect is gone, and the measurement says so rather than an argument saying so.
+
+    Criteria 1 to 4 are met.
+
+    ## What criterion 5 asked for, and where it goes
+
+    Criterion 5 asked for `factInSummary` on a large majority and `factRetention >= 0.9`. The run measured 4 of 6 and a mean of 0.333.
+
+    That number covered two different steps, which the later work on `^xscp198` separated:
+
+    - the SUMMARY carried the fact on 4 of 6 seeds — 0.667
+    - the ANSWER carried it on 2 of 6 — 0.333
+
+    The gap between those two is the resumed session refusing to answer from a summary that holds the fact. That is `^e814b60`, filed from this same run.
+
+    So criterion 5 moves, and it moves to three places rather than one:
+
+    - `^e814b60` — the answering fault, which is the larger half of the gap.
+    - `^xscp198` — the tier now asserts the two shares apart, against the same floor, so a future red run is attributable. `.greedy` is pinned, so a repeat run measures the code rather than the draw.
+    - `^6ssbakk` — the tier could not finish 7 of 7 inside its limit. The limit is now 42 minutes, derived from the dearest measured sample.
+
+    ## Why this is not a criterion quietly dropped
+
+    Criterion 5 asked whether a real model writes a good enough summary AND whether a resumed session will use it. No change to the summarizer budget — this card's subject — can settle either. Keeping the criterion here would have held a fixed defect open behind an unfinished research question, and would have made this card the place a reader looks for work that lives on three other cards.
+
+    The floor was NOT lowered to make anything green. It stays at 0.9 on both shares.
+
+    ## What is still unproven, stated plainly
+
+    No gated run has yet shown this tier ending on its own assertion with every fold applied. The last one was cut off at 6 of 7 seeds. Until a gated run happens, "the fold now applies" rests on that single partial run, and "the fold retains facts well enough" rests on nothing. `^6ssbakk` and `^xscp198` each carry that open box.
+  timestamp: 2026-08-19T12:06:47.527959+00:00
+position_column: done
+position_ordinal: ffbe80
 title: Compaction writes an empty summary against an always-reasoning model — the summarizer budget has no room for the think block
 ---
 Found by the gated real-model run of `FM_ROUTER_INTEGRATION_TESTS=1 swift test` against `aff8b1b`, recorded on `^z6xdyqn`.
