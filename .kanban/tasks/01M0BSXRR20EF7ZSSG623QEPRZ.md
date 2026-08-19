@@ -77,8 +77,24 @@ comments:
     - evidence: `swift build --build-tests -Xswiftc -warnings-as-errors` builds all targets clean, no warnings. `Scripts/swift-test.sh --skip IntegrationTests` — 1020 tests in 96 suites passed (1 known issue, the pre-existing BoundedWaitTests issue) plus 76 tests in 9 suites passed. No test failed. No test was skipped. No warning was found.
     - next: hand off to the next step in the pipeline.
   timestamp: 2026-08-19T22:17:31.699843+00:00
-position_column: doing
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m0e1thmz02y0f2xx76nxd0qz
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit eca92ea) — 0 findings, 5 file(s) reviewed, 2 excluded by `.reviewignore`. The prior reuse finding is checked. All acceptance criteria are checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-08-19T22:21:15.807959+00:00
+- actor: claude-code
+  id: 01m0e1vg4n4ases93szcqkgkmm
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — the reuse finding fixed: one canonical `ConcurrencyPeakObserver` in the shared support target with `enteredCount`, the duplicate actor deleted
+    - test: green — warnings-as-errors build clean over every target; `Scripts/swift-test.sh --skip IntegrationTests`, 1020 + 76 tests passed
+    - commit: eca92ea (iteration 1 landed as b05508d)
+    - review: clean — 0 findings over 5 files; task moved to `done`
+  timestamp: 2026-08-19T22:21:47.029180+00:00
+position_column: done
+position_ordinal: ffc780
 title: Two gated runs of the same eval code drove the samples two different ways, so the tier's dispatch shape is unmeasured
 ---
 Found while correcting `^9cw5g6n`. `^9cw5g6n` states that `Evaluations` drives this tier's samples concurrently. The raw trails say that is true of one run and false of another, and no code changed between them.
