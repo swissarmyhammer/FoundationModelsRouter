@@ -2,8 +2,11 @@ import Foundation
 
 @testable import FoundationModelsRouter
 
-/// What one summarizer call of a fold asked the model for, and what it
-/// answered.
+/// The ceiling one summarizer call of a fold ran under, and what it answered.
+///
+/// The ceiling is the only length the call carries. Nothing in the prompt states
+/// a length to the model — see ``Summarization`` — so a call gives the model a
+/// generation ceiling and reads back whatever it writes.
 ///
 /// Recorded because a discarded fold leaves no other trace of its summary.
 /// `Compactor.compact` throws such a fold away and reports the shortfall exit's
@@ -53,8 +56,8 @@ struct CompactionEvalSampleDiagnostic: Sendable {
     /// (``CompactionResult/stagesApplied``).
     let stagesApplied: [String]
 
-    /// Every summarizer call the fold made, in call order — what each asked the
-    /// model for and what the model answered.
+    /// Every summarizer call the fold made, in call order — the ceiling each ran
+    /// under and what the model answered.
     ///
     /// The whole list rather than a count, because a discarded fold's summary
     /// text survives nowhere else — see ``CompactionEvalSummarizerCall``.
@@ -258,11 +261,18 @@ enum CompactionEvalFactRetentionReport {
     /// ran under — ``Summarization/reasoningTokenHeadroom`` on top of the
     /// summary allowance — so it can run to tens of thousands of characters,
     /// and a table that printed one whole for every sample would bury the rest
-    /// of the run's evidence. `1000` is nearly twice the largest summary the
-    /// allowance itself buys (``Summarization/minimumSummaryTokens`` at
-    /// ``Compactor/charsPerTokenEstimate`` is 512 characters), so a summary
-    /// that stayed inside its allowance prints whole, and one that did not is
-    /// visibly cut with its real size stated on the line above.
+    /// of the run's evidence.
+    ///
+    /// The cut ``Summarization/summaryRetentionRatio`` sizes does not bound this
+    /// text, and it is meant not to. ``CompactionEvalRealSubjectRunner``'s
+    /// summarizer records the answer as the call returns it, before the stage
+    /// cuts anything, so a discarded fold is judged on what the model wrote.
+    ///
+    /// `1000` is nearly twice the largest summary the allowance itself buys
+    /// (``Summarization/minimumSummaryTokens`` at
+    /// ``Compactor/charsPerTokenEstimate`` is 512 characters), so an answer that
+    /// came back inside that size prints whole, and one that did not is visibly
+    /// cut with its real size stated on the line above.
     static let discardedSummaryPrefixCharacters = 1000
 
     /// What ``stanza(for:)`` appends to a discarded summary it cut short at

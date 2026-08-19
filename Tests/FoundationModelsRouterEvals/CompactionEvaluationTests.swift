@@ -159,22 +159,43 @@ let compactionEvalSummarizerCeiling =
 /// answer alone is what is left once ``Summarization/reasoningTokenHeadroom`` is
 /// taken off: the summary allowance.
 ///
-/// An answer filling that allowance is the largest a summarizer TOLD the
-/// allowance writes, and that qualifier is measured rather than assumed. The
-/// gated run of 2026-08-17 (task ^fm5ddk9) called every one of 7 seeds at a
+/// An answer that fills that allowance is the largest a WELL-BEHAVED summarizer
+/// writes. That qualifier carries the whole weight, because nothing states the
+/// allowance to the model. The prompt ``Summarization`` assembles names no
+/// length at all, and the gated run of 2026-08-17 (task ^fm5ddk9) measured what
+/// a real model does with that freedom: it called every one of 7 seeds at a
 /// ceiling of 4224 tokens against an allowance of 128, and every one answered
-/// with 374 to 698 real tokens — 2.9x to 5.5x the allowance, because nothing in
-/// the assembled prompt had ever named it. `Summarization` now states the
-/// allowance to the model in its own length directive, so this summarizer models
-/// a summarizer that honors the stated bound. That is the contract under test;
-/// `Compactor.compact`'s did-not-shrink guard is what still catches a summarizer
-/// that does not.
+/// with 374 to 698 real tokens — 2.9x to 5.5x the allowance. So this summarizer
+/// stands for the good case. The two bounds ``Summarization`` applies in code
+/// are what hold the bad one, and `Compactor.compact`'s did-not-shrink guard
+/// still catches what gets past both.
 ///
-/// It answers slightly OVER the stated bound on purpose: the directive states
-/// the allowance in characters (128 tokens at `Compactor.charsPerTokenEstimate`
-/// is 512), and this answers the allowance in REAL tokens at
-/// ``compactionEvalMeasuredBytesPerToken`` — about 616 bytes. So a seed that
-/// clears this gate clears a summary 20% larger than the directive asks for.
+/// Those two bounds are different numbers, and they do different jobs. This
+/// summarizer reads only the first.
+///
+/// - ``Summarization/summaryTokenRatio`` sizes the summary allowance. The stage
+///   adds ``Summarization/reasoningTokenHeadroom`` to it and hands the sum down
+///   as `maxTokens`. That is a ceiling on the GENERATION, in real tokens, and it
+///   covers the reasoning and the answer together.
+/// - ``Summarization/summaryRetentionRatio`` sizes the cut `Summarization.cut`
+///   applies to the answer the call came back with. That is a ceiling on the
+///   TEXT, in the UTF-8 content bytes `Compactor` measures. It holds for every
+///   answer but one: a cut that would leave no text at all hands the answer back
+///   whole rather than erase the span, and the did-not-shrink guard judges it.
+///
+/// This summarizer answers a little over the allowance converted at
+/// `Compactor.charsPerTokenEstimate` on purpose. 128 tokens at that flat rate of
+/// 4.0 bytes is 512 bytes. This answers the allowance in REAL tokens at
+/// ``compactionEvalMeasuredBytesPerToken`` instead — about 616 bytes. So a seed
+/// that clears this gate clears a summary 20% larger than the flat estimate
+/// predicts.
+///
+/// The cut does not bind on that answer for any seed, so this gate measures a
+/// seed against the summary as written and never against one the stage had
+/// already trimmed. A 616-byte answer is cut only when the call's own content
+/// estimates 191 tokens or fewer, and
+/// `CompactionEvalSeedSizingTests/everySeedsFoldableSpanOutweighsARealSummary`
+/// already requires every seed's span to estimate 231 tokens or more.
 private struct RealisticSummaryLengthSummarizer: CompactionSummarizer {
     /// The headroom the stage under test adds on top of the summary allowance.
     ///
@@ -184,7 +205,9 @@ private struct RealisticSummaryLengthSummarizer: CompactionSummarizer {
 
     /// One sentence in the register a compaction summary is written in, repeated
     /// to reach a required size. ASCII throughout, so one character is one byte
-    /// and the length asked for is the length produced.
+    /// and the size ``summarize(_:maxTokens:)`` computes below is the size it
+    /// produces. Nobody asks the model for that size — see the type's own
+    /// documentation.
     private static let sentence =
         "The conversation above stated a constraint the next turn has to keep, so this summary records it in the order it was given. "
 
@@ -301,9 +324,9 @@ struct CompactionEvaluationHermeticTests {
         // resumed session answered from the original turns and the dataset
         // measured nothing about compaction at all.
         //
-        // So the summarizer here answers at the length the stated summary
-        // allowance buys — see `RealisticSummaryLengthSummarizer` for what the
-        // real model does when the allowance is never stated to it, which is
+        // So the summarizer here answers at the length the summary allowance
+        // buys — see `RealisticSummaryLengthSummarizer` for what a real model
+        // writes instead, since nothing states that allowance to it, which is
         // the defect `^fm5ddk9` measured — and this is the assertion that fails
         // the moment a seed
         // stops folding — under a plain `swift test`, rather than 400 seconds
@@ -1132,16 +1155,31 @@ struct CompactionEvalSeedSizingTests {
     /// wider still — the tightest seed sits at 2.07 as the fixtures stand.
     private static let summaryShrinkClearance = 1.5
 
-    /// The largest summary a summarizer honoring its stated allowance writes for
-    /// a span this size, in the estimated tokens ``Compactor`` measures a
-    /// transcript in.
+    /// The largest summary a WELL-BEHAVED summarizer writes for a span this
+    /// size — one that keeps to the allowance its own call earned — in the
+    /// estimated tokens ``Compactor`` measures a transcript in.
     ///
-    /// "Honoring its stated allowance" is the whole qualifier, and it is
-    /// measured. Before `Summarization` stated the allowance in its own length
-    /// directive, the gated run of 2026-08-17 measured summaries of 450 to 840
-    /// estimated tokens against this bound of 154 — task ^fm5ddk9. The bound
-    /// below is what the fold ASKS for; `Compactor.compact`'s did-not-shrink
-    /// guard is what happens when a model does not deliver it.
+    /// "Well-behaved" is the whole qualifier, and it is measured. Nothing states
+    /// the allowance to the model: the prompt `Summarization` assembles names no
+    /// length at all. So the gated run of 2026-08-17 measured summaries of 450 to
+    /// 840 estimated tokens against this bound of 154 — task ^fm5ddk9.
+    ///
+    /// The bound below is therefore what a summarizer WRITES, and not what the
+    /// fold asks for, because the fold asks for nothing. `Summarization` bounds a
+    /// call in code instead, twice over, and neither bound is this number.
+    /// ``Summarization/summaryTokenRatio`` sizes the output-token ceiling the
+    /// call generates under, which covers the reasoning and the answer together
+    /// and so bounds neither one alone. ``Summarization/summaryRetentionRatio``
+    /// sizes the cut applied to the answer itself, in UTF-8 content bytes, and
+    /// that one really does bound a stored summary — except for the answer whose
+    /// cut would leave no text, which `Summarization` hands back whole rather
+    /// than erase the span.
+    ///
+    /// The cut does not bind on any seed, so it never lowers this bound here. It
+    /// binds only on a call whose content estimates 191 tokens or fewer, and
+    /// ``summaryShrinkClearance`` holds every seed's span at 231 or more. A
+    /// summary past this bound therefore reaches `Compactor.compact`'s
+    /// did-not-shrink guard whole, and that guard is what discards the fold.
     ///
     /// Every seed's span earns the FLOOR of the summary allowance,
     /// ``Summarization/minimumSummaryTokens``, because the other branch —
