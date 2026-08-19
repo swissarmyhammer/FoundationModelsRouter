@@ -84,8 +84,27 @@ comments:
     - No env vars set. FoundationModelsRouterIntegrationTests target was not run.
     - next: none. Suite is clean.
   timestamp: 2026-08-19T17:33:51.822436+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0dhhjsdwdwt9djszbx8mg2w
+  text: |-
+    ### review — clean (card held in review)
+    - evidence: `review sha HEAD~1..HEAD` (commit c93c4ff). The engine found 0 new findings (7 attempted, 0 confirmed, 0 refuted). The prior finding at `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift:511` is corrected and checked.
+    - hold: the card does not move to `done`. The first acceptance criterion is open. Nine suites in `FoundationModelsRouterIntegrationTests` stay above the 2-minute budget. They wait for a sanctioned recording run, as the card records.
+    - next: do the sanctioned recording run, make the nine slow suites obey the budget, then review again.
+  timestamp: 2026-08-19T17:36:44.845287+00:00
+- actor: claude-code
+  id: 01m0dhjw41zxh033ce02ezsvnv
+  text: |-
+    ### finish iteration 2 — stuck
+    - implement: changed — the magic-number finding fixed and swept: 4 named constants over 13 sites in `CompactionContinuityDataset.swift`
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 1008 + 75 tests passed; warnings-as-errors build clean
+    - commit: c93c4ff (iteration 1 landed as efd3b58)
+    - review: clean — 0 findings; the card is HELD in `review`
+    - blocker: the first acceptance criterion covers the nine 30B suites in `FoundationModelsRouterIntegrationTests` that stay over the 2-minute budget. They need recordings, and only a person can sanction the 30B recording run that produces them.
+    - next: a person sanctions the recording run (`swift run RecordCompactionFixture` and the harness runs the card names), then the nine suites move onto recordings and the card re-reviews
+  timestamp: 2026-08-19T17:37:27.169296+00:00
+position_column: review
+position_ordinal: '8580'
 title: Every integration test must run in under 2 minutes — boot from a recording, or make the test smarter
 ---
 From the user, 2026-08-19:

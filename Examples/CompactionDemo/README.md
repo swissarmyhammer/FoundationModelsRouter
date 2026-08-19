@@ -1,25 +1,24 @@
 # CompactionDemo
 
-Runnable demo of the compaction loop end to end (compaction_plan.md §4), with
-real tool traffic (task 4ce0a1k): open a `RoutedSession` vended with sample
-tools (`SampleTools.swift`) and a tiny auto-compaction `TokenBudget` (task
-8213x39), drive scripted turns — some plain fixture reads, some explicit tool
-calls — while `contextFill` climbs, let the budget fold the transcript
-automatically at the 0.80 trigger (no caller-side `session.compact()`
-polling), keep talking to the same session, and restore it from disk to show
-nothing was lost.
+Runnable demo of one automatic compaction, narrated. It shows compaction and
+only compaction, in three steps a person reads off the terminal:
 
-## Tools
+1. Scripted turns read the project documents under `Fixtures/` into a
+   `RoutedSession` whose `TokenBudget` puts the compaction trigger at a
+   synthetic, low fraction of the working context. After each turn the demo
+   prints measured usage against the trigger, and once usage crosses it, the
+   demo says why the next turn will fold.
+2. That next turn folds the transcript before it generates — no caller ever
+   invokes `session.compact()` — and the fold's checkpoint event
+   (`SessionEvent.compaction`) prints the moment it arrives.
+3. The compacted summary the fold wrote — the text the model now reads in
+   place of the folded turns — prints last.
 
-- `generate_document` (`DocumentGeneratorTool`) manufactures configurably
-  large filler text on demand — additional context pressure delivered as a
-  real tool call/tool-output pair instead of a plain response.
-- `record_fact` / `recall_fact` (`RecordFactTool`/`RecallFactTool`) are a
-  matched pair backed by one shared `FactStore`. The demo has the model
-  record a fact before the fold and recall it afterward, proving continuity
-  of a different kind than plain conversational memory: the model must still
-  remember *that* a fact was stored under a given key, and remain able to
-  call a tool to retrieve it, after its transcript has been folded.
+The session model is small (`mlx-community/Llama-3.2-1B-Instruct-4bit`, the
+same one the compaction smoke tests drive), the summary is written by the
+profile's `flash` slot (`mlx-community/GLM-4-9B-0414-4bit` — auto-compaction
+prefers `flash` as its summarizer tier), and decoding is pinned to `.greedy`,
+so the run finishes in well under two minutes and repeats exactly.
 
 ## Run
 
@@ -27,6 +26,5 @@ nothing was lost.
 swift run CompactionDemo
 ```
 
-This downloads real model weights on first run and needs Apple silicon +
-network access — the same constraints as the real-model test targets
-(`swift test --filter IntegrationTests`).
+The first run downloads real model weights and needs Apple silicon plus
+network access — the same constraints as the integration test packages.
