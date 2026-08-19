@@ -22,8 +22,24 @@ comments:
     - evidence: 0 source files changed; the card's two criteria were checked in the description. Verified: `Scripts/swift-test.sh --filter CompactionEvalFullDataset` passed (1 test, 52.4 s against the 120 s limit, 24 of 24 seeds); `Scripts/swift-test.sh --skip IntegrationTests` passed (1008 tests in 93 suites + 75 tests in 8 suites, 0 failures, 1 known issue that a `withKnownIssue` test expects); `swift build --build-tests -Xswiftc -warnings-as-errors` completed with no compiler warning.
     - next: the card is ready for /review. Commit efd3b58 (task ^k0d30s4) already put one dearest-rate rule under the two tier limits, and `CompactionEvalTierBarTests` holds the two tiers to it.
   timestamp: 2026-08-19T19:33:14.293115+00:00
-position_column: doing
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m0drcppsvsss1gfewynd2wnx
+  text: |-
+    ### review — clean
+    - evidence: This pass examined the source, not the review engine, because the card has no new code. Claim 1 holds: `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift` derives the two limits with one function, `compactionEvalDerivedTimeLimitMinutes(forSamples:)`. The function applies the dearest measured small-model sample (3.5 s) to each sample and adds one model load (2.0 s). The subset limit is 1 minute (0.44 min derived) and the whole-dataset limit is 2 minutes (1.43 min derived). Claim 2 holds: `CompactionEvalTierBarTests.tierLimits` contains the subset pair and the whole-dataset pair, and two tests hold each limit from two sides (the limit is at or above its derived bound, and the limit is below the next whole minute above that bound). A run of `Scripts/swift-test.sh --filter CompactionEvalTierBarTests` passed with 5 tests in 1 suite. The run evidence on the card agrees: the whole-dataset tier passed in 52.4 s against its 120 s limit, with 24 of 24 seeds. Commit 864a643 contains only the card's `.kanban/` files. The two acceptance criteria show checked. Zero new findings.
+    - next: none — the card is done.
+  timestamp: 2026-08-19T19:36:25.049414+00:00
+- actor: claude-code
+  id: 01m0drdnp44ffxapphctz9gp62
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: no-change — commit efd3b58 (task ^k0d30s4) repaired this before the card started; verified against source and one real run (52.4 s of 120 s, 24 of 24 seeds)
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 1008 + 75 tests passed; warnings-as-errors build clean
+    - commit: 864a643 (card state only)
+    - review: clean — source verification confirmed one derivation sizes both tier limits, both held two-sided by `CompactionEvalTierBarTests`; task moved to `done`
+  timestamp: 2026-08-19T19:36:56.772131+00:00
+position_column: done
+position_ordinal: ffc380
 title: The whole-dataset time limit rests on the mean of six samples, where the subset's now rests on the dearest — 24 samples at that rate is 140.8 minutes against a 120-minute limit
 ---
 Found while implementing `^6ssbakk`, which re-derived `compactionEvalSubsetTimeLimitMinutes`.

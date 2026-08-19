@@ -55,6 +55,17 @@ comments:
     - evidence: 1 file added — Tests/FoundationModelsRouterIntegrationTests/CancelledGenerationTeardownIntegrationTests.swift (green: `swift test --filter CancelledGenerationTeardownIntegrationTests` — 1 test passed in 6.0 s). Verification: `Scripts/swift-test.sh --skip IntegrationTests` — 1008 tests in 93 suites passed (1 pre-existing known issue) plus 75 tests in 8 suites passed; `swift build --build-tests -Xswiftc -warnings-as-errors` — clean. The abort was reproduced with a throwaway probe (removed): time limit fired at 60 s mid-generation on the 1B, the report printed, and the process died on a signal; crash report shows a thread still inside vendored mlx (`CompilerCache::find`) after the test ended.
     - next: this card is stuck for this repository. The fault is the vendored fork's (mlx-swift-lm / mlx-swift, triggered by Apple `LanguageModelSession` returning a cancelled `respond` before the GPU drain completes). File the fix on the fork's own board with the 70-second reproduction recipe from the previous comment. Criterion 2 is done; criterion 1 needs the fork fix.
   timestamp: 2026-08-19T19:26:02.660058+00:00
+- actor: claude-code
+  id: 01m0dqxf32nx2hbc0xg59py3vq
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: stuck — the abort is reproduced in 70 s with a 1B time-limit probe, and the fault is located in the vendored mlx fork: the fork's executor leaves GPU work on the shared per-stream command buffer when a cancellation unwinds, and any two threads on one stream then hit the card's Metal assertion. Nothing in this repository's `Sources/` calls MLX directly, so the fix cannot land here.
+    - test: green — the new `CancelledGenerationTeardownIntegrationTests` passes in 6.0 s; the hermetic suite 1008 + 75 passed; warnings-as-errors build clean
+    - commit: 1555ac8
+    - review: not run — the card is stuck on a cross-repo fix
+    - blocker: per the no-cross-repo rule, the fix belongs on the mlx-swift-lm fork's own board. This card carries the 70-second reproduction recipe and the crash-report evidence.
+    - next: a person files the fix on the fork's board and pins this repo to the fixed revision, then this card re-verifies with the probe recipe
+  timestamp: 2026-08-19T19:28:05.730383+00:00
 position_column: doing
 position_ordinal: '8380'
 title: A gated eval cancelled by its time limit aborts the process on a Metal assertion — signal 6 from `_MTLCommandBuffer addCompletedHandler:`
