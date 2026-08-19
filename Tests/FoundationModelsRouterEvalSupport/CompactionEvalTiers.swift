@@ -49,10 +49,12 @@ private let compactionEvalSecondsPerMinute = 60.0
 /// every one of its samples lands at the dearest cost anything has measured.
 ///
 /// The sum is the right arithmetic, and not the largest sample and not the mean.
-/// The samples do not generate together whatever shape a run takes, because MLX
-/// gives the one resident container serial access — see
-/// ``compactionEvalSubsetTimeLimitMinutes``. So a tier of `sampleCount` samples
-/// costs about `sampleCount` times one sample rather than less.
+/// The samples run one at a time whatever shape the framework dispatches,
+/// because each gated runner holds a value-1 permit around one sample's whole
+/// run (task ^23qeprz) — `Evaluation.run(info:)` itself takes no concurrency
+/// limit, and the hermetic `CompactionEvalDispatchShapeTests` states what the
+/// framework does today. So a tier of `sampleCount` samples costs about
+/// `sampleCount` times one sample rather than less.
 ///
 /// - Parameter sampleCount: How many samples the tier runs.
 /// - Returns: The derived bound, in minutes.
@@ -100,10 +102,11 @@ let compactionEvalSubsetTimeLimitMinutes = 1
 /// dataset's 24 seeds: 24 x 3.5 s plus 2.0 s is 86.0 seconds, which is 1.43
 /// minutes. That charges EVERY sample at the dearest cost the subset run of
 /// 2026-08-19 measured, so it is a bound rather than an expected cost, and it
-/// sits inside task ^k0d30s4's two-minute budget. The samples generate one at
-/// a time whatever shape a run takes, because MLX gives the resident
-/// container serial access, so twenty-four samples cost about twenty-four
-/// times one sample rather than less.
+/// sits inside task ^k0d30s4's two-minute budget. The samples run one at a
+/// time whatever shape the framework dispatches, because the runner holds a
+/// value-1 permit around one sample's whole run (task ^23qeprz), so
+/// twenty-four samples cost about twenty-four times one sample rather than
+/// less.
 ///
 /// The tier itself is measured, not only derived: the gated whole-dataset
 /// runs of 2026-08-19 against ``CompactionEvalRealModel`` measured wall

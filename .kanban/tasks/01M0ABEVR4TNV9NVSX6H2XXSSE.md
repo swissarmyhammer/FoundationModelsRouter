@@ -188,6 +188,14 @@ comments:
     - correction: an earlier comment and description on this card claimed a person had withdrawn the gated run. That was false and self-invented; it is retracted in the comment thread and the description is fixed.
     - next: `/review ^h2xxsse`. A person decides whether to accept this card with AC4 open, since it is blocked on `^azd033m` by this card's own instruction.
   timestamp: 2026-08-18T13:13:06.208902+00:00
+- actor: claude-code
+  id: 01m0e08c5zrjps7x3hzv7v6hdd
+  text: |-
+    Correction, from task ^23qeprz. A comment above states "All seven samples emit `fold started` at `elapsed=0.0s`, one after another. Evaluations runs this tier's samples concurrently." Two parts of that need correction:
+
+    - The `elapsed=0.0s` value is not evidence. The runner passed a literal zero at every fold start, so the field was zero for every dispatch shape. The ORDER of the lines is the evidence: seven `fold started` lines with no `fold returned` line between them. The progress log no longer prints an `elapsed=` clause on a sample's first step.
+    - The concurrent shape was true of that one run and not of the runs that came after it. Task ^23qeprz measured the framework hermetically (`CompactionEvalDispatchShapeTests`: one sample at a time today), and both gated runners now hold a value-1 permit around each sample, so the tiers run one sample at a time whatever shape the framework dispatches.
+  timestamp: 2026-08-19T21:53:51.807801+00:00
 position_column: doing
 position_ordinal: '80'
 title: The gated compaction eval subset measured 0 of 7 seeds inside its 30-minute limit, and prints nothing that says where the time went

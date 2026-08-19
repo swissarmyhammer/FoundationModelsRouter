@@ -88,6 +88,25 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// lets its progress lines state where in the tier it stood.
     private var startedSampleCount = 0
 
+    /// Grants one sample at a time the whole of
+    /// ``run(entries:prompt:budget:question:)``, so the tier's dispatch shape
+    /// is a decision this runner holds rather than the framework's default.
+    ///
+    /// `Evaluation.run(info:)` takes no concurrency limit, and task ^23qeprz
+    /// holds two gated trails of identical dispatch code: one drove all seven
+    /// samples together, and one drove them one at a time. Every per-sample
+    /// figure the tier limits rest on (`CompactionEvalTiers.swift`) is read
+    /// off one sample's own progress lines, and those figures are clean only
+    /// when no other sample runs beside them. The hermetic
+    /// `CompactionEvalDispatchShapeTests` states what the framework itself
+    /// does today; this permit is what the tier's shape rests on either way.
+    ///
+    /// This runner is an actor, and an actor method interleaves other calls at
+    /// every `await`, so the actor alone cannot hold the shape. The permit is
+    /// taken before the sample's label and clock exist, so a wait here is
+    /// charged to no sample's own trail.
+    private let samplePermit = AsyncSemaphore(value: 1)
+
     /// Creates a runner over one tier's seeds.
     ///
     /// - Parameter seeds: The tier's seeds, in the order the tier states them.
@@ -192,6 +211,11 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         budget: TokenBudget,
         question: String
     ) async throws -> (answer: String, tokensBefore: Int, tokensAfter: Int, stagesApplied: [String]) {
+        // One sample at a time, whatever shape the framework dispatches —
+        // see ``samplePermit``. Taken before the label and the clock, so a
+        // wait here is charged to no sample's own trail.
+        await samplePermit.wait()
+        defer { samplePermit.signal() }
         let container = try await self.container()
         let label = makeSampleLabel(forQuestion: question)
         let sampleStartedAt = Date()

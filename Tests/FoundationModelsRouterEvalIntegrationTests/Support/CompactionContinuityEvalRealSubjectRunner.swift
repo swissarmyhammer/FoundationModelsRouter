@@ -46,6 +46,18 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// stood.
     private var startedSampleCount = 0
 
+    /// Grants one sample at a time the whole of
+    /// ``run(steps:finalInstruction:prompt:budget:)``, so the tier's dispatch
+    /// shape is a decision this runner holds rather than the framework's
+    /// default — the same permit, for the same reason, as
+    /// ``CompactionEvalRealSubjectRunner``'s own `samplePermit`: task ^23qeprz
+    /// recorded the framework dispatching the same eval code two different
+    /// ways across two runs, and every per-step figure in this runner's trail
+    /// is clean only when no other sample runs beside it. The hermetic
+    /// `CompactionEvalDispatchShapeTests` states what the framework itself
+    /// does today.
+    private let samplePermit = AsyncSemaphore(value: 1)
+
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
     /// `.embedding` slot every ``LanguageModelProfile`` built here must still
     /// carry — never exercised, only present to satisfy the type.
@@ -272,6 +284,11 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         finalAnswer: String, foldCount: Int, tokensBefore: Int, tokensAfter: Int, recordedEntryCount: Int,
         modelName: String
     ) {
+        // One sample at a time, whatever shape the framework dispatches —
+        // see ``samplePermit``. Taken before the label and the clock, so a
+        // wait here is charged to no sample's own trail.
+        await samplePermit.wait()
+        defer { samplePermit.signal() }
         let container = try await self.container()
         let label = makeSampleLabel(forFinalInstruction: finalInstruction)
         let cacheDir = FileManager.default.temporaryDirectory
