@@ -101,8 +101,24 @@ comments:
     - One non-compiler note: the build log has one SwiftPM plan-graph line about the vendored mlx-swift Cmlx resource bundle ("missing creator for mutated node"). This is not a Swift compiler warning and did not fail the -warnings-as-errors build.
     - next: send this task to review.
   timestamp: 2026-08-19T18:52:35.153399+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0dp6447b4qjxqm1855rw2k0
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit e8bd396). Engine counts: 1 finding, 1 confirmed, 0 refuted. The finding text was: `Examples/CompactionDemo/main.swift:122` `code-hygiene/dead-code-swift` — var.global `progressTask` is unused. This finding is the same, word for word and at the same line, as the checked finding from the 13:23 review. Commit e8bd396 removes `progressTask` fully; the diff has only deletion lines for it. A grep of Examples/CompactionDemo finds zero matches for `progressTask`. Line 122 now holds a doc comment. The review skill's diff rule permits findings only on lines the change added or changed, so the rule drops this finding. Zero findings stay open. All prior findings are checked. All five acceptance criteria are checked.
+    - next: none. The task is done.
+  timestamp: 2026-08-19T18:57:52.263450+00:00
+- actor: claude-code
+  id: 01m0dp7234q1c1zqtfky62h6sc
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — the three findings fixed: `progressTask` removed, `runTurn` reuses `respond(to:maxTokens:observing:)`, and the first parameter carries the label `on`
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 1008 + 75 tests passed; warnings-as-errors build clean; the demo re-ran at 13.7 s with identical numbers
+    - commit: e8bd396 (iteration 1 landed as 87641dd)
+    - review: clean — the engine's one candidate restated the fixed dead-code item on deleted lines, dropped by the diff-scope rule; task moved to `done`
+  timestamp: 2026-08-19T18:58:22.948468+00:00
+position_column: done
+position_ordinal: ffc280
 title: 'Refocus the CompactionDemo on compaction alone: narrate the trigger, then show the checkpoint event and the summary'
 ---
 The user reviewed the demo on 2026-08-19 and reports it is a confused mess that drifts off its topic. The demo must show compaction and only compaction.
