@@ -199,11 +199,18 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         CompactionEvalProgressLog.emit(
             CompactionEvalProgressLog.makeStepStartedLine(.fold, sample: label, elapsedSeconds: nil))
         let summarizer = BlankSlateSummarizer(container: container)
+        // The summarization cuts `reasoningTokenHeadroom` to the shared eval
+        // bound, because the resident model writes no `<think>` block and the
+        // default headroom of 4096 is free generation room for it — see
+        // `compactionEvalReasoningTokenHeadroom` for the measured runaway
+        // folds behind the cut. Every other summarization value stays at its
+        // production default, so the fold under test is the production fold.
         let (folded, result) = try await Compactor.compact(
             Transcript(entries: entries),
             prompt: prompt,
             budget: budget,
-            summarizer: summarizer
+            summarizer: summarizer,
+            summarization: Summarization(reasoningTokenHeadroom: compactionEvalReasoningTokenHeadroom)
         )
         let foldReturnedAt = Date()
         let summarizerCalls = await summarizer.calls

@@ -115,6 +115,10 @@ comments:
     - blocker: criterion 1 needs a sanctioned gated run, and the card records that a gated run is ruled out for now. Only a person can sanction that run.
     - next: a person runs the gated subset, then closes criterion 1 on its evidence
   timestamp: 2026-08-19T14:17:00.615116+00:00
+- actor: claude-code
+  id: 01m0dfy7jq57k56yq82x7dpdyw
+  text: Task ^k0d30s4 sets a two-minute budget for each integration and eval test. This budget replaces the direction of this card to derive and increase time limits for the 30B model. The eval tiers now run the small model (mlx-community/Llama-3.2-1B-Instruct-4bit). The derived limits stay measured, but the measurements are now 3.5 s for the dearest sample and 2.0 s for the model load (run of 2026-08-19). Do not increase a limit above two minutes again. Make the test faster instead.
+  timestamp: 2026-08-19T17:08:42.199495+00:00
 position_column: review
 position_ordinal: '8380'
 title: The gated compaction subset no longer fits its 30-minute limit now that every fold applies — 6 of 7 seeds in 1800 s

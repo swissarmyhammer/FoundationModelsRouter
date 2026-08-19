@@ -1,3 +1,4 @@
+import Foundation
 import FoundationModelsRouterTestSupport
 import Testing
 
@@ -8,13 +9,15 @@ import Testing
 ///
 /// ## Why a permit, and not one shared container
 ///
-/// Every gated eval suite resolves the same ~15-20GB
-/// ``CompactionEvalRealModel/ref``, each through its own runner
-/// (``CompactionEvalRealSubjectRunner`` and
+/// Every gated eval suite resolves the same ``CompactionEvalRealModel/ref``,
+/// each through its own runner (``CompactionEvalRealSubjectRunner`` and
 /// ``CompactionContinuityEvalRealSubjectRunner``), and each caching its own
 /// container. Distinct `@Suite` types run concurrently by default in Swift
 /// Testing, so before this gate both containers could be resident at once —
-/// two copies of the same 27B model in one process.
+/// two copies of one model in one process, and two suites generating through
+/// them at once. The model was the ~15-20GB 30B when this gate was built;
+/// the double-residency and eviction arguments hold for the small model just
+/// the same.
 ///
 /// Three suites declare one, and the everyday command steps the whole-dataset
 /// fact-retention tier aside (`--skip CompactionEvalFullDataset`), so two
@@ -28,8 +31,8 @@ import Testing
 ///   ``GatedEvalResidencyTrait`` evicts the runner's own container as its suite
 ///   ends, and a container two suites share belongs to neither: the first suite
 ///   to end would evict the model out from under the second, and a container
-///   nobody owns is never evicted at all, so ~15-20GB stays resident for the
-///   whole process.
+///   nobody owns is never evicted at all, so the whole model stays resident
+///   for the whole process.
 ///
 ///   Decoding used to be the reason stated here, and it no longer separates the
 ///   two. `samplingMode` is stored *on* the container (`LiveModelLoader` builds
@@ -79,7 +82,7 @@ import Testing
 /// run whose selectors matched nothing.
 ///
 /// One selector is this target's alone. The whole-dataset fact-retention tier
-/// measures a superset of the subset tier's seeds under a two-hour limit, so an
+/// measures a superset of the subset tier's seeds, so an
 /// everyday real-model run steps it aside with
 /// `--skip CompactionEvalFullDataset`, and a run that wants it names it with
 /// `swift test --filter CompactionEvalFullDataset`.
@@ -99,22 +102,23 @@ enum GatedEvalSerialGate {
     static let shared = AsyncSemaphore(value: 1)
 }
 
-/// The wall-clock ceiling a gated eval suite's `@Test` runs under when the
-/// suite has measured no ceiling of its own.
+/// The wall-clock ceiling a gated eval suite's `@Test` runs under.
 ///
-/// Matches `CompactionRoundTripIntegrationTests`, the gated integration suite
-/// that loads the same ``CompactionEvalRealModel/ref`` into the `.standard`
-/// slot and drives multi-turn compaction through it. Swift Testing measures a
-/// time limit in whole minutes, and applies a suite's limit to each `@Test`
-/// inside it rather than to the suite as a whole, so the time a suite spends
-/// waiting on ``GatedEvalSerialGate/shared`` is not charged against it.
+/// Two minutes is task ^k0d30s4's budget for every integration test, stated
+/// as the limit so a test past the budget FAILS rather than merely being
+/// slow. Swift Testing measures a time limit in whole minutes, and applies a
+/// suite's limit to each `@Test` inside it rather than to the suite as a
+/// whole, so the time a suite spends waiting on ``GatedEvalSerialGate/shared``
+/// is not charged against it.
 ///
-/// `CompactionContinuityEvaluationTests` runs under this value. The two
-/// compaction fact-retention tiers do not: each measured a ceiling for the
-/// number of samples it really runs, and each states that measurement beside its
-/// own constant (`compactionEvalSubsetTimeLimitMinutes` and
-/// `compactionEvalFullDatasetTimeLimitMinutes`, task ^fz49qds).
-let gatedEvalSuiteTimeLimitMinutes = 20
+/// `CompactionContinuityEvaluationIntegrationTests` runs under this value.
+/// The two compaction fact-retention tiers state the same budget through
+/// their own measured constants (`compactionEvalSubsetTimeLimitMinutes` and
+/// `compactionEvalFullDatasetTimeLimitMinutes`), which
+/// `CompactionEvalTierBarTests` holds against the measured per-sample costs.
+/// The 20 minutes this value stated before belonged to the 30B model the eval
+/// tiers no longer drive — see ``CompactionEvalRealModel``.
+let gatedEvalSuiteTimeLimitMinutes = 2
 
 /// A gated eval's real-model runner, as ``GatedEvalResidencyTrait`` drives it.
 protocol GatedEvalRealModelRunner: Sendable {
@@ -178,6 +182,20 @@ struct GatedEvalResidencyTrait: SuiteTrait, TestScoping {
     ) async throws {
         _ = MetalLibraryTestBootstrap.ensureColocatedMetallib
         try await GatedEvalSerialGate.shared.withPermit {
+            // The suite's whole wall clock, measured inside the permit so a
+            // wait on another suite is not charged, and printed however the
+            // run ended. This is the recorded measurement task ^k0d30s4 asks
+            // every integration test to print for itself: `.evaluates(...)`
+            // runs the whole evaluation ahead of the `@Test` body, so a
+            // clock started in the body would measure nothing, and this
+            // trait's scope is the one place that encloses the whole run.
+            let startedAt = Date()
+            defer {
+                let seconds = Date().timeIntervalSince(startedAt)
+                print(
+                    "[gatedEvalSuite] suite=\(test.displayName ?? test.name) "
+                        + "wallClockSeconds=\(String(format: "%.1f", seconds))")
+            }
             let outcome: Result<Void, any Error>
             do {
                 try await function()

@@ -1226,74 +1226,106 @@ struct CompactionEvalTierBarTests {
     /// How many samples the opt-in whole-dataset tier runs.
     private static let fullDatasetSampleCount = compactionEvalSeeds.count
 
-    /// How many of the whole dataset's seeds must retain the fact for its mean
-    /// to clear ``compactionEvalFactRetentionFloor`` — 22, because 22 of 24 is
-    /// 0.917 and 21 of 24 is 0.875.
-    private static let fullDatasetRequiredSamples = 22
+    /// The two floors the gated assertions apply — the summary side and the
+    /// answer side — so every property below is held for each floor a tier
+    /// really uses.
+    private static let checkedFloors = [
+        compactionEvalSummaryFactRetentionFloor,
+        compactionEvalAnswerFactRetentionFloor,
+    ]
 
     /// The tier sizes the required-count property below is held over: every size
     /// from a single sample up to the whole dataset, so the property covers the
     /// two tiers this eval really runs and every size between them.
     private static let checkedSampleCounts = 1...compactionEvalSeeds.count
 
-    @Test("the subset's time limit clears the bound its own measured samples derive")
-    func subsetTimeLimitClearsItsDerivedBound() {
-        let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: Self.subsetSampleCount)
-        #expect(
-            Double(compactionEvalSubsetTimeLimitMinutes) >= derived,
-            """
-            the subset tier holds \(Self.subsetSampleCount) seeds, which derive \(derived) minutes, \
-            against a limit of \(compactionEvalSubsetTimeLimitMinutes)
-            """
-        )
+    @Test("each tier's time limit clears the bound its own measured samples derive")
+    func eachTierTimeLimitClearsItsDerivedBound() {
+        for (limit, sampleCount) in Self.tierLimits {
+            let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: sampleCount)
+            #expect(
+                Double(limit) >= derived,
+                """
+                a tier of \(sampleCount) seeds derives \(derived) minutes, \
+                against a limit of \(limit)
+                """
+            )
+        }
     }
 
-    @Test("the subset's time limit is the next whole minute above that bound, so it states a measurement")
-    func subsetTimeLimitIsTheNextWholeMinuteAboveItsBound() {
+    @Test("each tier's time limit is the next whole minute above that bound, so it states a measurement")
+    func eachTierTimeLimitIsTheNextWholeMinuteAboveItsBound() {
         // The other half of the same property. A limit far above the derivation
         // passes the test above and states nothing, which is the defect ^6ssbakk
         // records against the 30 minutes this value replaced: a number nobody
-        // can read a measurement out of.
-        let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: Self.subsetSampleCount)
-        #expect(
-            Double(compactionEvalSubsetTimeLimitMinutes) < derived + 1,
-            """
-            the subset tier derives \(derived) minutes and states \(compactionEvalSubsetTimeLimitMinutes), \
-            which is more than the next whole minute above it
-            """
-        )
+        // can read a measurement out of. One minute is the smallest limit Swift
+        // Testing accepts, so a derivation under one minute states a limit of
+        // one.
+        for (limit, sampleCount) in Self.tierLimits {
+            let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: sampleCount)
+            #expect(
+                Double(limit) < max(derived, 1) + 1,
+                """
+                a tier of \(sampleCount) seeds derives \(derived) minutes and states \(limit), \
+                which is more than the next whole minute above it
+                """
+            )
+        }
     }
 
-    @Test("the floor needs every seed of the subset, and 22 of the whole dataset")
+    /// Each gated tier's stated limit beside its own sample count, so the two
+    /// time-limit properties above cover both tiers with one body. The small
+    /// model's measured rate is what lets both rest on one dearest-sample
+    /// derivation; the 30B rate could not (task ^6ssbakk).
+    private static let tierLimits = [
+        (compactionEvalSubsetTimeLimitMinutes, subsetSampleCount),
+        (compactionEvalFullDatasetTimeLimitMinutes, fullDatasetSampleCount),
+    ]
+
+    @Test("the floors need 5 and 4 of the subset's seeds, and 16 and 12 of the whole dataset's")
     func eachTiersFloorIsTheSampleCountItReallyNeeds() {
-        // `FactRetention` scores one bit per sample, so a tier of n samples can
-        // only produce the means k/n. A 7-seed tier held to 0.9 passes at 7 of 7
-        // and at no other count, because 6 of 7 is 0.857.
+        // The metric scores one bit per sample, so a tier of n samples can only
+        // produce the means k/n. Each floor's own doc comment derives these
+        // counts from the measured baselines; this holds the derivation.
         #expect(
-            compactionEvalFactRetentionRequiredSamples(of: Self.subsetSampleCount) == Self.subsetSampleCount,
-            "the subset holds \(Self.subsetSampleCount) seeds and can lose none of them")
+            compactionEvalFactRetentionRequiredSamples(
+                of: Self.subsetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 5,
+            "the subset holds \(Self.subsetSampleCount) seeds against the summary floor")
         #expect(
-            compactionEvalFactRetentionRequiredSamples(of: Self.fullDatasetSampleCount)
-                == Self.fullDatasetRequiredSamples,
-            "the whole dataset holds \(Self.fullDatasetSampleCount) seeds")
+            compactionEvalFactRetentionRequiredSamples(
+                of: Self.subsetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 4,
+            "the subset holds \(Self.subsetSampleCount) seeds against the answer floor")
+        #expect(
+            compactionEvalFactRetentionRequiredSamples(
+                of: Self.fullDatasetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 16,
+            "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the summary floor")
+        #expect(
+            compactionEvalFactRetentionRequiredSamples(
+                of: Self.fullDatasetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 12,
+            "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the answer floor")
     }
 
     @Test("the required count is the smallest count that clears the floor, at every tier size")
     func requiredCountIsTheSmallestCountThatClearsTheFloor() {
-        for sampleCount in Self.checkedSampleCounts {
-            let required = compactionEvalFactRetentionRequiredSamples(of: sampleCount)
-            #expect(
-                Double(required) / Double(sampleCount) >= compactionEvalFactRetentionFloor,
-                "a tier of \(sampleCount) samples needs \(required), which does not clear the floor")
-            #expect(
-                Double(required - 1) / Double(sampleCount) < compactionEvalFactRetentionFloor,
-                "a tier of \(sampleCount) samples needs \(required), but \(required - 1) already clears the floor")
+        for floor in Self.checkedFloors {
+            for sampleCount in Self.checkedSampleCounts {
+                let required = compactionEvalFactRetentionRequiredSamples(of: sampleCount, floor: floor)
+                #expect(
+                    Double(required) / Double(sampleCount) >= floor,
+                    "a tier of \(sampleCount) samples needs \(required), which does not clear \(floor)")
+                #expect(
+                    Double(required - 1) / Double(sampleCount) < floor,
+                    "a tier of \(sampleCount) samples needs \(required), but \(required - 1) already clears \(floor)"
+                )
+            }
         }
     }
 
     @Test("a tier of no samples needs no sample, so the arithmetic never divides by zero")
     func tierOfNoSamplesNeedsNoSample() {
-        #expect(compactionEvalFactRetentionRequiredSamples(of: 0) == 0)
+        for floor in Self.checkedFloors {
+            #expect(compactionEvalFactRetentionRequiredSamples(of: 0, floor: floor) == 0)
+        }
     }
 }
 

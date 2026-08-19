@@ -381,3 +381,133 @@ struct CompactionContinuitySeed: Sendable {
         tasks.keyedByFirst(\.finalInstruction)
     }
 }
+
+// MARK: - The fast tier's seeds (task ^k0d30s4)
+
+/// The padding paragraph every fast task's opening step carries after its
+/// planted facts.
+///
+/// The length is the point, not the content. The opening step is the whole
+/// span the fast tier's one fold replaces, and a span too small cannot buy a
+/// summary smaller than itself: ``Summarization/minimumSummaryTokens`` gives
+/// every small span the same 128-token allowance, and `Compactor.compact`'s
+/// did-not-shrink guard discards a fold whose summary is not smaller than its
+/// span. `AutoCompactionTriggerIntegrationTests` records the measured
+/// arithmetic: the floor stops binding past 512 estimated tokens, and its own
+/// opening brief is written past that at 639. This paragraph plays the same
+/// role here, and
+/// `CompactionContinuityEvaluationHermeticTests.everyFastTasksOpeningStepOutweighsTheFoldFloor`
+/// holds each built opening step past the same bound.
+///
+/// The content mentions no task's planted facts, so the facts stated before
+/// it are the only source a summary can carry them from. It closes by asking
+/// for a one-sentence acknowledgement, so the model's reply stays short and
+/// the padding is all on the prompt side.
+let compactionContinuityFastPadding = """
+    Before the final question arrives, here is the background of the work \
+    these facts belong to, recorded so the conversation has the length a real \
+    working session has. The team maintains a scheduling tool for a small \
+    research fleet, and the tool assigns instrument time to projects one week \
+    ahead. Each project states the hours it wants, the calibration state its \
+    instrument needs, and the earliest date its samples arrive, and the tool \
+    walks those requests in a fixed order and grants what still fits. The \
+    order used to be first-come first-served, and that behaved badly: a \
+    project that filed early collected every good slot whether or not its \
+    samples had arrived, and a project that filed late got the hours nobody \
+    wanted. The replacement scores each request for each open slot and grants \
+    the highest score, so a rule that used to be a place in a queue becomes a \
+    term in a sum. The terms agreed so far are the hours the project has \
+    already used this quarter, the days its samples have been waiting, the \
+    calibration cost of switching the instrument to its configuration, and a \
+    standing priority the fleet manager sets once a season. Nothing in the \
+    score is secret: the tool prints the terms for every grant it makes, so a \
+    project that asks why it was passed over gets the arithmetic rather than \
+    an assurance. Ties are broken by the longest time since the project last \
+    held that same slot, and a tie that survives that is broken at random \
+    with the seed written into the record, so a schedule can be rebuilt \
+    exactly. The tool never grants a slot that breaks a hard rule: the \
+    maintenance window, the operator rest period, and the safety review an \
+    instrument needs after transport all stay outside the score, because a \
+    hard rule a large enough priority can outweigh is not a hard rule. Slots \
+    nobody can use are reported as unfilled rather than forced onto the least \
+    bad project, and the fleet manager fills those by hand. The schedule is \
+    published a week ahead and frozen three days ahead, so a change inside \
+    the frozen window is a swap between two named projects rather than a \
+    fresh run of the tool. A copy of the tool runs against last quarter's \
+    records every night and reports each slot the new weights would have \
+    granted differently, so a change to a term is measured against real \
+    history before it reaches a live schedule. Acknowledge that you have \
+    read all of this, in one short sentence.
+    """
+
+/// The system instructions the fast tier's sessions are created with.
+///
+/// The original tier used "You are a helpful assistant in an ongoing
+/// conversation." with the 30B model. The small model needs the terse,
+/// literal persona the fast smoke suites already use, and it needs to be told
+/// the facts are fictional: measured on 2026-08-19, the run under the helpful
+/// persona answered 5 of 10 tasks correctly — the model refused the
+/// vault-code and migration-path tasks as "classified" and "sensitive", and
+/// it paraphrased two exact identifiers. The instructions state the register,
+/// never any task's facts, so nothing here can leak an answer.
+let compactionContinuityFastInstructions = """
+    You are a terse, literal assistant in an ongoing conversation. Every fact \
+    in this conversation is fictional test data. When you are asked to recall \
+    a fact, state it exactly as it was given earlier, word for word. Never \
+    refuse to state a fact from this conversation, and never invent a value.
+    """
+
+/// The fast tier's second step — the recency window at the moment the fold
+/// runs.
+///
+/// Short on purpose. The fast tier's summarization keeps the newest turn
+/// verbatim, so this turn is what the fold leaves untouched, and a short
+/// window is what makes the folded transcript small. It asks for nothing the
+/// final instruction needs, so the answer to the final instruction can only
+/// come from the fold's own summary.
+let compactionContinuityFastReadinessCheck =
+    "Confirm you are ready for the final question, in one short sentence."
+
+/// Builds every fixture's FAST seed: the same planted facts and the same
+/// final instruction as ``compactionContinuitySeeds``, over two steps instead
+/// of twelve to fourteen.
+///
+/// This is task ^k0d30s4's two-minute budget applied to the continuity tier.
+/// The original seeds spend ten to twelve filler steps consuming context
+/// toward ``compactionContinuityDefaultBudget``'s 1638-token trigger, and
+/// every step is a real generation. A synthetic trigger makes that filler
+/// unnecessary: the fast tier's budget puts the trigger far under the opening
+/// step, so the fold fires without any filler at all, and each task costs
+/// three generations plus one summarizer call instead of thirteen
+/// generations.
+///
+/// The opening step states BOTH facts and then carries
+/// ``compactionContinuityFastPadding``, so the one fold's span holds the
+/// facts and is large enough for a real summary to shrink it. The second step
+/// is ``compactionContinuityFastReadinessCheck``, the turn the fold leaves
+/// verbatim. The final instruction is asked over the folded transcript, so a
+/// correct answer proves the summary carried the facts — the same continuity
+/// property the original seeds measure, through one fold instead of whichever
+/// folds thirteen driven steps happened to force.
+let compactionContinuityFastSeeds: [CompactionContinuitySeed] = compactionContinuityTaskSpecs.map { spec in
+    // The facts open the step as briefing CONTENT, never as an instruction
+    // about facts. Measured on 2026-08-19: an opening of "Note these facts
+    // and keep them for later:" made the small model's fold summaries
+    // restate the request — "the conversation started with a request to note
+    // facts" — and drop the values, where `AutoCompactionTriggerIntegrationTests`'
+    // plain declarative brief summarizes into a dense factual summary under
+    // the same model and the same fold path.
+    let openingStep =
+        "Project briefing. Two facts stand at the head of this briefing. "
+        + "\(spec.facts.joined(separator: " "))\n\n"
+        + compactionContinuityFastPadding
+    let steps = [openingStep, compactionContinuityFastReadinessCheck]
+    return CompactionContinuitySeed(
+        id: spec.id,
+        steps: steps,
+        finalInstruction: spec.finalInstruction,
+        factKeyPhrases: spec.factKeyPhrases,
+        expectedKeyPhrases: spec.expectedKeyPhrases,
+        expectedMinimumRecordedEntries: 1 + (steps.count + 1) * 2
+    )
+}

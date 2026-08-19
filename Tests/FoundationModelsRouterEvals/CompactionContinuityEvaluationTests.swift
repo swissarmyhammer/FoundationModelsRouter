@@ -54,6 +54,71 @@ struct CompactionContinuityEvaluationHermeticTests {
         }
     }
 
+    @Test("every FAST task's opening step outweighs the fold floor and the fold target")
+    func everyFastTasksOpeningStepOutweighsTheFoldFloor() {
+        // The fast tier's one fold replaces the opening turn, and two sizes
+        // decide whether that fold really happens (task ^k0d30s4):
+        //
+        // - `Compactor.compact`'s entry guard needs the transcript to estimate
+        //   past `targetTokens`, and the opening step's prompt alone is the
+        //   conservative bound for that — the live transcript also carries the
+        //   readiness turn, every reply, and the instructions header.
+        // - The did-not-shrink guard discards a fold whose summary is not
+        //   smaller than its span. `AutoCompactionTriggerIntegrationTests`
+        //   records the measured arithmetic: the 128-token summary floor stops
+        //   binding past 512 estimated tokens, and its own opening brief is
+        //   written past that at 639. 560 keeps the same margin over 512.
+        let foldFloorTokens = 560
+        let targetTokens = compactionContinuityFastBudget.targetTokens
+        for seed in compactionContinuityFastSeeds {
+            let openingTokens = Compactor.estimatedTokenCount(of: seed.steps[0])
+            #expect(
+                openingTokens >= foldFloorTokens,
+                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, under the fold floor's \(foldFloorTokens)"
+            )
+            #expect(
+                openingTokens > targetTokens,
+                "task \(seed.id)'s opening step estimates \(openingTokens) tokens, not past the fold target's \(targetTokens)"
+            )
+        }
+    }
+
+    @Test("every FAST task's opening step crosses the synthetic trigger on its own, under a conservative token conversion")
+    func everyFastTasksOpeningStepCrossesTheSyntheticTrigger() {
+        // The trigger compares MEASURED tokens, and this test can only
+        // estimate. Converting the estimate at the LARGER measured
+        // bytes-per-token rate under-states the real token count — see
+        // `compactionEvalMeasuredBytesPerToken` — so an opening step that
+        // crosses the trigger here crosses it live with margin.
+        let triggerTokens = compactionContinuityFastBudget.triggerTokens
+        for seed in compactionContinuityFastSeeds {
+            let conservativeRealTokens =
+                Double(seed.steps[0].utf8.count) / compactionEvalMeasuredBytesPerToken
+            #expect(
+                conservativeRealTokens > Double(triggerTokens),
+                "task \(seed.id)'s opening step converts to \(conservativeRealTokens) tokens, under the trigger's \(triggerTokens)"
+            )
+        }
+    }
+
+    @Test("every FAST task holds fewer turns than TurnTruncation's window, so only the model-assisted stage can fold it")
+    func everyFastTaskHoldsFewerTurnsThanTheTruncationWindow() {
+        // The structural guarantee behind
+        // `compactionContinuityFastTargetShareOfContext`: with fewer turns
+        // than the deterministic window, `TurnTruncation` drops nothing, so
+        // the pipeline always falls through to `Summarization` — the stage
+        // whose summary the fast tier measures. A turn count against a window
+        // needs no size arithmetic, which is what makes this guard exact.
+        let truncationWindow = TurnTruncation().keepRecentTurns
+        for seed in compactionContinuityFastSeeds {
+            let turnCount = seed.steps.count + 1
+            #expect(
+                turnCount < truncationWindow,
+                "task \(seed.id) drives \(turnCount) turns, not under TurnTruncation's window of \(truncationWindow)"
+            )
+        }
+    }
+
     @Test("subject(from:) wires up against a fake model with no real inference")
     func subjectWiresUpAgainstFakeModel() async throws {
         // Safe: this closure runs exactly once, synchronously within the

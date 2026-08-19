@@ -46,6 +46,10 @@ comments:
 
     **Not yet measured:** what a complete continuity run costs. This run never finished one. The figure above is a lower bound from a single sample.
   timestamp: 2026-08-19T13:13:05.982163+00:00
+- actor: claude-code
+  id: 01m0dfy8gy1qc22e6bvt82ddz6
+  text: Task ^k0d30s4 sets a two-minute budget for each integration and eval test. This budget replaces the direction to raise or keep long limits for the real-model suites. A test that cannot finish in two minutes must become smarter or boot from a recording. It must not get a larger limit.
+  timestamp: 2026-08-19T17:08:43.166295+00:00
 position_column: todo
 position_ordinal: '9080'
 title: The 20-minute limit on the continuity eval tier is an analogy, not a measurement

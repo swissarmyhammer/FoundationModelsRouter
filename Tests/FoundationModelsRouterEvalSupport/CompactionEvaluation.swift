@@ -59,7 +59,8 @@ enum CompactionEvaluationError: Error {
     /// A sample's `expected.seedID` did not match any seed this evaluation
     /// was constructed with — unreachable in practice, since
     /// ``CompactionEvaluation/dataset`` always stamps a `seedID` it also
-    /// registered in ``CompactionEvaluation/init(prompt:budget:seeds:runSubject:)``.
+    /// registered in
+    /// ``CompactionEvaluation/init(prompt:budget:seeds:includesJudgedDimensions:runSubject:)``.
     case unknownSeed(String)
 
     /// A sample carried no `expected` value at all — unreachable in practice,
@@ -156,6 +157,22 @@ struct CompactionEvaluation: Evaluation {
     /// (its `Transcript.Entry` values) back up from a sample's `seedID`.
     private let seedsByID: [String: CompactionEvalSeed]
 
+    /// Whether ``evaluators`` builds the `ModelJudgeEvaluator` scoring
+    /// ``CompactionEvalMetric/faithfulness`` and
+    /// ``CompactionEvalMetric/continuability`` beside the mechanical
+    /// evaluators.
+    ///
+    /// The judge drives Apple's `SystemLanguageModel` once per sample per
+    /// dimension, and nothing asserts the judged means — they are reported
+    /// only. The gated tiers turn the judge OFF for task ^k0d30s4's
+    /// two-minute budget: the gated combined run of 2026-08-19 spent about
+    /// 2.7 seconds per sample on judging against about 2.1 on the subject
+    /// itself, which is what held the whole-dataset tier at 120.7 seconds
+    /// against its 120-second limit. A gated run therefore measures LESS than
+    /// a judged run — the two judged quality dimensions are not computed —
+    /// and the gated suites' own doc comments say so.
+    let includesJudgedDimensions: Bool
+
     /// Creates a compaction evaluation.
     ///
     /// - Parameters:
@@ -170,11 +187,15 @@ struct CompactionEvaluation: Evaluation {
     ///     comment).
     ///   - seeds: The seed transcripts to draw samples from. Defaults to
     ///     ``compactionEvalSeeds`` (every hand-written fixture).
+    ///   - includesJudgedDimensions: Whether ``evaluators`` builds the
+    ///     `ModelJudgeEvaluator` beside the mechanical evaluators — see
+    ///     ``includesJudgedDimensions``. Defaults to `true`.
     ///   - runSubject: Runs one sample's subject work — see ``runSubject``.
     init(
         prompt: CompactionPrompt = .default,
         budget: TokenBudget = compactionEvalDefaultBudget,
         seeds: [CompactionEvalSeed] = compactionEvalSeeds,
+        includesJudgedDimensions: Bool = true,
         runSubject: @escaping @Sendable (
             _ entries: [Transcript.Entry],
             _ prompt: CompactionPrompt,
@@ -185,6 +206,7 @@ struct CompactionEvaluation: Evaluation {
         self.prompt = prompt
         self.budget = budget
         self.seedsByID = Dictionary(uniqueKeysWithValues: seeds.map { ($0.id, $0) })
+        self.includesJudgedDimensions = includesJudgedDimensions
         self.runSubject = runSubject
     }
 
@@ -253,7 +275,8 @@ struct CompactionEvaluation: Evaluation {
 
     /// The evaluators this evaluation registers: mechanical `FactRetention`
     /// and `UnderTarget` metrics computed directly from each sample/subject
-    /// pair, plus a `ModelJudgeEvaluator` scoring the
+    /// pair, plus — when ``includesJudgedDimensions`` — a
+    /// `ModelJudgeEvaluator` scoring the
     /// ``CompactionEvalMetric/faithfulness`` and
     /// ``CompactionEvalMetric/continuability`` quality dimensions.
     var evaluators: Evaluators {
@@ -288,21 +311,25 @@ struct CompactionEvaluation: Evaluation {
         // `FoundationModelsRouterEvals` (they
         // call `dataset`/`subject(from:)` directly, never `evaluators`/`run()`),
         // so building it here carries no hermeticity risk.
-        ModelJudgeEvaluator<Sample>(
-            dimensions: [CompactionEvalMetric.faithfulness, CompactionEvalMetric.continuability]
-        )
+        if includesJudgedDimensions {
+            ModelJudgeEvaluator<Sample>(
+                dimensions: [CompactionEvalMetric.faithfulness, CompactionEvalMetric.continuability]
+            )
+        }
     }
 
-    /// Registers all four metrics — `FactRetention`, `UnderTarget`,
-    /// `Faithfulness`, and `Continuability` — for mean aggregation, as the
-    /// `Evaluation` protocol requires.
+    /// Registers the mechanical metrics — `FactRetention` and `UnderTarget` —
+    /// for mean aggregation, plus `Faithfulness` and `Continuability` when
+    /// ``includesJudgedDimensions`` scores them, as the `Evaluation` protocol
+    /// requires.
     ///
-    /// - Parameter aggregator: The aggregator to register the four metrics
-    ///   with.
+    /// - Parameter aggregator: The aggregator to register the metrics with.
     func aggregateMetrics(using aggregator: inout MetricsAggregator) {
         aggregator.computeMean(of: CompactionEvalMetric.factRetention)
         aggregator.computeMean(of: CompactionEvalMetric.underTarget)
-        aggregator.computeMean(of: CompactionEvalMetric.faithfulness.metric)
-        aggregator.computeMean(of: CompactionEvalMetric.continuability.metric)
+        if includesJudgedDimensions {
+            aggregator.computeMean(of: CompactionEvalMetric.faithfulness.metric)
+            aggregator.computeMean(of: CompactionEvalMetric.continuability.metric)
+        }
     }
 }

@@ -105,8 +105,24 @@ comments:
     - No FM_ROUTER_* env vars set. No swift format run.
     - next: none. Build is clean.
   timestamp: 2026-08-19T16:00:42.453132+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0dcdes6y03hh7g4h539gxv2
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 90492c9) — 0 findings, 0 confirmed, 2 refuted; 10 files reviewed, 4 kanban files excluded by .reviewignore
+    - next: none. The task is complete and moved to done.
+  timestamp: 2026-08-19T16:07:06.790163+00:00
+- actor: claude-code
+  id: 01m0dcdxnxew25f82d5any2dbv
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — the `RecordCompactionFixture` executable target, the `RecordingRedactionScan` with 8 hermetic tests, the fast `RecordedFixtureRedactionTests` integration check, and the rewritten fixture README
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 1008 + 72 tests passed, 0 failures; `RecordedFixtureRedactionTests` passed in 0.12 s; warnings-as-errors build clean
+    - commit: 90492c9
+    - review: clean — `review sha HEAD~1..HEAD`, 0 findings over 10 files; task moved to `done`
+  timestamp: 2026-08-19T16:07:22.045302+00:00
+position_column: done
+position_ordinal: ffc180
 title: Give the checked-in compaction recording a regeneration tool, not a prose recipe
 ---
 Discovered while doing `^pfdrppj`.

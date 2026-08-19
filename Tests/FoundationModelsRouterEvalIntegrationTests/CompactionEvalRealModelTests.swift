@@ -27,12 +27,20 @@ private let compactionEvalFullDatasetRunner = CompactionEvalRealSubjectRunner(se
 /// Builds a tier's evaluation: the runner's own seeds folded with the
 /// router's default compaction prompt against a budget whose target is small
 /// enough to force the model-assisted `Summarization` stage (see
-/// ``CompactionEvaluation/init(prompt:budget:seeds:runSubject:)``'s own doc
-/// comment).
+/// ``CompactionEvaluation/init(prompt:budget:seeds:includesJudgedDimensions:runSubject:)``'s
+/// own doc comment).
 ///
 /// The seed set comes from the runner rather than from a second argument, so
 /// one tier can never evaluate one set of seeds while its runner numbers its
 /// progress lines and reads its unreached list against another.
+///
+/// `includesJudgedDimensions` is `false`: the gated tiers no longer compute
+/// the judged `Faithfulness`/`Continuability` means — they measure LESS than
+/// a judged run. No assertion ever read those means, and the judge's
+/// `SystemLanguageModel` calls cost about 2.7 seconds per sample (measured
+/// 2026-08-19), which alone held the whole-dataset tier over task ^k0d30s4's
+/// two-minute budget. Construct a `CompactionEvaluation` with the default
+/// `includesJudgedDimensions: true` to score the judged dimensions again.
 ///
 /// - Parameter runner: The runner whose resident model folds its seeds and
 ///   answers their questions.
@@ -40,7 +48,8 @@ private let compactionEvalFullDatasetRunner = CompactionEvalRealSubjectRunner(se
 private func makeCompactionEvalRealEvaluation(
     driving runner: CompactionEvalRealSubjectRunner
 ) -> CompactionEvaluation {
-    CompactionEvaluation(seeds: runner.seeds) { entries, prompt, budget, question in
+    CompactionEvaluation(seeds: runner.seeds, includesJudgedDimensions: false) {
+        entries, prompt, budget, question in
         try await runner.run(entries: entries, prompt: prompt, budget: budget, question: question)
     }
 }
@@ -68,16 +77,20 @@ private let compactionEvalFullDatasetEvaluation = makeCompactionEvalRealEvaluati
 /// of clock. The defect was in the message, and this states what was applied.
 ///
 /// - Parameters:
+///   - floor: The floor the assertion applied —
+///     ``compactionEvalSummaryFactRetentionFloor`` or
+///     ``compactionEvalAnswerFactRetentionFloor``, because the two sides
+///     state different measured baselines.
 ///   - measured: How many samples the run recorded.
 ///   - total: How many seeds the tier holds.
 /// - Returns: The sentence, which names the tier's own bar as well when the run
 ///   recorded fewer samples than the tier holds.
-private func compactionEvalFactRetentionBar(measured: Int, of total: Int) -> String {
-    let required = compactionEvalFactRetentionRequiredSamples(of: measured)
-    let applied = "a floor of \(compactionEvalFactRetentionFloor)"
+private func compactionEvalFactRetentionBar(floor: Double, measured: Int, of total: Int) -> String {
+    let required = compactionEvalFactRetentionRequiredSamples(of: measured, floor: floor)
+    let applied = "a floor of \(floor)"
         + " over the \(measured) samples this run measured needs \(required) of them"
     guard measured < total else { return applied }
-    let whole = compactionEvalFactRetentionRequiredSamples(of: total)
+    let whole = compactionEvalFactRetentionRequiredSamples(of: total, floor: floor)
     return applied
         + ", and the run stopped short of the tier's \(total) seeds, which need \(whole)"
 }
@@ -90,12 +103,13 @@ private func compactionEvalFactRetentionBar(measured: Int, of total: Int) -> Str
 ///
 /// Two assertions rather than one, because the tier spans two steps. The FOLD
 /// has to write a summary carrying the planted fact, and the resumed session has
-/// then to ANSWER with it. Both are held to
-/// ``compactionEvalFactRetentionFloor`` — see that value for why one number
-/// serves both — and each states, in its own message, how many samples cleared
-/// it beside the bar the assertion really applied. See
-/// ``compactionEvalFactRetentionBar(measured:of:)`` for why that bar is read off
-/// the measured count rather than off the tier's seed count.
+/// then to ANSWER with it. Each is held to its own measured floor —
+/// ``compactionEvalSummaryFactRetentionFloor`` and
+/// ``compactionEvalAnswerFactRetentionFloor``; see those values for why the
+/// small model separates the two — and each states, in its own message, how
+/// many samples cleared it beside the bar the assertion really applied. See
+/// ``compactionEvalFactRetentionBar(floor:measured:of:)`` for why that bar is
+/// read off the measured count rather than off the tier's seed count.
 ///
 /// - Parameter runner: The tier's runner, holding the evidence its samples
 ///   recorded and the seed set that evidence is read against — so a run the
@@ -115,24 +129,28 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
     }
 
     let measured = findings.count
-    let bar = compactionEvalFactRetentionBar(measured: measured, of: seeds.count)
 
     // The COMPACTION side, asserted first because it is the necessary
     // condition: a tier whose folds dropped the fact can never answer with it.
     let summaryCarried = CompactionEvalFactRetentionReport.summaryFactRetentionCount(of: findings)
+    let summaryBar = compactionEvalFactRetentionBar(
+        floor: compactionEvalSummaryFactRetentionFloor, measured: measured, of: seeds.count)
     #expect(
         CompactionEvalFactRetentionReport.share(of: summaryCarried, over: measured)
-            >= compactionEvalFactRetentionFloor,
-        "\(summaryCarried) of \(measured) folds wrote a summary carrying the fact, and \(bar)"
+            >= compactionEvalSummaryFactRetentionFloor,
+        "\(summaryCarried) of \(measured) folds wrote a summary carrying the fact, and \(summaryBar)"
     )
 
     // The end-to-end bar, read off the framework's own metric rather than off
     // the table, so this assertion and `FactRetention` can never disagree.
     let result = EvaluationContext.current.result
     let answerCarried = CompactionEvalFactRetentionReport.counts(of: findings)[.retained] ?? 0
+    let answerBar = compactionEvalFactRetentionBar(
+        floor: compactionEvalAnswerFactRetentionFloor, measured: measured, of: seeds.count)
     #expect(
-        result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention)) >= compactionEvalFactRetentionFloor,
-        "\(answerCarried) of \(measured) answers carried the fact, and \(bar)"
+        result.aggregateValue(.mean(of: CompactionEvalMetric.factRetention))
+            >= compactionEvalAnswerFactRetentionFloor,
+        "\(answerCarried) of \(measured) answers carried the fact, and \(answerBar)"
     )
 }
 
@@ -140,8 +158,14 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
 /// `@Test(.evaluates(...))` sketch): folds each seed of
 /// ``compactionEvalRepresentativeSeeds`` with the router's default compaction
 /// prompt, resumes a session over each result, asks its question, and asserts
-/// mean `FactRetention` over the subset is at least
-/// ``compactionEvalFactRetentionFloor``.
+/// the summary and answer fact-retention shares over the subset against
+/// ``compactionEvalSummaryFactRetentionFloor`` and
+/// ``compactionEvalAnswerFactRetentionFloor``.
+///
+/// The model is ``CompactionEvalRealModel`` — the SMALL model since task
+/// ^k0d30s4's two-minute budget, and that constant states what the swap no
+/// longer proves. The floors are the small model's measured baselines; the
+/// 30B model's 0.9 bar is not measured here any more.
 ///
 /// The TARGET is what selects this suite, and it carries no `.enabled(if:)` of
 /// its own — see ``GatedEvalSerialGate`` for the commands that ask for this
@@ -185,7 +209,8 @@ struct CompactionEvaluationIntegrationTests {
 }
 
 /// The opt-in whole-dataset tier of the same eval: every hand-written fixture,
-/// held to the same ``compactionEvalFactRetentionFloor``.
+/// held to the same ``compactionEvalSummaryFactRetentionFloor`` and
+/// ``compactionEvalAnswerFactRetentionFloor``.
 ///
 /// Its dataset is a superset of the default tier's, so an everyday real-model
 /// run steps it aside rather than measuring the same seeds twice ahead of it:

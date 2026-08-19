@@ -60,15 +60,36 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         func embed(texts: [String]) async throws -> [[Float]] { [] }
     }
 
+    /// The model-assisted stage every session this runner vends is created
+    /// with.
+    ///
+    /// A parameter rather than the production default, because the fast tier
+    /// needs ``compactionContinuityFastSummarization``'s one-turn recency
+    /// window for a three-turn task to fold at all — see that constant.
+    private nonisolated let summarization: Summarization
+
+    /// The system instructions every session this runner vends is created
+    /// with.
+    ///
+    /// A parameter for the same reason ``summarization`` is: the instructions
+    /// are part of the tier's fixture, and the fast tier states its own — see
+    /// ``compactionContinuityFastInstructions`` for the measured run behind
+    /// them.
+    private nonisolated let instructions: String
+
     /// Creates a runner over one tier's tasks.
     ///
-    /// - Parameter tasks: The tier's tasks, in the order the tier states them.
-    ///   Defaults to ``compactionContinuitySeeds``, which is the same default
-    ///   ``CompactionContinuityEvaluation/init(prompt:budget:tasks:runSubject:)``
-    ///   takes, so a runner and the evaluation beside it measure one set.
-    init(tasks: [CompactionContinuitySeed] = compactionContinuitySeeds) {
+    /// - Parameters:
+    ///   - tasks: The tier's tasks, in the order the tier states them.
+    ///   - instructions: The system instructions every session this runner
+    ///     vends is created with — see ``instructions``.
+    ///   - summarization: The model-assisted stage every session this runner
+    ///     vends is created with — see ``summarization``.
+    init(tasks: [CompactionContinuitySeed], instructions: String, summarization: Summarization) {
         self.tasks = tasks
         self.tasksByFinalInstruction = CompactionContinuitySeed.keyedByFinalInstruction(tasks)
+        self.instructions = instructions
+        self.summarization = summarization
     }
 
     /// The resident container, loading it on first access and caching it for
@@ -219,10 +240,12 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// Runs one sample's real subject work (task 4ce0a1k): opens a fresh
     /// session over the resident model vended with `prompt`/`budget`, drives
     /// every one of `steps` through it in order, then asks
-    /// `finalInstruction` — counting every ``SessionEvent/compaction(_:)``
-    /// this drives, wherever in the sequence it lands, and reading the
-    /// session's own durable recording afterward to report how many entries
-    /// it actually persisted.
+    /// `finalInstruction` — counting every APPLIED fold this drives (a
+    /// ``SessionEvent/compaction(_:)`` whose `stagesApplied` is not empty),
+    /// wherever in the sequence it lands, and reading the session's own
+    /// durable recording afterward to report how many entries it actually
+    /// persisted. A discarded fold — one of `Compactor`'s shortfall exits —
+    /// changed nothing, so it is not counted; see the event handling below.
     ///
     /// Every one of those generations states itself on a
     /// ``CompactionEvalProgressLog`` line as it happens, so a run the suite time
@@ -263,9 +286,10 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
 
         let profile = buildProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
         let session = profile.standard.makeSession(
-            instructions: "You are a helpful assistant in an ongoing conversation.",
+            instructions: instructions,
             budget: budget,
-            compactionPrompt: prompt
+            compactionPrompt: prompt,
+            summarization: summarization
         )
 
         // A free function, not a nested closure capturing this method's own
@@ -289,6 +313,21 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                 case .textDelta(let fragment):
                     reply += fragment
                 case .compaction(let result):
+                    // Only an APPLIED fold counts. `Compactor` reports its
+                    // shortfall exits with an empty `stagesApplied` and the
+                    // original transcript, and a session still emits the
+                    // event for one. Counting those would let `FoldOccurred`
+                    // pass on a fold that changed nothing, which is a test
+                    // that measures nothing (task ^k0d30s4).
+                    // `AutoCompactionTriggerIntegrationTests` applies the
+                    // same filter for the same reason.
+                    guard !result.stagesApplied.isEmpty else { break }
+                    // The summary text, on the trail. A red run cannot tell a
+                    // fact the fold dropped from a fact the answering turn
+                    // ignored without it — the debugging of 2026-08-19 read
+                    // exactly this line to find that 9 of 10 summaries
+                    // carried both facts verbatim while the answers did not.
+                    print("[compaction-eval] fold summary:\n\(result.summary ?? "<none>")")
                     stepFoldCount += 1
                     stepTokensBefore = result.tokensBefore
                     stepTokensAfter = result.tokensAfter

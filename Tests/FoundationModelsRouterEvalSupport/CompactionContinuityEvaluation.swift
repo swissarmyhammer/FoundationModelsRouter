@@ -89,6 +89,104 @@ enum CompactionContinuityEvaluationError: Error {
 /// somewhere to land.
 let compactionContinuityDefaultBudget = TokenBudget(limit: 2048, trigger: 0.80, target: 0.30)
 
+/// Where the FAST continuity tier puts the auto-compaction trigger, as a share
+/// of ``CompactionEvalRealModel/context``.
+///
+/// This is `AutoCompactionTriggerIntegrationTests`' proven device, applied to
+/// the continuity tier for task ^k0d30s4's two-minute budget. The number is
+/// chosen to be far under anything a fixture could be sized against: it
+/// resolves to 164 tokens of the 8192-token window, and the fast tier's
+/// opening step alone measures several hundred real tokens, so the trigger is
+/// crossed by construction rather than by arithmetic over the fixture.
+/// `CompactionContinuityEvaluationHermeticTests` still holds the crossing
+/// with a conservative conversion, so a shrunken padding paragraph goes red
+/// on a plain `swift test` rather than in a gated run.
+let compactionContinuityFastTriggerShareOfContext = 0.02
+
+/// Where the fast tier puts the fold target, as a share of
+/// ``CompactionEvalRealModel/context``.
+///
+/// It resolves to 492 estimated tokens. Two properties place it:
+///
+/// - The opening step alone estimates past it, so `Compactor.compact`'s own
+///   entry guard (`tokensBefore > targetTokens`) passes when the fold fires.
+/// - The deterministic stages can never land it. A fast task holds three
+///   turns, fewer than ``TurnTruncation``'s default window of four, so
+///   truncation drops nothing and the pipeline always falls through to the
+///   model-assisted ``Summarization`` stage — the stage whose summary the
+///   tier measures. That guarantee is structural (a turn count against a
+///   window), not an estimate against a size, which is the arithmetic task
+///   ^wnj3ka3 showed drifting.
+///
+/// The folded transcript — one summary entry, the readiness turn, and the
+/// header — lands well under this target, so ``CompactionContinuityMetric/budgetHeld``
+/// stays a real measurement rather than a constant failure.
+let compactionContinuityFastTargetShareOfContext = 0.06
+
+/// The auto-compaction budget the FAST continuity tier vends its sessions
+/// with.
+///
+/// `limit` is ``CompactionEvalRealModel/context`` and not a number of its
+/// own, so the session's measured context fill and the budget's trigger stay
+/// on one scale — ``TokenBudget/triggerTokens`` states that a budget whose
+/// limit differs from the session's window has its trigger silently scaled by
+/// the ratio between the two.
+let compactionContinuityFastBudget = TokenBudget(
+    limit: CompactionEvalRealModel.context,
+    trigger: compactionContinuityFastTriggerShareOfContext,
+    target: compactionContinuityFastTargetShareOfContext
+)
+
+/// How many of the newest turns every fast-tier fold leaves untouched.
+///
+/// One is what lets a THREE-turn task fold: ``Summarization`` answers `nil`
+/// while every turn is inside the recency window, and at the default of four
+/// a fast task would need five turns — five real generations — before a fold
+/// could do anything. One is also the smallest window that is still a window:
+/// the fold replaces the opening turn and keeps the readiness turn verbatim.
+/// `AutoCompactionTriggerIntegrationTests` uses the same value for the same
+/// reason.
+let compactionContinuityFastKeepRecentTurns = 1
+
+/// The model-assisted stage the fast continuity tier vends its sessions with.
+///
+/// A session is where this choice belongs, because an automatic fold has no
+/// caller to pass one to. See ``compactionContinuityFastKeepRecentTurns`` for
+/// the recency window and ``compactionEvalReasoningTokenHeadroom`` for the
+/// generation bound both gated tiers share.
+var compactionContinuityFastSummarization: Summarization {
+    Summarization(
+        keepRecentTurns: compactionContinuityFastKeepRecentTurns,
+        reasoningTokenHeadroom: compactionEvalReasoningTokenHeadroom
+    )
+}
+
+/// The mean `FactsSurvived` the fast continuity tier must reach: at least one
+/// planted fact in the final answer, after a real fold.
+///
+/// The small model's measured baseline, minus one task of margin. The gated
+/// run of 2026-08-19 under greedy decoding measured 7 of 10 tasks carrying at
+/// least one fact end to end, while the fold summaries themselves carried
+/// both facts verbatim on 9 of 10 — so the gap is the answering turn's, not
+/// the fold's. Greedy decoding makes the score a fact about the prompt and
+/// the fixtures rather than a draw, so a floor one task under the baseline
+/// holds the measured behavior while absorbing one cross-machine flip. A
+/// compaction-prompt regression that loses the facts from the summaries
+/// crashes this floor, which is the regression the tier exists to catch.
+let compactionContinuityFastFactsSurvivedFloor = 0.6
+
+/// The mean `AnswersCorrect` the fast continuity tier must reach: BOTH
+/// planted facts in the final answer, after a real fold.
+///
+/// The small model's measured baseline, minus one task of margin, exactly as
+/// ``compactionContinuityFastFactsSurvivedFloor`` is derived: the gated run
+/// of 2026-08-19 measured 4 of 10. The 0.8 bar the 30B tier held is NOT
+/// reachable by the small model — its answering turn refuses or paraphrases
+/// exact identifiers that its own fold summaries carry verbatim — and a bar
+/// the subject cannot reach measures the model, not the compaction prompt.
+/// The suite's doc comment states this trade in full.
+let compactionContinuityFastAnswersCorrectFloor = 0.3
+
 /// The compaction-continuity evaluation (task 4ce0a1k): drives a
 /// multi-step task's steps through a real session vended with a small
 /// ``budget`` (task 8213x39's auto-compaction opt-in), one step at a time,
