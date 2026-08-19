@@ -1,6 +1,28 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m0bq5vz0z0fyz27knka1xahy
+  text: |
+    ## Confirmed as the card that covers `Router.residentFootprint`
+
+    Checked while closing `^8hs4wrw`'s review findings. That card carries a line under "Out of scope for this diff, recorded for triage":
+
+    > `Router.swift` computes `residentFootprint` by summing one `footprintBytes` per pool entry, and two generation slots sharing one ref and context share one entry — so the pool records one session's KV where two are live.
+
+    This card states the same gap word for word in "The gap", and its acceptance criteria already bind the two figures together ("the bytes `Router` holds against the host budget for a shared key equal the bytes `JointFit` reserved for the same trio"). No extension was needed, and `^8hs4wrw` now names this card at that line.
+
+    ### One fact from `^8hs4wrw` that shapes the fix here
+
+    `JointFit.resolve` now takes a THIRD injected closure, `sessionBytes`, beside `footprint`. It answers the absolute KV cache of ONE session at a working context, and it is never discounted for residency. `Router.sessionBytes(for:context:metadataByRef:)` implements it as `metadata.footprint.kvBytes(context:)`.
+
+    So joint fit's figure for a shared key is now exactly:
+
+        withMargin(weights + kv) + withMargin(kv)
+
+    and the pool records `withMargin(weights + kv)` for its one entry. The gap this card names is the second term, and `Router` can compute it from the same `sessionBytes` helper rather than deriving it again.
+  timestamp: 2026-08-19T00:36:43.616770+00:00
 position_column: todo
 position_ordinal: '9180'
 title: '[Router] A pooled entry shared by two slots records one KV cache, while joint fit now reserves two'

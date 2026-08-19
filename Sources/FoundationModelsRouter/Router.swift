@@ -730,6 +730,39 @@ public actor Router {
         }
     }
 
+    /// The per-session KV cache bytes for one candidate loaded as a generation
+    /// model at a working context.
+    ///
+    /// This is what a second slot on one resident container still pays: the
+    /// container is shared, and each session materializes a cache of its own.
+    ///
+    /// Unlike ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``
+    /// this figure is **never** discounted for residency. A pool entry records
+    /// its container and ONE session, so a second session's cache is a cost the
+    /// pool does not yet hold, whether or not the model is already loaded.
+    /// Discounting it would let a box accept a profile it cannot hold.
+    ///
+    /// The embedding interpretation has no cache at all
+    /// (``Footprint/embedder(weightBytes:)`` carries no KV term), and only the
+    /// two generation slots can share one ``ResidencyKey``, so the generation
+    /// interpretation is the whole answer.
+    ///
+    /// - Parameters:
+    ///   - ref: The candidate to size.
+    ///   - context: The working context one session decodes at.
+    ///   - metadataByRef: The sizing metadata fetched for every candidate.
+    /// - Returns: The raw KV cache bytes, or why the candidate cannot be sized.
+    private static func sessionBytes(
+        for ref: ModelRef,
+        context: Int,
+        metadataByRef: [ModelRef: Result<RepoMetadata, RepoMetadataError>]
+    ) -> Result<Int64, RepoMetadataError> {
+        guard let metadataResult = metadataByRef[ref] else {
+            return .failure(.metadataUnavailable(Self.unsizedCandidateMessage(for: ref)))
+        }
+        return metadataResult.map { $0.footprint.kvBytes(context: context) }
+    }
+
     // MARK: - Joint fit
 
     /// Runs the pure joint fit and, on failure, records the diagnostics into the
@@ -751,6 +784,9 @@ public actor Router {
                         for: ref, context: context, metadataByRef: metadataByRef,
                         membership: membership, residentKeys: residentKeys
                     )
+                },
+                sessionBytes: { ref, context in
+                    Self.sessionBytes(for: ref, context: context, metadataByRef: metadataByRef)
                 },
                 nativeMaxContext: { ref in
                     (metadataByRef[ref]

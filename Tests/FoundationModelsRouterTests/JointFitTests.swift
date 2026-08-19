@@ -56,13 +56,44 @@ struct JointFitTests {
         }
     }
 
-    /// A ``JointFit/resolve(profile:budgetBytes:footprint:nativeMaxContext:)``
+    /// A ``JointFit/resolve(profile:budgetBytes:footprint:sessionBytes:nativeMaxContext:)``
     /// `nativeMaxContext` closure that fails the test if invoked — for a
     /// profile with an explicit context, the ladder must never run, so this
     /// closure must never be called.
     private static func neverCalledNativeMaxContext(_ ref: ModelRef) -> Result<Int, RepoMetadataError> {
         Issue.record("nativeMaxContext must not be called when ProfileDefinition.context is explicit")
         return .failure(.metadataUnavailable("nativeMaxContext should not be called"))
+    }
+
+    /// A ``JointFit/resolve(profile:budgetBytes:footprint:sessionBytes:nativeMaxContext:)``
+    /// `sessionBytes` closure that fails the test if invoked. Only a slot that
+    /// reuses an earlier slot's resident container charges a per-session KV
+    /// cache, so a profile whose slots name no one container twice must never
+    /// reach this closure.
+    private static func neverCalledSessionBytes(
+        _ ref: ModelRef, _ context: Int
+    ) -> Result<Int64, RepoMetadataError> {
+        Issue.record("sessionBytes must not be called when no two slots share one container")
+        return .failure(.metadataUnavailable("sessionBytes should not be called"))
+    }
+
+    /// The per-session KV cache of an injected ``Footprint`` table — the part
+    /// of a footprint a second slot on one resident container still pays for.
+    ///
+    /// It is the absolute figure, never discounted for residency, exactly as
+    /// the router's own session-cache closure is.
+    ///
+    /// - Parameter table: The footprints every reference is sized from.
+    /// - Returns: A session-cache closure over `table`.
+    private static func ladderSessionBytes(
+        _ table: [ModelRef: Footprint]
+    ) -> (ModelRef, Int) -> Result<Int64, RepoMetadataError> {
+        { ref, context in
+            guard let footprint = table[ref] else {
+                return .failure(.metadataUnavailable("no footprint injected for \(ref.stringValue)"))
+            }
+            return .success(footprint.kvBytes(context: context))
+        }
     }
 
     /// The portability profile: a standard ladder (32B-8bit → 32B-4bit → 14B),
@@ -92,6 +123,7 @@ struct JointFitTests {
             profile: Self.ladderProfile(),
             budgetBytes: 50_000,
             footprint: Self.provider(),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.embedding == Self.embBge)
@@ -105,6 +137,7 @@ struct JointFitTests {
             profile: Self.ladderProfile(),
             budgetBytes: 15_000,
             footprint: Self.provider(),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.std14b4)
@@ -132,6 +165,7 @@ struct JointFitTests {
             profile: Self.ladderProfile(),
             budgetBytes: 38_900,
             footprint: Self.provider(),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.std32b4)
@@ -150,6 +184,7 @@ struct JointFitTests {
             profile: Self.ladderProfile(),
             budgetBytes: 50_000,
             footprint: Self.provider(),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         let std = Self.resolution(result, for: .standard)
@@ -173,6 +208,7 @@ struct JointFitTests {
             profile: profile,
             budgetBytes: 13_800,
             footprint: Self.provider(),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(exact.flash == Self.flash3b)
@@ -183,6 +219,7 @@ struct JointFitTests {
                 profile: profile,
                 budgetBytes: 13_799,
                 footprint: Self.provider(),
+                sessionBytes: Self.neverCalledSessionBytes,
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -197,6 +234,7 @@ struct JointFitTests {
                 profile: Self.ladderProfile(),
                 budgetBytes: 5_000,
                 footprint: Self.provider(),
+                sessionBytes: Self.neverCalledSessionBytes,
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -221,6 +259,7 @@ struct JointFitTests {
                 profile: Self.ladderProfile(),
                 budgetBytes: 5_000,
                 footprint: Self.provider(),
+                sessionBytes: Self.neverCalledSessionBytes,
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -246,6 +285,7 @@ struct JointFitTests {
             profile: profile,
             budgetBytes: 50_000,
             footprint: Self.provider(unavailable: [Self.unsizable: "config.json is not present in the repo"]),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.std14b4)
@@ -328,6 +368,7 @@ struct JointFitTests {
             profile: Self.ladderProfile(standard: [Self.ladderNativeFits]),
             budgetBytes: 40_000,
             footprint: Self.ladderFootprint(footprints),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.ladderNativeMax([Self.ladderNativeFits: 8_192])
         )
         #expect(result.standard == Self.ladderNativeFits)
@@ -362,6 +403,7 @@ struct JointFitTests {
             profile: Self.ladderProfile(standard: [Self.ladderBig]),
             budgetBytes: 15_800_000,
             footprint: Self.ladderFootprint(footprints),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.ladderNativeMax([Self.ladderBig: 131_072])
         )
         #expect(result.standard == Self.ladderBig)
@@ -391,6 +433,7 @@ struct JointFitTests {
             profile: Self.ladderProfile(standard: [Self.ladderBig, Self.ladderSmall]),
             budgetBytes: 15_800_000,
             footprint: Self.ladderFootprint(footprints),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.ladderNativeMax([Self.ladderBig: 131_072, Self.ladderSmall: 131_072])
         )
         #expect(result.standard == Self.ladderBig)
@@ -421,6 +464,7 @@ struct JointFitTests {
                 profile: Self.ladderProfile(standard: [Self.ladderBig, Self.ladderSmall]),
                 budgetBytes: 1,
                 footprint: Self.ladderFootprint(footprints),
+                sessionBytes: Self.neverCalledSessionBytes,
                 nativeMaxContext: Self.ladderNativeMax([Self.ladderBig: 131_072, Self.ladderSmall: 131_072])
             )
         }
@@ -456,6 +500,7 @@ struct JointFitTests {
             profile: profile,
             budgetBytes: 40_000,
             footprint: Self.ladderFootprint(footprints),
+            sessionBytes: Self.neverCalledSessionBytes,
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.ladderNativeFits)
@@ -535,6 +580,7 @@ struct JointFitTests {
             profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
             budgetBytes: Self.sharedDedupedBudget,
             footprint: Self.ladderFootprint(Self.sharedFootprints),
+            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.sharedGeneration)
@@ -547,6 +593,7 @@ struct JointFitTests {
                 profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
                 budgetBytes: Self.sharedDedupedBudget - 1,
                 footprint: Self.ladderFootprint(Self.sharedFootprints),
+                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -558,6 +605,7 @@ struct JointFitTests {
             profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
             budgetBytes: Self.sharedDedupedBudget,
             footprint: Self.ladderFootprint(Self.sharedFootprints),
+            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         let standard = Self.resolution(result, for: .standard)
@@ -590,6 +638,7 @@ struct JointFitTests {
                 profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
                 budgetBytes: Self.sharedDedupedBudget - 1,
                 footprint: Self.ladderFootprint(Self.sharedFootprints),
+                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -613,6 +662,7 @@ struct JointFitTests {
                 ),
                 budgetBytes: Self.sharedDedupedBudget,
                 footprint: Self.ladderFootprint(Self.sharedFootprints),
+                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
                 nativeMaxContext: Self.neverCalledNativeMaxContext
             )
         }
@@ -622,10 +672,160 @@ struct JointFitTests {
             ),
             budgetBytes: Self.sharedSeparateBudget,
             footprint: Self.ladderFootprint(Self.sharedFootprints),
+            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
             nativeMaxContext: Self.neverCalledNativeMaxContext
         )
         #expect(result.standard == Self.sharedGeneration)
         #expect(result.flash == Self.sharedGenerationPinned)
+    }
+
+    // MARK: - A reference the router already holds resident
+
+    /// The budget the trio needs when the router already holds the shared
+    /// generation container: the embedding model, plus the second generation
+    /// session's own KV cache. `(500 × 1.2) + (2_000 × 1.2)`.
+    private static let sharedResidentBudget: Int64 = 3_000
+
+    /// A footprint provider shaped like the router's own, which answers a
+    /// *marginal* cost rather than an absolute one: a reference the pool
+    /// already holds at the working context costs nothing more, so it answers
+    /// zero there. Every other question is answered from `table`.
+    ///
+    /// - Parameters:
+    ///   - table: The footprints every reference is sized from.
+    ///   - resident: The references the pool already holds.
+    ///   - residentContext: The working context the pool holds them at.
+    /// - Returns: A footprint closure with the router's own residency rule.
+    private static func poolResidentFootprint(
+        _ table: [ModelRef: Footprint],
+        resident: Set<ModelRef>,
+        residentContext: Int
+    ) -> (ModelRef, Int) -> Result<Int64, RepoMetadataError> {
+        let sized = ladderFootprint(table)
+        return { ref, context in
+            guard resident.contains(ref), context == residentContext else {
+                return sized(ref, context)
+            }
+            return .success(0)
+        }
+    }
+
+    @Test("a pool-resident reference named by two generation slots still pays for the second session")
+    func residentSharedReferenceChargesTheSecondSession() throws {
+        let result = try JointFit.resolve(
+            profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
+            budgetBytes: Self.sharedResidentBudget,
+            footprint: Self.poolResidentFootprint(
+                Self.sharedFootprints,
+                resident: [Self.sharedGeneration],
+                residentContext: Self.sharedContext
+            ),
+            sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+            nativeMaxContext: Self.neverCalledNativeMaxContext
+        )
+        let standard = Self.resolution(result, for: .standard)
+        let flash = Self.resolution(result, for: .flash)
+
+        // The router already holds the container, so the first generation slot
+        // costs the budget nothing more.
+        #expect(standard.considered[0].chargedBytes == 0)
+        // The second slot opens a session of its own, and that session
+        // materializes a KV cache of its own. The pool holds no such cache, so
+        // the second slot pays for it.
+        #expect(flash.considered[0].chargedBytes == JointFit.withMargin(Self.sharedSessionRawBytes))
+    }
+
+    @Test("a pool-resident reference in two generation slots needs budget for the second KV cache")
+    func residentSharedReferenceNeedsBudgetForTheSecondSession() throws {
+        // One byte below the second session's own KV cache, the trio cannot
+        // co-fit — so the resident path really does charge that cache.
+        #expect(throws: ResolutionFailure.self) {
+            try JointFit.resolve(
+                profile: Self.sharedProfile(standard: Self.sharedGeneration, flash: Self.sharedGeneration),
+                budgetBytes: Self.sharedResidentBudget - 1,
+                footprint: Self.poolResidentFootprint(
+                    Self.sharedFootprints,
+                    resident: [Self.sharedGeneration],
+                    residentContext: Self.sharedContext
+                ),
+                sessionBytes: Self.ladderSessionBytes(Self.sharedFootprints),
+                nativeMaxContext: Self.neverCalledNativeMaxContext
+            )
+        }
+    }
+
+    // MARK: - One reference named across the embedding and generation roles
+
+    /// A reference named by both the embedding slot and the standard slot. The
+    /// router loads an embedder and a generation model under two pool keys, so
+    /// this reference costs the budget two whole containers.
+    private static let crossRoleShared: ModelRef = "org/embedder-and-standard"
+
+    /// The flash candidate the cross-role profile pairs with.
+    private static let crossRoleFlash: ModelRef = "org/cross-role-flash"
+
+    /// ``crossRoleFlash``'s raw footprint: weights alone, no KV cache.
+    private static let crossRoleFlashRawBytes: Int64 = 100
+
+    /// The budget the cross-role profile needs when the one reference pays for
+    /// two containers: `(12_000 × 1.2) × 2 + (100 × 1.2)`.
+    private static let crossRoleSeparateBudget: Int64 = 28_920
+
+    /// The footprint table the cross-role profile is sized against.
+    private static let crossRoleFootprints: [ModelRef: Footprint] = [
+        crossRoleShared: sharedGenerationFootprint,
+        crossRoleFlash: Footprint(weightBytes: crossRoleFlashRawBytes, layers: 0, kvHeads: 0, headDim: 0),
+    ]
+
+    /// A profile that names one reference in the embedding slot and in the
+    /// standard slot, sized at ``sharedContext``.
+    private static func crossRoleProfile() -> ProfileDefinition {
+        ProfileDefinition(
+            name: "cross-role",
+            description: "one reference serves the embedding slot and a generation slot",
+            standard: [crossRoleShared],
+            flash: [crossRoleFlash],
+            embedding: [crossRoleShared],
+            context: sharedContext
+        )
+    }
+
+    @Test("one reference in an embedding slot and a generation slot pays for two containers")
+    func crossRoleReferenceIsChargedForTwoContainers() throws {
+        let result = try JointFit.resolve(
+            profile: Self.crossRoleProfile(),
+            budgetBytes: Self.crossRoleSeparateBudget,
+            footprint: Self.ladderFootprint(Self.crossRoleFootprints),
+            sessionBytes: Self.neverCalledSessionBytes,
+            nativeMaxContext: Self.neverCalledNativeMaxContext
+        )
+        let embeddingCharge = try #require(
+            Self.resolution(result, for: .embedding).considered[0].chargedBytes
+        )
+        let standardCharge = try #require(
+            Self.resolution(result, for: .standard).considered[0].chargedBytes
+        )
+
+        // An embedder and a generation model are different container types
+        // under different pool keys. So the generation slot pays the whole
+        // footprint, not the KV cache alone.
+        #expect(embeddingCharge == JointFit.withMargin(Self.sharedGenerationRawBytes))
+        #expect(standardCharge == JointFit.withMargin(Self.sharedGenerationRawBytes))
+    }
+
+    @Test("one reference across the embedding and generation roles does not fit on one container's budget")
+    func crossRoleReferenceDoesNotFitOnOneContainerBudget() throws {
+        // One byte below two whole containers, the flash candidate no longer
+        // fits — so both charges really are full ones.
+        #expect(throws: ResolutionFailure.self) {
+            try JointFit.resolve(
+                profile: Self.crossRoleProfile(),
+                budgetBytes: Self.crossRoleSeparateBudget - 1,
+                footprint: Self.ladderFootprint(Self.crossRoleFootprints),
+                sessionBytes: Self.neverCalledSessionBytes,
+                nativeMaxContext: Self.neverCalledNativeMaxContext
+            )
+        }
     }
 
     // MARK: - The profile the field report failed on
@@ -683,6 +883,7 @@ struct JointFitTests {
             profile: Self.multitoolProfile(),
             budgetBytes: Self.multitoolBudgetBytes,
             footprint: Self.ladderFootprint(Self.multitoolFootprints),
+            sessionBytes: Self.ladderSessionBytes(Self.multitoolFootprints),
             nativeMaxContext: Self.ladderNativeMax(
                 [Self.multitoolGeneration: Self.multitoolNativeMaxContext]
             )
@@ -737,6 +938,7 @@ struct JointFitTests {
                 profile: blockedByEmbeddingProfile(),
                 budgetBytes: blockedByEmbeddingBudget,
                 footprint: ladderFootprint(blockedByEmbeddingFootprints),
+                sessionBytes: ladderSessionBytes(blockedByEmbeddingFootprints),
                 nativeMaxContext: ladderNativeMax([sharedGeneration: blockedByEmbeddingNativeMax])
             )
         }

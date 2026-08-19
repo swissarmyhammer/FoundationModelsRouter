@@ -61,10 +61,21 @@ public struct JointResolution: Sendable, Equatable {
 /// is its **KV cache**, which is per session rather than per container: two
 /// slots on one resident model open their own sessions, and each materializes
 /// its own cache. The dedupe covers the weights and nothing else — see
-/// `SharedBudget` for the reservation, `ReservationKey` for what makes two
-/// candidates one container, and
-/// ``sessionBytes(_:context:residentBytes:footprint:)`` for the half that is
-/// still charged again.
+/// `SharedBudget` for the reservation and `ReservationKey` for what makes two
+/// candidates one container.
+///
+/// The two injected sizing closures answer two different questions, and that
+/// difference is what keeps the second session honest.
+///
+/// - `footprint` answers what a candidate costs the budget **now**. The router
+///   answers zero for a model it already holds resident, because the budget
+///   already carries that model's pool entry.
+/// - `sessionBytes` answers the **absolute** size of one session's KV cache,
+///   which no residency discounts. A pool entry covers its container and one
+///   session, so the second slot's cache is always a cost the pool does not
+///   yet hold. Reading that cache out of `footprint` instead would charge zero
+///   for a resident model named by both generation slots, and the box would
+///   accept a profile it cannot hold.
 ///
 /// ## Deriving the working context
 ///
@@ -99,13 +110,6 @@ public enum JointFit {
     /// The context step-down rungs a standard-slot candidate's ladder tries
     /// below its own native max context, in descending order.
     private static let ladderStepDowns: [Int] = [131_072, 65_536, 32_768, 16_384, 8_192, 4_096]
-
-    /// The context a candidate is sized at to read its weights alone.
-    ///
-    /// ``Footprint/footprint(context:)`` is `weightBytes + kvBytes(context:)`,
-    /// and ``Footprint/kvBytes(context:)`` scales linearly with the context, so
-    /// the KV term is exactly zero here and what comes back is the weights.
-    private static let weightsOnlyContext = 0
 
     /// Applies the `× 1.2` overhead margin to a raw footprint, rounding up so the
     /// budgeted figure is never an under-estimate.
@@ -155,11 +159,29 @@ public enum JointFit {
     /// resolve to one commit: the pool never resolves the spelling, so it loads
     /// two containers. Deduping on a resolved identity would reserve for one of
     /// them and let a box accept a profile it cannot hold.
+    ///
+    /// This key carries no context, while the router's own pool key does. The
+    /// two agree only because **one resolution gives one context to every
+    /// slot**: ``resolveAtFixedContext(profile:budgetBytes:context:footprint:sessionBytes:)``
+    /// writes that one figure onto all three slot resolutions, so two slots
+    /// that name one reference always name it at one context. That property is
+    /// load-bearing for memory safety. If per-slot contexts are ever added,
+    /// this key becomes coarser than the pool key, two containers collapse
+    /// onto one reservation, and a whole set of weights goes unreserved. Add
+    /// the context to this key in the same change.
     private struct ReservationKey: Hashable {
         /// The candidate reference, exactly as the profile spells it.
+        ///
+        /// Read only by the synthesized `Hashable` conformance, which is what
+        /// makes this a set key; periphery sees no caller.
+        // periphery:ignore
         let ref: ModelRef
 
         /// The role the slot loads that reference under.
+        ///
+        /// Read only by the synthesized `Hashable` conformance, which is what
+        /// makes this a set key; periphery sees no caller.
+        // periphery:ignore
         let role: ResidentRole
     }
 
@@ -167,8 +189,8 @@ public enum JointFit {
     ///
     /// A chosen candidate is charged one time. A later slot naming a key an
     /// earlier slot already charged is charged its per-session KV cache alone,
-    /// because the router loads one container for both — see
-    /// ``sessionBytes(_:context:residentBytes:footprint:)``.
+    /// because the router loads one container for both — see the injected
+    /// `sessionBytes` closure.
     private struct SharedBudget {
         /// The bytes still available to the next slot.
         private(set) var remainingBytes: Int64
@@ -205,7 +227,14 @@ public enum JointFit {
     ///     co-fit.
     ///   - footprint: The injected per-candidate raw footprint at a given
     ///     working context, or ``RepoMetadataError/metadataUnavailable(_:)``
-    ///     when a candidate cannot be sized.
+    ///     when a candidate cannot be sized. The caller may answer a *marginal*
+    ///     cost here — the router answers zero for a model it already holds
+    ///     resident.
+    ///   - sessionBytes: The injected per-candidate KV cache bytes for **one**
+    ///     session at a given working context. This one is always the absolute
+    ///     figure: a cache is materialized per session, so a second slot on one
+    ///     resident container pays for a cache the box does not yet hold. It is
+    ///     read only for a slot that reuses an earlier slot's container.
     ///   - nativeMaxContext: The injected per-candidate native max context,
     ///     used only to build the ladder for standard-slot candidates when
     ///     ``ProfileDefinition/context`` is `nil`; never invoked when it is
@@ -217,6 +246,7 @@ public enum JointFit {
         profile: ProfileDefinition,
         budgetBytes: Int64,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
         nativeMaxContext: (ModelRef) -> Result<Int, RepoMetadataError>
     ) throws -> JointResolution {
         if let explicitContext = profile.context {
@@ -224,13 +254,15 @@ public enum JointFit {
                 profile: profile,
                 budgetBytes: budgetBytes,
                 context: explicitContext,
-                footprint: footprint
+                footprint: footprint,
+                sessionBytes: sessionBytes
             )
         }
         return try resolveViaLadder(
             profile: profile,
             budgetBytes: budgetBytes,
             footprint: footprint,
+            sessionBytes: sessionBytes,
             nativeMaxContext: nativeMaxContext
         )
     }
@@ -242,18 +274,33 @@ public enum JointFit {
     /// fit wins. This is the whole of resolution when
     /// ``ProfileDefinition/context`` is explicit, and is also the ladder's
     /// building block for a single rung.
+    ///
+    /// Every slot resolution it returns carries this one `context`, which is
+    /// what lets `ReservationKey` leave the context out — see that type.
+    ///
+    /// - Parameters:
+    ///   - profile: The authored profile supplying every slot's candidates.
+    ///   - budgetBytes: The shared memory budget the trio must co-fit.
+    ///   - context: The one working context every candidate is sized at.
+    ///   - footprint: The injected per-candidate raw footprint at `context`.
+    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
+    ///     session at `context`.
+    /// - Returns: The chosen trio and per-slot reasoning.
+    /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate.
     private static func resolveAtFixedContext(
         profile: ProfileDefinition,
         budgetBytes: Int64,
         context: Int,
-        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) throws -> JointResolution {
         let attempt = attemptTrio(
             profile: profile,
             standardCandidates: profile.standard,
             budgetBytes: budgetBytes,
             context: context,
-            footprint: footprint
+            footprint: footprint,
+            sessionBytes: sessionBytes
         )
 
         guard
@@ -286,6 +333,8 @@ public enum JointFit {
     ///     what remains and which keys they already reserved.
     ///   - context: The working context to size every candidate at.
     ///   - footprint: The injected per-candidate raw footprint at `context`.
+    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
+    ///     session at `context`.
     /// - Returns: The slot's resolution, with one ``CandidateReport`` per
     ///   candidate.
     private static func resolveSlot(
@@ -293,7 +342,8 @@ public enum JointFit {
         candidates: [ModelRef],
         budget: SharedBudget,
         context: Int,
-        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) -> SlotResolution {
         var chosen: ModelRef?
         var considered: [CandidateReport] = []
@@ -318,7 +368,8 @@ public enum JointFit {
                 role: ResidentRole(slot: slot),
                 context: context,
                 budget: budget,
-                footprint: footprint
+                footprint: footprint,
+                sessionBytes: sessionBytes
             )
             considered.append(report)
             if report.verdict == .chosen {
@@ -338,15 +389,17 @@ public enum JointFit {
     /// Sizes one candidate against the remaining budget at a given context,
     /// producing its verdict.
     ///
-    /// This is the success-case logic factored out of ``resolveSlot(_:candidates:budget:context:footprint:)``:
+    /// This is the success-case logic factored out of ``resolveSlot(_:candidates:budget:context:footprint:sessionBytes:)``:
     /// a candidate is `.chosen` when the bytes it charges fit what remains,
     /// `.tooLarge` when they don't, and `.metadataUnavailable` when it could
     /// not be sized at all.
     ///
     /// A candidate whose key an earlier slot already reserved charges its
     /// per-session KV cache alone, because the router loads one container for
-    /// both slots. Its report still carries the whole footprint, so a reader
-    /// sees both the size of the model and what it cost.
+    /// both slots. That cache is read from `sessionBytes` and never derived
+    /// from `footprint`, which may be answering a marginal cost of zero for a
+    /// container the pool already holds. Its report still carries the whole
+    /// footprint, so a reader sees both the size of the model and what it cost.
     ///
     /// - Parameters:
     ///   - ref: The candidate being sized.
@@ -354,6 +407,8 @@ public enum JointFit {
     ///   - context: The working context to size the candidate at.
     ///   - budget: The shared budget as earlier slots left it.
     ///   - footprint: The injected per-candidate raw footprint at `context`.
+    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
+    ///     session at `context`.
     /// - Returns: The candidate's report, with its verdict and (when sized) its
     ///   `× 1.2` footprint and charge.
     private static func evaluateCandidate(
@@ -361,66 +416,66 @@ public enum JointFit {
         role: ResidentRole,
         context: Int,
         budget: SharedBudget,
-        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) -> CandidateReport {
         switch footprint(ref, context) {
         case .failure(.metadataUnavailable(let reason)):
-            return CandidateReport(
-                ref: ref,
-                estimatedFootprintBytes: nil,
-                chargedBytes: nil,
-                verdict: .metadataUnavailable(reason)
-            )
-        case .success(let rawBytes):
-            let sharesWeights = budget.chargedKeys.contains(ReservationKey(ref: ref, role: role))
-            let rawCharge = sharesWeights
-                ? sessionBytes(ref, context: context, residentBytes: rawBytes, footprint: footprint)
-                : rawBytes
-            let charged = withMargin(rawCharge)
-            let verdict: Verdict = charged <= budget.remainingBytes ? .chosen : .tooLarge
-            return CandidateReport(
-                ref: ref,
-                estimatedFootprintBytes: withMargin(rawBytes),
-                chargedBytes: charged,
-                verdict: verdict
-            )
+            return unsizedReport(ref, reason: reason)
+        case .success(let wholeBytes):
+            guard budget.chargedKeys.contains(ReservationKey(ref: ref, role: role)) else {
+                return sizedReport(ref, wholeBytes: wholeBytes, rawChargeBytes: wholeBytes, budget: budget)
+            }
+            switch sessionBytes(ref, context) {
+            case .failure(.metadataUnavailable(let reason)):
+                return unsizedReport(ref, reason: reason)
+            case .success(let cacheBytes):
+                return sizedReport(ref, wholeBytes: wholeBytes, rawChargeBytes: cacheBytes, budget: budget)
+            }
         }
     }
 
-    /// The per-session part of a candidate's raw footprint at `context` — its KV
-    /// cache — which a slot pays for even when an earlier slot already reserved
-    /// the same container's weights.
-    ///
-    /// Sizing the same reference at ``weightsOnlyContext`` yields its weights
-    /// alone, so the difference is the KV term. The injected closure answers
-    /// both questions, which is why the dedupe needs no second closure and no
-    /// change to ``resolve(profile:budgetBytes:footprint:nativeMaxContext:)``.
-    ///
-    /// The result is clamped at zero because the injected closure is free to
-    /// report a *marginal* cost rather than an absolute one — the router charges
-    /// nothing for a model already resident in its pool — which makes the figure
-    /// at `context` smaller than the figure at a context of zero. Zero is the
-    /// right charge there as well: reusing a resident model costs nothing.
+    /// The report for a candidate the injected closures could not size.
     ///
     /// - Parameters:
-    ///   - ref: The candidate sharing an already-reserved container.
-    ///   - context: The working context the candidate is sized at.
-    ///   - residentBytes: The candidate's whole raw footprint at `context`.
-    ///   - footprint: The injected per-candidate raw footprint at a context.
-    /// - Returns: The raw KV bytes, or the whole footprint when the candidate
-    ///   cannot be sized at a context of zero.
-    private static func sessionBytes(
+    ///   - ref: The candidate that could not be sized.
+    ///   - reason: Why its sizing metadata could not be read.
+    /// - Returns: A report that carries no bytes and the unavailable verdict.
+    private static func unsizedReport(_ ref: ModelRef, reason: String) -> CandidateReport {
+        CandidateReport(
+            ref: ref,
+            estimatedFootprintBytes: nil,
+            chargedBytes: nil,
+            verdict: .metadataUnavailable(reason)
+        )
+    }
+
+    /// The report for a sized candidate: its whole `× 1.2` footprint, the
+    /// `× 1.2` bytes it charges, and whether that charge fits what remains.
+    ///
+    /// The two byte figures differ for a slot that reuses an earlier slot's
+    /// container: the footprint names the size of the model, and the charge
+    /// names its own KV cache.
+    ///
+    /// - Parameters:
+    ///   - ref: The candidate being reported.
+    ///   - wholeBytes: Its whole raw footprint at the working context.
+    ///   - rawChargeBytes: The raw bytes it charges the shared budget.
+    ///   - budget: The shared budget as earlier slots left it.
+    /// - Returns: The candidate's report, with its verdict.
+    private static func sizedReport(
         _ ref: ModelRef,
-        context: Int,
-        residentBytes: Int64,
-        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
-    ) -> Int64 {
-        guard case .success(let weightBytes) = footprint(ref, weightsOnlyContext) else {
-            // Sizable at `context` and not at zero is not a shape the router
-            // produces. Charge the whole footprint rather than guess a share.
-            return residentBytes
-        }
-        return max(0, residentBytes - weightBytes)
+        wholeBytes: Int64,
+        rawChargeBytes: Int64,
+        budget: SharedBudget
+    ) -> CandidateReport {
+        let charged = withMargin(rawChargeBytes)
+        return CandidateReport(
+            ref: ref,
+            estimatedFootprintBytes: withMargin(wholeBytes),
+            chargedBytes: charged,
+            verdict: charged <= budget.remainingBytes ? .chosen : .tooLarge
+        )
     }
 
     /// The report for the candidate a slot chose, or `nil` when it chose none.
@@ -481,13 +536,16 @@ public enum JointFit {
     ///   - budgetBytes: The shared memory budget the trio must co-fit.
     ///   - context: The working context to size every candidate at.
     ///   - footprint: The injected per-candidate raw footprint at `context`.
+    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
+    ///     session at `context`.
     /// - Returns: The three slot resolutions, in allocation order.
     private static func attemptTrio(
         profile: ProfileDefinition,
         standardCandidates: [ModelRef],
         budgetBytes: Int64,
         context: Int,
-        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) -> TrioAttempt {
         var budget = SharedBudget(totalBytes: budgetBytes)
         let embedding = resolveSlot(
@@ -495,7 +553,8 @@ public enum JointFit {
             candidates: profile.embedding,
             budget: budget,
             context: context,
-            footprint: footprint
+            footprint: footprint,
+            sessionBytes: sessionBytes
         )
         budget.charge(embedding)
         let standard = resolveSlot(
@@ -503,7 +562,8 @@ public enum JointFit {
             candidates: standardCandidates,
             budget: budget,
             context: context,
-            footprint: footprint
+            footprint: footprint,
+            sessionBytes: sessionBytes
         )
         budget.charge(standard)
         let flash = resolveSlot(
@@ -511,7 +571,8 @@ public enum JointFit {
             candidates: profile.flash,
             budget: budget,
             context: context,
-            footprint: footprint
+            footprint: footprint,
+            sessionBytes: sessionBytes
         )
         return TrioAttempt(embedding: embedding, standard: standard, flash: flash)
     }
@@ -563,13 +624,16 @@ public enum JointFit {
     ///   - budgetBytes: The shared memory budget the trio must co-fit.
     ///   - native: The candidate's own native max context, anchoring the ladder.
     ///   - footprint: The injected per-candidate raw footprint at a context.
+    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
+    ///     session at a context.
     /// - Returns: Every rung attempted and the winning rung, if any.
     private static func walkLadder(
         candidate: ModelRef,
         profile: ProfileDefinition,
         budgetBytes: Int64,
         native: Int,
-        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+        footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
     ) -> LadderWalkResult {
         var attempts: [LadderAttempt] = []
 
@@ -579,7 +643,8 @@ public enum JointFit {
                 standardCandidates: [candidate],
                 budgetBytes: budgetBytes,
                 context: context,
-                footprint: footprint
+                footprint: footprint,
+                sessionBytes: sessionBytes
             )
             attempts.append(
                 LadderAttempt(
@@ -676,9 +741,11 @@ public enum JointFit {
     ///
     /// - Parameters:
     ///   - profile: The authored profile; ``ProfileDefinition/context`` must be
-    ///     `nil` (callers dispatch on this in ``resolve(profile:budgetBytes:footprint:nativeMaxContext:)``).
+    ///     `nil` (callers dispatch on this in ``resolve(profile:budgetBytes:footprint:sessionBytes:nativeMaxContext:)``).
     ///   - budgetBytes: The shared memory budget the trio must co-fit.
     ///   - footprint: The injected per-candidate raw footprint at a context.
+    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
+    ///     session at a context.
     ///   - nativeMaxContext: The injected per-candidate native max context,
     ///     queried once per standard candidate to build its ladder.
     /// - Returns: The chosen trio and per-slot reasoning, with the winning
@@ -690,6 +757,7 @@ public enum JointFit {
         profile: ProfileDefinition,
         budgetBytes: Int64,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,
         nativeMaxContext: (ModelRef) -> Result<Int, RepoMetadataError>
     ) throws -> JointResolution {
         // No standard candidate to anchor a ladder on — a degenerate authored
@@ -701,7 +769,8 @@ public enum JointFit {
                 profile: profile,
                 budgetBytes: budgetBytes,
                 context: ProfileDefinition.defaultContext,
-                footprint: footprint
+                footprint: footprint,
+                sessionBytes: sessionBytes
             )
         }
 
@@ -730,7 +799,8 @@ public enum JointFit {
                     profile: profile,
                     budgetBytes: budgetBytes,
                     native: native,
-                    footprint: footprint
+                    footprint: footprint,
+                    sessionBytes: sessionBytes
                 )
                 if let mostRecentRung = walk.attempts.last?.contextTokens {
                     lastTriedContext = mostRecentRung
@@ -770,7 +840,8 @@ public enum JointFit {
             candidates: profile.embedding,
             budget: budget,
             context: lastTriedContext,
-            footprint: footprint
+            footprint: footprint,
+            sessionBytes: sessionBytes
         )
         budget.charge(embeddingResolution)
         let standardResolution = SlotResolution(
@@ -785,7 +856,8 @@ public enum JointFit {
             candidates: profile.flash,
             budget: budget,
             context: lastTriedContext,
-            footprint: footprint
+            footprint: footprint,
+            sessionBytes: sessionBytes
         )
         throw ResolutionFailure(
             profileName: profile.name,

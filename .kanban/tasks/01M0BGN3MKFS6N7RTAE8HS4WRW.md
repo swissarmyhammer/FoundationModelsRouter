@@ -175,6 +175,88 @@ comments:
     - evidence: 3 files — `Sources/FoundationModelsRouter/Resolution/JointFit.swift`, `Sources/FoundationModelsRouter/Resolution/SlotResolution.swift`, `Tests/FoundationModelsRouterTests/JointFitTests.swift`. `swift test`: 1081 passed, 0 failed.
     - next: `/review`
   timestamp: 2026-08-18T23:43:33.899836+00:00
+- actor: claude-code
+  id: 01m0bmxnfs3zkze3bqy2c72hsv
+  text: |
+    ### review — findings
+
+    - evidence: `review sha 6bb2947~1..6bb2947` — 2 findings, 2 confirmed, 2 refuted, 7 attempted. Sources/FoundationModelsRouter/Resolution/JointFit.swift:160, Sources/FoundationModelsRouter/Resolution/JointFit.swift:163
+    - next: Both findings are on `ReservationKey`. Periphery cannot see the synthesized `Hashable` conformance that reads `ref` and `role`, and that conformance is exactly what makes the struct a set key. Do NOT delete either property. Mark each with `// periphery:ignore` and a comment, the same way `ResidencyKey` in Sources/FoundationModelsRouter/Router.swift already does for its identical `ref` and `role` pair. Apply the cause to the whole file, not only the two reported lines.
+  timestamp: 2026-08-18T23:57:17.689277+00:00
+- actor: claude-code
+  id: 01m0bnfyt19enratwdbk24s427
+  text: |
+    ### review — findings (directed verification pass)
+
+    - evidence: 4 open items. Engine: Sources/FoundationModelsRouter/Resolution/JointFit.swift:160, :163. Directed verification: `sessionBytes` clamp under-reserves one KV cache on the pool-resident path; the embedding-versus-generation role axis has no charging test.
+    - next: The clamp item is the one that matters. `Router.footprintBytes` answers 0 for a key resident at the real rung, while `footprint(ref, 0)` builds key `.llm(context: 0)` which is never resident and so answers real weights. The subtraction goes negative and the clamp turns a positive true cost into a zero charge, so a resident model named by both generation slots is charged nothing. This is the under-reserve direction — the box accepts a profile it cannot hold. Distinguish "already resident, weights committed" from "second session on that container, KV not committed" rather than letting one clamp cover both.
+  timestamp: 2026-08-19T00:07:17.057109+00:00
+- actor: claude-code
+  id: 01m0bq6t4wvpzt2v5kw2pb038p
+  text: |
+    ## All four open findings closed. The under-reserve needed a signature change, and here is why
+
+    ### Finding 3 is real, and the clamp was not the whole cause
+
+    The verification comment is exactly right about the symptom, and the red test reproduced it before any code changed:
+
+        flash.considered[0].chargedBytes → 0
+        JointFit.withMargin(Self.sharedSessionRawBytes) → 2400
+
+    At a budget of 3000 the whole trio charged 600, not 3000. Both generation slots charged zero for a pool-resident 27B-shaped model.
+
+    **The clamp could not be repaired in place.** `sessionBytes` derived the KV term by subtraction — `footprint(ref, context) − footprint(ref, 0)` — and the first term is the figure the router *discounts*. For a resident key `footprint(ref, context)` answers `0`, so no arithmetic over that closure can recover a positive cache. Removing the clamp only turns a zero charge into a negative one. Raising the charge to the whole footprint would over-reserve by the weights. Neither is the honest figure.
+
+    So `JointFit.resolve` now takes a THIRD injected closure:
+
+        sessionBytes: (ModelRef, Int) -> Result<Int64, RepoMetadataError>
+
+    It answers the **absolute** KV cache of ONE session at a working context, and it is never discounted for residency, because a cache is materialised per session and is never shared. `Router.sessionBytes(for:context:metadataByRef:)` implements it as `metadata.footprint.kvBytes(context:)` — no `residentKeys` in sight, and its doc states that the omission is the point.
+
+    `evaluateCandidate` now reads: a key no earlier slot charged pays its whole footprint; a key an earlier slot already charged pays `sessionBytes` and nothing else. `weightsOnlyContext`, the subtraction and the clamp are all gone.
+
+    Charges for a shared key are now, whether or not the model is resident:
+
+    | | first generation slot | second generation slot |
+    |---|---|---|
+    | not resident | `withMargin(weights + kv)` | `withMargin(kv)` |
+    | pool-resident | `0` | `withMargin(kv)` |
+
+    The resident row is the one that was wrong.
+
+    ### Finding 4 — the role axis now has two tests, and one of them catches a collapse directly
+
+    `crossRoleReferenceIsChargedForTwoContainers` names one reference in the embedding slot AND the standard slot, and asserts both slots charge the whole `withMargin(12_000)`. `crossRoleReferenceDoesNotFitOnOneContainerBudget` takes one byte off the two-container budget and requires the throw.
+
+    Both pass `sessionBytes: Self.neverCalledSessionBytes`, which records an issue when invoked. If `ResidentRole` were ever collapsed onto the ref alone, the standard slot would take the shared path, call that closure, and the test would fail by name rather than by an arithmetic surprise.
+
+    ### Findings 1 and 2 — marked, not deleted
+
+    `ReservationKey.ref` and `.role` each carry `// periphery:ignore` with the reason on its own line above the marker, the shape `dead-code-swift`'s staging contract requires and the shape `ResidencyKey` in `Router.swift` already uses. The marker line carries no trailing text, which the rule measures as the difference between suppressed and still reported.
+
+    Swept the whole file for the same cause: `TrioAttempt`, `LadderWinner`, `LadderWalkResult` and `SharedBudget` all read their stored properties by name, so `ReservationKey`'s pair is the only site.
+
+    ### The two recorded items that were not findings
+
+    - **"One context per resolution" is now stated where it is load-bearing.** `ReservationKey`'s doc says the key carries no context while the pool key does, that the two agree only because `resolveAtFixedContext` writes one context onto all three slot resolutions, and that per-slot contexts would make this key coarser than the pool key and leave a whole set of weights unreserved — add the context to the key in the same change.
+    - **`^pq5w87d` does cover the `Router.residentFootprint` under-record.** Read it: its "The gap" section states the same thing, and its acceptance criteria already bind the pool figure to the joint-fit figure. No extension was needed. Said so on that card, and `^8hs4wrw`'s triage line now names it.
+
+    ### Two things a reviewer should weigh
+
+    - **`JointFit.resolve` is public and gained a parameter.** Both in-repo callers are updated (`Router.runJointFit` and 26 test call sites). No safe default exists: a default that answers zero is the defect this card exists to remove, so the parameter is required on purpose.
+    - **A stale DocC symbol link was found and fixed.** `JointFitTests.neverCalledNativeMaxContext` still named `resolve(profile:budgetBytes:footprint:nativeMaxContext:)`, which no longer exists.
+
+    ### Green
+
+    `swift test` — 1085 tests over 114 suites (32 + 58 + 995), 0 failures. One known issue, pre-existing (`withKnownIssue`). One build warning, pre-existing (`missing creator for mutated node`, the mlx-swift bundle).
+  timestamp: 2026-08-19T00:37:14.524039+00:00
+- actor: claude-code
+  id: 01m0bq6yadkvehjg9nmdbqctq9
+  text: |
+    ### implement — changed
+    - evidence: 3 files — `Sources/FoundationModelsRouter/Resolution/JointFit.swift`, `Sources/FoundationModelsRouter/Router.swift`, `Tests/FoundationModelsRouterTests/JointFitTests.swift`. `swift test`: 1085 passed over 114 suites, 0 failed, 1 pre-existing known issue.
+    - next: `/review`
+  timestamp: 2026-08-19T00:37:18.797305+00:00
 position_column: doing
 position_ordinal: '8380'
 title: '[Router] JointFit double-counts a ModelRef named in two slots; the runtime shares one container'
@@ -246,4 +328,28 @@ It also widens what Router can host generally: any profile reusing one model acr
 - [ ] A test pinning the deduped arithmetic: same ref in two slots reserves once; different refs reserve twice
 - [ ] A regression test for the reported asymmetry above
 - [ ] FoundationModelsMultitool re-runs its CI and reports the per-suite result back — they have offered to do this the moment it lands
-#router #defect
+
+## Review Findings (2026-08-18 18:47)
+
+> Scope: `review sha 6bb2947~1..6bb2947` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 0 not reviewed.
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:160` `code-hygiene/dead-code-swift` — var.instance `ref` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift:163` `code-hygiene/dead-code-swift` — var.instance `role` is assignOnlyProperty.
+
+## Directed Source Verification (2026-08-18 19:05)
+
+Six points checked from source at the user's direction, in addition to the engine pass. Points 1, 4, 5 and 6 hold. Points 2 and 3 do not.
+
+- [x] `Sources/FoundationModelsRouter/Resolution/JointFit.swift` `sessionBytes` — the `max(0, residentBytes - weightBytes)` clamp under-reserves one KV cache when the model is already pool-resident. `Router.footprintBytes` keys residency as `ResidencyKey(ref:, role: .llm(context: context))` and returns `0` for a resident key. `sessionBytes` asks for `footprint(ref, weightsOnlyContext)` with `weightsOnlyContext = 0`, which builds key `.llm(context: 0)`; the pool only ever holds real rungs (8192, or ladder rungs floored at 4096), so that key is never resident and the call returns the real weights `W`. The resident path is therefore `residentBytes = 0`, `weightBytes = W`, giving `max(0, 0 - W) = 0`. The first generation slot also charges `withMargin(0) = 0`, so a resident model named by both `standard` and `flash` is charged nothing at all. The pool entry's recorded footprint covers the container plus ONE session's KV; the second slot opens its own session and materialises its own cache, so the true marginal cost is a whole KV cache and the charge is zero. The docstring's justification — "Zero is the right charge there as well: reusing a resident model costs nothing" — is true of the weights and false of the KV half, which is the exact distinction this task exists to draw. Reachable in production: `residentKeys` is `Set(pool.keys)`, so any resolve that happens while another profile is resident takes this path. Magnitude on this repo's own `multitoolGenerationFootprint` (`layers: 64, kvHeads: 8, headDim: 32`) at a 32768 rung is `2 x 64 x 32768 x 8 x 32 x 2` = 2147483648 raw, about 2.6 GB margined, charged as 0. This is the under-reserve direction: a box accepts a profile it cannot hold, and it fails at load time on a user's machine.
+- [x] `Tests/FoundationModelsRouterTests/JointFitTests.swift` — the embedding-versus-generation role axis has no test on the charging side. `ResidentRole(slot:)` correctly maps `.embedding` to `.embedding` and `.standard`/`.flash` to `.generation`, so a ref named in both an embedding slot and a generation slot yields two `ReservationKey`s and pays twice. Nothing pins it: every `embedding:` list in this file names a dedicated embedding ref (`embBge`, `ladderEmb`, `sharedEmbedding`, `multitoolEmbedding`, `oversizedEmbedding`), never a ref that a generation slot also names. Add a test that names one ref in an embedding slot and a generation slot and asserts two full charges. If `ResidentRole` were ever collapsed, the failure would be an under-reserve of a whole embedding container, and today nothing would catch it.
+
+### Points that hold, recorded so a later pass need not redo them
+
+- The dedupe key is `(ModelRef as written, generation-or-embedding role)` with no resolved or normalised identity anywhere. `ModelRef` is `Hashable` over `repo` and an optional `revision`, and `init(_ string:)` only splits on the first `@` — no canonicalisation. Router's pool key `ResidencyKey` is `(ModelRef, .llm(context:) | .embedding)`, which is strictly finer. The two can only diverge on the context axis, and they cannot diverge there because one resolution assigns one context to every slot: `resolveAtFixedContext(context:)` writes `contextTokens: context` onto all three slot resolutions. Conservative-or-equal, so correct. Pinned by the test at `JointFitTests.swift` that asserts a pinned and an unpinned spelling of one repository need the separate budget, not the deduped one. NOTE for future work: "one context per resolution" is now load-bearing for memory safety. If per-slot contexts are ever introduced, `ReservationKey` becomes coarser than the pool key and will under-reserve a whole set of weights.
+- The margin is applied once to the deduped total. `withMargin` is called on the already-deduped `rawCharge`, and the budget subtracts that same single-margined figure. `withMargin` rounds up, so charging per part is equal to or more conservative than one application to the sum. Pinned by the test asserting `standardCharge + flashCharge == withMargin(rawWeights + rawSession)`.
+- `blockedSlot` cannot mislabel in the other direction. The standard-first branch only fires when `standard.chosen == nil`, so naming `.standard` is never a false statement, and when standard did choose the branch is skipped and the fallback reports embedding then flash in allocation order. A blocked embedding slot charges nothing, so standard sees the full budget and the label is maximally justified. `blockedSlot` is nil if and only if all three slots chose, so the preference changes only which slot is named and never `fits` or `isSucceeded` — it cannot make a failing trio look like it fits.
+- `CandidateReport` is constructed in seven places, all inside `JointFit.swift`; nothing else in the repo builds one. It is `public` with a `public init`, and `chargedBytes` is required and inserted mid-signature, so this is still a source-breaking change for any downstream package that constructs the type. The same commit also changed `LadderAttempt.init`'s labels and turned `fits` into a computed property, and added `Verdict.trioBlocked(ModelSlot)` which breaks downstream exhaustive switches. Worth a semver note even though no in-repo caller breaks.
+
+### Out of scope for this diff, recorded for triage
+
+`Router.swift` computes `residentFootprint` by summing one `footprintBytes` per pool entry, and two generation slots sharing one ref and context share one entry — so the pool records one session's KV where two are live. That under-record is a property of `Router.swift`, which this commit does not touch, and it predates this change. It is adjacent to the clamp defect above and should be triaged with it rather than assumed fixed by it. Confirmed covered by `^pq5w87d`, which states the same gap and carries acceptance criteria for it. #defect #router
