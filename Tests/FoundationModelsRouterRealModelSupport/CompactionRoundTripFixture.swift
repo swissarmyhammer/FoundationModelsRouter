@@ -70,7 +70,13 @@ public enum CompactionRoundTripFixture {
     /// not the target's, so the folded span, the summary, and the restored
     /// window are exactly what a default-budget fold would produce on the run
     /// where it happened to reach stage 3.
-    public static let foldBudget = TokenBudget(limit: context, target: 0.25)
+    public static let foldBudget = TokenBudget(limit: context, target: foldTargetShare)
+
+    /// The share of ``context`` the fold must come down to — the `target` of
+    /// ``foldBudget``, named here so the doc comment above has one value to
+    /// reason about. See that comment for why 0.25 rather than the 0.50
+    /// default.
+    private static let foldTargetShare = 0.25
 
     /// Long, distinct scripted documents fed into the session one per turn —
     /// enough cumulative text, against ``context``'s small 2048-token budget,
