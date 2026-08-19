@@ -99,6 +99,15 @@ comments:
     - evidence: 2 files — Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift. `swift test`: 995 + 37 + 75 = 1107 tests in 117 suites passed, 0 failures, 1 known issue in the untouched main bundle. A forced rebuild of the eval target gave 0 compiler warnings. The doc parameter sweep over `Tests/FoundationModelsRouterEvals` reports 0 over 70 declarations and 112 keys.
     - next: stays in `review`. Acceptance criterion 1's first disjunct needs two gated runs, which are ruled out, so this card cannot finish here.
   timestamp: 2026-08-19T11:59:18.239317+00:00
+- actor: claude-code
+  id: 01m0d8vmyd6qyb5w23pp57cj6m
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: no-change — all review findings are checked, and the findings pass of 2026-08-19 is complete
+    - review: not run — the card's own review hold forbids a move to `done` while criterion 1's first disjunct is open
+    - blocker: the first disjunct needs two sanctioned gated runs of identical code with identical verdicts. A gated run is ruled out for now, and only a person can sanction one.
+    - next: a person sanctions two gated subset runs, then closes the criterion on their evidence
+  timestamp: 2026-08-19T15:04:57.549737+00:00
 position_column: review
 position_ordinal: '8480'
 title: The 7-seed gated subset can only pass FactRetention at 7 of 7 — 6 of 7 is 0.857, under the 0.9 bar, so the tier has no tolerance for model sampling

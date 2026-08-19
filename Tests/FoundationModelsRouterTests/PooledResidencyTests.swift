@@ -218,6 +218,20 @@ struct PooledResidencyTests {
     /// between this constant's footprint arithmetic and the joint fit's own.
     private static let headroomBufferBytes: Int64 = 1_000
 
+    /// The `× 1.2` margined KV cache of ONE generation session at the default
+    /// 8192-token context for the canned 2-layer config (raw 2_097_152 bytes)
+    /// — the extra steady-state cost each generation slot beyond the first
+    /// adds on a shared resident model, and exactly what ``JointFit`` charges
+    /// a second generation slot naming an already-charged reference.
+    private static let sessionKVMarginedBytes: Int64 = 2_516_583
+
+    /// The whole reservation ``JointFit`` makes for a trio whose standard and
+    /// flash slots name ONE reference: that reference's weights plus one KV
+    /// cache (14_516_583), the second slot's own KV cache
+    /// (``sessionKVMarginedBytes``), and the embedding model (12_000_000).
+    private static let sharedPairTrioFootprint: Int64 =
+        14_516_583 + sessionKVMarginedBytes + 12_000_000
+
     /// A working context below ``ProfileDefinition/defaultContext``, for the
     /// profile that names an already-resident repo at a second context: the KV
     /// cache is sized into the container at load time, so the same repo at this
@@ -648,5 +662,102 @@ struct PooledResidencyTests {
         // distinct keys evicted in total across both profiles' releases.
         await resolvedB.release()
         #expect(await spy.evictions == 5)
+    }
+
+    // MARK: - A shared generation pair holds both KV caches against the budget.
+
+    /// Regression test for the accounting gap between ``JointFit`` and the
+    /// pool (task pq5w87d): a trio whose standard and flash slots name one
+    /// reference shares one pool entry, and that entry must hold the WHOLE
+    /// reservation joint fit made for the pair — weights plus TWO KV caches —
+    /// not just the first slot's footprint. The budget a later resolve sees
+    /// pins the two figures together.
+    @Test("a profile naming one ref in both generation slots holds two KV caches against the budget")
+    @MainActor
+    func sharedGenerationPairHoldsBothKVCachesAgainstTheBudget() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Exactly the shared-pair trio's own reservation plus the rounding buffer.
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.sharedPairTrioFootprint + Self.headroomBufferBytes,
+            cacheDir: dir
+        )
+
+        let pair = ProfileDefinition(
+            name: "pair", description: "standard and flash share one reference",
+            standard: ["org/pair-repo"], flash: ["org/pair-repo"], embedding: ["org/pair-emb"]
+        )
+        let resolvedPair = try await router.resolve(profile: pair, reporting: ResolutionProgress())
+        // One container serves both generation slots.
+        #expect(await spy.llmLoads.filter { $0 == "org/pair-repo" }.count == 1)
+
+        // A disjoint second profile cannot fit beside the pair trio, and the
+        // budget its failure reports is the host budget minus everything the
+        // pair trio reserved — including the second slot's KV cache.
+        let disjoint = ProfileDefinition(
+            name: "disjoint", description: "cannot fit beside the pair trio",
+            standard: ["org/pin-std"], flash: ["org/pin-flash"], embedding: ["org/pin-emb"]
+        )
+        do {
+            _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
+            Issue.record("the disjoint profile must not fit beside the pair trio")
+        } catch let failure as ResolutionFailure {
+            #expect(failure.budgetBytes == Self.headroomBufferBytes)
+        }
+        withExtendedLifetime(resolvedPair) {}
+    }
+
+    // MARK: - Releasing one holder of a shared key gives back only its own share.
+
+    /// The release half of the same accounting (task pq5w87d): a second
+    /// profile reusing a resident shared pair charges only its own flash
+    /// slot's KV cache, and releasing it gives back exactly that share —
+    /// never the first profile's still-live reservation.
+    @Test("releasing one of two profiles on a shared generation pair gives back only its own share")
+    @MainActor
+    func releasingOneHolderOfSharedPairGivesBackOnlyItsShare() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = LoadSpy()
+        // Fits the pair trio, plus the reusing profile's one extra KV cache.
+        let router = Self.makeRouter(
+            spy: spy,
+            recommendedMaxWorkingSetSize: Self.sharedPairTrioFootprint
+                + Self.sessionKVMarginedBytes + Self.headroomBufferBytes,
+            cacheDir: dir
+        )
+
+        let pair = ProfileDefinition(
+            name: "pair", description: "standard and flash share one reference",
+            standard: ["org/share-repo"], flash: ["org/share-repo"], embedding: ["org/share-emb"]
+        )
+        let holder = try await router.resolve(profile: pair, reporting: ResolutionProgress())
+        // The same trio again: its container reuses are free, and only its
+        // own second generation slot's KV cache is charged.
+        let reuser = try await router.resolve(profile: pair, reporting: ResolutionProgress())
+
+        await reuser.release()
+        // The first profile still references everything — nothing is evicted,
+        // and only the reuser's own KV share came back.
+        #expect(await spy.evictions == 0)
+
+        // Pin the released share through the budget a failing resolve sees:
+        // the pool still holds the first profile's whole pair reservation.
+        let disjoint = ProfileDefinition(
+            name: "disjoint", description: "cannot fit beside the pair trio",
+            standard: ["org/share-pin-std"], flash: ["org/share-pin-flash"],
+            embedding: ["org/share-pin-emb"]
+        )
+        do {
+            _ = try await router.resolve(profile: disjoint, reporting: ResolutionProgress())
+            Issue.record("the disjoint profile must not fit beside the pair trio")
+        } catch let failure as ResolutionFailure {
+            #expect(
+                failure.budgetBytes == Self.sessionKVMarginedBytes + Self.headroomBufferBytes
+            )
+        }
+        withExtendedLifetime(holder) {}
     }
 }

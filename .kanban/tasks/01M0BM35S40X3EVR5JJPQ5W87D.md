@@ -23,8 +23,73 @@ comments:
 
     and the pool records `withMargin(weights + kv)` for its one entry. The gap this card names is the second term, and `Router` can compute it from the same `sessionBytes` helper rather than deriving it again.
   timestamp: 2026-08-19T00:36:43.616770+00:00
-position_column: todo
-position_ordinal: '9180'
+- actor: claude-code
+  id: 01m0d999j6ar3v1krnhbst9afz
+  text: |-
+    ## Research done — the design decision
+
+    The gap is confirmed in `Router.swift`:
+
+    - `acquireModel` writes `footprintBytes` on a fresh `PoolEntry` only. A reuse acquisition bumps `refcount` and records no bytes.
+    - The figure comes from `chosenFootprint(for:)`, which reads `estimatedFootprintBytes` — the whole margined footprint. `JointFit` charges the second generation slot `chargedBytes` = `withMargin(kv)` (2_516_583 at the test fixture's 8192 context), and the pool does not hold it.
+
+    The fix I will make (the card's first option, with one guard):
+
+    - `PoolEntry` gets two figures: `baseFootprintBytes` (the first load's whole `× 1.2` footprint, a floor) and `acquiredChargeBytes` (the sum of the bytes each live acquisition charged at its joint fit). `footprintBytes` becomes computed: `max(base, acquiredChargeBytes)`.
+    - Each acquisition passes its own `chargedBytes` — read from the chosen `CandidateReport.chargedBytes`, the exact figure `JointFit` subtracted. A reuse acquisition ADDS its charge; a release SUBTRACTS it.
+    - `residentProfiles` stores `(key, chargedBytes)` holds, so `release(token:)` and the rollback path give back exactly each acquisition's share.
+    - The `max(base, ...)` floor keeps today's conservative behavior when the first (fully charged) holder releases while a zero-charged reuser still holds the entry: resident weights never become unaccounted. This diverges from strict equality only in that stale-holder case, and only in the safe direction.
+
+    By construction the pool delta of one resolve equals the sum of the trio's `chargedBytes` — the exact figure `JointFit` reserved. Criterion 1 and 2 follow; criterion 3 is pinned through `ResolutionFailure.budgetBytes` of a second resolve.
+
+    Fixture math (2-layer config, 10 MB weights, context 8192): kv = 2_097_152 raw; `withMargin(kv)` = 2_516_583; generation base = 14_516_583; embedder = 12_000_000. Shared-pair trio reservation = 14_516_583 + 2_516_583 + 12_000_000 = 29_033_166.
+  timestamp: 2026-08-19T15:12:24.646988+00:00
+- actor: claude-code
+  id: 01m0da48bgwp70g85xsk8fqw2f
+  text: |-
+    ## Implementation landed — TDD, both tests written first and seen red
+
+    **RED.** Two new hermetic tests in `Tests/FoundationModelsRouterTests/PooledResidencyTests.swift` failed with the exact predicted figures before the fix:
+
+    - `sharedGenerationPairHoldsBothKVCachesAgainstTheBudget` — resolves a trio whose standard and flash slots name `org/pair-repo`, then resolves a disjoint trio that cannot fit and pins `ResolutionFailure.budgetBytes`. Red: 2_517_583 where 1_000 is correct — the missing figure is exactly one margined session KV cache (2_516_583).
+    - `releasingOneHolderOfSharedPairGivesBackOnlyItsShare` — a second profile reuses the resident pair (charged only its own flash slot's KV, 2_516_583), releases, and the pinned budget shows only that share came back. Red: 5_034_166 where 2_517_583 is correct.
+
+    **GREEN.** The fix in `Sources/FoundationModelsRouter/Router.swift`, the card's first option:
+
+    - `PoolEntry` now carries `baseFootprintBytes` (the first load's whole `× 1.2` footprint, a floor) and `acquiredChargeBytes` (the sum of what every live acquisition charged at its joint fit). `footprintBytes` became computed: `max(base, acquiredCharge)`.
+    - Each acquisition passes `chargedBytes` read from the chosen `CandidateReport.chargedBytes` — the exact figure `JointFit` subtracted (new helper `chosenCharge(for:)` beside `chosenFootprint(for:)`, both over a shared `chosenReport(for:)`). A reuse acquisition ADDS its charge to the entry.
+    - New `ResidencyHold` (key + chargedBytes) replaces the bare key in `resolve`'s `slotHolds`, the rollback path, and `residentProfiles`, so `release(token:)` and `releaseKey(key:chargedBytes:)` give back exactly each acquisition's share.
+    - The `max(base, ...)` floor keeps today's conservative accounting when the fully-charged first holder releases while a zero-charged reuser still holds the entry — resident weights never go unaccounted.
+    - `makeRoutedModel`'s `footprintBytes` stamp on the handle stays `chosenFootprint` on purpose: it reports the model's whole size, not pool accounting.
+
+    **Verification.**
+
+    - `swift test --filter PooledResidencyTests`: 12/12 pass, including the 2 new tests.
+    - `swift build --build-tests -Xswiftc -warnings-as-errors`: clean, 0 warnings.
+    - `Scripts/swift-test.sh --skip IntegrationTests`: green — 997 tests in 91 suites (1 pre-existing known issue) + 72 tests in 8 suites, exit 0.
+
+    **Out of scope, noted for completeness.** A LATER resolve that reuses a resident generation key is still priced at zero by the `footprint` closure's residency discount, including the KV its own new sessions add. That is a `JointFit` pricing question across resolves, not the pool-entry accounting this card names; the pool now holds exactly what joint fit reserved, which is what the acceptance criteria bind.
+  timestamp: 2026-08-19T15:27:08.144900+00:00
+- actor: claude-code
+  id: 01m0da5keg64w1m84w5cwm7vwq
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Router.swift, Tests/FoundationModelsRouterTests/PooledResidencyTests.swift. RED seen first (budgetBytes 2_517_583 vs 1_000; 5_034_166 vs 2_517_583), then GREEN: `swift test --filter PooledResidencyTests` 12/12 pass; `swift build --build-tests -Xswiftc -warnings-as-errors` clean; `Scripts/swift-test.sh --skip IntegrationTests` green (997 tests in 91 suites + 72 tests in 8 suites, exit 0). Follow-up card filed for the cross-resolve residency-discount KV gap: ^4pbv8b9.
+    - next: /review
+  timestamp: 2026-08-19T15:27:52.272976+00:00
+- actor: claude-code
+  id: 01m0da8ec3yy31n1ag5s3m1qpb
+  text: |-
+    ### test — green
+    - We ran `Scripts/swift-test.sh --skip IntegrationTests`. No `FM_ROUTER_*` variable was set.
+    - Result: 997 tests in 91 suites passed, with 1 known issue. This known issue is the pre-existing `BoundedWaitTests` record. It counts as green.
+    - A second bundle ran: 72 tests in 8 suites passed.
+    - No test failed. No test was skipped.
+    - We also ran `swift build --build-tests -Xswiftc -warnings-as-errors`. The build finished with no error and no compiler warning.
+    - Next step: proceed to review.
+  timestamp: 2026-08-19T15:29:25.379026+00:00
+position_column: doing
+position_ordinal: '8380'
 title: '[Router] A pooled entry shared by two slots records one KV cache, while joint fit now reserves two'
 ---
 Found while implementing `^8hs4wrw`, which made `JointFit` reserve a shared model's weights one time and its KV cache one time for each slot. This card is the `Router` half of the same accounting, and `^8hs4wrw` deliberately left it alone: it is a pool question, not a joint-fit one.
@@ -56,7 +121,6 @@ Either way the figure `Router` subtracts from the host budget must match what `J
 
 ## Acceptance Criteria
 
-- [ ] The bytes `Router` holds against the host budget for a shared key equal the bytes `JointFit` reserved for the same trio
-- [ ] Releasing one of two slots on a shared key gives back only that slot's share
-- [ ] A test resolves two profiles in order, the first naming one reference in both generation slots, and pins the budget the second one sees
-#router #defect
+- [x] The bytes `Router` holds against the host budget for a shared key equal the bytes `JointFit` reserved for the same trio
+- [x] Releasing one of two slots on a shared key gives back only that slot's share
+- [x] A test resolves two profiles in order, the first naming one reference in both generation slots, and pins the budget the second one sees #router #defect
