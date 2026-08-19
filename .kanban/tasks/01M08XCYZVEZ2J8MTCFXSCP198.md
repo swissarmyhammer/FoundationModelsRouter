@@ -1,6 +1,16 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m0bjqz3nh7cgwp3d6f8pmabd
+  text: |-
+    ## Audit at `dd55fcd2c` — LIVE
+
+    Re-checked, and the claim holds. 7 seeds, a floor of 0.9, and provider sampling that is not pinned — all unchanged.
+
+    Today's gated run confirms that the tier has no tolerance: 4 of 6 measured seeds carried the fact, and the mean was 0.333.
+  timestamp: 2026-08-18T23:19:13.781974+00:00
 position_column: todo
 position_ordinal: '8380'
 title: The 7-seed gated subset can only pass FactRetention at 7 of 7 — 6 of 7 is 0.857, under the 0.9 bar, so the tier has no tolerance for model sampling

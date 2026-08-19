@@ -88,8 +88,21 @@ comments:
     - evidence: 13 files. New: `Tests/FoundationModelsRouterEvals/Support/CompactionEvalRealModelContainer.swift`, `Tests/FoundationModelsRouterEvals/Support/SequenceKeyedByFirst.swift`, `Tests/FoundationModelsRouterIntegrationTests/RealModelHarnessTests.swift`. Modified: `CompactionEvalProgressLog.swift`, `CompactionEvalSeed.swift`, `CompactionContinuityDataset.swift`, `CompactionEvaluationTests.swift`, `CompactionContinuityEvaluationTests.swift`, `Support/CompactionEvalRealSubjectRunner.swift`, `Support/CompactionContinuityEvalRealSubjectRunner.swift`, `CompactionRoundTripIntegrationTests.swift`, `SessionTreeRestorationIntegrationTests.swift`, `Support/RealModelHarness.swift`. No `Sources/` file changed. `swift test` 1099 pass; `FM_ROUTER_COMPACTION_SMOKE=1 swift test` 1099 pass; `review working` 0 findings.
     - next: `/review`. This card and `^aktsp2e` are complete; `^hxyj3q1` has one acceptance criterion open — the gated run — which this session was instructed not to make.
   timestamp: 2026-08-19T02:41:48.144120+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0bznwz0cqwap4bwwkaj1eah
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit c349f05) — 0 findings, 0 confirmed, 0 refuted, 14 validator passes attempted, 0 failed. 13 files reviewed; 6 `.kanban/` files excluded by `.reviewignore`. No prior `## Review Findings` section on this card.
+    - verified from source, not from the summary:
+      - `Package.swift` is unchanged by c349f05 — `git show --stat c349f05 -- Package.swift` names no file. The spike left no trace.
+      - `swift build -c release` is clean right now: `Build complete! (84.92 sec)`, exit 0.
+      - The release-build claim is written where a reader meets it: `Tests/FoundationModelsRouterEvals/Support/CompactionEvalRealModelContainer.swift` states the measured result — builds under `swift build --build-tests`, breaks under `swift build -c release` with `unable to resolve Swift module dependency to a compatible module: 'FoundationModelsRouter'`, and `.testTarget` does not rescue it.
+      - Both runners call the one shared loader. Each error case keeps exactly one thrower, passed in as the `unexpectedContainerType` parameter.
+      - The greedy pin survives on the continuity runner alone, with task `f80n046`'s reason at the call site.
+    - next: none. The card advances to `done`.
+  timestamp: 2026-08-19T03:05:17.536969+00:00
+position_column: done
+position_ordinal: ffbc80
 title: The two eval real-subject runners each carry their own copy of the real-model container load
 ---
 `Tests/FoundationModelsRouterEvals/Support/CompactionEvalRealSubjectRunner.swift` and `Tests/FoundationModelsRouterEvals/Support/CompactionContinuityEvalRealSubjectRunner.swift` each hold a private `container()` that runs the same three-step body: build a `LiveModelLoader` over `#hubDownloader()` and `#huggingFaceTokenizerLoader()`, call `loadLLM(ref:slot:context:reporting:)` for `CompactionEvalRealModel` at `.standard`, then cast the result to `MLXFoundationModelsContainer`.

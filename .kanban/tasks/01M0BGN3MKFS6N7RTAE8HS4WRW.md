@@ -257,8 +257,21 @@ comments:
     - evidence: 3 files — `Sources/FoundationModelsRouter/Resolution/JointFit.swift`, `Sources/FoundationModelsRouter/Router.swift`, `Tests/FoundationModelsRouterTests/JointFitTests.swift`. `swift test`: 1085 passed over 114 suites, 0 failed, 1 pre-existing known issue.
     - next: `/review`
   timestamp: 2026-08-19T00:37:18.797305+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0bqxc04c81tdmpde7jbtmy5
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha HEAD~1..HEAD` on 0f4b274 — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. Directed source check of the four round-one items: all four are fixed, not moved. `swift test --filter JointFit` — 24 tests, 0 failures.
+    - The under-reserve is gone. `evaluateCandidate` charges a repeated key `withMargin(sessionBytes(ref, context))`. `Router.sessionBytes(for:context:metadataByRef:)` reads `metadataByRef` only. It has no `residentKeys` parameter, so the resident discount cannot reach it. The subtraction, the `weightsOnlyContext` term and the `max(0, ...)` clamp are all deleted.
+    - The role axis is pinned. A change of `ResidentRole(slot: .embedding)` to `.generation` makes both cross-role tests fail with 3 issues. The change was reverted at once.
+    - `ReservationKey.ref` and `ReservationKey.role` are still stored properties. Each carries `// periphery:ignore` with the reason, as `ResidencyKey` does in Router.swift.
+    - `JointFit.resolve` gained a required `sessionBytes` parameter. Both in-repo callers are updated — Router.swift and JointFitTests.swift. The whole package builds. The change is source-breaking for an out-of-repo caller.
+    - The DocC link `JointFit/resolve(profile:budgetBytes:footprint:sessionBytes:nativeMaxContext:)` in the test helper agrees with the signature.
+    - next: card moves to done.
+  timestamp: 2026-08-19T00:49:33.700591+00:00
+position_column: done
+position_ordinal: ffb880
 title: '[Router] JointFit double-counts a ModelRef named in two slots; the runtime shares one container'
 ---
 Filed from the FoundationModelsMultitool session at their user's direction, 2026-08-18. Router-native: it edits only `Sources/FoundationModelsRouter/Resolution/JointFit.swift` and its tests.

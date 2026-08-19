@@ -186,8 +186,20 @@ comments:
     - new work filed: `^4bb3mjv`, give the fixture a regeneration tool rather than a prose recipe.
     - next: `/review`
   timestamp: 2026-08-18T23:01:28.112806+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0bj3vfzyb2d2ahrfcevnrv8
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (dd55fcd2c) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 4 files reviewed; 4 `.kanban/` files excluded by `.reviewignore`.
+    - driver checks, done by hand because the checked-in recording is the risk in this commit:
+      - Both recorded files read in full. `Fixtures/CompactionRecording/01M0BGQR2DV5T0P9XQ1PS05K8V/session.json` (28 lines) and `transcript.jsonl` (31 lines) carry no machine path, no user name, no credential, no email and no remote URL. A pattern scan for `/Users/`, `@`, `http`, `sk-`, `Bearer`, `AKIA`, `PRIVATE KEY`, `password`, `api_key`, `/var/folders` and the repository name gave zero matches. `workingDirectory` is the synthetic `file:///recordings/station-archive/`; the prose is a synthetic "station archive" discussion; tool outputs are `MARKER-7F3A-*`. Acceptance criterion 3 holds.
+      - The extraction is behavior-identical. `budgetLimit`, `foldTargetShareOfDeterministicFloor`, `budget(forcingSummarizationOf:)`, `foldedSpanTokens(of:keepRecentTurns:)` and the outcome members moved with their bodies unchanged. The print line keeps its old text, because `foldLabel` is `"compactionSmoke"`. No reference to a removed private member is left anywhere in `Tests/` or `Sources/`, so no doc link dangles. The smoke suite's doc-comment table (one call, ceiling 291, 643-token span, 713 -> 400) states numbers the extraction does not touch.
+      - The doc comment states what the suite proves (three facts) and what it does not (quality, format stability across schema versions, other sizes, the automatic path) — criterion 5. It states where the recording came from and that it is CHECKED IN rather than read live, with the reason — criterion 2.
+      - The map-reduce claim holds against source: `Summarization.init` defaults `maxChunkTokens` to 2000 (`Sources/FoundationModelsRouter/Compaction/Summarization.swift`), and the suite builds `Summarization(reasoningTokenHeadroom:)`, which leaves that default. A 2366-token span is past it, so the span chunks and the fold costs three calls. The README's model and context claims also match source: `RealModels.standard` is `mlx-community/Muse-Glimmer-30B-4bit` and `RealModels.context` is 8192, which is what `session.json` records.
+    - next: none. Card moved to done.
+  timestamp: 2026-08-18T23:08:14.719708+00:00
+position_column: done
+position_ordinal: ffb680
 title: Boot compaction tests from a recorded transcript rather than a hand-built fixture
 ---
 From the user, 2026-08-18:

@@ -58,8 +58,21 @@ comments:
     - evidence: 13 files across the three cards done in one session. This card's own: `Tests/FoundationModelsRouterEvals/CompactionEvalProgressLog.swift`, `Support/CompactionContinuityEvalRealSubjectRunner.swift`, `Support/CompactionEvalRealSubjectRunner.swift`, `CompactionContinuityDataset.swift`, `CompactionContinuityEvaluationTests.swift`, `CompactionEvaluationTests.swift`, `Support/SequenceKeyedByFirst.swift`. `swift test` 1099 pass; `FM_ROUTER_COMPACTION_SMOKE=1 swift test` 1099 pass; `review working` 0 findings.
     - next: `/review`.
   timestamp: 2026-08-19T02:41:50.852243+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0bzp3kdehtx3n0220qcv85q
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit c349f05) — 0 findings, 0 confirmed, 0 refuted, 14 validator passes attempted, 0 failed. 13 files reviewed; 6 `.kanban/` files excluded by `.reviewignore`. No prior `## Review Findings` section on this card.
+    - verified from source, not from the summary:
+      - `CompactionContinuityEvalRealSubjectRunner` emits lines. Each of `steps` writes a started line and a returned line, and the final instruction writes its own pair.
+      - The model load is timed apart from the samples. `CompactionEvalRealModelContainer.load` writes the started line, takes `Date()`, and writes the returned line with the real interval. The sample clock, `sampleStartedAt`, is taken after the load and after the profile build, so no sample is charged for the load.
+      - Nothing prints a number that is not a measurement. Every `elapsed=`, `took=`, `replyBytes=`, `folds=` value comes from a `timeIntervalSince` or a real count. `sample=n/total` and `step=n/total` are positions, and read as positions.
+      - `makeStepStartedLine` takes `elapsedSeconds: Double?` and appends the `elapsed=` clause only under `if let`.
+      - No caller passes a literal `0`. Every `elapsedSeconds:` argument in the test tree is `nil`, a `timeIntervalSince` result, `foldSeconds`, or a named test constant. `CompactionEvalRealSubjectRunner`'s fold-start call passes `nil`, and the continuity runner's first step passes `nil` through `offset == 0 ? nil : …`.
+    - next: none. The card advances to `done`.
+  timestamp: 2026-08-19T03:05:24.333049+00:00
+position_column: done
+position_ordinal: ffbd80
 title: The gated compaction continuity eval has the same one-bit defect — it prints nothing until it ends
 ---
 Found while instrumenting the fact-retention tier for `^h2xxsse`.

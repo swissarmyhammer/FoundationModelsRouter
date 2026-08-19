@@ -39,8 +39,33 @@ comments:
     - evidence: 2 files — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift, /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift. `swift test`: 995 + 32 + 58 = 1085 tests in 114 suites, 0 failures, 1 pre-existing known issue in `BoundedWait`. Cards `^9cw5g6n` and `^a2x0ksj`.
     - next: /review.
   timestamp: 2026-08-19T01:26:40.386835+00:00
-position_column: doing
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m0btj4hapbc40rpjh8aq25p0
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 2525f29) run as this card's own gate, 2 files reviewed, 7 validators attempted, 0 failed. counts: findings 0, confirmed 0, refuted 0. This card carries no acceptance checkboxes and no prior review findings.
+    - next: none. Card moves to done.
+
+    ## The rounding direction, verified in code rather than assumed
+
+    `RealisticSummaryLengthSummarizer.summarize(_:maxTokens:)` computes
+
+        let bytes = Int((Double(summaryTokens) * compactionEvalMeasuredBytesPerToken).rounded(.up))
+
+    so it rounds UP. `compactionEvalMeasuredBytesPerToken` is `4.81`, and `128 * 4.81` is `615.68`, which the ceiling makes exactly `616`. 616 is therefore the byte count this target's code really produces, not a rounded description of it.
+
+    ## Three sites, one figure, each naming the rate
+
+    Swept the eval target for `627`, `615` and `616`. The old figures are gone and the three sites agree:
+
+    - `Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift` — "a floor of 128 tokens, which is 616 bytes of prose at ``compactionEvalMeasuredBytesPerToken``". Was 627.
+    - `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`, `everySeedsFoldableSpanOutweighsARealSummary` — "a 128-token floor that is 616 bytes at `compactionEvalMeasuredBytesPerToken`". Was 615.
+    - `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`, `RealisticSummaryLengthSummarizer` — "at ``compactionEvalMeasuredBytesPerToken`` instead — 616 bytes". The hedge "about" is gone, so no site rounds the product a second way.
+
+    A fourth mention in the same file reads "A 616-byte answer is cut only when...", which is consistent with the three and needed no change.
+  timestamp: 2026-08-19T01:35:51.338115+00:00
+position_column: done
+position_ordinal: ffbb80
 title: CompactionEvalDataset says the 128-token floor costs 627 bytes; the dataset's own measured rate makes it 616
 ---
 `Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift` states that ``Summarization/minimumSummaryTokens`` — "a floor of 128 tokens" — is what "a real model spends on roughly 627 bytes of prose".

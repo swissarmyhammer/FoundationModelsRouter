@@ -11,6 +11,17 @@ comments:
 
     Note that this card is not `^y0mhcdq`, which the audit closed as stale. The two cards name different constants and different suites.
   timestamp: 2026-08-18T23:19:18.247755+00:00
+- actor: claude-code
+  id: 01m0bt03zkb0mxddxbmrbd7bcb
+  text: |-
+    ## One figure on this card is a division — do not carry it forward
+
+    `^9cw5g6n` criterion 2 forbids any card from deriving a per-sample cost by dividing a run's wall clock by its sample count. This card's line "against about 235 s each in the run `^fz49qds` measured" is exactly such a division: 1644.7 s over seven samples. `compactionEvalSubsetTimeLimitMinutes` no longer states it, and the comparison should not be read as a measured rate.
+
+    The card's OWN figures are clean and stay. The trail timed each sample apart, and this card's log shows the samples ran one at a time — sample 1's four lines complete before sample 2's first line, and so on to sample 7. So 295.1, 197.4, 352.0, 260.9, 269.9 and 250.7 seconds are each one sample's own work, and their mean of 271.0 s is a measurement rather than a division.
+
+    `compactionEvalFullDatasetTimeLimitMinutes` now rests on that 271.0 s: 24 samples is 6504 seconds, which is 108.4 minutes against the 120-minute ceiling.
+  timestamp: 2026-08-19T01:26:00.947030+00:00
 position_column: todo
 position_ordinal: 8d80
 title: The gated compaction subset no longer fits its 30-minute limit now that every fold applies — 6 of 7 seeds in 1800 s

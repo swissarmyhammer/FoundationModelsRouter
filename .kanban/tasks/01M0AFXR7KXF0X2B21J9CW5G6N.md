@@ -66,8 +66,41 @@ comments:
     - evidence: 2 files — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift, /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterEvals/CompactionEvalDataset.swift. `swift test`: 995 + 32 + 58 = 1085 tests in 114 suites, 0 failures, 1 pre-existing known issue in `BoundedWait`. Cards `^9cw5g6n` and `^a2x0ksj`.
     - next: /review. `^23qeprz` filed for the unmeasured dispatch shape.
   timestamp: 2026-08-19T01:26:37.808464+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0btj3ez22fr0mrqvtzbx74m
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 2525f29), 2 files reviewed, 7 validators attempted, 0 failed. counts: findings 0, confirmed 0, refuted 0. No prior review findings on this card; all three acceptance criteria checked.
+    - next: none. Card moves to done.
+
+    ## Each new statement checked against source and logs
+
+    The commit's purpose is to state measured facts only, so every new claim was verified rather than taken on trust.
+
+    1. **`elapsed=0.0s` carries no timing information.** Confirmed. `Tests/FoundationModelsRouterEvals/Support/CompactionEvalRealSubjectRunner.swift` passes `elapsedSeconds: 0` as a literal in `makeStepStartedLine(.fold, sample: label, elapsedSeconds: 0)`. Every sample prints `0.0s` at fold start whenever it starts.
+
+    2. **The two trails disagree about dispatch.** Both logs were read. `gated-run-3.log` holds six `fold started` lines one after another with no `fold returned` between them, and the seventh only AFTER the `Time limit was exceeded: 1800.000 seconds` line — exactly as the doc comment states. `gated-crit5.log` holds each sample's four lines complete before the next sample's first line. The comment's "the seventh only after the limit fired" is supported line for line.
+
+    3. **The serialisation attribution.** Both halves confirmed. `ModelContainer` holds `private let context: SerialAccessContainer<ModelContext>` and `perform` runs `try await context.read { ... }`. And `RoutedSession`/`generationGate` appear nowhere in `CompactionEvalRealSubjectRunner` — the only eval-target uses are in `CompactionContinuityEvalRealSubjectRunner`, a different tier. So this tier builds no `RoutedSession` and takes no permit.
+
+    4. **The re-derivation.** `gated-crit5.log` gives per-sample totals 295.1, 197.4, 352.0, 260.9, 269.9, 250.7 s. They add to 1626.0 s, the mean is 271.0 s, 24 samples is 6504 s, which is 108.4 minutes, leaving 11.6 against 120. Every figure recomputes exactly. The 1.8x spread is 352.0/197.4 = 1.78. Model load 3.6 s and 3.5 s both confirmed from the two logs. Neither constant's VALUE changed: `compactionEvalSubsetTimeLimitMinutes = 30` and `compactionEvalFullDatasetTimeLimitMinutes = 120` at HEAD~1 and at HEAD alike.
+
+    5. **"No other value in this target states a sample concurrency limit."** Checked against `Support/GatedEvalSerialGate.swift`, which is the one permit in the target. It is SUITE-scoped, and its own documentation records that each eval suite holds exactly one `@Test`. It bounds suite concurrency, not sample concurrency inside an evaluation, so it does not contradict the claim.
+
+    Nothing the new text states is unsupported.
+
+    ## Criterion 3 — the implementer's reading is fair
+
+    Criterion 3 asks that the limits' documented basis rest "on whole-run measurements only". The implementer read it in substance rather than to the letter and recorded the reading. That reading holds, for two reasons.
+
+    `compactionEvalSubsetTimeLimitMinutes` satisfies the criterion literally: it rests on 1644.7 s of an 1800 s run and on the 1800 s overrun, both whole-run figures.
+
+    `compactionEvalFullDatasetTimeLimitMinutes` cannot satisfy it literally, because a DERIVED constant cannot rest on a measurement of the thing it derives — that is what makes it derived. The criterion was written when the only per-sample figure available was a division, and the card's own "Why it matters" section shows that division is what it meant to forbid. Criterion 2 already forbids division outright. `^6ssbakk` timed each sample APART, so the 271.0 s rate is a measurement, not a quotient, and the constant names itself DERIVED and asks for a real run to replace it. The criterion's intent is met.
+
+    The criterion is fairly checked. The residual work — a real whole-dataset run — is filed as its own card rather than left inside a checked criterion.
+  timestamp: 2026-08-19T01:35:50.239782+00:00
+position_column: done
+position_ordinal: ffba80
 title: The gated compaction eval subset runs its 7 samples concurrently, so every per-sample cost figure divided out of a run is wrong
 ---
 Found by the instrumented gated run of 2026-08-18 (`^h2xxsse`). This is a measurement defect, not a product defect, and it silently corrupts how every figure on this tier gets read.

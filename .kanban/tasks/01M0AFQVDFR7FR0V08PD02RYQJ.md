@@ -124,8 +124,17 @@ comments:
     - evidence: 1 file — /Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Tests/FoundationModelsRouterIntegrationTests/AutoCompactionTriggerIntegrationTests.swift. `FM_ROUTER_COMPACTION_SMOKE=1 swift test` — 984 unit, 30 integration, 58 evals, 0 failures, exit 0, 28.5 s. The finding's checkbox is checked; 0 findings are open.
     - next: /review
   timestamp: 2026-08-18T22:15:21.152228+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0bf8k7ns542x9aw11t1zwb9
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 6bed76a) — 0 findings, 0 confirmed, 0 refuted; 7 validator/file pairs attempted, 0 failed, 0 skipped. 1 file reviewed, 2 not reviewed (`.kanban/`, excluded by `.reviewignore`). Round one's one finding is checked.
+    - directed accuracy check: the corrected comment at `Tests/FoundationModelsRouterIntegrationTests/AutoCompactionTriggerIntegrationTests.swift:435-443` is TRUE against source, not only different. `ContextUsageState.measuredTokens` gives `0` for `case .none` and `nil` for `case .unknown` (`Sources/FoundationModelsRouter/Compaction/TokenBudget.swift`), which is what the comment now says. The pre-turn check in `RoutedSessionActorTurnExecution.runTurn` binds `let measuredTokens = usageState.measuredTokens` and compares `measuredTokens >= budget.triggerTokens`, so only `.unknown` stops the comparison and the check DOES run on turn one, as the comment now says. `TokenBudget.triggerTokens` is `tokens(for: trigger)` and `tokens(for:)` is `Int((Double(limit) * fraction).rounded())`, so a trigger of `0.0` gives `0` tokens and `0 >= 0` holds — the comment's edge case is correct. `syntheticTriggerShareOfContext` is `0.02`, a positive trigger, as the comment says. The false "whatever the trigger is" universal is gone.
+    - sweep: `ContextUsageState` appears once in the file, at the corrected comment. No other site in the file carries the same mistaken reading of `.none`. The recency-window half of the sentence and the `foldKeepRecentTurns` doc are unchanged and stay correct.
+    - next: none. Card is in `done`.
+  timestamp: 2026-08-18T22:18:24.373288+00:00
+position_column: done
+position_ordinal: ffb580
 title: Test auto-compaction with a synthetic trigger threshold, so no fixture has to be grown to trip it
 ---
 From the user, 2026-08-18:

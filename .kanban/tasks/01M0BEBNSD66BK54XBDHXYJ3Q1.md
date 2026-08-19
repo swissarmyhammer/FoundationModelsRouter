@@ -75,8 +75,25 @@ comments:
     - evidence: this card's own files: `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelHarness.swift`, `RealModelHarnessTests.swift` (new), `CompactionRoundTripIntegrationTests.swift`, `SessionTreeRestorationIntegrationTests.swift`. `swift test` 1099 pass; `FM_ROUTER_COMPACTION_SMOKE=1 swift test` 1099 pass; `swift build -c release` clean; `review working` 0 findings.
     - next: `/review` for the code. The card does NOT close on that: acceptance criterion 3 — both gated suites run once, green, wall clock recorded — is still open, and needs a session that is allowed to set `FM_ROUTER_INTEGRATION_TESTS`.
   timestamp: 2026-08-19T02:41:53.661103+00:00
-position_column: doing
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m0bzpmvdgvh9tzvnxzc6nzfg
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit c349f05) — the engine returned 0 findings, 0 confirmed, 0 refuted, 14 validator passes attempted, 0 failed. The CODE on this card is clean. The card does NOT advance, because acceptance criterion 3 is still open: `Both gated suites are run once, green, and the run's wall clock is recorded on this card`. That run needs `FM_ROUTER_INTEGRATION_TESTS`, which this work deliberately did not set, and this review was instructed not to set either. Nothing here substitutes for it — no ungated test reaches the real model's own behavior.
+    - verified from source, not from the summary:
+      - `RealModelHarness.make` takes `container: any LoadedLLMContainer` and `routerId: ULID = .generate()`, and returns `LanguageModelProfile` alone. No `Router` is returned.
+      - Two of the three hand-built copies moved onto it. `CompactionRoundTripIntegrationTests` calls it twice, the second with `routerId: routerId` read off `profile.standard.routerId`. `SessionTreeRestorationIntegrationTests` calls it from its own thin wrapper.
+      - The third copy did NOT move, and that is what criterion 4 asks for. `CompactionContinuityEvalRealSubjectRunner.buildProfile` stays, and its doc comment states the measured reason: the shared function needs `@testable import FoundationModelsRouter`, `@testable` reaches only a leaf test target, and SwiftPM cannot share source between two leaf test targets.
+      - No assertion in `RealModelHarnessTests` is tautological. Each was read:
+        - `everySlotResolvesToWhatTheHandBuiltCopiesDid` compares against a `SlotResolution` spelled out in literals, not derived from the function.
+        - `statingTheProfileDefaultMatchesOmittingIt` compares two independently-declared spellings. `SlotResolution.init` defaults `contextTokens: Int = ProfileDefinition.defaultContext`, so this fails if either that default or `makeResolution`'s threading of `context` drifts.
+        - `durableRecordingWritesTheSidecarARestoreReads` decodes the `session.json` on disk and checks each field against a literal or a locally-made value.
+        - `builtProfileStampsEverySlot` pins the literal `"real-model-harness"`, not `RealModelHarness.definitionName`. This is the assertion the implementer replaced, and the replacement holds.
+        - `profileStampedWithAnExistingRouterIdContinuesThatRoot` checks a passed-in id comes back out AND that an unstamped build differs, so a `make` that ignored the parameter fails.
+    - next: a session that is allowed to set `FM_ROUTER_INTEGRATION_TESTS` runs both gated suites once, green, and records the wall clock here. The card then re-reviews and closes. It stays in `review` until then.
+  timestamp: 2026-08-19T03:05:41.997526+00:00
+position_column: review
+position_ordinal: '8280'
 title: Move the three hand-built gated-model profile copies onto the shared RealModelHarness
 ---
 `^d02ryqj` added `Tests/FoundationModelsRouterIntegrationTests/Support/RealModelHarness.swift`, which builds a real `LanguageModelProfile` over an already-loaded container. It is the same consolidation commit d82c33e made for `RealModelContainer.load`.

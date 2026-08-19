@@ -1,6 +1,14 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m0bjrkwvwjzt08nykbrh8whf
+  text: |-
+    ## Audit at `dd55fcd2c` — LIVE
+
+    Re-checked, and the claim holds. `Tests/FoundationModelsRouterIntegrationTests/Fixtures/CompactionRecording/README.md:121-127` still holds the prose "Re-recording it" paragraph. No generator target exists, and no gated regeneration suite exists.
+  timestamp: 2026-08-18T23:19:35.067523+00:00
 position_column: todo
 position_ordinal: 8f80
 title: Give the checked-in compaction recording a regeneration tool, not a prose recipe
