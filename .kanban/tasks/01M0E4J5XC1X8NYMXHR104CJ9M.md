@@ -40,8 +40,67 @@ comments:
     - evidence: 2 files — Examples/MultiModelGeneration/main.swift, Examples/MultiModelGeneration/README.md. `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0. `Scripts/swift-test.sh --skip IntegrationTests`: 1023 + 77 tests pass, 0 failures. `swift run MultiModelGeneration`: exit 0, wall clock 11.1 seconds.
     - next: review
   timestamp: 2026-08-20T01:41:39.776846+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0edh4jkhgaa7rqgvbsxem79
+  text: |-
+    ### review — findings
+    - evidence: `review sha 5c7fe5c~1..5c7fe5c` — 5 findings, 5 confirmed, 0 refuted. All are `code-hygiene/dead-code-swift` in Examples/MultiModelGeneration/main.swift (lines 39, 58, 71, 82, 120).
+    - next: Remove or use each unused symbol, then run the review again.
+  timestamp: 2026-08-20T01:45:50.419526+00:00
+- actor: claude-code
+  id: 01m0edhybbjpdc4rjqk4gs0gqb
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 2 files; the example observes the routed session through streamEvents, resolve phases print via async let, demoReplyTokenCeiling holds the run at 11.1 s
+    - test: green — Scripts/swift-test.sh --skip IntegrationTests, 1023 + 77 passed; warnings-as-errors clean; example ran once, exit 0
+    - commit: 5c7fe5c
+    - review: findings — 5 dead-code findings at Examples/MultiModelGeneration/main.swift:39,58,71,82,120
+  timestamp: 2026-08-20T01:46:16.811214+00:00
+- actor: claude-code
+  id: 01m0ee45qfj1mhh5y9q6tza8qz
+  text: |-
+    All 5 dead-code findings are refuted. No code change was necessary. The working tree stays identical to commit 5c7fe5c.
+
+    How each finding was examined, per the card's process:
+
+    1. Code reading. Four of the five symbols have direct readers in the file: `demoReplyTokenCeiling` at line 85 (`maxTokens:` argument), `runObservedTurn` at lines 192 and 206, `category` at line 209 (prompt interpolation), `startedAt` at line 217 (wall-clock print). The fifth, `progressTask`, is not in the file at all — not in the working tree and not in commit 5c7fe5c. Line 58 is a doc-comment line.
+
+    2. periphery 3.8.0 with the working invocation from ^59fd9rt (`swift build --build-tests`, then `periphery scan --skip-build --index-store-path .build/index-build/arm64-apple-macosx/debug/index/store`). The scan reports zero findings in Examples/MultiModelGeneration/main.swift.
+
+    3. IMPORTANT discovery — periphery is blind to this file. A canary probe (append a genuinely dead `let deadCanaryProbe = 42`, rebuild, rescan) produced NO periphery finding. All declarations in a `main.swift` are top-level entry-point code, and periphery keeps them all. So periphery silence proves nothing here, in either direction. Do not use periphery alone to confirm or refute a dead-code claim in an example `main.swift`.
+
+    4. The decisive evidence is compiler rename probes: rename each flagged declaration and the build fails at its use sites — `demoReplyTokenCeiling` at 85:78, `runObservedTurn` at 192:31 and 206:15, `category` at 209:28, `startedAt` at 217:84 ("cannot find ... in scope"). All probes were reverted; `git diff 5c7fe5c -- Examples/` is empty.
+
+    Verification after the probes were reverted:
+    - `swift run MultiModelGeneration`: exit 0, in-program wall clock 11.0 seconds (20.2 seconds real, warm cache). Under the 2-minute limit.
+    - `swift build --build-tests -Xswiftc -warnings-as-errors`: exit 0.
+    - `Scripts/swift-test.sh --skip IntegrationTests`: 1023 tests in 96 suites and 77 tests in 9 suites, all passed, exit 0. This equals the baseline.
+  timestamp: 2026-08-20T01:56:14.191890+00:00
+- actor: claude-code
+  id: 01m0ee4h7wjm5awpa7np3bh3y2
+  text: |-
+    ### implement — no-change
+    - evidence: 0 source files changed; the tree is identical to 5c7fe5c. All 5 findings refuted and checked off with evidence: (39) `demoReplyTokenCeiling` read at main.swift:85; (58) `progressTask` does not exist in the file; (71) `runObservedTurn` called at 192 and 206; (82/192) `category` read at 209; (120) `startedAt` read at 217. Rename probes fail the build at each use site. periphery 3.8.0 (`--skip-build --index-store-path .build/index-build/arm64-apple-macosx/debug/index/store` after `swift build --build-tests`) reports zero findings in the file; a canary probe shows periphery keeps all top-level `main.swift` declarations, so the compiler probes are the decisive evidence. Checks: `swift run MultiModelGeneration` exit 0, wall clock 11.0 s; `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0; `Scripts/swift-test.sh --skip IntegrationTests` 1023 + 77 passed, exit 0.
+    - next: review
+  timestamp: 2026-08-20T01:56:25.980817+00:00
+- actor: claude-code
+  id: 01m0eekpasx84pae72z27f96f7
+  text: |-
+    ### review — clean
+    - evidence: `review sha 5c7fe5c~1..5c7fe5c` (backend local) returned 6 `code-hygiene/dead-code-swift` findings on `Examples/MultiModelGeneration/main.swift`. All 6 are refuted. Five are the same findings as the 20:43 pass, refuted by the recorded compiler rename probes. The sixth (`answer`) is refuted this pass by a fresh rename probe: the build fails at main.swift:207:9 ("cannot find 'answer' in scope"). The probe edit was reverted; the working tree equals commit 5c7fe5c. The validator is blind on main.swift top-level symbols (recorded canary evidence), so the compiler probe is the decisive instrument.
+    - next: none. The task moved to done.
+  timestamp: 2026-08-20T02:04:42.713034+00:00
+- actor: claude-code
+  id: 01m0eemx42faqqscwb4z0k088r
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: no-change — all 5 dead-code findings refuted by compiler rename probes; tree identical to 5c7fe5c
+    - test: green — Scripts/swift-test.sh --skip IntegrationTests, 1023 + 77 passed; example ran at 11.0 s
+    - commit: none (no source change; iteration 1 landed as 5c7fe5c)
+    - review: clean — 6 engine findings all refuted by compile probes (the new `answer` finding included); task moved to `done`
+  timestamp: 2026-08-20T02:05:22.434649+00:00
+position_column: done
+position_ordinal: ffcd80
 title: MultiModelGeneration observes the routed session, not a standalone ResolutionProgress
 ---
 The user read the MultiModelGeneration example and reports that `ResolutionProgress` is not well integrated. A standalone use of `ResolutionProgress` is useless as a sample. The example must show what a real caller does: observe a routed session.
@@ -69,4 +128,33 @@ Rework `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/Examples/M
 - [x] One run of `swift run MultiModelGeneration` exits 0; the implementer records the wall clock and the printed event names on this card
 
 ## Workflow
-- Use `/tdd` where a failing test is possible; an example executable is verified by the warnings-as-errors build and a recorded run. #examples #router
+- Use `/tdd` where a failing test is possible; an example executable is verified by the warnings-as-errors build and a recorded run.
+
+## Review Findings (2026-08-19 20:43)
+
+> Scope: `review sha 5c7fe5c~1..5c7fe5c` — reviewed the diffs only — lines this change added or modified. 1 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Examples/MultiModelGeneration/main.swift:39` `code-hygiene/dead-code-swift` — var.global `demoReplyTokenCeiling` is unused. — Refuted: line 85 reads the constant as the `maxTokens:` argument of `streamEvents(to:maxTokens:)`. A rename probe causes a compile error at main.swift:85:78 ("cannot find 'demoReplyTokenCeiling' in scope"). The symbol is live.
+- [x] `Examples/MultiModelGeneration/main.swift:58` `code-hygiene/dead-code-swift` — var.global `progressTask` is unused. — Refuted: the symbol `progressTask` is not in the file. `grep progressTask` finds zero matches in the working tree and in commit 5c7fe5c. Line 58 is a doc-comment line. There is nothing to remove.
+- [x] `Examples/MultiModelGeneration/main.swift:71` `code-hygiene/dead-code-swift` — function.free `runObservedTurn(on:label:prompt:)` is unused. — Refuted: the top-level code calls the function at lines 192 and 206. A rename probe causes compile errors at 192:31 and 206:15. The symbol is live.
+- [x] `Examples/MultiModelGeneration/main.swift:82` `code-hygiene/dead-code-swift` — var.global `category` is unused. — Refuted: `category` (declared at line 192) is read at line 209, interpolated into the standard turn's prompt. A rename probe causes a compile error at 209:28. The symbol is live.
+- [x] `Examples/MultiModelGeneration/main.swift:120` `code-hygiene/dead-code-swift` — var.global `startedAt` is unused. — Refuted: line 217 reads `startedAt` in `Date().timeIntervalSince(startedAt)` for the wall-clock print. A rename probe causes a compile error at 217:84. The symbol is live.
+
+## Review Findings (2026-08-19 20:58)
+
+> Scope: `review sha 5c7fe5c~1..5c7fe5c` — reviewed the diffs only — lines this change added or modified. 1 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+The engine raised the same five `dead-code-swift` findings again, plus one new finding on `answer`. Each finding is refuted by a compiler rename probe. The validator is blind on main.swift top-level symbols (a dead canary probe made no finding), so the compiler probe is the decisive instrument. No genuine finding stays open.
+
+- [x] `Examples/MultiModelGeneration/main.swift:39` `code-hygiene/dead-code-swift` — var.global `demoReplyTokenCeiling` is unused. — Refuted: same finding as the 20:43 pass. The recorded rename probe shows a compile error at main.swift:85:78. The symbol is live.
+- [x] `Examples/MultiModelGeneration/main.swift:58` `code-hygiene/dead-code-swift` — var.global `progressTask` is unused. — Refuted: same finding as the 20:43 pass. The symbol `progressTask` is not in the file. There is nothing to remove.
+- [x] `Examples/MultiModelGeneration/main.swift:71` `code-hygiene/dead-code-swift` — function.free `runObservedTurn(on:label:prompt:)` is unused. — Refuted: same finding as the 20:43 pass. Calls at lines 192 and 206; the recorded rename probe fails to compile at 192:31 and 206:15. The symbol is live.
+- [x] `Examples/MultiModelGeneration/main.swift:91` `code-hygiene/dead-code-swift` — var.global `answer` is unused. — Refuted this pass with a fresh rename probe: `answer` is declared at line 202 and is read at line 207 as the `on:` argument of `runObservedTurn`. Rename of the declaration to `answerRenameProbe` causes a compile error at main.swift:207:9 ("cannot find 'answer' in scope"). The probe edit was reverted; `git diff 5c7fe5c -- Examples/MultiModelGeneration/main.swift` is empty. The symbol is live.
+- [x] `Examples/MultiModelGeneration/main.swift:120` `code-hygiene/dead-code-swift` — var.global `startedAt` is unused. — Refuted: same finding as the 20:43 pass. Line 217 reads `startedAt`; the recorded rename probe fails to compile at 217:84. The symbol is live.
+- [x] `Examples/MultiModelGeneration/main.swift:192` `code-hygiene/dead-code-swift` — var.global `category` is unused. — Refuted: same finding as the 20:43 pass (reported then at line 82). `category` is declared at line 192 and is read at line 209; the recorded rename probe fails to compile at 209:28. The symbol is live. #examples #router
