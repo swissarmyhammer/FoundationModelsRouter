@@ -13,8 +13,24 @@ comments:
     - evidence: 1 file removed — docs/Usage.md (and the empty docs/ directory with it, via `git rm -r docs/`). No other file changed: the pre-deletion reference sweep (`rg -l --hidden "docs/Usage|Usage\.md" --glob '!.build' --glob '!.kanban' --glob '!.git' .` and the wider `docs/` sweep) found zero references in the README, the CI workflows, and the DocC sources. Post-deletion checks: both rg sweeps exit 1 (no match), `test -d docs` exits 1. `swift build --build-tests -Xswiftc -warnings-as-errors` exits 0. `Scripts/swift-test.sh --skip IntegrationTests` passed: 1023 tests in 96 suites (1 known issue) + 77 tests in 9 suites — the same counts as the baseline. Note: the first suite run showed one timing flake in GenerationStallDiagnosticTests ("a streaming turn reports the stall against the fragments it counted", BoundedWait timeout under full-suite load); it passed in isolation (0.067 s) and in the second full run. The deletion of a Markdown file cannot cause it.
     - next: /review
   timestamp: 2026-08-20T01:21:35.482974+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0ec99d6773vzhb1zsz5gdjv
+  text: |-
+    ### review — clean
+    - evidence: `review sha 83929af~1..83929af` (local backend) — 0 findings, 0 confirmed, 0 refuted. The commit deletes `docs/Usage.md`. The engine did not review the 2 `.kanban/` files (`.reviewignore` rule). No prior findings are open on this card.
+    - next: none. The card moves to done.
+  timestamp: 2026-08-20T01:24:04.646257+00:00
+- actor: claude-code
+  id: 01m0eca5enkec36kgw3x6hyfd2
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — docs/Usage.md deleted with the docs/ directory; reference sweep found zero references
+    - test: green — Scripts/swift-test.sh --skip IntegrationTests, 1023 + 77 passed; warnings-as-errors clean
+    - commit: 83929af
+    - review: clean — 0 findings; task moved to `done`
+  timestamp: 2026-08-20T01:24:33.365614+00:00
+position_column: done
+position_ordinal: ffcc80
 title: Delete the docs directory
 ---
 The user asked to delete the docs. The `docs/` directory holds one file, `docs/Usage.md` (8 KB), which describes `respond`, the run plane, and drain behavior.
