@@ -73,37 +73,33 @@ embeddings, forking, and residency. A runnable, real-model demo lives in
 
 ## Tests
 
-The tests are split by what they need, and the split is a package target rather
-than an environment variable, so one command names one target.
+The tests are split by what they need, and the split is a package boundary
+rather than an environment variable or a name filter. The root package
+declares no integration target, so a plain `swift test` runs only the
+hermetic tests by construction. The real-model targets live in the nested
+[`IntegrationTests/`](IntegrationTests) package.
 
 ```sh
 # Everyday: hermetic, no network, no GPU, seconds.
-swift test --skip IntegrationTests
+swift test
 
 # Real models: downloads weights and generates on the GPU. Tens of minutes.
-swift test --filter IntegrationTests --skip CompactionEvalFullDataset
+swift test --package-path IntegrationTests --skip CompactionEvalFullDataset
 
 # The real-model smoke tier alone — does compaction work at all? Seconds.
-swift test --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'
+swift test --package-path IntegrationTests --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'
 
 # The whole-dataset compaction eval, a superset of the tier the line above
 # measures. Its own limit is two hours.
-swift test --filter CompactionEvalFullDataset
+swift test --package-path IntegrationTests --filter CompactionEvalFullDataset
 ```
 
 `FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests`
 hold every suite that reaches a real model, and no suite in either one reads an
-environment variable or can skip itself. `--filter` and `--skip` take a regular
-expression over `<test-target>.<test-case>`, so the shared
-`IntegrationTests` suffix selects both targets at once.
-
-`swift test` answers 0 when a `--filter` matches nothing, printing only
-`warning: No matching test cases were run`. Run the commands through
-`Scripts/swift-test.sh`, as CI does, to turn that warning into a failure:
-
-```sh
-Scripts/swift-test.sh --skip IntegrationTests
-```
+environment variable or can skip itself. Both targets exist only in the nested
+package, so a root `swift test` cannot see them, and a run of the nested
+package executes every suite in it — no command can silently match nothing.
+CI runs the same two commands.
 
 ## License
 

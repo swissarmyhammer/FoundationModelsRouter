@@ -1,9 +1,9 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterRealModelSupport
 import Testing
 
 @testable import FoundationModelsRouter
+@testable import FoundationModelsRouterRealModelSupport
 
 // MARK: - Model
 

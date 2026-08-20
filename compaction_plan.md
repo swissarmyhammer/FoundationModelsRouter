@@ -380,7 +380,8 @@ A small executable beside `MultiModelGeneration` proving the loop end to end:
 ## 5. Testing
 
 Family conventions: swift-testing, hermetic unit tests, real-model tests in
-their own targets (`swift test --filter IntegrationTests`).
+their own targets in the nested `IntegrationTests/` package
+(`swift test --package-path IntegrationTests`).
 
 - **Stage unit tests** — fixture transcripts covering every §1.3 invariant,
   plus: compaction entry round-trips through the recording mirror and the
@@ -508,7 +509,7 @@ their own targets (`swift test --filter IntegrationTests`).
    half of this verdict — whether `LanguageModelSession(transcript:)` itself
    preserves ids on ingest — is now empirically confirmed too:
    `CompactionSpikeIntegrationTests` passes against a real model under
-   `swift test --filter IntegrationTests`.
+   `swift test --package-path IntegrationTests`.
 
 2. **`CompactionSegment` + registry default registration**; recording
    round-trip tests.

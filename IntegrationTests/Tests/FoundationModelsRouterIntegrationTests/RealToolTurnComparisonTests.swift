@@ -1,11 +1,11 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import MLXFoundationModels
 import Testing
 
 @testable import FoundationModelsRouter
+@testable import FoundationModelsRouterRealModelSupport
 
 /// The same real `mlx-community` generation model this target's other gated
 /// suites drive for the `.standard` slot.

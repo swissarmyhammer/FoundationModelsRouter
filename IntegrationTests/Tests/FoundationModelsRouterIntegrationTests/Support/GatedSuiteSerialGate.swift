@@ -23,25 +23,23 @@ import Testing
 ///
 /// ## How a suite of this target is selected
 ///
-/// By the TARGET, and by nothing else. No suite here reads an environment
-/// variable and none carries an `.enabled(if:)`, so a suite that is selected
-/// runs and a suite that is not selected is not built into the run at all:
+/// By the PACKAGE, and by nothing else. No suite here reads an environment
+/// variable and none carries an `.enabled(if:)`. This target lives in the
+/// nested `IntegrationTests/` package, which the root package does not
+/// declare, so a suite that is selected runs and a suite that is not
+/// selected is not built into the run at all:
 ///
-/// - `swift test --skip IntegrationTests` is the everyday
-///   hermetic run, and it leaves this target and
-///   `FoundationModelsRouterEvalIntegrationTests` out through the one
-///   `IntegrationTests` suffix both names share.
-/// - `swift test --filter IntegrationTests` is what asks for
-///   them, and it is what CI runs.
-/// - `swift test --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'`
+/// - `swift test` at the repository root is the everyday hermetic run, and
+///   it cannot see this package.
+/// - `swift test --package-path IntegrationTests` runs this target and
+///   `FoundationModelsRouterEvalIntegrationTests`, and it is what CI runs.
+/// - `swift test --package-path IntegrationTests --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'`
 ///   runs the three compaction smoke suites alone — the seconds-long tier that
 ///   answers "does compaction work at all against a real model" without the
 ///   15-to-30-minute suites beside it.
 ///
-/// `swift test` exits 0 when a `--filter` matches nothing, so a selector that
-/// named a target no longer present would report green having measured nothing.
-/// `Scripts/swift-test.sh` reads that warning and fails on it, and CI runs
-/// every command through it.
+/// The package boundary needs no guard script: a run of this package executes
+/// every suite in it, so a green run always measured something.
 enum GatedSuiteSerialGate {
     /// The target-wide permit every gated suite holds for its duration.
     ///

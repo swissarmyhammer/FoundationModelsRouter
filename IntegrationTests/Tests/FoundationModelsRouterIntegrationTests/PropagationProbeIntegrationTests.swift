@@ -1,9 +1,9 @@
 import FoundationModels
-import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
+@testable import FoundationModelsRouterRealModelSupport
 
 /// The same real `mlx-community` generation model the rest of this target's
 /// gated suites use for the `.standard` slot.

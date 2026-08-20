@@ -16,4 +16,4 @@ swift run MultiModelGeneration
 
 This downloads real model weights on first run and needs Apple silicon +
 network access — the same constraints as the real-model test targets
-(`swift test --filter IntegrationTests`).
+(`swift test --package-path IntegrationTests`).

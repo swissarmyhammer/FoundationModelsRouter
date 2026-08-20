@@ -1,10 +1,10 @@
 import Foundation
 import FoundationModels
-import FoundationModelsRouterRealModelSupport
 import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
+@testable import FoundationModelsRouterRealModelSupport
 
 /// The model this suite cancels mid-generation: the same 1B model the
 /// compaction smoke suite drives, small enough that the whole suite stays

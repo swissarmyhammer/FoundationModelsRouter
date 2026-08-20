@@ -16,7 +16,7 @@ import Testing
 /// a `contextFill` of 0.41 against a 0.80 trigger. These assertions are
 /// mechanical, need no model, and fail loudly if the fixtures shrink or grow
 /// out of range again — which is why they live in this hermetic target, where
-/// every `swift test --skip IntegrationTests` run measures them (task
+/// every root `swift test` run measures them (task
 /// ^cvsh3m9).
 ///
 /// They are stated in the token count a live run MEASURES, not in the

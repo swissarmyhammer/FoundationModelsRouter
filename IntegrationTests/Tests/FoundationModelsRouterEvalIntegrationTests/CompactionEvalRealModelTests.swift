@@ -214,9 +214,9 @@ struct CompactionEvaluationIntegrationTests {
 ///
 /// Its dataset is a superset of the default tier's, so an everyday real-model
 /// run steps it aside rather than measuring the same seeds twice ahead of it:
-/// the command carries `--skip CompactionEvalFullDataset` beside its
-/// `--filter IntegrationTests`. Ask for this tier by naming it,
-/// with `swift test --filter CompactionEvalFullDataset`. Its limit is
+/// `swift test --package-path IntegrationTests` carries
+/// `--skip CompactionEvalFullDataset`. Ask for this tier by naming it, with
+/// `swift test --package-path IntegrationTests --filter CompactionEvalFullDataset`. Its limit is
 /// ``compactionEvalFullDatasetTimeLimitMinutes``, which is why the everyday run
 /// does not pay for it.
 ///

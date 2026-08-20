@@ -10,20 +10,16 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# The real-model suites are selected by TARGET, never by an environment
-# variable. `FoundationModelsRouterIntegrationTests` and
-# `FoundationModelsRouterEvalIntegrationTests` share the `IntegrationTests`
-# suffix, so the two commands below name that suffix once each: `--skip` for
-# the hermetic run, `--filter`
-# for the real-model run. `Scripts/swift-test.sh` fails a run whose selectors
-# matched no test, because `swift test` reports such a run as a clean exit 0.
-#
-# This repository called `swissarmyhammer/workflows/.github/workflows/swift-ci.yaml`
-# until the real-model suites moved behind a target. That workflow's integration
-# job takes the NAME of a gate variable and runs one `.xctest` bundle found by
-# glob under `<VARIABLE>=1 xcrun xctest`, so it can express neither selector
-# above, and its single-bundle glob had never run the gated eval suites at all.
-# The steps below replace it.
+# The real-model suites are selected by PACKAGE, never by an environment
+# variable and never by a name regex. The root package declares no integration
+# target, so `swift test` at the root runs only the hermetic targets
+# (`FoundationModelsRouterTests`, `FoundationModelsRouterEvals`) by
+# construction. The nested `IntegrationTests/` package holds the two
+# real-model targets (`FoundationModelsRouterIntegrationTests`,
+# `FoundationModelsRouterEvalIntegrationTests`), and
+# `swift test --package-path IntegrationTests` runs them. A run of a package
+# executes every suite in it, so neither command can silently match nothing —
+# the guard script the name-regex selectors needed is gone with them.
 jobs:
   test:
     name: Build & hermetic tests
@@ -43,7 +39,7 @@ jobs:
         run: swift build --build-tests
 
       - name: Run the hermetic tests
-        run: Scripts/swift-test.sh --skip IntegrationTests
+        run: swift test
 
   real-model:
     name: Real-model tests
@@ -57,15 +53,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Clean build directory
-        run: rm -rf .build
+        run: rm -rf .build IntegrationTests/.build
 
       - name: Build (incl. tests)
-        run: swift build --build-tests
+        run: swift build --build-tests --package-path IntegrationTests
 
       # The whole-dataset fact-retention tier is a superset of the subset tier
       # this run measures, and its own limit is two hours, so it is stepped
       # aside by name. Ask for it with
-      # `swift test --filter CompactionEvalFullDataset`.
+      # `swift test --package-path IntegrationTests --filter CompactionEvalFullDataset`.
       #
       # No metallib is copied beside the test bundle here, as the shared
       # workflow used to do: `MetalLibraryTestBootstrap` installs that link from
@@ -73,6 +69,6 @@ jobs:
       # is the suite that proves the shaders load.
       - name: Run the real-model tests
         run: |
-          Scripts/swift-test.sh \
-            --filter IntegrationTests \
+          swift test \
+            --package-path IntegrationTests \
             --skip CompactionEvalFullDataset
