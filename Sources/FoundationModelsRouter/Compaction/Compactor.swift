@@ -39,6 +39,20 @@ public struct CompactionResult: Sendable, Equatable {
     /// ``summary`` is.
     public let summaryEntryId: String?
 
+    /// The ``ModelRef`` string of the model that wrote ``summary``, or `nil`
+    /// when ``summary`` is `nil` or when the producer did not name one.
+    ///
+    /// This field is the signal that names the summary's writer.
+    /// ``RoutedSessionActor`` sets it on every fold it applies: the profile's
+    /// flash slot, or the session's own model — see
+    /// ``RoutedSessionActor/performAutoCompaction(prompt:budget:)`` for why a
+    /// consumer must be able to see which model summarized. A fold built
+    /// outside a session — ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+    /// called bare, or a cold ``SessionProjection`` row seeded from a
+    /// persisted checkpoint — carries `nil`, because no model name reaches
+    /// those producers.
+    public let summarizerModel: String?
+
     /// The transcript's estimated size, in tokens, before this pipeline ran.
     public let tokensBefore: Int
 
@@ -64,6 +78,8 @@ public struct CompactionResult: Sendable, Equatable {
     ///   - summaryEntryId: The synthesized summary entry's own
     ///     `Transcript.Entry.id`, or `nil` when no summary entry was applied.
     ///     Defaults to `nil`.
+    ///   - summarizerModel: The ``ModelRef`` string of the model that wrote
+    ///     `summary`, or `nil` when no producer named one. Defaults to `nil`.
     ///   - tokensBefore: The estimated pre-fold size, in tokens.
     ///   - tokensAfter: The estimated post-fold size, in tokens.
     ///   - stagesApplied: The stages that ran, in order.
@@ -71,6 +87,7 @@ public struct CompactionResult: Sendable, Equatable {
         id: String = ULID.generate().description,
         summary: String?,
         summaryEntryId: String? = nil,
+        summarizerModel: String? = nil,
         tokensBefore: Int,
         tokensAfter: Int,
         stagesApplied: [String]
@@ -78,9 +95,34 @@ public struct CompactionResult: Sendable, Equatable {
         self.id = id
         self.summary = summary
         self.summaryEntryId = summaryEntryId
+        self.summarizerModel = summarizerModel
         self.tokensBefore = tokensBefore
         self.tokensAfter = tokensAfter
         self.stagesApplied = stagesApplied
+    }
+
+    /// Returns a copy of this result that names the model that wrote its
+    /// summary, or this result unchanged when there is nothing to name.
+    ///
+    /// A result carries a summarizer name only together with a summary —
+    /// see ``summarizerModel`` — so a result with no ``summary`` (a
+    /// deterministic-only fold, or a discarded one) returns unchanged, as
+    /// does a `nil` `modelName`.
+    ///
+    /// - Parameter modelName: The ``ModelRef`` string of the model that wrote
+    ///   ``summary``, or `nil` when the caller has none to name.
+    /// - Returns: The named copy, or `self` when there is nothing to name.
+    func namingSummarizerModel(_ modelName: String?) -> CompactionResult {
+        guard summary != nil, let modelName else { return self }
+        return CompactionResult(
+            id: id,
+            summary: summary,
+            summaryEntryId: summaryEntryId,
+            summarizerModel: modelName,
+            tokensBefore: tokensBefore,
+            tokensAfter: tokensAfter,
+            stagesApplied: stagesApplied
+        )
     }
 }
 

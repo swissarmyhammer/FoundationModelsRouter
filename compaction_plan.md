@@ -114,6 +114,7 @@ public struct TokenBudget: Sendable {
 
 public struct CompactionResult: Sendable {
     public let summary: String?
+    public let summarizerModel: String?  // the model that wrote `summary` (task ^59fd9rt)
     public let tokensBefore: Int
     public let tokensAfter: Int
     public let stagesApplied: [String]
@@ -125,6 +126,23 @@ resolved working context; the fill numerator is *measured* usage, not an
 estimate (§1.5); the summarizer is the session's own model by default, with
 the profile's `flash` slot as the recommended override for consumers that
 have one resident.
+
+**Summary quality hazard (task ^59fd9rt).** The flash override is a routing
+choice, not a quality check. Auto-compaction prefers the `flash` slot as its
+summarizer, and a model that is too small to summarize can hold that slot.
+Each fold it writes passes every mechanical check — `stagesApplied` is
+non-empty, the transcript shrinks, the checkpoint records — while the summary
+text is garbage, and a session that resumes from that fold reads garbage in
+place of its history. Measured on 2026-08-19: with
+`mlx-community/SmolLM-135M-Instruct-4bit` in `flash`, every fold summary
+degenerated into hallucinated repetition loops, under greedy and sampled
+decoding alike, whatever model held `standard`. A profile that opts into
+auto-compaction with a `budget:` must put a model that can summarize into its
+`flash` slot. The signal: every fold's `CompactionResult.summarizerModel`
+names the model that wrote the summary, so a consumer of the
+`.compaction(_:)` event can judge each summary against its writer. See
+`RoutedSessionActor.performAutoCompaction(prompt:budget:)` for the code-level
+note.
 
 ### 1.5 Token accounting — measured, not estimated
 

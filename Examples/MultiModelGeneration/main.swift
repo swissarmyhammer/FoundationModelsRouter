@@ -39,6 +39,14 @@ let router = Router(
 // Deliberately small, distinct model refs per generation slot so both co-fit
 // comfortably and the multi-model point is visible: `flash` and `standard`
 // really are two different resident models, not the same one reused.
+//
+// SmolLM-135M in `flash` is safe here ONLY because no session in this demo
+// opts into auto-compaction with a `budget:`. Auto-compaction prefers the
+// `flash` slot as its summarizer, and this model is too small to summarize —
+// see the summary quality hazard on
+// `RoutedSessionActor.performAutoCompaction(prompt:budget:)` (task ^59fd9rt).
+// A demo that adds a `budget:` must also put a capable model into `flash`,
+// as `CompactionDemo` does.
 let demo = ProfileDefinition(
     name: "multi-model-demo",
     description: "Flash triages, standard answers — two co-resident models from one resolve.",

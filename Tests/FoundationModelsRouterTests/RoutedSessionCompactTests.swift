@@ -222,6 +222,9 @@ struct RoutedSessionCompactTests {
         #expect(!result.stagesApplied.isEmpty)
         #expect(result.tokensBefore == preFoldTokens)
         #expect(result.tokensAfter < result.tokensBefore)
+        // A deterministic-only fold writes no summary, so it names no
+        // summarizer model — the signal is present exactly when a summary is.
+        #expect(result.summarizerModel == nil)
 
         let postFoldFill = await session.contextFill
         #expect(postFoldFill < preFoldFill)
@@ -319,6 +322,10 @@ struct RoutedSessionCompactTests {
         let result = try await session.compact(budget: budget)
         #expect(result.summary != nil)
         #expect(result.stagesApplied.contains("Summarization"))
+        // A manual compact() always summarizes with the session's own model,
+        // and the result names it — the same signal an automatic fold carries
+        // (task ^59fd9rt).
+        #expect(result.summarizerModel == "org/std-a")
 
         // Identity: requirement 4.
         #expect(session.id == sessionId)

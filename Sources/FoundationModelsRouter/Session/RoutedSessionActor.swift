@@ -587,7 +587,7 @@ actor RoutedSessionActor: RoutedSession {
     /// the caller-driven ``compact(prompt:budget:)`` and the automatic
     /// ``performAutoCompaction(prompt:budget:)`` alike, since both reach
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-    /// through the one shared ``fold(prompt:budget:summarizer:)``. Its three
+    /// through the one shared ``fold(prompt:budget:summarizer:summarizerModel:)``. Its three
     /// knobs — ``Summarization/keepRecentTurns``,
     /// ``Summarization/maxChunkTokens``, ``Summarization/summaryTokenRatio`` —
     /// are how a caller trades compression against summary fidelity, and how it

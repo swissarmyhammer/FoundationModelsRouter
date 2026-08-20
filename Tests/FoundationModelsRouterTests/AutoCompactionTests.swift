@@ -297,6 +297,10 @@ struct AutoCompactionTests {
         // The summary text is flash's own canned response — proof flash,
         // not the session's own model, actually produced it.
         #expect(result.summary == "FLASH-SUMMARY")
+        // The result names the flash slot's model as the summary's writer —
+        // the signal task ^59fd9rt adds, so a consumer can judge the summary
+        // against the model that wrote it.
+        #expect(result.summarizerModel == "org/flash-a")
 
         // The triggering turn's own work still ran normally afterward.
         #expect(events.contains(.textDelta(Self.cannedText)))
@@ -333,6 +337,9 @@ struct AutoCompactionTests {
         #expect(!summary.isEmpty)
         #expect(Self.cannedText.hasPrefix(summary))
         #expect(summary.hasSuffix("lazy dog."))
+        // The result names the session's own model, not the flash slot's —
+        // the fallback tier is just as visible as the preferred one.
+        #expect(result.summarizerModel == "org/std-a")
 
         // The triggering turn's own work still ran normally afterward.
         #expect(events.contains(.textDelta(Self.cannedText)))

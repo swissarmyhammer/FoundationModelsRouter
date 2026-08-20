@@ -147,6 +147,7 @@ func runTurn(
             [checkpoint]   tokensAfter    = \(result.tokensAfter)
             [checkpoint]   stagesApplied  = \(result.stagesApplied.joined(separator: ", "))
             [checkpoint]   summaryEntryId = \(result.summaryEntryId ?? "(none)")
+            [checkpoint]   summarizerModel = \(result.summarizerModel ?? "(none)")
             """)
     }
     return (outcome.reply, outcome.compactions.filter { !$0.stagesApplied.isEmpty })

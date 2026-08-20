@@ -132,8 +132,10 @@ extension RoutedSessionActor {
     /// permit for the duration (``beginTurn()``) since a caller can invoke this
     /// at any time — folding reads and swaps ``backend`` and runs real model
     /// work, so it is a turn as far as both gates are concerned — then runs the shared fold
-    /// mechanics in ``fold(prompt:budget:summarizer:)``. See that method's
-    /// doc comment for what folding does.
+    /// mechanics in ``fold(prompt:budget:summarizer:summarizerModel:)``. See that method's
+    /// doc comment for what folding does. The result names this session's own
+    /// model as ``CompactionResult/summarizerModel`` when a summary was
+    /// applied.
     @discardableResult
     func compact(
         prompt: CompactionPrompt = .default,
@@ -141,7 +143,9 @@ extension RoutedSessionActor {
     ) async throws -> CompactionResult {
         try await beginTurn()
         defer { endTurn() }
-        return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
+        return try await fold(
+            prompt: prompt, budget: budget,
+            summarizer: BackendCompactionSummarizer(backend: backend), summarizerModel: model)
     }
 
     /// Auto-compaction's own fold entry point (task 8213x39,
@@ -167,11 +171,34 @@ extension RoutedSessionActor {
     /// if the own-model attempt fails too — so a broken summarizer model can
     /// never block an automatic mid-turn fold outright.
     ///
+    /// ## Summary quality hazard
+    ///
+    /// The flash preference is a routing choice, not a quality check. A model
+    /// that is too small to summarize can hold the ``LanguageModelProfile/flash``
+    /// slot, and every fold it writes then passes each mechanical check —
+    /// ``CompactionResult/stagesApplied`` is non-empty, the transcript
+    /// shrinks, and the checkpoint records — while the summary text itself is
+    /// garbage, and a session that resumes from that fold reads garbage in
+    /// place of its history. Measured on 2026-08-19 (task ^59fd9rt): with
+    /// `mlx-community/SmolLM-135M-Instruct-4bit` in `flash`, every fold
+    /// summary degenerated into hallucinated repetition loops, under greedy
+    /// and sampled decoding alike, whatever model held `standard`; the same
+    /// span and prompt through a capable mid-size model produced a dense,
+    /// accurate summary. A profile that opts into auto-compaction with a
+    /// `budget:` must therefore put a model that can summarize into its
+    /// `flash` slot. Every fold's ``CompactionResult/summarizerModel`` names
+    /// the model that wrote the summary, so a consumer of
+    /// ``SessionEvent/compaction(_:)`` can judge each summary against its
+    /// writer. See compaction_plan.md §1.4 for the matching plan-level note.
+    ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to whichever summarizer tier
     ///     actually runs.
     ///   - budget: The token budget to fold against.
-    /// - Returns: What the fold did.
+    /// - Returns: What the fold did. ``CompactionResult/summarizerModel``
+    ///   names the tier that wrote the applied summary: the flash slot's
+    ///   chosen model, this session's own model, or `nil` for a
+    ///   deterministic-only fold.
     /// - Throws: `CancellationError`, and nothing else, when a tier fails *and* a
     ///   cancellation is outstanding against this turn (``isTurnCancelled``) — the
     ///   one case not degraded to the next tier, because degrading a cancelled fold
@@ -195,7 +222,8 @@ extension RoutedSessionActor {
             do {
                 return try await fold(
                     prompt: prompt, budget: budget,
-                    summarizer: BackendCompactionSummarizer(backend: profile.flash.container.makeSession(instructions: nil))
+                    summarizer: BackendCompactionSummarizer(backend: profile.flash.container.makeSession(instructions: nil)),
+                    summarizerModel: profile.flash.chosen
                 )
             } catch {
                 try abandonFoldIfCancelled(discarding: error, tier: .flash)
@@ -203,12 +231,14 @@ extension RoutedSessionActor {
             }
         }
         do {
-            return try await fold(prompt: prompt, budget: budget, summarizer: BackendCompactionSummarizer(backend: backend))
+            return try await fold(
+                prompt: prompt, budget: budget,
+                summarizer: BackendCompactionSummarizer(backend: backend), summarizerModel: model)
         } catch {
             // The *only* abandon guard on this path for a session that already is the
             // flash slot and so skipped the tier above.
             try abandonFoldIfCancelled(discarding: error, tier: .ownModel)
-            return try await fold(prompt: prompt, budget: budget, summarizer: nil)
+            return try await fold(prompt: prompt, budget: budget, summarizer: nil, summarizerModel: nil)
         }
     }
 
@@ -340,6 +370,13 @@ extension RoutedSessionActor {
     ///     the deterministic-only pipeline. A non-`nil` summarizer is wrapped in
     ///     ``CancellableCompactionSummarizer`` before the pipeline sees it, so
     ///     each of its model calls is cancellable as this turn's own.
+    ///   - summarizerModel: The ``ModelRef`` of the model `summarizer` runs
+    ///     on, or `nil` when `summarizer` is `nil`. Written to the result as
+    ///     ``CompactionResult/summarizerModel`` when the fold applies a
+    ///     summary, so the ``SessionEvent/compaction(_:)`` event names the
+    ///     summary's writer — see
+    ///     ``performAutoCompaction(prompt:budget:)``'s summary quality
+    ///     hazard for why that name must be visible.
     /// - Returns: What the fold did.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, unmodified, when
     ///   the model-assisted stage runs and fails — including `CancellationError`
@@ -351,7 +388,8 @@ extension RoutedSessionActor {
     private func fold(
         prompt: CompactionPrompt,
         budget: TokenBudget?,
-        summarizer: (any CompactionSummarizer)?
+        summarizer: (any CompactionSummarizer)?,
+        summarizerModel: ModelRef?
     ) async throws -> CompactionResult {
         let entries = backend.transcriptEntries()
         let resolvedBudget = budget ?? TokenBudget(limit: contextTokens)
@@ -369,7 +407,7 @@ extension RoutedSessionActor {
             )
         }
 
-        let (folded, result) = try await Compactor.compact(
+        let (folded, pipelineResult) = try await Compactor.compact(
             Transcript(entries: entries),
             prompt: prompt,
             budget: resolvedBudget,
@@ -385,6 +423,12 @@ extension RoutedSessionActor {
             summarization: summarization,
             pendingRuns: pendingRuns
         )
+
+        // The report names the model that wrote its summary — the signal task
+        // ^59fd9rt adds, applied in the one place both entry points share. A
+        // result with no summary returns unchanged, so a deterministic-only
+        // fold, and a fold whose summary was discarded, name nothing.
+        let result = pipelineResult.namingSummarizerModel(summarizerModel?.stringValue)
 
         // Nothing to fold (already under target) or every stage ran and
         // still couldn't land it (the oversized-tail case): `folded` is
