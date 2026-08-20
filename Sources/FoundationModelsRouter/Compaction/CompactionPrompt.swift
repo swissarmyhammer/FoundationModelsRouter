@@ -53,17 +53,37 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
     /// `defaultPromptKeepsBareStatedFacts` pins the section so it cannot be
     /// removed silently.
     ///
-    /// Named `"router-default-v2"` rather than plain `"default"` so a fold's
+    /// The verbatim-value demand and the size-budget paragraph are task
+    /// ^xx02yn6's, both measured on the 2-seed Qwen3.8-27B probe of
+    /// 2026-08-20: where its demand was soft the model abstracted values
+    /// ("then stated the staging database port"), and a model never given a
+    /// size wrote 2.2-3.0 KB answers whose fact sections the old ratio cut
+    /// then discarded. The budget itself is stated per request by
+    /// ``Summarization`` (a number this static text cannot know); this text
+    /// tells the model what that number means.
+    ///
+    /// Named `"router-default-v3"` rather than plain `"default"` so a fold's
     /// recorded ``CompactionSegment/Content/promptName`` unambiguously
-    /// identifies this exact wording, distinct from the `"router-default-v1"`
-    /// revision it supersedes and from any future one.
+    /// identifies this exact wording, distinct from the `"router-default-v2"`
+    /// and `"router-default-v1"` revisions it supersedes and from any future
+    /// one.
     public static let `default` = CompactionPrompt(
-        name: "router-default-v2",
+        name: "router-default-v3",
         text: """
             You are compacting an agent conversation into a continuation summary. The
             summary will REPLACE the older conversation: whoever continues has no other
             memory of it, so anything you omit is lost. Be precise and dense. State only
             facts from the conversation — never invent, never infer beyond it.
+
+            Copy every name, identifier, code, number, path, date and value EXACTLY as it
+            appears in the conversation — character for character, never paraphrased,
+            never abbreviated, never re-derived. "The staging database port is 6432" is
+            a kept fact; "the user stated the staging database port" is that fact lost.
+
+            Each request states a size budget for the whole summary, as a word count.
+            Aim near it without counting words: keep every section terse, and drop
+            polish rather than stated facts. Text far past the budget is trimmed away
+            and lost.
 
             Structure the summary exactly as:
 

@@ -4,9 +4,10 @@ import FoundationModelsRouter
 
 /// The ceiling one summarizer call of a fold ran under, and what it answered.
 ///
-/// The ceiling is the only length the call carries. Nothing in the prompt states
-/// a length to the model — see ``Summarization`` — so a call gives the model a
-/// generation ceiling and reads back whatever it writes.
+/// The ceiling bounds the generation; the assembled prompt also states the
+/// call's summary allowance to the model as a word-count target (task
+/// ^xx02yn6) — see ``Summarization`` — and the call reads back whatever the
+/// model writes.
 ///
 /// Recorded because a discarded fold leaves no other trace of its summary.
 /// `Compactor.compact` throws such a fold away and reports the shortfall exit's
@@ -263,10 +264,11 @@ enum CompactionEvalFactRetentionReport {
     /// and a table that printed one whole for every sample would bury the rest
     /// of the run's evidence.
     ///
-    /// The cut ``Summarization/summaryRetentionRatio`` sizes does not bound this
-    /// text, and it is meant not to. ``CompactionEvalRealSubjectRunner``'s
-    /// summarizer records the answer as the call returns it, before the stage
-    /// cuts anything, so a discarded fold is judged on what the model wrote.
+    /// The span byte budget ``Summarization`` holds the FINAL summary to does
+    /// not bound this text, and it is meant not to.
+    /// ``CompactionEvalRealSubjectRunner``'s summarizer records the answer as
+    /// the call returns it, before the stage resolves anything, so a
+    /// discarded fold is judged on what the model wrote.
     ///
     /// `1000` is nearly twice the largest summary the allowance itself buys
     /// (``Summarization/minimumSummaryTokens`` at

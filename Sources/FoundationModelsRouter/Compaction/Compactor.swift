@@ -68,6 +68,24 @@ public struct CompactionResult: Sendable, Equatable {
     /// a fold whose summary left the transcript no smaller than it was.
     public let stagesApplied: [String]
 
+    /// Whether ``Summarization``'s last-resort cut removed text from
+    /// ``summary`` before the fold stored it (task ^xx02yn6).
+    ///
+    /// The cut fires only when the fold would otherwise fail to shrink the
+    /// transcript: the summarizer's answer overran the folded span's byte
+    /// budget, the one condense re-ask did not bring it inside, and a prefix
+    /// cut was the last resort. A `true` here says the stored summary lost
+    /// text by POSITION — whatever the model wrote past the cut point is
+    /// gone — so a consumer judging summary quality should weigh this fold
+    /// differently from one whose model wrote the whole stored text.
+    ///
+    /// `false` when no ``Summarization`` ran, when the answer fit, or when
+    /// the condense re-ask recovered it. Also `false` on a result rebuilt
+    /// from a persisted checkpoint (`SessionProjection`'s cold rows): the
+    /// checkpoint does not carry this flag, so only the live fold's own
+    /// report states it.
+    public let summaryCut: Bool
+
     /// Creates a compaction result.
     ///
     /// - Parameters:
@@ -80,6 +98,9 @@ public struct CompactionResult: Sendable, Equatable {
     ///     Defaults to `nil`.
     ///   - summarizerModel: The ``ModelRef`` string of the model that wrote
     ///     `summary`, or `nil` when no producer named one. Defaults to `nil`.
+    ///   - summaryCut: Whether the last-resort cut removed text from
+    ///     `summary`. Defaults to `false`, which is also what every producer
+    ///     without a live fold reports — see ``summaryCut``.
     ///   - tokensBefore: The estimated pre-fold size, in tokens.
     ///   - tokensAfter: The estimated post-fold size, in tokens.
     ///   - stagesApplied: The stages that ran, in order.
@@ -88,6 +109,7 @@ public struct CompactionResult: Sendable, Equatable {
         summary: String?,
         summaryEntryId: String? = nil,
         summarizerModel: String? = nil,
+        summaryCut: Bool = false,
         tokensBefore: Int,
         tokensAfter: Int,
         stagesApplied: [String]
@@ -96,6 +118,7 @@ public struct CompactionResult: Sendable, Equatable {
         self.summary = summary
         self.summaryEntryId = summaryEntryId
         self.summarizerModel = summarizerModel
+        self.summaryCut = summaryCut
         self.tokensBefore = tokensBefore
         self.tokensAfter = tokensAfter
         self.stagesApplied = stagesApplied
@@ -119,6 +142,7 @@ public struct CompactionResult: Sendable, Equatable {
             summary: summary,
             summaryEntryId: summaryEntryId,
             summarizerModel: modelName,
+            summaryCut: summaryCut,
             tokensBefore: tokensBefore,
             tokensAfter: tokensAfter,
             stagesApplied: stagesApplied
@@ -286,6 +310,7 @@ public enum Compactor {
                     CompactionResult(
                         summary: folded.summary,
                         summaryEntryId: folded.summaryEntryId,
+                        summaryCut: folded.summaryCut,
                         tokensBefore: tokensBefore,
                         tokensAfter: tokensAfter,
                         stagesApplied: stagesApplied + [Summarization.stageName]
@@ -377,9 +402,15 @@ public enum Compactor {
     /// every entry kind, and none of the mirror's own JSON envelope (see
     /// ``TranscriptEntryPayload/contentByteCount``).
     ///
+    /// `internal` rather than `private` because ``Summarization`` sums it
+    /// over a folded span's entries to state the span byte budget its final
+    /// summary must fit (task ^xx02yn6) — the SAME measure this type's
+    /// did-not-shrink guard reads, so the budget and the guard cannot drift
+    /// apart.
+    ///
     /// - Parameter entry: The entry to measure.
     /// - Returns: The entry's content size in bytes.
-    private static func contentByteCount(of entry: Transcript.Entry) -> Int {
+    static func contentByteCount(of entry: Transcript.Entry) -> Int {
         let (_, payload, _) = TranscriptEntryMapper.event(from: entry)
         return payload.contentByteCount
     }

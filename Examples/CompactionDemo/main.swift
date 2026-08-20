@@ -83,7 +83,7 @@ let demoTargetShare = 0.05
 let demoKeepRecentTurns = 1
 
 /// The reasoning-token headroom each summarizer call gets, instead of
-/// ``Summarization``'s default of 4096. That default is sized for a model
+/// ``Summarization``'s default of 8192. That default is sized for a model
 /// that writes a `<think>` block before its answer; ``demoModel`` writes
 /// none, so cutting it bounds the one unbounded generation in the run —
 /// the measured reason `CompactionSmokeIntegrationTests` cuts it too.

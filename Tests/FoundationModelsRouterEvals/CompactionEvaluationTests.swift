@@ -1024,27 +1024,20 @@ struct CompactionEvalSeedSizingTests {
     /// size — one that keeps to the allowance its own call earned — in the
     /// estimated tokens ``Compactor`` measures a transcript in.
     ///
-    /// "Well-behaved" is the whole qualifier, and it is measured. Nothing states
-    /// the allowance to the model: the prompt `Summarization` assembles names no
-    /// length at all. So the gated run of 2026-08-17 measured summaries of 450 to
-    /// 840 estimated tokens against this bound of 154 — task ^fm5ddk9.
+    /// "Well-behaved" is the qualifier, and since task ^xx02yn6 the fold asks
+    /// for exactly this: the assembled prompt states the call's allowance as
+    /// a word-count target. A model can still overrun what it was asked —
+    /// the gated run of 2026-08-17, when nothing was stated, measured
+    /// summaries of 450 to 840 estimated tokens against this bound of 154
+    /// (task ^fm5ddk9) — so the bound below is what a summarizer that keeps
+    /// to its target WRITES.
     ///
-    /// The bound below is therefore what a summarizer WRITES, and not what the
-    /// fold asks for, because the fold asks for nothing. `Summarization` bounds a
-    /// call in code instead, twice over, and neither bound is this number.
-    /// ``Summarization/summaryTokenRatio`` sizes the output-token ceiling the
-    /// call generates under, which covers the reasoning and the answer together
-    /// and so bounds neither one alone. ``Summarization/summaryRetentionRatio``
-    /// sizes the cut applied to the answer itself, in UTF-8 content bytes, and
-    /// that one really does bound a stored summary — except for the answer whose
-    /// cut would leave no text, which `Summarization` hands back whole rather
-    /// than erase the span.
-    ///
-    /// The cut does not bind on any seed, so it never lowers this bound here. It
-    /// binds only on a call whose content estimates 191 tokens or fewer, and
-    /// ``summaryShrinkClearance`` holds every seed's span at 231 or more. A
-    /// summary past this bound therefore reaches `Compactor.compact`'s
-    /// did-not-shrink guard whole, and that guard is what discards the fold.
+    /// A stored summary past this bound is no longer trimmed by any per-call
+    /// ratio: `Summarization` holds the FINAL summary to the folded span's
+    /// own byte budget (shrink invariant), condensing once and cutting only
+    /// as the last resort, and `Compactor.compact`'s did-not-shrink guard
+    /// judges whatever remains. A seed sized by this arithmetic keeps its
+    /// fold clear of that whole ladder.
     ///
     /// Every seed's span earns the FLOOR of the summary allowance,
     /// ``Summarization/minimumSummaryTokens``, because the other branch —
@@ -1304,26 +1297,28 @@ struct CompactionEvalTierBarTests {
         (compactionEvalFullDatasetTimeLimitMinutes, fullDatasetSampleCount),
     ]
 
-    @Test("the floors need 5 and 4 of the subset's seeds, and 16 and 12 of the whole dataset's")
+    @Test("the floors need 1 and 1 of the subset's seeds, and 4 and 4 of the whole dataset's")
     func eachTiersFloorIsTheSampleCountItReallyNeeds() {
         // The metric scores one bit per sample, so a tier of n samples can only
         // produce the means k/n. Each floor's own doc comment derives these
-        // counts from the measured baselines; this holds the derivation.
+        // counts from the measured baselines — the ^xx02yn6 re-baseline of
+        // 2026-08-20, where the 1B canary measured 2 of 7 on both subset
+        // sides under the Qwen-first redesign; this holds the derivation.
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.subsetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 5,
+                of: Self.subsetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 1,
             "the subset holds \(Self.subsetSampleCount) seeds against the summary floor")
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.subsetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 4,
+                of: Self.subsetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 1,
             "the subset holds \(Self.subsetSampleCount) seeds against the answer floor")
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.fullDatasetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 16,
+                of: Self.fullDatasetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 4,
             "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the summary floor")
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.fullDatasetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 12,
+                of: Self.fullDatasetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 4,
             "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the answer floor")
     }
 

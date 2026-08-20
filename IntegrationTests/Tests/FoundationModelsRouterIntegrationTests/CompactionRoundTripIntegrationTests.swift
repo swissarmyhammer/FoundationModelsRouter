@@ -56,7 +56,13 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
 @Suite(
     "Gated real-model end-to-end coverage: RoutedSession.compact(prompt:budget:) round trip (task rjvrgt9)",
     .serialized,
-    .timeLimit(.minutes(20)),
+    // 40 minutes. The run of 2026-08-17 measured 425 seconds; task ^xx02yn6's
+    // condense re-ask can double the fold's model work, and the run of
+    // 2026-08-20 exceeded the 20 minutes this stated before while the box was
+    // under the memory pressure of earlier real-model suites — a time-limit
+    // cancellation lands mid-generation, which aborts the whole process, so
+    // the bound carries margin for the slow case rather than sitting on it.
+    .timeLimit(.minutes(40)),
     .exclusiveRealModel
 )
 struct CompactionRoundTripIntegrationTests {

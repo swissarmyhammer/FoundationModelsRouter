@@ -327,16 +327,11 @@ struct AutoCompactionTests {
         }
         #expect(result.stagesApplied.contains("Summarization"))
         // The summary text is the session's own canned response, not flash's —
-        // proof the own-model tier, not flash, produced it. A PREFIX of it
-        // rather than the whole of it, because `Summarization` cuts an answer
-        // that overruns the share of its content that call may retain, and the
-        // cut falls on a sentence boundary, so what is stored is a whole number
-        // of the canned sentences. This test is about which TIER answered, so
-        // it asserts the shape the cut can leave rather than the exact bound.
+        // proof the own-model tier, not flash, produced it. Stored word for
+        // word: the canned answer fits the folded span's byte budget, so the
+        // stage stores it exactly as the model wrote it (task ^xx02yn6).
         let summary = try #require(result.summary)
-        #expect(!summary.isEmpty)
-        #expect(Self.cannedText.hasPrefix(summary))
-        #expect(summary.hasSuffix("lazy dog."))
+        #expect(summary == Self.cannedText)
         // The result names the session's own model, not the flash slot's —
         // the fallback tier is just as visible as the preferred one.
         #expect(result.summarizerModel == "org/std-a")

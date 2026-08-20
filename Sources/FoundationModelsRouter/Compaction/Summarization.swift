@@ -146,39 +146,30 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// occupy, however much it was handed.
     public var maxChunkTokens: Int
 
-    /// The fraction of the content a single summarizer call condenses that its
-    /// own summary text may occupy — the compression a fold is run for, and one
-    /// of the two amounts that make the ceiling every call generates under
-    /// (``CompactionSummarizer/summarize(_:maxTokens:)``'s `maxTokens`; the
-    /// other is ``reasoningTokenHeadroom``).
+    /// The fraction of a full ``maxChunkTokens`` of content that sizes
+    /// ``maximumSummaryTokens`` — the cap on every call's stated budget and
+    /// summary allowance, and through them the bound on the final summary of
+    /// a conversation of any length.
     ///
-    /// Defaults to `0.25`. The number this replaces was no number at all: the
-    /// call went out unbounded and resolved to the generation path's generic
-    /// per-turn default, which on real hardware produced a 3346-character
-    /// summary for a span estimated at 1068 tokens — four fifths of what it
-    /// replaced, for a fold that then saved almost nothing. A quarter is the
-    /// compression a summary of a conversation is worth writing.
-    ///
-    /// The ceiling is per call, sized against that call's own content, so it
-    /// holds at every level of the map-reduce tree rather than only over the
-    /// whole span: a chunk's summary is sized against that chunk, and each
-    /// reduce round's summary against the summaries it joins.
-    ///
-    /// A share of the input alone would still leave the final summary of an
-    /// arbitrarily long span unbounded, because a call can be handed more than
+    /// Defaults to `0.25`, and since task ^xx02yn6 it sizes the CAP alone.
+    /// The per-call ask is ``statedBudgetShareOfContent`` of the call's own
+    /// content — stated to the model in the assembled prompt — and the
+    /// generation allowance follows that ask (see
+    /// ``statedBudgetShareOfContent`` for the measurements). This ratio's job
+    /// is the one a per-call share cannot do: a call can be handed more than
     /// ``maxChunkTokens`` (see that property — neither packer splits a single
-    /// item), and a quarter of *that* grows with the span.
+    /// item), and any share of *that* grows with the span.
     /// ``maximumSummaryTokens`` closes it without having to know which calls
-    /// those are: it caps every call's summary allowance at what a full
-    /// ``maxChunkTokens`` of content earns, so the bound holds for every call
-    /// a fold makes, and therefore for the final summary of a span of any
-    /// length.
+    /// those are: it caps every call's stated budget at what a full
+    /// ``maxChunkTokens`` of content earns at this ratio, so the bound holds
+    /// for every call a fold makes, and therefore for the final summary of a
+    /// span of any length.
     public var summaryTokenRatio: Double
 
     /// The tokens, in addition to the summary allowance, every summarizer call
     /// is given for the reasoning a model writes before its answer.
     ///
-    /// Defaults to `4096`. The two amounts are added rather than shared,
+    /// Defaults to `8192`. The two amounts are added rather than shared,
     /// because they scale with different things. The summary allowance scales
     /// with the content, which is what ``summaryTokenRatio`` states. The
     /// reasoning does not: how much a model thinks before it answers is a
@@ -187,13 +178,16 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// would hand it more than it can use. A fixed amount beside the fraction
     /// says exactly that.
     ///
-    /// Measurement gives the default, and it is this repository's own:
-    /// `Tests/FoundationModelsRouterTestSupport/GatedRealModelBudget.swift`
-    /// records that the gated model always writes a `<think>` block first, that
-    /// a ceiling of `512` leaves the response empty, and that `4096` does not.
-    /// Before this amount existed, the largest ceiling a summarizer call could
-    /// ask for was `500` — under the value already known to fail — and every
-    /// gated fold stored an empty summary as a result.
+    /// Measurement gives the default, and it is this repository's own, twice
+    /// over. `Tests/FoundationModelsRouterTestSupport/GatedRealModelBudget.swift`
+    /// records that the gated model always writes a `<think>` block first,
+    /// that a ceiling of `512` leaves the response empty, and that `4096` did
+    /// not — the old default. The instrumented Qwen3.8-27B probe of
+    /// 2026-08-20 (task ^xx02yn6) then measured `4096` failing too, once the
+    /// assembled prompt began stating a size budget: the model deliberated
+    /// over the budget inside `<think>`, spent the whole `4224`-token ceiling
+    /// there, and answered EMPTY on 2 of 2 probe seeds. Doubling the headroom
+    /// is what gives that longer deliberation room to reach the answer.
     ///
     /// It is a ceiling, not a target. Generation still stops at the model's
     /// end-of-sequence token, so a model that reasons briefly, or not at all,
@@ -215,110 +209,55 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// the original transcript rather than apply it.
     public static let minimumSummaryTokens = 128
 
-    /// The largest share of a call's own content its summary text may KEEP —
-    /// the bound ``cut(_:toCharacters:)`` applies, and deliberately not
-    /// ``summaryTokenRatio``.
+    /// The bytes the whole boundary text — the final summary plus any
+    /// pending-runs rendering — must stay UNDER the folded span's own content
+    /// bytes for the fold to strictly shrink the transcript.
     ///
-    /// The two ratios have two different jobs, and `^azd033m` measured what it
-    /// costs to make one number do both.
-    ///
-    /// ``summaryTokenRatio`` is the COMPRESSION a fold is run for. It sizes
-    /// what the call is given room to generate
-    /// (``outputTokenCeiling(forSummaryAllowance:)``) and it sizes
-    /// ``maximumSummaryTokens``, the cap that keeps the final summary of a
-    /// conversation of any length bounded. Both of those stay as they were.
-    ///
-    /// This ratio is the SAFETY bound, and all it has to guarantee is what
+    /// ``Compactor/estimatedTokenCount(of:)-(Transcript)`` sums content bytes
+    /// over the whole transcript and divides once by
+    /// ``Compactor/charsPerTokenEstimate``, rounding up. A drop of one full
+    /// character-per-token ratio in the byte sum therefore always drops the
+    /// rounded estimate by at least one token, which is what
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``'s
-    /// did-not-shrink guard requires: a summary smaller than the span it
-    /// replaces, so the fold is applied rather than discarded. Nothing more.
-    /// Every byte a cut removes past that point is content the model chose to
-    /// write and the fold then threw away, chosen by position rather than by
-    /// meaning, because a prefix cut keeps what was said first.
+    /// did-not-shrink guard requires — a drop smaller than this can round
+    /// away to nothing and leave the guard discarding a fold whose bytes did
+    /// shrink.
+    public static let shrinkMarginBytes = Int(Compactor.charsPerTokenEstimate)
+
+    /// The estimated UTF-8 size of one English word with its separator, used
+    /// to state a byte budget to the model as a word count.
     ///
-    /// Cutting to the compression target instead measured exactly that loss.
-    /// One fold of `Tests/FoundationModelsRouterIntegrationTests/CompactionSmokeIntegrationTests.swift`'s
-    /// fixture against a real 1B model answered 330 estimated tokens over a
-    /// 643-token span — already comfortably inside what the guard needs — and
-    /// the cut stored 160 of them. The answer named a fact stated at the end of
-    /// the span twice; the stored summary named it not at all.
+    /// The budget is enforced in bytes (``summaryByteBudget(forSpanBytes:pendingRunsRenderingBytes:)``)
+    /// because bytes are what the shrink guard measures, and stated in words
+    /// because a model tracks its own length in words far better than in
+    /// bytes or characters. Five letters plus a space is the commonly cited
+    /// average for English text, so a budget stated at this rate slightly
+    /// under-asks — the safe direction, since text past the byte budget is
+    /// cut.
+    public static let summaryBytesPerWordEstimate = 6.0
+
+    /// The share of a call's own content its STATED size budget names — the
+    /// number the assembled prompt asks the model for, sitting under the span
+    /// byte budget the fold enforces.
     ///
-    /// `0.8` states the guarantee with a margin. The margin has to cover the
-    /// TWO places the two sides disagree, and they sit on opposite sides of
-    /// the comparison: the first changes what this bound is measured against,
-    /// the second changes what the guard measures.
+    /// A share of the content rather than the compression allowance, and the
+    /// instrumented Qwen3.8-27B probes of 2026-08-20 (task ^xx02yn6) measured
+    /// why. The allowance-derived target — 85 words for the probe seeds —
+    /// cannot hold eight sections of verbatim facts, and the thinking model
+    /// spent whole 4224- and then 8320-token ceilings inside `<think>`
+    /// drafting, word-counting and redrafting against it, answering EMPTY on
+    /// 2 of 2 seeds both times. The share sits well under the enforced bound
+    /// while staying near the model's natural answer, so compliance costs it
+    /// a trim rather than an optimisation.
     ///
-    /// The first is the rendering. This bound is measured against the RENDERED
-    /// content of the call, which carries a `User: `/`Assistant: ` label per
-    /// entry and a line break between them, while the guard measures the
-    /// span's entries. On the fixture above rendering came to 1.01x the span,
-    /// and a fifth covers that many times over.
-    ///
-    /// **That 1.01x is a property of that one fixture, not of this ratio.** The
-    /// labels and the separator cost about 19 bytes per prompt/response turn
-    /// however short the turn is. So a span of many very short turns — entries
-    /// averaging under roughly 40 bytes of text, a line of a few words each —
-    /// renders past 1.25x the span, and past 1.25x this ratio of the rendered
-    /// content EXCEEDS the span it replaces. This bound then guarantees
-    /// nothing on its own, and
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``'s
-    /// did-not-shrink guard is the only thing left standing. That guard is why
-    /// a fixture-measured margin is safe to ship: the worst this bound can do
-    /// is let a fold be discarded, which is the state that preceded it.
-    ///
-    /// The second is the pending runs, and it sits on the guard's side of the
-    /// comparison: ``cut(_:toCharacters:)`` bounds the summary TEXT, while the
-    /// guard measures the whole replacement ENTRY.
-    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` appends a
-    /// second `.text` segment carrying
-    /// ``CompactionSegment/renderedPendingRuns(_:)`` whenever the session has
-    /// parked runs, and ``SegmentPayload/contentByteCount`` counts a `.text`
-    /// segment in full, so the guard weighs those bytes against the span.
-    /// Measured: 134 bytes of heading — never on
-    /// their own, because that segment exists only when there is at least one
-    /// run — plus, per run, 20 bytes of framing, the run's
-    /// ``ULID/stringLength``-character completion token, its op, and either 29
-    /// bytes for the no-progress clause or 22 bytes plus the progress detail.
-    /// One parked run with an eight-byte op and no progress reported renders
-    /// 217 bytes, and each further such run adds 84.
-    ///
-    /// **That cost is charged per parked run, so unlike the labels it does not
-    /// shrink against a larger span.** Six such runs come to 637 bytes — more
-    /// than the whole 512-byte bound the ``minimumSummaryTokens`` floor
-    /// produces, and 32% of the 2000-byte bound the ``maximumSummaryTokens``
-    /// cap produces. This ratio is not where that disagreement is answered:
-    /// ``boundaryBoundedSummary(_:folding:pendingRuns:)`` cuts the fold's final
-    /// summary once more with the rendering's byte count subtracted from this
-    /// bound, so summary and rendering together stay inside it (task
-    /// ^64f3hnv). A rendering that reaches the bound on its own still defeats
-    /// the fold — no summary length can pay for it — and the guard then
-    /// discards the fold, which is the safe failure.
-    ///
-    /// The rest of the margin is a floor on what a fold saves: a fold that
-    /// could not save a fifth of the span it replaced was not worth the
-    /// generation it cost.
-    ///
-    /// Raising this ratio does not widen the final summary of a long
-    /// conversation, because ``maximumSummaryTokens`` clamps this bound too and
-    /// is computed from ``summaryTokenRatio`` alone. A call handed a full
-    /// ``maxChunkTokens`` is cut to exactly what it was cut to before.
-    ///
-    /// The band that DID change is far wider than that, and naming it "the
-    /// calls where the cap does not bind" was wrong: the cap binding on THIS
-    /// ratio does not mean it bound on the old one. At the defaults —
-    /// ``maxChunkTokens`` `2000` and ``summaryTokenRatio`` `0.25`, so
-    /// ``maximumSummaryTokens`` `500` — this bound reaches the cap at content
-    /// of 624 estimated tokens, while the old bound reached it only at 1997.
-    /// So every call from 161 estimated tokens (under that both bounds sit on
-    /// ``minimumSummaryTokens``) up to 1996 keeps strictly more than it did,
-    /// and a call in the middle of that band keeps several times more: at 650
-    /// estimated tokens the old bound was 163 tokens and this one is 500.
-    /// The fixture this defect was measured on sits inside that band, and it
-    /// shows why the cap is the wrong thing to reason from — at about 650
-    /// estimated tokens of rendered content the cap DOES bind on retention
-    /// (`0.8 * 650` is 520, clamped to 500), and the stored summary still went
-    /// from 160 tokens to 330.
-    public static let summaryRetentionRatio = 0.8
+    /// `0.75` is the measured-best value of the two the probe compared. At
+    /// `0.75` both probe seeds stored the fact (one paid a condense re-ask
+    /// and a recorded cut after overshooting the enforced budget by 26
+    /// bytes). At `0.6` — tried to remove that overshoot — the tighter
+    /// number re-triggered the think spiral on `encryption-algorithm` under
+    /// greedy decoding and the answer came back EMPTY, so the wider target
+    /// stands.
+    public static let statedBudgetShareOfContent = 0.75
 
     /// Creates a summarization stage.
     ///
@@ -332,12 +271,12 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     `0.25`.
     ///   - reasoningTokenHeadroom: The tokens every call is given on top of
     ///     that allowance, for the reasoning a model writes before its answer.
-    ///     Defaults to `4096`.
+    ///     Defaults to `8192`.
     public init(
         keepRecentTurns: Int = 4,
         maxChunkTokens: Int = 2000,
         summaryTokenRatio: Double = 0.25,
-        reasoningTokenHeadroom: Int = 4096
+        reasoningTokenHeadroom: Int = 8192
     ) {
         self.keepRecentTurns = keepRecentTurns
         self.maxChunkTokens = maxChunkTokens
@@ -361,6 +300,13 @@ public struct Summarization: Sendable, Equatable, Codable {
         /// join key ``CompactionResult/summaryEntryId`` carries from the fold
         /// back to the raw transcript and the recording.
         public let summaryEntryId: String
+
+        /// Whether the last-resort cut removed text from ``summary`` before
+        /// the fold stored it — carried into
+        /// ``CompactionResult/summaryCut`` so the fold's report records when
+        /// the trim fired (task ^xx02yn6). See that property for what a
+        /// `true` means for the stored text.
+        public let summaryCut: Bool
     }
 
     /// Folds `transcript`'s old span (everything but the header and the
@@ -391,10 +337,11 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     written, in park order. When non-empty they land in the resulting
     ///     ``CompactionSegment/Content/pendingRuns`` and as an additional
     ///     model-visible text segment on the summary entry
-    ///     (``CompactionSegment/renderedPendingRuns(_:)``), and the final
-    ///     summary is cut once more to leave room for that segment inside the
-    ///     retention bound — see
-    ///     ``boundaryBoundedSummary(_:folding:pendingRuns:)`` (task ^64f3hnv).
+    ///     (``CompactionSegment/renderedPendingRuns(_:)``), and the
+    ///     rendering's bytes are charged against the span byte budget the
+    ///     final summary must fit — see
+    ///     ``summaryByteBudget(forSpanBytes:pendingRunsRenderingBytes:)``
+    ///     (tasks ^64f3hnv, ^xx02yn6).
     ///     When empty — the default, and always the case for the bare-session
     ///     recipe, which has no mailbox — the boundary is exactly as before.
     /// - Returns: The folded transcript and summary text, or `nil` when there
@@ -420,7 +367,13 @@ public struct Summarization: Sendable, Equatable, Codable {
         guard !old.isEmpty else { return nil }
 
         let answeredSummary = try await summarize(old, prompt: prompt, summarizer: summarizer)
-        let summaryText = boundaryBoundedSummary(answeredSummary, folding: old, pendingRuns: pendingRuns)
+        let spanBytes = old.flatMap(\.entries).reduce(0) { $0 + Compactor.contentByteCount(of: $1) }
+        let renderingBytes =
+            pendingRuns.isEmpty ? 0 : CompactionSegment.renderedPendingRuns(pendingRuns).utf8.count
+        let budgetBytes = Self.summaryByteBudget(
+            forSpanBytes: spanBytes, pendingRunsRenderingBytes: renderingBytes)
+        let (summaryText, summaryCut) = try await resolveOversizedSummary(
+            answeredSummary, within: budgetBytes, summarizer: summarizer)
 
         let entryId = "compaction-summary-\(UUID().uuidString)"
         let foldedEntryIds = old.flatMap(\.entries).map(\.id)
@@ -454,53 +407,158 @@ public struct Summarization: Sendable, Equatable, Codable {
         let tokensAfter = Compactor.estimatedTokenCount(of: provisional)
         let finalTranscript = Transcript(entries: header + [makeSummaryEntry(tokensAfter: tokensAfter)] + recentEntries)
 
-        return Folded(transcript: finalTranscript, summary: summaryText, summaryEntryId: entryId)
+        return Folded(
+            transcript: finalTranscript, summary: summaryText, summaryEntryId: entryId,
+            summaryCut: summaryCut)
     }
 
-    /// Returns `summary`, cut once more so the whole boundary ENTRY — the
-    /// summary text plus the pending-runs rendering — stays inside the
-    /// retention bound of the folded span (task ^64f3hnv).
+    /// The bytes the fold's FINAL summary may occupy for the boundary entry
+    /// to strictly shrink the transcript: the folded span's own content
+    /// bytes, minus ``shrinkMarginBytes``, minus the pending-runs rendering
+    /// that shares the boundary entry (task ^xx02yn6).
     ///
-    /// ``cut(_:toCharacters:)`` inside ``summarizeOnce(_:prompt:summarizer:)``
-    /// bounds each call's answer against that call's own content. The
+    /// This is the ONE size bound the stored summary is held to, and it is
+    /// the invariant's own arithmetic rather than a ratio of anything: the
     /// did-not-shrink guard in
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-    /// measures the whole replacement ENTRY instead, and
-    /// ``CompactionSegment/boundaryEntry(id:summaryText:content:)`` adds a
-    /// second `.text` segment carrying
-    /// ``CompactionSegment/renderedPendingRuns(_:)`` whenever the session has
-    /// parked runs. That rendering costs a fixed amount per parked run — ten
-    /// runs with an eight-byte op and no progress come to 973 bytes — so on a
-    /// modest span it spent the retention margin on its own, and the guard
-    /// discarded the fold whatever the summary said. Charging the rendering
-    /// against the bound here restores the guarantee: summary bytes plus
-    /// rendering bytes stay at or under ``summaryRetentionRatio`` of the
-    /// span's rendered content.
+    /// compares the whole folded transcript against the original, the two
+    /// differ exactly by the boundary entry against the span, and the
+    /// boundary entry's content bytes are the summary text plus the rendering
+    /// (the structure segment counts zero — see
+    /// ``TranscriptEntryPayload/contentByteCount``). The 2-seed Qwen probe of
+    /// 2026-08-20 measured what a stricter, ratio-based bound cost: both raw
+    /// answers carried the planted fact verbatim, and the ratio cut stored
+    /// the `1. Intent` line alone.
     ///
-    /// When the rendering alone reaches the bound, the limit here is zero or
-    /// below, ``cut(_:toCharacters:)`` returns `summary` unchanged — never
-    /// empty, see that method — and the guard discards the fold. That is the
-    /// safe failure: no summary of any length can make such a fold shrink,
-    /// because the rendering costs more than the retention share of the span.
+    /// Zero or below when the rendering alone spends the span:
+    /// ``resolveOversizedSummary(_:within:summarizer:)`` then skips the
+    /// condense pass — no rewrite of any length could fit — and the guard
+    /// discards the fold, which is the safe failure.
     ///
     /// - Parameters:
-    ///   - summary: The fold's final summary text, already cut per call.
-    ///   - old: The folded span's turns, rendered here the same way the
-    ///     single-chunk summarizer call renders them, so this bound and the
-    ///     per-call bound measure the same content.
-    ///   - pendingRuns: The parked runs whose rendering shares the boundary
-    ///     entry. Empty — the common path — returns `summary` untouched.
-    /// - Returns: `summary`, or a prefix of it that leaves room for the
-    ///   pending-runs rendering.
-    private func boundaryBoundedSummary(
+    ///   - spanBytes: The folded span's content bytes, summed with
+    ///     ``Compactor/contentByteCount(of:)`` — the same measure the guard
+    ///     reads.
+    ///   - renderingBytes: The pending-runs rendering's UTF-8 size, `0` when
+    ///     the fold parks no runs.
+    /// - Returns: The budget, in UTF-8 bytes — possibly zero or negative.
+    static func summaryByteBudget(forSpanBytes spanBytes: Int, pendingRunsRenderingBytes renderingBytes: Int) -> Int {
+        spanBytes - shrinkMarginBytes - renderingBytes
+    }
+
+    /// Resolves a final summary that may overrun `budgetBytes` into the text
+    /// the fold stores, preferring recovery over destruction (task ^xx02yn6):
+    ///
+    /// 1. A summary already inside the budget is stored word for word —
+    ///    however far over the compression target it is, because the budget
+    ///    is the shrink invariant and nothing else.
+    /// 2. An oversized summary earns ONE condense re-ask: the model is shown
+    ///    its own summary and the budget, and a condensed answer that fits is
+    ///    stored word for word.
+    /// 3. Only then does ``cut(_:toCharacters:)`` fire, over the smaller of
+    ///    the two candidates, and the fold records that it fired.
+    ///
+    /// A budget of zero or below skips the condense re-ask — no rewrite of
+    /// any length could fit — and the cut's own zero-budget fallback returns
+    /// the summary unchanged for the did-not-shrink guard to discard.
+    ///
+    /// - Parameters:
+    ///   - summary: The fold's final summary, as the model wrote it.
+    ///   - budgetBytes: The bytes the stored summary may occupy, from
+    ///     ``summaryByteBudget(forSpanBytes:pendingRunsRenderingBytes:)``.
+    ///   - summarizer: The model asked to condense its own summary.
+    /// - Returns: The text to store, and whether the cut removed text from
+    ///   it.
+    /// - Throws: Whatever the condense re-ask's
+    ///   `summarizer.summarize(_:maxTokens:)` throws, unmodified — the same
+    ///   contract every other summarizer call in this fold has.
+    private func resolveOversizedSummary(
         _ summary: String,
-        folding old: [TranscriptTurn],
-        pendingRuns: [CompactionSegment.PendingRunSummary]
-    ) -> String {
-        guard !pendingRuns.isEmpty else { return summary }
-        let retained = summaryTokenAllowance(condensing: Self.render(old), atRatio: Self.summaryRetentionRatio)
-        let renderingByteCount = CompactionSegment.renderedPendingRuns(pendingRuns).utf8.count
-        return Self.cut(summary, toCharacters: Self.characters(forEstimatedTokens: retained) - renderingByteCount)
+        within budgetBytes: Int,
+        summarizer: any CompactionSummarizer
+    ) async throws -> (text: String, cut: Bool) {
+        guard summary.utf8.count > budgetBytes else { return (summary, false) }
+
+        var candidate = summary
+        if budgetBytes > 0 {
+            let condensed = try await condense(summary, toBytes: budgetBytes, summarizer: summarizer)
+            if let condensed {
+                if condensed.utf8.count <= budgetBytes { return (condensed, false) }
+                if condensed.utf8.count < candidate.utf8.count { candidate = condensed }
+            }
+        }
+        let stored = Self.cut(candidate, toCharacters: budgetBytes)
+        return (stored, stored.utf8.count < candidate.utf8.count)
+    }
+
+    /// Asks `summarizer` once to condense its own oversized `summary` to fit
+    /// `budgetBytes` — the recovery step between accepting an answer whole
+    /// and cutting it by position.
+    ///
+    /// The call's generation ceiling is sized from the budget itself
+    /// (floored at ``minimumSummaryTokens``, capped at
+    /// ``maximumSummaryTokens``) plus ``reasoningTokenHeadroom``, the same
+    /// two-amount shape every other summarizer call here generates under.
+    ///
+    /// - Parameters:
+    ///   - summary: The oversized summary to condense.
+    ///   - budgetBytes: The bytes the condensed summary should fit. Positive —
+    ///     the caller skips this call otherwise.
+    ///   - summarizer: The model to re-ask.
+    /// - Returns: The condensed answer, or `nil` when the model answered no
+    ///   text — the caller then falls back to the cut rather than store or
+    ///   report an empty recovery.
+    /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws,
+    ///   unmodified.
+    private func condense(
+        _ summary: String,
+        toBytes budgetBytes: Int,
+        summarizer: any CompactionSummarizer
+    ) async throws -> String? {
+        let allowance = min(
+            maximumSummaryTokens,
+            max(Self.minimumSummaryTokens, Int(Double(budgetBytes) / Compactor.charsPerTokenEstimate)))
+        let answer = try await summarizer.summarize(
+            Self.makeCondensePrompt(summary: summary, budgetBytes: budgetBytes),
+            maxTokens: outputTokenCeiling(forSummaryAllowance: allowance)
+        )
+        return answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : answer
+    }
+
+    /// Assembles the condense re-ask's prompt: the rewrite instruction with
+    /// the budget stated in words, then the oversized summary, in the same
+    /// "instructions, then the thing to condense" shape every fold call uses.
+    ///
+    /// The instruction demands verbatim values for the same measured reason
+    /// ``CompactionPrompt/default`` does: a condense pass that paraphrases a
+    /// value loses the fact the fold exists to carry.
+    ///
+    /// - Parameters:
+    ///   - summary: The oversized summary to condense.
+    ///   - budgetBytes: The bytes the condensed summary should fit.
+    /// - Returns: The assembled prompt.
+    static func makeCondensePrompt(summary: String, budgetBytes: Int) -> String {
+        """
+        The summary below is too long to store. Rewrite it to about \
+        \(summaryBudgetWords(forBytes: budgetBytes)) words — a rough ceiling; never \
+        count or verify the length. Keep the numbered section structure. Keep every \
+        name, identifier, code, number, path and value EXACTLY as written — drop \
+        whole sentences before you shorten any stated value.
+
+        ---
+
+        \(summary)
+        """
+    }
+
+    /// Converts a byte budget into the word count the model is told, at
+    /// ``summaryBytesPerWordEstimate`` — never below one word, so a tiny
+    /// positive budget still states a real target.
+    ///
+    /// - Parameter bytes: The budget, in UTF-8 bytes.
+    /// - Returns: The word count to state.
+    static func summaryBudgetWords(forBytes bytes: Int) -> Int {
+        max(1, Int(Double(bytes) / summaryBytesPerWordEstimate))
     }
 
     // MARK: - Map-reduce summarization
@@ -623,29 +681,25 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// cancellation in general.) Parallelize either loop above only together with that
     /// registration.
     ///
-    /// Every call made through here is bounded twice over, because the two
-    /// bounds reach different things.
+    /// Every call made through here generates under
+    /// ``outputTokenCeiling(forSummaryAllowance:)``, whose summary allowance
+    /// is never larger than ``maximumSummaryTokens`` however much content the
+    /// call was handed — and that same allowance is STATED to the model, as a
+    /// word count between the instructions and the content (task ^xx02yn6).
+    /// The ceiling covers the reasoning and the answer together (see
+    /// ``reasoningTokenHeadroom``), so it cannot bound the answer alone; the
+    /// stated budget is what aims the answer, and the fold's final summary is
+    /// then held to the span byte budget in
+    /// ``resolveOversizedSummary(_:within:summarizer:)`` — never to a
+    /// per-call ratio of the content, which is the arithmetic the 2-seed Qwen
+    /// probe of 2026-08-20 measured discarding verbatim facts by position.
     ///
-    /// ``outputTokenCeiling(forSummaryAllowance:)`` bounds what the model may
-    /// GENERATE, and its summary allowance is never larger than
-    /// ``maximumSummaryTokens`` however much content the call was handed. But
-    /// that ceiling covers the reasoning and the answer together (see
-    /// ``reasoningTokenHeadroom``), so it never bounds the ANSWER: a decoder
-    /// has one stop, and it is already spoken for by the `<think>` block.
-    /// ``cut(_:toCharacters:)`` is what bounds the answer, and it does it to
-    /// the text the call came back with rather than to the generation.
-    ///
-    /// The gated run of 2026-08-17 measured why the second bound is needed.
-    /// Every one of 7 seeds was called at a ceiling of 4224 tokens against a
-    /// summary allowance of 128, and every one answered with 374 to 698 real
-    /// tokens of summary — 1.30x to 2.07x the estimated size of the span it was
-    /// condensing, so
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-    /// discarded all 7 folds.
-    ///
-    /// The assembled prompt states no length of its own. `^azd033m` measured
-    /// what stating one cost against that same model, and
-    /// ``cut(_:toCharacters:)`` records the two numbers.
+    /// (`^azd033m` measured a HARD stated bound — "write at most N
+    /// characters ... Compress hard" — driving Muse-Glimmer to spend its
+    /// whole ceiling inside `<think>`. That measurement was that model's;
+    /// the standard model is Qwen3.8-27B now, and the budget here is a
+    /// target in words, re-measured on the 2-seed probe rather than
+    /// inherited.)
     ///
     /// Every call is also checked here, and one answer is refused: text that
     /// holds no characters. A fold stores what a summarizer answers, so a
@@ -660,28 +714,32 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     turns, or a batch of prior summaries.
     ///   - prompt: The compaction prompt sent to `summarizer` verbatim.
     ///   - summarizer: The model called to condense text.
-    /// - Returns: The summarizer's answer, cut down to the share of this
-    ///   call's own content it may retain — see ``cut(_:toCharacters:)``.
+    /// - Returns: The summarizer's answer, exactly as the model wrote it.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws,
     ///   unmodified, or ``SummarizationError/emptySummary`` when that answer
-    ///   holds no characters. The refusal reads the answer as the model wrote
-    ///   it, before the cut, so a fold that produced nothing is reported as
-    ///   such rather than cut to nothing.
+    ///   holds no characters.
     private func summarizeOnce(
         _ content: String,
         prompt: CompactionPrompt,
         summarizer: any CompactionSummarizer
     ) async throws -> String {
-        let allowance = summaryTokenAllowance(condensing: content, atRatio: summaryTokenRatio)
-        let retained = summaryTokenAllowance(condensing: content, atRatio: Self.summaryRetentionRatio)
+        let allowance = summaryTokenAllowance(condensing: content)
+        let budgetWords = Self.summaryBudgetWords(forBytes: statedBudgetBytes(condensing: content))
+        // "about N words ... never count": the instrumented Qwen probe of
+        // 2026-08-20 captured the thinking model counting its draft word by
+        // word against the stated target and spending the whole ceiling on
+        // the verification, so the line forbids it outright as its own rule —
+        // see ``statedBudgetShareOfContent`` for the target's own sizing.
         let summary = try await summarizer.summarize(
-            "\(prompt.text)\n\n---\n\n\(content)",
+            "\(prompt.text)\n\nSize budget: about \(budgetWords) words. "
+                + "This is a rough ceiling — never count or verify the length; a near miss is fine."
+                + "\n\n---\n\n\(content)",
             maxTokens: outputTokenCeiling(forSummaryAllowance: allowance)
         )
         guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SummarizationError.emptySummary
         }
-        return Self.cut(summary, toCharacters: Self.characters(forEstimatedTokens: retained))
+        return summary
     }
 
     /// The characters that end a sentence, and so mark a place a summary can be
@@ -691,49 +749,32 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// `summary`, cut down to at most `limit` characters at the last sentence
     /// or list-item boundary that fits inside them.
     ///
-    /// This is the bound on the summary TEXT, and it is applied in code rather
-    /// than asked of the model, for two measured reasons.
+    /// This is the LAST RESORT of the recovery ladder
+    /// ``resolveOversizedSummary(_:within:summarizer:)`` runs, and its one
+    /// caller: it fires only when the fold would otherwise fail to shrink the
+    /// transcript — the answer overran the span byte budget and the condense
+    /// re-ask did not bring it inside — and the fold records that it fired
+    /// (``Folded/summaryCut``). It stays in code rather than being left to
+    /// the model because it holds whatever the model writes: it makes "the
+    /// boundary entry is smaller than the span it replaces" a property of
+    /// this file rather than a hope about a generation.
     ///
-    /// Asking does not work, and it costs. Commit `c26fbbe` stated the bound in
-    /// the assembled prompt — "write at most N characters ... a summary that is
-    /// not clearly shorter than what it replaces saves nothing and is thrown
-    /// away. Compress hard" — and `^azd033m` measured one fold of that prompt
-    /// against `Muse-Glimmer-30B-4bit` at a ceiling of 4249 tokens. Without the
-    /// directive the model answered with 839 estimated tokens in 205.3 s; with
-    /// it the model spent the whole ceiling inside its `<think>` block and
-    /// answered with nothing at all, in 283.6 s. A length stated as a
-    /// requirement reads as an optimisation problem, and a reasoning model
-    /// optimises until the hard stop.
-    ///
-    /// Not asking does not work either, on its own. The same control run — the
-    /// prompt with no directive, which is what shipped before `c26fbbe` — wrote
-    /// 839 estimated tokens against the 600-token span it was replacing, so
-    /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-    /// discarded the fold, exactly as it discarded 7 of 7 gated seeds in
-    /// `^fm5ddk9`.
-    ///
-    /// A cut in code answers both. It needs nothing from the model, it holds
-    /// whatever the model writes, and it makes "a fold's summary is smaller
-    /// than the span it replaces" a property of this file rather than a hope
-    /// about a generation.
-    ///
-    /// It is a SAFETY bound and not the compression device, and `limit` says
-    /// so: it is ``summaryRetentionRatio`` of the call's content, not
-    /// ``summaryTokenRatio`` of it. The reason is that this cut keeps a PREFIX,
-    /// so it is content-blind — it keeps what the model said first and drops
-    /// what it said last, and the last thing a span states is usually the last
-    /// thing its summary states. Every byte cut past what the did-not-shrink
-    /// guard requires is a fact discarded by position rather than by meaning,
-    /// and a fold that shrank the transcript and dropped the fact it existed to
-    /// carry has not worked. So the bound sits as close to that requirement as
-    /// it safely can, and the compression a fold is run for is left to the
-    /// prompt and to the generation ceiling.
+    /// It keeps a PREFIX, so it is content-blind — it keeps what the model
+    /// said first and drops what it said last, a fact discarded by position
+    /// rather than by meaning. That destructiveness is why it is the last
+    /// resort and never the compression device: the compression a fold is run
+    /// for is asked of the model — the stated budget in
+    /// ``summarizeOnce(_:prompt:summarizer:)`` and the generation ceiling —
+    /// and `limit` is the shrink invariant's own arithmetic
+    /// (``summaryByteBudget(forSpanBytes:pendingRunsRenderingBytes:)``),
+    /// never a ratio of the call's content. The 2-seed Qwen probe of
+    /// 2026-08-20 (task ^xx02yn6) measured what a ratio-based routine cut
+    /// cost: both raw answers carried the planted fact verbatim, and the cut
+    /// stored the `1. Intent` line alone.
     ///
     /// `limit` is in the unit
     /// ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-    /// really measures — UTF-8 content bytes over
-    /// ``Compactor/charsPerTokenEstimate``, from
-    /// ``characters(forEstimatedTokens:)`` — so the size cut to here and the
+    /// really measures — UTF-8 content bytes — so the size cut to here and the
     /// size the did-not-shrink guard reads are the same number. (Bytes and
     /// characters part company on non-ASCII text, and the byte count is the one
     /// that binds, which cuts a little shorter rather than a little longer.)
@@ -751,31 +792,26 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// 4. Failing that, the budget itself.
     ///
     /// The section boundary stands first because of what `^51e9dyq` measured:
-    /// ``CompactionPrompt/default`` scaffolds eight numbered sections, on a
-    /// small span this bound is the ``minimumSummaryTokens`` floor — 512
-    /// bytes — and the sectioned output regularly exceeds it, so the cut is
-    /// the routine path rather than the safety net. A sentence-boundary cut
-    /// then stored a scaffold that stops in the middle of a section, and the
-    /// session model that read the truncated scaffold as its context
-    /// degenerated on its next turn — one word repeated to the token ceiling.
-    /// Whole sections the model finished are better context than more bytes
-    /// of a structure it did not.
+    /// ``CompactionPrompt/default`` scaffolds eight numbered sections, and a
+    /// sentence-boundary cut stored a scaffold that stops in the middle of a
+    /// section. The session model that read the truncated scaffold as its
+    /// context degenerated on its next turn — one word repeated to the token
+    /// ceiling. Whole sections the model finished are better context than
+    /// more bytes of a structure it did not.
     ///
     /// The section cut declines rather than empties: when not even the first
-    /// section fits whole — one section alone exceeding the whole bound, which
-    /// at the 512-byte floor means a single section of over 512 bytes — the
-    /// sentence-boundary cut takes over and the stored summary ends at a
-    /// finished sentence inside an unfinished section. That trade is taken
-    /// because the only alternatives are an emptied summary, which is the
-    /// `^bgxtdk3` defect, or an unbounded one, which the did-not-shrink guard
-    /// would discard.
+    /// section fits whole, the sentence-boundary cut takes over and the
+    /// stored summary ends at a finished sentence inside an unfinished
+    /// section. That trade is taken because the only alternatives are an
+    /// emptied summary, which is the `^bgxtdk3` defect, or an unbounded one,
+    /// which the did-not-shrink guard would discard.
     ///
     /// An empty result would erase the span the fold replaced — the defect
     /// ``SummarizationError/emptySummary`` exists for — so a cut that finds no
     /// text at all gives `summary` back unchanged and leaves the did-not-shrink
     /// guard to judge it. A `limit` of zero or below takes the same fallback:
-    /// ``boundaryBoundedSummary(_:folding:pendingRuns:)`` reaches it when the
-    /// pending-runs rendering alone spends the whole retention bound, and the
+    /// ``resolveOversizedSummary(_:within:summarizer:)`` reaches it when the
+    /// pending-runs rendering alone spends the whole span byte budget, and the
     /// answer is the guard's judgment, never an emptied summary.
     ///
     /// - Parameters:
@@ -936,9 +972,9 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// The sum is also why the ceiling cannot be the bound on the summary
     /// TEXT: it has to be wide enough for reasoning the answer never uses.
-    /// ``cut(_:toCharacters:)`` is what bounds the answer, at
-    /// ``summaryRetentionRatio`` of the same content rather than at this
-    /// allowance — see that constant for why the two numbers differ.
+    /// The stated budget in ``summarizeOnce(_:prompt:summarizer:)`` is what
+    /// aims the answer's size, and the fold's final summary is held to the
+    /// span byte budget by ``resolveOversizedSummary(_:within:summarizer:)``.
     ///
     /// - Parameter allowance: The summary allowance the call's content earns.
     /// - Returns: The output ceiling for that call, in tokens.
@@ -946,25 +982,47 @@ public struct Summarization: Sendable, Equatable, Codable {
         allowance + reasoningTokenHeadroom
     }
 
-    /// The part of that ceiling the summary text itself may occupy:
-    /// ``summaryTokenRatio`` of `content`'s own estimated size, never below
-    /// ``minimumSummaryTokens`` and never above ``maximumSummaryTokens``.
+    /// The part of that ceiling the summary text itself may occupy: the
+    /// STATED budget's own size in estimated tokens, never below
+    /// ``minimumSummaryTokens``.
+    ///
+    /// Sized from the budget the assembled prompt states, so the ceiling
+    /// always covers the ask. The 1B re-baseline of 2026-08-20 (task
+    /// ^xx02yn6) measured what a smaller allowance costs: the prompt asked
+    /// for three quarters of the content while the allowance was still a
+    /// quarter of it, the ceiling ended each answer mid-list before the facts
+    /// stated late in the span, and 5 of 7 stored summaries lost their fact
+    /// to that truncation rather than to the model.
+    ///
+    /// Never above ``maximumSummaryTokens``, because
+    /// ``statedBudgetBytes(condensing:)`` is itself capped there.
     ///
     /// Measured on the content alone, never on the assembled prompt: the
     /// compaction instructions are the same however small the span is, and
     /// charging a summary for the length of the instructions asking for it
     /// would let a short span buy a long summary.
     ///
-    /// - Parameters:
-    ///   - content: The content the call will condense — a rendered chunk of
-    ///     turns, or a batch of prior summaries.
-    ///   - ratio: The share of `content` to take, either ``summaryTokenRatio``
-    ///     for the generation ceiling or ``summaryRetentionRatio`` for the cut.
-    ///     Stated by the caller rather than fixed here, because one arithmetic
-    ///     serves both bounds and the two differ only in this number.
-    /// - Returns: That share of the call's content, in tokens.
-    private func summaryTokenAllowance(condensing content: String, atRatio ratio: Double) -> Int {
-        min(maximumSummaryTokens, summaryTokenAllowance(ingesting: Self.estimatedTokens(of: content), atRatio: ratio))
+    /// - Parameter content: The content the call will condense — a rendered
+    ///   chunk of turns, or a batch of prior summaries.
+    /// - Returns: The allowance the stated budget needs, in tokens.
+    private func summaryTokenAllowance(condensing content: String) -> Int {
+        max(
+            Self.minimumSummaryTokens,
+            Int((Double(statedBudgetBytes(condensing: content)) / Compactor.charsPerTokenEstimate).rounded(.up)))
+    }
+
+    /// The bytes the STATED budget names for a call condensing `content`:
+    /// ``statedBudgetShareOfContent`` of the content's own UTF-8 size, capped
+    /// at what ``maximumSummaryTokens`` occupies in characters so the final
+    /// summary of a conversation of any length stays bounded however much one
+    /// call ingests.
+    ///
+    /// - Parameter content: The content the call will condense.
+    /// - Returns: The stated budget, in UTF-8 bytes.
+    private func statedBudgetBytes(condensing content: String) -> Int {
+        min(
+            Int(Double(content.utf8.count) * Self.statedBudgetShareOfContent),
+            Self.characters(forEstimatedTokens: maximumSummaryTokens))
     }
 
     /// The allowance no single summarizer call's summary text may exceed,
@@ -980,37 +1038,23 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// Clamping unconditionally is what keeps the final summary of a long
     /// conversation bounded, the defect ``summaryTokenRatio`` exists to close,
     /// without the bound depending on any such list being complete.
-    /// It is computed from ``summaryTokenRatio`` alone, never from
-    /// ``summaryRetentionRatio``, and both bounds clamp to it. That is what
-    /// held the final summary of a long conversation where it already was when
-    /// the retention ratio went up: a call handed a full ``maxChunkTokens``
-    /// reaches this cap under either ratio.
-    ///
-    /// It does NOT make that change a small-fold one, and reading it that way
-    /// is the mistake ``summaryRetentionRatio`` records. Reaching this cap
-    /// under the retention ratio is not the same as reaching it under
-    /// ``summaryTokenRatio``: at the defaults the first happens at content of
-    /// 624 estimated tokens and the second only at 1997, so every call between
-    /// the two keeps more than it did before.
     private var maximumSummaryTokens: Int {
-        summaryTokenAllowance(ingesting: maxChunkTokens, atRatio: summaryTokenRatio)
+        summaryTokenAllowance(ingesting: maxChunkTokens)
     }
 
-    /// `ratio` of `tokens`, rounded UP and floored at ``minimumSummaryTokens``
-    /// — the one place the allowance arithmetic lives, shared by the per-call
-    /// allowance and the cap it is clamped to.
+    /// ``summaryTokenRatio`` of `tokens`, rounded UP and floored at
+    /// ``minimumSummaryTokens`` — the one place the allowance arithmetic
+    /// lives, shared by the per-call allowance and the cap it is clamped to.
     ///
-    /// The rounding up is why a bound reaches a cap one token of content
-    /// earlier than a division suggests. A `ratio` of `0.8` reaches a cap of
-    /// `500` as soon as `0.8 * tokens` passes `499`, which is at 624 tokens
-    /// and not at 625.
+    /// The rounding up is why the cap is reached one token of content earlier
+    /// than a division suggests: a ratio of `0.25` reaches a cap of `500` as
+    /// soon as `0.25 * tokens` passes `499`.
     ///
-    /// - Parameters:
-    ///   - tokens: The estimated size, in tokens, of what a call ingests.
-    ///   - ratio: The share of `tokens` to take.
-    /// - Returns: That share of it, in tokens.
-    private func summaryTokenAllowance(ingesting tokens: Int, atRatio ratio: Double) -> Int {
-        max(Self.minimumSummaryTokens, Int((Double(tokens) * ratio).rounded(.up)))
+    /// - Parameter tokens: The estimated size, in tokens, of what a call
+    ///   ingests.
+    /// - Returns: The allowance those tokens earn, in tokens.
+    private func summaryTokenAllowance(ingesting tokens: Int) -> Int {
+        max(Self.minimumSummaryTokens, Int((Double(tokens) * summaryTokenRatio).rounded(.up)))
     }
 
     // MARK: - Chunking

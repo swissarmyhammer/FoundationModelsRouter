@@ -22,7 +22,7 @@ import Testing
 /// that is still an instruct model — `SmolLM-135M-Instruct-4bit` is smaller and
 /// too small to follow an eight-section instruction. And it writes NO `<think>`
 /// block, which is the whole reason ``Summarization/reasoningTokenHeadroom``
-/// defaults to 4096; `Qwen3-1.7B-4bit` is comparable in size and was rejected
+/// defaults to 8192; `Qwen3-1.7B-4bit` is comparable in size and was rejected
 /// because it reasons.
 private let compactionSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
@@ -48,8 +48,13 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// The wall-clock bound this suite runs under, in minutes.
 ///
 /// Stated as a constant so the number carries its measurement. See the suite's
-/// own doc comment for the measured run behind it.
-private let compactionSmokeTimeLimitMinutes = 1
+/// own doc comment for the measured run behind it. One minute held while a
+/// fold cost one generation; under task ^xx02yn6's condense re-ask this
+/// model's fold costs two (see the first test's call-count pin), and the run
+/// of 2026-08-20 measured the pair at 60.1 seconds — the limit itself, with
+/// 7.3-second model loads — so the bound moved to the next whole minute
+/// above the measured pair.
+private let compactionSmokeTimeLimitMinutes = 2
 
 // MARK: - Suite
 
@@ -60,8 +65,9 @@ private let compactionSmokeTimeLimitMinutes = 1
 ///
 /// It proves the PATH WORKS. Five facts, and no more:
 ///
-/// 1. The summarizer was called — exactly once, which is also this suite's
-///    generation budget.
+/// 1. The summarizer was called — within the fold's own call budget of one
+///    map call plus at most one condense re-ask (task ^xx02yn6), which is
+///    also this suite's generation budget.
 /// 2. It answered with text that is not empty (`^bgxtdk3` stored an empty
 ///    summary on 19 of 19 gated seeds).
 /// 3. The summary is smaller than the span it replaced, in the estimated
@@ -93,11 +99,12 @@ private let compactionSmokeTimeLimitMinutes = 1
 ///
 /// - ``compactionSmokeModel`` rather than the 18 GB ``RealModels/standard``.
 /// - One fixture, not a dataset.
-/// - ONE generation: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
-///   and nothing after it. No resumed session and no answering turn — that is a
-///   second generation, and "works at all" does not need one.
+/// - At most TWO generations: ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``
+///   and nothing after it — the map call, plus the one condense re-ask task
+///   ^xx02yn6's recovery ladder allows. No resumed session and no answering
+///   turn — that is another generation, and "works at all" does not need one.
 /// - ``reasoningTokenHeadroom``, sized for a model that writes no reasoning,
-///   rather than the 4096 the 30B path needs.
+///   rather than the 8192 the thinking-model path needs.
 ///
 /// ## The measurement behind ``compactionSmokeTimeLimitMinutes``
 ///
@@ -117,18 +124,24 @@ private let compactionSmokeTimeLimitMinutes = 1
 /// twice, once per test; the same box then reported 4.1 s per fold and 6.3 s
 /// for the pair, of which 2.0 s is each fold's model load.
 ///
-/// The fold numbers moved twice, both times on `^azd033m`, and both are worth
-/// keeping because they are what the two bounds cost:
+/// The fold numbers moved twice on `^azd033m`, and both rows are worth
+/// keeping because they are what a per-call cut cost:
 ///
 /// | the fold | answer | stored summary | transcript |
 /// |---|---|---|---|
 /// | cut at `summaryTokenRatio` of the content | 330 | 160 | 713 -> 230 |
-/// | cut at `summaryRetentionRatio` of it | 330 | 330 | 713 -> 400 |
+/// | cut at 0.8 of it (the old retention ratio) | 330 | 330 | 713 -> 400 |
 ///
 /// Both rows are one summarizer call at a ceiling of 291 over a 643-token span,
 /// and both shrank the transcript, so `Compactor` applied either. The first row
 /// discarded half of what the model wrote — including the fact planted at the
-/// end of the span, which is why the second test below exists.
+/// end of the span, which is why the second test below exists. Task ^xx02yn6
+/// then removed the per-call ratio cut entirely: the stored summary is now
+/// bounded once, against the folded span's own content bytes — an answer
+/// inside that bound is stored word for word, and an answer past it earns
+/// one condense re-ask before any cut. The run of 2026-08-20 measured this
+/// model taking the condense path on this fixture, and the condense answer
+/// still carried the planted fact.
 ///
 /// The smoke tier is what those numbers rest on: this suite,
 /// ``AutoCompactionTriggerIntegrationTests`` and
@@ -138,8 +151,9 @@ private let compactionSmokeTimeLimitMinutes = 1
 /// read: the whole package, this suite's real model included, in 18.0
 /// seconds.
 ///
-/// The limit is one minute, roughly nine times the measured run of the pair and
-/// the smallest `.timeLimit` Swift Testing accepts.
+/// The limit is two minutes — the next whole minute above the 60.1-second
+/// pair the run of 2026-08-20 measured under task ^xx02yn6's two-call folds;
+/// see ``compactionSmokeTimeLimitMinutes``.
 @Suite(
     "Real-model smoke test: the compaction fold works end to end (task ^w1cz46m)",
     .timeLimit(.minutes(compactionSmokeTimeLimitMinutes)),
@@ -166,16 +180,13 @@ struct CompactionSmokeIntegrationTests {
     /// whatever the model chooses to write.
     ///
     /// The measurement says the model really does write to that stop, so the
-    /// worst case is the case. ``Summarization`` computes a ceiling of 291
-    /// tokens over this fixture, and the answer that comes back measures 330
-    /// estimated tokens against the 643-token span it replaces.
-    ///
-    /// That answer is what gets STORED, whole.
-    /// ``Summarization/cut(_:toCharacters:)`` bounds it at
-    /// ``Summarization/summaryRetentionRatio`` of the call's content, which
-    /// this answer is well inside, so the fold keeps every word of it and still
-    /// halves the transcript. So this headroom bounds what the run can COST,
-    /// and the shrinking is the model's own compression rather than a cut's.
+    /// worst case is the case: the run of 2026-08-20 under task ^xx02yn6's
+    /// stated-budget ceilings measured this model generating to its map-call
+    /// ceiling, past the folded span's own byte budget — the one bound
+    /// ``Summarization`` holds a final summary to since that task — so the
+    /// stage made its condense re-ask and stored the condense answer. The
+    /// first test below pins that call count, and the run's own printed fold
+    /// line carries each call's ceiling.
     ///
     /// Not zero, so a summary has a little room to finish its last sentence
     /// inside the ceiling rather than always ending at it.
@@ -238,19 +249,19 @@ struct CompactionSmokeIntegrationTests {
     /// at once.
     ///
     /// - Under ``Summarization/maxChunkTokens`` (2000 estimated tokens), so the
-    ///   span is ONE chunk and the fold costs ONE generation. The test asserts
-    ///   that count, so the fixture cannot grow past it in silence.
+    ///   span is ONE chunk and the fold costs one MAP generation — plus at
+    ///   most the one condense re-ask task ^xx02yn6's recovery ladder allows.
+    ///   The test asserts that count, so the fixture cannot grow past it in
+    ///   silence.
     /// - Large enough that the fold cannot fail to shrink the transcript.
-    ///   Since `^azd033m` ``Summarization`` CUTS an answer that overruns the
-    ///   share of its content it may retain, rather than asking the model for a
-    ///   length, so a span this size cannot buy a summary that fails
-    ///   ``Compactor``'s did-not-shrink guard. Measured over this fixture: a
-    ///   643-token span bought a ceiling of 291, the answer came back at 330
-    ///   estimated tokens — inside the bound, so stored whole — and the whole
-    ///   transcript went from 713 tokens to 400. `^fm5ddk9` measured the 30B
-    ///   model writing summaries 1.30x to 2.07x the size of the spans it was
-    ///   given, and `Compactor` was right to discard all seven; the cut puts
-    ///   that outcome out of reach for a span this size.
+    ///   Since task ^xx02yn6 ``Summarization`` bounds the FINAL summary
+    ///   against the folded span's own content bytes — one condense re-ask,
+    ///   then the last-resort cut — so a span this size cannot buy a summary
+    ///   that fails ``Compactor``'s did-not-shrink guard. `^fm5ddk9` measured
+    ///   the 30B model writing summaries 1.30x to 2.07x the size of the spans
+    ///   it was given, and `Compactor` was right to discard all seven; the
+    ///   span byte budget puts that outcome out of reach for a span this
+    ///   size.
     ///
     /// The second turn ends with ``plantedFact``, which is the whole fixture
     /// for ``aPlantedFactLateInTheSpanSurvivesTheFold``.
@@ -376,7 +387,7 @@ struct CompactionSmokeIntegrationTests {
     // MARK: - The tests
 
     @Test(
-        "one fold against a real model: the summarizer runs once, answers with text, and the fold is applied rather than discarded"
+        "one fold against a real model: the summarizer answers within the fold's call budget, and the fold is applied rather than discarded"
     )
     func theFoldWorksAgainstARealModel() async throws {
         let outcome = try await Self.foldTheFixture()
@@ -384,13 +395,18 @@ struct CompactionSmokeIntegrationTests {
         let ceilings = outcome.ceilings
         let spanTokens = outcome.spanTokens
 
-        // 1. The summarizer ran — and exactly once, which is this suite's whole
-        //    generation budget. A fixture that grew past
-        //    `Summarization.maxChunkTokens` would buy a second call and a
-        //    reduce round, and would fail here rather than merely get slower.
+        // 1. The summarizer ran, and within the fold's own call budget: ONE
+        //    map call, plus at most the ONE condense re-ask the recovery
+        //    ladder allows (task ^xx02yn6) when the raw answer overruns the
+        //    folded span's byte budget. The run of 2026-08-20 measured this
+        //    model taking exactly that path on this fixture — the map answer
+        //    overran the span budget and the condense re-ask fired. A THIRD
+        //    call would mean the fixture outgrew
+        //    `Summarization.maxChunkTokens` and bought a reduce round, and
+        //    fails here rather than merely getting slower.
         #expect(
-            ceilings.count == 1,
-            "expected exactly one summarizer call, got \(ceilings.count) at ceilings \(ceilings)"
+            (1...2).contains(ceilings.count),
+            "expected the map call plus at most one condense re-ask, got \(ceilings.count) at ceilings \(ceilings)"
         )
 
         // 2. It answered with text. `^bgxtdk3` was an empty summary on 19 of 19

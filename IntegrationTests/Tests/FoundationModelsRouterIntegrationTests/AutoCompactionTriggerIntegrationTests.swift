@@ -45,8 +45,13 @@ private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = 
 /// The wall-clock bound this suite runs under, in minutes.
 ///
 /// Stated as a constant so the number carries its measurement. See the suite's
-/// own doc comment for the measured run behind it.
-private let autoCompactionTriggerTimeLimitMinutes = 1
+/// own doc comment for the measured run behind it. One minute held while the
+/// run of 2026-08-18 measured 4.7 to 5.0 seconds; the runs of 2026-08-20
+/// measured 23.7 and 54.6 seconds — task ^xx02yn6's stage makes more model
+/// work per fold, and the same box loaded the model in 6.1 to 7.5 seconds —
+/// so the bound moved to the next whole minute above the dearest measured
+/// run.
+private let autoCompactionTriggerTimeLimitMinutes = 2
 
 // MARK: - Suite
 
@@ -122,20 +127,22 @@ private let autoCompactionTriggerTimeLimitMinutes = 1
 ///
 /// The run makes four generations: one for each of the three scripted turns,
 /// and one for the fold's summarizer call. All three runs reported identical
-/// fold numbers, which is ``autoCompactionTriggerSamplingMode`` doing its job:
+/// fold numbers, which is ``autoCompactionTriggerSamplingMode`` doing its job.
+/// Task ^xx02yn6's span-budget trim then moved the fold numbers, and the run
+/// of 2026-08-20 under ``foldSummaryTokenRatio`` re-measured them:
 ///
-/// | what the run measured | value |
-/// |---|---|
-/// | the synthetic trigger, in tokens | 82 |
-/// | the fold target, in tokens | 4 |
-/// | context fill before the turn | 0.167 |
-/// | context fill after the turn | 0.107 |
-/// | folds inside the turn | 1 |
-/// | stages the fold applied | elision, truncation, summarization |
-/// | the fold's transcript, before and after | 733 -> 369 |
+/// | what the run measured | 2026-08-18 | 2026-08-20 |
+/// |---|---|---|
+/// | the synthetic trigger, in tokens | 82 | 82 |
+/// | the fold target, in tokens | 4 | 4 |
+/// | context fill before the turn | 0.167 | 0.167 |
+/// | context fill after the turn | 0.107 | 0.114 |
+/// | folds inside the turn | 1 | 1 |
+/// | stages the fold applied | elision, truncation, summarization | the same |
+/// | the fold's transcript, before and after | 733 -> 369 | 733 -> 463 |
 ///
-/// The limit is one minute, roughly twelve times the measured run and the
-/// smallest `.timeLimit` Swift Testing accepts.
+/// The limit is two minutes — the next whole minute above the 54.6-second
+/// run of 2026-08-20; see ``autoCompactionTriggerTimeLimitMinutes``.
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
 /// ``RecordedTranscriptCompactionIntegrationTests``. The three answer one
@@ -221,6 +228,31 @@ struct AutoCompactionTriggerIntegrationTests {
     /// run, which is the summarizer generation.
     private static let reasoningTokenHeadroom = 128
 
+    /// The summary cap every summarizer call of this suite runs under, as
+    /// ``Summarization/summaryTokenRatio`` — and deliberately not the default
+    /// of 0.25.
+    ///
+    /// Task ^xx02yn6 sizes a call's stated budget and generation ceiling from
+    /// the span's own content, for the standard thinking model, which writes
+    /// near the budget it is asked for. ``autoCompactionTriggerModel`` does
+    /// not: it generates to whatever ceiling it is given. The run of
+    /// 2026-08-20 at the default ratio measured what that costs here — the
+    /// answer overran the folded span's byte budget, the stage condensed and
+    /// then cut it to 64 bytes under the span, the fold saved 16 of 733
+    /// estimated tokens, and the turn's own prompt and reply cost more than
+    /// that, so the fill ROSE across the turn (0.167 to 0.177) and the suite
+    /// went red on its own fourth fact.
+    ///
+    /// At 0.1 the cap is 200 tokens (`0.1` of ``Summarization/maxChunkTokens``),
+    /// so the whole generation is bounded at 328 tokens with
+    /// ``reasoningTokenHeadroom`` — about 1.6 KB at the dataset-measured 4.81
+    /// bytes for each token, well under this fixture's span byte budget. The
+    /// answer therefore fits the span and is stored whole, and the fold's
+    /// saving is the span minus a BOUNDED answer, by construction rather than
+    /// by the model's good behaviour — the same device
+    /// ``reasoningTokenHeadroom`` already applies to the reasoning half.
+    private static let foldSummaryTokenRatio = 0.1
+
     /// The model-assisted stage this suite vends its session with.
     ///
     /// A session is where this choice belongs, because an automatic fold has no
@@ -230,6 +262,7 @@ struct AutoCompactionTriggerIntegrationTests {
     private static var foldSummarization: Summarization {
         Summarization(
             keepRecentTurns: foldKeepRecentTurns,
+            summaryTokenRatio: foldSummaryTokenRatio,
             reasoningTokenHeadroom: reasoningTokenHeadroom
         )
     }
@@ -252,20 +285,20 @@ struct AutoCompactionTriggerIntegrationTests {
     /// The first scripted turn, and the whole of the span the fold replaces.
     ///
     /// Its length is deliberate and it is the one fixture dimension that
-    /// matters. ``Summarization`` gives a call a summary allowance of
-    /// ``Summarization/summaryTokenRatio`` (0.25) of the content it condenses,
-    /// never under ``Summarization/minimumSummaryTokens`` (128). That floor
-    /// binds for any span under 512 estimated tokens, and while it binds the
-    /// allowance stops falling with the span — so a SMALL span can buy a
-    /// summary as large as itself, and ``Compactor`` then discards the fold for
-    /// failing to shrink the transcript. That is the exit which discarded 7 of
-    /// 7 gated folds in `^fm5ddk9`.
+    /// matters. The largest summary a call of this suite can produce is
+    /// bounded by its generation ceiling — 328 tokens, see
+    /// ``foldSummaryTokenRatio`` — so a span that OUTWEIGHS that bound is a
+    /// span the fold always shrinks, and the fill assertion below measures
+    /// the wiring rather than the model's own brevity. A span near the bound
+    /// would instead buy a summary as large as itself, which is the shape
+    /// that discarded 7 of 7 gated folds in `^fm5ddk9` under the old
+    /// allowance floor.
     ///
-    /// So this turn is written past the floor rather than up to it. It
-    /// estimates 639 tokens, measured with ``Compactor/estimatedTokenCount(of:)``'s
-    /// own arithmetic over its 2556 bytes, against the 512 where the floor
-    /// stops binding. It stays well under ``Summarization/maxChunkTokens``
-    /// (2000), so the span is ONE chunk and the fold costs ONE generation.
+    /// So this turn is written well past the bound. It estimates 639 tokens,
+    /// measured with ``Compactor/estimatedTokenCount(of:)``'s own arithmetic
+    /// over its 2556 bytes. It stays well under
+    /// ``Summarization/maxChunkTokens`` (2000), so the span is ONE chunk and
+    /// the fold costs ONE generation.
     ///
     /// This is a bound on the FIXTURE, and it is not the trigger arithmetic
     /// this card removes. Nothing here is sized against a window or a

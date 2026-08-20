@@ -43,8 +43,14 @@ private let recordedTranscriptCompactionSamplingMode: GenerationOptions.Sampling
 /// The wall-clock bound this suite runs under, in minutes.
 ///
 /// Stated as a constant so the number carries its measurement. See the suite's
-/// own doc comment for the measured run behind it.
-private let recordedTranscriptCompactionTimeLimitMinutes = 1
+/// own doc comment for the measured run behind it. One minute held while a
+/// call's ceiling was sized by the old allowance; task ^xx02yn6 sizes the
+/// ceilings from the stated budget and re-asks once for an answer past the
+/// span byte budget, and the run of 2026-08-20 exceeded the old one-minute
+/// bound with 8-second model loads on a busy box — so the bound moved to
+/// three minutes, above the dearest cost the same box measured for the
+/// two-chunk fold.
+private let recordedTranscriptCompactionTimeLimitMinutes = 3
 
 // MARK: - Suite
 
@@ -72,8 +78,9 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 1
 ///    ``Summarization/maxChunkTokens`` (2000), so the stage chunks the span,
 ///    summarizes each chunk, and re-summarizes the results — three summarizer
 ///    calls rather than one. ``CompactionSmokeIntegrationTests`` sizes its own
-///    fixture to stay under that ceiling and asserts exactly one call, so this
-///    is the only fast suite that reaches the chunking path at all. It is also
+///    fixture to stay under that ceiling and asserts the one map call plus at
+///    most one condense re-ask, so this is the only fast suite that reaches
+///    the chunking path at all. It is also
 ///    the clearest illustration of the card: a recording is whatever real
 ///    traffic was, and it exercises code a fixture written to a budget avoids.
 ///
@@ -152,8 +159,9 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 1
 /// folding real traffic rather than a span sized to one chunk, and it is still
 /// seconds.
 ///
-/// The limit is one minute, roughly six times the measured run and the smallest
-/// `.timeLimit` Swift Testing accepts.
+/// The limit is three minutes — see
+/// ``recordedTranscriptCompactionTimeLimitMinutes`` for the 2026-08-20
+/// measurement that moved it off the old one-minute bound.
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
 /// ``AutoCompactionTriggerIntegrationTests``. The three answer one

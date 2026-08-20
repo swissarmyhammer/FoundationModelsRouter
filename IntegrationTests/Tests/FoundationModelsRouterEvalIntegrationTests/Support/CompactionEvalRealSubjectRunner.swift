@@ -225,7 +225,7 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let summarizer = BlankSlateSummarizer(container: container)
         // The summarization cuts `reasoningTokenHeadroom` to the shared eval
         // bound, because the resident model writes no `<think>` block and the
-        // default headroom of 4096 is free generation room for it — see
+        // default headroom of 8192 is free generation room for it — see
         // `compactionEvalReasoningTokenHeadroom` for the measured runaway
         // folds behind the cut. Every other summarization value stays at its
         // production default, so the fold under test is the production fold.

@@ -299,6 +299,16 @@ summary will REPLACE the older conversation: whoever continues has no other
 memory of it, so anything you omit is lost. Be precise and dense. State only
 facts from the conversation — never invent, never infer beyond it.
 
+Copy every name, identifier, code, number, path, date and value EXACTLY as it
+appears in the conversation — character for character, never paraphrased,
+never abbreviated, never re-derived. "The staging database port is 6432" is
+a kept fact; "the user stated the staging database port" is that fact lost.
+
+Each request states a size budget for the whole summary, as a word count.
+Aim near it without counting words: keep every section terse, and drop
+polish rather than stated facts. Text far past the budget is trimmed away
+and lost.
+
 Structure the summary exactly as:
 
 1. Intent — the user's request(s) and overall goal, in order given.
@@ -333,8 +343,15 @@ supply closet" into `1. Intent — Inform the assistant about the location of
 spare toner cartridges.` with `2. Constraints & decisions — None.`: it recorded
 THAT a fact was communicated and discarded WHAT it was, and no answering turn
 could recover the location from that summary. The prompt is named
-`router-default-v2`; the seven-section form it supersedes was
-`router-default-v1`.
+`router-default-v3`. The verbatim-value demand and the size-budget paragraph
+are task `^xx02yn6`'s, measured on the 2-seed Qwen3.8-27B probe of 2026-08-20:
+where the demand was soft, the model abstracted values ("then stated the
+staging database port"), and a model never given a size wrote 2.2-3.0 KB
+answers whose fact sections the old per-call cut then discarded. The stage
+appends the concrete budget, as a word count, to each request. The prompt
+supersedes `router-default-v2` (which stated no size and demanded verbatim
+copies only for security-relevant instructions) and the seven-section
+`router-default-v1` before it.
 
 Consumers pass their own `CompactionPrompt` to specialize (a coding harness
 might add "always list test commands"); the prompt's `name` is recorded in the
