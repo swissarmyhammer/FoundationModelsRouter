@@ -29,8 +29,24 @@ comments:
     - Real-model IntegrationTests suites were not run, per instructions. No FM_ROUTER_* variables were used. swift format was not run.
     - next: hand off to review.
   timestamp: 2026-08-19T23:46:02.534463+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0e71swpgd9fvfgz4f6fx0rs
+  text: |-
+    ### review — clean
+    - evidence: review sha 3f3c08c~1..3f3c08c (local backend) — 0 findings, 0 confirmed, 0 refuted; 3 files reviewed, 2 kanban files excluded by .reviewignore
+    - next: none; the task moved to done
+  timestamp: 2026-08-19T23:52:36.502265+00:00
+- actor: claude-code
+  id: 01m0e72k5j2z8dm36q5af24yt6
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — the runner's 91-line hand-built `buildProfile` and `UnusedEmbeddingContainer` deleted; the runner calls `RealModelHarness.make`; the stale cross-target constraint prose removed
+    - test: green — warnings-as-errors build clean; `Scripts/swift-test.sh --skip IntegrationTests`, 1021 + 77 passed; fast continuity tier green in 28.6 s
+    - commit: 3f3c08c
+    - review: clean — 0 findings over 3 files; task moved to `done`
+  timestamp: 2026-08-19T23:53:02.386929+00:00
+position_column: done
+position_ordinal: ffc980
 title: Fold CompactionContinuityEvalRealSubjectRunner.buildProfile onto RealModelHarness
 ---
 Found while landing ^cvsh3m9.
