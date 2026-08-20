@@ -78,8 +78,24 @@ comments:
     - evidence: all 5 criteria verified against current code, no file touched. Timed gated run: `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluationIntegrationTests` → passed, wallClockSeconds=29.5 under the 2-minute limit (`GatedEvalSerialGate.swift:121`, applied at `CompactionContinuityRealModelTests.swift:84`); measurement stated at `CompactionContinuityRealModelTests.swift:79-81`; zero `CompactionRoundTripIntegrationTests` matches in the eval integration target; root `swift test` green 1023 + 77; `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0.
     - next: ready for /review
   timestamp: 2026-08-20T03:25:39.405813+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0ekc78qrkkdewxsmmgmeccr
+  text: |-
+    ### review — clean
+    - evidence: `review sha 1d65c78~1..1d65c78` (backend local) → 0 findings; all 4 files in scope are `.kanban/` bookkeeping, excluded by `.reviewignore`. The comments on this card record the evidence for all 5 acceptance criteria: measured run 29.5 s, two-minute budget constant, doc comment with the measurement, zero `CompactionRoundTripIntegrationTests` matches, suite pass with no time-limit issue.
+    - next: none — task moved to done
+  timestamp: 2026-08-20T03:28:00.791835+00:00
+- actor: claude-code
+  id: 01m0ekd1me8wmq8p4t4j23zchd
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: no-change — the card was stale; ^k0d30s4 and ^ryb01x7 already made the limit a measurement (29.5 s measured under a 2-minute derived budget); per-criterion evidence recorded on the card
+    - test: green — root `swift test` 1023 + 77; gated continuity tier passed once at 29.5 s; warnings-as-errors exit 0
+    - commit: 1d65c78 (board bookkeeping only)
+    - review: clean — 0 findings; task moved to `done`
+  timestamp: 2026-08-20T03:28:27.790497+00:00
+position_column: done
+position_ordinal: ffcf80
 title: The 20-minute limit on the continuity eval tier is an analogy, not a measurement
 ---
 Filed from the backlog audit at `dd55fcd2c`, as the narrow residue of `^y0mhcdq`. That card said both gated evals go over one shared limit of 20 minutes. That is no longer true, and the card is closed. This card holds the one part that is still true.

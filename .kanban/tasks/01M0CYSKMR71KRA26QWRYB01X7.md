@@ -81,8 +81,24 @@ comments:
     - evidence: 57 files — 5 added, 16 modified, 36 renamed. Verified: `swift build --build-tests` clean; `swift build -c release` clean (88.4 s); `Scripts/swift-test.sh --skip FoundationModelsRouterRealModel` green, 995 + 72 tests in 13 s, exit 0; `swift test --filter 'FoundationModelsRouterRealModelTests\.(RealModelHarnessTests|ScriptedTurnSizingTests)'` runs 9 tests in 2 suites, so a target-name selector reaches the suites inside the target; `swift test --filter FoundationModelsRouterRealModelEvals --skip CompactionEval --skip CompactionContinuity` reaches the evals target and reports `No matching test cases were run` at exit 0, and the same command through `Scripts/swift-test.sh` exits 1, as does `Scripts/swift-test.sh --filter FoundationModelsRouterRenamedAway`. No real-model suite was run.
     - next: `/review`
   timestamp: 2026-08-19T13:59:12.618051+00:00
-position_column: doing
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01m0emavq77jf20txrwn767any
+  text: |-
+    ### review — clean
+    - evidence: `review sha 1db2b56~1..1db2b56` — 2 findings, 2 confirmed, 0 refuted. Both are `code-hygiene/dead-code-swift` false alarms: the symbols are used from the nested `IntegrationTests/` package that commit `731a7ba` (card ^g5ghfgm, reviewed clean 2026-08-19) created, and the analyzer reads only the root package. Both are recorded as superseded on the card. All six acceptance criteria hold against the current tree: `rg 'FM_ROUTER_'` finds nothing, the root package declares only hermetic test targets, and CI runs the real-model job with `swift test --package-path IntegrationTests`. Card ^cvsh3m9 (done) closed the nine-test remainder of criterion 4.
+    - next: none — the card moved to done.
+  timestamp: 2026-08-20T03:44:44.775478+00:00
+- actor: claude-code
+  id: 01m0embs7n5kk28e5s8ykb2mt8
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: none this iteration — the work landed earlier as 1db2b56 and card ^g5ghfgm (731a7ba) completed the structural split
+    - review: clean — `review sha 1db2b56~1..1db2b56`, 2 dead-code findings both superseded by 731a7ba (the symbols are used from the nested IntegrationTests package, which the root-package analyzer cannot see); all 6 acceptance criteria verified against the current tree
+    - commit: none needed (board bookkeeping travels with the batch close-out)
+    - outcome: task moved to `done`
+  timestamp: 2026-08-20T03:45:14.997927+00:00
+position_column: done
+position_ordinal: ffd080
 title: Gated real-model tests must be a CI-selectable package target, not 16 bespoke environment variables
 ---
 From the user, 2026-08-19:
@@ -137,7 +153,26 @@ Where a gate must still exist, there should be ONE, named once, not sixteen.
 - [x] The SwiftPM constraint above is settled by measurement, and what the tool really does is written down
 - [x] Every real-model suite is selected by target rather than by an environment variable
 - [x] CI can run the gated tests with one command that names no environment variable
-- [ ] A plain `swift test` stays hermetic and fast, and the hermetic tests of both current targets still run — 72 of the 81 do, under `swift test --skip FoundationModelsRouterRealModel`, in 13 seconds. The other 9 test real-model-only support and travel with it; card ^cvsh3m9 carries what closing that costs.
+- [x] A plain `swift test` stays hermetic and fast, and the hermetic tests of both current targets still run — 72 of the 81 do, under `swift test --skip FoundationModelsRouterRealModel`, in 13 seconds. The other 9 test real-model-only support and travel with it; card ^cvsh3m9 carries what closing that costs. (Closed by later cards — see the verification section below.)
 - [x] A gated run that measures nothing fails rather than reporting green
 - [x] The remaining gate, if any, is named once rather than sixteen times
-#ci #test-debt
+
+## Verification against the current tree (2026-08-19)
+
+Later cards moved part of this work after commit `1db2b56`. Card ^g5ghfgm (commit `731a7ba`, reviewed clean 2026-08-19) deleted `Scripts/swift-test.sh` and moved the two real-model targets into the nested package `IntegrationTests/`. Each criterion holds against the tree of 2026-08-19:
+
+- Criterion 1: the measurement is written in this card, in the section above.
+- Criterion 2: the real-model suites are the two targets of the nested package `IntegrationTests/`. `rg 'enabled\(if'` finds only document comments that say no gate exists. `rg 'FM_ROUTER_'` finds nothing.
+- Criterion 3: the CI job "Real-model tests" runs `swift test --package-path IntegrationTests`. The command names no environment variable.
+- Criterion 4: satisfied by the later cards. The root `Package.swift` declares only the two hermetic test targets, so a plain `swift test` needs no `--skip` (card ^g5ghfgm). Card ^cvsh3m9 (done 2026-08-19) moved the nine support proofs into the hermetic run.
+- Criterion 5: the target selector always runs the tests it names. A run without a model fails. It does not report green.
+- Criterion 6: no gate remains, so no gate name remains. `rg 'FM_ROUTER_'` finds nothing.
+
+## Review Findings (2026-08-19 22:30)
+
+> Scope: `review sha 1db2b56~1..1db2b56` — reviewed the diffs only — lines this change added or modified. 82 file(s) reviewed, 8 not reviewed (`.kanban/`, from `.reviewignore`).
+
+> The engine also wrote 174 notes that say a rule "declined an item". Each note names a file path that commit `731a7ba` later moved, so the engine could not read that path in the current tree.
+
+- [x] `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift:483` `code-hygiene/dead-code-swift` — var.global `compactionContinuityFastInstructions` is unused. — Superseded by commit `731a7ba`: the symbol is used at `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionContinuityRealModelTests.swift:17`. The nested package consumes the `FoundationModelsRouterEvalSupport` product (`IntegrationTests/Package.swift:91`). The analyzer reads only the root package, so it cannot see this use.
+- [x] `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift:281` `code-hygiene/dead-code-swift` — var.global `compactionEvalReasoningTokenHeadroom` is unused. — Superseded by commit `731a7ba`: the symbol is used at `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityEvaluation.swift:160` and at `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/CompactionEvalRealSubjectRunner.swift:237`. The chain ends in the nested package, which the root-package analyzer cannot see. #ci #test-debt

@@ -242,8 +242,43 @@ comments:
     - new work found and filed: `^we8n8nk` — the same loader-plus-`loadLLM` sequence exists twice more in `FoundationModelsRouterEvals/Support/`. It is out of this card's reach (separate test target, separate module) and out of its scope, and the card records what differs between those two copies so the next agent does not flatten their typed errors or their progress lines.
     - next: ready for /review. 12 of 12 acceptance criteria checked, 1 of 1 review finding checked. Nothing open.
   timestamp: 2026-08-18T13:24:37.834969+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0emv42waperqegxmvhqb7g9
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha d82c33e~1..d82c33e` (local backend) gave 0 findings, 1 candidate refuted. `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` passed: 2 tests, 0 failures, 13.85 s for the full command, build included.
+    - The one prior finding (reuse/reuse, nine `makeContainer()` copies) is checked. Commit d82c33e made the fix. The engine found no new fault in that commit.
+    - Superseded scope: card ^ryb01x7 moved the suite to `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/` and removed the env-var gate. Findings on the old paths do not apply. The review of 731a7ba (2026-08-19, clean) covered the moved code.
+
+    Criterion evidence against the current tree (2026-08-19 run):
+
+    1. Gate: the env-var gate is gone (^ryb01x7). The test target selects the test. The command ran with no env var.
+    2. Small model: the model load took 2.0 s. The test downloaded nothing.
+    3. Summarizer called: `summarizerCalls=1`, `ceilings=[291]`.
+    4. Summary text not empty: `summaryTokens=330`.
+    5. Summary smaller than the span: 330 < 643 (`summaryTokens` < `spanTokens`).
+    6. Fold applied: `stages=["ToolOutputElision", "TurnTruncation", "Summarization"]` — the last stage is `Summarization`.
+    7. `tokensAfter < tokensBefore`: 400 < 713.
+    8. The test prints its times: `[compactionSmoke] wallClockSeconds=4.2 modelLoadSeconds=2.0`.
+    9. Measured budget: 4.2 s and 6.3 s for the two tests, each less than 90 s.
+    10. Time limit: the suite has `.timeLimit(.minutes(compactionSmokeTimeLimitMinutes))` and the doc states the measurement behind it.
+    11. Doc scope: the suite doc says "It proves the PATH WORKS" and lists what it does not prove.
+    12. Build and tests: the run built the package clean and all tests passed.
+
+    - next: none. The card moves to done.
+  timestamp: 2026-08-20T03:53:37.628795+00:00
+- actor: claude-code
+  id: 01m0emwan2w3n4w0sd8m4bcg23
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: none this iteration — the smoke test and the RealModelContainer extraction landed on 2026-08-18; the closing review never ran until now
+    - review: clean — `review sha d82c33e~1..d82c33e`, 0 findings, 1 refuted; decisive check `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` 2/2 passed at 13.85 s total (test wall clock 4.2 s / 6.3 s), far under the 90-second budget
+    - commit: none needed
+    - outcome: task moved to `done`
+  timestamp: 2026-08-20T03:54:17.122352+00:00
+position_column: done
+position_ordinal: ffd180
 title: A compaction smoke test that answers "does compaction work at all" against a real model in under 90 seconds
 ---
 Every present way to ask whether compaction works costs 28 minutes and gives back one bit. A run on 2026-08-17 burned 1800 seconds and measured 0 of 7 seeds. `^bgxtdk3`, `^vjf3mdm` and `^fm5ddk9` each waited a full gated run to learn a fact a fast test could have stated in a minute.
