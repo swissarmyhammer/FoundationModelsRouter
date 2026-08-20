@@ -46,6 +46,33 @@ comments:
     - evidence: `swift build --build-tests -Xswiftc -warnings-as-errors` build OK, no warnings, no errors. `Scripts/swift-test.sh --skip IntegrationTests` all pass: 1021 tests in 96 suites (1 known issue, this is the pre-existing BoundedWaitTests issue, this is OK), and 77 tests in 9 suites. No fail. No skip.
     - next: task can go to review.
   timestamp: 2026-08-20T00:13:05.701158+00:00
+- actor: claude-code
+  id: 01m0e8j5ner4aj3n35c545txbn
+  text: |-
+    ### review — findings
+    - evidence: review sha 3ba63d9~1..3ba63d9 — 2 findings, 2 confirmed, 0 refuted. Examples/MultiModelGeneration/main.swift:42 (code-hygiene/dead-code-swift), Sources/FoundationModelsRouter/Compaction/Compactor.swift:115 (swift/fluent-usage).
+    - next: Correct the 2 open findings. Then run the review again.
+  timestamp: 2026-08-20T00:19:01.422597+00:00
+- actor: claude-code
+  id: 01m0e986sbdr056j979vgy7q82
+  text: |-
+    Correction of the two review findings.
+
+    Finding 2 (swift/fluent-usage): I renamed `namingSummarizerModel(_:)` to `withSummarizerModel(_:)` in Sources/FoundationModelsRouter/Compaction/Compactor.swift. I changed the one call site, in Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift. I examined each other name in Compactor.swift for the same cause: `compact(_:prompt:budget:summarizer:summarization:pendingRuns:)`, `estimatedTokenCount(of:)`, `estimatedTokenCount(bytes:)`, and `contentByteCount(of:)`. Each name makes a correct phrase at its call site. No other rename is necessary. A grep for `namingSummarizerModel` across the repository finds zero matches.
+
+    Finding 1 (code-hygiene/dead-code-swift): The global `demo` is not dead code. The demo uses it at the call `router.resolve(profile: demo, reporting: progress)` in Examples/MultiModelGeneration/main.swift, in this revision and in the parent revision. I ran periphery 3.8.0 (the tool the dead-code-swift rule names as the authority) on the complete index store with `periphery scan --skip-build --index-store-path .build/index-build/arm64-apple-macosx/debug/index/store --retain-public --retain-objc-accessible --retain-swift-ui-previews --retain-codable-properties`. Periphery does not report `demo`, and it reports no declaration in Examples/ or Sources/ — its only reports are test-target items outside this card. The review's finding likely came from an index store that was not complete immediately after commit 3ba63d9. No code change is necessary for this finding.
+
+    Discovery for the next agent: periphery cannot make its own build in this repository. The build system puts the index store at .build/index-build/arm64-apple-macosx/debug/index/store, not at .build/debug/index/store, so a bare `periphery scan` stops with "index store path does not exist". A scan must use `--skip-build` and `--index-store-path`.
+
+    Verification: `swift build --build-tests -Xswiftc -warnings-as-errors` — clean. `Scripts/swift-test.sh --skip IntegrationTests` — 1021 tests in 96 suites passed (1 known issue, the pre-existing BoundedWaitTests issue) and 77 tests in 9 suites passed. Zero failures.
+  timestamp: 2026-08-20T00:31:03.467059+00:00
+- actor: claude-code
+  id: 01m0e98hyvme6nhrarx6g44gkz
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Compaction/Compactor.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift. Tests: Scripts/swift-test.sh --skip IntegrationTests — 1021 tests in 96 suites passed (1 known issue, pre-existing) plus 77 tests in 9 suites passed, 0 failed; swift build --build-tests -Xswiftc -warnings-as-errors — clean. Finding 1 took no code change: `demo` is in use at router.resolve, and periphery 3.8.0 on the complete index store reports no dead code in the file.
+    - next: review
+  timestamp: 2026-08-20T00:31:14.907113+00:00
 position_column: doing
 position_ordinal: '8580'
 title: Auto-compaction's flash summarizer tier degrades summary quality without a signal when the flash slot holds a tiny model
@@ -67,4 +94,14 @@ The degraded summaries pass every mechanical check: `stagesApplied` is non-empty
 ## Acceptance criteria
 
 - [x] The flash-tier summary quality hazard is documented on `performAutoCompaction` and on the compaction plan, or a guard makes the hazard unreachable
-- [x] The demo trio (`SmolLM-135M` as flash) is checked in every place that pairs it with a `budget:` opt-in #compaction
+- [x] The demo trio (`SmolLM-135M` as flash) is checked in every place that pairs it with a `budget:` opt-in
+
+## Review Findings (2026-08-19 19:14)
+
+> Scope: `review sha 3ba63d9~1..3ba63d9` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Examples/MultiModelGeneration/main.swift:42` `code-hygiene/dead-code-swift` — var.global `demo` is unused.
+- [x] `Sources/FoundationModelsRouter/Compaction/Compactor.swift:115` `swift/fluent-usage` — Method name `namingSummarizerModel(_:)` does not form a grammatical phrase at the call site. When read aloud, `result.namingSummarizerModel(value)` reads as "naming summarizer model value", which is not idiomatic Swift. Builder/copy methods use the `with-` prefix pattern. Rename to `withSummarizerModel(_:)` so the call site reads idiomatically: `result.withSummarizerModel(value)`. #compaction

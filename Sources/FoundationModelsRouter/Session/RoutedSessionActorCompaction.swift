@@ -428,7 +428,7 @@ extension RoutedSessionActor {
         // ^59fd9rt adds, applied in the one place both entry points share. A
         // result with no summary returns unchanged, so a deterministic-only
         // fold, and a fold whose summary was discarded, name nothing.
-        let result = pipelineResult.namingSummarizerModel(summarizerModel?.stringValue)
+        let result = pipelineResult.withSummarizerModel(summarizerModel?.stringValue)
 
         // Nothing to fold (already under target) or every stage ran and
         // still couldn't land it (the oversized-tail case): `folded` is

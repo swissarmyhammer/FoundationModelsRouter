@@ -112,7 +112,7 @@ public struct CompactionResult: Sendable, Equatable {
     /// - Parameter modelName: The ``ModelRef`` string of the model that wrote
     ///   ``summary``, or `nil` when the caller has none to name.
     /// - Returns: The named copy, or `self` when there is nothing to name.
-    func namingSummarizerModel(_ modelName: String?) -> CompactionResult {
+    func withSummarizerModel(_ modelName: String?) -> CompactionResult {
         guard summary != nil, let modelName else { return self }
         return CompactionResult(
             id: id,
