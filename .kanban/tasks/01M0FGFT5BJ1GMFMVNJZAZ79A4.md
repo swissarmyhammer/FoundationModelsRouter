@@ -6,6 +6,32 @@ comments:
   id: 01m0fggss1y79za6yh8qqpqdbs
   text: 'From the Multitool session, 2026-08-20: the contract does NOT require a call to the shared workflow. It documents the expectations and two accepted shapes; the shared swift-ci.yaml is a convenience, not a mandate. Repo-local jobs with `needs: test` satisfy expectation 4. The authority is the workflows README at commit f7b504f (origin/main 5f7e9a5). Verify against that document; do not chase a shared-workflow gap.'
   timestamp: 2026-08-20T11:57:19.521319+00:00
+- actor: claude-code
+  id: 01m0fn9dw4h4g0xt91kg4vgq8j
+  text: 'Coordination from the Multitool session, 2026-08-20 (it reports a unified-CI directive from the user): do NOT convert to the shared workflow yet — swift-ci.yaml cannot run a nested integration package today. The workflows repo is adding an `integration-package-path` input: the integration job will build and run the nested package, the unit job will build it on every run, metallib colocation will search the package path, and `needs: test` stays. When that lands on workflows origin/main, convert this repo''s two repo-local ci.yml jobs to one shared call. Multitool''s card ^jjyqe1a (their board) is the model conversion. The directive reached this board second-hand — confirm with the user before the conversion commit.'
+  timestamp: 2026-08-20T13:20:40.836166+00:00
+- actor: claude-code
+  id: 01m0fnwksy63nb8ekwgnz93r1a
+  text: 'Landing signal from the Multitool session: workflows origin/main is 0580114 — `integration-package-path` landed. The interface: setting the input opts the integration job in (clean `<dir>/.build`, `swift build --package-path <dir> --build-tests`, then `swift test --package-path <dir>` through the swift-test action with `integration-filter`/`integration-skip`/`integration-no-parallel` and the no-match-fails-green check); the unit job builds the nested package on every run; `integration-metallib-glob` searches `<dir>/.build`; `needs: test` stays; combining `integration-gate-env` with the package path is an error. The conversion of this repo''s ci.yml to one shared call is now technically unblocked. It stays queued behind the user''s direct confirmation in this session.'
+  timestamp: 2026-08-20T13:31:09.502433+00:00
+- actor: claude-code
+  id: 01m0fpg00r3p9da5994tbjmawg
+  text: |-
+    From the workflows session (the contract's author), 2026-08-20: the directive is that every Swift repo converges on the shared swift-ci.yaml for both jobs. The support is on workflows main at 20c0a0a. The conversion for this repo, verbatim:
+
+    ```yaml
+    jobs:
+      ci:
+        uses: swissarmyhammer/workflows/.github/workflows/swift-ci.yaml@main
+        with:
+          integration-package-path: IntegrationTests
+          integration-skip: CompactionEvalFullDataset
+    ```
+
+    Notes from the author: drop the repo-local real-model job and its `needs: test` edge (the ordering is internal); the `--skip` run goes through the swift-test action, which FAILS a run that matched no test — a deliberate behavior change from our current plain `--skip` step (if `CompactionEvalFullDataset` is renamed away, the job goes red); no metallib input is needed because `MetalLibraryTestBootstrap` places the library in-process.
+
+    Execution note for this board: the conversion is queued behind the in-flight summarization card ^xx02yn6 (one agent at a time on the shared tree), and the push happens after the user confirms the directive in this session.
+  timestamp: 2026-08-20T13:41:44.600794+00:00
 position_column: todo
 position_ordinal: '80'
 title: Verify this package against the org test expectations after the workflows README lands
