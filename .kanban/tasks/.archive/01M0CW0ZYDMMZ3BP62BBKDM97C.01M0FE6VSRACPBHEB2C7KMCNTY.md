@@ -66,6 +66,10 @@ comments:
     - blocker: per the no-cross-repo rule, the fix belongs on the mlx-swift-lm fork's own board. This card carries the 70-second reproduction recipe and the crash-report evidence.
     - next: a person files the fix on the fork's board and pins this repo to the fixed revision, then this card re-verifies with the probe recipe
   timestamp: 2026-08-19T19:28:05.730383+00:00
+- actor: claude-code
+  id: 01m0fe6qvjcbjyrn2d99th5vrv
+  text: Moved to the mlx-swift-lm fork's board as card ^3axg80k (id 01M0FE5PQ21FYK42YK73AXG80K), per the cross-repo rule. That card carries the full fault location, the 70-second reproduction recipe, and the crash-report path. This card is archived. When the fork fix lands and this repository pins the fixed revision, re-verify here with the probe recipe; the safe-path regression `CancelledGenerationTeardownIntegrationTests` (commit 1555ac8) stays in this repository.
+  timestamp: 2026-08-20T11:16:52.722546+00:00
 position_column: doing
 position_ordinal: '8380'
 title: A gated eval cancelled by its time limit aborts the process on a Metal assertion — signal 6 from `_MTLCommandBuffer addCompletedHandler:`
