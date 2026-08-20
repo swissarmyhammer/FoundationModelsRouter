@@ -739,12 +739,36 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// that binds, which cuts a little shorter rather than a little longer.)
     ///
     /// The cut falls on a boundary rather than on the byte the budget runs out
-    /// on, because a summary is what a resumed session READS. Three fallbacks,
+    /// on, because a summary is what a resumed session READS. Four fallbacks,
     /// in order, and the last one is what keeps the result non-empty:
     ///
-    /// 1. The last sentence terminator or line end inside the budget.
-    /// 2. Failing that, the last word boundary inside it.
-    /// 3. Failing that, the budget itself.
+    /// 1. The last SECTION boundary inside the budget, when the text carries a
+    ///    numbered-section scaffold — see
+    ///    ``sectionAlignedPrefix(of:withinBytes:)``.
+    /// 2. Failing that, the last sentence terminator or line end inside the
+    ///    budget.
+    /// 3. Failing that, the last word boundary inside it.
+    /// 4. Failing that, the budget itself.
+    ///
+    /// The section boundary stands first because of what `^51e9dyq` measured:
+    /// ``CompactionPrompt/default`` scaffolds eight numbered sections, on a
+    /// small span this bound is the ``minimumSummaryTokens`` floor — 512
+    /// bytes — and the sectioned output regularly exceeds it, so the cut is
+    /// the routine path rather than the safety net. A sentence-boundary cut
+    /// then stored a scaffold that stops in the middle of a section, and the
+    /// session model that read the truncated scaffold as its context
+    /// degenerated on its next turn — one word repeated to the token ceiling.
+    /// Whole sections the model finished are better context than more bytes
+    /// of a structure it did not.
+    ///
+    /// The section cut declines rather than empties: when not even the first
+    /// section fits whole — one section alone exceeding the whole bound, which
+    /// at the 512-byte floor means a single section of over 512 bytes — the
+    /// sentence-boundary cut takes over and the stored summary ends at a
+    /// finished sentence inside an unfinished section. That trade is taken
+    /// because the only alternatives are an emptied summary, which is the
+    /// `^bgxtdk3` defect, or an unbounded one, which the did-not-shrink guard
+    /// would discard.
     ///
     /// An empty result would erase the span the fold replaced — the defect
     /// ``SummarizationError/emptySummary`` exists for — so a cut that finds no
@@ -761,6 +785,8 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///   that does.
     private static func cut(_ summary: String, toCharacters limit: Int) -> String {
         guard summary.utf8.count > limit else { return summary }
+
+        if let sections = sectionAlignedPrefix(of: summary, withinBytes: limit) { return sections }
 
         let budgeted = UTF8Budget.prefix(of: summary, keepingAtMostBytes: limit)
         if let boundary = lastSentenceBoundary(in: budgeted) {
@@ -800,6 +826,89 @@ public struct Summarization: Sendable, Equatable, Codable {
             index = next
         }
         return boundary
+    }
+
+    /// The longest prefix of `summary` that holds WHOLE numbered sections and
+    /// fits inside `limit` bytes, or `nil` when no such prefix exists.
+    ///
+    /// This is the section-boundary step of ``cut(_:toCharacters:)``. A
+    /// candidate cut point is the start of a section header other than the
+    /// first one: everything before it is finished sections — the section a
+    /// header opens ends exactly where the next header starts — plus whatever
+    /// preamble the model wrote ahead of the scaffold. The prefix is measured
+    /// and returned with its trailing whitespace dropped, and nothing else
+    /// trimmed, so the stored summary stays a prefix of the model's answer up
+    /// to that whitespace.
+    ///
+    /// A `summary` with fewer than two section headers carries no scaffold to
+    /// respect, and a `limit` too small for even the first whole section
+    /// leaves no candidate standing. Both answer `nil`, and
+    /// ``cut(_:toCharacters:)`` falls back to the sentence boundary — its doc
+    /// comment records that trade.
+    ///
+    /// The result is never empty: every candidate stands after the FIRST
+    /// header, so its prefix holds that header's own line, whose `N. ` opening
+    /// no whitespace trim can reach.
+    ///
+    /// - Parameters:
+    ///   - summary: The summarizer's answer, unchanged.
+    ///   - limit: The bytes the answer may occupy.
+    /// - Returns: The whole-section prefix, or `nil` when none fits.
+    private static func sectionAlignedPrefix(of summary: String, withinBytes limit: Int) -> String? {
+        let headers = sectionHeaderStarts(in: summary)
+        guard headers.count > 1 else { return nil }
+
+        var best: String?
+        for header in headers.dropFirst() {
+            var end = header
+            while end > summary.startIndex, summary[summary.index(before: end)].isWhitespace {
+                end = summary.index(before: end)
+            }
+            let prefix = summary[..<end]
+            guard prefix.utf8.count <= limit else { break }
+            best = String(prefix)
+        }
+        return best
+    }
+
+    /// Every index of `text` at which a numbered-section header line starts, in
+    /// order.
+    ///
+    /// A header is a line that opens, flush against the line start, with one
+    /// or more ASCII digits, a period, and a space — the shape
+    /// ``CompactionPrompt/default``'s scaffold instructs and the shape its
+    /// summaries carry. An indented numbered line is a nested list item, not a
+    /// section. A flush-left numbered list the model writes inside a section
+    /// does match; a cut before such an item still lands between finished
+    /// items, so the cost of the ambiguity is a cleanly shorter list.
+    ///
+    /// - Parameter text: The text to search.
+    /// - Returns: The header start indexes, possibly empty.
+    private static func sectionHeaderStarts(in text: String) -> [String.Index] {
+        var starts: [String.Index] = []
+        var lineStart = text.startIndex
+        while lineStart < text.endIndex {
+            let lineEnd = text[lineStart...].firstIndex(where: \.isNewline) ?? text.endIndex
+            if lineOpensSection(text[lineStart..<lineEnd]) {
+                starts.append(lineStart)
+            }
+            lineStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : text.endIndex
+        }
+        return starts
+    }
+
+    /// Whether `line` opens a numbered section: one or more ASCII digits, then
+    /// a period, then a space.
+    ///
+    /// - Parameter line: One line of a summary, without its line end.
+    /// - Returns: `true` when the line is a section header.
+    private static func lineOpensSection(_ line: Substring) -> Bool {
+        let digits = line.prefix(while: { $0.isASCII && $0.isNumber })
+        guard !digits.isEmpty, digits.endIndex < line.endIndex, line[digits.endIndex] == "." else {
+            return false
+        }
+        let afterPeriod = line.index(after: digits.endIndex)
+        return afterPeriod < line.endIndex && line[afterPeriod] == " "
     }
 
     /// `tokens` of ``Compactor/estimatedTokenCount(of:)``'s estimate, converted

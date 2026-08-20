@@ -179,8 +179,38 @@ struct SummarizationStageTests {
         ratio: Double,
         maxChunkTokens: Int
     ) -> Int {
-        let allowance = expectedSummaryAllowance(condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens)
-        return Int(Double(allowance) * Compactor.charsPerTokenEstimate)
+        characters(
+            forExpectedTokens: expectedSummaryAllowance(
+                condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens))
+    }
+
+    /// The character bound the CUT applies to a call condensing `content`:
+    /// that call's retained allowance, converted back into the characters
+    /// ``Compactor/estimatedTokenCount(of:)`` measures a transcript in.
+    ///
+    /// - Parameters:
+    ///   - content: The content the call was asked to condense.
+    ///   - ratio: The stage's ``Summarization/summaryTokenRatio``.
+    ///   - maxChunkTokens: The stage's ``Summarization/maxChunkTokens``.
+    /// - Returns: The expected cut bound, in characters.
+    private static func expectedRetainedCharacters(
+        condensing content: String,
+        ratio: Double,
+        maxChunkTokens: Int
+    ) -> Int {
+        characters(
+            forExpectedTokens: expectedRetainedAllowance(
+                condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens))
+    }
+
+    /// `tokens` of an expected allowance, converted into the characters that
+    /// allowance bounds — the same arithmetic
+    /// ``Summarization`` applies, restated here so these tests pin it.
+    ///
+    /// - Parameter tokens: A size in estimated tokens.
+    /// - Returns: That size in characters.
+    private static func characters(forExpectedTokens tokens: Int) -> Int {
+        Int(Double(tokens) * Compactor.charsPerTokenEstimate)
     }
 
     /// Folds `turns` with `stage` and `prompt`, and returns the assembled
@@ -720,6 +750,29 @@ struct SummarizationStageTests {
     /// cut used to take and now leaves alone.
     private static let insideRetentionAnswerRepeats = 20
 
+    /// One numbered section of a scripted sectioned answer, in the shape the
+    /// default prompt's scaffold produces: a flush-left `N. ` header, then
+    /// full sentences.
+    ///
+    /// Every index the tests use is a single digit, so each section holds the
+    /// same byte count and the section a cut keeps or drops is deterministic.
+    ///
+    /// - Parameter index: The section's number.
+    /// - Returns: The section, one line.
+    private static func sectionedAnswerSection(index: Int) -> String {
+        "\(index). Topic \(index) — the fold keeps the facts of kind \(index) here. "
+            + "The section states them in full sentences. Each fact keeps its stated value. It stays whole."
+    }
+
+    /// How many numbered sections a scripted sectioned answer carries — the
+    /// default prompt's own count.
+    private static let sectionedAnswerSectionCount = 8
+
+    /// How many whole sections of that answer fit the cut bound a
+    /// minimum-allowance call earns. The test asserts both sides of this
+    /// count as sanity, so a change to the section text fails loudly.
+    private static let keptSectionCount = 3
+
     @Test("the assembled prompt carries the caller's instructions and the content, and asks the model for nothing else")
     func theAssembledPromptAsksTheModelForNoLength() async throws {
         // Commit c26fbbe put a length directive between the two — "write at
@@ -796,6 +849,69 @@ struct SummarizationStageTests {
 
         let summary = try #require(outcome.folded).summary
         #expect(summary.hasSuffix("."))
+    }
+
+    @Test(
+        "a sectioned summary over its bound is cut at a section boundary, so a stored summary never ends inside an unfinished section"
+    )
+    func aSectionedSummaryIsCutAtASectionBoundary() async throws {
+        // The defect `^51e9dyq` measured: the default prompt scaffolds eight
+        // numbered sections, a small span's cut bound is the 512-byte floor,
+        // and a sentence-boundary cut stored a scaffold that stops in the
+        // middle of a section. The session model read that truncated scaffold
+        // as its context and degenerated on its next turn. A cut at a SECTION
+        // boundary stores whole sections only.
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let sections = (1...Self.sectionedAnswerSectionCount).map { Self.sectionedAnswerSection(index: $0) }
+        let answer = sections.joined(separator: "\n")
+        let outcome = try await Self.foldOutcome(
+            folding: try TranscriptFixtures.makeTurns(5),
+            with: stage,
+            prompt: .default,
+            answering: [answer]
+        )
+
+        let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
+        let bound = Self.expectedRetainedCharacters(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        let kept = sections.prefix(Self.keptSectionCount).joined(separator: "\n")
+        let oneSectionMore = sections.prefix(Self.keptSectionCount + 1).joined(separator: "\n")
+        // Sanity: the kept sections really fit the bound, and one more really
+        // does not, so the expected cut point is observable.
+        #expect(kept.utf8.count <= bound)
+        #expect(oneSectionMore.utf8.count > bound)
+
+        #expect(try #require(outcome.folded).summary == kept)
+    }
+
+    @Test("a sectioned summary whose first section overruns the whole bound falls back to the sentence boundary")
+    func anOversizedFirstSectionFallsBackToTheSentenceBoundary() async throws {
+        // When not even one whole section fits the bound, a section-aligned
+        // cut would store nothing — the `^bgxtdk3` defect. The cut falls back
+        // to the sentence boundary inside the first section instead, which is
+        // the trade ``Summarization/cut(_:toCharacters:)`` documents.
+        let stage = Summarization(keepRecentTurns: 4, maxChunkTokens: Self.wholeSpanChunkTokens)
+        let firstSection =
+            "1. Intent — " + String(repeating: Self.summarySentence, count: Self.summarySentenceRepeats)
+        let answer = firstSection + "\n2. Next steps — none."
+        let outcome = try await Self.foldOutcome(
+            folding: try TranscriptFixtures.makeTurns(5),
+            with: stage,
+            prompt: .default,
+            answering: [answer]
+        )
+
+        let condensed = try Self.condensedContent(of: try #require(outcome.prompts.first))
+        let bound = Self.expectedRetainedCharacters(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        #expect(firstSection.utf8.count > bound)  // sanity: not even one whole section fits
+
+        let retained = Self.expectedRetainedAllowance(
+            condensing: condensed, ratio: stage.summaryTokenRatio, maxChunkTokens: stage.maxChunkTokens)
+        let summary = try #require(outcome.folded).summary
+        #expect(answer.hasPrefix(summary))
+        #expect(summary.hasSuffix("."))
+        #expect(Summarization.estimatedTokens(of: summary) <= retained)
     }
 
     @Test("a summary already inside the share of its content its call may retain is stored word for word")
