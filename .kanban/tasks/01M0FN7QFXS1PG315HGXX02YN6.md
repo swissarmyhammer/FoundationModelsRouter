@@ -194,8 +194,24 @@ comments:
     - next: /review
     task: ^xx02yn6
   timestamp: 2026-08-20T19:39:09.337443+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0gberad47aqq2cysyjhgv8p
+  text: |-
+    ### review — clean
+    - evidence: `review sha 7aa276a~1..7aa276a` — 0 findings, 0 confirmed, 0 refuted, 21 attempted; 15 files reviewed, 6 `.kanban/` files excluded by `.reviewignore`
+    - next: none. The task moved to done.
+  timestamp: 2026-08-20T19:48:04.045611+00:00
+- actor: claude-code
+  id: 01m0gbfbsa17hvhwqrmms61sjj
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 16 source/test/doc files; the prompt demands verbatim identifiers and states a size budget, the per-call ratio cut is replaced by the span-byte-budget bound with a condense re-ask recovery ladder; Qwen subset summaries 0 of 7 -> 5 of 7; the 1B canary re-baselined at 2 of 7 and 13 of 24 with floors re-derived to 0.14, four-run trail recorded; follow-up card ^m03heaa filed to choose a canary the redesigned prompt serves
+    - test: green — root swift test 1025 + 77; warnings-as-errors clean; all five compaction integration suites; eval subset at the re-derived floors
+    - commit: 7aa276a (housekeeping split into a93290b)
+    - review: clean — 0 findings over 15 files; task moved to `done`
+  timestamp: 2026-08-20T19:48:23.978808+00:00
+position_column: done
+position_ordinal: ffd380
 title: Redesign the summarization instructions and the trim logic so Qwen3.8-27B (thinking on) is a working summarizer
 ---
 From the user, 2026-08-20, after the sanctioned Qwen3.8-27B run on ^e814b60 measured 0 of 7 summaries carrying the fact (the 1B carries 6 of 7):
