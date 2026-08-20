@@ -73,8 +73,24 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Compaction/Compactor.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift. Tests: Scripts/swift-test.sh --skip IntegrationTests — 1021 tests in 96 suites passed (1 known issue, pre-existing) plus 77 tests in 9 suites passed, 0 failed; swift build --build-tests -Xswiftc -warnings-as-errors — clean. Finding 1 took no code change: `demo` is in use at router.resolve, and periphery 3.8.0 on the complete index store reports no dead code in the file.
     - next: review
   timestamp: 2026-08-20T00:31:14.907113+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0e9kfb6m3pjn051vv5avyth
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (backend local) on commit b116f43. Counts: 0 findings, 0 confirmed, 0 refuted, 7 attempted. 2 files reviewed; 2 files in `.kanban/` not reviewed because of `.reviewignore`. The two prior findings are checked: the rename to `withSummarizerModel(_:)` is done, and the dead-code finding on the `demo` global has evidence of refutation on the card.
+    - next: none. The task moved from `review` to `done`.
+  timestamp: 2026-08-20T00:37:12.678942+00:00
+- actor: claude-code
+  id: 01m0e9mfyqmt8d03cgv6nw2b5p
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — `namingSummarizerModel(_:)` renamed to `withSummarizerModel(_:)` with its one call site; the dead-code finding on the example's `demo` global refuted with evidence (the global is used, and periphery over a complete index store reports nothing)
+    - test: green — `Scripts/swift-test.sh --skip IntegrationTests`, 1021 + 77 passed; warnings-as-errors build clean
+    - commit: b116f43 (iteration 1 landed as 3ba63d9)
+    - review: clean — 0 findings; task moved to `done`
+  timestamp: 2026-08-20T00:37:46.071165+00:00
+position_column: done
+position_ordinal: ffca80
 title: Auto-compaction's flash summarizer tier degrades summary quality without a signal when the flash slot holds a tiny model
 ---
 Found on 2026-08-19 while task ^nwe0qt1 rebuilt the CompactionDemo.
