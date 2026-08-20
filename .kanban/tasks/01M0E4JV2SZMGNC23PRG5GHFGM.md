@@ -54,8 +54,26 @@ comments:
     - evidence: 35 files — Package.swift, IntegrationTests/Package.swift (new), .github/workflows/ci.yml, README.md, Examples/MultiModelGeneration/README.md, plan.md, compaction_plan.md, Tests/FoundationModelsRouterTests/ScriptedTurnSizingTests.swift, Tests/FoundationModelsRouterTests/CompactionSpikeTests.swift, Scripts/swift-test.sh (deleted), 21 files moved to IntegrationTests/Tests/ (12 of them switched to `@testable import FoundationModelsRouterRealModelSupport`, 5 with corrected doc comments). Verified: root `swift test` 1023+77 green; nested build exit 0; `-warnings-as-errors` build exit 0; eval tier 19.3s green; zero swift-test.sh references.
     - next: `/review`
   timestamp: 2026-08-20T03:03:51.900645+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0ejs7bn6bh14c28b1w3j0pj
+  text: |-
+    ### review — clean
+    - evidence: `review sha 731a7ba~1..731a7ba`, backend local. The engine examined 48 files and reported 0 findings (0 confirmed, 0 refuted).
+    - next: none. The task moved to done.
+
+    Checklist verification: the description boxes are not set, but the implementer comment of 2026-08-20T03:03 gives evidence for each acceptance criterion and each test item. The reviewer does not set the marks. One deliberate deviation is on record: the change makes no declaration `public`, because `@testable import` carries `package` access across the package boundary. The root manifest comment records the reason. The review found no defect in that decision.
+  timestamp: 2026-08-20T03:17:38.293040+00:00
+- actor: claude-code
+  id: 01m0ejtat5ejzr94ks7svb5ct0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 35 files; nested IntegrationTests package holds the two real-model targets, Scripts/ deleted, CI and README state the native commands; zero `public` widenings (deviation recorded: `@testable import` carries `package` access)
+    - test: green — root `swift test` 1023 + 77 with 0 integration suites (RED showed 32); nested build exit 0; eval tier 19.3 s; warnings-as-errors exit 0
+    - commit: 731a7ba
+    - review: clean — 0 findings over 48 files; task moved to `done`
+  timestamp: 2026-08-20T03:18:14.597009+00:00
+position_column: done
+position_ordinal: ffce80
 title: 'Delete the Scripts directory: the package structure, not a shell script, selects the tests'
 ---
 The user reports the Scripts directory is useless. It holds one file, `Scripts/swift-test.sh`, whose only job is to fail a `swift test --filter`/`--skip` run that matched no test. That guard exists because test selection rides on name regexes. The durable shape removes the need for the script: selection by package structure.

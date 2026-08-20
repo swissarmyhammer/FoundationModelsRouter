@@ -50,8 +50,36 @@ comments:
   id: 01m0dfy8gy1qc22e6bvt82ddz6
   text: Task ^k0d30s4 sets a two-minute budget for each integration and eval test. This budget replaces the direction to raise or keep long limits for the real-model suites. A test that cannot finish in two minutes must become smarter or boot from a recording. It must not get a larger limit.
   timestamp: 2026-08-19T17:08:43.166295+00:00
-position_column: todo
-position_ordinal: '9080'
+- actor: claude-code
+  id: 01m0ek7jrt1bj9mjez73as36g1
+  text: |-
+    ### Verification, 2026-08-19 — the card is stale, and the work is done
+
+    Task ^k0d30s4 rebuilt this tier onto the small model with fast seeds. Task ^ryb01x7 removed the env-var gates. The suite now lives in the nested `IntegrationTests/` package. This check examines each criterion against the current code.
+
+    **Criterion 1 — a timed gated run, with the duration on this card.** The suite doc comment records the tuning runs of 2026-08-19: 26.2 to 41.4 seconds of wall clock (`IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionContinuityRealModelTests.swift:79-81`). A fresh gated run today measured 29.5 seconds: `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluationIntegrationTests` printed `[gatedEvalSuite] suite=CompactionContinuityEvaluationIntegrationTests wallClockSeconds=29.5`, and the suite passed after 29.505 seconds. This comment puts those durations on the card. Satisfied.
+
+    **Criterion 2 — an own time-limit constant, set from the measurement.** The tier runs under `gatedEvalSuiteTimeLimitMinutes = 2` (`IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/GatedEvalSerialGate.swift:121`, applied at `CompactionContinuityRealModelTests.swift:84`). That value is task ^k0d30s4's two-minute budget. The comment of 2026-08-19 17:08 on this card makes that budget the rule, and it replaces the direction to set a larger measured limit. The measured 29.5 seconds gives about 4x headroom under the limit, so the limit still bounds a hung real-model load. The value is a stated budget with a recorded measurement, not an analogy. A separate constant equal to the budget changes no behavior. Satisfied through the budget.
+
+    **Criterion 3 — the doc comment states the measurement, not an analogy.** `CompactionContinuityRealModelTests.swift:79-81` states the measurement: 26.2 to 41.4 seconds against the two-minute limit. `GatedEvalSerialGate.swift:107-120` states the budget's source, and states that the old 20 minutes belonged to the 30B model. No analogy remains. Satisfied.
+
+    **Criterion 4 — no `CompactionRoundTripIntegrationTests` as the source.** A grep of `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/` finds zero occurrences of that name. Satisfied.
+
+    **Criterion 5 — no time-limit issue from the continuity suite.** The `FM_ROUTER_INTEGRATION_TESTS` selector no longer exists; the target selects the suite (task ^ryb01x7). The equivalent command is `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluationIntegrationTests`. It passed with zero issues, and the run output holds no `Time limit` line. Satisfied.
+
+    **Root verification.** `swift test` at the root: 1023 tests passed (with the 1 known-issue baseline) plus 77 tests passed. `swift build --build-tests -Xswiftc -warnings-as-errors`: build complete, exit code 0.
+
+    No code change is necessary.
+  timestamp: 2026-08-20T03:25:28.730670+00:00
+- actor: claude-code
+  id: 01m0ek7x6d558xvt1f8rc0g44g
+  text: |-
+    ### implement — no-change
+    - evidence: all 5 criteria verified against current code, no file touched. Timed gated run: `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluationIntegrationTests` → passed, wallClockSeconds=29.5 under the 2-minute limit (`GatedEvalSerialGate.swift:121`, applied at `CompactionContinuityRealModelTests.swift:84`); measurement stated at `CompactionContinuityRealModelTests.swift:79-81`; zero `CompactionRoundTripIntegrationTests` matches in the eval integration target; root `swift test` green 1023 + 77; `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0.
+    - next: ready for /review
+  timestamp: 2026-08-20T03:25:39.405813+00:00
+position_column: doing
+position_ordinal: '8580'
 title: The 20-minute limit on the continuity eval tier is an analogy, not a measurement
 ---
 Filed from the backlog audit at `dd55fcd2c`, as the narrow residue of `^y0mhcdq`. That card said both gated evals go over one shared limit of 20 minutes. That is no longer true, and the card is closed. This card holds the one part that is still true.
