@@ -227,8 +227,24 @@ comments:
     - evidence: 0 source files touched. All 4 criteria verified against the current code. Subset tier run once: `swift test --package-path IntegrationTests --filter CompactionEvaluationIntegrationTests` — passed, 18.7 s suite wall clock, 7 of 7 seeds measured, `retention: summary=6 of 7 answer=5 of 7`, `unreached: <none>`. Root: `swift test` — 1023 + 77 tests, 0 failures, 1 pre-existing known issue; `swift build --build-tests -Xswiftc -warnings-as-errors` — clean. Card description updated: criterion 4 checked, stale paragraph replaced, moved file path corrected.
     - next: `/review ^h2xxsse`. The card stays in `doing`. Nothing was committed.
   timestamp: 2026-08-20T04:01:23.034484+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0endazas7sj65vqg0knv83d
+  text: |-
+    ### review — clean
+    - evidence: `review sha 5c10d92~1..5c10d92` (local backend) gave 0 findings. All 8 files in scope are `.kanban/` files, which `.reviewignore` excludes. All 4 acceptance criteria are checked, with evidence on the card: the progress log in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalProgressLog.swift`, the separate model-load time (3.6 s), the per-step time lines, and the gated run of 2026-08-19 that measured 7 of 7 seeds in 18.7 s.
+    - next: none. The task moved to done.
+  timestamp: 2026-08-20T04:03:34.506416+00:00
+- actor: claude-code
+  id: 01m0ene9nepfzmve882sb1hfgz
+  text: |-
+    ### finish iteration — clean
+    - implement: no-change — the card was stale; the progress log, per-step times, separate model-load timing and unreached-seeds reporting all landed with earlier cards; today's run measured 7 of 7 seeds in 18.7 s
+    - test: green — root `swift test` 1023 + 77; warnings-as-errors clean; subset tier passed once via the nested package
+    - commit: 5c10d92 (board bookkeeping only)
+    - review: clean — 0 findings; task moved to `done`
+  timestamp: 2026-08-20T04:04:05.934341+00:00
+position_column: done
+position_ordinal: ffd280
 title: The gated compaction eval subset measured 0 of 7 seeds inside its 30-minute limit, and prints nothing that says where the time went
 ---
 Found by the sanctioned gated verification run of 2026-08-18 06:16 local, made to answer `^fm5ddk9`'s open acceptance criteria.
