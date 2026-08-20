@@ -41,6 +41,51 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Compaction/Summarization.swift, Tests/FoundationModelsRouterTests/SummarizationStageTests.swift; `Scripts/swift-test.sh --skip IntegrationTests` green (1023 + 77 passed, 1 pre-existing known issue); `swift build --build-tests -Xswiftc -warnings-as-errors` clean; `--filter CompactionSmokeIntegrationTests` 2/2 passed once
     - next: review
   timestamp: 2026-08-20T00:57:42.341520+00:00
+- actor: claude-code
+  id: 01m0eb4d5cst7kz5v7cj8htrwj
+  text: |-
+    ### review — findings
+    - evidence: `review sha a4c47ed~1..a4c47ed` — 1 finding, 1 confirmed, 0 refuted — Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:212 (reuse/reuse)
+    - next: correct the finding, then run the review again
+  timestamp: 2026-08-20T01:03:56.076996+00:00
+- actor: claude-code
+  id: 01m0eb5b56xy4cc9cdrm4q76db
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 2 files; `cut(_:toCharacters:)` prefers a whole-section prefix when the summary carries two or more `N. ` headers
+    - test: green — Scripts/swift-test.sh --skip IntegrationTests, 1023 + 77 passed; warnings-as-errors clean; smoke tier 2/2
+    - commit: a4c47ed
+    - review: findings — Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:212 (reuse/reuse: the test reimplements `Summarization.characters(forEstimatedTokens:)`; widen the symbol and call it directly)
+  timestamp: 2026-08-20T01:04:26.790840+00:00
+- actor: claude-code
+  id: 01m0ebq0tcwpdcy50e69pj7cj7
+  text: |-
+    Pulled the card back to doing to correct the one open review finding (reuse/reuse).
+
+    What changed:
+
+    - `Sources/FoundationModelsRouter/Compaction/Summarization.swift`: `characters(forEstimatedTokens:)` widened from `private` to `package`, the same access `estimatedTokens(of:)` in the same file already uses for test-reachable symbols. The doc comment was already there and stays. Its "the one place the conversion lives" sentence is true again, because the duplicate is gone.
+    - `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift`: the duplicate helper `characters(forExpectedTokens:)` and its doc comment are deleted. `expectedSummaryCharacters` and `expectedRetainedCharacters` now call `Summarization.characters(forEstimatedTokens:)`. The sweep for the same cause across the whole file found three more inline restatements of the conversion (`Int(Double(tokens) * Compactor.charsPerTokenEstimate)` and one `tokens * Int(Compactor.charsPerTokenEstimate)` fixture size); all three now call the production symbol.
+
+    What the sweep did NOT change, and why:
+
+    - `expectedBound`, `expectedSummaryAllowance`, `expectedRetainedAllowance` restate the allowance arithmetic on purpose. Their doc comment states the pin intent ("Restated here rather than read off the stage, so these tests pin the arithmetic instead of comparing it against itself"), they pre-exist commit a4c47ed, and they are oracles, not identical copies of one callable production function.
+    - The `charsPerTokenEstimate` mentions in other test files are doc prose or a different formula (a division in CompactionEvaluationTests), not this conversion.
+
+    Verification:
+
+    - `swift build --build-tests -Xswiftc -warnings-as-errors`: clean.
+    - `Scripts/swift-test.sh --skip IntegrationTests`: 1023 tests in 96 suites passed (the 1 known issue is the pre-existing BoundedWait one) and 77 tests in 9 suites passed. Baseline held.
+
+    The finding is checked off in the description. No commit, per the step instructions.
+  timestamp: 2026-08-20T01:14:06.028477+00:00
+- actor: claude-code
+  id: 01m0ebqbjnf1xqec3d2j6dh0sx
+  text: |-
+    ### implement — changed
+    - evidence: 2 files — Sources/FoundationModelsRouter/Compaction/Summarization.swift (characters(forEstimatedTokens:) private -> package), Tests/FoundationModelsRouterTests/SummarizationStageTests.swift (duplicate helper deleted, 5 call sites now call the production symbol); `Scripts/swift-test.sh --skip IntegrationTests` green (1023 tests in 96 suites + 77 tests in 9 suites, 1 pre-existing known issue); `swift build --build-tests -Xswiftc -warnings-as-errors` clean
+    - next: review
+  timestamp: 2026-08-20T01:14:17.045190+00:00
 position_column: doing
 position_ordinal: '8580'
 title: The retention cut truncates the default CompactionPrompt's sectioned summary mid-section on small spans, and the truncated scaffold derails the next turn
@@ -65,4 +110,13 @@ The session model (`Llama-3.2-1B-Instruct-4bit`, greedy) then read the truncated
 
 ## Acceptance criteria
 
-- [x] A fold's stored summary never ends inside an unfinished section or sentence, or the trade is documented with a measurement #compaction
+- [x] A fold's stored summary never ends inside an unfinished section or sentence, or the trade is documented with a measurement
+
+## Review Findings (2026-08-19 19:59)
+
+> Scope: `review sha a4c47ed~1..a4c47ed` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift:212` `reuse/reuse` — This function reimplements `Summarization.characters(forEstimatedTokens:)` with an identical implementation but different parameter name (`forExpectedTokens` vs `forEstimatedTokens`). The doc comment explicitly states it restates 'the same arithmetic ``Summarization`` applies'. Make `Summarization.characters(forEstimatedTokens:)` internal or public (currently private) so the test can call it directly, eliminating the duplicate implementation. #compaction

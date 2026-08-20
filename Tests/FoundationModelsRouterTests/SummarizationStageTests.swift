@@ -179,8 +179,8 @@ struct SummarizationStageTests {
         ratio: Double,
         maxChunkTokens: Int
     ) -> Int {
-        characters(
-            forExpectedTokens: expectedSummaryAllowance(
+        Summarization.characters(
+            forEstimatedTokens: expectedSummaryAllowance(
                 condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens))
     }
 
@@ -198,19 +198,9 @@ struct SummarizationStageTests {
         ratio: Double,
         maxChunkTokens: Int
     ) -> Int {
-        characters(
-            forExpectedTokens: expectedRetainedAllowance(
+        Summarization.characters(
+            forEstimatedTokens: expectedRetainedAllowance(
                 condensing: content, ratio: ratio, maxChunkTokens: maxChunkTokens))
-    }
-
-    /// `tokens` of an expected allowance, converted into the characters that
-    /// allowance bounds — the same arithmetic
-    /// ``Summarization`` applies, restated here so these tests pin it.
-    ///
-    /// - Parameter tokens: A size in estimated tokens.
-    /// - Returns: That size in characters.
-    private static func characters(forExpectedTokens tokens: Int) -> Int {
-        Int(Double(tokens) * Compactor.charsPerTokenEstimate)
     }
 
     /// Folds `turns` with `stage` and `prompt`, and returns the assembled
@@ -1132,7 +1122,7 @@ struct SummarizationStageTests {
         // joined set — the one call that must ingest more than maxChunkTokens.
         let oversizedSummaryTokens = maxChunkTokens * 2
         let oversizedResponse = String(
-            repeating: "y", count: oversizedSummaryTokens * Int(Compactor.charsPerTokenEstimate))
+            repeating: "y", count: Summarization.characters(forEstimatedTokens: oversizedSummaryTokens))
         let responses = (1...3).map { _ in oversizedResponse } + ["flat-fallback-summary"]
         let summarizer = ScriptedSummarizer(responses: responses)
         // A ratio above one half, because `summarizeOnce` now cuts every map
@@ -1732,7 +1722,7 @@ struct SummarizationStageTests {
         // summary plus the rendering stay inside the retention bound.
         let summary = try #require(result.summary)
         #expect(answer.hasPrefix(summary))
-        let retainedCharacters = Int(Double(retainedTokens) * Compactor.charsPerTokenEstimate)
+        let retainedCharacters = Summarization.characters(forEstimatedTokens: retainedTokens)
         #expect(summary.utf8.count + rendering.utf8.count <= retainedCharacters)
 
         // Control: the same fold with no parked runs is applied too, so the
@@ -1774,7 +1764,7 @@ struct SummarizationStageTests {
         let rendered = try Self.condensedContent(of: #require(summarizer.receivedPrompts.first))
         let retainedTokens = Self.expectedRetainedAllowance(
             condensing: rendered, ratio: defaults.summaryTokenRatio, maxChunkTokens: defaults.maxChunkTokens)
-        let retainedCharacters = Int(Double(retainedTokens) * Compactor.charsPerTokenEstimate)
+        let retainedCharacters = Summarization.characters(forEstimatedTokens: retainedTokens)
         #expect(rendering.utf8.count >= retainedCharacters)
         #expect(renderingTokens < spanTokens)
 

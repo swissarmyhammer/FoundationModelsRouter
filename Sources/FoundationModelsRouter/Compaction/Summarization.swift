@@ -920,7 +920,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///
     /// - Parameter tokens: A size in estimated tokens.
     /// - Returns: That size in characters.
-    private static func characters(forEstimatedTokens tokens: Int) -> Int {
+    package static func characters(forEstimatedTokens tokens: Int) -> Int {
         Int(Double(tokens) * Compactor.charsPerTokenEstimate)
     }
 
