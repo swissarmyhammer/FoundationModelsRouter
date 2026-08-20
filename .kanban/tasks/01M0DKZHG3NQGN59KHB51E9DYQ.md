@@ -86,8 +86,24 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Compaction/Summarization.swift (characters(forEstimatedTokens:) private -> package), Tests/FoundationModelsRouterTests/SummarizationStageTests.swift (duplicate helper deleted, 5 call sites now call the production symbol); `Scripts/swift-test.sh --skip IntegrationTests` green (1023 tests in 96 suites + 77 tests in 9 suites, 1 pre-existing known issue); `swift build --build-tests -Xswiftc -warnings-as-errors` clean
     - next: review
   timestamp: 2026-08-20T01:14:17.045190+00:00
-position_column: doing
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0ebwe5j5rst5h9bany3y2c1
+  text: |-
+    ### review — clean
+    - evidence: `review sha 97f4006~1..97f4006` gave 0 findings (0 confirmed, 0 refuted). The one prior finding is checked. The task moved to done.
+    - next: none
+  timestamp: 2026-08-20T01:17:03.538047+00:00
+- actor: claude-code
+  id: 01m0ebx7zse5z8gade521c2ycs
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — `Summarization.characters(forEstimatedTokens:)` widened to `package`; the test's duplicate helper and three inline copies removed
+    - test: green — Scripts/swift-test.sh --skip IntegrationTests, 1023 + 77 passed; warnings-as-errors clean
+    - commit: 97f4006 (iteration 1 landed as a4c47ed)
+    - review: clean — 0 findings; task moved to `done`
+  timestamp: 2026-08-20T01:17:29.977130+00:00
+position_column: done
+position_ordinal: ffcb80
 title: The retention cut truncates the default CompactionPrompt's sectioned summary mid-section on small spans, and the truncated scaffold derails the next turn
 ---
 Found on 2026-08-19 while task ^nwe0qt1 rebuilt the CompactionDemo.
