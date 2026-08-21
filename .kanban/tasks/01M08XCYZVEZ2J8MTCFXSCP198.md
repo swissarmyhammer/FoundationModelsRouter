@@ -150,8 +150,40 @@ comments:
     - card: the description now records the closure and releases the review hold of 2026-08-19. The open question on ^k0d30s4 was not touched.
     - next: `/review`
   timestamp: 2026-08-21T04:45:47.318777+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0hb8r1dd0tf79kc5j4t8enp
+  text: |-
+    ### review — clean
+    - evidence: `review sha df0bc36~1..df0bc36` gives 0 findings, 0 confirmed, 0 refuted. The range holds 2 files. Both are `.kanban/` files, and `.reviewignore` keeps them out of the review. Thus the range has no source to review. The one finding of 2026-08-19 is checked. Both acceptance criteria are checked. The review hold of 2026-08-19 is released.
+    - criteria, read in the tree and not remembered: `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift` gives 0.71 for `compactionEvalSummaryFactRetentionFloor` and for `compactionEvalAnswerFactRetentionFloor`. A search of the tree for `compactionEvalFactRetentionFloor` finds nothing, so the 0.9 constant is gone. At 7 seeds, 0.71 needs 5 samples, because 5 of 7 is 0.714 and 4 of 7 is 0.571. The tier can lose 2 of its 7 seeds and stay green, which is the tolerance criterion 1 asks for. `CompactionEvalTierBarTests` holds 5, 5, 18 and 18. The doc of each floor states, at the declaration, how many seeds the floor asks of each tier, which is criterion 2. `CompactionEvalRealSubjectRunner` loads the container with `samplingMode: .greedy`. No gated run was made for this review.
+    - next: none. The card moves to `done`.
+  timestamp: 2026-08-21T05:04:01.581469+00:00
+- actor: claude-code
+  id: 01m0hb926v9n5yqga1jaawfgk1
+  text: |-
+    ### Where these files are now, 2026-08-21
+
+    The committer asked if the stale paths in the body of this card need a correction. They do, but not in the body. Each dated section of the body is a record of one day. The paths in it were correct on that day. A change to a dated section would put a path in it that did not exist on that day, so the sections stay as they are. This comment gives the path of each file today. Each symbol name in the body is still correct.
+
+    - `CompactionEvalFactRetentionReport.swift` is now `Tests/FoundationModelsRouterEvalSupport/CompactionEvalFactRetentionReport.swift`. The section of 2026-08-19 puts it in `Tests/FoundationModelsRouterEvals/`.
+    - `CompactionEvalRealSubjectRunner.swift` is now `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/CompactionEvalRealSubjectRunner.swift`.
+    - `GatedEvalSerialGate.swift` is now `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/GatedEvalSerialGate.swift`.
+    - `CompactionEvaluationTests.swift` did not move. It is still `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`. But three symbols the body reads in it moved out of it: the two floors and `compactionEvalFactRetentionRequiredSamples(of:floor:)` are now in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`, and `compactionEvalFactRetentionBar(floor:measured:of:)` is now in `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionEvalRealModelTests.swift`.
+    - `CompactionEvalTierBarTests` is a suite in `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`. There is no file with that name.
+
+    The line numbers in the body are also out of date. Find each symbol by its name.
+  timestamp: 2026-08-21T05:04:11.995573+00:00
+- actor: claude-code
+  id: 01m0hb9y5jj3qb048qq8n7jbb0
+  text: |-
+    ### finish iteration — clean
+    - implement: no-change — the card is satisfied by ^m03heaa: both floors are 0.71, which needs 5 of 7 subset seeds, so the tier tolerates the loss of two seeds; greedy is pinned; the applied bar is stated in a failing run's message
+    - test: green — root swift test 1025 in 96 suites plus 77 in 9 suites; both packages build with -warnings-as-errors
+    - commit: df0bc36 (board state only)
+    - review: clean — 0 findings; task moved to `done`
+  timestamp: 2026-08-21T05:04:40.626612+00:00
+position_column: done
+position_ordinal: ffd780
 title: The 7-seed gated subset can only pass FactRetention at 7 of 7 — 6 of 7 is 0.857, under the 0.9 bar, so the tier has no tolerance for model sampling
 ---
 Found by the gated subset run of 2026-08-17 21:42 while measuring `^fm5ddk9`.
