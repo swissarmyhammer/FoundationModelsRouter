@@ -50,8 +50,24 @@ comments:
     - evidence: 9 files — `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityRealModel.swift` (ref to `mlx-community/Qwen2.5-3B-Instruct-4bit`), `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift` (new `compactionContinuityFastTierIDs` = vault-code-and-outpost, migration-script-and-rollback, codename-and-owner, db-port-and-region; new `compactionContinuityFastTierSeeds`), `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityEvaluation.swift` (floors 0.7 / 0.45), `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`, `Tests/FoundationModelsRouterEvalSupport/CompactionEvalRealModel.swift`, `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift` (new `CompactionContinuityFastTierTests`, 3 tests), `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionContinuityRealModelTests.swift` (drives the tier seeds, prints the measured shares), `IntegrationTests/.../Support/CompactionContinuityEvalRealSubjectRunner.swift` (prints the final answer), `IntegrationTests/.../Support/GatedEvalSerialGate.swift` (doc only; the limit stays 2). Measured 2026-08-21 under the 3B: 10 tasks 99.5 s (limit raised to 10 in the tree for that one run only); 4 tasks factsSurvived 1.0 and answersCorrect 0.75 at 30.9 s and again at 29.7 s under the 2-minute limit. `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluation` green. Root `swift test` 1032 tests in 98 suites passed (2 pre-existing known issues) and 80 tests in 10 suites passed; both packages build with `-Xswiftc -warnings-as-errors`.
     - next: `/review`.
   timestamp: 2026-08-21T18:38:20.733880+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0jtb6ejk25edymde8egrpw0
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit ac3c301), 9 Swift files reviewed, 6 `.kanban/` files excluded by `.reviewignore`; counts: 0 findings, 0 confirmed, 0 refuted, 7 attempted, 0 failed
+    - next: task moved to `done`
+  timestamp: 2026-08-21T18:46:44.946540+00:00
+- actor: claude-code
+  id: 01m0jtbtnxnarnjr3mgprwg3sk
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 9 files; continuity tier on Qwen2.5-3B over 4 seeds (compactionContinuityFastTierSeeds); floors 0.7 / 0.45 from measured 1.0 / 0.75 minus one task; runs 30.9 s, 29.7 s; old 10-seed shape 99.5 s under the 3B today (219.1 s on 2026-08-20)
+    - test: green — root swift test 1032 + 80 passed; swift build --build-tests --package-path IntegrationTests complete; CompactionContinuityEvaluation 1/1, factsSurvived 1.0, answersCorrect 0.75, 36.8 s
+    - commit: ac3c301
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-21T18:47:05.661493+00:00
+position_column: done
+position_ordinal: ffe580
 title: 'The continuity eval tier is red on main: the 1B loses the facts under the redesigned prompt, and only the 3B that breaks the two-minute budget keeps them'
 ---
 `CompactionContinuityEvaluationIntegrationTests` FAILS on unmodified `main`. Measured on 2026-08-20 with `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluation`, against `mlx-community/Llama-3.2-1B-Instruct-4bit`:
