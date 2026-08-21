@@ -1263,13 +1263,14 @@ struct CompactionEvalTierBarTests {
 
     @Test("each tier's time limit clears the bound its own measured samples derive")
     func eachTierTimeLimitClearsItsDerivedBound() {
-        for (limit, sampleCount) in Self.tierLimits {
-            let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: sampleCount)
+        for tier in Self.tierLimits {
+            let derived = compactionEvalDerivedTimeLimitMinutes(
+                forSamples: tier.sampleCount, chargedAt: tier.dearestSampleSeconds)
             #expect(
-                Double(limit) >= derived,
+                Double(tier.limit) >= derived,
                 """
-                a tier of \(sampleCount) seeds derives \(derived) minutes, \
-                against a limit of \(limit)
+                a tier of \(tier.sampleCount) seeds at \(tier.dearestSampleSeconds) s for each \
+                sample derives \(derived) minutes, against a limit of \(tier.limit)
                 """
             )
         }
@@ -1283,25 +1284,42 @@ struct CompactionEvalTierBarTests {
         // can read a measurement out of. One minute is the smallest limit Swift
         // Testing accepts, so a derivation under one minute states a limit of
         // one.
-        for (limit, sampleCount) in Self.tierLimits {
-            let derived = compactionEvalDerivedTimeLimitMinutes(forSamples: sampleCount)
+        for tier in Self.tierLimits {
+            let derived = compactionEvalDerivedTimeLimitMinutes(
+                forSamples: tier.sampleCount, chargedAt: tier.dearestSampleSeconds)
             #expect(
-                Double(limit) < max(derived, 1) + 1,
+                Double(tier.limit) < max(derived, 1) + 1,
                 """
-                a tier of \(sampleCount) seeds derives \(derived) minutes and states \(limit), \
-                which is more than the next whole minute above it
+                a tier of \(tier.sampleCount) seeds at \(tier.dearestSampleSeconds) s for each \
+                sample derives \(derived) minutes and states \(tier.limit), which is more than \
+                the next whole minute above it
                 """
             )
         }
     }
 
-    /// Each gated tier's stated limit beside its own sample count, so the two
-    /// time-limit properties above cover both tiers with one body. The small
-    /// model's measured rate is what lets both rest on one dearest-sample
-    /// derivation; the 30B rate could not (task ^6ssbakk).
+    /// Each gated tier's stated limit beside its own sample count AND its own
+    /// measured per-sample rate, so the two time-limit properties above hold
+    /// each tier against the samples that tier really measured.
+    ///
+    /// The rate belongs in this table because each tier measured its own. One
+    /// rate for both tiers is what task ^5q0vv85 removed: the whole-dataset
+    /// limit was derived from the subset run's dearest sample, and the
+    /// whole-dataset run measured two seeds that BOTH tiers hold far dearer
+    /// than that — 82.4 and 56.5 seconds against 15.9 each — for the same work
+    /// at greedy decoding. A bound another tier's rate derives is not this
+    /// tier's bound, and one shared rate cannot state two measurements.
     private static let tierLimits = [
-        (compactionEvalSubsetTimeLimitMinutes, subsetSampleCount),
-        (compactionEvalFullDatasetTimeLimitMinutes, fullDatasetSampleCount),
+        (
+            limit: compactionEvalSubsetTimeLimitMinutes,
+            sampleCount: subsetSampleCount,
+            dearestSampleSeconds: compactionEvalSubsetMeasuredDearestSampleSeconds
+        ),
+        (
+            limit: compactionEvalFullDatasetTimeLimitMinutes,
+            sampleCount: fullDatasetSampleCount,
+            dearestSampleSeconds: compactionEvalFullDatasetMeasuredDearestSampleSeconds
+        ),
     ]
 
     @Test("the floors need 5 and 5 of the subset's seeds, and 18 and 18 of the whole dataset's")

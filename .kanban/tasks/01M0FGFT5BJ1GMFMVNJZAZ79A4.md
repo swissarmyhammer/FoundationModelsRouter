@@ -52,8 +52,28 @@ comments:
     - evidence: no source file and no workflow file was changed. The verification record is in the description, part "Verification, 2026-08-21". All four expectations of the contract HOLD: root `swift test` gives `1025 tests in 96 suites` plus `77 tests in 9 suites`, with no integration suite, no `.enabled(if:)`, no `.disabled(`, no `XCTSkip`, and no root test that loads a model; `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` gives `2 tests in 1 suite passed after 18.262 seconds`; `rg 'FM_ROUTER_'` gives no hit; `.github/workflows/ci.yml` states `needs: test` on the `real-model` job. Builds: `swift build --build-tests -Xswiftc -warnings-as-errors` is clean in BOTH packages (`Build complete!`, exit 0 each). `actionlint .github/workflows/ci.yml` exits 0. Every path and every name inside `ci.yml` resolves in the tree, thus this pass found no wrong fact to correct.
     - next: the one gap — the unit job does not build the nested package, which requirement 1 of Shape 2 asks for — is recorded as a deliberate deviation with its reason, and filed as card ^h56as4j. The user must decide between the shared workflow and one more build step before that card starts.
   timestamp: 2026-08-21T06:01:57.586034+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0hetwctnrezshf7mky0qsd2
+  text: |-
+    ### review — clean
+    - evidence: `review sha e665028~1..e665028` gives 0 findings, 0 confirmed, 0 refuted. The commit changes 6 files, and all 6 are in `.kanban/`, which `.reviewignore` excludes. Thus no source file and no workflow file was in the scope, as the card says.
+    - the recorded evidence was checked again: `rg FM_ROUTER_` exits 1 with no hit; the 4 hits of `.enabled(if:)` are all doc comment lines that start with `///`; there is no `.disabled(` and no `XCTSkip`; `IntegrationTests/Package.swift` declares `FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests`; `ci.yml` gives `real-model` the edge `needs: test`, and both jobs use the same triggers (push to main, pull request, manual start). The test counts of the two suite runs were not measured again, because the card records them and a real-model run is not permitted here.
+    - the deviation was judged on its merits and it is ACCEPTED. `docs/swift-ci.md` gives the reason for the requirement in its own words: "The root build does not compile these tests. Without this build step, the tests can break between runs, and no run shows the breakage." In this repository the `real-model` job is not optional, it uses the same triggers as the unit job, and its first step is `swift build --build-tests --package-path IntegrationTests`. Thus a break in the nested package makes a job red on the same run. The harm the requirement prevents does not occur here. Acceptance criterion 2 permits a recorded deviation with its reason, and the reason holds.
+    - one point of the record is not exact, and it does not change the result: when the `test` job is red, `needs: test` makes the `real-model` job stop, thus that run does not compile the nested package. That run is red for another cause, and the next run with a green unit job shows the break. The card says the cost correctly in its own words.
+    - next: none for this card. Card ^h56as4j holds the decision to call the shared `swift-ci.yaml`. Do not start it before the user confirms it.
+  timestamp: 2026-08-21T06:06:21.594605+00:00
+- actor: claude-code
+  id: 01m0hew4gnkj5dw3tkch14kedq
+  text: |-
+    ### finish iteration — clean
+    - implement: no-change — all four org expectations hold; every name in `ci.yml` still resolves and `actionlint` exits 0; no source and no workflow file changed
+    - test: green — root swift test 1025 in 96 suites plus 77 in 9 suites; `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` 2 tests in 18.3 s; both packages build with -warnings-as-errors
+    - commit: e665028 (board state only)
+    - review: clean — 0 findings; the Shape-2 deviation was judged sound against the contract's own stated purpose; task moved to `done`
+    - filed: ^h56as4j holds the deviation decision, which must not start before the user confirms the shared-workflow direction
+  timestamp: 2026-08-21T06:07:02.677336+00:00
+position_column: done
+position_ordinal: ffda80
 title: Verify this package against the org test expectations after the workflows README lands
 ---
 Filed on a request from the FoundationModelsMultitool session, on the user's directive: every sibling package must comply with the org's new test expectations, documented in the swissarmyhammer/workflows README (push imminent from the workflows-06 session).

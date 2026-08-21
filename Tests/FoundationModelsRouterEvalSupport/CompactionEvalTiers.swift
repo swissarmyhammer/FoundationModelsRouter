@@ -16,7 +16,7 @@ import FoundationModelsRouter
 /// task ^m03heaa put it in place of the 1B canary — with every summarizer call
 /// bounded by ``compactionEvalReasoningTokenHeadroom``, under task ^xx02yn6's
 /// span-budget trim and its `router-default-v3` prompt, at greedy decoding.
-/// The seven samples cost 5.4, 4.7, 12.2, 3.2, 5.1, 15.9 and 15.9 seconds.
+/// The seven samples cost 5.4, 4.7, 12.1, 3.2, 5.1, 15.9 and 15.9 seconds.
 /// Four of the seven folds made one summarizer call and three made two,
 /// because the redesigned stage re-asks: an answer past the span byte budget
 /// earns one condense call before the last-resort cut. The rate rose from the
@@ -48,15 +48,50 @@ import FoundationModelsRouter
 /// The DEAREST sizes a limit, not the mean, because the spread between
 /// samples is what a limit has to survive (task ^6ssbakk).
 ///
-/// This is the SUBSET run's dearest sample, and the whole-dataset tier is
-/// sized from it as well. Task ^m03heaa measured that the whole-dataset run
-/// holds samples dearer than any of the seven above — up to 82.4 seconds at
-/// its sample 21 — and still ended inside the bound they derive for it: 369.1
-/// seconds measured against 382.9 derived, a margin of 13.8 seconds. Task
-/// ^5q0vv85 gives that tier a rate its own samples measure.
-private let compactionEvalMeasuredDearestSampleSeconds = 15.9
+/// This rate sizes the SUBSET tier and no other. The whole-dataset tier was
+/// sized from it as well until task ^5q0vv85, and the two runs of 2026-08-20
+/// show why that was wrong. `three-facts-support-escalation` is one of the
+/// seven seeds above, and it cost 15.9 seconds as sample 7 here and 82.4
+/// seconds as sample 21 of the whole-dataset run; `three-facts-long-project-brief`
+/// is another, and it cost 15.9 seconds as sample 6 here and 56.5 seconds as
+/// sample 18 there. Each seed did the SAME work in both runs — two summarizer
+/// calls, and 1948 and 2103 summary bytes, which greedy decoding repeats — so
+/// what changed is throughput, and a rate measured over a short run cannot
+/// bound a long one. Each tier therefore charges its own measured rate; the
+/// other one is ``compactionEvalFullDatasetMeasuredDearestSampleSeconds``.
+let compactionEvalSubsetMeasuredDearestSampleSeconds = 15.9
 
-/// What the same run's model load cost, in seconds.
+/// The dearest of the samples the gated WHOLE-DATASET run of 2026-08-20 timed
+/// apart, in seconds.
+///
+/// Timed as ``compactionEvalSubsetMeasuredDearestSampleSeconds`` is timed: one
+/// sample's own work — its fold and its answering turn together — read off that
+/// sample's own progress lines, and never a run's wall clock divided by a
+/// sample count, which `^9cw5g6n` forbids. The run drove its samples one at a
+/// time and printed each sample's four lines complete before the next sample's
+/// first line.
+///
+/// Measured against ``CompactionEvalRealModel`` under the same recipe as the
+/// subset run of the same day: every summarizer call bounded by
+/// ``compactionEvalReasoningTokenHeadroom``, task ^xx02yn6's span-budget trim
+/// and its `router-default-v3` prompt, at greedy decoding. The 24 samples cost
+/// 11.0, 5.4, 5.1, 3.8, 4.7, 12.2, 3.2, 4.1, 5.9, 5.1, 4.3, 3.3, 4.2, 6.6,
+/// 11.0, 3.9, 3.8, 56.5, 24.3, 23.0, 82.4, 27.6, 11.5 and 44.7 seconds, in
+/// dataset order. They add to 367.6 seconds, and with the 1.3-second model load
+/// that no sample carries that is 368.9 against the 369.1 seconds of wall clock
+/// the run reported — which is how this trail shows that it holds every sample.
+///
+/// The spread inside that ONE run is 3.2 to 82.4 seconds, and it follows the
+/// position in the run rather than the seed: the last seven samples hold the
+/// six dearest. That is the property this constant exists for. A tier's
+/// per-sample rate is a fact about the tier's own length, so no other tier's
+/// rate bounds these samples (task ^5q0vv85).
+///
+/// The DEAREST sizes a limit, not the mean, because the spread between samples
+/// is what a limit has to survive (task ^6ssbakk).
+let compactionEvalFullDatasetMeasuredDearestSampleSeconds = 82.4
+
+/// What the two runs of 2026-08-20 measured the model load at, in seconds.
 ///
 /// ``CompactionEvalRealModelContainer/load(ref:context:samplingMode:unexpectedContainerType:)``
 /// times the load on its own two progress lines, so it is charged to no sample
@@ -76,12 +111,23 @@ private let compactionEvalMeasuredModelLoadSeconds = 1.3
 private let compactionEvalSecondsPerMinute = 60.0
 
 /// The wall clock a gated tier of `sampleCount` samples is bounded by, in
-/// minutes, derived from the samples the gated run of 2026-08-20 timed apart.
+/// minutes, when every one of those samples is charged
+/// `dearestSampleSeconds`.
 ///
-/// Every sample is charged ``compactionEvalMeasuredDearestSampleSeconds``, and
-/// the tier is charged one ``compactionEvalMeasuredModelLoadSeconds`` on top.
-/// That is a BOUND rather than an expected cost: it is what a tier takes when
-/// every one of its samples lands at the dearest cost anything has measured.
+/// Every sample is charged the rate the CALLER states, and the tier is charged
+/// one ``compactionEvalMeasuredModelLoadSeconds`` on top. That is a BOUND
+/// rather than an expected cost: it is what a tier takes when every one of its
+/// samples lands at the dearest cost that tier has measured.
+///
+/// The rate is a parameter, and deliberately not one constant this arithmetic
+/// reads for every tier. A rate measured over a short run does not bound a long
+/// one: the two runs of 2026-08-20 measured two seeds that BOTH tiers hold at
+/// 15.9 seconds each in the seven-sample subset run, and at 82.4 and 56.5
+/// seconds in the twenty-four-sample run, for the same work at greedy decoding
+/// (task ^5q0vv85). So each tier states its own measured rate —
+/// ``compactionEvalSubsetMeasuredDearestSampleSeconds`` and
+/// ``compactionEvalFullDatasetMeasuredDearestSampleSeconds`` — and this one
+/// arithmetic charges whichever it is given.
 ///
 /// The sum is the right arithmetic, and not the largest sample and not the mean.
 /// The samples run one at a time whatever shape the framework dispatches,
@@ -91,10 +137,16 @@ private let compactionEvalSecondsPerMinute = 60.0
 /// framework does today. So a tier of `sampleCount` samples costs about
 /// `sampleCount` times one sample rather than less.
 ///
-/// - Parameter sampleCount: How many samples the tier runs.
+/// - Parameters:
+///   - sampleCount: How many samples the tier runs.
+///   - dearestSampleSeconds: What the dearest of that tier's OWN measured
+///     samples cost, in seconds.
 /// - Returns: The derived bound, in minutes.
-func compactionEvalDerivedTimeLimitMinutes(forSamples sampleCount: Int) -> Double {
-    (Double(sampleCount) * compactionEvalMeasuredDearestSampleSeconds
+func compactionEvalDerivedTimeLimitMinutes(
+    forSamples sampleCount: Int,
+    chargedAt dearestSampleSeconds: Double
+) -> Double {
+    (Double(sampleCount) * dearestSampleSeconds
         + compactionEvalMeasuredModelLoadSeconds) / compactionEvalSecondsPerMinute
 }
 
@@ -102,9 +154,11 @@ func compactionEvalDerivedTimeLimitMinutes(forSamples sampleCount: Int) -> Doubl
 /// minutes.
 ///
 /// The next whole minute above
-/// ``compactionEvalDerivedTimeLimitMinutes(forSamples:)`` at the seven seeds
-/// of ``compactionEvalRepresentativeSubsetIDs``: 7 x 15.9 s plus 1.3 s is
-/// 112.6 seconds, which is 1.88 minutes, so this states 2.
+/// ``compactionEvalDerivedTimeLimitMinutes(forSamples:chargedAt:)`` at the
+/// seven seeds of ``compactionEvalRepresentativeSubsetIDs``, charged at this
+/// tier's OWN measured rate,
+/// ``compactionEvalSubsetMeasuredDearestSampleSeconds``: 7 x 15.9 s plus 1.3 s
+/// is 112.6 seconds, which is 1.88 minutes, so this states 2.
 /// `CompactionEvalTierBarTests` holds this value against
 /// that derivation from both sides, so a subset that outgrew its limit, or a
 /// limit that stopped stating a measurement, fails a plain `swift test`
@@ -136,33 +190,42 @@ let compactionEvalSubsetTimeLimitMinutes = 2
 /// in minutes.
 ///
 /// The next whole minute above
-/// ``compactionEvalDerivedTimeLimitMinutes(forSamples:)`` at the whole
-/// dataset's 24 seeds: 24 x 15.9 s plus 1.3 s is 382.9 seconds, which is 6.38
-/// minutes, so this states 7. That charges EVERY sample at the dearest cost
-/// the subset run of 2026-08-20 measured, so it is a bound rather than an
-/// expected cost. The samples run one at a time whatever shape the framework
-/// dispatches, because the runner holds a value-1 permit around one sample's
-/// whole run (task ^23qeprz), so twenty-four samples cost about twenty-four
-/// times one sample rather than less.
+/// ``compactionEvalDerivedTimeLimitMinutes(forSamples:chargedAt:)`` at the
+/// whole dataset's 24 seeds, charged at this tier's OWN measured rate,
+/// ``compactionEvalFullDatasetMeasuredDearestSampleSeconds``: 24 x 82.4 s plus
+/// 1.3 s is 1978.9 seconds, which is 32.98 minutes, so this states 33. The
+/// samples run one at a time whatever shape the framework dispatches, because
+/// the runner holds a value-1 permit around one sample's whole run (task
+/// ^23qeprz), so twenty-four samples cost about twenty-four times one sample
+/// rather than less.
 ///
 /// The tier itself is measured, not only derived: the gated whole-dataset
 /// run of 2026-08-20 against ``CompactionEvalRealModel``, under task
 /// ^xx02yn6's span-budget trim, measured a wall clock of 369.1 seconds over
-/// all 24 seeds with none unreached. That run sits inside the 382.9-second
-/// bound above, but by 13.8 seconds only, and its late samples cost up to
-/// 82.4 seconds where the dearest of the subset's seven was 15.9 — so the
-/// margin here is far thinner than the subset tier's, and task ^5q0vv85
-/// gives this tier a rate its own samples measure. This tier is the opt-in
-/// one, outside task ^k0d30s4's two-minute budget for the everyday command,
-/// which skips it.
+/// all 24 seeds with none unreached. The bound is 5.4 times that, and the
+/// distance is the point rather than a defect: the bound charges EVERY sample
+/// at the dearest, and this tier's samples spread from 3.2 to 82.4 seconds
+/// inside that one run. A tier must never REACH its limit, because a run that
+/// reaches one takes a Metal abort in place of a failure (fork card ^3axg80k),
+/// so the limit has to cover the run in which every sample lands where the
+/// dearest landed. This tier is the opt-in one, outside task ^k0d30s4's
+/// two-minute budget for the everyday command, which skips it.
+///
+/// The 7 minutes this stated before task ^5q0vv85 came from the SUBSET tier's
+/// rate of 15.9 seconds: 24 x 15.9 s plus 1.3 s is 382.9 seconds. The measured
+/// 369.1 sat inside that by 13.8 seconds, which is 3.6 percent, and the margin
+/// was luck rather than a bound: this tier's own late samples cost up to 82.4
+/// seconds, far above the subset's dearest, and the two errors cancelled,
+/// because most samples here are cheaper than the subset's dearest while a few
+/// are five times dearer. A bound another tier's rate derives is not this
+/// tier's bound.
 ///
 /// The 3 minutes this value stated before ^m03heaa was derived from the 1B
 /// canary's 7.2-second dearest sample, and the 120 minutes it stated before
 /// ^6ssbakk from the 30B model's 271.0-second mean sample.
-/// `CompactionEvalTierBarTests` holds this tier to the same
-/// dearest-rate derivation the subset tier is held to, which the two bases'
-/// old disagreement made impossible.
-let compactionEvalFullDatasetTimeLimitMinutes = 7
+/// `CompactionEvalTierBarTests` holds this tier against its OWN rate from both
+/// sides, as it holds the subset tier against the subset's.
+let compactionEvalFullDatasetTimeLimitMinutes = 33
 
 // MARK: - Measured tier bars
 
