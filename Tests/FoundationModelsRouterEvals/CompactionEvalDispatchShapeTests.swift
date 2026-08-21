@@ -35,8 +35,8 @@ struct CompactionEvalDispatchShapeTests {
     ///
     /// Long enough that a dispatcher which starts a second sample while the
     /// first is suspended would overlap the two on any machine, and short
-    /// enough that all 24 seeds still cost about half a second when the
-    /// framework drives them one at a time.
+    /// enough that the dataset's seven seeds still cost about a seventh of a
+    /// second when the framework drives them one at a time.
     private static let fakeSubjectSuspensionMilliseconds = 20
 
     @Test("Evaluation.run(info:) drives the samples one at a time")

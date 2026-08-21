@@ -1,7 +1,7 @@
 import FoundationModelsRouter
 
-/// The real `mlx-community` model the gated fact-retention eval tiers
-/// resolve against actual hardware.
+/// The real `mlx-community` model the gated fact-retention eval tier
+/// resolves against actual hardware.
 ///
 /// ## Why this is Qwen2.5-3B, and no longer the 1B Llama
 ///
@@ -26,11 +26,11 @@ import FoundationModelsRouter
 /// 369.1 seconds of suite wall clock. It is 1.6 GB on disk against 18 GB
 /// for `RealModels/standard`.
 ///
-/// ## What the tiers prove, and what they do not
+/// ## What the tier proves, and what it does not
 ///
-/// The tiers still measure the real thing they always measured: a real fold
+/// The tier still measures the real thing it always measured: a real fold
 /// through `Compactor`, a real summarizer generation, and a real answering
-/// turn over the folded transcript, scored mechanically. What they do NOT
+/// turn over the folded transcript, scored mechanically. What it does NOT
 /// prove is how the 27B standard model performs the same work. A fact the
 /// 3B model retains says nothing about the 27B, and a fact it loses may
 /// still survive under the larger model. That trade is task `^k0d30s4`'s

@@ -16,10 +16,11 @@ import Testing
 /// this target that did not fit.
 ///
 /// `Qwen2.5-3B-Instruct-4bit` is 1.6 GB on disk, and it is the subject the
-/// gated fact-retention evals already measure this exact property against: see
+/// gated fact-retention eval already measures this exact property against: see
 /// `CompactionEvalRealModel` for the trial order task ^m03heaa ran and for the
-/// 6 of 7 subset summaries and 23 of 24 whole-dataset summaries this model
-/// carried through a fold on 2026-08-20. Step 3 below is one instance of that
+/// 6 of 7 summaries of that tier, and 23 of 24 of the whole-dataset tier task
+/// ^k0d30s4 has since deleted, that this model carried through a fold on
+/// 2026-08-20. Step 3 below is one instance of that
 /// same property, so the subject the evals measured it on is the subject to
 /// measure it on here.
 ///

@@ -16,7 +16,7 @@ import Tokenizers
 /// slot at the tier's own context, then narrow the returned
 /// `any LoadedLLMContainer` to the concrete type. What differed between them
 /// is this function's parameters — since task ^m03heaa that includes the
-/// model itself, because the fact-retention tiers resolve
+/// model itself, because the fact-retention tier resolves
 /// ``CompactionEvalRealModel`` while the continuity tier resolves
 /// ``CompactionContinuityRealModel``. The load's own progress lines were a
 /// difference once, and they are no longer one: both tiers state the load

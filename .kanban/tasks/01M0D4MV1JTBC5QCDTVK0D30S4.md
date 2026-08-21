@@ -229,8 +229,73 @@ comments:
 
     The card stays in `review`. The findings do not hold it — one acceptance criterion does, and only the user can settle it: `CompactionEvalFullDatasetIntegrationTests` measures 369.1 s and cannot fit two minutes (24 seeds at a dearest sample of 15.9 s is 382 s). Delete that tier, or keep it as the declared opt-in tier the everyday command skips with `--skip CompactionEvalFullDataset`.
   timestamp: 2026-08-21T04:22:49.476461+00:00
-position_column: review
-position_ordinal: '8580'
+- actor: claude-code
+  id: 01m0j3cnef78mzvssk8jdajss3
+  text: |-
+    ### The user settled the open criterion, 2026-08-21
+
+    The user chose neither of the two options this card recorded. The answer is a third one: make the test smaller.
+
+    - The whole-dataset tier goes. `CompactionEvalFullDatasetIntegrationTests` is deleted, with the constants only it needed.
+    - The 7-fixture tier becomes the only gated fact-retention tier. It already spans the four things the dataset varies — the number of facts in the head, which fact the question probes, plain reply against tool traffic, and the length of the recency window — and that coverage is held by a test.
+    - The extra fixtures are deleted with the tier, because no gated tier would measure them.
+
+    The user did not ask for a check of whether any deleted fixture ever failed alone. That check was offered and refused, so this work does not do it.
+
+    With the whole-dataset tier gone, criterion 1 holds: every test of the integration and eval targets runs in under two minutes.
+  timestamp: 2026-08-21T12:05:35.823845+00:00
+- actor: claude-code
+  id: 01m0j3w418gsvw5831wrv4y1nc
+  text: |-
+    Research before the edits, 2026-08-21. The user settled the open criterion: make the test smaller.
+
+    What the whole-dataset tier reaches, read off the tree:
+
+    - `CompactionEvalRealModelTests.swift` holds `compactionEvalFullDatasetRunner`, `compactionEvalFullDatasetEvaluation` and `CompactionEvalFullDatasetIntegrationTests`. `makeCompactionEvalRealEvaluation(driving:)` exists only because TWO tiers built one evaluation each, so it folds back into the one surviving value.
+    - `CompactionEvalTiers.swift` holds `compactionEvalFullDatasetMeasuredDearestSampleSeconds` (82.4, the rate task ^5q0vv85 added) and `compactionEvalFullDatasetTimeLimitMinutes` (33). Both go.
+    - `CompactionEvaluationTests.swift` holds `CompactionEvalTierBarTests.fullDatasetSampleCount`, the second row of its `tierLimits` table, and the whole-dataset half of the floor test.
+    - The `--skip CompactionEvalFullDataset` guidance stands in `README.md`, `.github/workflows/ci.yml`, `GatedSuiteSerialGate.swift`, `GatedEvalSerialGate.swift` and `CompactionEvalRealModelTests.swift`.
+
+    Two tests break on the smaller dataset and must be re-derived:
+
+    - `CompactionEvaluationHermeticTests/datasetLoadsAtLeast20Samples` asserts `count >= 20`. compaction_plan.md §5 asked for 20 to 30 fixtures, which the user's decision supersedes.
+    - `CompactionEvalRepresentativeSubsetTests` — two of its seven tests compare the subset against the whole dataset (`subsetCarriesEveryFactCount`, `subsetSpansTheWholeRecentTurnRange`) and become trivially true. The other five already read the subset alone and stay as they are.
+
+    The seven fixtures the tier keeps, read off the specs:
+
+    | id | facts | probed index | delivery | recency window |
+    |---|---|---|---|---|
+    | `env-file` | 1 | 0 | plain reply | 4 |
+    | `db-port` | 1 | 0 | tool traffic | 4 |
+    | `license-key-and-region` | 2 | 1 | plain reply | 4 |
+    | `budget-cap-tool-and-owner` | 2 | 0 | tool traffic | 6 |
+    | `three-facts-support-escalation` | 3 | 0 | plain reply | 7 |
+    | `encryption-algorithm` | 1 | 0 | tool traffic | 5 |
+    | `three-facts-long-project-brief` | 3 | 2 | plain reply | 6 |
+
+    No fixture of the seven probes a fact that is neither the first nor the last of its head, so the absolute position test asserts a first fact, a fact that is not first, and a last fact — which is what the suite already asserts.
+
+    `compactionEvalFillerTurns` holds 8 turns and the longest recency window is 7, and `compactionEvalFactAcknowledgements` holds 4 and the largest head is 3, so both pools stay longer than what the smaller dataset asks of them. Neither loses an entry.
+
+    One measurement really changes: `compactionEvalMeasuredBytesPerToken` states its corpus as "every fixture's context and facts, every acknowledgement, and every filler prompt and reply. That is 85 pieces of text and 31541 UTF-8 bytes", with a token count for each of three tokenizers. The method was reproduced before any deletion — a temporary test dumped the corpus and the three `tokenizer.json` files out of the local Hub cache counted it — and it gave 85 pieces, 31541 bytes, and 6564, 6577 and 6602 tokens, which is the doc's table exactly. So the same measurement re-runs over the smaller corpus.
+  timestamp: 2026-08-21T12:14:02.280005+00:00
+- actor: claude-code
+  id: 01m0j513rc3518n38yn00kqcz3
+  text: |-
+    ### implement — changed
+
+    - evidence: 13 files. Deleted: `CompactionEvalFullDatasetIntegrationTests` with `compactionEvalFullDatasetRunner`, `compactionEvalFullDatasetEvaluation` and `makeCompactionEvalRealEvaluation(driving:)` in `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionEvalRealModelTests.swift`; `compactionEvalFullDatasetTimeLimitMinutes` and `compactionEvalFullDatasetMeasuredDearestSampleSeconds` in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`; 17 of the 24 entries of `compactionEvalFixtureSpecs` in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalDataset.swift`; and the `--skip CompactionEvalFullDataset` guidance in `.github/workflows/ci.yml`, `README.md`, `Support/GatedEvalSerialGate.swift` and `Support/GatedSuiteSerialGate.swift`. One grep of the whole tree for `CompactionEvalFullDataset` now answers NONE.
+    - evidence: `CompactionEvalRepresentativeSubsetTests` re-framed to absolute bars — head sizes `== [1, 2, 3]`, the recency window varies, and the delivery and probed-position bars unchanged because they already read the subset alone. `CompactionEvaluationHermeticTests` no longer asks the dataset for 20 samples; it asks the stream for one sample per fixture id. `CompactionEvalTierBarTests` holds ONE derivation from both sides and names `samplesEachFloorNeeds`.
+    - evidence: `compactionEvalMeasuredBytesPerToken` re-measured, 4.81 to 4.85. The method was validated on the 24-fixture corpus first and reproduced the doc's table exactly, then re-run over the 41 pieces and 9946 bytes that are left: 2052, 2061 and 2069 tokens over the three tokenizers, thus 4.847, 4.826 and 4.807, of which the largest rounded up is 4.85. The worst-case summary rises 154 to 156 estimated tokens, the required span 231 to 234, and the tightest seed is `db-port` at 345 tokens, a ratio of 2.21.
+    - evidence: build — `swift build --build-tests -Xswiftc -warnings-as-errors` clean in the root package AND in `IntegrationTests`. Zero warnings, zero errors.
+    - evidence: test — root `swift test` gives 1026 tests in 96 suites passed with 2 known issues (`RealModelHarness.swift:72` and `BoundedWait.swift:114`, both pre-existing `withKnownIssue` items in files this work did not touch), plus 77 tests in 9 suites passed.
+    - evidence: the gated tier, run ONCE — `swift test --package-path IntegrationTests --filter CompactionEvaluationIntegrationTests` gives 1 test in 1 suite passed, `[gatedEvalSuite] suite=CompactionEvaluationIntegrationTests wallClockSeconds=89.0` against the 2-minute limit, 106.5 s of shell wall clock with the build. `counts: retained=6 answerMissedFactSummaryCarriedIt=0 summaryLostFact=1 foldProducedNoSummary=0 unrecognizedSample=0`; `retention: summary=6 of 7 answer=6 of 7`; `unreached: <none> — every one of the 7 seeds ran`; every sample recorded `stages=ToolOutputElision,TurnTruncation,Summarization`. The same verdict as the ^m03heaa baseline, so the tier still measures what it did, and it never approached its limit.
+    - criterion 1 now HOLDS and is checked: every test of the integration and eval targets runs under two minutes. The 32nd test was the whole-dataset tier at 369.1 s, and it no longer exists.
+    - not weakened, as the card directs: both retention floors stay 0.71, the summarization prompt did not move, and the canary is still Qwen2.5-3B-Instruct. The "has any deleted fixture ever failed alone" check was NOT done — the user was offered it and refused it.
+    - next: /review. One thing for a person: compaction_plan.md §5's code sketch still asks for 20 to 30 fixtures, which the user's decision supersedes; the plan is a design record, so the sketch was left as written and the test that carried the old floor states the supersession in its own comment.
+  timestamp: 2026-08-21T12:34:14.412278+00:00
+position_column: doing
+position_ordinal: '8180'
 title: Every integration test must run in under 2 minutes — boot from a recording, or make the test smarter
 ---
 From the user, 2026-08-19:
@@ -273,7 +338,7 @@ The same continuity property is reachable inside the budget: boot a recorded tra
 
 ## Acceptance Criteria
 
-- [ ] Every test in the integration and eval targets runs in under 2 minutes, measured and recorded — 31 of 32 hold. `CompactionEvalFullDatasetIntegrationTests` does not, and a person has to decide; see "The one criterion a person has to settle" below.
+- [x] Every test in the integration and eval targets runs in under 2 minutes, measured and recorded — every test that remains holds it. The one that did not was `CompactionEvalFullDatasetIntegrationTests`, and the user settled it on 2026-08-21 by making the TEST smaller: that tier is deleted, with the fixtures no other tier folded.
 - [x] The measurement is printed by the test itself, as the three fast suites already do, so a regression is visible without a stopwatch
 - [x] A test that exceeds the budget fails rather than merely being slow
 - [x] What each converted test proves, and what it no longer proves, is stated in its doc comment — a faster test that measures less must say so
@@ -294,16 +359,11 @@ The card's own table above is superseded by measurement. Three whole runs of the
 - `GatedRealModelSuiteTrait` prints each test's own wall clock, and `GatedEvalResidencyTrait` prints each eval suite's. Both measure through `GatedWallClock`, in `FoundationModelsRouterTestSupport`, so the two targets cannot drift into two shapes.
 - The eval target already held the budget before this pass: `gatedEvalSuiteTimeLimitMinutes` is 2 and `compactionEvalSubsetTimeLimitMinutes` is 2, both from task ^m03heaa's canary swap.
 
-## The one criterion a person has to settle
+## The criterion a person had to settle, and how the user settled it
 
-`CompactionEvalFullDatasetIntegrationTests` states `compactionEvalFullDatasetTimeLimitMinutes` of 7 and measured 369.1 s on 2026-08-20. It cannot fit two minutes, and the arithmetic says why: the tier runs 24 seeds, the dearest measured sample costs 15.9 s, and 24 times 15.9 is 382 s. A tier that fits 120 s holds 7 seeds, which is exactly `CompactionEvaluationIntegrationTests`, the subset tier that already runs.
+`CompactionEvalFullDatasetIntegrationTests` stated `compactionEvalFullDatasetTimeLimitMinutes` and measured 369.1 s on 2026-08-20. It could not fit two minutes, and the arithmetic says why: the tier ran 24 seeds, the dearest measured sample cost 15.9 s, and 24 times 15.9 is 382 s. A tier that fits 120 s holds 7 seeds, which is exactly `CompactionEvaluationIntegrationTests`.
 
-So the choice is between two things, and only a person makes it:
-
-1. Delete the whole-dataset tier. The subset tier stays, and the whole dataset stops being measured. Task ^5q0vv85 reads that tier's own sample rate and would go with it.
-2. Keep it as the declared opt-in tier the everyday command skips with `--skip CompactionEvalFullDataset`, which is what CI does today and what the constant's doc already records.
-
-Nothing in this card's body decides it: the card's own table does not list this tier at all.
+The card offered two answers — delete the tier, or declare it an opt-in tier the everyday command skips. **The user chose a third: make the test smaller.** The tier goes, and the dataset goes down with it to the seven fixtures the surviving tier folds, because no gated tier would have measured the other seventeen. The user was offered a check of whether any deleted fixture had ever failed alone, and refused it.
 
 ## Review Findings (2026-08-19 12:13)
 
@@ -349,7 +409,7 @@ No doc names a constant that this commit deleted. `compactionSmokeTimeLimitMinut
 
 The last three files are outside the diff of this commit, so the engine could not give them. The review asked for the check, thus they are recorded here. Other docs that give the old limits as history ("stated before", "used to", "replaces") are correct and need no change.
 
-## What landed, 2026-08-21
+## What landed, 2026-08-21 (the shared trait)
 
 The five open findings above are corrected.
 
@@ -378,23 +438,35 @@ Each target keeps its own convenience — `.exclusiveRealModel` in `GatedSuiteSe
 
 Docs that frame the old limits as history are correct and were left as they stand.
 
-**One thing the sweep found that is more than a doc correction.** `CompactionEvalRepresentativeSubsetTests` claimed its stated seed count is pinned from BOTH sides by the limit binding. At the 30B rate it was. At the canary's rate it is not: eight seeds derive 2.14 minutes, which the limit of 2 refuses, but six seeds derive 1.61 minutes, which 2 still covers and is still the next whole minute above. So the upper side still refuses a larger subset and the lower side refuses nothing. The doc now states that, and names `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst` as what holds a smaller subset to account.
+## What landed, 2026-08-21 (the smaller test)
 
-**What this pass did NOT exercise at run time.** The `.wholeSuite` branch of the shared trait — the eval target's mode. The card's own verification plan runs the fast gated integration suites and no eval tier, so that branch is proved by the build and by the `.eachTest` branch it shares every line with, and the eval tiers measure it on the next full run.
+The user's decision is carried out. The last acceptance criterion holds.
 
-## The card stays in Review
+**Deleted.** `CompactionEvalFullDatasetIntegrationTests`, its runner `compactionEvalFullDatasetRunner`, its evaluation `compactionEvalFullDatasetEvaluation`, the constants `compactionEvalFullDatasetTimeLimitMinutes` and `compactionEvalFullDatasetMeasuredDearestSampleSeconds` (the rate task ^5q0vv85 added), and 17 of the 24 entries of `compactionEvalFixtureSpecs`. `makeCompactionEvalRealEvaluation(driving:)` went with them: a factory whose one argument had one value is a hop the reader pays for nothing, so the one evaluation is built where it stands.
 
-One acceptance criterion is open and needs a person, not an agent: the choice for `CompactionEvalFullDatasetIntegrationTests` between deletion and a declared opt-in tier. That criterion holds this card in `review`, together with the findings above. #compaction #eval #test-debt
+**The `--skip CompactionEvalFullDataset` guidance is gone from every site**: `.github/workflows/ci.yml`, `README.md`, `GatedEvalSerialGate.swift`, `GatedSuiteSerialGate.swift` and the suite doc. Removing it from `ci.yml` changes nothing about what CI runs, because the tier it stepped aside no longer exists; nothing else in that file moved.
 
-## Review Findings (2026-08-20 23:10)
+**The coverage test now does work.** With the dataset and the subset holding the same seven seeds, three tests of `CompactionEvalRepresentativeSubsetTests` compared the dataset with itself. Two of them are re-framed to ABSOLUTE bars, and two others already read the subset alone and are unchanged:
 
-> Scope: `review sha 885f284~1..885f284` — reviewed the diffs only — lines this change added or modified. 16 file(s) reviewed, 2 not reviewed.
+| bar | how it is stated now |
+|---|---|
+| head sizes | `Set(headSizes) == [1, 2, 3]`, a value the suite states |
+| probed position | a first fact, a fact that is not first, and a last fact — unchanged, it already read the subset alone |
+| delivery | `Set(deliveries) == [true, false]` — unchanged, same reason |
+| recency window | more than one distinct `recentTurnCount` across the seven |
 
-> 2 file(s) not reviewed — excluded by an ignore rule:
-> - `.kanban/ (from .reviewignore)` — 2 file(s)
+No fixture of the seven probes a fact that is neither the first nor the last of its head, so "a middle fact" is asserted as "a fact that is not first", which is what the suite already asserted.
 
-No new finding. The engine attempted 7 validators, confirmed 0 and refuted 0. Every finding of the two earlier passes is marked done.
+**Two more tests had to be re-derived.** `CompactionEvaluationHermeticTests` asserted `count >= 20` against compaction_plan.md §5's ask for 20 to 30 fixtures; it now asserts that the dataset stream carries one sample for each fixture, under its own id. `CompactionEvalTierBarTests` lost its whole-dataset row, its second sample count and its two-row tier table; it holds ONE derivation from both sides now, and names `samplesEachFloorNeeds` rather than repeating the literal.
 
-### What holds the card in Review, 2026-08-21
+**One measurement really changed, and it was re-measured rather than guessed.** `compactionEvalMeasuredBytesPerToken` states its corpus as this dataset's whole prose. Cutting 17 fixtures cut the corpus from 85 pieces and 31541 bytes to 41 pieces and 9946 bytes. The three tokenizers of the local Hub cache were run over both corpora, and the method was validated on the OLD corpus first — it reproduced the doc's table exactly (6564, 6577, 6602 tokens; 4.805, 4.796, 4.777 bytes for each token). Over the seven fixtures they give 2052, 2061 and 2069 tokens, thus 4.847, 4.826 and 4.807. The constant keeps the largest, rounded up, so it rose from 4.81 to **4.85**. Everything that reads it was re-derived with it:
 
-The findings do not hold this card. One acceptance criterion holds it, and only a person can settle it: `CompactionEvalFullDatasetIntegrationTests` measures 369.1 s and cannot fit two minutes. Delete that tier, or keep it as the declared opt-in tier that the everyday command skips. An agent does not make this choice, thus the card stays in `review`.
+- the worst-case summary rises from 154 to 156 estimated tokens, and the span each seed must carry from 231 to 234;
+- the tightest seed is `db-port` at 345 estimated tokens, a ratio of 2.21 against the 1.5 the gate asks;
+- a real summary of the 128-token floor is 621 bytes, not 616, at each of the three sites that stated it.
+
+**The seven-fixture tier's own numbers did NOT change**, as the user directed: dearest sample 15.9 s, model load 1.3 s, limit 2 minutes, floors 0.71 needing 5 of 7. No retention floor was weakened, the summarization prompt did not move, and the canary is still Qwen2.5-3B-Instruct.
+
+**The gated run, once.** `swift test --package-path IntegrationTests --filter CompactionEvaluationIntegrationTests` — 1 test in 1 suite passed, `[gatedEvalSuite] wallClockSeconds=89.0` against the 2-minute limit, 106.5 s of shell wall clock including the build. `retained=6 answerMissedFactSummaryCarriedIt=0 summaryLostFact=1 foldProducedNoSummary=0`, retention `summary=6 of 7 answer=6 of 7`, `unreached: <none>`, and every sample applied all three stages. That is the same verdict the ^m03heaa baseline recorded, so the tier still measures what it did. The run never approached its limit, so no Metal abort was risked (fork card ^3axg80k). The 89.0 s against the 63.5 s of 2026-08-20 is throughput spread on one box, not a code change, and the limit doc now states both.
+
+**One divergence a person should judge.** compaction_plan.md §5's own code sketch still asks the dataset for "20–30 hand-written seed transcripts". The user's decision supersedes it, and the plan is a design record rather than a doc comment about the code, so the sketch was left as written; the test that carried the old floor states the supersession in its own comment. #compaction #eval #test-debt

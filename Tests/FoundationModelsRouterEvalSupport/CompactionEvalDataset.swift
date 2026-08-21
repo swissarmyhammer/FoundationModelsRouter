@@ -22,7 +22,7 @@ struct CompactionEvalFixtureSpec: Sendable {
     /// taste. `Compactor.compact` discards a fold whose summary entry is no
     /// smaller than the span it replaces, and
     /// ``Summarization/minimumSummaryTokens`` gives every span this small the
-    /// same summary allowance — a floor of 128 tokens, which is 616 bytes of
+    /// same summary allowance — a floor of 128 tokens, which is 621 bytes of
     /// prose at ``compactionEvalMeasuredBytesPerToken``. A head of one fact
     /// sentence plus its acknowledgement is a few hundred bytes, so the fold
     /// cost more than it saved and the gated run of 2026-08-17 discarded 8 of
@@ -166,9 +166,25 @@ let compactionEvalFactAcknowledgements: [String] = [
 /// ``compactionEvalFactAcknowledgements`` states.
 let compactionEvalContextAcknowledgement = "Noted — I have the background in mind."
 
-/// Every hand-written fixture (compaction_plan.md §5): 24 seed transcripts —
-/// well over the required 20–30 — spanning single- and multi-fact heads,
-/// plain-reply and tool-traffic delivery, and short-to-long overall lengths.
+/// Every hand-written fixture: seven seed transcripts spanning single- and
+/// multi-fact heads, plain-reply and tool-traffic delivery, and short-to-long
+/// recency windows.
+///
+/// These are exactly the seeds ``compactionEvalRepresentativeSubsetIDs`` names,
+/// which is the whole dataset the one gated fact-retention tier measures. The
+/// dataset held 24 fixtures until task ^k0d30s4, of which a second gated tier
+/// measured all 24 and this tier measured these seven. A tier of 24 seeds costs
+/// more than six minutes at the canary's own measured rate, so it could not
+/// hold that task's two-minute budget for every integration test, and the user
+/// answered it by making the TEST smaller rather than by keeping a tier no
+/// everyday command runs: the seventeen fixtures no gated tier would have
+/// folded went with it.
+///
+/// So the dataset and the gated tier now hold the same seeds. What the seven
+/// must carry between them is held by
+/// `CompactionEvalRepresentativeSubsetTests`, which reads them against absolute
+/// bars rather than against the dataset — a comparison of the dataset with
+/// itself would state nothing.
 let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
     CompactionEvalFixtureSpec(
         id: "env-file",
@@ -196,55 +212,6 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         recentTurnCount: 4
     ),
     CompactionEvalFixtureSpec(
-        id: "tabs-vs-spaces",
-        context: """
-            Background for this session: the repository formats every source file with one shared
-            configuration, checked in beside the code, and a commit hook rejects a file the formatter would
-            change. The configuration fixes the line width at one hundred and twenty columns, forbids
-            trailing whitespace, and requires a newline at the end of every file. It says nothing about the
-            order of imports, which is the one thing reviewers still argue about, and nothing about comment
-            wrapping, which the formatter leaves alone entirely. The hook runs only on the files a commit
-            touches, so a change to the configuration itself does not reformat the whole tree; that is done
-            deliberately, in one commit of its own, so the history stays readable afterwards. Generated
-            sources are excluded by a list of paths rather than by a marker comment, because two of the
-            generators write no header at all. The team reviews that exclusion list once a quarter and has
-            removed two entries from it so far. Two long-lived branches were rebased onto the formatting
-            commit rather than merged across it, because a merge across a whole-tree reformat produces
-            conflicts in every file it touches and resolves none of them usefully. Reply with one short
-            sentence acknowledging this.
-            """,
-        facts: ["The team chose tabs over spaces for indentation in this repository."],
-        probedFactIndex: 0,
-        factKeyPhrase: "tabs",
-        question: "What indentation style did the team choose for this repository?",
-        probedFactViaTool: false,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "vault-code",
-        context: """
-            Background for this session: every credential this project needs is held in one managed store,
-            and nothing is read from a file on disk. Each service reads the store at startup with a
-            short-lived token the platform mints for it, and the token is refreshed on a timer well before
-            it expires, so a service that runs for weeks never has to be restarted for a credential alone.
-            Access is granted per service rather than per person, and a person who needs to read a value
-            does it through a command that records who asked and why. Values rotate on a fixed schedule, and
-            a rotation writes the new value beside the old one for a grace period, so a service that has not
-            refreshed yet keeps working. The store keeps a full audit trail, which is the reason nothing is
-            copied out of it into a ticket or a chat message. Two values are exempt from rotation because
-            the systems behind them cannot accept a new value without downtime, and both are tracked as open
-            work. A separate copy of the store runs for the staging environment, holding values that look
-            like the production ones but are not, so a service pointed at the wrong environment fails to
-            authenticate rather than reading live data. Reply with one short sentence acknowledging this.
-            """,
-        facts: ["The project's internal vault code is CRIMSON-77; it must be remembered precisely."],
-        probedFactIndex: 0,
-        factKeyPhrase: "CRIMSON-77",
-        question: "What is the exact vault code for this project?",
-        probedFactViaTool: false,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
         id: "db-port",
         context: """
             Background for this session: the staging environment runs its own copy of the database, restored
@@ -266,101 +233,6 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         factKeyPhrase: "6543",
         question: "What port does the staging database listen on?",
         probedFactViaTool: true,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "release-branch",
-        context: """
-            Background for this session: the project ships on a two-week cadence, and every shipped build
-            carries a tag naming the version it was cut at. The changelog is assembled from the commit
-            subjects between two tags, so a commit whose subject says nothing useful shows up in the notes
-            exactly as written, which is why the subject line is reviewed as carefully as the code. A
-            release build is produced once and promoted through the environments unchanged; nothing is
-            rebuilt for production, because a rebuild would not be the artifact that was tested. A fix that
-            cannot wait for the next cadence is applied on top of the tag it fixes and shipped as a patch
-            version, and the same fix is carried forward separately rather than merged backwards. The
-            release itself is done by whoever is on the rotation that week, following a written checklist,
-            and the checklist is updated in the same change as any process that alters it. Anything that
-            changes the database is released separately from the code that depends on it, at least one
-            cadence earlier, so a rollback of the code never has to be paired with a rollback of the schema.
-            Reply with one short sentence acknowledging this.
-            """,
-        facts: ["Releases are cut from the `release/stable` branch, never directly from `main`."],
-        probedFactIndex: 0,
-        factKeyPhrase: "release/stable",
-        question: "Which branch are releases cut from?",
-        probedFactViaTool: false,
-        recentTurnCount: 5
-    ),
-    CompactionEvalFixtureSpec(
-        id: "allergy",
-        context: """
-            Background for this session: the user is planning a week of meals for a household of four,
-            cooking on weekday evenings and once at the weekend, with leftovers expected to cover two
-            lunches. The kitchen is small, with one oven and two working burners, so a plan that needs three
-            pans going at once is not practical however good it reads. Shopping happens once a week, on
-            Saturday morning, at one supermarket rather than a specialist grocer, so ingredients that need a
-            special trip are out of scope unless the recipe is worth the trip on its own. The household
-            prefers meals that reheat well, since the second serving is eaten a day or two later rather than
-            the same evening. Two of the four eat very little red meat by preference rather than by rule.
-            The user is happy to cook something new but wants the shopping list to stay under about twenty
-            items in total across the whole week. One member of the household eats at a different time on
-            Wednesdays, so that evening's meal has to hold for an hour without spoiling or has to be
-            something that reheats in a single portion. Reply with one short sentence acknowledging this.
-            """,
-        facts: ["The user is allergic to shellfish and must never be given a recipe containing it."],
-        probedFactIndex: 0,
-        factKeyPhrase: "shellfish",
-        question: "What food allergy does the user have?",
-        probedFactViaTool: false,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "flight-number",
-        context: """
-            Background for this session: the user is travelling for a week-long conference and is booking
-            the trip in pieces rather than as a package, so the flights, the hotel and the ground transport
-            are each held separately. The outbound leg is already booked and leaves early enough that the
-            user plans to stay near the airport the night before rather than risk the morning traffic. The
-            return leg matters more than the outbound one, because a meeting is scheduled for the following
-            morning and a delay would cost that meeting rather than an evening. Checked baggage is being
-            avoided entirely, so everything has to fit in one cabin bag within the carrier's size limit. The
-            user holds no status with the carrier and is not paying for a seat selection, so a middle seat
-            is a real possibility on both legs. Travel insurance is bought through the user's own provider
-            rather than the carrier's, and it requires the booking references to be filed within a week of
-            purchase. The carrier changed its cabin bag policy this year and now weighs bags at the gate on
-            the busier routes, so the user is packing to the weight limit rather than to the size limit
-            alone. Reply with one short sentence acknowledging this.
-            """,
-        facts: ["The user's return flight number is BA-249, departing from gate 12."],
-        probedFactIndex: 0,
-        factKeyPhrase: "BA-249",
-        question: "What is the user's return flight number?",
-        probedFactViaTool: true,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "codename",
-        context: """
-            Background for this session: the new feature has been in design for about a month and is now
-            moving into build, with a small team of three and a target of a first internal demo before the
-            end of the quarter. The feature is being built behind a flag from the first commit, so it can
-            ship dark and be turned on for a handful of internal accounts before anyone outside sees it. The
-            design work produced two documents, one describing what the feature does and one describing what
-            it deliberately does not do, and the second has been the more useful of the two in review.
-            Nothing about the work is public yet, and the marketing team has not been briefed, so anything
-            written down about it stays in the internal tracker rather than in a public issue. The team has
-            agreed that the first release covers a single workflow end to end rather than several workflows
-            partially, because a half-finished second workflow is worse than an absent one. A second team
-            owns the surface the feature plugs into and has asked for two weeks of notice before anything
-            lands there, which is the constraint that actually decides the demo date. Reply with one short
-            sentence acknowledging this.
-            """,
-        facts: ["The internal codename for the new feature is \"Project Longbow\"."],
-        probedFactIndex: 0,
-        factKeyPhrase: "Longbow",
-        question: "What is the internal codename for the new feature?",
-        probedFactViaTool: false,
         recentTurnCount: 4
     ),
     CompactionEvalFixtureSpec(
@@ -391,111 +263,6 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         recentTurnCount: 4
     ),
     CompactionEvalFixtureSpec(
-        id: "meeting-time-and-reviewer",
-        context: """
-            Background for this session: the team works asynchronously most of the week and keeps exactly
-            one recurring meeting, which exists to surface blockers rather than to give status, since status
-            is written down where anyone can read it. The agenda is built from whatever people add to a
-            shared document before the meeting starts, and an empty agenda means the meeting is cancelled
-            rather than filled. Decisions taken in the meeting are written back into the tracker the same
-            day, because a decision that lives only in someone's memory is a decision that will be
-            relitigated. Code review is expected to happen within a working day, and a review that will take
-            longer than that is expected to say so rather than sit silently. Nobody merges their own work
-            without a second pair of eyes, however small the change, and the team has held that line even
-            for one-line fixes because the exceptions were where the incidents came from. Reviews are
-            assigned rather than volunteered, on a rotation that spreads the load, because the volunteer
-            model left the same two people doing most of the reviewing and everyone else out of practice.
-            Reply with one short sentence acknowledging this.
-            """,
-        facts: [
-            "The weekly sync moved from Tuesday to Thursday at 3pm.",
-            "Every pull request against `main` needs sign-off from Priya before merging.",
-        ],
-        probedFactIndex: 1,
-        factKeyPhrase: "Priya",
-        question: "Whose sign-off is required before merging a pull request against main?",
-        probedFactViaTool: false,
-        recentTurnCount: 5
-    ),
-    CompactionEvalFixtureSpec(
-        id: "pet-name-and-vet",
-        context: """
-            Background for this session: the user adopted an adult cat about eighteen months ago, from a
-            shelter that had taken her in as a stray, so nothing is known about the first few years of her
-            life. She is indoor-only, with access to a covered balcony, and she has settled well apart from
-            a strong dislike of the carrier, which makes any trip out of the flat a planned event rather
-            than a spontaneous one. Her weight was slightly high at the last check and the plan since then
-            has been measured meals twice a day rather than a full bowl left out, which has worked. She is
-            microchipped and the registration details were updated when the user moved last spring. Her
-            vaccinations are up to date and were given at the shelter's own clinic before the adoption, so
-            the records had to be transferred rather than started fresh. She has never needed treatment for
-            anything beyond a mild ear infection in her first winter. She is due for her annual check and a
-            dental assessment, and the dental part is new: the last visit noted some tartar and suggested it
-            be looked at properly within the year. Reply with one short sentence acknowledging this.
-            """,
-        facts: [
-            "The user's cat is named Biscuit.",
-            "Biscuit's vet appointment is booked for the 14th at the Riverside clinic.",
-        ],
-        probedFactIndex: 1,
-        factKeyPhrase: "Riverside",
-        question: "Where is Biscuit's vet appointment booked, and for which date?",
-        probedFactViaTool: false,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "wifi-and-guest-policy",
-        context: """
-            Background for this session: the office network is split into two, with staff devices on one
-            segment and everything else on another, and the two cannot reach each other at all. Printers,
-            meeting-room displays and the door system sit on the second segment, which is why a laptop that
-            has joined the wrong network can print but cannot reach the file server. The wireless coverage
-            was surveyed when the floor was fitted out, and there are four access points, one of which is
-            behind a fire door and is noticeably weaker than the other three. There is no wired networking
-            at the desks, so a device that cannot join the wireless network cannot get online at all. The
-            office manager keeps a written record of which devices are permanently on the second segment,
-            and adding one is a request rather than something a person does themselves. A rolling password
-            change happens twice a year, announced a week in advance. Visitors are common, several a week,
-            and the current arrangement puts them on the same segment as the printers, which the office
-            manager has flagged as something to revisit. Reply with one short sentence acknowledging this.
-            """,
-        facts: [
-            "The office wifi password is printed on the back of the router, not shared over chat.",
-            "Guests must be signed in at the front desk before receiving the wifi password.",
-        ],
-        probedFactIndex: 0,
-        factKeyPhrase: "router",
-        question: "Where is the office wifi password printed, and is it ever shared over chat?",
-        probedFactViaTool: true,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "recipe-substitution-and-timing",
-        context: """
-            Background for this session: the recipe under discussion is a batch of shortbread-style
-            biscuits, scaled to about thirty pieces, and it is being adapted for a bake sale rather than for
-            a household. That changes a few things: the biscuits have to survive a few hours in a box
-            without going soft, they have to be recognisable enough that a buyer knows what they are, and
-            every ingredient has to be listed on a card beside the tray. The recipe as written uses very few
-            ingredients, which is why each one carries a lot of weight and a careless substitution is
-            obvious in the result. The baker has one domestic oven and two trays, so the batch is baked in
-            three rounds and the last round waits at room temperature while the first two bake. Weighing is
-            done on a digital scale rather than by cup measures, because the dough is sensitive to the ratio
-            and volume measures vary too much between people. The sale is outdoors and the forecast is warm,
-            which rules out anything that softens above room temperature and is part of why this recipe was
-            chosen over the other candidate. Reply with one short sentence acknowledging this.
-            """,
-        facts: [
-            "In this recipe, butter can be substituted with coconut oil in equal measure.",
-            "The dough needs to rest in the fridge for at least 45 minutes before baking.",
-        ],
-        probedFactIndex: 0,
-        factKeyPhrase: "coconut oil",
-        question: "What can butter be substituted with in this recipe, and in what ratio?",
-        probedFactViaTool: false,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
         id: "budget-cap-tool-and-owner",
         context: """
             Background for this session: the project runs entirely on managed cloud services, with no
@@ -520,160 +287,6 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         question: "What is the monthly cloud spend cap for this project?",
         probedFactViaTool: true,
         recentTurnCount: 6
-    ),
-    CompactionEvalFixtureSpec(
-        id: "server-hostname",
-        context: """
-            Background for this session: the staging environment is deliberately small, one machine for the
-            application and one for the database, and it is rebuilt from configuration rather than patched
-            in place, so a machine that drifts is replaced rather than repaired. Names are assigned from a
-            scheme that encodes the environment and the role, and the scheme is documented in the runbook,
-            which is where anyone looking for a machine starts. Access is through a bastion host with
-            per-person keys, and no shared account exists on any machine. Logs are shipped off the machines
-            as they are written, so nothing important is lost when a machine is replaced, and the shipped
-            copy is what people actually read. Monitoring watches the application rather than the machine,
-            on the reasoning that a machine at full memory serving traffic correctly is not an incident. The
-            environment is rebuilt from scratch about once a month, deliberately, to prove that the rebuild
-            still works. There is exactly one machine of each role, so there is no load balancer in front of
-            anything, and a rebuild is therefore a short outage of the environment rather than a rolling
-            change. Reply with one short sentence acknowledging this.
-            """,
-        facts: ["The internal staging server's hostname is `stg-node-07.internal`."],
-        probedFactIndex: 0,
-        factKeyPhrase: "stg-node-07",
-        question: "What is the internal staging server's hostname?",
-        probedFactViaTool: true,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "travel-itinerary-hotel",
-        context: """
-            Background for this session: the conference runs over four days and the user is attending all of
-            it, arriving the evening before the first session and leaving the morning after the last. The
-            venue is a short walk from the main station, and the user would rather walk than deal with
-            taxis, which is the main thing shaping where to stay. Breakfast is not included at most of the
-            nearby options, and the user is content with that because the conference provides it on three of
-            the four mornings. The trip is being expensed, so every receipt has to be kept and the total has
-            to stay within a stated daily limit, which rules out the two venues attached to the conference
-            centre itself. The user is travelling alone but sharing a dinner with colleagues on the second
-            evening, booked separately. A quiet room matters more than a large one, because the user plans
-            to work in the room for an hour each evening. Check-in on the arrival evening will be late,
-            after nine, so anywhere with a staffed desk only until eight has been ruled out however
-            convenient it otherwise looked. Reply with one short sentence acknowledging this.
-            """,
-        facts: ["The hotel reservation for the conference is under the name \"Aldergate Inn\", confirmation JH-3391."],
-        probedFactIndex: 0,
-        factKeyPhrase: "JH-3391",
-        question: "What hotel is the conference reservation under, and what is the confirmation code?",
-        probedFactViaTool: false,
-        recentTurnCount: 5
-    ),
-    CompactionEvalFixtureSpec(
-        id: "three-facts-migration",
-        context: """
-            Background for this session: the release under discussion changes a table that every request
-            touches, so the order of operations matters more than usual and the team has written the steps
-            down rather than trusting anyone to remember them. The change is being done in two releases
-            rather than one: the first adds the new column and writes to both, and the second stops writing
-            the old one once the backfill has finished and been checked. That shape means the application
-            has to tolerate both states, which is more code in the short term and far less risk. The
-            backfill runs in batches with a pause between them so it does not starve live traffic, and it
-            can be stopped and resumed without losing its place. The whole sequence has been rehearsed
-            against a copy of production data, and the rehearsal is where the batch size was chosen, because
-            the first guess was four times too large. The new column is nullable for the whole of the first
-            release and is made required only after the backfill is verified, because a required column with
-            a default rewrites the table on some engines. Reply with one short sentence acknowledging this.
-            """,
-        facts: [
-            "The database migration must run before the API deploy, never after.",
-            "The migration script lives at `scripts/migrate_2026_07.sql`.",
-            "A rollback script exists at `scripts/rollback_2026_07.sql` in case the migration fails.",
-        ],
-        probedFactIndex: 2,
-        factKeyPhrase: "rollback_2026_07",
-        question: "Where is the rollback script for the migration located?",
-        probedFactViaTool: false,
-        recentTurnCount: 4
-    ),
-    CompactionEvalFixtureSpec(
-        id: "three-facts-onboarding",
-        context: """
-            Background for this session: the team hires in small numbers and treats the first fortnight as
-            structured rather than improvised, with a written plan that the new joiner owns and edits as
-            they go. The plan front-loads reading and pairing rather than tickets, on the reasoning that a
-            person who understands why the system is shaped the way it is will pick up the work quickly,
-            while a person handed a ticket on day one learns one corner and nothing else. Every new joiner
-            ships something small to production in their first few days, deliberately, so the release path
-            is familiar before it matters. Accounts and access are requested ahead of the start date rather
-            than on it, because two of the systems take days to approve. The plan is reviewed at the end of
-            the fortnight and edited for the next person, so it improves with each hire rather than aging
-            quietly in a folder somewhere. Pairing is scheduled rather than left to chance, one session a
-            day for the first week, and the partner rotates so the new joiner meets most of the team rather
-            than one person repeatedly. Reply with one short sentence acknowledging this.
-            """,
-        facts: [
-            "New hires get access to the design system Figma file on day one.",
-            "New hires do not get production database access until after their second week.",
-            "The onboarding buddy for new hires this quarter is Sana.",
-        ],
-        probedFactIndex: 1,
-        factKeyPhrase: "second week",
-        question: "When do new hires get production database access?",
-        probedFactViaTool: false,
-        recentTurnCount: 6
-    ),
-    CompactionEvalFixtureSpec(
-        id: "game-strategy-and-seed",
-        context: """
-            Background for this session: the playthrough under discussion is a four-character party on the
-            harder of the two difficulty settings, where enemy damage is high enough that a single badly
-            ordered round can end a fight. The party has settled into a shape after about twenty hours: one
-            character absorbs damage, one heals and cleanses, one deals damage at range and one handles the
-            utility abilities that open shortcuts and disarm traps. Consumables are plentiful and the party
-            has stopped hoarding them, which was the main thing holding the run back earlier. Equipment
-            upgrades come mostly from crafting rather than from drops, and the crafting materials are the
-            real bottleneck. Save points are frequent enough that a lost fight costs a few minutes rather
-            than an hour, so the run is being played fairly aggressively. The user is not following a guide
-            and would rather work things out than be told the optimal answer. The party has skipped most of
-            the optional content so far and is now going back for it, which is why the current area is well
-            below the party level and the fights are short. Reply with one short sentence acknowledging
-            this.
-            """,
-        facts: [
-            "In this playthrough, the party's healer should always act before the mage in turn order.",
-            "The current dungeon seed is 8821, noted for a guaranteed rare drop on floor 3.",
-        ],
-        probedFactIndex: 1,
-        factKeyPhrase: "8821",
-        question: "What is the current dungeon seed, and what is it noted for?",
-        probedFactViaTool: false,
-        recentTurnCount: 5
-    ),
-    CompactionEvalFixtureSpec(
-        id: "config-flag-and-owner",
-        context: """
-            Background for this session: every behavioural change in this service ships behind a flag, and
-            the flags are held in one service rather than in configuration files, so a flag can be turned on
-            and off without a deploy. A flag is expected to be short-lived: it exists to separate the deploy
-            from the release, and once a behaviour is on everywhere and has been for a while, the flag and
-            the old code path are deleted together. A flag that has been at one value for more than a
-            quarter is reported automatically, and the report is reviewed rather than ignored. Flags default
-            to off, and a flag whose lookup fails returns the default rather than throwing, so an outage of
-            the flag service degrades to the old behaviour instead of an error. Each flag records who
-            created it and what it is for, because a flag with no owner is one nobody dares to remove and
-            one nobody remembers. The flag service is read through a client that caches for a few seconds,
-            so a change takes effect quickly but not instantly, and anything that needs an instant change is
-            not a flag. Reply with one short sentence acknowledging this.
-            """,
-        facts: [
-            "The feature flag `enable-fast-path` must stay off in production until QA signs off.",
-            "QA sign-off for `enable-fast-path` is owned by the platform team, not the feature team.",
-        ],
-        probedFactIndex: 1,
-        factKeyPhrase: "platform team",
-        question: "Which team owns QA sign-off for the `enable-fast-path` flag?",
-        probedFactViaTool: true,
-        recentTurnCount: 4
     ),
     CompactionEvalFixtureSpec(
         id: "three-facts-support-escalation",
@@ -702,30 +315,6 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         question: "After how long does a tier-1 support ticket escalate to tier-2?",
         probedFactViaTool: false,
         recentTurnCount: 7
-    ),
-    CompactionEvalFixtureSpec(
-        id: "printer-and-supply-closet",
-        context: """
-            Background for this session: the office occupies two floors of a shared building, with the
-            shared facilities split between them rather than duplicated, so almost everything is a short
-            walk away rather than on the same floor. The building's own post arrives once a day and is
-            sorted by the front desk. There is one multifunction device for the whole office, on the third
-            floor near the meeting rooms, and it handles printing, scanning and copying for both floors. It
-            is set up to hold a job until the person who sent it releases it at the panel, which was
-            introduced after too many uncollected pages piled up on the tray. Scanning goes to email rather
-            than to a shared folder. Consumables are ordered monthly against a standing list, and anything
-            used up between orders is raised with the office manager rather than bought ad hoc, which keeps
-            the spend predictable and the deliveries to one a month. The device is on a service contract
-            that covers parts and labour but not consumables, and a callout takes two working days, which is
-            the reason a spare of everything is kept on site. Reply with one short sentence acknowledging
-            this.
-            """,
-        facts: ["The office printer's spare toner cartridges are kept in the third-floor supply closet, not the mailroom."],
-        probedFactIndex: 0,
-        factKeyPhrase: "supply closet",
-        question: "Where are the spare printer toner cartridges kept?",
-        probedFactViaTool: false,
-        recentTurnCount: 4
     ),
     CompactionEvalFixtureSpec(
         id: "encryption-algorithm",
@@ -787,20 +376,19 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
 /// under test).
 let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(CompactionEvalSeed.build(from:))
 
-/// The fixtures the DEFAULT real-model tier measures — a representative subset
-/// of ``compactionEvalFixtureSpecs``, not its first few.
+/// The fixtures the one gated real-model tier measures.
 ///
 /// Every seed costs two real generations, one summarizer call inside the fold
-/// and one answering turn on the resumed session, so the whole dataset does not
-/// fit a wall-clock limit anyone runs by habit. The everyday real-model command
-/// therefore measures these seeds, and steps the whole-dataset tier aside with
-/// `--skip CompactionEvalFullDataset` (task ^fz49qds).
+/// and one answering turn on the resumed session, so a tier is priced in seeds:
+/// ``compactionEvalSubsetTimeLimitMinutes`` derives its wall clock from this
+/// count. Seven is what fits task ^k0d30s4's two-minute budget for every
+/// integration test, and the dataset was cut to these seven when the user
+/// settled that budget, so this list and ``compactionEvalFixtureSpecs`` now name
+/// the same fixtures. It is still stated separately, because it is what the tier
+/// ASKS FOR — a run that measured fewer seeds than this list names has left
+/// seeds unreached, and ``CompactionEvalFactRetentionReport`` says which.
 ///
-/// What that costs is stated plainly: `factRetention >= 0.9` is measured over
-/// this subset by default, and the whole-dataset number comes only from the
-/// opt-in run.
-///
-/// Chosen for coverage. The dataset varies four things — how many facts the
+/// Chosen for coverage. Four things vary across them — how many facts the
 /// foldable head states, which of them the question probes, whether the probed
 /// fact arrives as tool traffic or as a plain reply, and how many filler turns
 /// pad the untouchable recency window. Each member is here for a property it
@@ -808,17 +396,18 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 ///
 /// | fixture | head | probed fact | delivery | recency window |
 /// |---|---|---|---|---|
-/// | `env-file` | one fact | the only one | plain reply | 4 — the dataset's shortest |
+/// | `env-file` | one fact | the only one | plain reply | 4 — the shortest here |
 /// | `db-port` | one fact | the only one | tool traffic | 4 |
 /// | `encryption-algorithm` | one fact | the only one | tool traffic | 5 |
 /// | `license-key-and-region` | two facts | the second, so the last of its head | plain reply | 4 |
 /// | `budget-cap-tool-and-owner` | two facts | the first, so a fact the summary must reach past its sibling for | tool traffic | 6 |
-/// | `three-facts-support-escalation` | three facts | the first of three | plain reply | 7 — the dataset's longest |
+/// | `three-facts-support-escalation` | three facts | the first of three | plain reply | 7 — the longest here |
 /// | `three-facts-long-project-brief` | three facts | the third, so the last of its head | plain reply | 6 |
 ///
 /// `CompactionEvalRepresentativeSubsetTests` holds that coverage mechanically,
-/// against the whole dataset rather than against this list, so a fixture that
-/// widens the dataset widens what this subset must carry.
+/// against ABSOLUTE bars rather than against the dataset. It read the dataset
+/// while a second tier measured a wider one; now that the two hold the same
+/// seeds, a comparison with the dataset would pass whatever this list named.
 let compactionEvalRepresentativeSubsetIDs: [String] = [
     "env-file",
     "db-port",
@@ -833,8 +422,8 @@ let compactionEvalRepresentativeSubsetIDs: [String] = [
 /// ``compactionEvalFixtureSpecs`` states them.
 ///
 /// Filtered out of ``compactionEvalSeeds`` rather than built from a second list
-/// of specs, so a subset member is the same seed the full tier folds and the two
-/// tiers can never measure two different transcripts under one fixture id.
+/// of specs, so a seed the gated tier folds is the same seed every hermetic test
+/// of this dataset reads, under one fixture id.
 let compactionEvalRepresentativeSeeds: [CompactionEvalSeed] = compactionEvalSeeds.filter {
     compactionEvalRepresentativeSubsetIDs.contains($0.id)
 }

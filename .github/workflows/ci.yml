@@ -58,11 +58,6 @@ jobs:
       - name: Build (incl. tests)
         run: swift build --build-tests --package-path IntegrationTests
 
-      # The whole-dataset fact-retention tier is a superset of the subset tier
-      # this run measures, and its own limit is two hours, so it is stepped
-      # aside by name. Ask for it with
-      # `swift test --package-path IntegrationTests --filter CompactionEvalFullDataset`.
-      #
       # No metallib is copied beside the test bundle here, as the shared
       # workflow used to do: `MetalLibraryTestBootstrap` installs that link from
       # inside each real-model process, and `MetalLibraryBootstrapIntegrationTests`
@@ -70,5 +65,4 @@ jobs:
       - name: Run the real-model tests
         run: |
           swift test \
-            --package-path IntegrationTests \
-            --skip CompactionEvalFullDataset
+            --package-path IntegrationTests

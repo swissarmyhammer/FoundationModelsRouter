@@ -84,14 +84,10 @@ hermetic tests by construction. The real-model targets live in the nested
 swift test
 
 # Real models: downloads weights and generates on the GPU. Tens of minutes.
-swift test --package-path IntegrationTests --skip CompactionEvalFullDataset
+swift test --package-path IntegrationTests
 
 # The real-model smoke tier alone — does compaction work at all? Seconds.
 swift test --package-path IntegrationTests --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests'
-
-# The whole-dataset compaction eval, a superset of the tier the line above
-# measures. Its own limit is two hours.
-swift test --package-path IntegrationTests --filter CompactionEvalFullDataset
 ```
 
 `FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests`

@@ -6,7 +6,9 @@
 /// stand in for earlier turns and is reliable, plus a statement that the
 /// facts are fictional. Each clause is measured against
 /// `mlx-community/Llama-3.2-1B-Instruct-4bit` under greedy decoding, over the
-/// whole-dataset tier's 24 seeds (task ^e814b60, gated runs of 2026-08-19).
+/// 24 seeds of the whole-dataset tier of the day (task ^e814b60, gated runs of
+/// 2026-08-19). Task ^k0d30s4 has since deleted that tier and cut the dataset
+/// to the seven seeds the one remaining tier folds.
 /// That 1B model was ``CompactionEvalRealModel`` on the day of the
 /// measurement; task ^m03heaa has since moved this eval to Qwen2.5-3B, so the
 /// counts below are the 1B's and this header has not been re-measured against

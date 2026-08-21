@@ -15,52 +15,34 @@ import Testing
 private let compactionEvalSubsetRunner = CompactionEvalRealSubjectRunner(
     seeds: compactionEvalRepresentativeSeeds)
 
-/// The whole-dataset tier's own runner, for the same reason
-/// ``compactionEvalSubsetRunner`` is declared at file scope.
-///
-/// A second instance rather than a shared one. A runner accumulates its own
-/// per-sample evidence, and the two tiers report separate tables, so sharing one
-/// would let a table carry samples the other tier ran. The everyday command
-/// runs one of the two tiers, and a runner that never runs loads no model.
-private let compactionEvalFullDatasetRunner = CompactionEvalRealSubjectRunner(seeds: compactionEvalSeeds)
-
-/// Builds a tier's evaluation: the runner's own seeds folded with the
-/// router's default compaction prompt against a budget whose target is small
-/// enough to force the model-assisted `Summarization` stage (see
+/// The tier's evaluation: the runner's own seeds folded with the router's
+/// default compaction prompt against a budget whose target is small enough to
+/// force the model-assisted `Summarization` stage (see
 /// ``CompactionEvaluation/init(prompt:budget:seeds:includesJudgedDimensions:runSubject:)``'s
 /// own doc comment).
 ///
-/// The seed set comes from the runner rather than from a second argument, so
-/// one tier can never evaluate one set of seeds while its runner numbers its
+/// The seed set comes from the runner rather than from a second statement, so
+/// the tier can never evaluate one set of seeds while its runner numbers its
 /// progress lines and reads its unreached list against another.
 ///
-/// `includesJudgedDimensions` is `false`: the gated tiers no longer compute
-/// the judged `Faithfulness`/`Continuability` means — they measure LESS than
-/// a judged run. No assertion ever read those means, and the judge's
+/// `includesJudgedDimensions` is `false`: the gated tier does not compute the
+/// judged `Faithfulness`/`Continuability` means — it measures LESS than a judged
+/// run. No assertion ever read those means, and the judge's
 /// `SystemLanguageModel` calls cost about 2.7 seconds per sample (measured
-/// 2026-08-19), which alone held the whole-dataset tier over task ^k0d30s4's
-/// two-minute budget. Construct a `CompactionEvaluation` with the default
-/// `includesJudgedDimensions: true` to score the judged dimensions again.
+/// 2026-08-19), which alone held the whole-dataset tier of the day over task
+/// ^k0d30s4's two-minute budget. Construct a `CompactionEvaluation` with the
+/// default `includesJudgedDimensions: true` to score the judged dimensions
+/// again.
 ///
-/// - Parameter runner: The runner whose resident model folds its seeds and
-///   answers their questions.
-/// - Returns: The evaluation, ready to hand to `.evaluates(...)`.
-private func makeCompactionEvalRealEvaluation(
-    driving runner: CompactionEvalRealSubjectRunner
-) -> CompactionEvaluation {
-    CompactionEvaluation(seeds: runner.seeds, includesJudgedDimensions: false) {
-        entries, prompt, budget, question in
-        try await runner.run(entries: entries, prompt: prompt, budget: budget, question: question)
-    }
+/// Built here rather than by a factory. A factory took the runner as an
+/// argument while TWO tiers each built one of these; task ^k0d30s4 deleted the
+/// whole-dataset tier, so one caller was left and the argument had one value.
+private let compactionEvalSubsetEvaluation = CompactionEvaluation(
+    seeds: compactionEvalSubsetRunner.seeds, includesJudgedDimensions: false
+) { entries, prompt, budget, question in
+    try await compactionEvalSubsetRunner.run(
+        entries: entries, prompt: prompt, budget: budget, question: question)
 }
-
-/// The default tier's evaluation, over ``compactionEvalRepresentativeSeeds``.
-private let compactionEvalSubsetEvaluation = makeCompactionEvalRealEvaluation(
-    driving: compactionEvalSubsetRunner)
-
-/// The opt-in tier's evaluation, over every hand-written fixture.
-private let compactionEvalFullDatasetEvaluation = makeCompactionEvalRealEvaluation(
-    driving: compactionEvalFullDatasetRunner)
 
 /// States the bar ``expectFactRetention(of:)`` really applied.
 ///
@@ -95,11 +77,8 @@ private func compactionEvalFactRetentionBar(floor: Double, measured: Int, of tot
         + ", and the run stopped short of the tier's \(total) seeds, which need \(whole)"
 }
 
-/// Prints one tier's per-sample evidence, then asserts the two bars its samples
+/// Prints the tier's per-sample evidence, then asserts the two bars its samples
 /// are held to.
-///
-/// Shared by both tiers so the two can never drift into measuring the same
-/// metric two ways.
 ///
 /// Two assertions rather than one, because the tier spans two steps. The FOLD
 /// has to write a summary carrying the planted fact, and the resumed session has
@@ -155,11 +134,11 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
     )
 }
 
-/// The DEFAULT real-model eval (compaction_plan.md §5's
+/// The real-model fact-retention eval (compaction_plan.md §5's
 /// `@Test(.evaluates(...))` sketch): folds each seed of
 /// ``compactionEvalRepresentativeSeeds`` with the router's default compaction
 /// prompt, resumes a session over each result, asks its question, and asserts
-/// the summary and answer fact-retention shares over the subset against
+/// the summary and answer fact-retention shares against
 /// ``compactionEvalSummaryFactRetentionFloor`` and
 /// ``compactionEvalAnswerFactRetentionFloor``.
 ///
@@ -171,17 +150,21 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
 ///
 /// The TARGET is what selects this suite, and it carries no `.enabled(if:)` of
 /// its own — see ``GatedEvalSerialGate`` for the commands that ask for this
-/// target and the command that leaves it out. It never runs on a
-/// network/GPU-less box because nothing there names the real-model targets.
+/// target. It never runs on a network/GPU-less box because nothing there names
+/// the real-model targets.
 ///
-/// It measures a subset rather than the whole dataset because the whole dataset
-/// does not fit a limit anyone runs by habit — see
-/// ``compactionEvalRepresentativeSubsetIDs`` for what the subset carries and
-/// ``compactionEvalSubsetTimeLimitMinutes`` for the measurement behind its
-/// limit. ``CompactionEvalFullDatasetIntegrationTests`` is the whole-dataset
-/// tier, and the everyday command steps that tier aside with one
-/// `--skip CompactionEvalFullDataset` rather than measuring the same seeds
-/// twice.
+/// ## What it NO LONGER proves (task ^k0d30s4)
+///
+/// A second tier folded 24 hand-written fixtures until 2026-08-21, and this one
+/// folded seven of them. 24 seeds cost more than six minutes at the canary's own
+/// measured rate, so that tier could not hold the two-minute budget for every
+/// integration test, and the answer was to make the test smaller: the tier went,
+/// and the seventeen fixtures no other tier folded went with it. So no gated run
+/// measures the fold against a fixture outside these seven any more. What the
+/// seven still span is stated by ``compactionEvalRepresentativeSubsetIDs`` and
+/// held mechanically by `CompactionEvalRepresentativeSubsetTests`, and
+/// ``compactionEvalSubsetTimeLimitMinutes`` carries the measurement behind the
+/// limit.
 ///
 /// This suite was long described here as blocked by an MLX `default.metallib`
 /// load failure that no real-model suite in this repository could get past.
@@ -208,38 +191,5 @@ struct CompactionEvaluationIntegrationTests {
     )
     func evaluateCompaction() async {
         await expectFactRetention(of: compactionEvalSubsetRunner)
-    }
-}
-
-/// The opt-in whole-dataset tier of the same eval: every hand-written fixture,
-/// held to the same ``compactionEvalSummaryFactRetentionFloor`` and
-/// ``compactionEvalAnswerFactRetentionFloor``.
-///
-/// Its dataset is a superset of the default tier's, so an everyday real-model
-/// run steps it aside rather than measuring the same seeds twice ahead of it:
-/// `swift test --package-path IntegrationTests` carries
-/// `--skip CompactionEvalFullDataset`. Ask for this tier by naming it, with
-/// `swift test --package-path IntegrationTests --filter CompactionEvalFullDataset`. Its limit is
-/// ``compactionEvalFullDatasetTimeLimitMinutes``, which is why the everyday run
-/// does not pay for it.
-///
-/// Named so it does not carry `CompactionEvaluationIntegrationTests` as a
-/// substring: `swift test --filter` takes a regular expression, and a name that
-/// contained the default tier's would make the everyday targeted command select
-/// both tiers.
-@Suite(
-    .exclusiveResidentModel(of: compactionEvalFullDatasetRunner),
-    .timeLimit(.minutes(compactionEvalFullDatasetTimeLimitMinutes))
-)
-struct CompactionEvalFullDatasetIntegrationTests {
-    @Test(
-        "Compaction retains pre-fold facts across the whole dataset",
-        .evaluates(
-            compactionEvalFullDatasetEvaluation,
-            info: ["promptName": CompactionPrompt.default.name]
-        )
-    )
-    func evaluateCompactionOverEverySeed() async {
-        await expectFactRetention(of: compactionEvalFullDatasetRunner)
     }
 }

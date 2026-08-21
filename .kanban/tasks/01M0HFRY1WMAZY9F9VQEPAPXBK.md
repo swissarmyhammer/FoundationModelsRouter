@@ -1,8 +1,22 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8980'
+comments:
+- actor: claude-code
+  id: 01m0j40hkm2q11h129msy221ns
+  text: |-
+    ### Closed by the user, 2026-08-21
+
+    The user closed this card without work.
+
+    The measurement that opened it stays true: on 2026-08-20 the seed `three-facts-support-escalation` cost 15.9 s in the 7-fixture run and 82.4 s in the 24-fixture run, on one day, at identical work — two summarizer calls and 1948 summary bytes in both, under greedy decoding.
+
+    The card is also largely moot now. Task ^k0d30s4 cuts the dataset to seven fixtures and deletes the whole-dataset tier, so no gated tier runs long enough for the fall to accumulate. The fall was measured across a 24-sample run; the surviving tier holds 7 samples and measured 63.3 s.
+
+    If a long run is ever needed again, this card holds the measurement to start from.
+  timestamp: 2026-08-21T12:16:27.252357+00:00
+position_column: done
+position_ordinal: ffde80
 title: The eval tiers lose 5x of generation throughput as a run goes on, at identical work
 ---
 Found while task ^5q0vv85 timed the whole-dataset compaction eval tier's own samples.

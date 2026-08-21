@@ -77,8 +77,10 @@ enum GatedSuiteSerialGate {
 /// Every `@Test` of this target, in three whole runs on one Apple silicon box
 /// with every model already in the Hugging Face cache. Run 1 stands before this
 /// task's conversion of the compaction round trip, run 2 after it, and run 3 is
-/// the shipped configuration — `swift test --package-path IntegrationTests
-/// --skip CompactionEvalFullDataset`, the command CI runs, under this budget.
+/// the configuration of the day — `swift test --package-path IntegrationTests`
+/// with the whole-dataset eval tier stepped aside by name, under this budget.
+/// Task ^k0d30s4 has since deleted that tier, so the command CI runs is now the
+/// nested package whole.
 ///
 /// Three runs rather than one, because one run states no spread and this target
 /// has a wide one. Most suites here take the provider's default sampling —

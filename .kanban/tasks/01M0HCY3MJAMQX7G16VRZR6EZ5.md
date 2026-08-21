@@ -99,6 +99,20 @@ comments:
     - review: clean — 0 findings; the reviewer verified all three new claims against the `ba8ff43b` fork checkout, including the reversed one about a fork naming its parent's cache; task moved to `done`
     - filed: ^8894h7j for a stale test path in a paragraph the sweep rewrote
   timestamp: 2026-08-21T07:16:45.037303+00:00
+- actor: claude-code
+  id: 01m0hk87waq3jfk7vg6zrs003s
+  text: |-
+    ### review — addendum, two questions closed
+
+    A second read of the source asked two questions about the new text. I closed both. The verdict does not change.
+
+    **Question 1. Does the fork name the same cache?** The executor part is true word for word: `sessionCacheKey(for:modelID:)` reads `request.transcript.first` and uses `firstEntry.id`. The second part is a result of this: a child made from the transcript of the parent keeps the first entry, thus it keeps the same key. Apple supplies `LanguageModelSession(model:tools:transcript:)`, and its source is not open, thus you cannot read the proof there. But this repository already depends on the same property, and tests cover it. `RecordingLanguageModel` removes duplicate entries by `Transcript.Entry.id` with `TranscriptDiffer.diffByEntryId`. `RoutedSessionActorCompaction` calls that function after `compact()` puts a new session in place through the same initializer that `makeFork()` uses, and the comment on that path says the folded transcript has "no new entry ids". If the initializer made new ids, this de-duplication would fail. The root `swift test` gives 1026 tests in 96 suites, all passed. Thus the statement in `plan.md` has support in this repository. It is not only a deduction.
+
+    **Question 2. Does "the pinned revision" say too much?** Two lines in the list of milestones say "the pinned `mlx-swift-lm` revision does carry a prompt cache" and do not name the package. This is true for the `IntegrationTests` pin at `ba8ff43b` only. The root pin at `acc9205` has no `ExecutorPromptCache.swift`, and its `MLXLanguageModel.swift` has five sites with a fixed `cachedTokenCount: 0`. Both lines send the reader to "Backends" and "Sessions & KV cache" for the citation, and those sections name the package and the revision. The document also has the heading "A local hazard, not a repository defect", which tells the reader to read the revision of the package that runs before the reader trusts a claim about the fork. Thus the document gives the correct qualification, and no reader goes to a dead end. I record the two lines here for the next reader. They do not block this card.
+
+    - evidence: `Sources/FoundationModelsRouter/Recording/TranscriptDiffer.swift` (`diffByEntryId`), `Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift`, `Sources/FoundationModelsRouter/Recording/RecordingLanguageModel.swift`. The root checkout `.build/checkouts/mlx-swift-lm` at `acc9205` has no `ExecutorPromptCache.swift`.
+    - next: none. The card stays in `done`.
+  timestamp: 2026-08-21T07:23:33.642237+00:00
 position_column: done
 position_ordinal: ffdd80
 title: plan.md and the KV-cache test comment state a stale reason for the red cachedTokenCount test

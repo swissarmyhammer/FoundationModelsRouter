@@ -14,18 +14,26 @@ import Testing
 /// exactly the acceptance criteria that do not need a real model to verify.
 @Suite("CompactionEvaluation hermetic wiring")
 struct CompactionEvaluationHermeticTests {
-    @Test("the dataset loads at least 20 hand-written seed samples")
-    func datasetLoadsAtLeast20Samples() async throws {
+    @Test("the dataset stream carries one sample for every hand-written fixture")
+    func datasetStreamCarriesEveryFixture() async throws {
+        // The wiring property, and not the dataset's SIZE. This asked for at
+        // least 20 samples while compaction_plan.md §5 asked the dataset for 20
+        // to 30 fixtures; task ^k0d30s4 cut it to the seven the one gated tier
+        // folds, so a floor of 20 measured a requirement that no longer stands.
+        // What the stream still owes is every fixture, under its own id:
+        // `CompactionEvalRepresentativeSubsetTests` states how many there are
+        // and what they carry between them.
         let evaluation = CompactionEvaluation { _, _, _, _ in
             ("unused", 0, 0, [])
         }
 
-        var count = 0
-        for try await _ in evaluation.dataset.stream {
-            count += 1
+        var streamedIDs: [String] = []
+        for try await sample in evaluation.dataset.stream {
+            streamedIDs.append(try #require(sample.expected).seedID)
         }
-        #expect(count >= 20)
-        #expect(compactionEvalSeeds.count >= 20)
+        #expect(
+            streamedIDs.sorted() == compactionEvalFixtureSpecs.map(\.id).sorted(),
+            "the dataset stream carried \(streamedIDs.sorted())")
     }
 
     @Test("subject(from:) wires up against a fake model with no real inference")
@@ -1017,7 +1025,8 @@ struct CompactionEvalSeedSizingTests {
     /// ``compactionEvalMeasuredBytesPerToken``, measured over this dataset's own
     /// prose, and a summary written in a wordier register costs more bytes for
     /// the same tokens. A third absorbs that comfortably. The measured margin is
-    /// wider still — the tightest seed sits at 2.07 as the fixtures stand.
+    /// wider still — the tightest seed, `db-port`, sits at 2.21 as the fixtures
+    /// stand: 345 estimated tokens of span against a worst case of 156.
     private static let summaryShrinkClearance = 1.5
 
     /// The largest summary a WELL-BEHAVED summarizer writes for a span this
@@ -1044,7 +1053,7 @@ struct CompactionEvalSeedSizingTests {
     /// ``Summarization/summaryTokenRatio`` of the span — only passes the floor on
     /// a span of roughly 2048 bytes or more. That branch cannot fail this bound
     /// at all: a quarter of a span, converted back into estimated tokens at the
-    /// measured rate, is `0.25 * 4.81 / 4.0` — under a third of the span it
+    /// measured rate, is `0.25 * 4.85 / 4.0` — under a third of the span it
     /// condensed — so a summary that large shrinks the transcript by
     /// construction, whatever the span. The floor is the only branch that can
     /// leave a fold no smaller than what it replaced, so the floor is what this
@@ -1060,7 +1069,7 @@ struct CompactionEvalSeedSizingTests {
     func everySeedsFoldableSpanOutweighsARealSummary() {
         // The lower bound of the band. Before task ^vjf3mdm a seed's whole span
         // was one fact sentence and its acknowledgement — a few hundred bytes,
-        // against a 128-token floor that is 616 bytes at
+        // against a 128-token floor that is 621 bytes at
         // `compactionEvalMeasuredBytesPerToken`. The fold cost more than it
         // saved, and `Compactor.compact` was right to throw it away.
         let worstCase = Self.worstCaseSummaryEstimatedTokens
@@ -1098,20 +1107,24 @@ struct CompactionEvalSeedSizingTests {
 
 // MARK: - Ungated gated-subset coverage
 
-/// Ungated proof that the seed subset the default gated tier measures still
-/// spans every property the whole dataset varies (task ^fz49qds).
+/// Ungated proof that the seeds the gated tier measures still span every
+/// property this dataset is built to vary (task ^fz49qds).
 ///
-/// The default tier runs a subset because the whole dataset does not fit a
-/// short wall-clock limit, and a subset is only worth running when it is
+/// A tier of seven seeds is only worth running when those seven are
 /// representative. "Representative" is a property of the fixtures, so it is
 /// checked against the fixtures rather than argued for in a comment: an edit
-/// that drops the subset's last tool-traffic seed, or its longest recency
+/// that drops the last tool-traffic seed, or leaves every seed the same recency
 /// window, fails under a plain `swift test` instead of silently narrowing what
 /// the gated tier measures.
 ///
-/// Every bound below is read from ``compactionEvalFixtureSpecs`` itself, never
-/// restated as a literal, so a fixture that widens the dataset widens what the
-/// subset must cover.
+/// Each bar below is ABSOLUTE — what these seven must carry, stated here — and
+/// deliberately not read back off ``compactionEvalFixtureSpecs``. Three of them
+/// were read off the dataset while a second gated tier folded a wider one, and
+/// task ^k0d30s4 cut the dataset to exactly the seeds this tier measures. A bar
+/// read off the dataset now compares the dataset with itself and passes
+/// whatever the dataset holds, so the bars that could go trivial are stated as
+/// values instead. The two that already read the subset alone — the delivery
+/// bar and the probed-position bar — are unchanged.
 @Suite("CompactionEvaluation gated subset coverage (ungated)")
 struct CompactionEvalRepresentativeSubsetTests {
     /// How many seeds the subset holds.
@@ -1155,6 +1168,15 @@ struct CompactionEvalRepresentativeSubsetTests {
         compactionEvalRepresentativeSubsetIDs.contains($0.id)
     }
 
+    /// Every head size the seven seeds must carry between them.
+    ///
+    /// A single-fact head gives the summarizer one thing to keep. A three-fact
+    /// head makes it choose what to keep, which is the harder measurement, and
+    /// seven single-fact heads would never make it. The two-fact head is the
+    /// step between: it is the smallest head on which a summary can keep one
+    /// planted fact and drop another.
+    private static let requiredHeadSizes: Set<Int> = [1, 2, 3]
+
     @Test("every id the subset names is a fixture the dataset holds")
     func everySubsetIDNamesAFixture() {
         let datasetIDs = Set(compactionEvalFixtureSpecs.map(\.id))
@@ -1182,14 +1204,12 @@ struct CompactionEvalRepresentativeSubsetTests {
         )
     }
 
-    @Test("the subset carries every head size the dataset varies, so a multi-fact fold is measured")
-    func subsetCarriesEveryFactCount() {
-        // A single-fact head gives the summarizer one thing to keep. A three-fact
-        // head makes it choose what to keep, which is the harder measurement, and
-        // a subset of single-fact heads alone would never make it.
-        let datasetCounts = Set(compactionEvalFixtureSpecs.map(\.facts.count))
+    @Test("the subset carries a one-, a two- and a three-fact head, so a multi-fact fold is measured")
+    func subsetCarriesEveryRequiredHeadSize() {
         let subsetCounts = Set(Self.subsetSpecs.map(\.facts.count))
-        #expect(subsetCounts == datasetCounts, "the gated subset carries head sizes \(subsetCounts.sorted())")
+        #expect(
+            subsetCounts == Self.requiredHeadSizes,
+            "the gated subset carries head sizes \(subsetCounts.sorted())")
     }
 
     @Test("the subset carries both tool-traffic and plain-reply delivery")
@@ -1201,16 +1221,17 @@ struct CompactionEvalRepresentativeSubsetTests {
         #expect(deliveries == [true, false], "the gated subset carries deliveries \(deliveries)")
     }
 
-    @Test("the subset spans the dataset's whole recency-window range")
-    func subsetSpansTheWholeRecentTurnRange() {
-        // The recency window is what `Summarization` keeps verbatim, so it decides
-        // how much of the transcript the fold leaves alone. The shortest and the
-        // longest window in the dataset are the two ends of that, and the subset
-        // carries both.
-        let dataset = compactionEvalFixtureSpecs.map(\.recentTurnCount)
-        let subset = Self.subsetSpecs.map(\.recentTurnCount)
-        #expect(subset.min() == dataset.min(), "the gated subset's shortest recency window is \(subset.min() ?? 0)")
-        #expect(subset.max() == dataset.max(), "the gated subset's longest recency window is \(subset.max() ?? 0)")
+    @Test("the subset's recency window varies, so the fold is measured at more than one window size")
+    func subsetVariesTheRecentTurnCount() {
+        // The recency window is what `Summarization` keeps verbatim, so it
+        // decides how much of the transcript the fold leaves alone — and how
+        // far the probed fact sits behind the window the answering turn can
+        // still read. Seven seeds that all kept the same number of turns would
+        // measure the fold at one window size and read as coverage.
+        let windows = Set(Self.subsetSpecs.map(\.recentTurnCount))
+        #expect(
+            windows.count > 1,
+            "every seed of the gated subset keeps \(windows.sorted()) recent turns, which is one size")
     }
 
     @Test("the subset probes a first fact, a fact that is not first, and a last fact")
@@ -1229,7 +1250,7 @@ struct CompactionEvalRepresentativeSubsetTests {
 
 // MARK: - Ungated tier thresholds
 
-/// Ungated proof that each gated tier's two thresholds — the wall clock it runs
+/// Ungated proof that the gated tier's two thresholds — the wall clock it runs
 /// under and the `FactRetention` bar it is held to — state the measurement they
 /// rest on, and that the seed count can express that bar (tasks ^6ssbakk,
 /// ^xscp198).
@@ -1242,11 +1263,8 @@ struct CompactionEvalRepresentativeSubsetTests {
 /// limit, or a floor its seed count cannot express, fails a plain `swift test`.
 @Suite("CompactionEvaluation tier thresholds (ungated)")
 struct CompactionEvalTierBarTests {
-    /// How many samples the default gated tier runs.
+    /// How many samples the gated tier runs.
     private static let subsetSampleCount = compactionEvalRepresentativeSeeds.count
-
-    /// How many samples the opt-in whole-dataset tier runs.
-    private static let fullDatasetSampleCount = compactionEvalSeeds.count
 
     /// The two floors the gated assertions apply — the summary side and the
     /// answer side — so every property below is held for each floor a tier
@@ -1258,94 +1276,79 @@ struct CompactionEvalTierBarTests {
 
     /// The tier sizes the required-count property below is held over: every size
     /// from a single sample up to the whole dataset, so the property covers the
-    /// two tiers this eval really runs and every size between them.
+    /// tier this eval really runs and every size a smaller one could take.
     private static let checkedSampleCounts = 1...compactionEvalSeeds.count
 
-    @Test("each tier's time limit clears the bound its own measured samples derive")
-    func eachTierTimeLimitClearsItsDerivedBound() {
-        for tier in Self.tierLimits {
-            let derived = compactionEvalDerivedTimeLimitMinutes(
-                forSamples: tier.sampleCount, chargedAt: tier.dearestSampleSeconds)
-            #expect(
-                Double(tier.limit) >= derived,
-                """
-                a tier of \(tier.sampleCount) seeds at \(tier.dearestSampleSeconds) s for each \
-                sample derives \(derived) minutes, against a limit of \(tier.limit)
-                """
-            )
-        }
+    /// The bound this tier's own measured samples derive, in minutes.
+    ///
+    /// Derived once, so the two properties below hold the SAME arithmetic from
+    /// its two sides. Its two inputs are stated apart — the tier's seed count,
+    /// and the rate the tier's own dearest sample measured — because a bound
+    /// another tier's rate derives is not this tier's bound (task ^5q0vv85).
+    private static let derivedBoundMinutes = compactionEvalDerivedTimeLimitMinutes(
+        forSamples: subsetSampleCount,
+        chargedAt: compactionEvalSubsetMeasuredDearestSampleSeconds)
+
+    /// How many of the tier's samples each floor really asks for.
+    ///
+    /// Both floors state 0.71 and the tier holds seven seeds, so both sides ask
+    /// the same count; each floor's own doc comment derives it from the measured
+    /// baseline of the ^m03heaa re-baseline of 2026-08-20, where the Qwen2.5-3B
+    /// canary measured 6 of 7 on both sides. Written here as a value the test
+    /// compares against, so a floor that stopped asking this count fails rather
+    /// than agreeing with itself.
+    private static let samplesEachFloorNeeds = 5
+
+    @Test("the tier's time limit clears the bound its own measured samples derive")
+    func tierTimeLimitClearsItsDerivedBound() {
+        #expect(
+            Double(compactionEvalSubsetTimeLimitMinutes) >= Self.derivedBoundMinutes,
+            """
+            a tier of \(Self.subsetSampleCount) seeds at \
+            \(compactionEvalSubsetMeasuredDearestSampleSeconds) s for each sample derives \
+            \(Self.derivedBoundMinutes) minutes, against a limit of \
+            \(compactionEvalSubsetTimeLimitMinutes)
+            """
+        )
     }
 
-    @Test("each tier's time limit is the next whole minute above that bound, so it states a measurement")
-    func eachTierTimeLimitIsTheNextWholeMinuteAboveItsBound() {
+    @Test("the tier's time limit is the next whole minute above that bound, so it states a measurement")
+    func tierTimeLimitIsTheNextWholeMinuteAboveItsBound() {
         // The other half of the same property. A limit far above the derivation
         // passes the test above and states nothing, which is the defect ^6ssbakk
         // records against the 30 minutes this value replaced: a number nobody
         // can read a measurement out of. One minute is the smallest limit Swift
         // Testing accepts, so a derivation under one minute states a limit of
         // one.
-        for tier in Self.tierLimits {
-            let derived = compactionEvalDerivedTimeLimitMinutes(
-                forSamples: tier.sampleCount, chargedAt: tier.dearestSampleSeconds)
-            #expect(
-                Double(tier.limit) < max(derived, 1) + 1,
-                """
-                a tier of \(tier.sampleCount) seeds at \(tier.dearestSampleSeconds) s for each \
-                sample derives \(derived) minutes and states \(tier.limit), which is more than \
-                the next whole minute above it
-                """
-            )
-        }
+        #expect(
+            Double(compactionEvalSubsetTimeLimitMinutes) < max(Self.derivedBoundMinutes, 1) + 1,
+            """
+            a tier of \(Self.subsetSampleCount) seeds at \
+            \(compactionEvalSubsetMeasuredDearestSampleSeconds) s for each sample derives \
+            \(Self.derivedBoundMinutes) minutes and states \
+            \(compactionEvalSubsetTimeLimitMinutes), which is more than the next whole minute \
+            above it
+            """
+        )
     }
 
-    /// Each gated tier's stated limit beside its own sample count AND its own
-    /// measured per-sample rate, so the two time-limit properties above hold
-    /// each tier against the samples that tier really measured.
-    ///
-    /// The rate belongs in this table because each tier measured its own. One
-    /// rate for both tiers is what task ^5q0vv85 removed: the whole-dataset
-    /// limit was derived from the subset run's dearest sample, and the
-    /// whole-dataset run measured two seeds that BOTH tiers hold far dearer
-    /// than that — 82.4 and 56.5 seconds against 15.9 each — for the same work
-    /// at greedy decoding. A bound another tier's rate derives is not this
-    /// tier's bound, and one shared rate cannot state two measurements.
-    private static let tierLimits = [
-        (
-            limit: compactionEvalSubsetTimeLimitMinutes,
-            sampleCount: subsetSampleCount,
-            dearestSampleSeconds: compactionEvalSubsetMeasuredDearestSampleSeconds
-        ),
-        (
-            limit: compactionEvalFullDatasetTimeLimitMinutes,
-            sampleCount: fullDatasetSampleCount,
-            dearestSampleSeconds: compactionEvalFullDatasetMeasuredDearestSampleSeconds
-        ),
-    ]
-
-    @Test("the floors need 5 and 5 of the subset's seeds, and 18 and 18 of the whole dataset's")
-    func eachTiersFloorIsTheSampleCountItReallyNeeds() {
+    @Test("each floor needs 5 of the tier's seeds")
+    func eachFloorIsTheSampleCountItReallyNeeds() {
         // The metric scores one bit per sample, so a tier of n samples can only
-        // produce the means k/n. Each floor's own doc comment derives these
-        // counts from the measured baselines — the ^m03heaa re-baseline of
-        // 2026-08-20, where the Qwen2.5-3B canary measured 6 of 7 on both
-        // subset sides and 23 of 24 on both whole-dataset sides; this holds
+        // produce the means k/n. Each floor's own doc comment derives this count
+        // from the measured baseline — the ^m03heaa re-baseline of 2026-08-20,
+        // where the Qwen2.5-3B canary measured 6 of 7 on both sides; this holds
         // the derivation.
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.subsetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 5,
-            "the subset holds \(Self.subsetSampleCount) seeds against the summary floor")
+                of: Self.subsetSampleCount, floor: compactionEvalSummaryFactRetentionFloor)
+                == Self.samplesEachFloorNeeds,
+            "the tier holds \(Self.subsetSampleCount) seeds against the summary floor")
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.subsetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 5,
-            "the subset holds \(Self.subsetSampleCount) seeds against the answer floor")
-        #expect(
-            compactionEvalFactRetentionRequiredSamples(
-                of: Self.fullDatasetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 18,
-            "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the summary floor")
-        #expect(
-            compactionEvalFactRetentionRequiredSamples(
-                of: Self.fullDatasetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 18,
-            "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the answer floor")
+                of: Self.subsetSampleCount, floor: compactionEvalAnswerFactRetentionFloor)
+                == Self.samplesEachFloorNeeds,
+            "the tier holds \(Self.subsetSampleCount) seeds against the answer floor")
     }
 
     @Test("the required count is the smallest count that clears the floor, at every tier size")

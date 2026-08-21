@@ -290,7 +290,8 @@ struct SummarizationStageTests {
     @Test("CompactionPrompt.default gives a bare stated fact its own section, so a fold cannot record that a fact was stated without stating what it was")
     func defaultPromptKeepsBareStatedFacts() {
         // Pins the defect the gated eval measured on the `printer-and-supply-closet`
-        // fixture: the summary read "1. Intent — Inform the assistant about the
+        // fixture, one of the seventeen task ^k0d30s4 deleted with the
+        // whole-dataset tier: the summary read "1. Intent — Inform the assistant about the
         // location of spare toner cartridges. / 2. Constraints & decisions — None."
         // It recorded THAT a fact was communicated and discarded WHAT it was,
         // because a bare stated fact — a location, a code, a name, a number the

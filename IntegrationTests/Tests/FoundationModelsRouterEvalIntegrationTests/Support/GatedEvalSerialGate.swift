@@ -9,7 +9,7 @@ import Testing
 ///
 /// ## Why a permit, and not one shared container
 ///
-/// Every gated eval suite resolves a real model — the fact-retention tiers
+/// Every gated eval suite resolves a real model — the fact-retention tier
 /// ``CompactionEvalRealModel/ref``, the continuity tier
 /// ``CompactionContinuityRealModel/ref`` — each through its own runner
 /// (``CompactionEvalRealSubjectRunner`` and
@@ -21,10 +21,10 @@ import Testing
 /// the double-residency and eviction arguments hold for the small model just
 /// the same.
 ///
-/// Three suites declare one, and the everyday command steps the whole-dataset
-/// fact-retention tier aside (`--skip CompactionEvalFullDataset`), so two
-/// normally run in one process. The permit bounds any number of them, and a run
-/// that asks for all three is bounded just the same.
+/// Two suites declare one, and an everyday command runs both in one process. A
+/// third declared one until task ^k0d30s4 deleted the whole-dataset
+/// fact-retention tier. The permit bounds any number of them, so a suite added
+/// back is bounded just the same.
 ///
 /// Three mechanisms could close that, and only one of them is available here:
 ///
@@ -84,11 +84,11 @@ import Testing
 /// `GatedSuiteSerialGate` for those two commands and for the guard that fails a
 /// run whose selectors matched nothing.
 ///
-/// One selector is this target's alone. The whole-dataset fact-retention tier
-/// measures a superset of the subset tier's seeds, so an
-/// everyday real-model run steps it aside with
-/// `--skip CompactionEvalFullDataset`, and a run that wants it names it with
-/// `swift test --filter CompactionEvalFullDataset`.
+/// This target held one selector of its own until task ^k0d30s4: the everyday
+/// real-model run stepped the whole-dataset fact-retention tier aside by name,
+/// because that tier measured a superset of this one's seeds. The tier is
+/// deleted, so the everyday run now asks for the nested package whole and skips
+/// nothing.
 ///
 /// ## Relationship to the integration target's gate
 ///
@@ -120,11 +120,11 @@ enum GatedEvalSerialGate {
 /// 26.2 to 41.4 seconds under the 1B model, where the Qwen2.5-3B canary the
 /// fact-retention tiers moved to measured 219.1 seconds on 2026-08-20, past
 /// this budget, which is why the continuity tier keeps its own model (task
-/// ^m03heaa). The two compaction fact-retention tiers state their own limits
-/// through their own measured constants
-/// (`compactionEvalSubsetTimeLimitMinutes` and
-/// `compactionEvalFullDatasetTimeLimitMinutes`), which
-/// `CompactionEvalTierBarTests` holds against the measured per-sample costs.
+/// ^m03heaa). `CompactionEvaluationIntegrationTests` states its own limit
+/// through its own measured constant, `compactionEvalSubsetTimeLimitMinutes`,
+/// which `CompactionEvalTierBarTests` holds against the measured per-sample
+/// cost. A second fact-retention tier stated a limit of its own until task
+/// ^k0d30s4 deleted it.
 /// The 20 minutes this value stated before belonged to the 30B model the eval
 /// tiers no longer drive.
 let gatedEvalSuiteTimeLimitMinutes = 2
