@@ -635,7 +635,7 @@ so a fork **correctly inherits its parent's conversation history** up to the for
 point, then diverges independently. This is tested against stubs
 (`Tests/FoundationModelsRouterTests/MultiTurnSessionTests.swift`) and, in the gated
 integration suite, against a real model
-(`Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`'s
+(`IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`'s
 `makeForkSeedsFromParentTranscript`) — not aspirational. That same gated file also
 carries `secondTurnReusesFirstTurnsKVCache`, a hard, never-weakened assertion that
 `usage.input.cachedTokenCount > 0` on a session's second turn — written as the

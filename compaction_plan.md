@@ -504,7 +504,7 @@ their own targets in the nested `IntegrationTests/` package
    → JSONL → `TranscriptTree.effectiveTranscript(forSession:)` with identical
    structure and ids, using nothing beyond the mapper/reconstruction code
    already in place — no production changes were needed for this half.
-   `Tests/FoundationModelsRouterIntegrationTests/CompactionSpikeIntegrationTests.swift`
+   `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/CompactionSpikeIntegrationTests.swift`
    (in the real-model target) covers the live-session half: it
    rebuilds a real `LanguageModelSession` via
    `MLXFoundationModelsContainer.makeSession(transcript:)` — the exact factory

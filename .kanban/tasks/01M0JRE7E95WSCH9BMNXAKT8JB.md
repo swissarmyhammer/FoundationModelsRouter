@@ -15,8 +15,24 @@ comments:
     - filed: ^t905g5y for the same-shape stale header on `RecordingHandleIntegrationTests.swift` (different suite, needs its own run to record).
     - next: /review
   timestamp: 2026-08-21T19:20:47.174463+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0jwmz9a5sq0zp0e3vv1wt1n
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 10789b5); 2 files reviewed, 0 findings, 0 confirmed, 0 refuted; 4 `.kanban/` files not reviewed (`.reviewignore`)
+    - next: none; task moved to done
+  timestamp: 2026-08-21T19:27:02.442621+00:00
+- actor: claude-code
+  id: 01m0jwnejjhcr348mq97fn18r0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 doc-comment files (LiveModelLoader.swift, LanguageModelSessionBackendTests.swift); sibling stale header filed as ^t905g5y
+    - test: green — root swift test 1032 + 80 passed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: 10789b5
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-21T19:27:18.098751+00:00
+position_column: done
+position_ordinal: ffe680
 title: The usageTokenCounts() doc comment in LiveModelLoader.swift says the gated suite never ran; it runs and it is green
 ---
 The doc comment on `MLXFoundationModelsSessionBackend.usageTokenCounts()` in `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` says: "that suite needs a GPU and network access this sandbox does not have, so it has never actually run here; it only ever reports skipped", and that whether the executor populates non-zero `usage.input`/`usage.output` totals "has not been empirically confirmed in this environment". That text is stale.
