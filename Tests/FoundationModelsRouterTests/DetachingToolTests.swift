@@ -245,6 +245,38 @@ struct DetachingToolTests {
         }
     }
 
+    /// Blocks on a gate, supplies a per-call `waitSeconds` of `0`, and
+    /// supplies its own collect sentence through
+    /// ``DetachmentParameterProviding/detachmentCollectInstruction(forCompletionToken:)``
+    /// — the tool that owns its collect verb and so owns the `next` text of
+    /// its pending envelope.
+    private struct CollectSentenceTool: Tool, DetachmentParameterProviding {
+        let name = "collect_sentence_tool"
+        let description = "parks at once and names its own collect step"
+        let gate: RunLatch
+
+        /// The sentence this tool renders for `completionToken`, so a test
+        /// can state the expected text without repeating the tool's prose.
+        static func collectInstruction(forCompletionToken completionToken: String) -> String {
+            "Call the fetch tool with ticket \"\(completionToken)\" to read the result."
+        }
+
+        func call(arguments: DetachingArguments) async throws -> String {
+            await gate.waitUntilOpen()
+            return "collected: \(arguments.value)"
+        }
+
+        func detachmentClocks(
+            from arguments: GeneratedContent
+        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
+            (0, nil)
+        }
+
+        func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String {
+            Self.collectInstruction(forCompletionToken: completionToken)
+        }
+    }
+
     /// Asks one question through `ToolContext.elicit` and returns the
     /// action it was answered with — the elicitation-suspends-timeout
     /// subject.
@@ -442,12 +474,27 @@ struct DetachingToolTests {
         }
     }
 
-    @Test("the rendered envelope's next field teaches the collect step: still running, do not answer, the exact wait snippet, and both run-plane states")
-    func renderedEnvelopeTeachesTheCollectStep() throws {
+    /// The text shapes the default collect sentence must not carry: a
+    /// `runCode` snippet, the snippet-level `wait` call, any call syntax,
+    /// and the run-plane state names no host reports on the wire.
+    private static let forbiddenDefaultCollectInstructionFragments = [
+        "runCode",
+        "return await wait",
+        "wait(",
+        "snippet",
+        "settled",
+        "deadline_elapsed",
+    ]
+
+    @Test("the default next sentence teaches the collect step: still running, do not answer, the wait tool with the same completionToken, and no snippet")
+    func defaultCollectInstructionTeachesTheCollectStep() throws {
         let completionToken = ULID.generate().ulidString
         let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
 
         let next = try Self.decodeEnvelope(rendered).next
+        #expect(
+            next == PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken)
+        )
         Self.expect(
             next,
             saysInOrder: [
@@ -456,15 +503,51 @@ struct DetachingToolTests {
                 // Do not answer, and do not invent the result.
                 "not answer",
                 "never invent",
-                // The follow-up snippet, verbatim, carrying the real token.
-                "return await wait(\"\(completionToken)\", 60)",
-                // Where the result is once the run settles.
-                "settled",
-                "detail",
-                // What to do when the follow-up wait comes back empty.
-                "deadline_elapsed",
+                // The in-band collect step, carrying the real token.
+                "wait tool",
+                completionToken,
+                // What to do when the collect step comes back empty.
+                "wait again",
+                "same completionToken",
             ]
         )
+        for fragment in Self.forbiddenDefaultCollectInstructionFragments {
+            #expect(!next.contains(fragment), "default sentence must not say \(fragment)")
+        }
+    }
+
+    @Test("a tool that supplies its own collect sentence gets that sentence rendered as the envelope's next field")
+    func toolSuppliedCollectInstructionIsRendered() async throws {
+        let gate = RunLatch()
+        let harness = Self.makeHarness(
+            wrapping: CollectSentenceTool(gate: gate),
+            configuration: DetachConfiguration(
+                mode: .detaching, waitSeconds: Self.generousInterval
+            )
+        )
+
+        let rendered = try await harness.detaching.call(
+            arguments: DetachingArguments(value: "own sentence")
+        )
+
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+        #expect(
+            envelope.next
+                == CollectSentenceTool.collectInstruction(forCompletionToken: envelope.completionToken)
+        )
+        #expect(
+            rendered
+                == PendingRunEnvelope(
+                    completionToken: envelope.completionToken, next: envelope.next
+                ).rendered
+        )
+
+        await gate.open()
+        let terminal = try await Self.settledTerminal(
+            of: envelope.completionToken, in: harness.mailbox
+        )
+        #expect(terminal.detail == "collected: own sentence")
     }
 
     @Test("the rendered envelope fits the run plane's detail cap, which truncates from the front")
@@ -478,21 +561,24 @@ struct DetachingToolTests {
         #expect(rendered.count <= ToolContext.terminalDetailTailLimit)
     }
 
-    @Test("an envelope whose two token slots disagree is not recognized")
-    func mismatchedTwinTokensAreRejected() throws {
+    @Test("an envelope is recognized whatever collect sentence it carries: the default, a tool's own, and one that needs JSON escaping")
+    func renderedEnvelopeIsRecognizedWithAnyCollectInstruction() throws {
         let completionToken = ULID.generate().ulidString
-        let other = ULID.generate().ulidString
-        #expect(other != completionToken)
-        let rendered = PendingRunEnvelope(completionToken: completionToken).rendered
+        let sentences = [
+            PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken),
+            CollectSentenceTool.collectInstruction(forCompletionToken: completionToken),
+            // Quotes, a backslash, a newline, and a tab all need escaping
+            // inside the JSON string the `next` field is.
+            "Say \"\(completionToken)\" \\ twice\n\tthen stop.",
+        ]
 
-        let firstSlot = try #require(rendered.range(of: completionToken))
-        let lastSlot = try #require(rendered.range(of: completionToken, options: .backwards))
-        #expect(firstSlot != lastSlot)
+        for next in sentences {
+            let rendered = PendingRunEnvelope(completionToken: completionToken, next: next).rendered
 
-        for slot in [firstSlot, lastSlot] {
-            let tampered = rendered.replacingCharacters(in: slot, with: other)
-            #expect(tampered.count == rendered.count)
-            #expect(!PendingRunEnvelope.isRendered(text: tampered))
+            #expect(PendingRunEnvelope.isRendered(text: rendered))
+            let decoded = try Self.decodeEnvelope(rendered)
+            #expect(decoded.completionToken == completionToken)
+            #expect(decoded.next == next)
         }
     }
 
@@ -517,16 +603,50 @@ struct DetachingToolTests {
         }
     }
 
-    @Test("an envelope whose instruction prose was edited is not recognized, even at an unchanged length")
-    func editedProseIsRejected() {
-        let rendered = PendingRunEnvelope(completionToken: ULID.generate().ulidString).rendered
+    /// A token limit far below any rendered envelope's estimated size, so
+    /// only the envelope exemption can let one through the capping layer.
+    private static let tinyTokenLimit = 1
 
-        // Same length, so only a content check can catch it.
-        let tampered = rendered.replacingOccurrences(of: "detail", with: "result")
+    @Test("TokenCappingTool passes a rendered envelope through uncapped, with the default sentence and with a tool's own")
+    func tokenCappingPassesRenderedEnvelopesThrough() async throws {
+        let gate = RunLatch()
+        let harnesses = [
+            Self.makeHarness(
+                wrapping: GatedTool(gate: gate),
+                configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
+            ),
+            Self.makeHarness(
+                wrapping: CollectSentenceTool(gate: gate),
+                configuration: DetachConfiguration(
+                    mode: .detaching, waitSeconds: Self.generousInterval
+                )
+            ),
+        ]
 
-        #expect(tampered != rendered)
-        #expect(tampered.count == rendered.count)
-        #expect(!PendingRunEnvelope.isRendered(text: tampered))
+        var completionTokens: [String] = []
+        for harness in harnesses {
+            let capping = TokenCappingTool(wrapped: harness.detaching, limit: Self.tinyTokenLimit)
+
+            let rendered = try await capping.call(arguments: DetachingArguments(value: "capped"))
+
+            // The cap would have bitten: the envelope is not short enough to
+            // pass on size alone.
+            #expect(ToolOutputCapping.capped(text: rendered, toTokenLimit: Self.tinyTokenLimit) != rendered)
+            #expect(PendingRunEnvelope.isRendered(text: rendered))
+            let envelope = try Self.decodeEnvelope(rendered)
+            #expect(
+                rendered
+                    == PendingRunEnvelope(
+                        completionToken: envelope.completionToken, next: envelope.next
+                    ).rendered
+            )
+            completionTokens.append(envelope.completionToken)
+        }
+
+        await gate.open()
+        for (harness, completionToken) in zip(harnesses, completionTokens) {
+            _ = try await Self.settledTerminal(of: completionToken, in: harness.mailbox)
+        }
     }
 
     @Test("an envelope whose twin slots hold a same-length non-ULID is not recognized")
@@ -553,6 +673,10 @@ struct DetachingToolTests {
             "{\"pending\":true,\"completionToken\":\"\(completionToken)\"}",
             // The same facts as JSON, but not this envelope's byte shape.
             "{\"completionToken\":\"\(completionToken)\",\"pending\":true,\"next\":\"wait\"}",
+            // The frame, but a `next` field that is not a JSON string.
+            "{\"pending\":true,\"completionToken\":\"\(completionToken)\",\"next\":\"a\"b\"}",
+            // The frame, but the `next` field is not closed.
+            "{\"pending\":true,\"completionToken\":\"\(completionToken)\",\"next\":\"open}",
         ]
 
         for text in notEnvelopes {

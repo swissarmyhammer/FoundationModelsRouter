@@ -5,7 +5,7 @@ import Synchronization
 /// Declares a wrapped tool's own detachment parameters.
 ///
 /// The hook a tool states its own detachment behaviour through. A tool that
-/// conforms makes up to two declarations, and the ``DetachingTool`` engine
+/// conforms makes up to three declarations, and the ``DetachingTool`` engine
 /// reads each of them over the wrap-time ``DetachConfiguration`` its
 /// composition site applies:
 ///
@@ -13,10 +13,13 @@ import Synchronization
 ///   call it takes.
 /// - ``detachmentClocks(from:)`` reads a `waitSeconds` and/or a `timeout`
 ///   out of one call's `GeneratedContent` — however the tool encodes them.
+/// - ``detachmentCollectInstruction(forCompletionToken:)`` states the `next`
+///   sentence of the pending envelope a parked call hands the model: the
+///   collect step the tool's own host offers.
 ///
-/// Each declaration has a default that declares nothing, so a tool states
-/// only the half it needs, and a tool that does not conform at all keeps the
-/// configuration its composition site gave it.
+/// Each declaration has a default, so a tool states only the part it needs,
+/// and a tool that does not conform at all keeps the configuration its
+/// composition site gave it and the default collect sentence.
 public protocol DetachmentParameterProviding {
     /// The mount this tool needs whatever mount its composition site
     /// applies, or `nil` to take that site's own.
@@ -54,9 +57,45 @@ public protocol DetachmentParameterProviding {
     func detachmentClocks(
         from arguments: GeneratedContent
     ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?)
+
+    /// Returns the `next` sentence of the pending envelope a parked call of
+    /// this tool hands the model: the in-band collect step for
+    /// `completionToken`.
+    ///
+    /// The tool that owns the collect verb owns this sentence (task
+    /// ^rx6f25m). A host whose collect step is not a tool named `wait`, or
+    /// whose `wait` reports its outcome under names of its own, states its
+    /// own step here, and the engine renders that text in place of
+    /// ``PendingRunEnvelope/defaultCollectInstruction(forCompletionToken:)``.
+    ///
+    /// The sentence must name `completionToken`, and it must lead to a step
+    /// that returns the run's result in band. It must not prescribe a call
+    /// to the parked tool itself: a tool that parks every call would then
+    /// hand the model a new token on each round and never the result. The
+    /// engine carries the rendered envelope as the detail of the synthesized
+    /// progress event, and the run plane keeps the trailing
+    /// ``ToolContext/terminalDetailTailLimit`` characters of a detail, so
+    /// the sentence must keep the whole envelope under that limit or the
+    /// model loses the token.
+    ///
+    /// - Parameter completionToken: The parked run's completion token.
+    /// - Returns: The `next` text as plain prose; the envelope escapes it
+    ///   for the wire.
+    func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String
 }
 
 extension DetachmentParameterProviding {
+    /// Blanket default: the sentence
+    /// ``PendingRunEnvelope/defaultCollectInstruction(forCompletionToken:)``
+    /// renders, which names the `wait` tool and the same token, and no
+    /// run-plane state.
+    ///
+    /// - Parameter completionToken: The parked run's completion token.
+    /// - Returns: The default collect sentence for `completionToken`.
+    public func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String {
+        PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken)
+    }
+
     /// Blanket default: no declared mount, so the tool runs under the
     /// configuration its composition site passes.
     public var detachmentMount: DetachConfiguration? { nil }
@@ -281,10 +320,12 @@ public enum DetachingToolError: Error, Equatable, CustomStringConvertible {
 /// bare token leaves it holding a key it has no reason to understand while
 /// the user waits for an answer — the measured failure was a model inventing
 /// the result outright. Every other in-band text this package hands a model
-/// is phrased as repair instructions; so is this one. It is derived entirely
-/// from ``completionToken``, so it is regenerated rather than carried as a
-/// stored property: ``rendered``, not the synthesized `Codable` conformance,
-/// is the authoritative wire form.
+/// is phrased as repair instructions; so is this one. The wrapped tool owns
+/// the sentence (task ^rx6f25m): it supplies one through
+/// ``DetachmentParameterProviding/detachmentCollectInstruction(forCompletionToken:)``,
+/// and a tool that supplies none gets
+/// ``defaultCollectInstruction(forCompletionToken:)``. ``rendered``, not the
+/// synthesized `Codable` conformance, is the authoritative wire form.
 public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// Always `true` — the discriminator a reader branches on.
     public let pending: Bool
@@ -293,102 +334,155 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// run's event `correlationID`.
     public let completionToken: String
 
-    /// Creates the envelope for a run parked under `completionToken`.
+    /// The collect step the model must take instead of answering, as plain
+    /// prose: the wrapped tool's own sentence, or the default.
+    public let next: String
+
+    /// Creates the envelope for a run parked under `completionToken`, with
+    /// ``defaultCollectInstruction(forCompletionToken:)`` as its `next` text.
     public init(completionToken: String) {
-        self.pending = true
-        self.completionToken = completionToken
+        self.init(
+            completionToken: completionToken,
+            next: Self.defaultCollectInstruction(forCompletionToken: completionToken)
+        )
     }
 
-    /// The `seconds` argument of the follow-up `wait` the ``rendered``
-    /// instruction tells the model to make: long enough that most parked runs
-    /// settle inside that single collect step, short enough that a stalled one
-    /// still hands control back rather than blocking the turn.
-    private static let followUpWaitSeconds = 60
+    /// Creates the envelope for a run parked under `completionToken`, with
+    /// `next` as its collect sentence.
+    ///
+    /// - Parameters:
+    ///   - completionToken: The parked run's completion token.
+    ///   - next: The collect sentence, as plain prose — the text the wrapped
+    ///     tool supplied through
+    ///     ``DetachmentParameterProviding/detachmentCollectInstruction(forCompletionToken:)``.
+    public init(completionToken: String, next: String) {
+        self.pending = true
+        self.completionToken = completionToken
+        self.next = next
+    }
 
-    /// The run-plane state name a `wait` reports for a run that finished — the
-    /// wire spelling of ``WaitOutcome/settled``, whose event
-    /// carries the run's output in its `detail`.
-    private static let settledStateName = "settled"
+    /// The collect sentence an envelope carries when the wrapped tool
+    /// supplies none.
+    ///
+    /// It names the in-band collect step and the same token: call the `wait`
+    /// tool with the completionToken, and call it again when the run is not
+    /// finished. It names no run-plane state, because Router's
+    /// ``WaitOutcome`` is a Swift value with no wire spelling: the host's
+    /// `wait` tool reports outcomes under names of its own, and a sentence
+    /// that named Router's would name values the model never sees. It
+    /// prescribes no snippet either: a host whose detaching tool takes no
+    /// snippet has nothing to run, and a host whose every call parks would
+    /// hand the model a fresh token on each round instead of the result.
+    ///
+    /// - Parameter completionToken: The parked run's completion token.
+    /// - Returns: The default `next` text for `completionToken`.
+    public static func defaultCollectInstruction(forCompletionToken completionToken: String) -> String {
+        "This run is still going. Do not answer yet, and never invent or guess its result. "
+            + "Call the wait tool with completionToken \"\(completionToken)\" to collect the result. "
+            + "If the run is not finished yet, call wait again with the same completionToken."
+    }
 
-    /// The run-plane state name a `wait` reports when its own deadline ran out
-    /// with the run still parked — the wire spelling of
-    /// ``WaitOutcome/deadlineElapsed``.
-    private static let deadlineElapsedStateName = "deadline_elapsed"
-
-    /// The fixed text before the first `completionToken` slot in
-    /// ``rendered``'s wire form.
+    /// The fixed text before the `completionToken` slot in ``rendered``'s
+    /// wire form.
     private static let renderedPrefix = "{\"pending\":true,\"completionToken\":\""
 
-    /// The fixed text between ``rendered``'s two `completionToken` slots: the
-    /// opening of the `next` instruction, ending inside the quoted token
-    /// argument of the follow-up snippet it hands the model.
-    private static let renderedMidfix =
-        "\",\"next\":\"This run is still going. Do not answer yet, "
-        + "and never invent or guess its result. "
-        + "Call this tool again with a snippet that does: return await wait(\\\""
+    /// The fixed text between the `completionToken` slot and the `next`
+    /// field's string body in ``rendered``'s wire form.
+    private static let renderedMidfix = "\",\"next\":\""
 
-    /// The fixed text after ``rendered``'s second `completionToken` slot: the
-    /// rest of the follow-up snippet, then how to read each state it can
-    /// report back.
-    private static let renderedSuffix =
-        "\\\", \(followUpWaitSeconds)). "
-        + "When the returned state is \\\"\(settledStateName)\\\", "
-        + "the result is in its detail field. "
-        + "When it is \\\"\(deadlineElapsedStateName)\\\", the run is still going: "
-        + "call wait again with the same completionToken.\"}"
+    /// The fixed text after the `next` field's string body in ``rendered``'s
+    /// wire form.
+    private static let renderedSuffix = "\"}"
 
-    /// ``rendered``'s exact length: the three fixed frame parts around two
-    /// ``ULID/stringLength``-character token slots.
-    private static let renderedLength =
-        renderedPrefix.count + ULID.stringLength + renderedMidfix.count + ULID.stringLength
-        + renderedSuffix.count
+    /// The first Unicode scalar value that is not a JSON control character:
+    /// every scalar under it must be written as a JSON escape.
+    private static let firstUnescapedScalarValue: UInt32 = 0x20
 
-    /// Renders the wire form of an envelope for `completionToken`.
+    /// Renders the wire form of an envelope for `completionToken` and `next`.
     ///
-    /// The one definition both ``rendered`` and ``isRendered(text:)`` go through,
-    /// so recognition can never drift from rendering. Built literally — a
-    /// completion token is a 26-character Crockford base32 ULID, so no
-    /// escaping can ever be needed — keeping the rendering total and
-    /// deterministic.
+    /// The one definition both ``rendered`` and ``isRendered(text:)`` go
+    /// through, so recognition can never drift from rendering. The frame is
+    /// literal — a completion token is a 26-character Crockford base32 ULID,
+    /// so its slot needs no escaping — and the `next` body is
+    /// ``jsonStringBody(of:)``, so the rendering is total and deterministic
+    /// for any sentence.
     ///
-    /// - Parameter completionToken: The parked run's completion token, spliced
-    ///   into both of the wire form's token slots.
+    /// - Parameters:
+    ///   - completionToken: The parked run's completion token, spliced into
+    ///     the wire form's token slot.
+    ///   - next: The collect sentence, as plain prose.
     /// - Returns: The envelope's JSON wire form.
-    private static func rendered(forCompletionToken completionToken: String) -> String {
-        renderedPrefix + completionToken + renderedMidfix + completionToken + renderedSuffix
+    private static func rendered(forCompletionToken completionToken: String, next: String) -> String {
+        renderedPrefix + completionToken + renderedMidfix + jsonStringBody(of: next) + renderedSuffix
+    }
+
+    /// The body of the JSON string literal for `text`: `"` and `\` escaped,
+    /// a control character written as its JSON escape, every other scalar
+    /// verbatim.
+    ///
+    /// A `JSONDecoder` reads this body back to `text`, and re-encoding what
+    /// it read gives the same body, which is what lets ``isRendered(text:)``
+    /// decode an envelope and re-render it.
+    ///
+    /// - Parameter text: The plain text to write as a JSON string body.
+    /// - Returns: The escaped body, without the surrounding quotes.
+    private static func jsonStringBody(of text: String) -> String {
+        var body = ""
+        body.reserveCapacity(text.utf8.count)
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\"": body += "\\\""
+            case "\\": body += "\\\\"
+            case "\n": body += "\\n"
+            case "\r": body += "\\r"
+            case "\t": body += "\\t"
+            default:
+                if scalar.value < firstUnescapedScalarValue {
+                    body += String(format: "\\u%04x", scalar.value)
+                } else {
+                    body.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return body
     }
 
     /// The envelope rendered as its JSON wire form.
     public var rendered: String {
-        Self.rendered(forCompletionToken: completionToken)
+        Self.rendered(forCompletionToken: completionToken, next: next)
     }
 
     /// Whether `text` is exactly a rendered pending envelope: the fixed
-    /// ``rendered`` frame around two slots holding one and the same valid ULID
-    /// `completionToken`.
+    /// ``rendered`` frame around a valid ULID `completionToken` and a `next`
+    /// field, whatever sentence that field carries.
     ///
     /// This is what lets a decorator outside the detachment layer — today
     /// ``TokenCappingTool`` — recognize control-plane wire data and pass it
     /// through untouched, without JSON-parsing arbitrary tool output: the
-    /// wire form is deterministic, so a byte-shape check is exact. Recognition
-    /// is defined as re-rendering: the token is read out of the first slot,
-    /// and `text` must equal what this envelope renders for exactly that
-    /// token, so a twin-slot mismatch, an edited instruction, and any length
-    /// change are all rejections by construction.
+    /// frame is checked byte for byte first — the prefix, a valid ULID in
+    /// the token slot, the `next` field's opening, and the closing — and
+    /// only text that holds the whole frame is decoded. Recognition is then
+    /// defined as re-rendering: `text` must equal what this envelope renders
+    /// for the token in its slot and the `next` it decoded, so an unclosed or
+    /// malformed `next` field and any text outside the frame are rejections
+    /// by construction.
     ///
     /// - Parameter text: The rendered tool output to test.
     /// - Returns: `true` iff `text` is a rendered pending envelope.
     public static func isRendered(text: String) -> Bool {
-        guard text.count == renderedLength, text.hasPrefix(renderedPrefix) else {
+        guard text.hasPrefix(renderedPrefix), text.hasSuffix(renderedSuffix) else {
             return false
         }
-        let completionToken = String(
-            text.dropFirst(renderedPrefix.count).prefix(ULID.stringLength)
-        )
-        guard ULID(completionToken) != nil else {
+        let afterPrefix = text.dropFirst(renderedPrefix.count)
+        let completionToken = String(afterPrefix.prefix(ULID.stringLength))
+        guard
+            ULID(completionToken) != nil,
+            afterPrefix.dropFirst(ULID.stringLength).hasPrefix(renderedMidfix),
+            let decoded = try? JSONDecoder().decode(Self.self, from: Data(text.utf8))
+        else {
             return false
         }
-        return text == rendered(forCompletionToken: completionToken)
+        return text == rendered(forCompletionToken: completionToken, next: decoded.next)
     }
 }
 
@@ -640,6 +734,12 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 
     // MARK: - Per-call clocks
 
+    /// The wrapped tool as the declarer of its own detachment parameters, or
+    /// `nil` when it does not conform to ``DetachmentParameterProviding``.
+    private var parameterProvider: (any DetachmentParameterProviding)? {
+        wrapped as? any DetachmentParameterProviding
+    }
+
     /// The per-call clocks the wrapped tool supplies through
     /// ``DetachmentParameterProviding``, or all-`nil` when it does not
     /// conform (or its arguments cannot round-trip to `GeneratedContent`).
@@ -647,12 +747,24 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         from arguments: Arguments
     ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
         guard
-            let provider = wrapped as? any DetachmentParameterProviding,
+            let provider = parameterProvider,
             let convertible = arguments as? any ConvertibleToGeneratedContent
         else {
             return (nil, nil)
         }
         return provider.detachmentClocks(from: convertible.generatedContent)
+    }
+
+    /// The `next` sentence of the pending envelope for `completionToken`:
+    /// the wrapped tool's own through
+    /// ``DetachmentParameterProviding/detachmentCollectInstruction(forCompletionToken:)``,
+    /// or ``PendingRunEnvelope/defaultCollectInstruction(forCompletionToken:)``
+    /// when it does not conform.
+    private func collectInstruction(forCompletionToken completionToken: String) -> String {
+        guard let provider = parameterProvider else {
+            return PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken)
+        }
+        return provider.detachmentCollectInstruction(forCompletionToken: completionToken)
     }
 
     // MARK: - Detachment
@@ -672,7 +784,10 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         context: ToolContext,
         cancellationFlag: CancellationRequestFlag
     ) async throws -> String {
-        let envelope = PendingRunEnvelope(completionToken: context.completionToken)
+        let envelope = PendingRunEnvelope(
+            completionToken: context.completionToken,
+            next: collectInstruction(forCompletionToken: context.completionToken)
+        )
         let synthesizedProgress = OperationEvent(
             tool: context.tool,
             op: context.op,

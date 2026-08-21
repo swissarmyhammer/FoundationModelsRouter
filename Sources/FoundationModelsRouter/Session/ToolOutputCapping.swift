@@ -123,9 +123,10 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// `completionToken` the model needs to ever hear the parked run's
     /// completion again — and the `next` instruction that tells it to collect
     /// with that token instead of answering — so the exemption holds under
-    /// any `limit`, however small. Recognition is the exact byte-shape check
-    /// ``PendingRunEnvelope/isRendered(text:)``, so ordinary tool output can
-    /// never ride through it.
+    /// any `limit`, however small. Recognition is the envelope-frame check
+    /// ``PendingRunEnvelope/isRendered(text:)``, which accepts every
+    /// collect sentence a wrapped tool supplies and no ordinary tool output,
+    /// so nothing else can ride through it.
     ///
     /// - Parameter arguments: The call's arguments, forwarded to `wrapped`
     ///   untouched.
