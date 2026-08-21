@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -103,8 +104,7 @@ struct RecordingDurabilityTests {
     /// Replaces the fixture's first turn-close `.response` line — a line that
     /// is not the file's last — with bytes that do not decode.
     private static func corruptFirstTurnClose(of transcriptURL: URL) throws {
-        let text = try String(contentsOf: transcriptURL, encoding: .utf8)
-        var lines = text.split(separator: "\n").map(String.init)
+        var lines = try TextFileLines.read(from: transcriptURL)
         let firstTurnCloseIndex = try #require(lines.firstIndex { $0.contains("response") })
         lines[firstTurnCloseIndex] = "{\"seq\": torn mid-file bytes"
         try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: transcriptURL)

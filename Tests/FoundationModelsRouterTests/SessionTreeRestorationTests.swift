@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -534,9 +535,8 @@ struct SessionTreeRestorationTests {
             .appendingPathComponent(router1.id.description, isDirectory: true)
             .appendingPathComponent(root.id.description, isDirectory: true)
         let fileURL = recordingDirectory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let text = try String(contentsOf: fileURL, encoding: .utf8)
         let decoder = JSONDecoder()
-        let events = try text.split(separator: "\n").map { try decoder.decode(TranscriptEvent.self, from: Data($0.utf8)) }
+        let events = try TextFileLines.read(from: fileURL).map { try decoder.decode(TranscriptEvent.self, from: Data($0.utf8)) }
         #expect(events.contains { $0.grammar == grammarSource })
     }
 

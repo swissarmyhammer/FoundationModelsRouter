@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -181,9 +182,8 @@ struct TranscriptNestingTests {
     /// Decodes every event from a session directory's `transcript.jsonl`.
     private func events(in directory: URL) throws -> [TranscriptEvent] {
         let fileURL = directory.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let text = try String(contentsOf: fileURL, encoding: .utf8)
         let decoder = JSONDecoder()
-        return try text.split(separator: "\n").map {
+        return try TextFileLines.read(from: fileURL).map {
             try decoder.decode(TranscriptEvent.self, from: Data($0.utf8))
         }
     }

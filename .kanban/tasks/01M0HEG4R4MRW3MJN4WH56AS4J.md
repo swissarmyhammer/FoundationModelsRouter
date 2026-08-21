@@ -84,6 +84,67 @@ comments:
     - evidence: 2 files — `.github/workflows/ci.yml` (rewritten), `Tests/FoundationModelsRouterTests/CIWorkflowTests.swift` (new). `swift test --filter CIWorkflowTests` 3/3 pass; root `swift test` 1029 + 77 pass; `actionlint` clean; `swift build --build-tests --package-path IntegrationTests` complete.
     - next: `/review`
   timestamp: 2026-08-21T14:10:42.331246+00:00
+- actor: claude-code
+  id: 01m0jb5ya6m24dhx6ex9t4rwa4
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (8974f14); counts findings 1, confirmed 1, refuted 3 — Tests/FoundationModelsRouterTests/CIWorkflowTests.swift:83 (reuse/reuse)
+    - next: the implementer extracts the duplicated line-split helper to one shared test utility, marks the finding, then /review h56as4j runs again
+  timestamp: 2026-08-21T14:21:44.134777+00:00
+- actor: claude-code
+  id: 01m0jb6ky3mnrf31pn298zxtnw
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 2 files (.github/workflows/ci.yml rewritten, Tests/FoundationModelsRouterTests/CIWorkflowTests.swift new)
+    - test: green — swift test, 1029 + 77 passed, 0 failed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: 8974f14
+    - review: findings — Tests/FoundationModelsRouterTests/CIWorkflowTests.swift:83 (reuse/reuse: workflowLines() duplicates a line-splitting helper that RecordingDurabilityTests, TranscriptNestingTests, TranscriptReconstructionTests and TranscriptTreeTests each hold)
+  timestamp: 2026-08-21T14:22:06.275470+00:00
+- actor: claude-code
+  id: 01m0jbejg5wkm3estq8rr8wjp5
+  text: |-
+    ## Research for the review finding, 2026-08-21
+
+    - Read the `reuse` validator rule. It asks for one canonical implementation and it says a `similar` candidate is a signal, not proof.
+    - The cause is "read a UTF-8 file and split it into lines". Six sites in the unit target hold it: `CIWorkflowTests.workflowLines()` (`split` with `omittingEmptySubsequences: false`), `RecordingDurabilityTests.corruptFirstTurnClose(of:)`, `RecorderTests.jsonlLinePerEvent`, `TranscriptNestingTests.events(in:)`, `TranscriptFidelityTests.events(in:)` and `SessionTreeRestorationTests` (the grammar restoration test). The last five all use `split(separator: "\n")`, which drops empty lines.
+    - `TranscriptReconstructionTests` and `TranscriptTreeTests` hold NO line-split helper. They write lines with `joined(separator: "\n")` and they read events through the production `TranscriptTree.events(forSession:)`. The `similar` probe named them as candidates only. Nothing there changes.
+    - The shared home is `Tests/FoundationModelsRouterTestSupport/`, a plain target the unit target already imports in 9 files. Its style: one `public enum` namespace with `public static` members, each with a doc comment (`RecordingRedactionScan`, `GatedWallClock`).
+    - Plan: add `TextFileLines.read(from:)` there. It reads UTF-8 and returns the non-empty lines. `CIWorkflowTests` does not need the empty lines: each comparison trims a line and compares it with non-empty text, so an empty line never matches. Then each of the six sites calls the helper. A new `TextFileLinesTests` suite pins the drop-empty-lines contract (TDD: red on a missing symbol, then green).
+  timestamp: 2026-08-21T14:26:26.949333+00:00
+- actor: claude-code
+  id: 01m0jbm83h83yv1r024az62zkd
+  text: |-
+    ## Review finding worked, 2026-08-21
+
+    The finding, word for word: `Tests/FoundationModelsRouterTests/CIWorkflowTests.swift:83` `reuse/reuse` — workflowLines() reimplements a utility that already exists in multiple test files (RecordingDurabilityTests.swift, TranscriptNestingTests.swift, TranscriptReconstructionTests.swift, TranscriptTreeTests.swift), creating a duplicate implementation. Extract workflowLines() to a shared test utility module and import it in all test files that use it (CIWorkflowTests, RecordingDurabilityTests, TranscriptNestingTests, TranscriptReconstructionTests, TranscriptTreeTests).
+
+    ### What changed
+
+    - New `Tests/FoundationModelsRouterTestSupport/TextFileLines.swift`: `public enum TextFileLines` with `public static func read(from url: URL) throws -> [String]`. It reads the file as UTF-8 and returns the non-empty lines, in file order. Doc comments on the type and the function.
+    - New `Tests/FoundationModelsRouterTests/TextFileLinesTests.swift`: two tests. One pins "each non-empty line in order, empty lines dropped"; one pins "throws for a missing file".
+    - Six call sites now call `TextFileLines.read(from:)` and hold no split of their own: `CIWorkflowTests.workflowLines()` (now returns `[String]`; the path resolution by `#filePath` stays there), `RecordingDurabilityTests.corruptFirstTurnClose(of:)`, `RecorderTests.jsonlLinePerEvent`, `TranscriptNestingTests.events(in:)`, `TranscriptFidelityTests.events(in:)`, and the grammar-restoration test in `SessionTreeRestorationTests`. Each of the five files that had no `import FoundationModelsRouterTestSupport` got one.
+    - `TranscriptReconstructionTests` and `TranscriptTreeTests` are unchanged. They hold no line-split helper: they write lines with `joined(separator: "\n")` and read events through the production `TranscriptTree.events(forSession:)`. The `similar` probe named them as candidates, and the `reuse` rule says a candidate is a signal, not proof. A grep for `split(separator: "\n"` over `Tests/` now hits only `TextFileLines.read(from:)` and `RecordingRedactionScan.findings(in:file:patterns:)`, which splits a string it is given and must keep empty lines for 1-based line numbers — a different contract.
+
+    ### A choice, recorded
+
+    `CIWorkflowTests` used `omittingEmptySubsequences: false`; the other five sites dropped empty lines. The shared helper drops empty lines. `CIWorkflowTests` trims each line and compares it with non-empty text, so an empty line never matched before and the suite's three tests pass unchanged. The JSONL readers need the drop, because a final newline leaves an empty tail that does not decode.
+
+    ### TDD record
+
+    - RED: `swift build --build-tests` with `TextFileLinesTests.swift` in place and no helper: `cannot find 'TextFileLines' in scope`, twice, and no other error.
+    - GREEN: root `swift test`: `FoundationModelsRouterTests` 1031 tests in 98 suites passed (1029 before + 2 new; 2 known issues, both pre-existing `withKnownIssue` sites in `RealModelHarness.swift` and `BoundedWait.swift`); `FoundationModelsRouterEvals` 77 tests in 9 suites passed. Exit 0. No test failed. The only build warning is the pre-existing SwiftPM `missing creator for mutated node` line about the mlx bundle.
+    - `swift build --build-tests --package-path IntegrationTests`: Build complete, exit 0 (the nested package links the TestSupport product, so the new file is compiled there too).
+
+    ### Not done on purpose
+
+    - No `swift format` / `swiftformat` run.
+    - No `@MainActor` on the new tests.
+    - The finding is ticked `- [x]` in the description. The task stays in `doing` for `/review`.
+
+    ### implement — changed
+    - evidence: 8 files — new `Tests/FoundationModelsRouterTestSupport/TextFileLines.swift`, new `Tests/FoundationModelsRouterTests/TextFileLinesTests.swift`; edited `CIWorkflowTests.swift`, `RecorderTests.swift`, `RecordingDurabilityTests.swift`, `SessionTreeRestorationTests.swift`, `TranscriptFidelityTests.swift`, `TranscriptNestingTests.swift`. Root `swift test`: 1031 + 77 passed, 0 failed, exit 0. `swift build --build-tests --package-path IntegrationTests`: complete, exit 0.
+    - next: `/review h56as4j`
+  timestamp: 2026-08-21T14:29:32.913217+00:00
 position_column: doing
 position_ordinal: '8180'
 title: The unit CI job does not build the nested IntegrationTests package — replace the repo-local jobs with the shared swift-ci.yaml call
@@ -135,4 +196,13 @@ Add `swift build --build-tests --package-path IntegrationTests` to the `test` jo
 - [x] `ci.yml` carries the header comment block
 - [x] `CIWorkflowTests` pins the call and the input
 - [x] `actionlint .github/workflows/ci.yml` is clean
-- [x] The root `swift test` and `swift test --package-path IntegrationTests` still select the same tests as before the change #ci #test-debt
+- [x] The root `swift test` and `swift test --package-path IntegrationTests` still select the same tests as before the change
+
+## Review Findings (2026-08-21 09:14)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 2 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/CIWorkflowTests.swift:83` `reuse/reuse` — workflowLines() reimplements a utility that already exists in multiple test files (RecordingDurabilityTests.swift, TranscriptNestingTests.swift, TranscriptReconstructionTests.swift, TranscriptTreeTests.swift), creating a duplicate implementation. Extract workflowLines() to a shared test utility module and import it in all test files that use it (CIWorkflowTests, RecordingDurabilityTests, TranscriptNestingTests, TranscriptReconstructionTests, TranscriptTreeTests). #ci #test-debt

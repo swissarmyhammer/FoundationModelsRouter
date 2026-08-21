@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import Testing
 
 /// Pins `.github/workflows/ci.yml` to the shared CI shape the org test
@@ -76,18 +77,18 @@ struct CIWorkflowTests {
     /// `Tests/FoundationModelsRouterTests/CIWorkflowTests.swift`, two
     /// directories below the root). Keep this file directly inside
     /// `Tests/FoundationModelsRouterTests/`, or adjust the step count to match
-    /// the new location.
+    /// the new location. The split is ``TextFileLines/read(from:)``, the one
+    /// shared line reader, so this suite holds no copy of it.
     ///
-    /// - Returns: each line of the workflow file.
+    /// - Returns: each non-empty line of the workflow file.
     /// - Throws: an error when the file cannot be read.
-    private static func workflowLines() throws -> [Substring] {
+    private static func workflowLines() throws -> [String] {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // Tests/FoundationModelsRouterTests/
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // repository root
         let workflow = repoRoot
             .appendingPathComponent(".github/workflows/ci.yml")
-        let text = try String(contentsOf: workflow, encoding: .utf8)
-        return text.split(separator: "\n", omittingEmptySubsequences: false)
+        return try TextFileLines.read(from: workflow)
     }
 }

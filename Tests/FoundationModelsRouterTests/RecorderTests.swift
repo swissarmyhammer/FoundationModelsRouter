@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -71,8 +72,7 @@ struct RecorderTests {
         }
 
         let fileURL = dir.appendingPathComponent("transcript.jsonl", isDirectory: false)
-        let text = try String(contentsOf: fileURL, encoding: .utf8)
-        let lines = text.split(separator: "\n").map(String.init)
+        let lines = try TextFileLines.read(from: fileURL)
         #expect(lines.count == 3)
 
         let decoder = JSONDecoder()
