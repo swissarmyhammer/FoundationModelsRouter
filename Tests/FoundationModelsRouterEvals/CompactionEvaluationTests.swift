@@ -1025,8 +1025,8 @@ struct CompactionEvalSeedSizingTests {
     /// ``compactionEvalMeasuredBytesPerToken``, measured over this dataset's own
     /// prose, and a summary written in a wordier register costs more bytes for
     /// the same tokens. A third absorbs that comfortably. The measured margin is
-    /// wider still — the tightest seed, `db-port`, sits at 2.21 as the fixtures
-    /// stand: 345 estimated tokens of span against a worst case of 156.
+    /// wider still — the tightest seed, `sesame-allergy`, sits at 2.13 as the
+    /// fixtures stand: 328 estimated tokens of span against a worst case of 154.
     private static let summaryShrinkClearance = 1.5
 
     /// The largest summary a WELL-BEHAVED summarizer writes for a span this
@@ -1053,7 +1053,7 @@ struct CompactionEvalSeedSizingTests {
     /// ``Summarization/summaryTokenRatio`` of the span — only passes the floor on
     /// a span of roughly 2048 bytes or more. That branch cannot fail this bound
     /// at all: a quarter of a span, converted back into estimated tokens at the
-    /// measured rate, is `0.25 * 4.85 / 4.0` — under a third of the span it
+    /// measured rate, is `0.25 * 4.79 / 4.0` — under a third of the span it
     /// condensed — so a summary that large shrinks the transcript by
     /// construction, whatever the span. The floor is the only branch that can
     /// leave a fold no smaller than what it replaced, so the floor is what this
@@ -1069,7 +1069,7 @@ struct CompactionEvalSeedSizingTests {
     func everySeedsFoldableSpanOutweighsARealSummary() {
         // The lower bound of the band. Before task ^vjf3mdm a seed's whole span
         // was one fact sentence and its acknowledgement — a few hundred bytes,
-        // against a 128-token floor that is 621 bytes at
+        // against a 128-token floor that is 614 bytes at
         // `compactionEvalMeasuredBytesPerToken`. The fold cost more than it
         // saved, and `Compactor.compact` was right to throw it away.
         let worstCase = Self.worstCaseSummaryEstimatedTokens
@@ -1244,6 +1244,22 @@ struct CompactionEvalRepresentativeSubsetTests {
         #expect(
             Self.subsetSpecs.contains { $0.probedFactIndex == $0.facts.count - 1 },
             "the gated subset probes no last fact"
+        )
+    }
+
+    @Test("the subset probes a rule on the assistant's own later answers, so a fold that drops a constraint is measured")
+    func subsetProbesARuleOnLaterAnswers() {
+        // An identifier can only be carried word for word, so a seed that probes
+        // one measures whether the summary COPIED the fact. A rule the user set
+        // on the assistant's later answers is the one kind whose loss is a harm
+        // rather than a miss, and its probed phrase is an ordinary word a
+        // summary that dropped the fact can replace with a plausible wrong one.
+        // Task ^k0d30s4's cut lost the only such fixture, because no bar read
+        // the kind of a fact (task ^rdsbf57).
+        let kinds = Self.subsetSpecs.map(\.probedFactKind)
+        #expect(
+            kinds.contains(.ruleOnLaterAnswers),
+            "the gated subset probes facts of kinds \(kinds), none a rule on the assistant's own later answers"
         )
     }
 }

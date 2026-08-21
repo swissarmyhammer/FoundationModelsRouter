@@ -144,8 +144,9 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // temperature 0.6 from MLX's process-global PRNG, which seeds itself
         // from the clock, so two runs of identical code drew different answers:
         // the runs of 2026-08-17 scored 7 of 7 and 6 of 7 against the same fold
-        // code, and the one seed that moved, `env-file`, answered with its key
-        // phrase once and refused once.
+        // code, and the one seed that moved, `env-file` (rewritten as
+        // `sesame-allergy` by task ^rdsbf57), answered with its key phrase once
+        // and refused once.
         //
         // This tier scores a key-phrase search over an answer rather than the
         // answer's exact text, and that was once the reason the pin was left

@@ -65,8 +65,31 @@ comments:
     - evidence: 14 files changed under IntegrationTests/Tests/FoundationModelsRouterIntegrationTests — SessionTreeRestorationIntegrationTests.swift, RecordingHandleIntegrationTests.swift, Support/GatedSuiteSerialGate.swift, RealToolTurnComparisonTests.swift, and ten doc-only "run table" edits (AutoCompactionTrigger, CancelledGenerationTeardown, CompactionSmoke, CompactionSpike, IntegrationTests, LanguageModelSessionBackendTests, MetalLibraryBootstrap, PropagationProbe, RecordedTranscriptCompaction, TranscriptReconstruction). Whole-target run 4: fork-tree 3.1 s, handle 55.4 s; run 5: fork-tree 3.1 s, handle 44.8 s; both runs all green (29 tests in 14 suites + 2 eval suites). Sampling: `.greedy` pinned on both converted suites (SessionTree at the four load sites; RecordingHandle on the turn's `GenerationOptions`, plus the 4096 ceiling). Models: fork-tree test on Qwen2.5-3B-Instruct-4bit, tool-calling test and RecordingHandle on RealModels.standard (30B). Root `swift test`: 1032 tests in 98 suites + 80 tests in 10 suites passed. New card ^6ww73dm filed for RealToolTurnComparisonTests at 109–111 s.
     - next: `/review`
   timestamp: 2026-08-21T21:58:45.668746+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0k5hy5wd7dgkhk9q0p335f2
+  text: |-
+    ### commit — changed
+    - evidence: 2e07e98 test(integration): pin greedy decoding and shrink the two dearest gated tests inside half the budget (^bpwfbyz) — 18 files changed, 361 insertions(+), 124 deletions(-)
+    - next: /review
+  timestamp: 2026-08-21T22:02:40.188151+00:00
+- actor: claude-code
+  id: 01m0k5pjm2ytv160p7n3pefqmp
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 2e07e98), 14 files reviewed, counts findings 0 / confirmed 0 / refuted 0; 4 `.kanban/` files skipped by `.reviewignore`
+    - next: none, task moved to done
+  timestamp: 2026-08-21T22:05:12.194853+00:00
+- actor: claude-code
+  id: 01m0k5q7mpty6h49pys2c5a5ar
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 14 files under IntegrationTests/Tests/FoundationModelsRouterIntegrationTests; greedy pins; fork-tree test on Qwen2.5-3B, tool-calling test and RecordingHandle on the 30B with the response ceiling; two whole-target runs green: fork-tree 3.1 / 3.1 s, handle 55.4 / 44.8 s, tool-calling 49.6 / 47.9 s (box under GPU load from a game); ^6ww73dm filed for RealToolTurnComparisonTests at 109–111 s
+    - test: green — root swift test 1032 + 80 passed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: 2e07e98
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-21T22:05:33.718256+00:00
+position_column: done
+position_ordinal: ffe980
 title: Two integration tests fit the two-minute budget by under 20 percent, and the 30B's sampling decides which run
 ---
 Filed by task ^k0d30s4, which gave every test of `FoundationModelsRouterIntegrationTests` a wall-clock budget of two minutes and stated that budget as each suite's `.timeLimit`.

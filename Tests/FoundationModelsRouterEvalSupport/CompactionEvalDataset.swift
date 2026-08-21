@@ -1,5 +1,29 @@
 import FoundationModels
 
+/// The kind of thing a fixture's probed fact is, which decides what a fold
+/// that loses it costs.
+///
+/// The dataset held 24 fixtures until task ^k0d30s4 cut it to seven, and the
+/// seven that stayed probed an identifier, a number or a duration almost
+/// alone. The kind of a fact is not a field the dataset varies, so no bar read
+/// it, and the cut lost the one fixture whose probed fact was a rule the user
+/// set on the assistant's own later answers (task ^rdsbf57). This marker makes
+/// the kind a value `CompactionEvalRepresentativeSubsetTests` can hold.
+enum CompactionEvalProbedFactKind: Sendable {
+    /// A value a summary can only carry word for word — an identifier, a
+    /// slug, a number or a duration. A fold that loses one gives a wrong
+    /// answer, and the metric measures whether the summary COPIED the fact.
+    case verbatimValue
+
+    /// A rule the user places on the assistant's own later answers — a
+    /// constraint every later answer must obey, stated as a fact about the
+    /// user as a person. A fold that loses one does harm, not a miss. Its
+    /// probed phrase is an ordinary English word, so a summary that dropped
+    /// the fact can still answer with a plausible wrong one, and the metric
+    /// measures whether the model KEPT the fact.
+    case ruleOnLaterAnswers
+}
+
 /// One hand-written fixture: facts planted in a seed transcript's head, which
 /// fact this fixture's ``question`` probes, and whether the head includes
 /// simulated tool traffic (compaction_plan.md §5's "varied lengths, tool
@@ -22,7 +46,7 @@ struct CompactionEvalFixtureSpec: Sendable {
     /// taste. `Compactor.compact` discards a fold whose summary entry is no
     /// smaller than the span it replaces, and
     /// ``Summarization/minimumSummaryTokens`` gives every span this small the
-    /// same summary allowance — a floor of 128 tokens, which is 621 bytes of
+    /// same summary allowance — a floor of 128 tokens, which is 614 bytes of
     /// prose at ``compactionEvalMeasuredBytesPerToken``. A head of one fact
     /// sentence plus its acknowledgement is a few hundred bytes, so the fold
     /// cost more than it saved and the gated run of 2026-08-17 discarded 8 of
@@ -60,6 +84,12 @@ struct CompactionEvalFixtureSpec: Sendable {
     /// unconditionally regardless of whether compaction actually preserved
     /// the fact.
     let factKeyPhrase: String
+
+    /// What kind of thing `facts[probedFactIndex]` states, so the shape of the
+    /// answer ``question`` asks for. No other field carries it: the fact count,
+    /// the probed position, the delivery and the recency window all vary, and
+    /// a fixture can change kind while every one of them stays the same.
+    let probedFactKind: CompactionEvalProbedFactKind
 
     /// The question asked of the resumed, post-compaction session — answerable
     /// only from `facts[probedFactIndex]`, never from the untouched recency
@@ -167,8 +197,9 @@ let compactionEvalFactAcknowledgements: [String] = [
 let compactionEvalContextAcknowledgement = "Noted — I have the background in mind."
 
 /// Every hand-written fixture: seven seed transcripts spanning single- and
-/// multi-fact heads, plain-reply and tool-traffic delivery, and short-to-long
-/// recency windows.
+/// multi-fact heads, plain-reply and tool-traffic delivery, short-to-long
+/// recency windows, and both kinds of probed fact — a value the summary can
+/// only copy, and a rule on the assistant's own later answers.
 ///
 /// These are exactly the seeds ``compactionEvalRepresentativeSubsetIDs`` names,
 /// which is the whole dataset the one gated fact-retention tier measures. The
@@ -187,27 +218,28 @@ let compactionEvalContextAcknowledgement = "Noted — I have the background in m
 /// itself would state nothing.
 let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
     CompactionEvalFixtureSpec(
-        id: "env-file",
+        id: "sesame-allergy",
         context: """
-            Background for this session: the service reads its whole configuration from environment
-            variables at startup, and the deployment scripts assemble those variables from three layers. The
-            base defaults are checked into the repository, the per-environment overrides are held by the
-            deployment tool, and a small set of secrets is injected by the platform at run time. The layers
-            merge in that order, so a value set in the defaults can be replaced per environment and replaced
-            again at run time, and a value that appears in none of the three is a startup failure rather
-            than a silent empty string. Developers running the service on their own machines get the first
-            two layers from the repository and are expected to supply the third themselves, which is the
-            step new joiners most often miss. The merge is done by a short shell script rather than by the
-            service, so the service sees one flat set of variables and cannot tell which layer any value
-            came from. A long-standing request to make that script print the origin of each value has never
-            been picked up. One service still reads a value the script no longer sets, and it falls back to
-            a compiled-in default rather than failing, which is how the mismatch went unnoticed for a month.
-            Reply with one short sentence acknowledging this.
+            Background for this session: I do most of the cooking at home for a household of four, and I
+            plan the week's dinners on a Sunday so that one big shop covers everything. Two of us take a
+            packed lunch, so most dinners are cooked in a quantity that leaves a portion over, and a recipe
+            that does not scale up cleanly is more trouble than it is worth. A weeknight gets about forty
+            minutes from starting to sitting down, and anything longer is kept for the weekend. The kitchen
+            is small, with one oven and four rings, so a menu that needs the oven at two temperatures at once
+            does not work for us. We eat a fair amount of fish and not much red meat, and I keep a stocked
+            spice shelf and a freezer full of stock, so a recipe can assume both. When I ask you for a recipe
+            or a menu, I want the ingredient list first and the method second, with quantities in grams
+            rather than cups, because the scales are easier to trust than the measuring cups. I cook from a
+            phone propped on the counter, so a method of short numbered steps is much easier to follow than
+            a long paragraph. Reply with one short sentence acknowledging this.
             """,
-        facts: ["The API key for this project lives in `.env.example`, never in a real `.env` file."],
+        facts: [
+            "I have a severe allergy to sesame, so never put it — the seeds, the oil or tahini — into any recipe or menu you give me."
+        ],
         probedFactIndex: 0,
-        factKeyPhrase: ".env.example",
-        question: "Which file holds the API key for this project?",
+        factKeyPhrase: "sesame",
+        probedFactKind: .ruleOnLaterAnswers,
+        question: "Which ingredient must you leave out of every recipe and menu you give me, and why?",
         probedFactViaTool: false,
         recentTurnCount: 4
     ),
@@ -231,6 +263,7 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         facts: ["The staging database listens on port 6543, not the default 5432."],
         probedFactIndex: 0,
         factKeyPhrase: "6543",
+        probedFactKind: .verbatimValue,
         question: "What port does the staging database listen on?",
         probedFactViaTool: true,
         recentTurnCount: 4
@@ -258,6 +291,7 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         ],
         probedFactIndex: 1,
         factKeyPhrase: "eu-west-2",
+        probedFactKind: .verbatimValue,
         question: "Which region is the production deployment in, and why was it chosen?",
         probedFactViaTool: false,
         recentTurnCount: 4
@@ -284,6 +318,7 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         ],
         probedFactIndex: 0,
         factKeyPhrase: "4,200",
+        probedFactKind: .verbatimValue,
         question: "What is the monthly cloud spend cap for this project?",
         probedFactViaTool: true,
         recentTurnCount: 6
@@ -312,6 +347,7 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         ],
         probedFactIndex: 0,
         factKeyPhrase: "2 hours",
+        probedFactKind: .verbatimValue,
         question: "After how long does a tier-1 support ticket escalate to tier-2?",
         probedFactViaTool: false,
         recentTurnCount: 7
@@ -335,6 +371,7 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         facts: ["Data at rest in this project is encrypted with AES-256-GCM, never the older CBC mode."],
         probedFactIndex: 0,
         factKeyPhrase: "AES-256-GCM",
+        probedFactKind: .verbatimValue,
         question: "Which encryption mode is used for data at rest in this project?",
         probedFactViaTool: true,
         recentTurnCount: 5
@@ -363,6 +400,7 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
         ],
         probedFactIndex: 2,
         factKeyPhrase: "WX-ARCHIVE-6",
+        probedFactKind: .verbatimValue,
         question: "What is the internal reference id for this weather-archive cataloging effort?",
         probedFactViaTool: false,
         recentTurnCount: 6
@@ -396,7 +434,7 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 ///
 /// | fixture | head | probed fact | delivery | recency window |
 /// |---|---|---|---|---|
-/// | `env-file` | one fact | the only one | plain reply | 4 — the shortest here |
+/// | `sesame-allergy` | one fact | the only one | plain reply | 4 — the shortest here |
 /// | `db-port` | one fact | the only one | tool traffic | 4 |
 /// | `encryption-algorithm` | one fact | the only one | tool traffic | 5 |
 /// | `license-key-and-region` | two facts | the second, so the last of its head | plain reply | 4 |
@@ -404,12 +442,20 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 /// | `three-facts-support-escalation` | three facts | the first of three | plain reply | 7 — the longest here |
 /// | `three-facts-long-project-brief` | three facts | the third, so the last of its head | plain reply | 6 |
 ///
+/// A fifth thing varies, and only one seed carries its harder side: the KIND
+/// of the probed fact, ``CompactionEvalFixtureSpec/probedFactKind``. Six seeds
+/// probe a value a summary can only copy word for word. `sesame-allergy` probes
+/// a rule the user places on the assistant's own later answers, stated as a fact
+/// about the user as a person and in a domain that is not software; task
+/// ^rdsbf57 rewrote it from the `env-file` fixture for that kind, because the
+/// cut of ^k0d30s4 had left the seven without one.
+///
 /// `CompactionEvalRepresentativeSubsetTests` holds that coverage mechanically,
 /// against ABSOLUTE bars rather than against the dataset. It read the dataset
 /// while a second tier measured a wider one; now that the two hold the same
 /// seeds, a comparison with the dataset would pass whatever this list named.
 let compactionEvalRepresentativeSubsetIDs: [String] = [
-    "env-file",
+    "sesame-allergy",
     "db-port",
     "encryption-algorithm",
     "license-key-and-region",

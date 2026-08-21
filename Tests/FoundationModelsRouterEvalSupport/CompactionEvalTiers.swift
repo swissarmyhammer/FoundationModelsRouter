@@ -307,39 +307,43 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 /// The corpus is this dataset's whole prose — every fixture's
 /// ``CompactionEvalFixtureSpec/context`` and facts, every acknowledgement, and
 /// every ``compactionEvalFillerTurns`` prompt and reply. That is 41 pieces of
-/// text and 9946 UTF-8 bytes. Each piece is encoded on its own and the token
+/// text and 9824 UTF-8 bytes. Each piece is encoded on its own and the token
 /// counts are summed, over each model's own `tokenizer.json` out of the local
 /// Hub cache:
 ///
 /// | tokenizer | tokens | bytes for each token |
 /// |---|---|---|
-/// | Muse Glimmer 30B | 2052 | 4.847 |
-/// | Llama 3.2 1B | 2061 | 4.826 |
-/// | Qwen2.5 3B | 2069 | 4.807 |
+/// | Muse Glimmer 30B | 2055 | 4.781 |
+/// | Llama 3.2 1B | 2066 | 4.755 |
+/// | Qwen2.5 3B | 2074 | 4.737 |
 ///
 /// This value deliberately keeps the LARGEST of those rates, rounded up, so
 /// the summary sizes it feeds are never under-stated.
 ///
-/// The rate rose from 4.81 when task ^k0d30s4 cut the dataset from 24 fixtures
-/// to seven. It is a property of the prose that is LEFT, not of the prose that
-/// was written, so it was re-measured over the smaller corpus by the same
-/// method: the 24-fixture corpus was 85 pieces and 31541 bytes, and gave 6564,
-/// 6577 and 6602 tokens, thus 4.805, 4.796 and 4.777 bytes for each token. Each
-/// tokenizer reads the seven fixtures a shade less densely than it read all 24,
-/// so the largest rate moved up and the constant with it. Task ^m03heaa
-/// measured the Qwen2.5-3B row when that model became the fact-retention
-/// canary; the 3B is the smallest of the three, so that measurement did not
-/// move the constant. The 4.524 this doc stated for the Llama tokenizer before
-/// ^m03heaa was taken over a different corpus — the single-line literals of the
-/// two dataset sources, 8776 bytes against 1940 tokens — which is why the table
-/// above re-states it.
+/// The rate is a property of the prose the dataset HOLDS, so each edit to a
+/// fixture measures it again by the same method. Task ^rdsbf57 rewrote the
+/// head of one fixture, `env-file`, into `sesame-allergy`, and the rate fell
+/// from 4.85 to 4.79: before that edit the corpus was 41 pieces and 9946 bytes,
+/// and gave 2052, 2061 and 2069 tokens, thus 4.847, 4.826 and 4.807 bytes for
+/// each token. Before ^rdsbf57, task ^k0d30s4 had cut the dataset from 24
+/// fixtures to seven, and the rate rose from 4.81 to 4.85: the 24-fixture
+/// corpus was 85 pieces and 31541 bytes, and gave 6564, 6577 and 6602 tokens,
+/// thus 4.805, 4.796 and 4.777 bytes for each token. Each tokenizer read the
+/// seven fixtures a shade less densely than it read all 24, and reads the
+/// cooking prose of `sesame-allergy` more densely than the configuration prose
+/// it replaced. Task ^m03heaa measured the Qwen2.5-3B row when that model
+/// became the fact-retention canary; the 3B is the smallest of the three, so
+/// that measurement did not move the constant. The 4.524 this doc stated for
+/// the Llama tokenizer before ^m03heaa was taken over a different corpus — the
+/// single-line literals of the two dataset sources, 8776 bytes against 1940
+/// tokens — which is why the table above re-states it.
 ///
 /// Every use of this constant converts a real-token allowance into the bytes
 /// a real summary occupies, so the largest rate over-states every such
 /// summary and each gate it feeds stays strict: the hermetic shrink gate
 /// folds against a summary bigger than the model writes, and the seed sizing
 /// outweighs a worst case bigger than the real one.
-let compactionEvalMeasuredBytesPerToken = 4.85
+let compactionEvalMeasuredBytesPerToken = 4.79
 
 /// The ceiling one summarizer call of an eval-sized fold is given at the
 /// PRODUCTION defaults: ``Summarization/minimumSummaryTokens`` — the FLOOR
@@ -417,17 +421,17 @@ let compactionEvalReasoningTokenHeadroom = 128
 /// This summarizer answers a little over the allowance converted at
 /// `Compactor.charsPerTokenEstimate` on purpose. 128 tokens at that flat rate of
 /// 4.0 bytes is 512 bytes. This answers the allowance in REAL tokens at
-/// ``compactionEvalMeasuredBytesPerToken`` instead — 621 bytes. So a seed
-/// that clears this gate clears a summary 21% larger than the flat estimate
+/// ``compactionEvalMeasuredBytesPerToken`` instead — 614 bytes. So a seed
+/// that clears this gate clears a summary 20% larger than the flat estimate
 /// predicts.
 ///
 /// The span byte budget does not bind on that answer for any seed, so this
 /// gate measures a seed against the summary as written and never against one
 /// the stage had already condensed or cut. That budget is
 /// ``Summarization/statedBudgetShareOfContent`` of the span's own content, so a
-/// 621-byte answer overruns it only when the content is under 828 bytes, and
+/// 614-byte answer overruns it only when the content is under 819 bytes, and
 /// `CompactionEvalSeedSizingTests/everySeedsFoldableSpanOutweighsARealSummary`
-/// already requires every seed's span to estimate 234 tokens — 936 bytes at
+/// already requires every seed's span to estimate 231 tokens — 924 bytes at
 /// `Compactor.charsPerTokenEstimate` — or more.
 struct RealisticSummaryLengthSummarizer: CompactionSummarizer {
     /// The headroom the stage under test adds on top of the summary allowance.

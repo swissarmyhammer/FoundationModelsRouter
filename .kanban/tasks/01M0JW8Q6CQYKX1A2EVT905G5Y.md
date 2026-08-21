@@ -22,8 +22,24 @@ comments:
     - evidence: 1 file — `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/RecordingHandleIntegrationTests.swift` (suite doc comment only; no code line changed). Suite run 2026-08-21: `swift test --package-path IntegrationTests --filter RecordingHandleIntegrationTests` PASS, 1 test in 1 suite, 21.434 s test wall clock, 29.9 s whole command, fork revision `41e9f41` (`41e9f41c9121e11f85146e9f5a4d89f6f840f2d3`, branch `stable`). `swift build --build-tests --package-path IntegrationTests`: Build complete, exit 0. Root `swift test`: `Test run with 1032 tests in 98 suites passed after 5.384 seconds with 2 known issues` (FoundationModelsRouterTests) and `Test run with 80 tests in 10 suites passed after 0.181 seconds` (the eval target), exit 0, 0 failures. Post-edit sweep `rg -n "could not be executed live|never actually set against|verified to \*compile\*|report back|no GPU/Apple Silicon|this sandbox" Sources Tests IntegrationTests` matches nothing. Acceptance boxes ticked; tags `integration`, `real-model` re-supplied and verified with `get task`.
     - next: `/review`
   timestamp: 2026-08-21T20:13:11.403459+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0jzg6m89qdgmkqa3863sjtg
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit a076dbf) — 0 findings, 0 confirmed, 0 refuted; 1 file reviewed (`IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/RecordingHandleIntegrationTests.swift`), 7 validators attempted, 0 failed; `.kanban/` files excluded by `.reviewignore`
+    - next: task moved to `done`
+  timestamp: 2026-08-21T20:16:51.848856+00:00
+- actor: claude-code
+  id: 01m0jzgt1gnfzsne1aatvnadgb
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — RecordingHandleIntegrationTests.swift header (doc only); suite PASS 2026-08-21, 1 test, 21.4 s, fork 41e9f41
+    - test: green — root swift test 1032 + 80 passed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: a076dbf
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-21T20:17:11.728465+00:00
+position_column: done
+position_ordinal: ffe880
 title: The RecordingHandleIntegrationTests.swift header says the suite could not run in this sandbox; the same header reports three timed runs of 2026-08-20
 ---
 The suite doc comment on `RecordingHandleIntegrationTests` in `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/RecordingHandleIntegrationTests.swift` says: "IMPORTANT — this suite could not be executed live in this sandbox: there is no GPU/Apple Silicon and no network access here to download `recordingHandleTinyModel`, so a real-model run was never actually set against a real run. Everything below is verified to *compile* ... someone needs to run this suite on a real Apple Silicon Mac ... then confirm the assertions below hold and report back." The next paragraph of the same comment then says: "The three runs of 2026-08-20 measured this suite's one test at 16.7, then 40.9, then 101.5 seconds". The two paragraphs cannot both be true. The suite has run. Found while card ^xakt8jb corrected the same stale claim on `MLXFoundationModelsSessionBackend.usageTokenCounts()`.

@@ -242,7 +242,7 @@ struct AutoCompactionTriggerIntegrationTests {
     ///
     /// At 0.1 the cap is 200 tokens (`0.1` of ``Summarization/maxChunkTokens``),
     /// so the whole generation is bounded at 328 tokens with
-    /// ``reasoningTokenHeadroom`` — about 1.6 KB at the dataset-measured 4.81
+    /// ``reasoningTokenHeadroom`` — about 1.6 KB at the dataset-measured 4.79
     /// bytes for each token, well under this fixture's span byte budget. The
     /// answer therefore fits the span and is stored whole, and the fold's
     /// saving is the span minus a BOUNDED answer, by construction rather than
