@@ -167,8 +167,25 @@ comments:
     - untouched, and not this card's: the open question on ^k0d30s4 about `CompactionEvalFullDatasetIntegrationTests`, ^mx4jqrn (the continuity tier is red on `main`), ^5q0vv85 (the whole-dataset bound has little margin), ^de1yq0p, ^sqcp252.
     - next: `/review`.
   timestamp: 2026-08-21T04:34:50.882945+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0h9xn9gp160gvb1nhn893qy
+  text: |
+    ### review — clean
+    - evidence: `review sha bd26952~1..bd26952` with the local backend. 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 1 file reviewed (`Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`); 4 `.kanban/` files excluded by `.reviewignore`. The one earlier finding of 2026-08-19 06:26 is marked done. The card moved from `doing` through `review` to `done`.
+    - criteria: criterion 1 holds on the recorded gated subset run of 2026-08-20 from task ^m03heaa — 7 of 7 seeds, 6 of 7 summaries and 6 of 7 answers against a bar of 5 of 7, 63.3 s inside the 2-minute limit, no sample in `foldProducedNoSummary`. No gated tier was run for this pass. Criterion 2 holds on the doc of `compactionEvalMeasuredDearestSampleSeconds`, read at `bd26952`: it states that each measured figure holds an applied fold and the answering turn that reads the folded transcript, that task ^azd033m made the fold apply, that a discarded fold costs one summarizer call and nothing after it, and that the run of 2026-08-17 is thus not comparable. The two ungated tests it names both exist — `CompactionEvaluationHermeticTests/everySeedFoldSurvivesARealisticSummary` and `CompactionEvalSeedSizingTests/everySeedsFoldableSpanOutweighsARealSummary`, both in `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`. Criterion 3 is owned by ^bkdm97c, which commit `3add7b3` moved to the board of the vendored fork; that card is not on this board.
+    - next: none. The card is done.
+  timestamp: 2026-08-21T04:40:29.744411+00:00
+- actor: claude-code
+  id: 01m0h9yd6zzgvd5dxdmw6hztr8
+  text: |-
+    ### finish iteration — clean
+    - implement: changed — 1 source file, 19 lines of doc prose on `compactionEvalMeasuredDearestSampleSeconds`; the card's 30B premise was removed by ^m03heaa and ^k0d30s4, so no limit was raised
+    - test: green — both packages build with -warnings-as-errors; root swift test 1025 in 96 suites plus 77 in 9 suites; no gated tier run, because ^m03heaa recorded one on 2026-08-20
+    - commit: bd26952
+    - review: clean — 0 findings; task moved to `done`
+  timestamp: 2026-08-21T04:40:54.239743+00:00
+position_column: done
+position_ordinal: ffd680
 title: The gated compaction subset no longer fits its 30-minute limit now that every fold applies — 6 of 7 seeds in 1800 s
 ---
 Measured by the sanctioned gated run of 2026-08-18 16:07 local, made for `^bgxtdk3` criterion 5. Log: `/private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/606aa1c2-1180-4d8b-96da-9a3c34d5a1b0/scratchpad/gated-crit5.log`.
