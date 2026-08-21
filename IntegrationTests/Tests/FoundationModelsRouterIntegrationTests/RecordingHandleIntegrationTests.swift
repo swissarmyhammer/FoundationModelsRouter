@@ -24,9 +24,8 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// exactly as a harness frontend is expected to.
 ///
 /// Builds a real ``LanguageModelProfile`` directly over an already-loaded tiny
-/// model's ``MLXFoundationModelsContainer`` — the same technique
-/// ``LanguageModelSessionBackendIntegrationTests`` and
-/// ``TranscriptReconstructionIntegrationTests`` use — bypassing
+/// model's ``MLXFoundationModelsContainer`` through ``RealModelHarness`` — the
+/// build every real-model suite of this target shares — bypassing
 /// `Router.resolve(_:reporting:)`, which would need real `.flash`/`.embedding`
 /// downloads too, since this suite only ever drives `.standard`.
 ///
@@ -84,19 +83,10 @@ struct RecordingHandleIntegrationTests {
         }
     }
 
-    /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
-    /// `.embedding` slot the ``LanguageModelProfile`` this suite builds must
-    /// still carry — never exercised here, only present to satisfy the type.
-    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension = 1
-        func embed(texts: [String]) async throws -> [[Float]] { [] }
-    }
-
     // MARK: - Harness
 
     private struct Harness {
         let profile: LanguageModelProfile
-        let router: Router
         let container: MLXFoundationModelsContainer
         let recordingsDir: URL
         let cacheDir: URL
@@ -105,8 +95,17 @@ struct RecordingHandleIntegrationTests {
     /// Builds a real ``LanguageModelProfile`` directly over a freshly loaded
     /// tiny model, recording into a durable temp `recordingsDir` so its
     /// transcript can be reloaded through ``TranscriptTree``/``MergedTranscript``
-    /// after the turn completes — the same manual-harness technique this
-    /// target's other gated suites use.
+    /// after the turn completes.
+    ///
+    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
+    /// the one real-profile build every real-model suite of this target uses.
+    /// This suite's own hand-built copy said the same thing and was folded onto
+    /// it (task ^zz6kam0): the same `JSONLRecorder` for the router and every
+    /// handle, the same root-plus-writer ``DurableRecording`` pair `Router`
+    /// builds — which is what `TranscriptTree.load` below reads — one gate set
+    /// shared by the two generation handles, and one stub in the `.embedding`
+    /// slot this suite never drives. The copy named its profile `"test"`; the
+    /// harness stamps its own name, and nothing reads the field.
     private func makeHarness() async throws -> Harness {
         let container = try await RealModelContainer.load(ref: recordingHandleTinyModel)
 
@@ -117,78 +116,20 @@ struct RecordingHandleIntegrationTests {
             .appendingPathComponent(
                 "RecordingHandleIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
 
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let router = Router(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-
-        func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(
-                slot: slot, remainingBudgetBytes: 0, chosen: recordingHandleTinyModel, considered: [])
-        }
-        // Built by hand here (rather than taken from a `Router.resolve`), so
-        // each handle is handed the same root-plus-writer pair `Router` builds:
-        // a durable root travels with the writer that keeps what lands under it
-        // loadable, which is what `TranscriptTree.load` below reads.
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            DurableRecording(
-                root: recordingsDir,
-                sidecarWriter: SessionSidecarWriter(
-                    slot: slot,
-                    model: recordingHandleTinyModel,
-                    context: noopResolution(slot).contextTokens,
-                    recordingLevel: .full,
-                    profile: nil,
-                    routerId: router.id
-                )
-            )
-        }
-        // Both generation handles wrap the one `container`, so both take the
-        // one gate set it carries, as they would from a pool entry. Two sets
-        // would let two generations run inside the one container at once.
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        let standard = RoutedLLM(
-            slot: .standard,
-            chosen: recordingHandleTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.standard),
+        let profile = RealModelHarness.make(
+            model: recordingHandleTinyModel,
+            // The window the hand-built copy resolved at: it stated no
+            // `contextTokens` at all, so every slot took `SlotResolution`'s own
+            // default. Stated explicitly here, because the harness has no
+            // default of its own to inherit.
+            context: ProfileDefinition.defaultContext,
             container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.standard),
-            gates: generationGates
-        )
-        let flash = RoutedLLM(
-            slot: .flash,
-            chosen: recordingHandleTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.flash),
-            container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.flash),
-            gates: generationGates
-        )
-        let embedding = RoutedEmbedder(
-            slot: .embedding,
-            chosen: recordingHandleTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.embedding),
-            container: UnusedEmbeddingContainer(),
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        )
-        let profile = LanguageModelProfile(
-            definitionName: "test",
-            standard: standard,
-            flash: flash,
-            embedding: embedding,
-            router: router,
-            residencyToken: .generate()
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
         )
 
         return Harness(
-            profile: profile, router: router, container: container, recordingsDir: recordingsDir,
+            profile: profile, container: container, recordingsDir: recordingsDir,
             cacheDir: cacheDir)
     }
 
@@ -313,7 +254,7 @@ struct RecordingHandleIntegrationTests {
         // The handle's own directory carries its sidecar, with the right
         // slot/model.
         let routerDirectory = harness.recordingsDir
-            .appendingPathComponent(harness.router.id.description, isDirectory: true)
+            .appendingPathComponent(harness.profile.standard.routerId.description, isDirectory: true)
         let ownSidecar = try #require(try SessionSidecar.read(in: recordingDirectory))
         #expect(ownSidecar.slot == .standard)
         #expect(ownSidecar.model == recordingHandleTinyModel)

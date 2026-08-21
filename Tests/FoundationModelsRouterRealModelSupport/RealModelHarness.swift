@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import FoundationModelsRouter
+import Testing
 
 /// The one way a gated suite builds a real ``LanguageModelProfile`` over a
 /// model it has already loaded.
@@ -47,16 +48,30 @@ public enum RealModelHarness {
 
     /// A minimal ``LoadedEmbeddingContainer`` stand-in for the `.embedding` slot
     /// every ``LanguageModelProfile`` must carry. No suite that builds a profile
-    /// here embeds anything, so this is present only to satisfy the type.
+    /// here embeds anything, so this is present to satisfy the type — and it
+    /// records an issue if a caller drives it all the same.
     private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
         /// The dimension of a vector this container never makes.
         let dimension = 1
 
-        /// Answers with no vectors, because nothing calls this.
+        /// Records an issue and answers with no vectors.
+        ///
+        /// A caller reaches this only by embedding through the `.embedding`
+        /// handle of a harness profile, and the harness loaded no embedding
+        /// model to answer with — it stamps the one generation model it was
+        /// given into all three slots. So the empty answer is not a result, and
+        /// this states that rather than letting a caller read it as one.
+        ///
+        /// ``RealToolTurnComparisonTests`` carried this same tripwire on its own
+        /// copy of the stub. It is here now, so every harness caller has it, and
+        /// ``RealModelHarnessTests`` holds it.
         ///
         /// - Parameter texts: The texts to embed. Ignored.
         /// - Returns: An empty array.
-        func embed(texts: [String]) async throws -> [[Float]] { [] }
+        func embed(texts: [String]) async throws -> [[Float]] {
+            Issue.record("the .embedding slot of a RealModelHarness profile holds no embedding model")
+            return []
+        }
     }
 
     /// The ``SlotResolution`` every handle of a harness profile carries.

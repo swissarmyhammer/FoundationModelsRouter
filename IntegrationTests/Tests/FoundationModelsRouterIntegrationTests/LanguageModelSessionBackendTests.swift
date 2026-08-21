@@ -256,14 +256,6 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     // MARK: - Chokepoint fidelity: recorded entry kinds match the real transcript
 
-    /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
-    /// `.embedding` slot the ``LanguageModelProfile`` this test builds must
-    /// still carry — never exercised here, only present to satisfy the type.
-    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension = 1
-        func embed(texts: [String]) async throws -> [[Float]] { [] }
-    }
-
     /// The pieces ``recordedEntryKindsMatchSessionTranscriptKinds()`` and its
     /// streaming counterpart both need: a real ``RoutedSessionActor`` wired
     /// directly to the already-loaded tiny model's backend (bypassing
@@ -283,6 +275,21 @@ struct LanguageModelSessionBackendIntegrationTests {
     }
 
     /// Builds a ``ChokepointHarness`` over a freshly loaded tiny model.
+    ///
+    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
+    /// which this harness's own hand-built copy was folded onto (task
+    /// ^zz6kam0). One `JSONLRecorder` still reaches the router and every handle
+    /// alike — `Router.recorder` is actor-isolated, and one sink keeps every
+    /// append off that hop — and each handle still carries the root-plus-writer
+    /// ``DurableRecording`` pair `Router.makeDurableRecording` builds, so this
+    /// harness records a tree a reader could load rather than transcripts with
+    /// no sidecars beside them.
+    ///
+    /// One fact changed with the move. The copy built its `Router` with NO
+    /// `recordingsDir`, so `router.recordingsDir` read `nil` while every handle
+    /// recorded into a real directory; the harness always hands the router that
+    /// directory. Nothing in this suite reads the field, so the move corrects
+    /// an inconsistency and changes no assertion.
     private func makeChokepointHarness() async throws -> ChokepointHarness {
         let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
         let backend = try #require(
@@ -296,82 +303,22 @@ struct LanguageModelSessionBackendIntegrationTests {
             .appendingPathComponent(
                 "LanguageModelSessionBackendTests-cache-\(UUID().uuidString)", isDirectory: true)
 
-        // `Router.recorder` is actor-isolated; constructing the recorder
-        // directly and handing the same instance to both the router and every
-        // `RoutedModel`/`RoutedSessionActor` below avoids hopping the actor
-        // repeatedly and keeps every append going through one sink.
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let router = Router(cacheDir: cacheDir, recorder: recorder)
-
-        func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(
-                slot: slot, remainingBudgetBytes: 0, chosen: sessionBackendTinyModel, considered: [])
-        }
-        // The same root-plus-writer pair `Router.makeDurableRecording` builds,
-        // so this harness records the tree a reader could load, rather than
-        // transcripts with no sidecars beside them.
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            DurableRecording(
-                root: recordingsDir,
-                sidecarWriter: SessionSidecarWriter(
-                    slot: slot,
-                    model: sessionBackendTinyModel,
-                    context: noopResolution(slot).contextTokens,
-                    recordingLevel: .full,
-                    profile: nil,
-                    routerId: router.id
-                )
-            )
-        }
-        // Both generation handles wrap the one `container`, so both take the
-        // one gate set it carries, as they would from a pool entry. Two sets
-        // would let two generations run inside the one container at once.
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        let standard = RoutedLLM(
-            slot: .standard,
-            chosen: sessionBackendTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.standard),
+        let profile = RealModelHarness.make(
+            model: sessionBackendTinyModel,
+            // The window the hand-built copy resolved at: it stated no
+            // `contextTokens` at all, so every slot took `SlotResolution`'s own
+            // default. Stated explicitly here, because the harness has no
+            // default of its own to inherit.
+            context: ProfileDefinition.defaultContext,
             container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.standard),
-            gates: generationGates
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
         )
-        let flash = RoutedLLM(
-            slot: .flash,
-            chosen: sessionBackendTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.flash),
-            container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.flash),
-            gates: generationGates
-        )
-        let embedding = RoutedEmbedder(
-            slot: .embedding,
-            chosen: sessionBackendTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.embedding),
-            container: UnusedEmbeddingContainer(),
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        )
-        let profile = LanguageModelProfile(
-            definitionName: "test",
-            standard: standard,
-            flash: flash,
-            embedding: embedding,
-            router: router,
-            residencyToken: .generate()
-        )
+        let standard = profile.standard
 
         let sessionId = ULID.generate()
         let recordingDirectory = recordingsDir
-            .appendingPathComponent(router.id.description, isDirectory: true)
+            .appendingPathComponent(standard.routerId.description, isDirectory: true)
             .appendingPathComponent(sessionId.description, isDirectory: true)
 
         // This root is assembled by hand rather than vended from
@@ -380,7 +327,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         // rather than its builder's (see `SessionSidecarOrigin`).
         let session = RoutedSessionActor(
             profile: profile,
-            routerId: router.id,
+            routerId: standard.routerId,
             id: sessionId,
             parentId: nil,
             recordingDirectory: recordingDirectory,
@@ -388,7 +335,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             backend: backend,
             slot: .standard,
             model: sessionBackendTinyModel,
-            recorder: recorder,
+            recorder: standard.recorder,
             instructions: nil,
             grammar: nil,
             generationGate: standard.generationGate,

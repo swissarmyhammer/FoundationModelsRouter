@@ -222,4 +222,32 @@ struct RealModelHarnessTests {
             #expect(unstamped.standard.routerId != first.standard.routerId)
         }
     }
+
+    // MARK: - The embedding slot no caller drives
+
+    @Test("the embedding slot every harness profile carries records an issue when anything embeds through it")
+    func embeddingSlotRecordsAnIssueWhenDriven() async {
+        let embedder = Self.withTemporaryDirectories { cacheDir, recordingsDir in
+            RealModelHarness.make(
+                model: Self.model,
+                context: Self.context,
+                container: UndrivenLanguageModelContainer(),
+                cacheDir: cacheDir,
+                recordingsDir: recordingsDir
+            ).embedding.container
+        }
+
+        // The harness loads one generation model and stamps it into all three
+        // slots, so the `.embedding` handle stands over a stub that holds no
+        // embedding model at all. A call that reaches it is a suite driving a
+        // slot the harness never loaded for, and the empty answer alone would
+        // read as a result rather than as a mistake. This is the tripwire
+        // `RealToolTurnComparisonTests` carried on its own copy of the stub
+        // before that suite moved onto the harness (task ^zz6kam0); it is here
+        // now, so every harness caller has it.
+        await withKnownIssue("the harness embedding stub records an issue when it is driven") {
+            let vectors = try await embedder.embed(texts: ["anything"])
+            #expect(vectors.isEmpty)
+        }
+    }
 }

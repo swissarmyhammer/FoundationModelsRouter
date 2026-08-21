@@ -23,7 +23,10 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
 /// need a real `.flash`/`.embedding` download too) — the same technique
 /// ``LanguageModelSessionBackendIntegrationTests`` uses, extended to record
 /// into a durable `recordingsDir` so the on-disk transcript can be reloaded
-/// through a fresh ``TranscriptTree``.
+/// through a fresh ``TranscriptTree``. The profile under that session comes
+/// from ``RealModelHarness``, which every real-model suite of this target
+/// shares; this suite's own copy of that build was folded onto it (task
+/// ^zz6kam0).
 ///
 /// The three runs of 2026-08-20 measured this suite's one test at 19.7, then
 /// 24.1, then 17.1 seconds. The limit is now the shared
@@ -36,14 +39,6 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct TranscriptReconstructionIntegrationTests {
-    /// A minimal ``LoadedEmbeddingContainer`` stand-in for the unused
-    /// `.embedding` slot the ``LanguageModelProfile`` this suite builds must
-    /// still carry — never exercised here, only present to satisfy the type.
-    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        let dimension = 1
-        func embed(texts: [String]) async throws -> [[Float]] { [] }
-    }
-
     private struct Harness {
         let session: RoutedSessionActor
         let backend: MLXFoundationModelsSessionBackend
@@ -58,6 +53,11 @@ struct TranscriptReconstructionIntegrationTests {
     /// recording at `.full` into a durable temp `recordingsDir` so its
     /// transcript can be reloaded through ``TranscriptTree/load(under:)``
     /// after the turn completes.
+    ///
+    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``
+    /// and the session is assembled over its `.standard` handle. The hand-built
+    /// copy this replaced named its profile `"test"`; the harness stamps its own
+    /// name, and nothing reads the field.
     private func makeHarness() async throws -> Harness {
         let container = try await RealModelContainer.load(ref: transcriptReconstructionTinyModel)
         let backend = try #require(
@@ -70,85 +70,35 @@ struct TranscriptReconstructionIntegrationTests {
         let cacheDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("TranscriptReconstructionIntegrationTests-cache-\(UUID().uuidString)", isDirectory: true)
 
-        let recorder = JSONLRecorder(directory: recordingsDir)
-        let router = Router(cacheDir: cacheDir, recordingsDir: recordingsDir, recorder: recorder)
-
-        func noopResolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(slot: slot, remainingBudgetBytes: 0, chosen: transcriptReconstructionTinyModel, considered: [])
-        }
-        // The same root-plus-writer pair `Router.makeDurableRecording` builds.
-        // The session below is assembled by hand rather than vended from
-        // `standard.makeSession()` — the test needs the backend itself, to
-        // compare the reconstruction against the live `session.transcript` —
-        // and lands its own sidecar all the same, because a session's sidecar
-        // is its own job rather than its builder's (see `SessionSidecarOrigin`).
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            DurableRecording(
-                root: recordingsDir,
-                sidecarWriter: SessionSidecarWriter(
-                    slot: slot,
-                    model: transcriptReconstructionTinyModel,
-                    context: noopResolution(slot).contextTokens,
-                    recordingLevel: .full,
-                    profile: nil,
-                    routerId: router.id
-                )
-            )
-        }
-        // Both generation handles wrap the one `container`, so both take the
-        // one gate set it carries, as they would from a pool entry. Two sets
-        // would let two generations run inside the one container at once.
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        let standard = RoutedLLM(
-            slot: .standard,
-            chosen: transcriptReconstructionTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.standard),
+        let profile = RealModelHarness.make(
+            model: transcriptReconstructionTinyModel,
+            // The window this suite's own hand-built profile resolved at before
+            // it moved onto the harness: it stated no `contextTokens` at all, so
+            // every slot took `SlotResolution`'s own default. Stated explicitly
+            // here, because the harness has no default of its own to inherit.
+            context: ProfileDefinition.defaultContext,
             container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.standard),
-            gates: generationGates
+            cacheDir: cacheDir,
+            recordingsDir: recordingsDir
         )
-        let flash = RoutedLLM(
-            slot: .flash,
-            chosen: transcriptReconstructionTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.flash),
-            container: container,
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.flash),
-            gates: generationGates
-        )
-        let embedding = RoutedEmbedder(
-            slot: .embedding,
-            chosen: transcriptReconstructionTinyModel,
-            footprintBytes: 0,
-            resolution: noopResolution(.embedding),
-            container: UnusedEmbeddingContainer(),
-            routerId: router.id,
-            recorder: recorder,
-            durableRecording: durableRecording(.embedding),
-            gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        )
-        let profile = LanguageModelProfile(
-            definitionName: "test",
-            standard: standard,
-            flash: flash,
-            embedding: embedding,
-            router: router,
-            residencyToken: .generate()
-        )
+        let standard = profile.standard
 
         let sessionId = ULID.generate()
         let recordingDirectory = recordingsDir
-            .appendingPathComponent(router.id.description, isDirectory: true)
+            .appendingPathComponent(standard.routerId.description, isDirectory: true)
             .appendingPathComponent(sessionId.description, isDirectory: true)
 
+        // Assembled by hand rather than vended from `standard.makeSession()` —
+        // the test needs the backend itself, to compare the reconstruction
+        // against the live `session.transcript` — and it lands its own sidecar
+        // all the same, because a session's sidecar is its own job rather than
+        // its builder's (see `SessionSidecarOrigin`). Every piece it takes
+        // comes off the handle the harness built, so the session records
+        // through the same recorder and the same root-plus-writer
+        // ``DurableRecording`` pair `Router.makeDurableRecording` builds.
         let session = RoutedSessionActor(
             profile: profile,
-            routerId: router.id,
+            routerId: standard.routerId,
             id: sessionId,
             parentId: nil,
             recordingDirectory: recordingDirectory,
@@ -156,7 +106,7 @@ struct TranscriptReconstructionIntegrationTests {
             backend: backend,
             slot: .standard,
             model: transcriptReconstructionTinyModel,
-            recorder: recorder,
+            recorder: standard.recorder,
             instructions: nil,
             grammar: nil,
             generationGate: standard.generationGate,
@@ -175,7 +125,7 @@ struct TranscriptReconstructionIntegrationTests {
             session: session,
             backend: backend,
             container: container,
-            routerId: router.id,
+            routerId: standard.routerId,
             sessionId: sessionId,
             recordingsDir: recordingsDir,
             cacheDir: cacheDir

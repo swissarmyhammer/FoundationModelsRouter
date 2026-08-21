@@ -130,35 +130,35 @@ struct RealToolTurnComparisonTests {
         Look up both steps with your tools and tell me the two identifiers.
         """
 
+    /// The decoding strategy every container this suite loads is pinned to.
+    ///
+    /// The provider default draws at temperature `0.6` from MLX's
+    /// process-global PRNG, which seeds itself from the clock, so identical
+    /// code produced a different transcript on every run (task `f80n046`).
+    /// Argmax decoding consumes no randomness at all, which is what lets a red
+    /// run here be attributed to the change under test. It is not enough to
+    /// make two turns identical — the suite doc records four runs in which it
+    /// was not — so nothing here compares one turn against another.
+    private static let samplingMode: GenerationOptions.SamplingMode = .greedy
+
     // MARK: - Harness
 
     /// Builds a `RoutedSession` over the loaded real model with the scenario's
     /// two tools mounted.
     ///
-    /// Greedy sampling is pinned (see ``MLXFoundationModelsContainer/samplingMode``)
-    /// so nothing this suite can control is left to a draw from a distribution.
-    /// It is not enough to make two turns identical — the suite's own doc
-    /// comment records four runs in which it was not — which is why nothing
-    /// here compares one turn against another.
+    /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
+    /// which this suite's own hand-built copy was folded onto (task ^zz6kam0).
+    /// Two things the copy did differently went with the move. It re-wrapped the
+    /// container it was handed to pin greedy decoding; ``respondRun()`` and
+    /// ``streamRun()`` now ask ``RealModelContainer/load(ref:context:samplingMode:)``
+    /// for a greedy container at load time instead, as
+    /// ``CompactionRoundTripIntegrationTests`` does. And its `.embedding` stub
+    /// recorded an issue if anything embedded through it; that tripwire is on
+    /// the harness stub now, so every caller of the harness carries it.
     ///
-    /// The embedding slot this suite never drives. Every gated suite in this
-    /// target carries one: a `LanguageModelProfile` requires all three slots,
-    /// and only `.standard` is ever exercised here.
-    private struct UnusedEmbeddingContainer: LoadedEmbeddingContainer {
-        /// The embedding width, never read.
-        let dimension = 1
-
-        /// Never called.
-        ///
-        /// - Parameter texts: The strings that would be embedded.
-        /// - Returns: Nothing — this entry point always fails a requirement.
-        func embed(texts: [String]) async throws -> [[Float]] {
-            Issue.record("the embedding slot is never driven by this suite")
-            return []
-        }
-    }
-
-    /// - Parameter container: The loaded model container.
+    /// - Parameter container: The loaded model container, already pinned to
+    ///   ``samplingMode`` by its caller (see
+    ///   ``MLXFoundationModelsContainer/samplingMode``).
     /// - Returns: The vended session, the profile that must outlive it (the
     ///   session's handle holds its owning profile weakly), and the temp
     ///   directory the caller removes.
@@ -169,60 +169,16 @@ struct RealToolTurnComparisonTests {
             .appendingPathComponent("RealToolTurnComparison-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        let greedy = MLXFoundationModelsContainer(model: container.model, samplingMode: .greedy)
-        let recorder = JSONLRecorder(directory: directory)
-        let router = Router(cacheDir: directory, recordingsDir: directory, recorder: recorder)
-        func resolution(_ slot: ModelSlot) -> SlotResolution {
-            SlotResolution(
-                slot: slot, remainingBudgetBytes: 0, chosen: realToolTurnModel, considered: [])
-        }
-        func durableRecording(_ slot: ModelSlot) -> DurableRecording {
-            DurableRecording(
-                root: directory,
-                sidecarWriter: SessionSidecarWriter(
-                    slot: slot,
-                    model: realToolTurnModel,
-                    context: resolution(slot).contextTokens,
-                    recordingLevel: .full,
-                    profile: nil,
-                    routerId: router.id
-                )
-            )
-        }
-        // Both generation handles wrap the one `greedy` container, so both take
-        // the one gate set it carries, as they would from a pool entry. Two
-        // sets would let two generations run inside the one container at once.
-        let generationGates = ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-        func routedLLM(_ slot: ModelSlot) -> RoutedLLM {
-            RoutedLLM(
-                slot: slot,
-                chosen: realToolTurnModel,
-                footprintBytes: 0,
-                resolution: resolution(slot),
-                container: greedy,
-                routerId: router.id,
-                recorder: recorder,
-                durableRecording: durableRecording(slot),
-                gates: generationGates
-            )
-        }
-        let profile = LanguageModelProfile(
-            definitionName: "real-tool-turn",
-            standard: routedLLM(.standard),
-            flash: routedLLM(.flash),
-            embedding: RoutedEmbedder(
-                slot: .embedding,
-                chosen: realToolTurnModel,
-                footprintBytes: 0,
-                resolution: resolution(.embedding),
-                container: UnusedEmbeddingContainer(),
-                routerId: router.id,
-                recorder: recorder,
-                durableRecording: durableRecording(.embedding),
-                gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks)
-            ),
-            router: router,
-            residencyToken: .generate()
+        let profile = RealModelHarness.make(
+            model: realToolTurnModel,
+            // The window the hand-built copy resolved at: it stated no
+            // `contextTokens` at all, so every slot took `SlotResolution`'s own
+            // default. Stated explicitly here, because the harness has no
+            // default of its own to inherit.
+            context: ProfileDefinition.defaultContext,
+            container: container,
+            cacheDir: directory,
+            recordingsDir: directory
         )
         let session = profile.standard.makeSession(
             instructions: Self.instructions,
@@ -249,7 +205,8 @@ struct RealToolTurnComparisonTests {
     /// - Returns: The run's answer and normalized transcript.
     /// - Throws: Whatever loading or the turn throws.
     private func respondRun() async throws -> ToolTurnRunOutcome {
-        let container = try await RealModelContainer.load(ref: realToolTurnModel)
+        let container = try await RealModelContainer.load(
+            ref: realToolTurnModel, samplingMode: Self.samplingMode)
         let (session, profile, directory) = makeSession(over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
@@ -272,7 +229,8 @@ struct RealToolTurnComparisonTests {
     /// - Returns: The run's answers, ids, and normalized transcript.
     /// - Throws: Whatever loading or the turn throws.
     private func streamRun() async throws -> ToolTurnRunOutcome {
-        let container = try await RealModelContainer.load(ref: realToolTurnModel)
+        let container = try await RealModelContainer.load(
+            ref: realToolTurnModel, samplingMode: Self.samplingMode)
         let (session, profile, directory) = makeSession(over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile

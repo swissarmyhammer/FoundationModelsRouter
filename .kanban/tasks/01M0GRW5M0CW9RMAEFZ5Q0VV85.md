@@ -40,8 +40,30 @@ comments:
     - not decided, and not touched: ^k0d30s4's question of whether this tier is deleted or kept as the opt-in tier. Only the user settles it.
     - next: `/review`.
   timestamp: 2026-08-21T06:24:33.041754+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0hg7t4akbh9mgmpsw102rsw
+  text: |-
+    ### review — clean
+    - evidence: `review sha 59ca3b5~1..59ca3b5`, 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 2 Swift files reviewed; the 8 `.kanban` files are excluded by `.reviewignore`. The card moved from `doing` to `done`.
+    - arithmetic, checked against the constants the files really hold: `compactionEvalFullDatasetMeasuredDearestSampleSeconds` = 82.4, `compactionEvalSubsetMeasuredDearestSampleSeconds` = 15.9, `compactionEvalMeasuredModelLoadSeconds` = 1.3, `compactionEvalSecondsPerMinute` = 60. Whole dataset: 24 x 82.4 + 1.3 = 1978.9 s = 32.9817 minutes, so 33 is correct. Subset: 7 x 15.9 + 1.3 = 112.6 s = 1.8767 minutes, so 2 is correct.
+    - the two sums reconcile: the 24 stated sample costs add to 367.6 s, and with the 1.3 s load that is 368.9 s against the 369.1 s the run reported. The seven subset costs add to 62.3 s, and with the 1.2 s subset load that is 63.5 s against the 63.5 s that doc states. The corrected 12.1 s third subset sample keeps that sum true.
+    - `CompactionEvalTierBarTests` holds each tier from the two sides, as the card states. The lower test asks `Double(limit) >= derived` and the upper test asks `Double(limit) < max(derived, 1) + 1`. For the whole dataset: 7 >= 32.98 is false, so 7 is red; 34 < 33.98 is false, so 34 is red; 33 satisfies both, so 33 is green. The subset is bound the same way: 1 is red below, 3 is red above, 2 is green.
+    - `swift test --filter CompactionEvalTierBarTests`: 5 tests in 1 suite passed. No gated real-model suite was run.
+    - judgement on the size of the limit: the 33 minutes does useful work, but only as a stop for a hung run. At 5.4 times the 369.1 s the tier measures, it cannot find a rate regression, because a run that costs twice as much still clears it. The work of finding rate drift is done by `CompactionEvalTierBarTests`, which goes red as soon as a measured rate constant stops agreeing with the stated limit. The size is the necessary result of the standing rule that a tier must never REACH its limit (^3axg80k), together with the 3.2 to 82.4 s spread that ^epapxbk holds. I do not disagree with the change: 7 was unsafe, and 33 is the honest bound of the samples this tier measured. No finding.
+    - next: none. Card ^k0d30s4 still holds the open question of whether this tier is kept or deleted, and this card does not decide it.
+  timestamp: 2026-08-21T06:30:53.834519+00:00
+- actor: claude-code
+  id: 01m0hg8sgcrc6h80ntkt3cr125
+  text: |-
+    ### finish iteration — clean
+    - implement: changed — 2 source files; each tier's limit now derives from that tier's OWN measured rate: the whole dataset at 24 x 82.4 s plus 1.3 s gives 33 minutes, and the subset stays 2. No GPU time was spent, because the run of 2026-08-20 already printed each sample's cost
+    - test: green — `CompactionEvalTierBarTests` binds both tiers from both sides; root swift test 1025 in 96 suites plus 77 in 9 suites; both packages build with -warnings-as-errors
+    - commit: 59ca3b5
+    - review: clean — 0 findings; the reviewer re-derived every stated number and confirmed the bar goes red at 7 and at 34 and green at 33; task moved to `done`
+    - filed: ^epapxbk — the same seed measured 15.9 s in the subset run and 82.4 s in the whole-dataset run on one day at identical work, so throughput falls with run length
+  timestamp: 2026-08-21T06:31:25.964596+00:00
+position_column: done
+position_ordinal: ffdb80
 title: Give the whole-dataset compaction eval tier a bound its own measured samples derive
 ---
 `compactionEvalFullDatasetTimeLimitMinutes` is derived from the SUBSET run's dearest sample (`compactionEvalMeasuredDearestSampleSeconds`, 15.9 s under Qwen2.5-3B-Instruct), multiplied by the whole dataset's 24 seeds. Task ^m03heaa measured the whole-dataset tier and found that the derivation, which is supposed to be a bound, is close to the truth by luck only:
