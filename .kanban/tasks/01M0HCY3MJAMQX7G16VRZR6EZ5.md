@@ -62,8 +62,45 @@ comments:
     - evidence: 2 files — `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/plan.md` (9 hunks), `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift` (comments only). Root `swift build --build-tests -Xswiftc -warnings-as-errors` complete; `IntegrationTests` `swift build --build-tests -Xswiftc -warnings-as-errors` complete. Root `swift test`: 1026 tests in 96 suites passed, and 77 tests in 9 suites passed.
     - next: `/review`
   timestamp: 2026-08-21T07:09:30.485397+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0hjtf55k8a5c4m4k2h37215
+  text: |-
+    ### review — clean
+
+    The engine gave no findings. I also read the fork source, because the new text is the substance of this card.
+
+    - evidence: `review sha f42b089~1..f42b089`. 0 findings, 0 confirmed, 0 refuted, 7 checks attempted, 0 failed. The engine read 1 file. It did not read 6 files in `.kanban/`, because `.reviewignore` excludes them.
+
+    I made a check of each claim against the source in `IntegrationTests/.build/checkouts/mlx-swift-lm`, at revision `ba8ff43b`:
+
+    - Claim 1 is true. `ExecutorPromptCachePlan.make` starts with `guard input.image == nil, input.video == nil, input.audio == nil, input.text.mask == nil, input.text.tokens.ndim == 1 else { return nil }`. The text-only part of `MuseGlimmerProcessor.prepare(input:)`, in `Libraries/MLXVLM/Models/MuseGlimmer.swift`, gives `MLXArray(promptTokens).expandedDimensions(axis: 0)` with `ones(like: promptArray).asType(.int8)`. The tokens have rank 2 and the mask is not nil, thus the guard refuses the input.
+    - Claim 2 is true. `reusablePromptPrefix`, in `Libraries/MLXLMCommon/PromptCacheReusePolicy.swift`, asks `canTrimPromptCache(caches)` and calls `rewindPromptCache(caches, to:)`. `ExecutorPromptCache.swift` calls `reusablePromptPrefix`, thus reuse of the `trim(_:)` type is on the path. The old text was wrong.
+    - Claim 3 is true, and it is the opposite of what the old text told the reader. `sessionCacheKey(for:modelID:)` does `guard let firstEntry = request.transcript.first else { return nil }` and gives `ExecutorPromptCacheKey(modelID: modelID, sessionID: firstEntry.id)`. `makeFork` starts the child from the transcript of the parent, thus the first entry stays the same and the child names the same cache. `checkOut` removes the entry from the store, thus only one holder keeps it at one time.
+    - `MLXLanguageModel.swift` stamps `cachedTokenCount: promptCache.reusedTokenCount`. It does not use a fixed 0.
+    - The store is an actor, `ExecutorPromptCacheStore`, and `maximumRetainedSessions = 4`. This agrees with the text about the budget.
+
+    The pin drift is written as local drift. `plan.md` says "A local hazard, not a repository defect". Git does not track the two `Package.resolved` files, and `.gitignore:17` ignores both. The root gives branch `stable` at `acc920594fad346e416a0f633d96bd712d868460`. `IntegrationTests` gives branch `stable` at `ba8ff43b9040ceec43c84f28637a250f33590633`.
+
+    The red test keeps its full force. The diff of the Swift file changes comment lines only. The two `cachedTokenCount` assertions are not in the changed lines. The line "This assertion is deliberately never weakened or made non-fatal" stays.
+
+    No stale claim is left. A search of both files for `e6ccd2721`, "zero hits", "no persisted-cache", "confirmed absent" and the fixed-zero text gives no result.
+
+    I did not run a gated real-model suite.
+
+    - next: none. The card moves to `done`.
+  timestamp: 2026-08-21T07:16:02.341504+00:00
+- actor: claude-code
+  id: 01m0hjvrvd2c7fvsye5x3ww06d
+  text: |-
+    ### finish iteration — clean
+    - implement: changed — the sweep found 9 stale sites, not the 2 the card named: 8 blocks in `plan.md` and 1 comment in `LanguageModelSessionBackendTests.swift`; the Swift diff holds comment lines only and both `#expect` calls are untouched
+    - test: green — root swift test 1026 in 96 suites plus 77 in 9 suites; both packages build with -warnings-as-errors; no gated run was needed
+    - commit: f42b089
+    - review: clean — 0 findings; the reviewer verified all three new claims against the `ba8ff43b` fork checkout, including the reversed one about a fork naming its parent's cache; task moved to `done`
+    - filed: ^8894h7j for a stale test path in a paragraph the sweep rewrote
+  timestamp: 2026-08-21T07:16:45.037303+00:00
+position_column: done
+position_ordinal: ffdd80
 title: plan.md and the KV-cache test comment state a stale reason for the red cachedTokenCount test
 ---
 Found while task ^de1yq0p looked for the cause of the red `secondTurnReusesFirstTurnsKVCache`. Two places in this repository state a reason that the pinned fork revision refutes. Both send the next reader down a dead end.
