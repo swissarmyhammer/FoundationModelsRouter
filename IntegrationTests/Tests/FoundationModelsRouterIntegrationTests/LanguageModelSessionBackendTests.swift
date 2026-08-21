@@ -441,14 +441,14 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// Proves the chokepoint's usage delta stays faithful to the live
     /// backend's own ``LanguageModelSessionBackend/usageTokenCounts()``
     /// snapshots, whatever those snapshots turn out to be. Written to pass
-    /// either way per this task's instructions: whether `MLXLanguageModel`'s
-    /// `Executor` actually populates real, positive `usage.input`/`usage.output`
-    /// totals, or leaves them at zero, is the open empirical question
-    /// ``MLXFoundationModelsSessionBackend/usageTokenCounts()``'s doc comment
-    /// documents as unverified in this sandbox (no GPU). This test cannot
-    /// resolve that question — it can only prove the router's recorded delta
-    /// exactly matches whatever the backend reports, and prints the observed
-    /// counts for a human to read.
+    /// either way per this task's instructions: it proves only that the
+    /// router's recorded delta exactly matches whatever the backend reports,
+    /// and it prints the observed counts for a human to read. Whether
+    /// `MLXLanguageModel`'s `Executor` populates real, positive
+    /// `usage.input`/`usage.output` totals is answered by the print: measured
+    /// 2026-08-21 at fork pin `41e9f41` it printed `tokensIn=62 tokensOut=149`,
+    /// the measurement ``MLXFoundationModelsSessionBackend/usageTokenCounts()``'s
+    /// doc comment records.
     @Test("recorded tokensIn/tokensOut on the turn's response event exactly match the live backend's own usageTokenCounts() delta")
     func recordedTokenUsageMatchesLiveBackendDelta() async throws {
         let harness = try await makeChokepointHarness()

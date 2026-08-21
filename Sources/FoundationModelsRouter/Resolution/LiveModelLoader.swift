@@ -643,25 +643,28 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// (``LanguageModelSessionBackend/usageTokenCounts()``) for the
     /// turn-lock precondition this call must be made under.
     ///
-    /// **Empirical status: unverified in this environment.** `LanguageModelSession.usage`
+    /// **Empirical status: measured.** `LanguageModelSession.usage`
     /// (`Usage{input: Input{totalTokenCount, cachedTokenCount}, output:
-    /// Output{totalTokenCount, reasoningTokenCount}}`) is confirmed present in
-    /// the macOS 27 `FoundationModels` swiftinterface, and the gated
-    /// integration test `LanguageModelSessionBackendIntegrationTests.secondTurnReusesFirstTurnsKVCache`
-    /// already asserts `usage.input.totalTokenCount > 0` and
-    /// `usage.output.totalTokenCount > 0` against a real model as a hard,
-    /// unweakened requirement — but that suite needs a GPU and network access
-    /// this sandbox does not have, so it has never actually run here; it only
-    /// ever reports "skipped". Whether `MLXLanguageModel`'s `Executor`
-    /// populates real, non-zero totals for `usage.input`/`usage.output` (as
-    /// opposed to leaving them at zero) has therefore **not been empirically
-    /// confirmed in this environment** — this doc comment states that
-    /// honestly rather than claiming verification that never happened. This
-    /// implementation returns the SDK's real value regardless — never a
-    /// fabricated zero or a preemptive `nil` for lack of proof — so it is
-    /// already correct once the executor does populate real counts, and the
-    /// gated integration suite above is where the populated-vs-zero question
-    /// gets an actual answer, on real hardware.
+    /// Output{totalTokenCount, reasoningTokenCount}}`) is present in the
+    /// macOS 27 `FoundationModels` swiftinterface. The gated integration
+    /// suite `LanguageModelSessionBackendIntegrationTests` (nested
+    /// `IntegrationTests/` package, run with
+    /// `swift test --package-path IntegrationTests`) runs against a real
+    /// model on a machine that has the model, and it is green: 11 tests in 1
+    /// suite passed on 2026-08-21 with the `swissarmyhammer/mlx-swift-lm`
+    /// fork pinned at branch `stable`, revision `41e9f41`. `MLXLanguageModel`'s
+    /// `Executor` populates the totals with positive values:
+    /// `recordedTokenUsageMatchesLiveBackendDelta` printed
+    /// `tokensIn=62 tokensOut=149`, so `usage.input.totalTokenCount` and
+    /// `usage.output.totalTokenCount` are both positive after one turn.
+    /// `usage.input.cachedTokenCount` is positive on the second turn of a
+    /// session: `secondTurnReusesFirstTurnsKVCache` printed
+    /// `turn1In=49 turn1Out=93 turn2Cached=50`. This implementation returns
+    /// the SDK's value as it is — never a fabricated zero and never a
+    /// preemptive `nil`. `Package.resolved` is gitignored and the root package
+    /// and the nested package resolve the fork branch independently, so read
+    /// the revision your package resolved before you apply this measurement
+    /// to a different revision.
     func usageTokenCounts() -> (input: Int, output: Int)? {
         let usage = liveSession.usage
         return (usage.input.totalTokenCount, usage.output.totalTokenCount)

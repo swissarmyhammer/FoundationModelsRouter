@@ -1,8 +1,22 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8e80'
+comments:
+- actor: claude-code
+  id: 01m0jw5jh759gqr7s72xg13kgt
+  text: 'Picked up. Research: the stale claim lives in two places. (1) The "Empirical status" paragraph of `MLXFoundationModelsSessionBackend.usageTokenCounts()` in `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` (the card''s target). (2) The doc comment of `recordedTokenUsageMatchesLiveBackendDelta` in `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift` points at that paragraph and repeats "unverified in this sandbox (no GPU)". The sweep `rg -n "never actually run|only ever reports skipped|not been empirically confirmed" Sources Tests IntegrationTests plan.md` hits only LiveModelLoader.swift; the `PromptQueueTests.swift` and `RoutedSessionActorTurnExecution.swift` hits for "never actually runs a turn" are a different sentence about sessions, not about the suite. Both `Package.resolved` files (root and `IntegrationTests/`) pin `swissarmyhammer/mlx-swift-lm` branch `stable` at `41e9f41c9121e11f85146e9f5a4d89f6f840f2d3`. The suite struct is `LanguageModelSessionBackendIntegrationTests` (file `LanguageModelSessionBackendTests.swift`). The protocol doc on `LanguageModelSessionBackend.usageTokenCounts()` has no stale claim. No docc link checker script exists in the repo. Out of scope, same shape, different suite: the header of `RecordingHandleIntegrationTests.swift` says "this suite could not be executed live in this sandbox" and then reports three timed runs of 2026-08-20; that is a different suite and I will file its own card.'
+  timestamp: 2026-08-21T19:18:37.863915+00:00
+- actor: claude-code
+  id: 01m0jw9gt68mytvc3maha3fqbn
+  text: |-
+    ### implement — changed
+    - evidence: 2 files, doc comments only — `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` (the "Empirical status" paragraph of `MLXFoundationModelsSessionBackend.usageTokenCounts()` now reads "measured": suite `LanguageModelSessionBackendIntegrationTests` green, 11 tests in 1 suite, 2026-08-21, fork `swissarmyhammer/mlx-swift-lm` branch `stable` revision `41e9f41`; `recordedTokenUsageMatchesLiveBackendDelta` printed `tokensIn=62 tokensOut=149`; `secondTurnReusesFirstTurnsKVCache` printed `turn1In=49 turn1Out=93 turn2Cached=50`; turn-lock precondition text kept; every "never ran / only reports skipped / not empirically confirmed" sentence removed) and `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift` (the doc comment of `recordedTokenUsageMatchesLiveBackendDelta` no longer says the question is "unverified in this sandbox (no GPU)"; it records the measurement and points at the backend doc comment). No code changed. No `swift format`.
+    - verify: root `swift test` green — FoundationModelsRouterTests 1032 tests in 98 suites passed (2 known issues, both pre-existing `withKnownIssue` tests in RealModelHarness.swift and BoundedWait.swift); FoundationModelsRouterEvals 80 tests in 10 suites passed. `swift build --build-tests --package-path IntegrationTests`: Build complete. Sweep `rg -n "never actually run|only ever reports skipped|not been empirically confirmed|unverified in this sandbox" Sources Tests IntegrationTests plan.md` leaves only the two "a session that never actually runs a turn" sentences in `RoutedSessionActorTurnExecution.swift` and `PromptQueueTests.swift`, which are about sessions, not about the suite. No docc link checker script exists in the repo; the only ``…`` links touched name `LanguageModelSessionBackend/usageTokenCounts()` and `MLXFoundationModelsSessionBackend/usageTokenCounts()`, both real symbols.
+    - filed: ^t905g5y for the same-shape stale header on `RecordingHandleIntegrationTests.swift` (different suite, needs its own run to record).
+    - next: /review
+  timestamp: 2026-08-21T19:20:47.174463+00:00
+position_column: doing
+position_ordinal: '80'
 title: The usageTokenCounts() doc comment in LiveModelLoader.swift says the gated suite never ran; it runs and it is green
 ---
 The doc comment on `MLXFoundationModelsSessionBackend.usageTokenCounts()` in `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` says: "that suite needs a GPU and network access this sandbox does not have, so it has never actually run here; it only ever reports skipped", and that whether the executor populates non-zero `usage.input`/`usage.output` totals "has not been empirically confirmed in this environment". That text is stale.
@@ -16,6 +30,6 @@ Measured 2026-08-21 on this machine, `swift test --package-path IntegrationTests
 
 ## Acceptance Criteria
 
-- [ ] The doc comment no longer says the suite never ran or only reports skipped
-- [ ] The doc comment names the measured facts, the fork revision, and the date
-- [ ] Root `swift test` stays green #integration #real-model
+- [x] The doc comment no longer says the suite never ran or only reports skipped
+- [x] The doc comment names the measured facts, the fork revision, and the date
+- [x] Root `swift test` stays green #integration #real-model
