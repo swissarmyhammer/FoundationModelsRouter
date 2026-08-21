@@ -12,31 +12,42 @@ import FoundationModelsRouter
 /// unnecessary, because the run drove its samples one at a time and printed
 /// each sample's four lines complete before the next sample's first line.
 ///
-/// Measured against ``CompactionEvalRealModel`` — the small model since task
-/// ^k0d30s4's two-minute budget — with every summarizer call bounded by
-/// ``compactionEvalReasoningTokenHeadroom``, under task ^xx02yn6's span-budget
-/// trim. The seven samples cost 3.4, 1.4, 6.0, 6.0, 6.3, 6.2 and 7.2 seconds.
-/// The rate rose from the 3.5-second dearest sample of 2026-08-19 because the
-/// redesigned stage re-asks: an answer past the span byte budget earns one
-/// condense call before the last-resort cut, and this run's small model
-/// overshot its stated budget on six of the seven seeds, so those folds each
-/// made two summarizer calls. The 30B run of 2026-08-18 measured 197.4 to
-/// 352.0 seconds per sample over the same recipe, which is the rate the
-/// two-minute budget removed.
+/// Measured against ``CompactionEvalRealModel`` — Qwen2.5-3B-Instruct since
+/// task ^m03heaa put it in place of the 1B canary — with every summarizer call
+/// bounded by ``compactionEvalReasoningTokenHeadroom``, under task ^xx02yn6's
+/// span-budget trim and its `router-default-v3` prompt, at greedy decoding.
+/// The seven samples cost 5.4, 4.7, 12.2, 3.2, 5.1, 15.9 and 15.9 seconds.
+/// Four of the seven folds made one summarizer call and three made two,
+/// because the redesigned stage re-asks: an answer past the span byte budget
+/// earns one condense call before the last-resort cut. The rate rose from the
+/// 7.2-second dearest sample the 1B canary measured over the same recipe on
+/// the same day, which is what a model of three times the parameters costs to
+/// decode. The 30B run of 2026-08-18 measured 197.4 to 352.0 seconds per
+/// sample over the same recipe, which is the rate the two-minute budget
+/// removed.
 ///
 /// The DEAREST sizes a limit, not the mean, because the spread between
 /// samples is what a limit has to survive (task ^6ssbakk).
-private let compactionEvalMeasuredDearestSampleSeconds = 7.2
+///
+/// This is the SUBSET run's dearest sample, and the whole-dataset tier is
+/// sized from it as well. Task ^m03heaa measured that the whole-dataset run
+/// holds samples dearer than any of the seven above — up to 82.4 seconds at
+/// its sample 21 — and still ended inside the bound they derive for it: 369.1
+/// seconds measured against 382.9 derived, a margin of 13.8 seconds. Task
+/// ^5q0vv85 gives that tier a rate its own samples measure.
+private let compactionEvalMeasuredDearestSampleSeconds = 15.9
 
 /// What the same run's model load cost, in seconds.
 ///
-/// ``CompactionEvalRealModelContainer/load(samplingMode:unexpectedContainerType:)``
+/// ``CompactionEvalRealModelContainer/load(ref:context:samplingMode:unexpectedContainerType:)``
 /// times the load on its own two progress lines, so it is charged to no sample
-/// and has to be added back when a whole tier is sized. The run of 2026-08-20
-/// measured the small model's load at 1.8 seconds (2.0 on 2026-08-19), where
-/// the 30B loaded in 3.5 to 3.6 (tasks ^h2xxsse, ^6ssbakk). The larger of the
-/// two small-model loads is kept, so the derived bounds never under-state.
-private let compactionEvalMeasuredModelLoadSeconds = 2.0
+/// and has to be added back when a whole tier is sized. The two runs of
+/// 2026-08-20 measured Qwen2.5-3B's load at 1.2 seconds on the subset tier and
+/// 1.3 on the whole-dataset tier, where the 1B canary it replaced loaded in
+/// 1.8 to 2.0 and the 30B loaded in 3.5 to 3.6 (tasks ^h2xxsse, ^6ssbakk). The
+/// larger of the two measured loads of the current subject is kept, so the
+/// derived bounds never under-state.
+private let compactionEvalMeasuredModelLoadSeconds = 1.3
 
 /// How many seconds a minute holds.
 ///
@@ -73,22 +84,24 @@ func compactionEvalDerivedTimeLimitMinutes(forSamples sampleCount: Int) -> Doubl
 ///
 /// The next whole minute above
 /// ``compactionEvalDerivedTimeLimitMinutes(forSamples:)`` at the seven seeds
-/// of ``compactionEvalRepresentativeSubsetIDs``: 7 x 7.2 s plus 2.0 s is 52.4
-/// seconds, which is 0.87 minutes, and one minute is the smallest limit Swift
-/// Testing accepts. `CompactionEvalTierBarTests` holds this value against
+/// of ``compactionEvalRepresentativeSubsetIDs``: 7 x 15.9 s plus 1.3 s is
+/// 112.6 seconds, which is 1.88 minutes, so this states 2.
+/// `CompactionEvalTierBarTests` holds this value against
 /// that derivation from both sides, so a subset that outgrew its limit, or a
 /// limit that stopped stating a measurement, fails a plain `swift test`
 /// rather than a gated run.
 ///
 /// The measured run behind the derivation is the gated subset run of
 /// 2026-08-20 against ``CompactionEvalRealModel``, under task ^xx02yn6's
-/// span-budget trim, whose whole wall clock was 38.2 seconds — the seconds
+/// span-budget trim, whose whole wall clock was 63.5 seconds — the seconds
 /// the derivation does not carry are the framework's own dispatch and
-/// report, spent outside any sample's own trail. This limit is well inside
-/// task ^k0d30s4's two-minute budget for every integration test. The 42
-/// minutes this value stated before ^6ssbakk was derived from the 30B
-/// model's 197.4-to-352.0-second samples, a rate the small-model swap
-/// removed.
+/// report, spent outside any sample's own trail. That measured 63.5 seconds
+/// is inside task ^k0d30s4's two-minute budget for every integration test,
+/// which is the property task ^m03heaa had to keep while it changed the
+/// canary, and the limit of 2 minutes states the same budget. The 1 minute
+/// this value stated before ^m03heaa was derived from the 1B canary's
+/// 7.2-second dearest sample, and the 42 minutes it stated before ^6ssbakk
+/// from the 30B model's 197.4-to-352.0-second samples.
 ///
 /// One thing can still spend the margin: a machine that has never fetched the
 /// model pays that download inside this limit. Sampling cannot —
@@ -98,44 +111,46 @@ func compactionEvalDerivedTimeLimitMinutes(forSamples sampleCount: Int) -> Doubl
 /// ^xscp198). A run that ends on the limit names the seeds it never reached —
 /// see ``CompactionEvalFactRetentionReport/lines(of:expecting:)`` — so an
 /// overrun reads as an overrun rather than as a smaller clean sheet.
-let compactionEvalSubsetTimeLimitMinutes = 1
+let compactionEvalSubsetTimeLimitMinutes = 2
 
 /// The wall-clock ceiling the opt-in whole-dataset tier's `@Test` runs under,
 /// in minutes.
 ///
 /// The next whole minute above
 /// ``compactionEvalDerivedTimeLimitMinutes(forSamples:)`` at the whole
-/// dataset's 24 seeds: 24 x 7.2 s plus 2.0 s is 174.8 seconds, which is 2.91
-/// minutes. That charges EVERY sample at the dearest cost the subset run of
-/// 2026-08-20 measured, so it is a bound rather than an expected cost. The
-/// samples run one at a time whatever shape the framework dispatches,
-/// because the runner holds a value-1 permit around one sample's whole run
-/// (task ^23qeprz), so twenty-four samples cost about twenty-four times one
-/// sample rather than less.
+/// dataset's 24 seeds: 24 x 15.9 s plus 1.3 s is 382.9 seconds, which is 6.38
+/// minutes, so this states 7. That charges EVERY sample at the dearest cost
+/// the subset run of 2026-08-20 measured, so it is a bound rather than an
+/// expected cost. The samples run one at a time whatever shape the framework
+/// dispatches, because the runner holds a value-1 permit around one sample's
+/// whole run (task ^23qeprz), so twenty-four samples cost about twenty-four
+/// times one sample rather than less.
 ///
 /// The tier itself is measured, not only derived: the gated whole-dataset
 /// run of 2026-08-20 against ``CompactionEvalRealModel``, under task
-/// ^xx02yn6's span-budget trim, measured a wall clock of 124.9 seconds over
-/// all 24 seeds with none unreached. That run sits inside the 174.8-second
-/// bound above — and past the 2 minutes this value stated before ^xx02yn6,
-/// a limit the redesigned stage's condense re-asks outgrew: most folds now
-/// make two summarizer calls, where the runs of 2026-08-19 measured 52.4 to
-/// 53.6 seconds at one call each. This tier is the opt-in one, outside task
-/// ^k0d30s4's two-minute budget for the everyday command, which skips it.
+/// ^xx02yn6's span-budget trim, measured a wall clock of 369.1 seconds over
+/// all 24 seeds with none unreached. That run sits inside the 382.9-second
+/// bound above, but by 13.8 seconds only, and its late samples cost up to
+/// 82.4 seconds where the dearest of the subset's seven was 15.9 — so the
+/// margin here is far thinner than the subset tier's, and task ^5q0vv85
+/// gives this tier a rate its own samples measure. This tier is the opt-in
+/// one, outside task ^k0d30s4's two-minute budget for the everyday command,
+/// which skips it.
 ///
-/// The 120 minutes this value stated before ^6ssbakk was derived from the
-/// 30B model's 271.0-second mean sample, a rate the small-model swap
-/// removed. `CompactionEvalTierBarTests` holds this tier to the same
+/// The 3 minutes this value stated before ^m03heaa was derived from the 1B
+/// canary's 7.2-second dearest sample, and the 120 minutes it stated before
+/// ^6ssbakk from the 30B model's 271.0-second mean sample.
+/// `CompactionEvalTierBarTests` holds this tier to the same
 /// dearest-rate derivation the subset tier is held to, which the two bases'
 /// old disagreement made impossible.
-let compactionEvalFullDatasetTimeLimitMinutes = 3
+let compactionEvalFullDatasetTimeLimitMinutes = 7
 
 // MARK: - Measured tier bars
 
 /// The mean SUMMARY fact retention a gated tier's samples must reach: the
 /// share of folds whose summary carries the planted key phrase.
 ///
-/// ## The small model's measured baseline, minus one sample of margin
+/// ## The canary's measured baseline, minus one sample of margin
 ///
 /// The bar was 0.9 for both sides while the tiers drove the 30B model —
 /// compaction_plan.md §5's own bar. Task ^k0d30s4's two-minute budget swapped
@@ -144,21 +159,27 @@ let compactionEvalFullDatasetTimeLimitMinutes = 3
 /// the compaction prompt. The floor is the WEAKER tier's measured share
 /// minus one sample of that tier's margin.
 ///
-/// Task ^xx02yn6 re-measured both tiers under its span-budget trim and its
-/// `router-default-v3` size-budget prompt, both designed against
-/// Qwen3.8-27B (the standard model, which the redesign took from 0 of 7 to
-/// 5 of 7 subset summaries). The small 1B canary moved the OTHER way under
-/// the same prompt: the gated runs of 2026-08-20 under greedy decoding
-/// measured 2 of 7 subset summaries and 13 of 24 whole-dataset summaries
-/// carrying the fact, against 6 of 7 and 17 of 24 on 2026-08-19 under the
-/// old prompt and per-call cut. The 1B overshoots the stated size budget on
-/// most seeds, its answers enumerate background head-first, and the
-/// last-resort cut then drops the facts stated later in the span — task
-/// ^xx02yn6's card records the four-run trail. The weaker tier is now the
-/// subset: 2 of 7 is 0.286, one sample under it is 1 of 7, and 0.14
-/// requires exactly that 1 — and 4 of the whole dataset's 24 seeds, well
-/// under its measured 13. The 0.65 this value stated before ^xx02yn6 was
-/// the same rule over the 2026-08-19 measurements.
+/// Task ^m03heaa re-measured both tiers against the canary it chose,
+/// Qwen2.5-3B-Instruct, under task ^xx02yn6's span-budget trim and its
+/// `router-default-v3` size-budget prompt, at greedy decoding. The gated
+/// runs of 2026-08-20 measured 6 of 7 subset summaries and 23 of 24
+/// whole-dataset summaries carrying the fact. One sample under each is 5 of
+/// 7, which is 0.714, and 22 of 24, which is 0.917, so the WEAKER tier is
+/// the subset and this floor comes from its 5 of 7. It is written as 0.71,
+/// which sits under 5/7 and over 4/7, so the subset must retain exactly
+/// those 5.
+///
+/// The 0.14 this value stated before ^m03heaa was the same rule over the 1B
+/// canary that ran here until then: task ^xx02yn6's prompt redesign, built
+/// for Qwen3.8-27B (the standard model, which the redesign took from 0 of 7
+/// to 5 of 7 subset summaries), took the 1B the OTHER way, from 6 of 7 to 2
+/// of 7 subset summaries and from 17 of 24 to 13 of 24 whole-dataset ones.
+/// The 1B overshoots the stated size budget on most seeds, its answers
+/// enumerate background head-first, and the last-resort cut then drops the
+/// facts stated later in the span. A floor of 0.14 asked 1 of the subset's 7
+/// seeds, which a change that breaks half of the retained seeds still
+/// cleared. ^m03heaa answered that by changing the canary rather than the
+/// rule.
 ///
 /// ## What a seed count makes of it
 ///
@@ -168,8 +189,11 @@ let compactionEvalFullDatasetTimeLimitMinutes = 3
 ///
 /// | tier | seeds | summaries that must carry the fact | which is a mean of |
 /// |---|---|---|---|
-/// | the representative subset | 7 | 1 | 0.143 |
-/// | the whole dataset | 24 | 4 | 0.167 |
+/// | the representative subset | 7 | 5 | 0.714 |
+/// | the whole dataset | 24 | 18 | 0.750 |
+///
+/// The whole dataset's 18 is what 0.71 asks of 24 seeds, because 17 of 24 is
+/// 0.708 and misses. Its measured 23 clears that with five seeds to spare.
 ///
 /// ``compactionEvalFactRetentionRequiredSamples(of:floor:)`` computes that,
 /// `CompactionEvalTierBarTests` holds it, and ``expectFactRetention(of:)``
@@ -182,7 +206,7 @@ let compactionEvalFullDatasetTimeLimitMinutes = 3
 /// decoding consumes no randomness, so a run's score is a fact about the
 /// prompt and the fixtures, and a drop under this floor is a regression in
 /// the fold rather than a draw.
-let compactionEvalSummaryFactRetentionFloor = 0.14
+let compactionEvalSummaryFactRetentionFloor = 0.71
 
 /// The mean end-to-end `FactRetention` a gated tier's samples must reach: the
 /// share of ANSWERS carrying the planted key phrase after the resumed session
@@ -191,22 +215,25 @@ let compactionEvalSummaryFactRetentionFloor = 0.14
 /// Never above ``compactionEvalSummaryFactRetentionFloor``, and that order
 /// is structural: an answer can only carry a fact its own transcript holds,
 /// so the summary share bounds this one from above. The two sides carried
-/// ONE number while the 30B model ran both near 0.9; the small model
+/// ONE number while the 30B model ran both near 0.9; the 1B canary
 /// separated them on 2026-08-19 (6 of 7 subset summaries against 5 of 7
 /// subset answers, 17 of 24 whole-dataset summaries against 13 of 24
 /// whole-dataset answers), so each side states its own floor: the weaker
 /// tier's measured baseline minus one sample of that tier's margin.
 ///
-/// Task ^xx02yn6's re-baseline of 2026-08-20 (see the summary floor above
-/// for the whole story) measured 2 of 7 subset answers and 9 of 24
-/// whole-dataset answers. The weaker tier is the subset: 2 of 7 is 0.286,
-/// one sample under it is 1 of 7, and 0.14 requires exactly that 1 — and 4
-/// of the whole dataset's 24 seeds, well under its measured 9. The two
-/// sides meet at the same number here because the subset's summaries and
-/// answers measured the same 2 of 7; the constants stay separate because
-/// they state separate measurements. The 0.5 this value stated before
-/// ^xx02yn6 was the same rule over the 2026-08-19 measurements.
-let compactionEvalAnswerFactRetentionFloor = 0.14
+/// Task ^m03heaa's re-baseline of 2026-08-20 under Qwen2.5-3B-Instruct (see
+/// the summary floor above for the whole story) measured 6 of 7 subset
+/// answers and 23 of 24 whole-dataset answers. One sample under each is 5 of
+/// 7, which is 0.714, and 22 of 24, which is 0.917, so the weaker tier is
+/// the subset and this floor comes from its 5 of 7. Written as 0.71, it asks
+/// 5 of the subset's 7 seeds and 18 of the whole dataset's 24.
+///
+/// The two sides meet at the same number here because the 3B canary answered
+/// with the fact on every seed whose summary carried it, on both tiers; the
+/// constants stay separate because they state separate measurements. The
+/// 0.14 this value stated before ^m03heaa was the same rule over the 1B
+/// canary's 2 of 7 subset answers and 9 of 24 whole-dataset answers.
+let compactionEvalAnswerFactRetentionFloor = 0.71
 
 /// The smallest number of a tier's samples that must retain the fact for the
 /// tier's mean to clear `floor`.
@@ -246,8 +273,9 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 // MARK: - Measured sizing
 
 /// What one token of this dataset's own English prose costs in UTF-8 bytes,
-/// under the tokenizer of the model the gated eval runs
-/// (``CompactionEvalRealModel/ref``).
+/// under the tokenizers of the models the gated evals run
+/// (``CompactionEvalRealModel/ref`` and
+/// ``CompactionContinuityRealModel/ref``).
 ///
 /// The fold arithmetic spans two currencies, and this is the rate between them.
 /// ``Summarization`` sizes a summarizer call's answer in REAL tokens
@@ -258,23 +286,33 @@ func compactionEvalFactRetentionRequiredSamples(of sampleCount: Int, floor: Doub
 /// up below its own trigger (task ^wnj3ka3), so this dataset is sized in the
 /// tokens the model really counts.
 ///
-/// Measured with `AutoTokenizer` over the Muse Glimmer tokenizer out of the
-/// local Hub cache, against this dataset's whole prose corpus — every fixture's
+/// The corpus is this dataset's whole prose — every fixture's
 /// ``CompactionEvalFixtureSpec/context`` and facts, every acknowledgement, and
-/// every ``compactionEvalFillerTurns`` prompt and reply: 31541 bytes against
-/// 6564 tokens, which is 4.805 bytes for each token. Rounded up, so the summary
-/// sizes this feeds are never under-stated.
+/// every ``compactionEvalFillerTurns`` prompt and reply. That is 85 pieces of
+/// text and 31541 UTF-8 bytes. Each piece is encoded on its own and the token
+/// counts are summed, over each model's own `tokenizer.json` out of the local
+/// Hub cache:
 ///
-/// The gated tiers now run ``CompactionEvalRealModel/ref``, the small Llama
-/// model, and this value deliberately keeps the LARGER of the two tokenizers'
-/// rates. Measured on 2026-08-19 with the `tokenizers` library over the Llama
-/// 3.2 tokenizer out of the same Hub cache, against the single-line literals
-/// of the two dataset sources: 8776 bytes against 1940 tokens, which is 4.524
-/// bytes for each token. Every use of this constant converts a real-token
-/// allowance into the bytes a real summary occupies, so the larger rate
-/// over-states every such summary and each gate it feeds stays strict: the
-/// hermetic shrink gate folds against a summary bigger than the model writes,
-/// and the seed sizing outweighs a worst case bigger than the real one.
+/// | tokenizer | tokens | bytes for each token |
+/// |---|---|---|
+/// | Muse Glimmer 30B | 6564 | 4.805 |
+/// | Llama 3.2 1B | 6577 | 4.796 |
+/// | Qwen2.5 3B | 6602 | 4.777 |
+///
+/// This value deliberately keeps the LARGEST of those rates, rounded up, so
+/// the summary sizes it feeds are never under-stated. Task ^m03heaa measured
+/// the Qwen2.5-3B row when that model became the fact-retention canary, and
+/// re-measured the Llama row over this same corpus; the 3B is the smallest of
+/// the three, so the constant did not move. The 4.524 this doc stated for the
+/// Llama tokenizer before ^m03heaa was taken over a different corpus — the
+/// single-line literals of the two dataset sources, 8776 bytes against 1940
+/// tokens — which is why the table above re-states it.
+///
+/// Every use of this constant converts a real-token allowance into the bytes
+/// a real summary occupies, so the largest rate over-states every such
+/// summary and each gate it feeds stays strict: the hermetic shrink gate
+/// folds against a summary bigger than the model writes, and the seed sizing
+/// outweighs a worst case bigger than the real one.
 let compactionEvalMeasuredBytesPerToken = 4.81
 
 /// The ceiling one summarizer call of an eval-sized fold is given at the
@@ -296,14 +334,16 @@ let compactionEvalSummarizerCeiling =
 /// allowance, and deliberately not ``Summarization``'s own default of 8192.
 ///
 /// The default is sized for a model that writes a `<think>` block before its
-/// answer, and ``CompactionEvalRealModel/ref`` writes no such block, so the
-/// default hands the small model thousands of tokens of free generation. The
-/// gated subset run of 2026-08-19 measured what that freedom costs: two of
-/// seven folds generated to the ceiling — 20485 and 16060 bytes of summary
-/// answer — at 28.5 seconds each, where the five bounded folds cost 2.5 to
-/// 7.4 seconds. The three fast compaction smoke suites cut the same value for
-/// the same measured reason. Both gated eval tiers read this one constant, so
-/// the two cannot drift.
+/// answer. Neither gated subject writes one: ``CompactionEvalRealModel/ref``
+/// is a Qwen2.5 instruct model, which task ^m03heaa chose in part to keep
+/// this property, and ``CompactionContinuityRealModel/ref`` a Llama 3.2
+/// instruct model. So the default hands each of them thousands of tokens of
+/// free generation. The gated subset run of 2026-08-19 measured what that
+/// freedom costs: two of seven folds generated to the ceiling — 20485 and
+/// 16060 bytes of summary answer — at 28.5 seconds each, where the five
+/// bounded folds cost 2.5 to 7.4 seconds. The three fast compaction smoke
+/// suites cut the same value for the same measured reason. Every gated eval
+/// tier reads this one constant, so they cannot drift.
 let compactionEvalReasoningTokenHeadroom = 128
 
 /// A summarizer whose answer is the length a real one writes.

@@ -1297,28 +1297,29 @@ struct CompactionEvalTierBarTests {
         (compactionEvalFullDatasetTimeLimitMinutes, fullDatasetSampleCount),
     ]
 
-    @Test("the floors need 1 and 1 of the subset's seeds, and 4 and 4 of the whole dataset's")
+    @Test("the floors need 5 and 5 of the subset's seeds, and 18 and 18 of the whole dataset's")
     func eachTiersFloorIsTheSampleCountItReallyNeeds() {
         // The metric scores one bit per sample, so a tier of n samples can only
         // produce the means k/n. Each floor's own doc comment derives these
-        // counts from the measured baselines — the ^xx02yn6 re-baseline of
-        // 2026-08-20, where the 1B canary measured 2 of 7 on both subset
-        // sides under the Qwen-first redesign; this holds the derivation.
+        // counts from the measured baselines — the ^m03heaa re-baseline of
+        // 2026-08-20, where the Qwen2.5-3B canary measured 6 of 7 on both
+        // subset sides and 23 of 24 on both whole-dataset sides; this holds
+        // the derivation.
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.subsetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 1,
+                of: Self.subsetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 5,
             "the subset holds \(Self.subsetSampleCount) seeds against the summary floor")
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.subsetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 1,
+                of: Self.subsetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 5,
             "the subset holds \(Self.subsetSampleCount) seeds against the answer floor")
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.fullDatasetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 4,
+                of: Self.fullDatasetSampleCount, floor: compactionEvalSummaryFactRetentionFloor) == 18,
             "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the summary floor")
         #expect(
             compactionEvalFactRetentionRequiredSamples(
-                of: Self.fullDatasetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 4,
+                of: Self.fullDatasetSampleCount, floor: compactionEvalAnswerFactRetentionFloor) == 18,
             "the whole dataset holds \(Self.fullDatasetSampleCount) seeds against the answer floor")
     }
 

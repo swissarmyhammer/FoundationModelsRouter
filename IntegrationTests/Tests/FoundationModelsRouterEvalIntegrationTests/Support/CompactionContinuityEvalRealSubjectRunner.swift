@@ -5,8 +5,8 @@ import FoundationModelsRouterTestSupport
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterEvalSupport
 
-/// Loads ``CompactionEvalRealModel`` at most once and reuses it across every
-/// sample's ``run(steps:finalInstruction:prompt:budget:)`` call, driving a
+/// Loads ``CompactionContinuityRealModel`` at most once and reuses it across
+/// every sample's ``run(steps:finalInstruction:prompt:budget:)`` call, driving a
 /// real, full ``RoutedSession`` (task 8213x39's auto-compaction opt-in) per
 /// call rather than the bare `Compactor.compact` + one-shot session recipe
 /// ``CompactionEvalRealSubjectRunner`` uses — this evaluation needs the whole
@@ -95,7 +95,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// every later call.
     ///
     /// The load is timed and stated on its own two progress lines by
-    /// ``CompactionEvalRealModelContainer/load(samplingMode:unexpectedContainerType:)``,
+    /// ``CompactionEvalRealModelContainer/load(ref:context:samplingMode:unexpectedContainerType:)``,
     /// so it is never charged to the first sample. A tier that spends its whole
     /// limit here leaves the started line and no returned line, which is the
     /// trail ``gatedEvalSuiteTimeLimitMinutes`` exists to bound (task ^aktsp2e).
@@ -105,7 +105,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     /// - Throws: ``CompactionContinuityEvaluationError/unexpectedContainerType``
     ///   if the loaded container is not an `MLXFoundationModelsContainer`, or
     ///   whatever error ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
-    ///   throws while resolving/loading ``CompactionEvalRealModel/ref``.
+    ///   throws while resolving/loading ``CompactionContinuityRealModel/ref``.
     private func container() async throws -> MLXFoundationModelsContainer {
         if let loaded { return loaded }
         // Decoding is pinned to greedy. The provider default samples at
@@ -117,6 +117,8 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // under test (task f80n046). Argmax decoding consumes no randomness at
         // all, so a run's score is a fact about the prompt and the fixtures.
         let container = try await CompactionEvalRealModelContainer.load(
+            ref: CompactionContinuityRealModel.ref,
+            context: CompactionContinuityRealModel.context,
             samplingMode: .greedy,
             unexpectedContainerType: CompactionContinuityEvaluationError.unexpectedContainerType
         )
@@ -203,8 +205,8 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // eval assertion, and not the sidecar, which the harness writes with
         // `profile: nil`.
         let profile = RealModelHarness.make(
-            model: CompactionEvalRealModel.ref,
-            context: CompactionEvalRealModel.context,
+            model: CompactionContinuityRealModel.ref,
+            context: CompactionContinuityRealModel.context,
             container: container,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir
@@ -337,7 +339,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
             tokensBefore: lastTokensBefore,
             tokensAfter: lastTokensAfter,
             recordedEntryCount: fullHistory.count,
-            modelName: CompactionEvalRealModel.ref.stringValue
+            modelName: CompactionContinuityRealModel.ref.stringValue
         )
     }
 

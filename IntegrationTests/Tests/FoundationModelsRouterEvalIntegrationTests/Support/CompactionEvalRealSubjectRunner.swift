@@ -154,6 +154,8 @@ actor CompactionEvalRealSubjectRunner: GatedEvalRealModelRunner {
         // fact about the prompt and the fixtures rather than a coin flip
         // (task ^xscp198).
         let container = try await CompactionEvalRealModelContainer.load(
+            ref: CompactionEvalRealModel.ref,
+            context: CompactionEvalRealModel.context,
             samplingMode: .greedy,
             unexpectedContainerType: CompactionEvaluationError.unexpectedContainerType)
         loaded = container

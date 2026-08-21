@@ -1,49 +1,59 @@
 import FoundationModelsRouter
 
-/// The real `mlx-community` model every gated eval tier in this package
-/// resolves against actual hardware.
+/// The real `mlx-community` model the gated fact-retention eval tiers
+/// resolve against actual hardware.
 ///
-/// ## Why this is the small model, and no longer `RealModels/standard`
+/// ## Why this is Qwen2.5-3B, and no longer the 1B Llama
 ///
 /// This eval drove `mlx-community/Muse-Glimmer-30B-4bit` until task `^k0d30s4`
-/// set a budget of two minutes for each integration test. The 30B model cannot
-/// meet that budget: the gated run of 2026-08-18 measured 197.4 to 352.0
-/// seconds for ONE fact-retention sample — two generations — so even a single
-/// sample is over the whole budget. The small model is the same model the
-/// three fast compaction smoke suites drive, for the same measured reasons
-/// `CompactionSmokeIntegrationTests` records: it is a real instruct model, it
-/// follows the compaction prompt's own section structure, and it writes no
-/// `<think>` block, so a generation is its answer alone.
+/// set a budget of two minutes for each integration test — the 30B measured
+/// 197.4 to 352.0 seconds for ONE fact-retention sample — and then
+/// `mlx-community/Llama-3.2-1B-Instruct-4bit` until task ^m03heaa. The 1B
+/// stopped serving as a canary when task ^xx02yn6 redesigned the
+/// summarization prompt and trim for Qwen3.8-27B (the standard model): the
+/// redesign took the standard model from 0 of 7 to 5 of 7 stored subset
+/// summaries, and the 1B the OTHER way, from 6 of 7 to 2 of 7 — it ignores
+/// the stated size budget, enumerates background head-first, and the
+/// last-resort cut then drops the facts stated later in the span. The floors
+/// derived from that baseline fell to 0.14, a bar a change that breaks half
+/// of the retained seeds still clears.
 ///
-/// ## What the swap proves, and what it no longer proves
+/// Qwen2.5-3B-Instruct is the first candidate of ^m03heaa's trial order the
+/// redesigned prompt serves: the same family as the standard model the
+/// prompt is designed for, a real instruct model that writes no `<think>`
+/// block, and it measured 6 of 7 subset summaries and 23 of 24
+/// whole-dataset summaries under greedy decoding on 2026-08-20, at 63.5 and
+/// 369.1 seconds of suite wall clock. It is 1.6 GB on disk against 18 GB
+/// for `RealModels/standard`.
+///
+/// ## What the tiers prove, and what they do not
 ///
 /// The tiers still measure the real thing they always measured: a real fold
 /// through `Compactor`, a real summarizer generation, and a real answering
-/// turn over the folded transcript, scored mechanically. What they NO LONGER
-/// prove is how the 30B model — the model the slow gated suites drive —
-/// performs the same work. A fact the 1B model retains says nothing about the
-/// 30B, and a fact it loses may still survive under the larger model. That
-/// trade is task `^k0d30s4`'s decision: a live measurement in seconds on every
-/// run, in place of a stronger measurement nobody runs.
+/// turn over the folded transcript, scored mechanically. What they do NOT
+/// prove is how the 27B standard model performs the same work. A fact the
+/// 3B model retains says nothing about the 27B, and a fact it loses may
+/// still survive under the larger model. That trade is task `^k0d30s4`'s
+/// decision: a live measurement in seconds on every run, in place of a
+/// stronger measurement nobody runs.
+///
+/// The CONTINUITY tier resolves ``CompactionContinuityRealModel`` instead —
+/// see that constant for why the two subjects split.
 ///
 /// It stands here rather than beside the runner that loads it because the
 /// hermetic progress-line tests render the model-load lines and have to name
 /// the same reference those lines carry.
 enum CompactionEvalRealModel {
-    /// The `mlx-community/Llama-3.2-1B-Instruct-4bit` HuggingFace model
-    /// reference this eval resolves — 680 MB on disk against 18 GB for
-    /// `RealModels/standard`, and the model every fast compaction smoke suite
-    /// already drives. See the type's own doc comment for the budget that
-    /// forced the swap and for what the swap no longer proves.
-    static let ref: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
+    /// The `mlx-community/Qwen2.5-3B-Instruct-4bit` HuggingFace model
+    /// reference this eval resolves. See the type's own doc comment for the
+    /// measured trail behind the choice (task ^m03heaa).
+    static let ref: ModelRef = "mlx-community/Qwen2.5-3B-Instruct-4bit"
 
     /// The maximum context window, in tokens, to load ``ref`` with — passed
     /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.
     ///
-    /// Unchanged by the model swap. Every seed transcript, every fold prompt
+    /// Unchanged by the model swaps. Every seed transcript, every fold prompt
     /// chunk (bounded by ``Summarization/maxChunkTokens``), and every resumed
-    /// answering turn fits this window, and the fast continuity tier's
-    /// synthetic budget states its `limit` as this same number so a measured
-    /// context fill and the budget's trigger stay on one scale.
+    /// answering turn fits this window.
     static let context = 8192
 }

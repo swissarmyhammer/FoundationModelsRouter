@@ -8,16 +8,19 @@ import Tokenizers
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterEvalSupport
 
-/// The one way a gated eval tier in this target puts ``CompactionEvalRealModel``
-/// into its concrete ``MLXFoundationModelsContainer``.
+/// The one way a gated eval tier in this target puts its real model into a
+/// concrete ``MLXFoundationModelsContainer``.
 ///
 /// Both real-subject runners carried the same three-step body: build a
-/// ``LiveModelLoader`` over the fork's two Hub macros, load the `.standard` slot
-/// at ``CompactionEvalRealModel/context``, then narrow the returned
-/// `any LoadedLLMContainer` to the concrete type. Exactly two things differed,
-/// and those two are this function's parameters. The load's own progress lines
-/// were a third difference, and they are no longer one: both tiers state the
-/// load now (task ^aktsp2e), so this function emits them.
+/// ``LiveModelLoader`` over the fork's two Hub macros, load the `.standard`
+/// slot at the tier's own context, then narrow the returned
+/// `any LoadedLLMContainer` to the concrete type. What differed between them
+/// is this function's parameters — since task ^m03heaa that includes the
+/// model itself, because the fact-retention tiers resolve
+/// ``CompactionEvalRealModel`` while the continuity tier resolves
+/// ``CompactionContinuityRealModel``. The load's own progress lines were a
+/// difference once, and they are no longer one: both tiers state the load
+/// now (task ^aktsp2e), so this function emits them.
 ///
 /// Caching the loaded container is deliberately NOT here. That is per-runner
 /// state — each runner holds one model resident across its own samples — and it
@@ -43,8 +46,8 @@ import Tokenizers
 /// SwiftPM cannot share source between two leaf test targets, so each module
 /// keeps one loader, and neither keeps two.
 enum CompactionEvalRealModelContainer {
-    /// Loads ``CompactionEvalRealModel`` and returns the concrete container
-    /// behind it, timing the load on its own two progress lines.
+    /// Loads a tier's real model and returns the concrete container behind
+    /// it, timing the load on its own two progress lines.
     ///
     /// The load is stated apart from the samples, so it is never charged to the
     /// first one. A tier that spends its whole limit here leaves the started
@@ -52,6 +55,11 @@ enum CompactionEvalRealModelContainer {
     /// ``gatedEvalSuiteTimeLimitMinutes`` exists to bound.
     ///
     /// - Parameters:
+    ///   - ref: The model to resolve — ``CompactionEvalRealModel/ref`` for the
+    ///     fact-retention tiers, ``CompactionContinuityRealModel/ref`` for the
+    ///     continuity tier. The load's two progress lines name it.
+    ///   - context: The maximum context window, in tokens, to load `ref`
+    ///     with — the matching `context` constant beside each `ref`.
     ///   - samplingMode: The decoding strategy the loaded container generates
     ///     with. Defaults to `nil`, which leaves the provider's own default in
     ///     place, and that default samples. A tier whose score reads the exact
@@ -72,12 +80,14 @@ enum CompactionEvalRealModelContainer {
     /// - Throws: `unexpectedContainerType` if what was loaded is not an
     ///   ``MLXFoundationModelsContainer``, or whatever
     ///   ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)`` throws while
-    ///   resolving and loading ``CompactionEvalRealModel/ref``.
+    ///   resolving and loading `ref`.
     static func load(
+        ref: ModelRef,
+        context: Int,
         samplingMode: GenerationOptions.SamplingMode? = nil,
         unexpectedContainerType: any Error
     ) async throws -> MLXFoundationModelsContainer {
-        let modelName = CompactionEvalRealModel.ref.stringValue
+        let modelName = ref.stringValue
         CompactionEvalProgressLog.emit(CompactionEvalProgressLog.makeModelLoadStartedLine(ref: modelName))
         let startedAt = Date()
         let loader = LiveModelLoader(
@@ -86,9 +96,9 @@ enum CompactionEvalRealModelContainer {
             samplingMode: samplingMode
         )
         let loaded = try await loader.loadLLM(
-            ref: CompactionEvalRealModel.ref,
+            ref: ref,
             slot: .standard,
-            context: CompactionEvalRealModel.context,
+            context: context,
             reporting: { _ in }
         )
         guard let container = loaded as? MLXFoundationModelsContainer else {

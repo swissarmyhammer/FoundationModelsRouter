@@ -105,8 +105,9 @@ private func compactionEvalFactRetentionBar(floor: Double, measured: Int, of tot
 /// has to write a summary carrying the planted fact, and the resumed session has
 /// then to ANSWER with it. Each is held to its own measured floor —
 /// ``compactionEvalSummaryFactRetentionFloor`` and
-/// ``compactionEvalAnswerFactRetentionFloor``; see those values for why the
-/// small model separates the two — and each states, in its own message, how
+/// ``compactionEvalAnswerFactRetentionFloor``; see those values for the
+/// measurement each one states, and for why they stay two constants even on
+/// a day they hold the same number — and each states, in its own message, how
 /// many samples cleared it beside the bar the assertion really applied. See
 /// ``compactionEvalFactRetentionBar(floor:measured:of:)`` for why that bar is
 /// read off the measured count rather than off the tier's seed count.
@@ -162,10 +163,11 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
 /// ``compactionEvalSummaryFactRetentionFloor`` and
 /// ``compactionEvalAnswerFactRetentionFloor``.
 ///
-/// The model is ``CompactionEvalRealModel`` — the SMALL model since task
-/// ^k0d30s4's two-minute budget, and that constant states what the swap no
-/// longer proves. The floors are the small model's measured baselines; the
-/// 30B model's 0.9 bar is not measured here any more.
+/// The model is ``CompactionEvalRealModel`` — a small model since task
+/// ^k0d30s4's two-minute budget, and Qwen2.5-3B-Instruct since task ^m03heaa;
+/// that constant states what each swap no longer proves. The floors are the
+/// current canary's measured baselines; the 30B model's 0.9 bar is not
+/// measured here any more.
 ///
 /// The TARGET is what selects this suite, and it carries no `.enabled(if:)` of
 /// its own — see ``GatedEvalSerialGate`` for the commands that ask for this

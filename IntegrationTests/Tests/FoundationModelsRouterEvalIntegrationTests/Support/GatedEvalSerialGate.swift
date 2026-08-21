@@ -9,8 +9,10 @@ import Testing
 ///
 /// ## Why a permit, and not one shared container
 ///
-/// Every gated eval suite resolves the same ``CompactionEvalRealModel/ref``,
-/// each through its own runner (``CompactionEvalRealSubjectRunner`` and
+/// Every gated eval suite resolves a real model — the fact-retention tiers
+/// ``CompactionEvalRealModel/ref``, the continuity tier
+/// ``CompactionContinuityRealModel/ref`` — each through its own runner
+/// (``CompactionEvalRealSubjectRunner`` and
 /// ``CompactionContinuityEvalRealSubjectRunner``), and each caching its own
 /// container. Distinct `@Suite` types run concurrently by default in Swift
 /// Testing, so before this gate both containers could be resident at once —
@@ -111,13 +113,18 @@ enum GatedEvalSerialGate {
 /// whole, so the time a suite spends waiting on ``GatedEvalSerialGate/shared``
 /// is not charged against it.
 ///
-/// `CompactionContinuityEvaluationIntegrationTests` runs under this value.
-/// The two compaction fact-retention tiers state the same budget through
-/// their own measured constants (`compactionEvalSubsetTimeLimitMinutes` and
+/// `CompactionContinuityEvaluationIntegrationTests` runs under this value,
+/// against ``CompactionContinuityRealModel`` — its measured wall clocks are
+/// 26.2 to 41.4 seconds under the 1B model, where the Qwen2.5-3B canary the
+/// fact-retention tiers moved to measured 219.1 seconds on 2026-08-20, past
+/// this budget, which is why the continuity tier keeps its own model (task
+/// ^m03heaa). The two compaction fact-retention tiers state their own limits
+/// through their own measured constants
+/// (`compactionEvalSubsetTimeLimitMinutes` and
 /// `compactionEvalFullDatasetTimeLimitMinutes`), which
 /// `CompactionEvalTierBarTests` holds against the measured per-sample costs.
 /// The 20 minutes this value stated before belonged to the 30B model the eval
-/// tiers no longer drive — see ``CompactionEvalRealModel``.
+/// tiers no longer drive.
 let gatedEvalSuiteTimeLimitMinutes = 2
 
 /// A gated eval's real-model runner, as ``GatedEvalResidencyTrait`` drives it.

@@ -90,7 +90,7 @@ enum CompactionContinuityEvaluationError: Error {
 let compactionContinuityDefaultBudget = TokenBudget(limit: 2048, trigger: 0.80, target: 0.30)
 
 /// Where the FAST continuity tier puts the auto-compaction trigger, as a share
-/// of ``CompactionEvalRealModel/context``.
+/// of ``CompactionContinuityRealModel/context``.
 ///
 /// This is `AutoCompactionTriggerIntegrationTests`' proven device, applied to
 /// the continuity tier for task ^k0d30s4's two-minute budget. The number is
@@ -104,7 +104,7 @@ let compactionContinuityDefaultBudget = TokenBudget(limit: 2048, trigger: 0.80, 
 let compactionContinuityFastTriggerShareOfContext = 0.02
 
 /// Where the fast tier puts the fold target, as a share of
-/// ``CompactionEvalRealModel/context``.
+/// ``CompactionContinuityRealModel/context``.
 ///
 /// It resolves to 492 estimated tokens. Two properties place it:
 ///
@@ -126,13 +126,13 @@ let compactionContinuityFastTargetShareOfContext = 0.06
 /// The auto-compaction budget the FAST continuity tier vends its sessions
 /// with.
 ///
-/// `limit` is ``CompactionEvalRealModel/context`` and not a number of its
-/// own, so the session's measured context fill and the budget's trigger stay
-/// on one scale — ``TokenBudget/triggerTokens`` states that a budget whose
-/// limit differs from the session's window has its trigger silently scaled by
-/// the ratio between the two.
+/// `limit` is ``CompactionContinuityRealModel/context`` and not a number of
+/// its own, so the session's measured context fill and the budget's trigger
+/// stay on one scale — ``TokenBudget/triggerTokens`` states that a budget
+/// whose limit differs from the session's window has its trigger silently
+/// scaled by the ratio between the two.
 let compactionContinuityFastBudget = TokenBudget(
-    limit: CompactionEvalRealModel.context,
+    limit: CompactionContinuityRealModel.context,
     trigger: compactionContinuityFastTriggerShareOfContext,
     target: compactionContinuityFastTargetShareOfContext
 )
