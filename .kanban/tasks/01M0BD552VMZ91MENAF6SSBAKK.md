@@ -119,8 +119,56 @@ comments:
   id: 01m0dfy7jq57k56yq82x7dpdyw
   text: Task ^k0d30s4 sets a two-minute budget for each integration and eval test. This budget replaces the direction of this card to derive and increase time limits for the 30B model. The eval tiers now run the small model (mlx-community/Llama-3.2-1B-Instruct-4bit). The derived limits stay measured, but the measurements are now 3.5 s for the dearest sample and 2.0 s for the model load (run of 2026-08-19). Do not increase a limit above two minutes again. Make the test faster instead.
   timestamp: 2026-08-19T17:08:42.199495+00:00
-position_column: review
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0h94c5rz1k69s4b88z5s6cg
+  text: |-
+    ## Research, 2026-08-21 — every criterion read against the code at `885f284`
+
+    The card was pulled back to `doing`. The premise of this card is the 30B model's rate, and that premise is gone. Two tasks removed it:
+
+    - Task ^k0d30s4 (commits `fe9be35`, `885f284`) holds every integration test to `integrationTestBudgetMinutes = 2`. The comment of 2026-08-19 on this card records that this budget REPLACES the direction of this card to raise a limit. That comment names `mlx-community/Llama-3.2-1B-Instruct-4bit` as the subject, which is now stale.
+    - Task ^m03heaa (commits `e36277f`, `d1dde7a`) then made ``CompactionEvalRealModel/ref`` `mlx-community/Qwen2.5-3B-Instruct-4bit`.
+
+    State of the constants, read in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift` (the file moved out of `CompactionEvaluationTests.swift` since this card last wrote):
+
+    - `compactionEvalMeasuredDearestSampleSeconds` = 15.9, `compactionEvalMeasuredModelLoadSeconds` = 1.3.
+    - `compactionEvalDerivedTimeLimitMinutes(forSamples:)` is real arithmetic over those two. 7 x 15.9 + 1.3 = 112.6 s = 1.877 min.
+    - `compactionEvalSubsetTimeLimitMinutes` = 2, the next whole minute above 1.877. The 42 minutes this card put there is gone.
+    - `CompactionEvalTierBarTests` still binds the limit from both sides — `limit >= derived` and `limit < max(derived, 1) + 1` — and the second test now takes `max(derived, 1)`, because 1 minute is the smallest limit Swift Testing accepts.
+    - `CompactionEvalRepresentativeSubsetTests.subsetSeedCount` = 7, still one size and not a band.
+    - Both retention floors are 0.71, and ``CompactionEvalRealSubjectRunner`` pins greedy decoding, so a run's score is a fact about the prompt.
+
+    ## Criterion 1 is met, by a run that is already recorded
+
+    The gated subset run of 2026-08-20 on task ^m03heaa is the evidence. Its `implement — stuck` record states: summary 6 of 7, answer 6 of 7, every one of the 7 seeds reached, 63.3 s of suite wall clock inside the 2-minute limit. So the tier ended on its own assertion and not on the time limit, and no seed was unreached.
+
+    Every fold in that run APPLIED. The trail files each sample in one class of ``CompactionEvalFactRetentionClass``, and a fold that stored no summary lands in `foldProducedNoSummary`. The run filed 6 samples under `retained` and 1 under `summaryLostFact` — 7 of 7 — so no sample landed in `foldProducedNoSummary`. The per-sample costs the same run measured (5.4, 4.7, 12.2, 3.2, 5.1, 15.9, 15.9 s) are therefore each an applied fold plus the answering turn that reads the folded transcript.
+
+    No new gated run is necessary, and none was made.
+
+    ## Criterion 2 needs one doc sentence
+
+    The limit does state the per-sample rate it was measured against: the two measured constants and the derivation are all in the file. It does NOT name the applied fold. That half of the criterion was written against the 30B measurement, and the doc lost it when task ^m03heaa re-measured the rate. The fix is prose, in the doc of `compactionEvalMeasuredDearestSampleSeconds`.
+
+    ## Criterion 3 is owned elsewhere
+
+    The Metal abort on a time-limit cancellation is card ^bkdm97c, and commit `3add7b3` moved that card to the fork board. It is not on this board, and it is not this card's work.
+  timestamp: 2026-08-21T04:26:41.208602+00:00
+- actor: claude-code
+  id: 01m0h9kac2mb4pjj9dr4qbyhxb
+  text: |-
+    ### implement — changed
+
+    - evidence: 1 file — `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`, 19 insertions and 0 deletions, all of them `///` prose in the doc of `compactionEvalMeasuredDearestSampleSeconds`. No constant moved, no logic changed, and no test changed.
+    - builds: `swift build --build-tests -Xswiftc -warnings-as-errors` gives `Build complete!` at the root and in `IntegrationTests`, with no error and no warning in either.
+    - tests: root `swift test` gives `Test run with 1025 tests in 96 suites passed ... with 1 known issue` and `Test run with 77 tests in 9 suites passed`. The known issue is `BoundedWaitTests`, which is pre-existing and untouched. No gated tier was run.
+    - criteria: all three now hold. Criterion 1 closes on the gated subset run of 2026-08-20 that task ^m03heaa recorded — 7 of 7 seeds reached, 6 of 7 summaries and 6 of 7 answers against a bar of 5 of 7, 63.3 s inside a 2-minute limit, and no sample filed under `foldProducedNoSummary`, which is the evidence that every fold applied. Criterion 2 needed the one sentence this change adds. Criterion 3 is owned by ^bkdm97c on the fork board.
+    - not done, on purpose: no limit was derived again upward. The card forbids it, and task ^k0d30s4's two-minute budget replaces that direction. `compactionEvalSubsetTimeLimitMinutes` stays 2.
+    - untouched, and not this card's: the open question on ^k0d30s4 about `CompactionEvalFullDatasetIntegrationTests`, ^mx4jqrn (the continuity tier is red on `main`), ^5q0vv85 (the whole-dataset bound has little margin), ^de1yq0p, ^sqcp252.
+    - next: `/review`.
+  timestamp: 2026-08-21T04:34:50.882945+00:00
+position_column: doing
+position_ordinal: '80'
 title: The gated compaction subset no longer fits its 30-minute limit now that every fold applies — 6 of 7 seeds in 1800 s
 ---
 Measured by the sanctioned gated run of 2026-08-18 16:07 local, made for `^bgxtdk3` criterion 5. Log: `/private/tmp/claude-501/-Users-wballard-github-swissarmyhammer-FoundationModelsRouter/606aa1c2-1180-4d8b-96da-9a3c34d5a1b0/scratchpad/gated-crit5.log`.
@@ -185,6 +233,8 @@ The report and the counts printed first, so the run lost no measurement. The abo
 
 ## What landed, 2026-08-19
 
+SUPERSEDED on 2026-08-21. The 42 minutes below is gone, and answer 1 above is no longer the answer this card rests on. This section stays as the record of the 30B era; see "What landed, 2026-08-21" for the state that holds.
+
 Answer 1 of the three above, sized on the DEAREST measured sample rather than on the mean, because the six samples spread by 1.78x and a limit at the mean sits inside that spread.
 
 - `compactionEvalMeasuredDearestSampleSeconds` (352.0) and `compactionEvalMeasuredModelLoadSeconds` (3.5) name the two measured inputs, and `compactionEvalDerivedTimeLimitMinutes(forSamples:)` derives a tier's bound from them.
@@ -196,9 +246,9 @@ Answer 1 of the three above, sized on the DEAREST measured sample rather than on
 
 ## Acceptance Criteria
 
-- [ ] The gated subset ends on its own assertion, not on the time limit, with every fold applied — OPEN. Only a gated run can show it, and a gated run is ruled out for now.
+- [x] The gated subset ends on its own assertion, not on the time limit, with every fold applied — CLOSED on the gated subset run of 2026-08-20 that task ^m03heaa recorded: 7 of 7 seeds reached, 6 of 7 summaries and 6 of 7 answers against a bar of 5 of 7, and 63.3 seconds of wall clock inside a 2-minute limit. Every fold applied: the trail filed 6 samples as `retained` and 1 as `summaryLostFact`, and none as `foldProducedNoSummary`.
 - [x] The limit states the per-sample rate it was measured against, and names the applied fold as the reason for the rate
-- [ ] A time-limit cancellation does not abort the process on a Metal assertion — moved to `^bkdm97c`, which owns it. It is not a threshold question, it needs a gated run to verify, and any fix touches the MLX generation path rather than an eval constant.
+- [x] A time-limit cancellation does not abort the process on a Metal assertion — HANDED to `^bkdm97c`, which owns it. Commit `3add7b3` moved that card to the fork board, because any fix touches the MLX generation path rather than an eval constant. It is not open on this board.
 
 ## Review Findings (2026-08-19 06:26)
 
@@ -209,15 +259,17 @@ Answer 1 of the three above, sized on the DEAREST measured sample rather than on
 
 - [x] `Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift:438` `swift/doc-parameter-naming` — Doc parameter key uses the external argument label `counts` instead of the internal parameter name `tallied`. Per the rule, `- Parameter` entries must name the internal (local) parameter that callers inside the function use, not the external label used at call sites. Change line 438 from `- counts:` to `- tallied:` to reference the internal parameter name.
 
-## Review hold, 2026-08-19
+## Review hold, 2026-08-19 — LIFTED on 2026-08-21
 
-This card stays in `review` and must NOT move to `done` on a clean review. Acceptance criterion 1 is open: the tier must end on its own assertion rather than on the limit, and only a gated run can show it. A gated run is ruled out for now. The review pass verified the code, not the criterion.
+The hold is lifted. It held the card out of `done` because acceptance criterion 1 was open and only a gated run could show it. That gated run happened: task ^m03heaa ran the subset tier on 2026-08-20 and recorded the result. See "What landed, 2026-08-21" for the evidence. The text below stays as the record of why the hold existed.
 
-Source verification of this card's claims, made against `ace1d44` (all CONFIRMED):
+> This card stays in `review` and must NOT move to `done` on a clean review. Acceptance criterion 1 is open: the tier must end on its own assertion rather than on the limit, and only a gated run can show it. A gated run is ruled out for now. The review pass verified the code, not the criterion.
 
-- `compactionEvalDerivedTimeLimitMinutes(forSamples:)` is real arithmetic over the two measured constants, not a stated number — `CompactionEvaluationTests.swift:91-94`. 7 x 352.0 + 3.5 = 2467.5 s = 41.125 min, so 42 is the next whole minute. `compactionEvalSubsetTimeLimitMinutes` is 42 at `:181`, and `subsetSampleCount` reads `compactionEvalRepresentativeSeeds.count` rather than a literal, so the derivation follows the real seed count.
-- The binding is two-sided. `CompactionEvaluationTests.swift:1614` asserts `Double(limit) >= derived`, and `:1630` asserts `Double(limit) < derived + 1`. 41.125 <= 42 < 42.125, so 42 is the only integer that clears both. A limit that drifts up to 43 fails the second test. The limit cannot drift up silently.
-- The band is `6...7` at `CompactionEvaluationTests.swift:1499`, down from `6...8`. 8 x 352.0 + 3.5 = 2819.5 s = 46.99 min, over 42.
+Source verification of this card's claims, made against `ace1d44` (all CONFIRMED at that commit; the figures are the 30B era's and no longer hold):
+
+- `compactionEvalDerivedTimeLimitMinutes(forSamples:)` is real arithmetic over the two measured constants, not a stated number. 7 x 352.0 + 3.5 = 2467.5 s = 41.125 min, so 42 is the next whole minute. `compactionEvalSubsetTimeLimitMinutes` is 42, and `subsetSampleCount` reads `compactionEvalRepresentativeSeeds.count` rather than a literal, so the derivation follows the real seed count.
+- The binding is two-sided. One test asserts `Double(limit) >= derived`, and one asserts `Double(limit) < derived + 1`. 41.125 <= 42 < 42.125, so 42 is the only integer that clears both. A limit that drifts up to 43 fails the second test. The limit cannot drift up silently.
+- The band is `6...7`, down from `6...8`. 8 x 352.0 + 3.5 = 2819.5 s = 46.99 min, over 42.
 - Observation from the two-sided binding, not a finding: the upper assertion pins the subset at exactly 7 seeds. At 6 seeds the derived bound is 35.26 min, and `42 < 36.26` is false, so `subsetTimeLimitIsTheNextWholeMinuteAboveItsBound` fails while `subsetStaysInsideItsSizeBand` passes. The band's lower end of 6 is not reachable without also editing the limit.
 - Observation, not a finding: the doc prose says "41.1 minutes" where the derived value is 41.125. Prose rounding only; the tests use the computed value.
 
@@ -228,4 +280,27 @@ The finding above is fixed, and the band observation is resolved.
 - `retentionLine(of:counts:)` declares `counts tallied:`, so its doc key is now `- tallied:`. The whole eval target was swept for the same cause rather than the one line: 70 documented declarations and 112 doc parameter keys read against their declarations, 0 unparsed, this one site only, and 0 after the fix. DocC symbol links were left alone, because the rule says a symbol link follows the declaration.
 - The band and the limit binding no longer disagree. `subsetSizeBand = 6...7` becomes `subsetSeedCount = 7`, and `subsetStaysInsideItsSizeBand` becomes `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst`. The band was made to state what is reachable, rather than the limit derivation made to tolerate the band, because deriving the bound from a band's upper end would let 42 stand at 6 seeds — 5.7 minutes above that size's 35.26 bound — which is the very defect the two-sided binding exists to refuse. The size stays a literal, so the test still compares two independent statements.
 
-Acceptance criterion 1 is untouched: only a gated run can close it. #compaction #eval #real-model #test-debt
+## What landed, 2026-08-21
+
+The premise of this card is the 30B model's rate, and that premise is gone. Two tasks removed it, and this card closes on what they measured. No limit was derived again upward, and no gated tier was run for this pass.
+
+- Task ^k0d30s4 holds every integration test to `integrationTestBudgetMinutes = 2`. Its budget REPLACES the direction of this card to raise a limit.
+- Task ^m03heaa then made ``CompactionEvalRealModel/ref`` `mlx-community/Qwen2.5-3B-Instruct-4bit`, and re-measured every tier against it.
+
+State of the code, read in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`, where these constants now live:
+
+- `compactionEvalMeasuredDearestSampleSeconds` is 15.9 and `compactionEvalMeasuredModelLoadSeconds` is 1.3, both from the gated subset run of 2026-08-20.
+- `compactionEvalDerivedTimeLimitMinutes(forSamples:)` derives 7 x 15.9 + 1.3 = 112.6 s = 1.877 minutes for the subset.
+- `compactionEvalSubsetTimeLimitMinutes` is 2, the next whole minute above that bound. The 42 minutes this card put there is gone.
+- `CompactionEvalTierBarTests` still binds the limit from both sides. The upper assertion is now `Double(limit) < max(derived, 1) + 1`, because 1 minute is the smallest limit Swift Testing accepts.
+- `CompactionEvalRepresentativeSubsetTests` holds the subset at one size of 7.
+- Both retention floors are 0.71, and ``CompactionEvalRealSubjectRunner`` pins greedy decoding, so a run's score is a fact about the prompt and not a draw.
+
+Criterion 1 closes on the gated subset run of 2026-08-20 that task ^m03heaa recorded. The tier reached all 7 seeds, scored 6 of 7 summaries and 6 of 7 answers against a bar of 5 of 7, and ended in 63.3 seconds inside a 2-minute limit. So it ended on its own assertion and not on the time limit. Every fold in it applied: the trail files each sample in one class of ``CompactionEvalFactRetentionClass``, and a fold that stored no summary lands in `foldProducedNoSummary`. That run filed 6 samples as `retained` and 1 as `summaryLostFact` — 7 of 7 — and none as `foldProducedNoSummary`.
+
+Criterion 2 got the one sentence it was missing. The doc of `compactionEvalMeasuredDearestSampleSeconds` had kept its measured rate through each re-measurement, but it had lost the applied fold. It now states that each measured figure holds an applied fold and the answering turn that then reads the folded transcript, that task ^azd033m made the fold apply, and that a discarded fold costs one summarizer call and nothing after it — so a rate measured over discarded folds under-states this one, which is why the run of 2026-08-17 is not comparable with any figure in that doc. It names the run's own evidence, and it names the two ungated tests that keep the property true without a gated run: `CompactionEvaluationHermeticTests/everySeedFoldSurvivesARealisticSummary` and `CompactionEvalSeedSizingTests/everySeedsFoldableSpanOutweighsARealSummary`.
+
+Criterion 3 is owned by ^bkdm97c on the fork board, and is not open here.
+
+Verified: root `swift test` gives 1025 tests in 96 suites passed with 1 known issue (`BoundedWaitTests`, untouched and pre-existing), plus 77 tests in 9 suites passed. `swift build --build-tests -Xswiftc -warnings-as-errors` completes with no error and no warning at the root and in `IntegrationTests`.
+#compaction #eval #real-model #test-debt

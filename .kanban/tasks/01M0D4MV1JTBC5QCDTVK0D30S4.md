@@ -209,8 +209,28 @@ comments:
     - not run, as the card directs: the whole integration target, and every eval tier.
     - next: /review. Acceptance criterion 1 stays open for a person — the choice for `CompactionEvalFullDatasetIntegrationTests`.
   timestamp: 2026-08-21T04:05:38.981706+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0h8wbeeb7y10jepj6yfkkf0
+  text: |-
+    ### review — clean (the card stays in review)
+    - evidence: `review sha 885f284~1..885f284` (backend local) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 16 files reviewed, 2 excluded by `.reviewignore`. Every finding of the two earlier passes is marked done. Card column: review.
+    - hold: the findings do not hold this card. Acceptance criterion 1 holds it, and only a person can settle it — `CompactionEvalFullDatasetIntegrationTests` measures 369.1 s and cannot fit two minutes. Delete that tier, or keep it as the declared opt-in tier the everyday command skips.
+    - not run: no gated real-model suite. The measurements of commit 885f284 are recorded on the card.
+    - next: a person makes the choice for the whole-dataset tier. Then the card can move to `done`.
+  timestamp: 2026-08-21T04:22:18.318604+00:00
+- actor: claude-code
+  id: 01m0h8x9w47t9fsvmd4nzwzee6
+  text: |-
+    ### finish iteration — stuck, and it needs a person
+    - implement: changed — 15 files; one shared `GatedRealModelSuiteTrait` in `FoundationModelsRouterTestSupport` replaces the two near-identical traits; the doc sweep corrected 9 sites, not the 4 named
+    - test: green — both packages build with -warnings-as-errors and zero warnings; root swift test 1025 in 96 suites plus 77 in 9 suites; the 5 fast gated suites 7 tests in 52.6 s, each printing its wall-clock line
+    - commit: 885f284
+    - review: clean — 0 findings; all 6 earlier findings checked
+
+    The card stays in `review`. The findings do not hold it — one acceptance criterion does, and only the user can settle it: `CompactionEvalFullDatasetIntegrationTests` measures 369.1 s and cannot fit two minutes (24 seeds at a dearest sample of 15.9 s is 382 s). Delete that tier, or keep it as the declared opt-in tier the everyday command skips with `--skip CompactionEvalFullDataset`.
+  timestamp: 2026-08-21T04:22:49.476461+00:00
+position_column: review
+position_ordinal: '8580'
 title: Every integration test must run in under 2 minutes — boot from a recording, or make the test smarter
 ---
 From the user, 2026-08-19:
@@ -365,3 +385,16 @@ Docs that frame the old limits as history are correct and were left as they stan
 ## The card stays in Review
 
 One acceptance criterion is open and needs a person, not an agent: the choice for `CompactionEvalFullDatasetIntegrationTests` between deletion and a declared opt-in tier. That criterion holds this card in `review`, together with the findings above. #compaction #eval #test-debt
+
+## Review Findings (2026-08-20 23:10)
+
+> Scope: `review sha 885f284~1..885f284` — reviewed the diffs only — lines this change added or modified. 16 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+No new finding. The engine attempted 7 validators, confirmed 0 and refuted 0. Every finding of the two earlier passes is marked done.
+
+### What holds the card in Review, 2026-08-21
+
+The findings do not hold this card. One acceptance criterion holds it, and only a person can settle it: `CompactionEvalFullDatasetIntegrationTests` measures 369.1 s and cannot fit two minutes. Delete that tier, or keep it as the declared opt-in tier that the everyday command skips. An agent does not make this choice, thus the card stays in `review`.

@@ -26,6 +26,25 @@ import FoundationModelsRouter
 /// sample over the same recipe, which is the rate the two-minute budget
 /// removed.
 ///
+/// Every one of those seven samples APPLIED its fold, and that is half of the
+/// cost each figure holds: the answering turn then reads the folded
+/// transcript. Task ^azd033m made the fold apply. Before that change a fold
+/// was discarded, and a discarded fold costs one summarizer call and nothing
+/// after it, so a rate measured over discarded folds under-states this one —
+/// which is why the 7-sample run of 2026-08-17 is not comparable with any
+/// figure above. The run of 2026-08-20 filed six of its seven samples as
+/// `retained` and one as `summaryLostFact`, and none as
+/// ``CompactionEvalFactRetentionClass/foldProducedNoSummary``, which is how
+/// its own trail shows that each fold applied. Two ungated tests keep the
+/// property true without a gated run:
+/// `CompactionEvaluationHermeticTests/everySeedFoldSurvivesARealisticSummary`
+/// folds every seed against a summarizer that answers at a real summary's
+/// length, and
+/// `CompactionEvalSeedSizingTests/everySeedsFoldableSpanOutweighsARealSummary`
+/// holds every seed's foldable span above the largest summary such a
+/// summarizer writes for it. So `Compactor.compact` cannot throw a fold away
+/// on its did-not-shrink guard (task ^6ssbakk).
+///
 /// The DEAREST sizes a limit, not the mean, because the spread between
 /// samples is what a limit has to survive (task ^6ssbakk).
 ///
