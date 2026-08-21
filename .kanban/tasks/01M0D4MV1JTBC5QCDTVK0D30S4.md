@@ -294,8 +294,142 @@ comments:
     - not weakened, as the card directs: both retention floors stay 0.71, the summarization prompt did not move, and the canary is still Qwen2.5-3B-Instruct. The "has any deleted fixture ever failed alone" check was NOT done — the user was offered it and refused it.
     - next: /review. One thing for a person: compaction_plan.md §5's code sketch still asks for 20 to 30 fixtures, which the user's decision supersedes; the plan is a design record, so the sketch was left as written and the test that carried the old floor states the supersession in its own comment.
   timestamp: 2026-08-21T12:34:14.412278+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0j8qzg3fz1nd1xr1g3wty34
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha 134342a~1..134342a` — 0 findings, 0 confirmed, 0 refuted, 14 validators attempted, 0 failed. 13 files reviewed; 6 `.kanban/` files excluded by `.reviewignore`. All 6 prior findings on this card are checked. Card moved to `done`.
+    - next: none
+
+    ### The three directed checks
+
+    **1. The re-measured constant is correct.** `compactionEvalMeasuredBytesPerToken` is 4.85 in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`. It obeys the rule its own doc states — the LARGEST of the three tokenizer rates, rounded up. The rates are 4.847, 4.826 and 4.807, thus 4.847 rounds up to 4.85. The method also reproduces the OLD value: the stated old rates are 4.805, 4.796 and 4.777, and 4.805 rounds up to 4.81.
+
+    The corpus figures agree with the dataset that now exists. The doc states 41 pieces of text and 9946 UTF-8 bytes. A count of the source gives exactly 41 and 9946: 7 contexts (8172 bytes), 13 facts (1056 bytes), 8 filler prompts (402 bytes), 8 filler replies (161 bytes), 4 fact acknowledgements (115 bytes) and 1 context acknowledgement (40 bytes). Each stated token count also divides correctly: 9946 / 2052 = 4.847, 9946 / 2061 = 4.826, 9946 / 2069 = 4.807.
+
+    Everything derived from the constant was derived again with it:
+
+    | derived value | arithmetic | correct |
+    |---|---|---|
+    | 621 bytes for a 128-token summary | 128 x 4.85 = 620.8, rounded up | yes |
+    | 156 worst-case summary tokens | 621 / 4.0 = 155.25, rounded up | yes |
+    | 234 tokens of required span | 1.5 x 156 | yes |
+    | 936 bytes of span | 234 x 4.0 | yes |
+    | 828 bytes of content | 621 / 0.75 | yes |
+    | ratio 2.21 for `db-port` | 345 / 156 | yes |
+
+    **2. The coverage test does work.** `CompactionEvalRepresentativeSubsetTests` holds six bars, and no bar compares the dataset with itself:
+
+    - `everySubsetIDNamesAFixture` and `subsetSeedsAreTheSeedsTheSubsetNames` read `compactionEvalRepresentativeSubsetIDs`, which is a hand-written list of seven ids and is NOT derived from `compactionEvalFixtureSpecs`. A fixture that is dropped from the dataset makes the first bar red.
+    - `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst` reads the literal 7.
+    - `subsetCarriesEveryRequiredHeadSize` reads the literal set `[1, 2, 3]`, with `==` and not with a subset test, so a head size that is added or removed makes it red.
+    - `subsetCarriesBothDeliveries` reads the literal set `[true, false]`.
+    - `subsetVariesTheRecentTurnCount` and `subsetProbesEveryPositionInTheHead` read the subset alone.
+
+    A fixture that is dropped makes three bars red. A fixture whose shape changes makes the head-size, delivery or probed-position bar red.
+
+    **3. Nothing dangles.** A grep of every `.swift`, `.md`, `.yml` and `.yaml` file, less `.build/` and `.kanban/`, finds no `CompactionEvalFullDataset`, no `compactionEvalFullDataset`, no `makeCompactionEvalRealEvaluation` and no `--skip CompactionEval`. The only name that stays is `compactionEvalSubsetMeasuredDearestSampleSeconds`, which is the surviving tier's own constant. `ci.yml` lost the four-line comment and the `--skip CompactionEvalFullDataset` line only; the run is now `swift test --package-path IntegrationTests` and no other line moved.
+
+    ### What the seven span, and what they do not
+
+    This is the plain statement the user asked for. It is a comparison of the fields, not a check of whether a deleted fixture ever failed alone.
+
+    **No FIELD lost a value.** On each of the four fields the dataset varies, the seven carry the same set of values that the seventeen carried:
+
+    | field | the seven carry | the seventeen carried | lost |
+    |---|---|---|---|
+    | `facts.count` | 1, 2, 3 | 1, 2, 3 | none |
+    | `probedFactIndex` | 0, 1, 2 | 0, 1, 2 | none |
+    | `probedFactViaTool` | true, false | true, false | none |
+    | `recentTurnCount` | 4, 5, 6, 7 | 4, 5, 6 | none |
+
+    The seven carry MORE on the recency window: `three-facts-support-escalation` keeps 7 turns, and no deleted fixture kept more than 6. The longest context is also a fixture that stays (1460 bytes against 1419 bytes).
+
+    **Two COMBINATIONS are lost, and the bars cannot see them,** because each bar reads one field on its own:
+
+    - A three-fact head probed in the MIDDLE. The seven probe a three-fact head at index 0 and at index 2 only. `three-facts-onboarding` probed index 1 of three, and it is deleted.
+    - A tool-delivered head probed at a position that is not first. All three tool-delivered fixtures that stay probe index 0. `config-flag-and-owner` delivered by tool and probed index 1, and it is deleted.
+
+    **Subject matter is the other loss.** Seventeen kinds of planted fact are no longer measured against a real model: a vault code, an allergy, a flight number, a codename, a release branch, a server hostname, a printer location, a game seed, a pet and a vet, a meeting time, a wifi policy, a recipe, a travel itinerary, a tabs-vs-spaces rule, a config flag, a migration and an onboarding. The seven keep an env file, a database port, an encryption algorithm, a license key and region, a budget cap, a support escalation and a project brief.
+
+    Both losses follow from the user's decision and neither is a defect of this change. Card ^<pending> records the two combinations, because a person can get them back at zero cost in time by changing the shape of a fixture that stays, and not by adding a seed.
+  timestamp: 2026-08-21T13:39:09.443304+00:00
+- actor: claude-code
+  id: 01m0j8s7yp8y7jh448cmrtd79r
+  text: |-
+    The card the comment above names as `^<pending>` is **^ghkxf3r** — "Two fold shapes are no longer measured: a three-fact head probed in the middle, and a tool-delivered head probed after the first fact". It is in `todo`, tagged `#compaction #eval #test-debt`.
+
+    It records the two lost combinations only. It does NOT ask for a fixture to come back, and it does not ask for a gated run. The correction it describes costs no time, because it changes the shape of a fixture that stays instead of adding a seed.
+  timestamp: 2026-08-21T13:39:50.870066+00:00
+- actor: claude-code
+  id: 01m0j8vnfsa71cre0knfnkp0dn
+  text: |-
+    ### Addendum to the span statement — what the seven do not measure
+
+    A second, independent pass over all 24 fixtures agrees with the field table above and adds more. The review outcome does not change: the engine gave 0 findings, and the card stays in `done`. This is the honest statement the user asked for, made complete.
+
+    **The cut was a pure deletion.** No line outside a doc comment was added to the dataset. The seven that stay are byte-for-byte the fixtures they were, and they are exactly the `compactionEvalRepresentativeSubsetIDs` list that already existed. No fixture was picked again for coverage, and no fixture was re-shaped to cover for one that went. So the seven measure precisely what they measured before, and nothing more.
+
+    **Difficulty did not go down.** Each structural extreme of the 24 is a fixture that stays:
+
+    | extreme | fixture | kept |
+    |---|---|---|
+    | longest context | `env-file` | yes |
+    | largest head, context and facts together | `three-facts-long-project-brief` | yes |
+    | largest recency window (7 turns) | `three-facts-support-escalation` | yes |
+    | deepest burial, turns between the probed fact and the question | `three-facts-support-escalation` | yes |
+
+    No deleted fixture was harder than every fixture that stays on any structural axis. What went is breadth at the SAME difficulty.
+
+    (The two passes measured context bytes a little differently — one counted the indentation of the Swift literal and one did not, thus 1446 against 1460 for `env-file`. The order is the same under each count, and the longest context is a fixture that stays under each.)
+
+    **The two lost combinations stand, and card ^ghkxf3r holds them.** The second pass names the same two, and states the reason the bars cannot see the first one: `subsetProbesEveryPositionInTheHead` asks for a fact at index 0, a fact after index 0, and a fact at the last index. A MIDDLE fact satisfies none of those on its own, so a subset with no middle probe passes that bar.
+
+    **A third loss the field table cannot show: the SHAPE of the planted fact.** This is not a combination of the fields. It is what kind of thing the model must carry through the fold.
+
+    Six of the seven probed answers that stay are machine-shaped strings — `.env.example`, `6543`, `eu-west-2`, `4,200`, `AES-256-GCM`, `WX-ARCHIVE-6` — and the seventh is a duration, `2 hours`. Ten of the seventeen that went probed ORDINARY ENGLISH: `tabs`, `shellfish`, `Longbow`, `Priya`, `Riverside`, `router`, `coconut oil`, `supply closet`, `second week`, `platform team`. The two shapes fail differently. An opaque identifier can only be carried word for word, so it measures copying. A common word can be guessed from the context around it, so it measures whether the model really kept the fact or only reconstructed a plausible one. The seven measure copying almost alone.
+
+    Four kinds of fact now have ZERO fixtures:
+
+    - **A person's name as the answer.** `Priya` was the only one. `Marcus` and `Dana` are inside the facts of fixtures that stay, but neither is ever the probed phrase.
+    - **A date or a clock time as the answer.** `pet-name-and-vet` probed a calendar date and `meeting-time-and-reviewer` planted a weekday and an hour. `2 hours` is the nearest the seven come, and it is a duration.
+    - **A fact about the USER as a person.** `allergy`, `flight-number`, `pet-name-and-vet`, `travel-itinerary-hotel` and `recipe-substitution-and-timing` were five. All seven that stay state a fact about the project or the team.
+    - **A fact that is a rule on the assistant's own later answers.** `allergy` was the only one: the planted fact said the user must never be given a recipe with shellfish. A fold that loses THAT fact does harm, where a fold that loses a port number gives a wrong answer. No fixture that stays has that shape.
+
+    **Subject matter is now one domain.** The seven are config, infrastructure, cloud, finance operations, support operations, security and an archive brief — software work throughout. Cooking, travel, personal health, pets, gaming, office facilities, a calendar and onboarding all went. A summarizer tuned to software prose would score well on all seven, and this eval could not tell.
+
+    **The sample count is itself coverage.** At seven seeds a retention share can only take eight values, so one miss moves the measure by 14 points. That is a property of the user's decision and not a defect; it is written here so a later reader does not mistake a one-seed swing for a change in the model.
+
+    Card ^ghkxf3r holds the two structural combinations. Card ^<second> holds the fact-shape losses, because the two need different work: a combination comes back by changing one integer, and a fact shape comes back by re-writing the prose of a fixture that stays. Neither adds a seed, so neither costs time.
+  timestamp: 2026-08-21T13:41:10.265799+00:00
+- actor: claude-code
+  id: 01m0j8x53yjnb78513x8x1vy7p
+  text: |-
+    The card the addendum names as `^<second>` is **^rdsbf57** — "The compaction eval now plants only machine-shaped facts about software — an allergy, a person's name, a date and a safety rule are no longer measured". It is in `todo`, tagged `#compaction #eval #test-debt`.
+
+    Two cards hold the span statement, because the two need different work:
+
+    | card | what it holds | how it is corrected |
+    |---|---|---|
+    | ^ghkxf3r | two lost STRUCTURAL combinations: a three-fact head probed in the middle, and a tool-delivered head probed after the first fact | change one integer on a fixture that stays |
+    | ^rdsbf57 | the lost fact SHAPES: ordinary-English answers, a person's name, a date, a fact about the user, and a rule on the assistant's own later answers | re-write the prose of a fixture that stays, then measure `compactionEvalMeasuredBytesPerToken` again |
+
+    Neither card adds a seed, so neither costs time and neither fights the user's decision to make the test smaller. Both say plainly that they must not grow the dataset.
+  timestamp: 2026-08-21T13:41:59.038633+00:00
+- actor: claude-code
+  id: 01m0j8ydzz4neczeyhrndg4j0k
+  text: |-
+    ### finish iteration — clean, and the card is closed
+    - implement: changed — 20 files, 455 insertions against 864 deletions; the whole-dataset tier, its constants, 17 of 24 fixtures and every `--skip CompactionEvalFullDataset` site are deleted; `compactionEvalMeasuredBytesPerToken` was re-measured over the smaller corpus, 4.81 to 4.85, and every figure it feeds was re-derived
+    - test: green — both packages build with -warnings-as-errors; root swift test 1026 in 96 suites plus 77 in 9 suites; the surviving gated tier passed at 89.0 s against its 2-minute limit, 6 of 7 summaries and 6 of 7 answers, no seed unreached — the same verdict as before the cut
+    - commit: 134342a
+    - review: clean — 0 findings; all 5 acceptance criteria verified, not only the one the user settled; task moved to `done`
+
+    What the deletion cost, stated plainly: no field lost a value. `facts.count`, `probedFactIndex`, `probedFactViaTool` and `recentTurnCount` are each spanned exactly as before, and every structural extreme is a fixture that stays, so the eval is not easier. Two field COMBINATIONS went (a three-fact head probed in the middle, and a tool-delivered head probed after the first fact), and the fact shapes are now machine-like strings on software subjects. Cards ^ghkxf3r and ^rdsbf57 hold both, and each states that the dataset must not grow.
+  timestamp: 2026-08-21T13:42:40.895877+00:00
+position_column: done
+position_ordinal: ffdf80
 title: Every integration test must run in under 2 minutes — boot from a recording, or make the test smarter
 ---
 From the user, 2026-08-19:
