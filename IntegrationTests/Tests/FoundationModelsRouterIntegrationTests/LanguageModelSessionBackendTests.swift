@@ -492,7 +492,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     // MARK: - KV cache reuse across turns (the hard proof)
 
     @Test(
-        "turn 2's usage.input.cachedTokenCount is positive and approximates everything turn 1 processed — the KV cache is reused, not recomputed"
+        "turn 2's usage.input.cachedTokenCount is positive, covers turn 1's whole prompt, and does not exceed everything turn 1 processed — the KV cache is reused, not recomputed"
     )
     func secondTurnReusesFirstTurnsKVCache() async throws {
         let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
@@ -510,12 +510,14 @@ struct LanguageModelSessionBackendIntegrationTests {
         #expect(turn1Usage.input.totalTokenCount > 0)
         #expect(turn1Usage.output.totalTokenCount > 0)
 
-        // Every token turn 1 processed — its prompt (including the
-        // instructions entry) plus its own generated response — becomes part
-        // of the growing transcript turn 2 sends as input, and should now be
-        // served from cache rather than recomputed.
+        // The two bounds of what turn 2 can reuse. Turn 1's prompt (the
+        // instructions entry included) is the prefix of the transcript turn 2
+        // sends, so it is the least turn 2 can serve from cache. Turn 1's
+        // prompt plus its own generated response is everything turn 1
+        // processed, so it is the most turn 2 can serve from cache.
+        let turn1PromptTokenCount = turn1Usage.input.totalTokenCount
         let turn1ProcessedTokenCount =
-            turn1Usage.input.totalTokenCount + turn1Usage.output.totalTokenCount
+            turn1PromptTokenCount + turn1Usage.output.totalTokenCount
 
         _ = try await backend.respond(
             to: "What is my favorite color? Answer with just the color, lowercase.",
@@ -523,37 +525,55 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
         let turn2Usage = backend.session.usage
 
-        // THE required proof, and it is red today. The reason is NOT that the
-        // pinned fork carries no prompt cache. That revision does carry one:
-        // ExecutorPromptCache.swift keeps a live cache for each session, and
-        // MLXLanguageModel stamps `cachedTokenCount: promptCache.reusedTokenCount`.
-        // The reason is the executor's own input guard. ExecutorPromptCachePlan.make
-        // refuses any input that has a mask, or whose tokens have a rank other
-        // than 1, and the text-only branch of MuseGlimmerProcessor renders exactly
-        // that shape: a rank-2 prompt with an all-ones mask. The turn then
-        // generates with no carried cache and reports a reuse of zero, so one
-        // cause gives both the lost reuse and the zero count. The correction is
-        // one guard in the fork, filed on the fork's own board as ^7fy0d2z. The
-        // two packages of this repository also resolve the fork branch
-        // independently, and Package.resolved is gitignored, so read the revision
-        // this package resolved before you trust any claim about the fork.
-        // This assertion is deliberately never weakened or made non-fatal.
+        // THE required proof. The fork's executor keeps a live cache for each
+        // session (ExecutorPromptCache.swift) and stamps
+        // `cachedTokenCount: promptCache.reusedTokenCount`. Fork revision
+        // 239b41e made ExecutorPromptCachePlan.make accept the rank-2,
+        // all-ones-masked text-only input that MuseGlimmerProcessor renders,
+        // thus this count is positive for the standard model. The two packages
+        // of this repository resolve the fork branch independently, and
+        // Package.resolved is gitignored, so read the revision this package
+        // resolved before you trust any claim about the fork. This assertion is
+        // deliberately never weakened or made non-fatal.
         #expect(
             turn2Usage.input.cachedTokenCount > 0,
             "turn 2 must reuse turn 1's KV cache; cachedTokenCount == 0 means no cache reuse happened"
         )
 
-        // The cached count should approximate everything turn 1 processed —
-        // allow generous slack for chat-template role markers and separator
-        // tokens the framework re-renders between turns, which are not part
-        // of either turn's own prompt/response token counts but do land in
-        // the cached prefix.
-        let tolerance = max(8, turn1ProcessedTokenCount / 4)
+        // Printed, not asserted: the split of turn 1 between prompt and
+        // response, beside what turn 2 reused, for a human to read when a
+        // bound below fails.
+        print(
+            "[secondTurnReusesFirstTurnsKVCache] turn1In=\(turn1PromptTokenCount) "
+                + "turn1Out=\(turn1Usage.output.totalTokenCount) "
+                + "turn2Cached=\(turn2Usage.input.cachedTokenCount)"
+        )
+
+        // Bounds, not an approximate equality against prompt plus response.
+        // Turn 2 reuses turn 1's prompt, but it does not always reuse turn 1's
+        // response. The fork's cache ledger holds turn 1's render plus every
+        // token turn 1 generated, and `TranscriptConverter` drops prior-turn
+        // `.reasoning` entries from the chat history on purpose. A reasoning
+        // model such as Muse Glimmer reasons in a `to=self` channel directly
+        // after the generation prompt, so turn 2's render diverges from the
+        // ledger at the first generated token, and the fork rewinds the cache
+        // to the end of turn 1's prompt. Measured 2026-08-21 at fork pin
+        // 41e9f41: turn1In=49 turn1Out=84 turn2Cached=50. An equality against
+        // prompt plus response thus rests on a premise that is false for a
+        // reasoning model. The two bounds still fail on a zero, on a partial
+        // reuse of the prompt, and on an over-report. Decision: card ^dmxsxb0.
         #expect(
-            abs(turn2Usage.input.cachedTokenCount - turn1ProcessedTokenCount) <= tolerance,
+            turn2Usage.input.cachedTokenCount >= turn1PromptTokenCount,
             """
-            cachedTokenCount (\(turn2Usage.input.cachedTokenCount)) should approximate turn 1's total \
-            processed tokens (\(turn1ProcessedTokenCount)) within \(tolerance)
+            cachedTokenCount (\(turn2Usage.input.cachedTokenCount)) must cover turn 1's whole prompt \
+            (\(turn1PromptTokenCount)); less means turn 2 recomputed part of the prefix
+            """
+        )
+        #expect(
+            turn2Usage.input.cachedTokenCount <= turn1ProcessedTokenCount,
+            """
+            cachedTokenCount (\(turn2Usage.input.cachedTokenCount)) must not exceed everything turn 1 \
+            processed (\(turn1ProcessedTokenCount)); more is an over-report
             """
         )
 

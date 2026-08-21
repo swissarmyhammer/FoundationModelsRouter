@@ -501,15 +501,16 @@ child sees everything its parent said and heard up to the fork point, and forkin
 mid-conversation no longer silently drops that context.
 
 What this primitive does **not** guarantee is cheap prefix reuse at the GPU level.
-The pinned `swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor` does
-carry a prompt cache between the turns of one session, but it refuses that cache
-for the model the gated suite drives. "Sessions & KV cache" holds the evidence and
-the revision; it is not repeated here.
+The pinned `swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor`
+carries a prompt cache between the turns of one session, and since fork revision
+`239b41e` it accepts the input the model the gated suite drives renders. Turn 2
+then reuses the whole prompt of turn 1, and no more: the fork does not replay a
+prior turn's reasoning into the chat history, so the rendered history diverges
+from the cache ledger at the first token turn 1 generated. "Sessions & KV cache"
+holds the measured counts; they are not repeated here.
 **This is a performance observation, not a correctness gap**: conversation
 correctness (fork inherits the right history; a session sees its own prior turns)
-is fully implemented and tested today. The correction that would make the reuse
-engage is one guard in the fork, filed on the fork's own board, not an open item of
-this router's design.
+is fully implemented and tested today.
 
 ## Guided generation
 
@@ -638,41 +639,57 @@ integration suite, against a real model
 `makeForkSeedsFromParentTranscript`) — not aspirational. That same gated file also
 carries `secondTurnReusesFirstTurnsKVCache`, a hard, never-weakened assertion that
 `usage.input.cachedTokenCount > 0` on a session's second turn — written as the
-acceptance test for the compute-reuse fix described below. It is red against the
-pinned revision, and the reason is the executor's own input guard, NOT a missing
-prompt cache — see the compute-reuse discussion just below. It lives in the
+acceptance test for the compute-reuse fix described below. That first assertion
+is green since fork revision `239b41e`. The test's second assertion holds the
+count between two bounds: at least turn 1's prompt (`input.totalTokenCount`),
+and at most turn 1's prompt plus response. It once asked the count to
+approximate the prompt AND the response of turn 1, and that premise is false for
+a reasoning model — the reason is how a reasoning model's history is rendered,
+NOT a missing prompt cache; see the compute-reuse discussion just below and
+card `^dmxsxb0`. It lives in the
 `FoundationModelsRouterIntegrationTests` target in the nested
-`IntegrationTests/` package, which an everyday root `swift test` leaves out;
-it turns green when the fork accepts the input this model's processor renders.
+`IntegrationTests/` package, which an everyday root `swift test` leaves out.
 
-What is *not* recovered is cheap prefix reuse at the compute layer — and the
-reason is not the one this document used to give. The `IntegrationTests` package
-pins the `swissarmyhammer/mlx-swift-lm` fork at branch `stable`, revision
-`ba8ff43b`, and that revision **does** carry a prompt cache:
+What is *not* recovered is cheap prefix reuse of a whole turn at the compute
+layer — and the reason is not the one this document used to give. On 2026-08-21
+both packages resolve the `swissarmyhammer/mlx-swift-lm` fork at branch `stable`,
+revision `41e9f41`, and that revision **does** carry a prompt cache:
 `Libraries/MLXFoundationModels/ExecutorPromptCache.swift` keeps one `[KVCache]` for
 each live session in an actor-backed store, the executor checks that cache out
 before it generates and checks it back in when the turn ends, and
 `MLXLanguageModel.swift` stamps `cachedTokenCount: promptCache.reusedTokenCount`.
 Nothing on that path hardcodes a zero.
 
-The cache never engages for the model the gated suite drives.
-`ExecutorPromptCachePlan.make` opens with `guard input.image == nil, input.video ==
-nil, input.audio == nil, input.text.mask == nil, input.text.tokens.ndim == 1 else
-{ return nil }`. `RealModels.standard` is `mlx-community/Muse-Glimmer-30B-4bit`,
-which `MuseGlimmerProcessor` prepares; its text-only branch returns
-`MLXArray(promptTokens).expandedDimensions(axis: 0)` with an all-ones mask — rank
-2, and a mask. The guard refuses that input, the turn generates with no carried
-cache, and the slot reports a reuse of 0. One cause thus gives BOTH the lost reuse
-and the zero count. The correction is one guard in the fork, filed on the fork's
-own board as `^7fy0d2z`, not an open correctness item of this router's design.
+Until fork revision `239b41e` the cache never engaged for the model the gated
+suite drives. `ExecutorPromptCachePlan.make` refused an input with a mask or with
+rank-2 tokens, and `RealModels.standard` — `mlx-community/Muse-Glimmer-30B-4bit`,
+which `MuseGlimmerProcessor` prepares — renders its text-only prompt as
+`MLXArray(promptTokens).expandedDimensions(axis: 0)` with an all-ones mask. The
+turn then generated with no carried cache and reported a reuse of 0. That revision
+(fork card `^7fy0d2z`) accepts a batch of one row whose mask marks every token
+present.
+
+Measured on 2026-08-21 at `41e9f41`: turn 1 processed 49 prompt tokens and 84
+response tokens, and turn 2 reported `cachedTokenCount` 50. The reuse is the whole
+prompt of turn 1 and no more. The cache ledger holds the render of turn 1 plus
+every token turn 1 generated; `TranscriptConverter` drops `.reasoning` entries
+from the chat history on purpose; and Muse Glimmer reasons in a `to=self` channel
+right after the generation prompt. Turn 2's render thus diverges from the ledger
+at the first generated token, and the fork rewinds the cache to the end of turn
+1's prompt. The second assertion of `secondTurnReusesFirstTurnsKVCache` once
+expected the count to approximate prompt plus response (133 within 33) and was
+red for that reason; card `^dmxsxb0` decided that it holds the count between
+turn 1's prompt and turn 1's prompt plus response instead, and the measured 50
+sits inside those bounds with no tolerance.
 
 **A local hazard, not a repository defect.** `Package.resolved` is gitignored, and
 the root package and the nested `IntegrationTests` package resolve the same
-`stable` branch independently. On the machine that proved the above they sat at
-two different revisions — the root at `acc9205`, which predates
+`stable` branch independently. On 2026-08-20 they sat at two different revisions
+on one machine — the root at `acc9205`, which predates
 `ExecutorPromptCache.swift`, and `IntegrationTests` at `ba8ff43b`, which carries
-it. So the two `swift test` commands of one machine can build two different fork
-revisions, which makes a failure hard to reproduce. Read the revision of the
+it; on 2026-08-21 `swift package update mlx-swift-lm` in each package moved both
+to `41e9f41`. The two `swift test` commands of one machine can build two different
+fork revisions, which makes a failure hard to reproduce. Read the revision of the
 package you are actually running before you trust a claim about the fork.
 
 1. A session — root or fork — is driven through its own persistent
@@ -1258,11 +1275,11 @@ are additive within schema v2 (see `RecordingSchemaVersion` for the recorded rea
   and no hand-rolled generation/tool-dispatch loop anywhere in
   `Sources/FoundationModelsRouter`. `fork()`'s cheap-*compute*-reuse under this backend
   is a **performance property of the upstream dependency, not a correctness gap**
-  (see Backends and "Sessions & KV cache") — the pinned `mlx-swift-lm` revision does
-  carry a prompt cache, but its executor refuses that cache for the model the gated
-  suite drives, and it never copies a cache per fork, so `KVCache.copy()` does not
-  apply; fork's *conversation-history* inheritance, by contrast, is implemented and
-  tested (see below).
+  (see Backends and "Sessions & KV cache") — the pinned `mlx-swift-lm` revision
+  carries a prompt cache that reuses the prior turn's prompt, and it never copies a
+  cache per fork, so `KVCache.copy()` does not apply; fork's
+  *conversation-history* inheritance, by contrast, is implemented and tested (see
+  below).
 - **Session-as-factory (replaces the stateless invoker):** a `LoadedLLMContainer`
   manufactures a `LanguageModelSessionBackend` once per session
   (`makeSession(instructions:)`), and that backend holds one `LanguageModelSession`

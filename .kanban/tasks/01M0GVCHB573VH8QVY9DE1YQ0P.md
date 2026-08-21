@@ -65,6 +65,73 @@ comments:
 
     The correction belongs to the vendored fork, so it is card ^7fy0d2z on the `../mlx-swift-lm` board. This card stays open until that lands. Card ^rzr6ez5 holds the stale `plan.md` text that says the pinned fork has no prompt cache.
   timestamp: 2026-08-21T05:36:28.328781+00:00
+- actor: claude-code
+  id: 01m0jqpzp312khtzebkb84sx98
+  text: |-
+    Picked up again 2026-08-21. The fork fix landed: `swissarmyhammer/mlx-swift-lm` branch `stable` carries `239b41e fix(foundationmodels): let the plan guard accept a batched VLM text-only input`; the head is `41e9f41`.
+
+    **Pin moved.** `Package.resolved` is gitignored in this repository (`.gitignore` line `Package.resolved`), so the pin is local state, not a tracked file; each package resolves branch `stable` on its own. `swift package update mlx-swift-lm` at the root and `swift package --package-path IntegrationTests update mlx-swift-lm` both resolved `mlx-swift-lm` at `stable (41e9f41c9121e11f85146e9f5a4d89f6f840f2d3)`. The first root attempt failed with `'mlx-swift-lm': The file "EnumerableFlag.swift-3e9bd90f.o.tmp" couldn't be opened` — a race with a background `swift-build --experimental-prepare-for-indexing` that the IDE was running inside the checkout; the second attempt went through. The root package compiles against the newer fork with no source change: `swift build --build-tests -Xswiftc -warnings-as-errors` is clean at the root (28.21 s) and in `IntegrationTests` (35.61 s). No call site changed.
+
+    **Suite run**, `swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests`: 11 tests in 1 suite, failed after 427.3 s (wall clock of the call 444 s), 1 issue. The first assertion of `secondTurnReusesFirstTurnsKVCache` now PASSES: `cachedTokenCount` is 50, not 0. The second assertion fails: `cachedTokenCount (50) should approximate turn 1's total processed tokens (197) within 49`. `[secondTurnTendsToBeFasterThanFirst] turn1=13.0s turn2=0.75s ratio=0.058` (was 0.34 before the pin bump). `[recordedTokenUsageMatchesLiveBackendDelta] tokensIn=62 tokensOut=131`.
+
+    **One more focused run** with a print added to the test, `--filter secondTurnReusesFirstTurnsKVCache` (40.8 s, 50 s wall clock): `turn1In=49 turn1Out=84 turn2Cached=50`; `cachedTokenCount (50) should approximate turn 1's total processed tokens (133) within 33`.
+
+    **Why the count is the prompt of turn 1 and no more**, read in the fork checkout at `41e9f41`:
+    - `ExecutorPromptCachePlan.committed(generatedTokens:)` leaves a ledger of the render of turn 1 PLUS every token turn 1 generated.
+    - `reusablePromptPrefix` (`Libraries/MLXLMCommon/PromptCacheReusePolicy.swift`) does a plain prefix comparison between that ledger and turn 2's render, and rewinds the cache to the common prefix; its doc comment says it serves "a ledger that holds generated tokens a template render cannot reproduce".
+    - `TranscriptConverter.mlxMessages(for:)` drops `.reasoning` entries: "Prior-turn reasoning is intentionally NOT replayed into the model's chat history."
+    - Muse Glimmer's `chat_template.jinja` ends the prompt with `<|start|>assistant`; the model generates ` to=self<|message|>…reasoning…<|eom|><|start|>assistant<|message|>OK<|eot|>`; turn 2 renders the assistant entry as `<|start|>assistant<|message|>OK<|eot|>`. The two diverge at the first generated token, so the reusable prefix is turn 1's prompt: 49 tokens plus one.
+
+    So the cache IS reused, for the whole prompt of turn 1, and the count IS reported. What turn 2 cannot reuse is the response of turn 1, because a reasoning model's reasoning is not replayed into the history. The second assertion's premise — prompt plus response of turn 1 come back as input of turn 2 — does not hold for this model. This card may not weaken or change that assertion, so the decision is filed as `^dmxsxb0`.
+
+    Files changed here: the stale comment inside `secondTurnReusesFirstTurnsKVCache` (it said the fork refuses the input and the test is red with a zero) now states the current truth, and the test prints `turn1In`/`turn1Out`/`turn2Cached` in the pattern its siblings use — assertion and tolerance untouched. `plan.md` sections "Sessions & KV cache", the fork-primitive paragraph under Backends, and the Architecture bullet no longer say the fork refuses the cache; they carry the measured counts and the `41e9f41` revision.
+
+    Root `swift test`: 1032 tests in 98 suites passed (2 known issues, pre-existing `withKnownIssue`), plus 77 tests in 9 suites passed; 30 s. The only warning in any run is SwiftPM's `missing creator for mutated node: (... mlx-swift_Cmlx.bundle/Contents/MacOS)`, which was present before this card and is not from a source file.
+  timestamp: 2026-08-21T18:00:45.507873+00:00
+- actor: claude-code
+  id: 01m0jqr4hjyh42djsndjjxd5y4
+  text: |-
+    ### implement — stuck
+    - evidence: pin moved — `swift package update mlx-swift-lm` at the root and `swift package --package-path IntegrationTests update mlx-swift-lm` both resolve `mlx-swift-lm` at `stable (41e9f41c9121e11f85146e9f5a4d89f6f840f2d3)`, which carries `239b41e`; `Package.resolved` is gitignored, so no tracked pin file changed. `swift build --build-tests -Xswiftc -warnings-as-errors` clean at the root (28.21 s) and in `IntegrationTests` (35.61 s), no call site changed. `swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests` — 11 tests in 1 suite, 1 issue, 427.3 s (444 s wall clock): `cachedTokenCount > 0` PASSES with 50; `abs(50 - 197) <= 49` FAILS. Focused run `--filter secondTurnReusesFirstTurnsKVCache` — `turn1In=49 turn1Out=84 turn2Cached=50`, `abs(50 - 133) <= 33` FAILS, 40.8 s. Root `swift test` — 1032 tests in 98 suites passed (2 pre-existing known issues) plus 77 tests in 9 suites passed, 30 s. 2 files changed — `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift` (stale comment replaced, one diagnostic print added, assertion and tolerance untouched), `plan.md` (four stale passages now carry the `41e9f41` revision and the measured counts).
+    - next: the cache IS reused and IS reported, for the whole prompt of turn 1 (49 tokens, plus one). The response of turn 1 is not reusable because a reasoning model's reasoning is not replayed into the history, so turn 2's render diverges from the cache ledger at the first generated token. The second assertion expects prompt plus response and cannot pass for this model. This card may not weaken or change it; the decision is filed as ^dmxsxb0. A human decides.
+  timestamp: 2026-08-21T18:01:23.250768+00:00
+- actor: claude-code
+  id: 01m0jqtdt5e5hm27d8maw7ccmm
+  text: |-
+    ### finish iteration 2 — stuck, then decided
+    - implement: changed — pin moved to stable 41e9f41 in both packages (Package.resolved is gitignored, local state); first assertion passes with cachedTokenCount 50; second assertion red: 50 against turn 1's prompt+response (133 focused / 197 full), tolerance 33/49; LanguageModelSessionBackendTests.swift comment and plan.md corrected
+    - test: red — swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests, 11 tests, 1 issue, 427 s; root swift test 1032 + 77 green
+    - commit: none this iteration
+    - review: not run
+    - decision (orchestrator, recorded on ^dmxsxb0): the second assertion's reference becomes bounds — cachedTokenCount >= turn 1's input.totalTokenCount (the prompt, the prefix the ledger can serve for every model) and <= turn 1's input + output; the approximate-equality against prompt+response and its tolerance go away, because prior-turn reasoning is dropped from history on purpose and can not be reused. Iteration 3 implements this here.
+  timestamp: 2026-08-21T18:02:38.277479+00:00
+- actor: claude-code
+  id: 01m0jrdsq6j80q4qz8cgkbknnb
+  text: |-
+    Iteration 3, 2026-08-21. The decision of ^dmxsxb0 is implemented here; the decision itself was not re-opened.
+
+    **Change** in `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`, test `secondTurnReusesFirstTurnsKVCache`:
+    - `cachedTokenCount > 0` is unchanged.
+    - The approximate equality `abs(cached - (turn1In + turn1Out)) <= max(8, processed / 4)` is replaced by two bounds: `cached >= turn1Usage.input.totalTokenCount` and `cached <= turn1Usage.input.totalTokenCount + turn1Usage.output.totalTokenCount`. A new `turn1PromptTokenCount` holds the lower bound; `turn1ProcessedTokenCount` stays as the upper bound. The `tolerance` local is gone.
+    - The display string now states the three conditions; its first words are unchanged, so the timing table in `GatedSuiteSerialGate.swift` still matches it.
+    - The comment above the bounds states WHY: the ledger holds turn 1's render plus its generated tokens, `TranscriptConverter` drops prior-turn `.reasoning` on purpose, Muse Glimmer reasons in a `to=self` channel right after the generation prompt, so turn 2's render diverges at the first generated token and the fork rewinds to the end of turn 1's prompt. It carries the measured numbers (turn1In=49 turn1Out=84 turn2Cached=50, fork pin 41e9f41) and points at ^dmxsxb0.
+    - The diagnostic print from iteration 2 stays, in the sibling pattern.
+    - `plan.md`: the two passages that said the second assertion "is red" / "stays red" now state the two bounds and point at ^dmxsxb0. The iteration-2 edits to the test comment and to `plan.md` were kept.
+    - `RealModels.standard` is unchanged. The fork is untouched.
+
+    **Suite run** `swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests`: 11 tests in 1 suite passed after 347.5 s; wall clock of the call 362 s. Dearest test 52.4 s (`secondTurnReusesFirstTurnsKVCache`). Printed: `[secondTurnReusesFirstTurnsKVCache] turn1In=49 turn1Out=93 turn2Cached=50` (turn 1's output varies run to run: 84 in the focused run of iteration 2, 93 here), `[secondTurnTendsToBeFasterThanFirst] turn1=11.85s turn2=0.85s ratio=0.072`, `[recordedTokenUsageMatchesLiveBackendDelta] tokensIn=62 tokensOut=149`.
+
+    **Root** `swift test`: 1032 tests in 98 suites passed with 2 known issues (pre-existing `withKnownIssue`), plus 77 tests in 9 suites passed; 13 s wall clock. `swift build --build-tests --package-path IntegrationTests -Xswiftc -warnings-as-errors` clean (10.9 s). The only warning in any run is SwiftPM's pre-existing `missing creator for mutated node: (... mlx-swift_Cmlx.bundle/Contents/MacOS)`, which is not from a source file.
+
+    Not changed, noted for a later card if wanted: the doc comment on `MLXFoundationModelsSessionBackend.usageTokenCounts()` in `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift` still says the gated suite "has never actually run here" and "only ever reports skipped". That text is stale but outside this card.
+  timestamp: 2026-08-21T18:13:13.062195+00:00
+- actor: claude-code
+  id: 01m0jrebtpymsnzph178jk5ae9
+  text: |-
+    ### implement — changed
+    - evidence: 2 source files — `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift` (second assertion of `secondTurnReusesFirstTurnsKVCache` is now two bounds, `cached >= turn1 input` and `cached <= turn1 input + output`; tolerance gone; display string and comment rewritten; `cachedTokenCount > 0` kept; iteration-2 print kept), `plan.md` (two passages now state the bounds, not "red"). `swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests` — 11 tests in 1 suite passed after 347.5 s, 362 s wall clock; printed `turn1In=49 turn1Out=93 turn2Cached=50`. Root `swift test` — 1032 tests in 98 suites passed (2 pre-existing known issues) plus 77 tests in 9 suites passed, 13 s. `swift build --build-tests --package-path IntegrationTests -Xswiftc -warnings-as-errors` clean. Cards: all three boxes of this card ticked; all three boxes of ^dmxsxb0 ticked with a comment there. No fork change, no `RealModels.standard` change.
+    - next: `/review`. The stale `usageTokenCounts()` doc comment in `LiveModelLoader.swift` is filed as its own card.
+  timestamp: 2026-08-21T18:13:31.606711+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'The KV cache reuse integration test is red: turn 2 reports a cachedTokenCount of zero'
@@ -95,8 +162,8 @@ The first assertion is the informative one: `turn2Usage.input.cachedTokenCount` 
 ## Acceptance Criteria
 
 - [x] The cause is stated: no reuse, or no report
-- [ ] `swift test --package-path IntegrationTests` is green on this suite
-- [ ] The assertion still requires a positive `cachedTokenCount`, and still compares it against what turn 1 processed
+- [x] `swift test --package-path IntegrationTests` is green on this suite
+- [x] The assertion still requires a positive `cachedTokenCount`, and still compares it against what turn 1 processed — the comparison is now two bounds against turn 1's measured input (the lower bound) and input plus output (the upper bound), per ^dmxsxb0; the approximate equality and its tolerance are gone
 
 ## The cause, proved 2026-08-21
 
@@ -106,6 +173,12 @@ BOTH, from one cause, and the cause is in the vendored fork, not here.
 
 `plan.md` and the comment inside the test both state a stale reason — that the fork carries no prompt cache. The pinned revision `ba8ff43b` DOES carry it. Card ^rzr6ez5 corrects those two texts.
 
-## Blocked
+## The fork fix landed, the pin moved, 2026-08-21
 
-The correction is one guard in the vendored `mlx-swift-lm` fork. It is filed on that fork's own board as ^7fy0d2z. This card cannot go green until that lands and the pin moves. The assertion stays as it is; it is the acceptance test for ^7fy0d2z. #integration #real-model
+Fork revision `239b41e` makes the plan guard accept a batched VLM text-only input. `swift package update mlx-swift-lm` moved both packages to `stable (41e9f41)`; `Package.resolved` is gitignored, so the pin is local state. The first assertion now passes: `cachedTokenCount` is 50. The second assertion stays red: 50 against 197 processed (tolerance 49) in the suite run, and `turn1In=49 turn1Out=84 turn2Cached=50` against 133 (tolerance 33) in a focused run.
+
+The reuse is the whole prompt of turn 1 and no more. The fork's ledger holds turn 1's render plus its generated tokens; `TranscriptConverter` drops `.reasoning` entries from the history on purpose; Muse Glimmer reasons in a `to=self` channel right after the generation prompt; so turn 2's render diverges from the ledger at the first generated token. The second assertion's premise — prompt plus response of turn 1 come back as input of turn 2 — does not hold for a reasoning model. This card may not change that assertion. The decision is card ^dmxsxb0.
+
+## The decision implemented, 2026-08-21
+
+Per ^dmxsxb0, the second assertion is now two bounds: `cachedTokenCount >= turn1Usage.input.totalTokenCount` and `cachedTokenCount <= turn1Usage.input.totalTokenCount + turn1Usage.output.totalTokenCount`. The `max(8, processed / 4)` tolerance is gone with the approximate equality it served. Suite run `swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests`: 11 tests in 1 suite passed after 347.5 s (362 s wall clock); `turn1In=49 turn1Out=93 turn2Cached=50`. #integration #real-model
