@@ -266,9 +266,10 @@ struct CompactionContinuityEvaluationHermeticTests {
 /// that hit its own limit reported one bit — "not
 /// finished" — and no reading of its output could say whether the model load,
 /// one of a task's dozen-odd steps, or the final instruction had spent the time.
-/// The tier runs under `gatedEvalSuiteTimeLimitMinutes` of 2 against a 1B model
-/// now, measured at 26.2 to 41.4 seconds (task ^k0d30s4). The trail is what
-/// still names the step a red run stopped in, whatever the limit is.
+/// The tier runs under `gatedEvalSuiteTimeLimitMinutes` of 2 against a 3B model
+/// now, over four tasks, measured at 30.9 and 29.7 seconds on 2026-08-21 (task
+/// ^mx4jqrn). The trail is what still names the step a red run stopped in,
+/// whatever the limit is.
 ///
 /// These tests pin the lines that answer that question, and they pin the one
 /// property the two tiers share: ``CompactionEvalProgressLog/linePrefix`` and
@@ -438,6 +439,64 @@ struct CompactionContinuityEvalProgressLogTests {
         )
 
         #expect(label.fixtureID == CompactionEvalFactRetentionReport.unmatchedSeedID)
+    }
+}
+
+// MARK: - The gated fast tier's task set (task ^mx4jqrn)
+
+/// Hermetic proof that the task set the gated continuity tier drives is a
+/// stated subset of the dataset, built from the same fast seeds every other
+/// hermetic test here reads — mirrors `CompactionEvalRepresentativeSubsetTests`
+/// for the fact-retention tier's subset.
+///
+/// The tier drives ``compactionContinuityFastTierSeeds`` and no longer every
+/// fast seed, because ten tasks under `CompactionContinuityRealModel` do not
+/// fit the two-minute budget with margin — see
+/// ``compactionContinuityFastTierIDs`` for the measurement. These tests hold
+/// the list to the dataset and to the count the tier's wall clock and floors
+/// were measured against, so a task added to or dropped from the list fails a
+/// plain `swift test` until the measurement is made again.
+@Suite("CompactionContinuity gated fast tier")
+struct CompactionContinuityFastTierTests {
+    /// How many tasks the gated fast tier drives — the count its wall clock and
+    /// its two floors were measured against.
+    ///
+    /// Written as a literal rather than read back from
+    /// ``compactionContinuityFastTierSeeds``, so the test below compares two
+    /// independent statements rather than a value with itself.
+    private static let tierTaskCount = 4
+
+    @Test("every id the gated tier names is a task the dataset holds")
+    func everyTierIDNamesATask() {
+        let datasetIDs = Set(compactionContinuityTaskSpecs.map(\.id))
+        for id in compactionContinuityFastTierIDs {
+            #expect(datasetIDs.contains(id), "the gated tier names \"\(id)\", which is no task of this dataset")
+        }
+    }
+
+    @Test("the built tier seeds are exactly the fast seeds the tier names")
+    func tierSeedsAreTheFastSeedsTheTierNames() {
+        #expect(
+            Set(compactionContinuityFastTierSeeds.map(\.id)) == Set(compactionContinuityFastTierIDs),
+            "the built tier seeds are \(compactionContinuityFastTierSeeds.map(\.id))"
+        )
+        // The tier's seeds are the fast seeds themselves, not a second build
+        // from the specs, so a fast seed's sizing proofs above cover the tier.
+        let fastSeedsByID = Dictionary(uniqueKeysWithValues: compactionContinuityFastSeeds.map { ($0.id, $0) })
+        for seed in compactionContinuityFastTierSeeds {
+            #expect(fastSeedsByID[seed.id]?.steps == seed.steps, "tier task \(seed.id) is not the fast seed of the same id")
+        }
+    }
+
+    @Test("the tier holds the one task count its wall clock and floors were measured against")
+    func tierHoldsTheTaskCountItWasMeasuredAgainst() {
+        #expect(
+            compactionContinuityFastTierSeeds.count == Self.tierTaskCount,
+            """
+            the gated tier holds \(compactionContinuityFastTierSeeds.count) tasks, not the \
+            \(Self.tierTaskCount) its wall clock and floors were measured against
+            """
+        )
     }
 }
 

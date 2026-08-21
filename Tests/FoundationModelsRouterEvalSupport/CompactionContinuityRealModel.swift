@@ -1,36 +1,55 @@
 import FoundationModelsRouter
 
 /// The real `mlx-community` model the gated CONTINUITY tier resolves against
-/// actual hardware — deliberately its own constant, and no longer
-/// ``CompactionEvalRealModel``.
+/// actual hardware — deliberately its own constant, even on a day it names
+/// the same model as ``CompactionEvalRealModel``.
 ///
-/// The continuity tier and the two fact-retention tiers shared one model
+/// ## Why it is its own constant
+///
+/// The continuity tier and the two fact-retention tiers shared one constant
 /// until task ^m03heaa moved the fact-retention canary to
-/// `mlx-community/Qwen2.5-3B-Instruct-4bit`, the family the redesigned
-/// summarization prompt is designed for. Under that 3B model the continuity
-/// tier still cleared its floors, but its suite wall clock measured 219.1
-/// seconds on 2026-08-20 — past task ^k0d30s4's two-minute budget, which
-/// `gatedEvalSuiteTimeLimitMinutes` states as this tier's ceiling — where
-/// the 1B model measured 26.2 to 41.4 seconds. The continuity floors
-/// (``compactionContinuityFastFactsSurvivedFloor`` and
-/// ``compactionContinuityFastAnswersCorrectFloor``) are the 1B model's own
-/// measured baselines, so the tier keeps the subject its floors and its
-/// budget were measured against.
+/// `mlx-community/Qwen2.5-3B-Instruct-4bit` and split this one off, so that
+/// each tier's floors and wall clock stay measured against a subject that
+/// tier names for itself. A later swap of either tier's subject then moves
+/// one constant and one set of floors, and never the other tier's.
+///
+/// ## Why it is Qwen2.5-3B, and no longer the 1B Llama (task ^mx4jqrn)
+///
+/// This constant held `mlx-community/Llama-3.2-1B-Instruct-4bit` until task
+/// ^mx4jqrn, and the floors were that model's measured baselines of
+/// 2026-08-19: 7 of 10 tasks with at least one fact in the answer and 4 of
+/// 10 with both. Task ^xx02yn6's redesign of the summarization prompt for
+/// Qwen3.8-27B took the 1B the other way, as it took the fact-retention
+/// canary: measured on 2026-08-20 under the redesigned prompt, the 1B
+/// answered 1 of 10 tasks with at least one fact and 0 of 10 with both, so
+/// the tier was red on `main` against floors of 0.6 and 0.3. Under Qwen2.5-3B
+/// the same ten tasks kept their floors, but cost 219.1 seconds of suite wall
+/// clock on 2026-08-20 and 99.5 on 2026-08-21 — against task ^k0d30s4's
+/// two-minute budget, which `gatedEvalSuiteTimeLimitMinutes` states. So the
+/// tier moved to the 3B AND to a four-task shape, which
+/// ``compactionContinuityFastTierIDs`` states with its measurement, and the
+/// floors were re-derived from the 3B's own run over those four tasks — see
+/// ``compactionContinuityFastFactsSurvivedFloor`` and
+/// ``compactionContinuityFastAnswersCorrectFloor``. Lowering the floors to the
+/// 1B's 0.1 and 0.0 was refused: a floor that low lets a change break almost
+/// every task and still pass, the defect ^m03heaa removed on the
+/// fact-retention side.
 ///
 /// It stands beside ``CompactionEvalRealModel`` in this module because the
 /// fast continuity budget states its `limit` from ``context``, and that
 /// budget is a value this module owns.
 enum CompactionContinuityRealModel {
-    /// The `mlx-community/Llama-3.2-1B-Instruct-4bit` HuggingFace model
-    /// reference the continuity tier resolves — 680 MB on disk, a real
-    /// instruct model that writes no `<think>` block, and the model the fast
-    /// compaction smoke suites drive for the same measured reasons
-    /// `CompactionSmokeIntegrationTests` records.
+    /// The `mlx-community/Qwen2.5-3B-Instruct-4bit` HuggingFace model
+    /// reference the continuity tier resolves — 1.6 GB on disk, the same
+    /// family as the standard model the redesigned summarization prompt is
+    /// written for, and a real instruct model that writes no `<think>` block,
+    /// so ``compactionEvalReasoningTokenHeadroom`` stays correct for it. See
+    /// the type's own doc comment for the measured trail behind the choice.
     // Only `CompactionContinuityEvalRealSubjectRunner`, in the
     // IntegrationTests package, reads this. Periphery reads only this
     // package's index, thus it finds no reader.
     // periphery:ignore
-    static let ref: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
+    static let ref: ModelRef = "mlx-community/Qwen2.5-3B-Instruct-4bit"
 
     /// The maximum context window, in tokens, to load ``ref`` with — passed
     /// straight through to ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``.

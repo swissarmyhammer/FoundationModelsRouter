@@ -30,8 +30,12 @@ comments:
 
     Suite run `swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests`: 11 tests in 1 suite passed after 347.5 s (362 s wall clock of the call). The test printed `turn1In=49 turn1Out=93 turn2Cached=50`; 50 sits inside [49, 142] with no tolerance. Root `swift test`: 1032 tests in 98 suites passed (2 pre-existing known issues) plus 77 tests in 9 suites passed. All three boxes are ticked: the second one on the suite result measured above.
   timestamp: 2026-08-21T18:13:00.173494+00:00
-position_column: todo
-position_ordinal: 8d80
+- actor: claude-code
+  id: 01m0jrrp8hs2m8bscsnwyvh0ng
+  text: Closed by the orchestrator on 2026-08-21. The decision is recorded above, the bounds landed in commit bdbe7aa under ^de1yq0p, the suite measured green (11 tests, 347.5 s), and the review of bdbe7aa was clean. All three acceptance boxes are ticked.
+  timestamp: 2026-08-21T18:19:09.969449+00:00
+position_column: done
+position_ordinal: ffe480
 title: Decide what secondTurnReusesFirstTurnsKVCache's second assertion must compare against for a reasoning model
 ---
 Card ^de1yq0p moved the `mlx-swift-lm` pin to `41e9f41` (both packages). The fork now accepts the batched, masked text-only input that `MuseGlimmerProcessor` renders, and the first assertion of `secondTurnReusesFirstTurnsKVCache` (`cachedTokenCount > 0`) is green. The second assertion stays red.

@@ -1,8 +1,57 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8280'
+comments:
+- actor: claude-code
+  id: 01m0js1y8rhnfns6hxc89e8nfr
+  text: |-
+    Research done. Decision from the orchestrator: option 1 — move the continuity tier to `mlx-community/Qwen2.5-3B-Instruct-4bit` and make the tier smaller so it fits the two-minute budget with margin.
+
+    What drives the wall clock: the fast tier drives 10 tasks. Each task is 3 real generations (the opening step, the readiness check, the final instruction) and one fold with 1 or 2 summarizer calls. Under the 3B at the old shape the tier measured 219.1 s, which is about 22 s for each task. The steps cannot be cut: `compactionContinuityFastKeepRecentTurns = 1` needs the readiness turn, or the fold has no span to summarize. The padding must stay over the 560-token fold floor. So the lever is the task count.
+
+    Plan:
+    1. Change `CompactionContinuityRealModel.ref` to the 3B.
+    2. Measurement run over all 10 tasks with the suite limit raised to 10 minutes in the working tree only (the same method ^m03heaa used), so the per-task seconds and the per-task pass/fail of the 3B are on the trail. The limit goes back to 2 before any other run.
+    3. Subset: 4 tasks, which is 40 percent of the old work and an expected ~90 s. Chosen before the data is read, for spread of fact kinds: `vault-code-and-outpost` (a code with digits, the task the 1B refused as classified), `migration-script-and-rollback` (two backticked paths with underscores and digits, the task the 1B refused as sensitive), `codename-and-owner` (a quoted name and a person, no digits), `db-port-and-region` (a bare number stated beside a decoy default, and a region code). New constants in `CompactionContinuityDataset.swift`: `compactionContinuityFastTierIDs` and `compactionContinuityFastTierSeeds` (a filter of `compactionContinuityFastSeeds`, the shape `compactionEvalRepresentativeSubsetIDs` / `compactionEvalRepresentativeSeeds` already use). Hermetic tests first, in `CompactionContinuityEvaluationTests.swift`.
+    4. Floors: the 3B's measured share over the 4 tasks minus one task. Then one run at the 2-minute limit to show green and record the wall clock.
+    5. Doc comments to update: `CompactionContinuityRealModel.swift`, the two floors, the suite doc in `CompactionContinuityRealModelTests.swift`, `GatedEvalSerialGate.swift` (the continuity wall clock paragraph), `CompactionEvalTiers.swift` (the headroom doc names the continuity model as Llama), the progress-log suite doc in `CompactionContinuityEvaluationTests.swift`.
+  timestamp: 2026-08-21T18:24:13.080372+00:00
+- actor: claude-code
+  id: 01m0jsvccq2wej88mvh0r5j8xy
+  text: |-
+    Implementation landed. The measurements, in the order the runs were made, all on 2026-08-21, greedy decoding, `router-default-v3` prompt, Qwen2.5-3B-Instruct-4bit already in the Hugging Face cache:
+
+    | run | shape | limit in the tree | factsSurvived | answersCorrect | wall clock | tasks (s) | load |
+    |---|---|---|---|---|---|---|---|
+    | 1, measurement | all 10 fast seeds | 10 min, working tree only | cleared 0.6 | cleared 0.3 | 99.5 s | 8.5, 7.8, 11.7, 6.8, 7.2, 8.8, 17.1, 12.7, 8.7, 8.7 | 1.3 s |
+    | 2, the new shape | the 4 tasks of `compactionContinuityFastTierIDs` | 2 min | 4 of 4 (1.0) | 3 of 4 (0.75) | 30.9 s | 7.0, 6.5, 8.6, 7.3 | 1.4 s |
+    | 3, at the new floors | the same 4 | 2 min | 4 of 4 (1.0) | 3 of 4 (0.75) | 29.7 s | 6.9, 6.1, 7.7, 7.5 | 1.4 s |
+
+    The limit went back to 2 right after run 1; runs 2 and 3 ran under the committed limit of 2.
+
+    Discovery: the ten-task shape under the 3B cost 99.5 s today, not the 219.1 s ^m03heaa measured on 2026-08-20. The cause of the difference is not known (throughput moved, as ^5q0vv85 recorded for the other tier). The four-task shape fits both days: 4 x 17.1 s (the dearest task of run 1) + 1.3 s = 69.7 s at the dearest rate, about 88 s at the throughput of 2026-08-20. Ten tasks fit neither with margin (172 s at the dearest rate), so the orchestrator's four-task decision stands and the doc comments record both days.
+
+    The one task the 3B does not answer word for word: `migration-script-and-rollback`. The fold summary carries both paths verbatim; the answering turn wrote `rollback_2266_07` for `rollback_2026_07` — a digit the answer lost, not the fold. The other three answers are exact.
+
+    Floors, by the standing rule (measured share minus one task): `compactionContinuityFastFactsSurvivedFloor` 4 of 4 minus one is 3 of 4, written 0.7 (under 3/4, over 2/4); `compactionContinuityFastAnswersCorrectFloor` 3 of 4 minus one is 2 of 4, written 0.45 (under 2/4, over 1/4). One task is a quarter of the mean, so a second lost task is visible on either side and no rounding hides it.
+
+    Two trail additions, so the next re-baseline does not need the attachment the framework only writes under `--attachments-path`: the test body prints `[compaction-eval] continuity measured tasks=N foldOccurred= factsSurvived= answersCorrect=` before its assertions (the fact-retention tier already prints its evidence before asserting), and the runner prints each task's final answer beside the fold summary it already printed. The fold-summary print now reads its prefix from `CompactionEvalProgressLog.linePrefix` like the new line.
+
+    TDD: `CompactionContinuityFastTierTests` (3 tests) was written first and failed to compile against the missing `compactionContinuityFastTierIDs` / `compactionContinuityFastTierSeeds`; the constants then made it green. The subset is a filter of `compactionContinuityFastSeeds`, the shape `compactionEvalRepresentativeSeeds` takes, so the sizing proofs over every fast seed still cover the tier's tasks.
+
+    Doc comments updated for the new subject, shape, floors and wall clock: `CompactionContinuityRealModel.swift`, the two floors in `CompactionContinuityEvaluation.swift`, `compactionContinuityFastTierIDs` in `CompactionContinuityDataset.swift`, the suite doc in `CompactionContinuityRealModelTests.swift`, the continuity paragraph of `gatedEvalSuiteTimeLimitMinutes` in `GatedEvalSerialGate.swift`, the headroom doc in `CompactionEvalTiers.swift`, the cross-reference in `CompactionEvalRealModel.swift`, and the progress-log suite doc in `CompactionContinuityEvaluationTests.swift`.
+
+    Verification: root `swift build --build-tests -Xswiftc -warnings-as-errors` Build complete; root `swift test` 1032 tests in 98 suites passed with 2 known issues (both pre-existing `withKnownIssue` blocks in `BoundedWaitTests` and `RealModelHarnessTests`) and 80 tests in 10 suites passed; `swift build --build-tests --package-path IntegrationTests -Xswiftc -warnings-as-errors` Build complete.
+  timestamp: 2026-08-21T18:38:06.743934+00:00
+- actor: claude-code
+  id: 01m0jsvt1xrpdbvbbjdezn2e6y
+  text: |-
+    ### implement — changed
+    - evidence: 9 files — `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityRealModel.swift` (ref to `mlx-community/Qwen2.5-3B-Instruct-4bit`), `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift` (new `compactionContinuityFastTierIDs` = vault-code-and-outpost, migration-script-and-rollback, codename-and-owner, db-port-and-region; new `compactionContinuityFastTierSeeds`), `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityEvaluation.swift` (floors 0.7 / 0.45), `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`, `Tests/FoundationModelsRouterEvalSupport/CompactionEvalRealModel.swift`, `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift` (new `CompactionContinuityFastTierTests`, 3 tests), `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/CompactionContinuityRealModelTests.swift` (drives the tier seeds, prints the measured shares), `IntegrationTests/.../Support/CompactionContinuityEvalRealSubjectRunner.swift` (prints the final answer), `IntegrationTests/.../Support/GatedEvalSerialGate.swift` (doc only; the limit stays 2). Measured 2026-08-21 under the 3B: 10 tasks 99.5 s (limit raised to 10 in the tree for that one run only); 4 tasks factsSurvived 1.0 and answersCorrect 0.75 at 30.9 s and again at 29.7 s under the 2-minute limit. `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluation` green. Root `swift test` 1032 tests in 98 suites passed (2 pre-existing known issues) and 80 tests in 10 suites passed; both packages build with `-Xswiftc -warnings-as-errors`.
+    - next: `/review`.
+  timestamp: 2026-08-21T18:38:20.733880+00:00
+position_column: doing
+position_ordinal: '80'
 title: 'The continuity eval tier is red on main: the 1B loses the facts under the redesigned prompt, and only the 3B that breaks the two-minute budget keeps them'
 ---
 `CompactionContinuityEvaluationIntegrationTests` FAILS on unmodified `main`. Measured on 2026-08-20 with `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluation`, against `mlx-community/Llama-3.2-1B-Instruct-4bit`:
@@ -42,12 +91,15 @@ Do NOT lower the floors to the 1B's new 0.1 and 0.0. That is the exact defect ^m
 
 Task ^m03heaa leaves `CompactionContinuityRealModel` in place — the continuity tier's own model constant, holding the 1B — so this card can change one constant and one set of floors.
 
+## Decision (the orchestrator, 2026-08-21)
+
+Option 1: the tier moves to Qwen2.5-3B AND to a four-task shape, `compactionContinuityFastTierIDs`. The floors are re-derived from the 3B's own run over those four tasks with the standing rule.
+
 ## Acceptance Criteria
 
-- [ ] `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluation` is green
-- [ ] The floors are re-derived from measurements of the CURRENT subject under the current prompt, with the standing rule (the measured share minus one task of margin)
-- [ ] The floors are high enough that one lost task is visible
-- [ ] The tier's wall clock is recorded, and it is inside the limit its suite states, with margin
-- [ ] Each doc comment names the run its number was measured on
-
+- [x] `swift test --package-path IntegrationTests --filter CompactionContinuityEvaluation` is green
+- [x] The floors are re-derived from measurements of the CURRENT subject under the current prompt, with the standing rule (the measured share minus one task of margin)
+- [x] The floors are high enough that one lost task is visible
+- [x] The tier's wall clock is recorded, and it is inside the limit its suite states, with margin
+- [x] Each doc comment names the run its number was measured on
 #compaction #eval #real-model

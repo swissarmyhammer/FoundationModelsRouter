@@ -545,3 +545,60 @@ let compactionContinuityFastSeeds: [CompactionContinuitySeed] = compactionContin
         expectedMinimumRecordedEntries: 1 + (steps.count + 1) * compactionContinuityRecordedEntriesPerStep
     )
 }
+
+/// The ids of the tasks the GATED continuity tier drives — four of the ten
+/// fixtures, under `CompactionContinuityRealModel` (task ^mx4jqrn).
+///
+/// ## Why four tasks, and not all ten
+///
+/// Task ^m03heaa moved the fact-retention tiers to Qwen2.5-3B-Instruct and
+/// measured this tier at 219.1 seconds of suite wall clock over all ten fast
+/// seeds under the same model on 2026-08-20 — past task ^k0d30s4's two-minute
+/// budget, which `gatedEvalSuiteTimeLimitMinutes` states. The measurement run
+/// of 2026-08-21 over the same ten seeds under the same model, at greedy
+/// decoding, cost 99.5 seconds: the ten tasks cost 8.5, 7.8, 11.7, 6.8, 7.2,
+/// 8.8, 17.1, 12.7, 8.7 and 8.7 seconds, and the model loaded in 1.3. Ten tasks
+/// at the dearest of those rates, 17.1 seconds, is 172.3 seconds, which a
+/// two-minute limit cannot bound, and at the throughput of 2026-08-20 the ten
+/// take 219 seconds. Four tasks is about 40 percent of that work: 4 x 17.1 s
+/// plus 1.3 s is 69.7 seconds at the dearest rate, and about 88 seconds at the
+/// slower throughput of 2026-08-20, so the tier fits the budget with margin on
+/// both days that have been measured. A tier must never REACH its limit,
+/// because a run that reaches one takes a Metal abort in place of a failure
+/// (fork card ^3axg80k). The two gated runs of 2026-08-21 over these four
+/// tasks measured 30.9 and 29.7 seconds of suite wall clock: the tasks cost
+/// 7.0, 6.5, 8.6 and 7.3 seconds in the first run and 6.9, 6.1, 7.7 and 7.5
+/// in the second, and the model loaded in 1.4 both times.
+///
+/// ## Why these four
+///
+/// Chosen before the run was read, for the spread of fact kinds the final
+/// answer must reproduce word for word:
+///
+/// | task | the facts the answer must carry | why it is here |
+/// |---|---|---|
+/// | `vault-code-and-outpost` | a code with digits and an outpost name | the task the 1B refused as classified on 2026-08-19 |
+/// | `migration-script-and-rollback` | two backticked paths with underscores and digits | the longest identifiers, and the task the 1B refused as sensitive |
+/// | `codename-and-owner` | a quoted name and a person's name, no digits | a prose answer, which a small model paraphrases |
+/// | `db-port-and-region` | a bare number stated beside a decoy default, and a region code | the summary must keep the right one of two numbers |
+///
+/// `CompactionContinuityFastTierTests` holds this list to the dataset and to
+/// the task count the tier's wall clock and floors were measured against.
+let compactionContinuityFastTierIDs: [String] = [
+    "vault-code-and-outpost",
+    "migration-script-and-rollback",
+    "codename-and-owner",
+    "db-port-and-region",
+]
+
+/// The fast seeds of ``compactionContinuityFastTierIDs``, in the order
+/// ``compactionContinuityTaskSpecs`` states them.
+///
+/// Filtered out of ``compactionContinuityFastSeeds`` rather than built from a
+/// second list of specs, so a task the gated tier drives is the same seed every
+/// hermetic sizing proof of the fast seeds reads, under one task id — the
+/// shape ``compactionEvalRepresentativeSeeds`` takes for the fact-retention
+/// tier.
+let compactionContinuityFastTierSeeds: [CompactionContinuitySeed] = compactionContinuityFastSeeds.filter {
+    compactionContinuityFastTierIDs.contains($0.id)
+}

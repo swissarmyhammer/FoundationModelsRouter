@@ -362,8 +362,9 @@ let compactionEvalSummarizerCeiling =
 /// The default is sized for a model that writes a `<think>` block before its
 /// answer. Neither gated subject writes one: ``CompactionEvalRealModel/ref``
 /// is a Qwen2.5 instruct model, which task ^m03heaa chose in part to keep
-/// this property, and ``CompactionContinuityRealModel/ref`` a Llama 3.2
-/// instruct model. So the default hands each of them thousands of tokens of
+/// this property, and ``CompactionContinuityRealModel/ref`` names the same
+/// Qwen2.5 instruct model since task ^mx4jqrn, for the same reason among
+/// others. So the default hands each of them thousands of tokens of
 /// free generation. The gated subset run of 2026-08-19 measured what that
 /// freedom costs: two of seven folds generated to the ceiling — 20485 and
 /// 16060 bytes of summary answer — at 28.5 seconds each, where the five

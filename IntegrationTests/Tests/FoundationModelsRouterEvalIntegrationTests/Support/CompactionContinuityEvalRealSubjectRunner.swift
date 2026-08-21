@@ -253,7 +253,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
                     // ignored without it — the debugging of 2026-08-19 read
                     // exactly this line to find that 9 of 10 summaries
                     // carried both facts verbatim while the answers did not.
-                    print("[compaction-eval] fold summary:\n\(result.summary ?? "<none>")")
+                    print("\(CompactionEvalProgressLog.linePrefix) fold summary:\n\(result.summary ?? "<none>")")
                     stepFoldCount += 1
                     stepTokensBefore = result.tokensBefore
                     stepTokensAfter = result.tokensAfter
@@ -318,6 +318,12 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
         let finalStepResult = try await driveStep(session, finalInstruction)
         accumulate(finalStepResult)
         let finalAnswer = finalStepResult.reply
+        // The answer text, on the trail beside the fold summary above, for the
+        // same reason: the metrics score the answer, and a red run has to show
+        // what the answering turn wrote before anyone can say whether the
+        // fold or the answer lost the fact. The framework's own per-sample
+        // record is written nowhere unless an attachments path is configured.
+        print("\(CompactionEvalProgressLog.linePrefix) final answer:\n\(finalAnswer)")
         let finalReturnedAt = Date()
         CompactionEvalProgressLog.emit(
             CompactionEvalProgressLog.makeStepReturnedLine(

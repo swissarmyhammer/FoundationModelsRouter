@@ -132,8 +132,24 @@ comments:
     - evidence: 2 source files — `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift` (second assertion of `secondTurnReusesFirstTurnsKVCache` is now two bounds, `cached >= turn1 input` and `cached <= turn1 input + output`; tolerance gone; display string and comment rewritten; `cachedTokenCount > 0` kept; iteration-2 print kept), `plan.md` (two passages now state the bounds, not "red"). `swift test --package-path IntegrationTests --filter LanguageModelSessionBackendIntegrationTests` — 11 tests in 1 suite passed after 347.5 s, 362 s wall clock; printed `turn1In=49 turn1Out=93 turn2Cached=50`. Root `swift test` — 1032 tests in 98 suites passed (2 pre-existing known issues) plus 77 tests in 9 suites passed, 13 s. `swift build --build-tests --package-path IntegrationTests -Xswiftc -warnings-as-errors` clean. Cards: all three boxes of this card ticked; all three boxes of ^dmxsxb0 ticked with a comment there. No fork change, no `RealModels.standard` change.
     - next: `/review`. The stale `usageTokenCounts()` doc comment in `LiveModelLoader.swift` is filed as its own card.
   timestamp: 2026-08-21T18:13:31.606711+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0jrqzv73m2gjxarfg2kw4kv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (bdbe7aa); counts findings 0, confirmed 0, refuted 0, attempted 7; 1 file reviewed (`IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/LanguageModelSessionBackendTests.swift`), 6 `.kanban/` files excluded by `.reviewignore`; no validator matched `plan.md`; no prior `## Review Findings` sections
+    - next: none — task moved to `done`
+  timestamp: 2026-08-21T18:18:47.015135+00:00
+- actor: claude-code
+  id: 01m0jrrmrzbcb5b2kvsnxv4eey
+  text: |-
+    ### finish iteration 3 — clean
+    - implement: changed — LanguageModelSessionBackendTests.swift (bounds assertion per ^dmxsxb0, comments), plan.md; suite green 11/11 in 347.5 s, turn1In=49 turn1Out=93 turn2Cached=50
+    - test: green — root swift test 1032 + 77 passed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: bdbe7aa
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-21T18:19:08.447135+00:00
+position_column: done
+position_ordinal: ffe380
 title: 'The KV cache reuse integration test is red: turn 2 reports a cachedTokenCount of zero'
 ---
 The non-gated integration run is red on a test that has nothing to do with compaction. Measured on 2026-08-20 with `swift test --package-path IntegrationTests`, skipping the three compaction eval tiers:

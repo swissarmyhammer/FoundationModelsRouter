@@ -170,39 +170,59 @@ var compactionContinuityFastSummarization: Summarization {
     )
 }
 
-/// The mean `FactsSurvived` the fast continuity tier must reach: at least one
-/// planted fact in the final answer, after a real fold.
+/// The mean `FactsSurvived` the gated continuity tier must reach: at least
+/// one planted fact in the final answer, after a real fold.
 ///
-/// The small model's measured baseline, minus one task of margin. The gated
-/// run of 2026-08-19 under greedy decoding measured 7 of 10 tasks carrying at
-/// least one fact end to end, while the fold summaries themselves carried
-/// both facts verbatim on 9 of 10 — so the gap is the answering turn's, not
-/// the fold's. Greedy decoding makes the score a fact about the prompt and
-/// the fixtures rather than a draw, so a floor one task under the baseline
-/// holds the measured behavior while absorbing one cross-machine flip. A
+/// The subject's measured baseline, minus one task of margin — the standing
+/// rule every gated eval floor follows. The gated run of 2026-08-21 under
+/// ``CompactionContinuityRealModel`` (Qwen2.5-3B-Instruct), at greedy
+/// decoding, under task ^xx02yn6's `router-default-v3` prompt, over the four
+/// tasks ``compactionContinuityFastTierIDs`` names, measured 4 of 4 tasks
+/// carrying at least one fact end to end, and the four fold summaries carried
+/// both facts verbatim. One task under that is 3 of 4, which is 0.75. Written
+/// as 0.7, which sits under 3/4 and over 2/4, so the tier must keep exactly
+/// those 3: a second lost task moves the mean by a quarter, which no rounding
+/// hides. Greedy decoding makes the score a fact about the prompt and the
+/// fixtures rather than a draw, so a floor one task under the baseline holds
+/// the measured behavior while absorbing one cross-machine flip. A
 /// compaction-prompt regression that loses the facts from the summaries
 /// crashes this floor, which is the regression the tier exists to catch.
-// Only `CompactionContinuityRealModelTests`, in the IntegrationTests
-// package, reads this. Periphery reads only this package's index, thus it
-// finds no reader.
-// periphery:ignore
-let compactionContinuityFastFactsSurvivedFloor = 0.6
-
-/// The mean `AnswersCorrect` the fast continuity tier must reach: BOTH
-/// planted facts in the final answer, after a real fold.
 ///
-/// The small model's measured baseline, minus one task of margin, exactly as
-/// ``compactionContinuityFastFactsSurvivedFloor`` is derived: the gated run
-/// of 2026-08-19 measured 4 of 10. The 0.8 bar the 30B tier held is NOT
-/// reachable by the small model — its answering turn refuses or paraphrases
-/// exact identifiers that its own fold summaries carry verbatim — and a bar
-/// the subject cannot reach measures the model, not the compaction prompt.
-/// The suite's doc comment states this trade in full.
+/// The 0.6 this value stated before task ^mx4jqrn was the same rule over the
+/// 1B Llama canary's 7 of 10 tasks on 2026-08-19. Task ^xx02yn6's prompt
+/// redesign then took that model to 1 of 10, which is why the tier changed
+/// its subject rather than its floor — see ``CompactionContinuityRealModel``.
 // Only `CompactionContinuityRealModelTests`, in the IntegrationTests
 // package, reads this. Periphery reads only this package's index, thus it
 // finds no reader.
 // periphery:ignore
-let compactionContinuityFastAnswersCorrectFloor = 0.3
+let compactionContinuityFastFactsSurvivedFloor = 0.7
+
+/// The mean `AnswersCorrect` the gated continuity tier must reach: BOTH
+/// planted facts in the final answer, word for word, after a real fold.
+///
+/// The subject's measured baseline, minus one task of margin, exactly as
+/// ``compactionContinuityFastFactsSurvivedFloor`` is derived: the gated run
+/// of 2026-08-21 under Qwen2.5-3B-Instruct, over the same four tasks,
+/// measured 3 of 4. The one miss was `migration-script-and-rollback`, whose
+/// fold summary carried both paths verbatim and whose answering turn wrote
+/// `rollback_2266_07` for `rollback_2026_07` — the answer's loss, not the
+/// fold's. One task under 3 of 4 is 2 of 4, which is 0.5. Written as 0.45,
+/// which sits under 2/4 and over 1/4, so the tier must answer exactly those 2.
+/// The 0.8 bar the 30B tier held is NOT reachable by a small model whose
+/// answering turn drops a digit from an identifier its own fold summary
+/// carries verbatim, and a bar the subject cannot reach measures the model,
+/// not the compaction prompt. The suite's doc comment states this trade in
+/// full.
+///
+/// The 0.3 this value stated before task ^mx4jqrn was the same rule over the
+/// 1B canary's 4 of 10 on 2026-08-19; that model measured 0 of 10 under the
+/// redesigned prompt on 2026-08-20.
+// Only `CompactionContinuityRealModelTests`, in the IntegrationTests
+// package, reads this. Periphery reads only this package's index, thus it
+// finds no reader.
+// periphery:ignore
+let compactionContinuityFastAnswersCorrectFloor = 0.45
 
 /// The compaction-continuity evaluation (task 4ce0a1k): drives a
 /// multi-step task's steps through a real session vended with a small

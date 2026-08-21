@@ -38,7 +38,8 @@ import FoundationModelsRouter
 /// stronger measurement nobody runs.
 ///
 /// The CONTINUITY tier resolves ``CompactionContinuityRealModel`` instead —
-/// see that constant for why the two subjects split.
+/// its own constant, which names the same Qwen2.5-3B since task ^mx4jqrn;
+/// see that constant for why the two stay separate.
 ///
 /// It stands here rather than beside the runner that loads it because the
 /// hermetic progress-line tests render the model-load lines and have to name
