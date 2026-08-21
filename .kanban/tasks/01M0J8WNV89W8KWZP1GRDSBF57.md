@@ -22,8 +22,24 @@ comments:
     - evidence: fixture `env-file` rewritten as `sesame-allergy`; probed fact "I have a severe allergy to sesame, so never put it — the seeds, the oil or tahini — into any recipe or menu you give me."; key phrase `sesame`; `facts.count` 1, `probedFactIndex` 0, `probedFactViaTool` false, `recentTurnCount` 4 unchanged. New typed marker `CompactionEvalProbedFactKind` (`.verbatimValue`, `.ruleOnLaterAnswers`) on `CompactionEvalFixtureSpec.probedFactKind`; new bar `CompactionEvalRepresentativeSubsetTests.subsetProbesARuleOnLaterAnswers`, watched red (all seven `.verbatimValue`) then green. Corpus: 41 pieces, 9946 bytes, 2052 / 2061 / 2069 tokens before (method validated, matches the doc) → 41 pieces, 9824 bytes, 2055 / 2066 / 2074 tokens after, 4.781 / 4.755 / 4.737 bytes for each token; `compactionEvalMeasuredBytesPerToken` 4.85 → 4.79. Re-derived: 128-token summary 621 → 614 bytes (20% over the flat estimate, was 21%); worst-case summary 156 → 154 estimated tokens; required span 234 → 231 (924 bytes); content overrun figure 828 → 819 bytes; tightest seed now `sesame-allergy` at 328 span tokens, 2.13 over the worst case (was `db-port`, 345, 2.21); the `0.25 * 4.85 / 4.0` note → 4.79; the `AutoCompactionTriggerIntegrationTests` comment's dataset-measured rate → 4.79. Files: Tests/FoundationModelsRouterEvalSupport/CompactionEvalDataset.swift, Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift, Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift, IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/CompactionEvalRealSubjectRunner.swift (comment), IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/AutoCompactionTriggerIntegrationTests.swift (comment). Root `swift test`: 1032 tests in 98 suites passed (2 known issues, older than this change) and 81 tests in 10 suites passed; `CompactionEvalTierBarTests` green; subset holds seven seeds. The gated tier was NOT run; no floor moved; no fixture added.
     - next: /review. The batch's own gated run measures the new prose; a red there is a measurement for a card of its own.
   timestamp: 2026-08-21T22:17:46.471680+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0k6qv6a3r4qd7vevfh0pae5
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit c512195) — 0 findings, 0 confirmed, 0 refuted; 5 files reviewed, 6 `.kanban/` files skipped by `.reviewignore`
+    - next: none — task moved to done
+  timestamp: 2026-08-21T22:23:22.314734+00:00
+- actor: claude-code
+  id: 01m0k6rd5943ax7znp9qvqmm8g
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — env-file → sesame-allergy (rule on later answers, user-personal, cooking domain; shape fields unchanged); CompactionEvalProbedFactKind marker; bar subsetProbesARuleOnLaterAnswers; bytes-per-token 4.85 → 4.79 with every derived value re-derived; 5 Swift files
+    - test: green — root swift test 1032 + 81 passed; swift build --build-tests --package-path IntegrationTests complete; gated tier not run (per card)
+    - commit: c512195
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-21T22:23:40.713065+00:00
+position_column: done
+position_ordinal: ffea80
 title: The compaction eval now plants only machine-shaped facts about software — an allergy, a person's name, a date and a safety rule are no longer measured
 ---
 Found by the review of commit `134342a` (task ^k0d30s4). It is a statement of span, not a defect of that commit. Card ^ghkxf3r holds the STRUCTURAL half of the same finding; this card holds the fact-shape half.

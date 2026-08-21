@@ -316,10 +316,10 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
             "The monthly cloud spend cap for this project is $4,200.",
             "Any spend increase above the cap needs written approval from the finance owner, Marcus.",
         ],
-        probedFactIndex: 0,
-        factKeyPhrase: "4,200",
+        probedFactIndex: 1,
+        factKeyPhrase: "Marcus",
         probedFactKind: .verbatimValue,
-        question: "What is the monthly cloud spend cap for this project?",
+        question: "Who must give written approval for a spend increase above the cap?",
         probedFactViaTool: true,
         recentTurnCount: 6
     ),
@@ -345,10 +345,10 @@ let compactionEvalFixtureSpecs: [CompactionEvalFixtureSpec] = [
             "Tier-2 support tickets escalate to the on-call engineer after 6 hours with no response.",
             "The on-call escalation contact this week is Dana, reachable via the pager rotation.",
         ],
-        probedFactIndex: 0,
-        factKeyPhrase: "2 hours",
+        probedFactIndex: 1,
+        factKeyPhrase: "6 hours",
         probedFactKind: .verbatimValue,
-        question: "After how long does a tier-1 support ticket escalate to tier-2?",
+        question: "After how long does a tier-2 support ticket escalate to the on-call engineer?",
         probedFactViaTool: false,
         recentTurnCount: 7
     ),
@@ -438,8 +438,8 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 /// | `db-port` | one fact | the only one | tool traffic | 4 |
 /// | `encryption-algorithm` | one fact | the only one | tool traffic | 5 |
 /// | `license-key-and-region` | two facts | the second, so the last of its head | plain reply | 4 |
-/// | `budget-cap-tool-and-owner` | two facts | the first, so a fact the summary must reach past its sibling for | tool traffic | 6 |
-/// | `three-facts-support-escalation` | three facts | the first of three | plain reply | 7 — the longest here |
+/// | `budget-cap-tool-and-owner` | two facts | the second, delivered by tool, so elision acts on a fact that is not the first of its head | tool traffic | 6 |
+/// | `three-facts-support-escalation` | three facts | the second of three, the middle fact the summary must reach past a fact on each side of | plain reply | 7 — the longest here |
 /// | `three-facts-long-project-brief` | three facts | the third, so the last of its head | plain reply | 6 |
 ///
 /// A fifth thing varies, and only one seed carries its harder side: the KIND
@@ -449,6 +449,19 @@ let compactionEvalSeeds: [CompactionEvalSeed] = compactionEvalFixtureSpecs.map(C
 /// about the user as a person and in a domain that is not software; task
 /// ^rdsbf57 rewrote it from the `env-file` fixture for that kind, because the
 /// cut of ^k0d30s4 had left the seven without one.
+///
+/// Two COMBINATIONS of those fields are carried on purpose, and a bar of
+/// `CompactionEvalRepresentativeSubsetTests` that reads two fields together
+/// holds each one: a three-fact head probed in the middle
+/// (`three-facts-support-escalation`, index 1 of three), and a tool-delivered
+/// head probed after its first fact (`budget-cap-tool-and-owner`, index 1 of
+/// two). The cut of ^k0d30s4 lost both in silence, because each bar of that
+/// suite read ONE field on its own, and the one- and two-fact heads satisfied
+/// the position bar. Task ^ghkxf3r decided to carry both, each by a change of
+/// `probedFactIndex` on a fixture that stays, so no seed is added and the cost
+/// of the tier does not move. The first of a three-fact head is not carried: it
+/// is the easiest of the three shapes, and `sesame-allergy`, `db-port` and
+/// `encryption-algorithm` probe index 0 already.
 ///
 /// `CompactionEvalRepresentativeSubsetTests` holds that coverage mechanically,
 /// against ABSOLUTE bars rather than against the dataset. It read the dataset

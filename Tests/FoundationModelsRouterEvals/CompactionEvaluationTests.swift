@@ -1177,6 +1177,23 @@ struct CompactionEvalRepresentativeSubsetTests {
     /// planted fact and drop another.
     private static let requiredHeadSizes: Set<Int> = [1, 2, 3]
 
+    /// The size of the largest head the subset carries, and the one head size
+    /// whose probed positions this suite reads together with the size.
+    private static let threeFactHeadSize = 3
+
+    /// The positions the subset must probe a three-fact head at, read together
+    /// with the head size rather than alone.
+    ///
+    /// The middle fact is the hardest fact for a summary to keep, because the
+    /// summarizer must reach past a fact on each side of it. The last fact is
+    /// the one the summary is written with freshest. The first of three is not
+    /// required: it is the easiest of the three shapes, and the one- and
+    /// two-fact heads of the subset probe index 0 already. Task ^k0d30s4's cut
+    /// lost the middle position in silence, because
+    /// `subsetProbesEveryPositionInTheHead` reads the position on its own and a
+    /// two-fact head probed at index 1 satisfies it (task ^ghkxf3r).
+    private static let requiredThreeFactProbedIndices: Set<Int> = [1, 2]
+
     @Test("every id the subset names is a fixture the dataset holds")
     func everySubsetIDNamesAFixture() {
         let datasetIDs = Set(compactionEvalFixtureSpecs.map(\.id))
@@ -1244,6 +1261,42 @@ struct CompactionEvalRepresentativeSubsetTests {
         #expect(
             Self.subsetSpecs.contains { $0.probedFactIndex == $0.facts.count - 1 },
             "the gated subset probes no last fact"
+        )
+    }
+
+    @Test("the subset probes a three-fact head in the middle and at its end")
+    func subsetProbesAThreeFactHeadInTheMiddleAndAtItsEnd() {
+        // The head size and the probed position are read TOGETHER. Each bar
+        // above reads one of the two on its own, so a subset whose three-fact
+        // heads probed index 0 and index 2 alone passed every bar while no seed
+        // measured the summary against the middle fact of a head. A middle
+        // fact is the one a summarizer must reach past a fact on each side of.
+        let probedIndices = Set(
+            Self.subsetSpecs
+                .filter { $0.facts.count == Self.threeFactHeadSize }
+                .map(\.probedFactIndex))
+        #expect(
+            Self.requiredThreeFactProbedIndices.isSubset(of: probedIndices),
+            "the gated subset probes its three-fact heads at \(probedIndices.sorted())"
+        )
+    }
+
+    @Test("the subset probes a tool-delivered head at its first fact and after its first fact")
+    func subsetProbesAToolDeliveredHeadAtAndAfterItsFirstFact() {
+        // The delivery and the probed position are read TOGETHER.
+        // `ToolOutputElision` runs before `Summarization` and acts on the
+        // tool-traffic turn alone, which is the probed fact's own turn. A
+        // subset whose every tool-delivered head probed index 0 passed the
+        // delivery bar and the position bar, and measured what elision does to
+        // the first fact of a head and never to a later one.
+        let toolDeliveredIndices = Set(Self.subsetSpecs.filter(\.probedFactViaTool).map(\.probedFactIndex))
+        #expect(
+            toolDeliveredIndices.contains(0),
+            "no tool-delivered head of the gated subset probes its first fact"
+        )
+        #expect(
+            toolDeliveredIndices.contains { $0 > 0 },
+            "no tool-delivered head of the gated subset probes a fact after its first"
         )
     }
 
