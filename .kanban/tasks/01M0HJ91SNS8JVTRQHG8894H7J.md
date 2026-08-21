@@ -27,8 +27,24 @@ comments:
     - No deleted-file citation found; nothing left out of scope.
     - next: /review
   timestamp: 2026-08-21T19:29:38.670086+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0jwz1m1pangzky8ewnrmvwv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 306f935). 0 files reviewed, 0 findings. The engine has no validator for markdown (`plan.md`, `compaction_plan.md`); `.kanban/` is excluded by `.reviewignore`. All acceptance criteria are checked.
+    - next: none. The task moved to done.
+  timestamp: 2026-08-21T19:32:32.513605+00:00
+- actor: claude-code
+  id: 01m0jwzen9r8p6n26hg79c8wfa
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — plan.md 1 path, compaction_plan.md 1 path; check script 0 missing of 7
+    - test: green — root swift test 1032 + 80 passed
+    - commit: 306f935
+    - review: clean — 0 findings on HEAD~1..HEAD (no markdown validator); task moved to done
+  timestamp: 2026-08-21T19:32:45.865242+00:00
+position_column: done
+position_ordinal: ffe780
 title: plan.md points at a path the gated integration test no longer has
 ---
 Found while card ^rzr6ez5 corrected the stale prompt-cache text in the same paragraph. Out of that card's scope, thus filed on its own.

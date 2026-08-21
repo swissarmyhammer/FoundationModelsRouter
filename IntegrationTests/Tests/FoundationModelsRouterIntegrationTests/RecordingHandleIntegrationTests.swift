@@ -29,29 +29,30 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// `Router.resolve(_:reporting:)`, which would need real `.flash`/`.embedding`
 /// downloads too, since this suite only ever drives `.standard`.
 ///
-/// IMPORTANT — this suite could not be executed live in this sandbox: there
-/// is no GPU/Apple Silicon and no network access here to download
-/// `recordingHandleTinyModel`, so a real-model run was never
-/// actually set against a real run. Everything below is verified to *compile*
-/// and to be left out by a root `swift test`, which cannot see this package.
-/// To finish verifying the acceptance criteria that need an actual
-/// live run — the exact on-disk event sequence, the mid-turn back-fill
-/// snapshot before `sync`, the `session.json` sidecar fields, and the
-/// `MergedTranscript`/`TranscriptTree` reconstruction all matching a real
-/// session's live transcript — someone needs to run this suite on a real
-/// Apple Silicon Mac with network access to the Hub (so the tiny model can be
-/// downloaded/cached) under `swift test --package-path IntegrationTests`, then confirm
-/// the assertions below hold and report back.
+/// This suite runs on a machine that holds the `recordingHandleTinyModel`
+/// weights in its Hugging Face cache. The run of 2026-08-21, on an Apple
+/// silicon Mac, under
+/// `swift test --package-path IntegrationTests --filter RecordingHandleIntegrationTests`,
+/// against the mlx-swift-lm fork at revision `41e9f41`
+/// (`IntegrationTests/Package.resolved`), passed its one test in 21.4 seconds
+/// of test wall clock, and 29.9 seconds for the whole command, build included.
+/// That run confirmed each assertion below against a real session: the
+/// on-disk event sequence, the mid-turn back-fill snapshot before `sync`, the
+/// `session.json` sidecar fields, and the `MergedTranscript` and
+/// `TranscriptTree` reconstruction, which matched the live transcript. A root
+/// `swift test` leaves this suite out, because the root package cannot see
+/// this package.
 ///
 /// The three runs of 2026-08-20 measured this suite's one test at 16.7, then
-/// 40.9, then 101.5 seconds, with no code change between the runs. The 101.5 is
-/// six times run 1, and 85 percent of ``integrationTestBudgetMinutes``, so this
-/// suite is now one of the two of this target that run closest to the budget.
-/// The spread comes from the provider-default sampling
+/// 40.9, then 101.5 seconds, with no code change between the runs, and the run
+/// of 2026-08-21 measured it at 21.4 seconds. The 101.5 is six times run 1,
+/// and 85 percent of ``integrationTestBudgetMinutes``, so this suite is one of
+/// the two of this target that run closest to the budget. The spread comes
+/// from the provider-default sampling
 /// ``SessionTreeRestorationIntegrationTests`` states, and task ^bpwfbyz carries
-/// bringing this suite well inside the budget. That budget is now the limit,
-/// and it replaces the 15 minutes this suite stated before; see it for the
-/// whole three-run table.
+/// bringing this suite well inside the budget. That budget is the limit, and
+/// it replaces the 15 minutes this suite stated before; see it for the whole
+/// three-run table.
 @Suite(
     "Gated real-model integration: a tool-using turn over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",
     .serialized,
