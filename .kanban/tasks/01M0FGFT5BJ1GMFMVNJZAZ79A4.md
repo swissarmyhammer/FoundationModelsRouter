@@ -32,8 +32,28 @@ comments:
 
     Execution note for this board: the conversion is queued behind the in-flight summarization card ^xx02yn6 (one agent at a time on the shared tree), and the push happens after the user confirms the directive in this session.
   timestamp: 2026-08-20T13:41:44.600794+00:00
-position_column: todo
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0hejhm3fxphg1ajm4nw1s6x
+  text: |-
+    Research, 2026-08-21. The authority moved since the earlier comments named it. `swissarmyhammer/workflows` at `origin/main` is now `283418a`. Commit `611cd23` made the README a landing page, and it put the contract in `docs/swift-ci.md`. Read that file, not the README. The README now shows only one example call.
+
+    Three things the earlier comments do not state, and that the contract now does:
+
+    1. Shape 2 has TWO requirements, not one. The `needs:` edge is the second. The first is "The unit job builds the integration package on EVERY run", and the document says that a repository which writes its own CI steps must obey both itself. This repository does not obey the first one in the letter. See the part "The gap" in the description.
+    2. The `swift-test` action fails a run that matched no test. Thus a conversion changes the behaviour of the present `--skip CompactionEvalFullDataset` step: today a renamed suite runs the 7-minute tier and stays green; through the action the job goes red.
+    3. `swift-ci.yaml` has two new inputs the earlier comments do not name: `integration-artifacts-path`, which uploads the forensic files of the integration job in all conditions, and `integration-metallib-glob`, which now searches the nested package's `.build`.
+
+    The conversion is NOT done here. The user did not confirm the direction. It is filed as card ^h56as4j, with both ways to close the gap.
+  timestamp: 2026-08-21T06:01:48.419689+00:00
+- actor: claude-code
+  id: 01m0hejtjjtgnv0584ayv9rxcz
+  text: |-
+    ### implement — no-change
+    - evidence: no source file and no workflow file was changed. The verification record is in the description, part "Verification, 2026-08-21". All four expectations of the contract HOLD: root `swift test` gives `1025 tests in 96 suites` plus `77 tests in 9 suites`, with no integration suite, no `.enabled(if:)`, no `.disabled(`, no `XCTSkip`, and no root test that loads a model; `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` gives `2 tests in 1 suite passed after 18.262 seconds`; `rg 'FM_ROUTER_'` gives no hit; `.github/workflows/ci.yml` states `needs: test` on the `real-model` job. Builds: `swift build --build-tests -Xswiftc -warnings-as-errors` is clean in BOTH packages (`Build complete!`, exit 0 each). `actionlint .github/workflows/ci.yml` exits 0. Every path and every name inside `ci.yml` resolves in the tree, thus this pass found no wrong fact to correct.
+    - next: the one gap — the unit job does not build the nested package, which requirement 1 of Shape 2 asks for — is recorded as a deliberate deviation with its reason, and filed as card ^h56as4j. The user must decide between the shared workflow and one more build step before that card starts.
+  timestamp: 2026-08-21T06:01:57.586034+00:00
+position_column: doing
+position_ordinal: '8180'
 title: Verify this package against the org test expectations after the workflows README lands
 ---
 Filed on a request from the FoundationModelsMultitool session, on the user's directive: every sibling package must comply with the org's new test expectations, documented in the swissarmyhammer/workflows README (push imminent from the workflows-06 session).
@@ -53,15 +73,117 @@ If the final README states an expectation the shipped state does not meet (for e
 
 ## Acceptance Criteria
 
-- [ ] Each of the four documented expectations is verified against the current tree, with the command and its output recorded on this card
-- [ ] Any gap between the shipped state and the final README is fixed, or recorded as a deliberate deviation with the reason
+- [x] Each of the four documented expectations is verified against the current tree, with the command and its output recorded on this card
+- [x] Any gap between the shipped state and the final README is fixed, or recorded as a deliberate deviation with the reason
 
 ## Tests
 
-- [ ] Root `swift test` — green at the unit-only baseline, zero integration suites listed in the run
-- [ ] `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` — green, proving the integration package is selectable and runs
-- [ ] `rg 'FM_ROUTER_' --glob '!.build' --glob '!.kanban'` — zero matches
+- [x] Root `swift test` — green at the unit-only baseline, zero integration suites listed in the run
+- [x] `swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests` — green, proving the integration package is selectable and runs
+- [x] `rg 'FM_ROUTER_' --glob '!.build' --glob '!.kanban'` — zero matches
 
 ## Workflow
 
-- Use `/tdd` for any code gap found — write the failing check first, then fix. #ci #test-debt #tests
+- Use `/tdd` for any code gap found — write the failing check first, then fix.
+
+## Verification, 2026-08-21
+
+The document moved. `swissarmyhammer/workflows` at `origin/main` is `283418a`. Commit `611cd23` made the README a landing page and put the contract in `docs/swift-ci.md`. The four expectations are in the part "The test contract". This repository uses "Shape 2: a nested integration package".
+
+No file of this repository was changed. Four expectations hold. One requirement of Shape 2 does not hold in the letter, and the part "The gap" below gives the reason and the decision that the user must make.
+
+### Expectation 1 — the root `swift test` runs all the unit tests, and only the unit tests
+
+Command and result:
+
+```
+$ swift test
+✔ Test run with 1025 tests in 96 suites passed after 5.456 seconds with 1 known issue.
+✔ Test run with 77 tests in 9 suites passed after 0.669 seconds.
+```
+
+HOLDS. The two counts are the two test targets of the root package, `FoundationModelsRouterTests` and `FoundationModelsRouterEvals`. No integration suite is in the run, because the root `Package.swift` declares no integration target.
+
+No part of the configuration skips a test:
+
+- `rg '\.enabled\(if:' Sources Tests IntegrationTests` — four hits, and all four are doc comments that record the absence of a gate. No trait.
+- `rg '\.disabled\(' Tests IntegrationTests/Tests` — no hit.
+- `rg 'XCTSkip|throw SkipTest' Tests IntegrationTests/Tests` — no hit.
+- `rg 'RealModelContainer\.|\.load\(ref:|HubApi|snapshot\(' Tests` — no hit. Thus no root test loads a model.
+
+The one known issue is not a skipped test. The test "a condition that never holds ends the wait, and never before a late change would have landed" records an expected failure with `withKnownIssue` at `BoundedWait.swift:114`. The test ran, and it passed.
+
+### Expectation 2 — the integration tests run as a separate target, and the command names that target
+
+Command and result:
+
+```
+$ swift test --package-path IntegrationTests --filter CompactionSmokeIntegrationTests
+✔ Test "one fold against a real model: ..." passed after 14.206 seconds.
+✔ Test "a fact planted at the very end of the folded span is still in the summary the fold stores" passed after 18.261 seconds.
+✔ Test run with 2 tests in 1 suite passed after 18.262 seconds.
+```
+
+HOLDS. The nested package is at `IntegrationTests/Package.swift`. It declares the two real-model targets, `FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests`. Both tests stayed below `integrationTestBudgetMinutes`, which is 2.
+
+### Expectation 3 — an environment variable does not select a test
+
+Command and result:
+
+```
+$ rg -n 'FM_ROUTER_' --glob '!.build' --glob '!.kanban' --glob '!IntegrationTests/.build' .
+$ echo $?
+1
+```
+
+HOLDS. No hit in the repository. `rg 'ProcessInfo.processInfo.environment' Tests IntegrationTests` also gives no hit, thus no test reads an environment variable by another name.
+
+### Expectation 4 — CI runs the unit job before the integration job
+
+Command and result:
+
+```
+$ python3 -c "import yaml;d=yaml.safe_load(open('.github/workflows/ci.yml'));print(list(d['jobs'].keys()));print(d['jobs']['real-model'].get('needs'))"
+['test', 'real-model']
+test
+```
+
+HOLDS. This repository writes its own CI steps, and the contract tells such a repository to set its own `needs:` edge. The `real-model` job states `needs: test`.
+
+The file also parses and lints:
+
+```
+$ actionlint .github/workflows/ci.yml
+$ echo $?
+0
+```
+
+### The facts inside `ci.yml` are correct
+
+Each path and each name that the file gives resolves in the tree today:
+
+| the file says | the tree says |
+| --- | --- |
+| the root package declares no integration target | correct — the root test targets are `FoundationModelsRouterTests` and `FoundationModelsRouterEvals` |
+| the nested package holds `FoundationModelsRouterIntegrationTests` and `FoundationModelsRouterEvalIntegrationTests` | correct — `IntegrationTests/Package.swift` declares both |
+| the guard script is gone | correct — `.github/` holds only `ci.yml`, and no file reads the string `No matching test cases were run` |
+| ask for the opt-in tier with `--filter CompactionEvalFullDataset` | correct — the suite `CompactionEvalFullDatasetIntegrationTests` is in `CompactionEvalRealModelTests.swift` |
+| `MetalLibraryTestBootstrap` installs the metallib symlink in the process | correct — `Tests/FoundationModelsRouterTestSupport/MetalLibraryTestBootstrap.swift`, and `MetalLibraryBootstrapIntegrationTests` proves the shaders load |
+
+Thus this pass found no wrong fact to correct, and `ci.yml` was not touched.
+
+### The gap: the unit job does not build the nested package
+
+`docs/swift-ci.md` gives two requirements for Shape 2, and it says that a repository which writes its own CI steps must obey both itself:
+
+1. "The unit job builds the integration package on EVERY run."
+2. "The integration job runs after the unit job, through `needs:`."
+
+Requirement 2 holds. Requirement 1 does NOT hold in the letter. The `test` job runs `swift build --build-tests` for the root package only. The command `swift build --build-tests --package-path IntegrationTests` is in the `real-model` job.
+
+The purpose of the requirement is met, and here is the reason. The requirement exists because `integration-package-path` is an OPT-IN input of the shared workflow: a caller that does not set it never compiles the nested package. In this repository the `real-model` job is not opt-in. It runs on each push, on each pull request and on each manual start. Thus each CI run compiles the nested package, and a compile failure in it makes the run red.
+
+The deviation still costs one thing: the run learns of a compile failure in the nested package only after the whole hermetic suite passes, and not in the same job.
+
+**This is recorded as a deliberate deviation, and it is not corrected here.** The user must first decide if `ci.yml` calls the shared `swift-ci.yaml`. That decision reached this board only through peer agent sessions, and the user did not confirm it. The conversion satisfies requirement 1 in the letter, because the shared workflow builds the nested package in its unit job. Card ^h56as4j holds that decision, the two ways to close the gap, and the conversion.
+#ci #test-debt #tests

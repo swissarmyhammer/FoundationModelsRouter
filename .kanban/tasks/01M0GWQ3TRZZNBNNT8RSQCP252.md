@@ -94,8 +94,57 @@ comments:
     - evidence: 3 files — `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`, `Tests/FoundationModelsRouterRealModelSupport/CompactionFold.swift`, `Tests/FoundationModelsRouterRealModelSupport/RealModelContainer.swift`. Each change is a `// periphery:ignore` marker with its reason on the comment lines above it; no code moved and nothing was deleted. Probes: `CompactionFold.run`, `RealModelContainer.load` and `MLXFoundationModelsSessionBackend.session` each kept the ROOT build green and broke the `IntegrationTests` build at the use sites (live); `CountingBlankSlateSummarizer.init(container:)` broke the ROOT build at `CompactionFold.swift:184` (a transitive casualty of `run`, thus no marker). Scan: 4 findings before, 0 after. `swift build --build-tests -Xswiftc -warnings-as-errors` exit 0 in the root package and exit 0 in `IntegrationTests`. Root `swift test` exit 0: 1025 tests in 96 suites passed with 1 known issue, and 77 tests in 9 suites passed.
     - next: `/review`. No gated real-model run is needed. The open question on ^k0d30s4 is untouched, and nothing is committed.
   timestamp: 2026-08-21T05:43:39.554840+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0he33w0kve0vd1bw407ta9y
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha 1cd1e89~1..1cd1e89`. The engine gives 0 findings, 0 confirmed and 0 refuted. It attempted 7 validators. 0 failed and 0 were skipped. It did not read the 8 `.kanban` files, because `.reviewignore` excludes them. The card moves from `review` to `done`.
+
+    ## The four criteria, measured again
+
+    I did not trust the record alone.
+
+    1. The probes are recorded, with the error text and the use sites. The comment above holds them.
+    2. The three markers are in the diff. Each has its reason on the comment lines above it, in the words that ^m03heaa established.
+    3. The scan gives 0 findings. I proved that the markers do the work: I removed the marker from `RealModelContainer.load`, I built again, and the scan gave the card's finding again at `RealModelContainer.swift:58 function.method.static load(ref:context:samplingMode:)`. I put the marker back, and the tree is as the commit made it.
+    4. `swift build --build-tests -Xswiftc -warnings-as-errors` gives exit 0 in the root package and exit 0 in `IntegrationTests`. I ran the two builds again.
+
+    ## A caution about the command written on this card
+
+    The command on this card is not the full command of the rule. The rule sends the output of periphery through a filter:
+
+    ```
+    jq -c '.[] | select(.kind != "var.parameter") | ...'
+    ```
+
+    The command on this card stops at periphery. If you run only that part, you get 9 more findings, and all 9 are of the kind `var.parameter`. They are in `LiveModelLoader.swift` and `ModelLoader.swift`, on parameters of protocol requirements and of a sentinel loader that always throws. `ModelLoader.swift` is not in this commit, thus this work did not cause them.
+
+    These 9 are not defects. The rule drops the kind on purpose, and it gives the reason: "Periphery reports an unused function parameter. That is not dead code: the parameter is part of a signature every caller must supply." No new card is necessary. Add the `jq` filter if you copy the command from this card again.
+
+    ## The `session` accessor in `Sources/`
+
+    I agree with the decision, and I measured the fact it stands on. `liveSession` is `private let` in `MLXFoundationModelsSessionBackend`. `@testable import` raises `internal`, but it does not raise `private`. Thus the accessor cannot move to the test package.
+
+    The other way is to make `liveSession` `internal`. That opens the state to every file of the module, only to satisfy a scanner that cannot see the second package. The accessor is `internal`, thus no user of the library can reach it. The marker with its reason costs less than the wider state. I record no finding.
+
+    ## The commit message
+
+    The body of `2979ffa` named `^7fy0d2z`. That card is not in this commit, and it is not on this board. The commit holds the local trace of `^hxyj3q1`. The commit was not pushed, thus I amended the body to name `^hxyj3q1`. The new commit is `1cd1e89`, and its tree is the same as the tree of `2979ffa`.
+
+    - next: none. The card is closed.
+  timestamp: 2026-08-21T05:53:22.816378+00:00
+- actor: claude-code
+  id: 01m0he47qp5nt0nf4jcexe5f20
+  text: |-
+    ### finish iteration — clean
+    - implement: changed — 3 source files; each of the 4 findings was judged by a compiler rename probe, 3 proved live and got markers with reasons, and the 4th proved a transitive casualty and got none
+    - test: green — periphery scan 4 findings to 0; both packages build with -warnings-as-errors; root swift test 1025 in 96 suites plus 77 in 9 suites
+    - commit: 1cd1e89 (the body of 2979ffa was amended to name the right card; the tree did not move)
+    - review: clean — 0 findings; the markers were re-proved load-bearing by a marker-removal probe; task moved to `done`
+  timestamp: 2026-08-21T05:53:59.542720+00:00
+position_column: done
+position_ordinal: ffd980
 title: Stage the four remaining dead-code-swift findings the two-package split causes, outside the EvalSupport target
 ---
 Commit 1db2b56 moved the real-model tests into a nested `IntegrationTests` package. `code-hygiene/dead-code-swift` runs `periphery` with a workspace scope, and the rule states the limit in its own words: "The scope is `workspace` because periphery reads a whole package's index." The second package has its own index, and the scan at the root never reads it.
