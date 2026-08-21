@@ -174,8 +174,31 @@ comments:
     - still open, and not this card's: ^mx4jqrn (the continuity tier's subject and floors) and ^de1yq0p (the KV cache reuse test).
     - next: `/review` on the correction.
   timestamp: 2026-08-21T00:50:51.240672+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0gx184a982b53ebgdjxq837
+  text: |
+    ### review — clean
+
+    - evidence: `review sha d1dde7a~1..d1dde7a` — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 6 files reviewed; 6 `.kanban/` files excluded by `.reviewignore`. This is round 2. Round 1 (`review sha e36277f~1..e36277f`, 1 finding) named `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityRealModel.swift:29` `code-hygiene/dead-code-swift`, and that checklist item is checked on the card.
+    - the correction the round reviewed: 6 files changed, 36 insertions, 0 deletions, all in `Tests/FoundationModelsRouterEvalSupport/`. Each change is a `// periphery:ignore` marker with its reason above it. No declaration was deleted. The validator's own periphery command gave 11 findings in this target before the change and gives 0 after it.
+    - acceptance criteria: all three are checked, and the recorded measurements support each one. Criterion 1 — the subset tier measured 6 of 7 stored summaries against a bar of 5 of 7. Criterion 2 — both floors are 0.71, and `CompactionEvalTierBarTests` asserts the required counts of 5 and 18. Criterion 3 — `compactionEvalSubsetTimeLimitMinutes` is 2 and the subset tier measured 63.3 s.
+    - no gated real-model suite was run in this step.
+    - out of scope, and not held against this card: ^mx4jqrn (the continuity tier's subject and floors, red on `main`), ^de1yq0p (the KV cache reuse test), ^sqcp252 (4 findings of the same dead-code cause in files this card did not touch), ^5q0vv85 (the thin margin on the whole-dataset bound).
+    - next: the card is in `done`. Nothing is open on it.
+  timestamp: 2026-08-21T00:55:15.850003+00:00
+- actor: claude-code
+  id: 01m0gx26ga2n7zwmpvafmp06sj
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — the rename probe refuted the dead-code finding; 9 `// periphery:ignore` markers with reasons across 6 files; the target went from 11 periphery findings to 0
+    - test: green — root swift test 1025 in 96 suites, plus 77 in 9 suites; both packages build with -warnings-as-errors
+    - commit: d1dde7a
+    - review: clean — 0 findings; task moved to `done`
+
+    Not this card, and open for a person: ^mx4jqrn (the continuity tier is red on `main`), ^5q0vv85 (the whole-dataset bound has little margin), ^de1yq0p (the KV cache reuse test), ^sqcp252 (the same periphery cause in files this card did not touch).
+  timestamp: 2026-08-21T00:55:46.954113+00:00
+position_column: done
+position_ordinal: ffd580
 title: Choose a fast eval canary model that the redesigned compaction prompt serves, and restore meaningful retention floors
 ---
 Task ^xx02yn6 redesigned the summarization prompt and trim for Qwen3.8-27B (the standard model, thinking on). The redesign took Qwen from 0 of 7 to 5 of 7 stored subset summaries. The fast eval canary, `mlx-community/Llama-3.2-1B-Instruct-4bit`, moved the other way: 6 of 7 to 2 of 7 subset summaries, 17 of 24 to 13 of 24 whole-dataset summaries. The measured cause: the 1B ignores the stated size budget, generates to its ceiling, enumerates background head-first, and the last-resort cut drops the facts stated later in the span.
