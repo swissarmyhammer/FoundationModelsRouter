@@ -48,10 +48,31 @@ private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
 /// through the **real, public** vending surface
 /// (`makeSession`/`fork`/`restoreSessionTree`), since this test's whole point
 /// is proving that public surface end-to-end, not just its backend seam.
+///
+/// The three runs of 2026-08-20 measured the fork-tree test at 94.1, then
+/// 114.1, then 116.4 seconds, and the tool-calling test at 54.4, then 61.7,
+/// then 58.5 seconds. The 116.4 is 97 percent of
+/// ``integrationTestBudgetMinutes`` and the dearest test of the whole target.
+///
+/// The number moves that much because this suite loads ``RealModels/standard``,
+/// which is `Muse-Glimmer-30B-4bit`, and takes the provider's default
+/// sampling: temperature 0.6 out of MLX's clock-seeded, process-global PRNG.
+/// The 30B always writes a `<think>` block before its answer, and that block is
+/// a different length on every run of identical code, so the wall clock differs
+/// with it. The other suites of this target sample the same way, and their
+/// numbers move for the same reason.
+///
+/// A test the limit cancels is worse than a plain red result. The cancellation
+/// lands mid-generation, and a cancellation on GPU work aborts the whole
+/// process on a Metal assertion (fork card ^3axg80k), which takes every other
+/// suite's results with it.
+///
+/// Task ^bpwfbyz carries bringing this suite well inside the budget. See
+/// ``integrationTestBudgetMinutes`` for the whole three-run table.
 @Suite(
     "Gated real-model end-to-end coverage: restoreSessionTree(root:) (task zcxnbst)",
     .serialized,
-    .timeLimit(.minutes(20)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct SessionTreeRestorationIntegrationTests {

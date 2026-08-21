@@ -43,10 +43,20 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// Apple Silicon Mac with network access to the Hub (so the tiny model can be
 /// downloaded/cached) under `swift test --package-path IntegrationTests`, then confirm
 /// the assertions below hold and report back.
+///
+/// The three runs of 2026-08-20 measured this suite's one test at 16.7, then
+/// 40.9, then 101.5 seconds, with no code change between the runs. The 101.5 is
+/// six times run 1, and 85 percent of ``integrationTestBudgetMinutes``, so this
+/// suite is now one of the two of this target that run closest to the budget.
+/// The spread comes from the provider-default sampling
+/// ``SessionTreeRestorationIntegrationTests`` states, and task ^bpwfbyz carries
+/// bringing this suite well inside the budget. That budget is now the limit,
+/// and it replaces the 15 minutes this suite stated before; see it for the
+/// whole three-run table.
 @Suite(
     "Gated real-model integration: a tool-using turn over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",
     .serialized,
-    .timeLimit(.minutes(15)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RecordingHandleIntegrationTests {

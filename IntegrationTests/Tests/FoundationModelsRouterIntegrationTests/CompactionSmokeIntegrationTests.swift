@@ -45,17 +45,6 @@ private let compactionSmokeContext = 4096
 /// tabulated on the suite below reported identical fold numbers.
 private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greedy
 
-/// The wall-clock bound this suite runs under, in minutes.
-///
-/// Stated as a constant so the number carries its measurement. See the suite's
-/// own doc comment for the measured run behind it. One minute held while a
-/// fold cost one generation; under task ^xx02yn6's condense re-ask this
-/// model's fold costs two (see the first test's call-count pin), and the run
-/// of 2026-08-20 measured the pair at 60.1 seconds — the limit itself, with
-/// 7.3-second model loads — so the bound moved to the next whole minute
-/// above the measured pair.
-private let compactionSmokeTimeLimitMinutes = 2
-
 // MARK: - Suite
 
 /// The fast answer to one question: does the compaction path work end to end
@@ -106,7 +95,7 @@ private let compactionSmokeTimeLimitMinutes = 2
 /// - ``reasoningTokenHeadroom``, sized for a model that writes no reasoning,
 ///   rather than the 8192 the thinking-model path needs.
 ///
-/// ## The measurement behind ``compactionSmokeTimeLimitMinutes``
+/// ## What this suite measures
 ///
 /// Measured on 2026-08-18, on an Apple silicon box with the model already in
 /// the Hugging Face cache. Three consecutive runs, each printing its own
@@ -151,12 +140,16 @@ private let compactionSmokeTimeLimitMinutes = 2
 /// read: the whole package, this suite's real model included, in 18.0
 /// seconds.
 ///
-/// The limit is two minutes — the next whole minute above the 60.1-second
-/// pair the run of 2026-08-20 measured under task ^xx02yn6's two-call folds;
-/// see ``compactionSmokeTimeLimitMinutes``.
+/// The limit is the shared ``integrationTestBudgetMinutes``, which this suite
+/// states in place of a bound of its own, and which states the whole three-run
+/// table. An earlier run of 2026-08-20 measured the two tests at 60.1 seconds
+/// for the pair, with 7.3-second model loads, under task ^xx02yn6's two-call
+/// folds. The three runs of 2026-08-20 that measured the whole target reported
+/// 14.6, then 15.2, then 18.6 seconds for the fold, and 18.8, then 19.3, then
+/// 14.5 seconds for the planted-fact test.
 @Suite(
     "Real-model smoke test: the compaction fold works end to end (task ^w1cz46m)",
-    .timeLimit(.minutes(compactionSmokeTimeLimitMinutes)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CompactionSmokeIntegrationTests {

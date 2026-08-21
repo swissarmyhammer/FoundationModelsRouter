@@ -57,10 +57,21 @@ private let realToolTurnModel: ModelRef = RealModels.standard
 /// this suite could not measure never reads as one it measured.
 ///
 /// See ``NormalizedTranscriptEntry`` for the normalization and its rationale.
+///
+/// The three runs of 2026-08-20 measured the both-surfaces tool turn, which
+/// drives two multi-round tool turns, at 86.7, then 85.3, then 85.8 seconds,
+/// and the transcript-shape test at 41.9, then 41.1, then 41.0 seconds. The
+/// 86.7 seconds is 72 percent of ``integrationTestBudgetMinutes``, which is now
+/// the limit, replacing the 30 minutes this suite stated before; see it for the
+/// whole three-run table. How many tool rounds the model takes varies from run
+/// to run, so the cost varies with it. Two suites of this target still run
+/// nearer the budget than this 72 percent: the fork-tree restoration in
+/// ``SessionTreeRestorationIntegrationTests`` and the recording handle in
+/// ``RecordingHandleIntegrationTests``.
 @Suite(
     "Gated real-model integration: a real tool-using turn delivers its tools' data on both session surfaces (task ^w8dzvee)",
     .serialized,
-    .timeLimit(.minutes(30)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RealToolTurnComparisonTests {

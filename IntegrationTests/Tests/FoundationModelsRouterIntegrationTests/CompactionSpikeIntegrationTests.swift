@@ -31,10 +31,15 @@ private let compactionSpikeTinyModel: ModelRef = RealModels.standard
 /// full ``RoutedSessionActor``, since this spike's only question is whether
 /// the SDK itself accepts the synthesized shape, not the router's own
 /// bookkeeping around it (already covered hermetically elsewhere).
+///
+/// The three runs of 2026-08-20 measured this suite's one test at 17.5, then
+/// 9.4, then 17.0 seconds. The limit is now the shared
+/// ``integrationTestBudgetMinutes``, which replaces the 15 minutes this suite
+/// stated before; see it for the whole three-run table.
 @Suite(
     "Gated real-model coverage: a rebuilt live LanguageModelSession over synthesized entries (task dws80ms)",
     .serialized,
-    .timeLimit(.minutes(15)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CompactionSpikeIntegrationTests {

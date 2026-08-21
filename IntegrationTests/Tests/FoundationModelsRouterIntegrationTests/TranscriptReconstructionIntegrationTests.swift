@@ -24,10 +24,15 @@ private let transcriptReconstructionTinyModel: ModelRef = RealModels.standard
 /// ``LanguageModelSessionBackendIntegrationTests`` uses, extended to record
 /// into a durable `recordingsDir` so the on-disk transcript can be reloaded
 /// through a fresh ``TranscriptTree``.
+///
+/// The three runs of 2026-08-20 measured this suite's one test at 19.7, then
+/// 24.1, then 17.1 seconds. The limit is now the shared
+/// ``integrationTestBudgetMinutes``, which replaces the 15 minutes this suite
+/// stated before; see it for the whole three-run table.
 @Suite(
     "Gated real-model coverage: effectiveTranscript reconstruction (task dw0zx8k)",
     .serialized,
-    .timeLimit(.minutes(15)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct TranscriptReconstructionIntegrationTests {

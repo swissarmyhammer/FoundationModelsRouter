@@ -42,17 +42,6 @@ private let autoCompactionTriggerContext = 4096
 /// here be attributed to the change under test.
 private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = .greedy
 
-/// The wall-clock bound this suite runs under, in minutes.
-///
-/// Stated as a constant so the number carries its measurement. See the suite's
-/// own doc comment for the measured run behind it. One minute held while the
-/// run of 2026-08-18 measured 4.7 to 5.0 seconds; the runs of 2026-08-20
-/// measured 23.7 and 54.6 seconds — task ^xx02yn6's stage makes more model
-/// work per fold, and the same box loaded the model in 6.1 to 7.5 seconds —
-/// so the bound moved to the next whole minute above the dearest measured
-/// run.
-private let autoCompactionTriggerTimeLimitMinutes = 2
-
 // MARK: - Suite
 
 /// The fast answer to one question: does a session fold its own transcript,
@@ -113,7 +102,7 @@ private let autoCompactionTriggerTimeLimitMinutes = 2
 /// ``Summarization/keepRecentTurns``. Every knob this suite sets is one a
 /// caller outside the package can set.
 ///
-/// ## The measurement behind ``autoCompactionTriggerTimeLimitMinutes``
+/// ## What this suite measures
 ///
 /// Measured on 2026-08-18, on an Apple silicon box with the model already in
 /// the Hugging Face cache. Three consecutive runs, each printing its own
@@ -141,8 +130,14 @@ private let autoCompactionTriggerTimeLimitMinutes = 2
 /// | stages the fold applied | elision, truncation, summarization | the same |
 /// | the fold's transcript, before and after | 733 -> 369 | 733 -> 463 |
 ///
-/// The limit is two minutes — the next whole minute above the 54.6-second
-/// run of 2026-08-20; see ``autoCompactionTriggerTimeLimitMinutes``.
+/// Earlier runs of 2026-08-20 measured this test at 23.7 and at 54.6 seconds,
+/// on a box that loaded the model in 6.1 to 7.5 seconds: task ^xx02yn6's stage
+/// makes more model work for each fold. The three runs of 2026-08-20 that
+/// measured the whole target reported 5.2, then 5.1, then 5.1 seconds. The
+/// limit is the shared ``integrationTestBudgetMinutes``, which this suite
+/// states in place of a bound of its own, and which states the whole three-run
+/// table.
+///
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
 /// ``RecordedTranscriptCompactionIntegrationTests``. The three answer one
@@ -150,7 +145,7 @@ private let autoCompactionTriggerTimeLimitMinutes = 2
 ///
 @Suite(
     "Real-model smoke test: a synthetic trigger folds a short transcript inside its own turn (task ^d02ryqj)",
-    .timeLimit(.minutes(autoCompactionTriggerTimeLimitMinutes)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct AutoCompactionTriggerIntegrationTests {

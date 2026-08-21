@@ -140,6 +140,13 @@ protocol GatedEvalRealModelRunner: Sendable {
 /// shared container, and why it is held at suite scope rather than inside the
 /// `@Test` body.
 struct GatedEvalResidencyTrait: SuiteTrait, TestScoping {
+    /// The tag every wall-clock line of this target carries, so one `grep`
+    /// collects the whole run's measurements.
+    ///
+    /// Its own tag rather than the sibling target's, because the two targets
+    /// measure different things: a suite here, one test case there.
+    private static let measurementLabel = "gatedEvalSuite"
+
     /// The runner whose resident model this suite owns while it holds the
     /// permit, and which is evicted before the permit is handed back.
     let runner: any GatedEvalRealModelRunner
@@ -191,27 +198,28 @@ struct GatedEvalResidencyTrait: SuiteTrait, TestScoping {
         try await GatedEvalSerialGate.shared.withPermit {
             // The suite's whole wall clock, measured inside the permit so a
             // wait on another suite is not charged, and printed however the
-            // run ended. This is the recorded measurement task ^k0d30s4 asks
-            // every integration test to print for itself: `.evaluates(...)`
-            // runs the whole evaluation ahead of the `@Test` body, so a
-            // clock started in the body would measure nothing, and this
-            // trait's scope is the one place that encloses the whole run.
-            let startedAt = Date()
-            defer {
-                let seconds = Date().timeIntervalSince(startedAt)
-                print(
-                    "[gatedEvalSuite] suite=\(test.displayName ?? test.name) "
-                        + "wallClockSeconds=\(String(format: "%.1f", seconds))")
+            // run ended. Each suite of this target holds exactly one `@Test`,
+            // so the suite's clock IS that test's clock — the recorded
+            // measurement task ^k0d30s4 asks every integration test to print
+            // for itself. `.evaluates(...)` runs the whole evaluation ahead of
+            // the `@Test` body, so a clock started in the body would measure
+            // nothing, and this trait's scope is the one place that encloses
+            // the whole run. The measuring itself is shared with the sibling
+            // target's own trait — see `GatedWallClock`.
+            try await GatedWallClock.printing(
+                label: Self.measurementLabel,
+                subject: "suite=\(test.displayName ?? test.name)"
+            ) {
+                let outcome: Result<Void, any Error>
+                do {
+                    try await function()
+                    outcome = .success(())
+                } catch {
+                    outcome = .failure(error)
+                }
+                await runner.evictIfLoaded()
+                try outcome.get()
             }
-            let outcome: Result<Void, any Error>
-            do {
-                try await function()
-                outcome = .success(())
-            } catch {
-                outcome = .failure(error)
-            }
-            await runner.evictIfLoaded()
-            try outcome.get()
         }
     }
 }

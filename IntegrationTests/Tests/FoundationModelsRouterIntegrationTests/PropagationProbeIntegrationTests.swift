@@ -88,10 +88,19 @@ private let propagationProbeToolName = "context_probe"
 /// this probe no longer treats "no tool call" and "no propagation" as one
 /// outcome, and why the real cause here turned out to be an inherited cache
 /// rather than the prompt (see ``makeUncontaminatedContainer()``).
+///
+/// The three runs of 2026-08-20 measured the MLX path at 67.2, then 27.4, then
+/// 24.4 seconds, and the system-model path at 2.1, then 2.3, then 2.1 seconds.
+/// The MLX-path test is the dearer of the two because it loads the model twice,
+/// on purpose: the second, uncontaminated load is what keeps an inherited cache
+/// out of the probe. Its dearest run is 2.8 times its cheapest, out of the
+/// provider-default sampling ``SessionTreeRestorationIntegrationTests`` states.
+/// The limit is now ``integrationTestBudgetMinutes``, replacing the 15 minutes
+/// this suite stated before; see it for the whole three-run table.
 @Suite(
     "Gated propagation probe: does the ToolContext task local survive respond()? (task c25mpnw)",
     .serialized,
-    .timeLimit(.minutes(15)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct PropagationProbeIntegrationTests {

@@ -213,13 +213,19 @@ private struct DownloadObservingLoader: ModelLoader {
 /// milestone calls for is guaranteed structurally — Swift Testing's
 /// `@Suite`/`@Test` macros reject a redundant `@available` attribute on the
 /// type), and the target lives in the nested `IntegrationTests/` package,
-/// which a root `swift test` cannot see. `.serialized` so the heavy load happens once at a time, under a generous
-/// `.timeLimit`. Downloads are cached on disk by the Hub client and reused across
-/// runs.
+/// which a root `swift test` cannot see. `.serialized` so the heavy load
+/// happens once at a time, under ``integrationTestBudgetMinutes``. Downloads
+/// are cached on disk by the Hub client and reused across runs — a box that has
+/// never fetched these models pays that download inside the budget.
+///
+/// The three runs of 2026-08-20 measured this test at 46.6, then 48.7, then
+/// 44.9 seconds, against the 30 minutes the limit stated before task ^k0d30s4's
+/// budget replaced it. See ``integrationTestBudgetMinutes`` for the whole
+/// three-run table.
 @Suite(
     "Gated real-model integration (milestone 7)",
     .serialized,
-    .timeLimit(.minutes(30)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct IntegrationTests {

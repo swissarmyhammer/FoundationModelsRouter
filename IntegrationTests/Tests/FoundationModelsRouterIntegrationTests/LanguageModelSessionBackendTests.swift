@@ -29,10 +29,26 @@ private let sessionBackendTinyModel: ModelRef = RealModels.standard
 /// ``RoutedSessionActor`` still drives today (see plan.md) — is what's under
 /// test. `internal var session` on the backend exists specifically so this
 /// `@testable import` can read `transcript.count` directly.
+///
+/// This suite holds 11 tests, and each of them loads the model once. The three
+/// runs of 2026-08-20 measured them at 48.7, 45.7, 40.3, 28.8, 23.3, 19.5,
+/// 19.2, 19.1, 19.0, 16.6 and 16.0 seconds, then at 62.3, 48.3, 40.4, 30.0,
+/// 27.9, 21.0, 20.4, 20.0, 17.2, 16.6 and 15.0 seconds, then at 58.6, 46.5,
+/// 41.8, 39.7, 23.0, 21.7, 21.6, 20.3, 19.3, 17.9 and 17.5 seconds.
+///
+/// Which test is the dearest changes from run to run, so this comment names
+/// none of them. `makeFork() seeds the child's transcript from the parent's at
+/// fork time` was the dearest test of run 2 at 62.3 seconds and stands fourth
+/// in run 3 at 39.7 seconds, while `a second respond() call on the same backend
+/// sees the first turn` is the dearest test of run 3 at 58.6 seconds. The
+/// spread comes from the provider-default sampling
+/// ``SessionTreeRestorationIntegrationTests`` states. The limit is
+/// ``integrationTestBudgetMinutes``, which replaces the 15 minutes this suite
+/// stated before; see it for the whole three-run table.
 @Suite(
     "Gated real-model coverage: MLXFoundationModelsSessionBackend (milestone 7)",
     .serialized,
-    .timeLimit(.minutes(15)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct LanguageModelSessionBackendIntegrationTests {

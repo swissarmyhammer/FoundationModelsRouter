@@ -6,9 +6,46 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The same real `mlx-community` generation model the rest of this target's
-/// gated suites use for the `.standard` slot.
-private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
+/// The real `mlx-community` model this round trip folds against, and
+/// deliberately NOT ``RealModels/standard``.
+///
+/// ``RealModels/standard`` is `Muse-Glimmer-30B-4bit`, 18 GB of weights, and it
+/// is what this suite drove until task ^k0d30s4 gave every integration test a
+/// budget of two minutes. The run of 2026-08-20 measured this round trip at
+/// 541.6 seconds against the 30B — 4.5 times the budget, and the only test of
+/// this target that did not fit.
+///
+/// `Qwen2.5-3B-Instruct-4bit` is 1.6 GB on disk, and it is the subject the
+/// gated fact-retention evals already measure this exact property against: see
+/// `CompactionEvalRealModel` for the trial order task ^m03heaa ran and for the
+/// 6 of 7 subset summaries and 23 of 24 whole-dataset summaries this model
+/// carried through a fold on 2026-08-20. Step 3 below is one instance of that
+/// same property, so the subject the evals measured it on is the subject to
+/// measure it on here.
+///
+/// It is the same family as Qwen3.8-27B, the standard model task ^xx02yn6
+/// designed the summarization prompt for, and it writes no `<think>` block —
+/// which is what makes ``compactionRoundTripReasoningTokenHeadroom`` safe to
+/// cut below the production default.
+private let compactionRoundTripModel: ModelRef = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+
+/// The tokens every summarizer call of this suite is given on top of its
+/// summary allowance, and deliberately not ``Summarization``'s own default of
+/// 8192.
+///
+/// That default is sized for a model that writes a `<think>` block before its
+/// answer. ``compactionRoundTripModel`` writes none, so almost all of that
+/// headroom is a ceiling no generation reaches — and reaching for it is what a
+/// fold pays for when the model runs on. The gated eval subset measured what
+/// that freedom costs: two of seven folds generated to the ceiling, 20485 and
+/// 16060 bytes of summary answer, at 28.5 seconds each, where the five bounded
+/// folds cost 2.5 to 7.4 seconds.
+///
+/// The same value the three compaction smoke suites and every gated eval tier
+/// cut this to, for the same measured reason. Not zero, so a summary has a
+/// little room to finish its last sentence inside the ceiling rather than
+/// always ending at it.
+private let compactionRoundTripReasoningTokenHeadroom = 128
 
 // MARK: - Suite
 
@@ -31,7 +68,32 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
 ///    history.
 /// 5. A further turn on the restored session succeeds.
 ///
-/// Builds a ``LanguageModelProfile`` directly over an already-loaded tiny
+/// ## What it NO LONGER proves (task ^k0d30s4)
+///
+/// The five steps above ran against `Muse-Glimmer-30B-4bit` and an unbounded
+/// summarizer ceiling until this task, and the run of 2026-08-20 measured them
+/// at 541.6 seconds — 4.5 times the two-minute budget every integration test
+/// now has. Two changes bring the loop inside it:
+/// ``compactionRoundTripModel`` and ``compactionRoundTripReasoningTokenHeadroom``.
+/// What is no longer proven is:
+///
+/// - **The 30B model's summary quality.** Step 3 recalls `CRIMSON-77` out of a
+///   summary a 3B model wrote. That the 3B carries the fact says nothing about
+///   the 30B, and a fact this subject lost might survive under the larger one.
+///   `CompactionEvalRealModel` records the same trade for the eval tiers, and
+///   the measured baseline this subject is held to there.
+/// - **What a fold costs when the summarizer may run on.** The headroom cut
+///   makes the largest summary this loop can be handed `summaryAllowance` plus
+///   ``compactionRoundTripReasoningTokenHeadroom``, whatever the model chooses
+///   to write. A fold that generated to the production default's 8192 tokens is
+///   no longer measured here.
+///
+/// Everything else is untouched. The fixture, the working context, the reply
+/// ceiling, the 0.80 trigger, the fold budget, the stage list, the identity
+/// checks, the restore and the further turn are all exactly what they were, so
+/// each of the five steps still asserts what it always asserted.
+///
+/// Builds a ``LanguageModelProfile`` directly over an already-loaded
 /// model's ``MLXFoundationModelsContainer`` (bypassing
 /// `Router.resolve(_:reporting:)`, which would need real `.flash`/`.embedding`
 /// downloads too) — the same manual-harness technique
@@ -56,13 +118,12 @@ private let compactionRoundTripTinyModel: ModelRef = RealModels.standard
 @Suite(
     "Gated real-model end-to-end coverage: RoutedSession.compact(prompt:budget:) round trip (task rjvrgt9)",
     .serialized,
-    // 40 minutes. The run of 2026-08-17 measured 425 seconds; task ^xx02yn6's
-    // condense re-ask can double the fold's model work, and the run of
-    // 2026-08-20 exceeded the 20 minutes this stated before while the box was
-    // under the memory pressure of earlier real-model suites — a time-limit
-    // cancellation lands mid-generation, which aborts the whole process, so
-    // the bound carries margin for the slow case rather than sitting on it.
-    .timeLimit(.minutes(40)),
+    // The whole target's budget. The 40 minutes this stated before were the
+    // 30B model's cost with an unbounded summarizer ceiling: the run of
+    // 2026-08-17 measured 425 seconds, task ^xx02yn6's condense re-ask can
+    // double the fold's model work, and the run of 2026-08-20 measured 541.6.
+    // The two changes at the top of this file are what removed that cost.
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CompactionRoundTripIntegrationTests {
@@ -92,11 +153,11 @@ struct CompactionRoundTripIntegrationTests {
         }
 
         let container = try await RealModelContainer.load(
-            ref: compactionRoundTripTinyModel,
+            ref: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             samplingMode: Self.samplingMode)
         let profile = RealModelHarness.make(
-            model: compactionRoundTripTinyModel,
+            model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             container: container,
             cacheDir: cacheDir,
@@ -107,7 +168,13 @@ struct CompactionRoundTripIntegrationTests {
         // one and every handle already carries it.
         let routerId = profile.standard.routerId
 
-        let session = profile.standard.makeSession(instructions: CompactionRoundTripFixture.instructions)
+        // The stage is session-scoped rather than per-call, so the explicit
+        // `compact(budget:)` at step 2 folds with the ceiling stated here.
+        let session = profile.standard.makeSession(
+            instructions: CompactionRoundTripFixture.instructions,
+            summarization: Summarization(
+                reasoningTokenHeadroom: compactionRoundTripReasoningTokenHeadroom)
+        )
         let sessionId = session.id
         let recordingDirectoryBefore = session.recordingDirectory
 
@@ -177,11 +244,11 @@ struct CompactionRoundTripIntegrationTests {
         //    checkpointed live window: fewer entries than the full
         //    recorded history.
         let container2 = try await RealModelContainer.load(
-            ref: compactionRoundTripTinyModel,
+            ref: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             samplingMode: Self.samplingMode)
         let profile2 = RealModelHarness.make(
-            model: compactionRoundTripTinyModel,
+            model: compactionRoundTripModel,
             context: CompactionRoundTripFixture.context,
             container: container2,
             cacheDir: cacheDir,

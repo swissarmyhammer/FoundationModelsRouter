@@ -17,7 +17,7 @@ private let cancellationSmokeModel: ModelRef = "mlx-community/Llama-3.2-1B-Instr
 /// lands at ``cancellationDelaySeconds``: at the 1B model's measured decode
 /// rate this many tokens run well past that point, and — should cancellation
 /// fail to propagate at all — a full uncancelled run still ends inside the
-/// suite's two-minute limit rather than hanging it.
+/// suite's ``integrationTestBudgetMinutes`` limit rather than hanging it.
 private let cancelledGenerationMaxTokens = 2048
 
 /// How long the suite lets the doomed generation run before it cancels it.
@@ -44,10 +44,14 @@ private let cancellationDelaySeconds = 2
 /// The TARGET is what selects this suite, and no environment variable is
 /// read — see `GatedSuiteSerialGate` for the commands that ask for this
 /// target and the command that leaves it out.
+///
+/// The three runs of 2026-08-20 measured this suite's one test at 5.8, then
+/// 5.7, then 5.7 seconds, against the shared ``integrationTestBudgetMinutes``
+/// this suite now states as its limit; see it for the whole three-run table.
 @Suite(
     "Gated real-model coverage: cancellation mid-generation does not abort the process (task bkdm97c)",
     .serialized,
-    .timeLimit(.minutes(2)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct CancelledGenerationTeardownIntegrationTests {

@@ -40,18 +40,6 @@ private let recordedTranscriptCompactionContext = 4096
 /// attributed to the change under test.
 private let recordedTranscriptCompactionSamplingMode: GenerationOptions.SamplingMode = .greedy
 
-/// The wall-clock bound this suite runs under, in minutes.
-///
-/// Stated as a constant so the number carries its measurement. See the suite's
-/// own doc comment for the measured run behind it. One minute held while a
-/// call's ceiling was sized by the old allowance; task ^xx02yn6 sizes the
-/// ceilings from the stated budget and re-asks once for an answer past the
-/// span byte budget, and the run of 2026-08-20 exceeded the old one-minute
-/// bound with 8-second model loads on a busy box — so the bound moved to
-/// three minutes, above the dearest cost the same box measured for the
-/// two-chunk fold.
-private let recordedTranscriptCompactionTimeLimitMinutes = 3
-
 // MARK: - Suite
 
 /// The fast answer to one question: does the compaction fold work against a
@@ -126,7 +114,7 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 3
 /// read "whatever recording is on this box" would find nothing on any box, so
 /// it would skip everywhere and prove nothing.
 ///
-/// ## The measurement behind ``recordedTranscriptCompactionTimeLimitMinutes``
+/// ## What this suite measures
 ///
 /// Measured on 2026-08-18, on an Apple silicon box with the summarizer model
 /// already in the Hugging Face cache. Three consecutive runs, each printing its
@@ -159,9 +147,15 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 3
 /// folding real traffic rather than a span sized to one chunk, and it is still
 /// seconds.
 ///
-/// The limit is three minutes — see
-/// ``recordedTranscriptCompactionTimeLimitMinutes`` for the 2026-08-20
-/// measurement that moved it off the old one-minute bound.
+/// The three runs of 2026-08-20 measured the fold at 12.1, then 11.7, then
+/// 12.2 seconds, and the entry-kind check at 0.012, then 0.011, then 0.0
+/// seconds, against ``integrationTestBudgetMinutes``, which is now the limit
+/// and which states the whole three-run table. This suite carried
+/// a three-minute limit of its own before, derived from its own dearest
+/// measured run on a busy box; task ^k0d30s4 replaces that direction with one
+/// budget every suite of this target shares, so a suite states no limit of its
+/// own and the three minutes are gone.
+///
 /// One of the three compaction smoke suites, with
 /// ``CompactionSmokeIntegrationTests`` and
 /// ``AutoCompactionTriggerIntegrationTests``. The three answer one
@@ -169,7 +163,7 @@ private let recordedTranscriptCompactionTimeLimitMinutes = 3
 ///
 @Suite(
     "Real-model smoke test: a recorded transcript boots the compaction fold (task ^pfdrppj)",
-    .timeLimit(.minutes(recordedTranscriptCompactionTimeLimitMinutes)),
+    .timeLimit(.minutes(integrationTestBudgetMinutes)),
     .exclusiveRealModel
 )
 struct RecordedTranscriptCompactionIntegrationTests {
