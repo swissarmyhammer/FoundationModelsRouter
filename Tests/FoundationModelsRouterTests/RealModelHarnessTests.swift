@@ -12,10 +12,15 @@ import Testing
 ///
 /// The move could not be proved by running its callers.
 /// ``CompactionRoundTripIntegrationTests`` and
-/// ``SessionTreeRestorationIntegrationTests`` are gated suites with a 20-minute
-/// limit against a 30B model, which is why the card that added
+/// ``SessionTreeRestorationIntegrationTests`` are gated suites in the nested
+/// `IntegrationTests/` package, which a plain `swift test` cannot see, and each
+/// one loads a real model — which is why the card that added
 /// ``RealModelHarness`` left all three copies in place rather than moving them
-/// on a compile alone.
+/// on a compile alone. Both stated a limit of 20 minutes against the 30B model
+/// then. Both run under `integrationTestBudgetMinutes` of 2 now, and the round
+/// trip drives `mlx-community/Qwen2.5-3B-Instruct-4bit` (task ^k0d30s4); the
+/// argument for this suite is unchanged, because a gated suite still cannot
+/// run on a box with no model.
 ///
 /// So the harness was split instead. Everything about the profile that does not
 /// need a model — ``RealModelHarness/makeResolution(slot:model:context:)`` and

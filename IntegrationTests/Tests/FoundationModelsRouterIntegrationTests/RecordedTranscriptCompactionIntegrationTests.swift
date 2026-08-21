@@ -75,9 +75,10 @@ private let recordedTranscriptCompactionSamplingMode: GenerationOptions.Sampling
 /// ## What this suite does NOT prove
 ///
 /// **It does not measure summary quality.** Whether a fold keeps the facts a
-/// resumed session needs is what `FoundationModelsRouterEvals` measures, over a
-/// hand-written dataset, against the 30B model, in tens of minutes. That tier
-/// stays where it is.
+/// resumed session needs is what `FoundationModelsRouterEvalIntegrationTests`
+/// measures, over a hand-written dataset. That tier drove the 30B model in tens
+/// of minutes when this sentence was written; it drives a small canary under a
+/// two-minute limit now (task ^k0d30s4). That tier stays where it is.
 ///
 /// **It does not prove the recording FORMAT is stable across schema versions.**
 /// The fixture carries ``RecordingSchemaVersion`` 2. A reader that stopped

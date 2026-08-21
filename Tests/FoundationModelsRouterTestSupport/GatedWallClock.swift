@@ -7,12 +7,11 @@ import Foundation
 /// each one to print its own measurement, so a regression against that budget
 /// is visible without a stopwatch. Both gated test targets state a budget, both
 /// hold their tests to it with `.timeLimit`, and both print the measurement
-/// from the suite-scoped trait every gated suite already carries — see
-/// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests` and
-/// `GatedEvalResidencyTrait` in `FoundationModelsRouterEvalIntegrationTests`.
+/// from ``GatedRealModelSuiteTrait``, the suite-scoped trait every gated suite
+/// carries.
 ///
-/// The measuring itself stands here, in one place, so the two traits cannot
-/// drift into printing the same measurement in two shapes — a grep for one tag
+/// The measuring itself stands here, in one place, so no caller can drift into
+/// printing the same measurement in a second shape — a grep for one tag
 /// collects a whole run either way.
 ///
 /// This module is where it can stand. `swift test` builds one `.xctest` for

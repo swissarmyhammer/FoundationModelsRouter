@@ -30,7 +30,8 @@ import Testing
 ///
 /// - **One shared container** would make double residency impossible by
 ///   construction, and it is rejected anyway — for eviction, not for decoding.
-///   ``GatedEvalResidencyTrait`` evicts the runner's own container as its suite
+///   Every suite's `.exclusiveResidentModel(of:)` evicts that suite's own
+///   runner's container as the suite
 ///   ends, and a container two suites share belongs to neither: the first suite
 ///   to end would evict the model out from under the second, and a container
 ///   nobody owns is never evicted at all, so the whole model stays resident
@@ -59,7 +60,7 @@ import Testing
 ///
 /// A permit taken inside a `@Test` body would be taken too late: `.evaluates(...)`
 /// runs the whole evaluation — every sample, and therefore the model load — in
-/// a `TestScoping` trait ahead of the body. ``GatedEvalResidencyTrait`` is a
+/// a `TestScoping` trait ahead of the body. ``GatedRealModelSuiteTrait`` is a
 /// `SuiteTrait` instead, so its scope opens on the suite's own plan step,
 /// before any child step exists, and encloses every test-level trait no matter
 /// where among the suite's own traits it is written. Written order decides
@@ -95,10 +96,11 @@ import Testing
 /// only — `FoundationModelsRouterIntegrationTests` is a separate module in a
 /// separate `swift test` process, so neither gate can see the other, and
 /// ``MetalLibraryTestBootstrap`` has to run once in each of them. Both targets
-/// now run it from the same place: the suite-scoped trait every gated suite
-/// carries. See
-/// ``GatedEvalResidencyTrait/provideScope(for:testCase:performing:)``, and
-/// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests`.
+/// now run it from the same place, and from one shared type: the suite-scoped
+/// ``GatedRealModelSuiteTrait``, which each target binds to its own permit —
+/// this target through `.exclusiveResidentModel(of:)` below, the other through
+/// its own `.exclusiveRealModel`. See
+/// ``GatedRealModelSuiteTrait/provideScope(for:testCase:performing:)``.
 enum GatedEvalSerialGate {
     /// The target-wide permit every gated eval suite holds for its duration.
     static let shared = AsyncSemaphore(value: 1)
@@ -127,110 +129,49 @@ enum GatedEvalSerialGate {
 /// tiers no longer drive.
 let gatedEvalSuiteTimeLimitMinutes = 2
 
-/// A gated eval's real-model runner, as ``GatedEvalResidencyTrait`` drives it.
+/// A gated eval's real-model runner, as its suite's trait drives it.
 protocol GatedEvalRealModelRunner: Sendable {
     /// Evicts the resident model, if one was ever loaded.
     func evictIfLoaded() async
 }
 
-/// Gives one gated eval suite exclusive residency of the real model for its
-/// whole run, then evicts that model however the run ended.
+// MARK: - The trait every gated eval suite carries
+
+/// The tag every wall-clock line of this target carries, so one `grep` collects
+/// the whole run's measurements.
 ///
-/// See ``GatedEvalSerialGate`` for why the exclusion is a permit rather than a
-/// shared container, and why it is held at suite scope rather than inside the
-/// `@Test` body.
-struct GatedEvalResidencyTrait: SuiteTrait, TestScoping {
-    /// The tag every wall-clock line of this target carries, so one `grep`
-    /// collects the whole run's measurements.
-    ///
-    /// Its own tag rather than the sibling target's, because the two targets
-    /// measure different things: a suite here, one test case there.
-    private static let measurementLabel = "gatedEvalSuite"
+/// Its own tag rather than the sibling target's, because the two targets
+/// measure different things: a whole suite here, one test there.
+private let evalMeasurementLabel = "gatedEvalSuite"
 
-    /// The runner whose resident model this suite owns while it holds the
-    /// permit, and which is evicted before the permit is handed back.
-    let runner: any GatedEvalRealModelRunner
-
-    /// Provides the scope for the suite itself, and for nothing else.
+extension Trait where Self == GatedRealModelSuiteTrait {
+    /// Gives this suite exclusive residency of its real model for its whole
+    /// run, installs the metallib symlink before the suite runs, prints the
+    /// suite's own wall clock, and evicts `runner`'s model when the suite ends.
     ///
-    /// Stated rather than inherited: a scope provided per test case as well
-    /// would take the same value-1 permit a second time while the suite still
-    /// held it, and deadlock.
+    /// The trait itself is ``GatedRealModelSuiteTrait``, in
+    /// `FoundationModelsRouterTestSupport`, which the sibling integration
+    /// target carries as well. This function is what binds that one trait to
+    /// THIS target's permit, THIS target's tag, and this suite's own runner —
+    /// see ``GatedEvalSerialGate`` for why the exclusion is a permit rather
+    /// than a shared container, and why it is held at suite scope rather than
+    /// inside the `@Test` body.
     ///
-    /// - Parameters:
-    ///   - test: The test the runner is deciding a scope for.
-    ///   - testCase: The test case, if `test` is a function rather than a
-    ///     suite. Unused — the suite is the only scope this trait provides.
-    /// - Returns: This trait when `test` is the suite, or `nil` otherwise.
-    func scopeProvider(for test: Test, testCase: Test.Case?) -> Self? {
-        test.isSuite ? self : nil
-    }
-
-    /// Installs the metallib symlink, then runs the suite holding
-    /// ``GatedEvalSerialGate/shared``, evicting ``runner``'s model before the
-    /// permit is released whether the suite succeeded or threw.
+    /// The clock is per suite rather than per test. Each suite of this target
+    /// holds exactly one `@Test`, and `.evaluates(...)` runs the whole
+    /// evaluation ahead of that test's body, so the suite's clock IS the test's
+    /// clock and a clock started in the body would measure nothing.
     ///
-    /// This scope is the whole target's single metallib trigger. A suite scope
-    /// opens before any child step exists, so it encloses every test-level
-    /// trait no matter where among the suite's own traits it is written, and
-    /// the symlink is in place before `.evaluates(...)` — itself a
-    /// `TestScoping` trait, which runs the entire evaluation, model load
-    /// included, ahead of the `@Test` body — reaches the GPU. Among the traits
-    /// on one `@Suite` line the first written is the outermost, so this trait
-    /// is outermost against test-level traits, not against a suite trait
-    /// written before it. Triggering from a runner's own model load worked too,
-    /// but only for the runners that remembered to; this trigger covers a new
-    /// gated eval suite whether or not its author knows the symlink exists.
-    ///
-    /// - Parameters:
-    ///   - test: The suite being run.
-    ///   - testCase: Always `nil` here; ``scopeProvider(for:testCase:)``
-    ///     provides no per-test-case scope.
-    ///   - function: The suite's own work.
-    /// - Throws: Whatever `function` throws, rethrown after the model has been
-    ///   evicted.
-    func provideScope(
-        for test: Test,
-        testCase: Test.Case?,
-        performing function: @Sendable () async throws -> Void
-    ) async throws {
-        _ = MetalLibraryTestBootstrap.ensureColocatedMetallib
-        try await GatedEvalSerialGate.shared.withPermit {
-            // The suite's whole wall clock, measured inside the permit so a
-            // wait on another suite is not charged, and printed however the
-            // run ended. Each suite of this target holds exactly one `@Test`,
-            // so the suite's clock IS that test's clock — the recorded
-            // measurement task ^k0d30s4 asks every integration test to print
-            // for itself. `.evaluates(...)` runs the whole evaluation ahead of
-            // the `@Test` body, so a clock started in the body would measure
-            // nothing, and this trait's scope is the one place that encloses
-            // the whole run. The measuring itself is shared with the sibling
-            // target's own trait — see `GatedWallClock`.
-            try await GatedWallClock.printing(
-                label: Self.measurementLabel,
-                subject: "suite=\(test.displayName ?? test.name)"
-            ) {
-                let outcome: Result<Void, any Error>
-                do {
-                    try await function()
-                    outcome = .success(())
-                } catch {
-                    outcome = .failure(error)
-                }
-                await runner.evictIfLoaded()
-                try outcome.get()
-            }
-        }
-    }
-}
-
-extension Trait where Self == GatedEvalResidencyTrait {
-    /// Serializes this suite against every other gated eval suite in the
-    /// target, and evicts its real model when the suite ends.
-    ///
-    /// - Parameter runner: The suite's real-model runner.
+    /// - Parameter runner: The suite's real-model runner, whose model is
+    ///   evicted as the suite ends, however it ended, before the permit is
+    ///   handed back.
     /// - Returns: The trait.
     static func exclusiveResidentModel(of runner: any GatedEvalRealModelRunner) -> Self {
-        GatedEvalResidencyTrait(runner: runner)
+        GatedRealModelSuiteTrait(
+            measurementLabel: evalMeasurementLabel,
+            measuring: .wholeSuite,
+            holding: GatedEvalSerialGate.shared,
+            whenSuiteEnds: { await runner.evictIfLoaded() }
+        )
     }
 }

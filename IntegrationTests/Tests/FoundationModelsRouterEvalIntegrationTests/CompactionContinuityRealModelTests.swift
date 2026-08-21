@@ -72,7 +72,7 @@ private let compactionContinuityEvalRealEvaluation = CompactionContinuityEvaluat
 /// of its own — see ``GatedEvalSerialGate`` for the commands that ask for this
 /// target and the command that leaves it out.
 ///
-/// ``GatedEvalResidencyTrait`` holds this suite's real model exclusive
+/// `.exclusiveResidentModel(of:)` holds this suite's real model exclusive
 /// against the other real-model eval suites, evicts it when the suite ends,
 /// and prints the suite's own wall clock, so a run past
 /// ``gatedEvalSuiteTimeLimitMinutes`` fails rather than merely being slow and

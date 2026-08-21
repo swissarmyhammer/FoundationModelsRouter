@@ -74,10 +74,12 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// recall score. The bound the stage applies to a summarizer's answer keeps a
 /// PREFIX of it, so it drops what the model wrote last, and nothing but a
 /// planted late fact catches that. Whether a fold keeps the facts a resumed
-/// session needs IN GENERAL is still what `FoundationModelsRouterEvals`
-/// measures, over a hand-written dataset, against the 30B model, in tens of
-/// minutes. That tier stays where it is. This suite exists because that tier
-/// answers one bit for 28 minutes, and a broken summarizer, an empty answer, a
+/// session needs IN GENERAL is still what
+/// `FoundationModelsRouterEvalIntegrationTests` measures, over a hand-written
+/// dataset. That tier stays where it is. This suite was written when that tier
+/// drove the 30B model and answered one bit for 28 minutes; the tier drives a
+/// small canary under a two-minute limit now (task ^k0d30s4), and this suite
+/// still earns its place, because a broken summarizer, an empty answer, a
 /// discarded fold, and now a fold that dropped the fact it existed to carry are
 /// all things a few seconds of real model can rule out.
 ///

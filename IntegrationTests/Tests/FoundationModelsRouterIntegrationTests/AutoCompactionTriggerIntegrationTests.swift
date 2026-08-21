@@ -73,9 +73,11 @@ private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = 
 /// here measures it.
 ///
 /// It does not prove the summary is any good either. A fold that carries the
-/// facts a resumed session needs is what `FoundationModelsRouterEvals`
-/// measures, over a hand-written dataset, against the 30B model. That tier
-/// stays where it is.
+/// facts a resumed session needs is what
+/// `FoundationModelsRouterEvalIntegrationTests` measures, over a hand-written
+/// dataset. That tier drove the 30B model when this sentence was written; it
+/// drives a small canary under a two-minute limit now (task ^k0d30s4). That
+/// tier stays where it is.
 ///
 /// It does not prove a fold works at every fixture size. This suite folds one
 /// small transcript with one model.

@@ -55,10 +55,16 @@ enum GatedSuiteSerialGate {
 ///
 /// Two minutes is task ^k0d30s4's budget for every integration test, stated as
 /// the limit so a test past the budget FAILS rather than merely being slow.
-/// Every suite of this target reads this one value, so the budget cannot hold
-/// for some suites and not for others, and a suite cannot buy itself more time
-/// by stating a limit of its own. The sibling target states the same budget in
-/// `gatedEvalSuiteTimeLimitMinutes`.
+/// Every suite of this target that loads a model reads this one value, so no
+/// such suite can buy itself more time by stating a limit of its own. The
+/// sibling target states the same budget in `gatedEvalSuiteTimeLimitMinutes`.
+///
+/// One suite states a limit of its own, and it is STRICTER than this value:
+/// `MetalLibraryBootstrapIntegrationTests` runs under a
+/// `metalLibraryBootstrapTimeLimitMinutes` of 1, because it downloads nothing
+/// and adds four integers — the three runs below measured it at 0.001, 0.001
+/// and 0.0 seconds. A suite may hold itself to less than the budget; the rule
+/// this value carries is that none may hold itself to more.
 ///
 /// Swift Testing measures a time limit in whole minutes, and applies a suite's
 /// limit to each `@Test` inside it rather than to the suite as a whole — so
@@ -141,139 +147,40 @@ enum GatedSuiteSerialGate {
 /// discovered.
 let integrationTestBudgetMinutes = 2
 
-/// Gives one gated real-model suite exclusive residency for its whole run,
-/// installs the metallib symlink every suite in this target needs before it
-/// touches the GPU, and prints each of the suite's tests' own wall clock.
-///
-/// ## Why the wall clock is printed here
-///
-/// Task ^k0d30s4 asks every integration test to print its own measurement, so
-/// a regression against ``integrationTestBudgetMinutes`` is visible without a
-/// stopwatch. Printing it from this trait rather than from each `@Test` body
-/// is the same argument the metallib symlink makes below: a suite that gains a
-/// test gains the measurement with it, and a body that forgets the line cannot
-/// go unmeasured. A body's own clock would also miss whatever a test-level
-/// trait spends ahead of the body.
-///
-/// ## Why both concerns sit in one suite-scoped trait
-///
-/// Both used to rest on convention: every gated `@Test` body opened by reading
-/// ``GatedSuiteSerialGate/shared``, which took the permit and — through that
-/// property's initializer — installed the symlink. Twenty test bodies all
-/// remembered to, and nothing enforced it. A new gated `@Test` written without
-/// that line did not fail an assertion: mlx-swift cannot find its shader
-/// library under a plain `swift test` until the symlink exists, so the first
-/// GPU-device `MLXArray` evaluation aborted the whole test process, taking
-/// every other suite's results with it, under an error naming mlx rather than
-/// the missing line. A `SuiteTrait` written once per `@Suite` cannot be
-/// forgotten by a test the suite later gains.
-///
-/// ## Ordering against test-level traits
-///
-/// A `SuiteTrait`'s scope opens on the suite's own plan step, before any child
-/// step exists, so it encloses every test-level trait no matter where among
-/// the suite's own traits it is written. That matters for any trait that
-/// reaches the GPU ahead of the `@Test` body — `.evaluates(...)` in
-/// `FoundationModelsRouterEvals` is exactly such a trait, which is why its
-/// sibling ``GatedEvalResidencyTrait`` is suite-scoped too. Nothing in this
-/// target carries such a trait today; being suite-scoped means nothing here
-/// has to.
-///
-/// That freedom covers the suite/test boundary only. Written order still
-/// decides nesting *within* one declaration's own trait list, where the first
-/// trait written is the outermost — so a second suite trait that itself
-/// reached the GPU would have to be written after this one on the `@Suite`
-/// line to run inside its scope.
-struct GatedRealModelSuiteTrait: SuiteTrait, TestTrait, TestScoping {
-    /// The tag every wall-clock line of this target carries, so one `grep`
-    /// collects the whole run's measurements.
-    private static let measurementLabel = "gatedTest"
+// MARK: - The trait every gated suite of this target carries
 
-    /// Applies this trait to each `@Test` of the suite as well as to the suite
-    /// itself.
-    ///
-    /// A `SuiteTrait` is asked for a scope on its own suite's step only, unless
-    /// it says so here. The permit wants the suite's step and nothing more, but
-    /// the wall clock this trait prints is a PER-TEST measurement — the budget
-    /// is per test, and Swift Testing charges `.timeLimit` per test — so the
-    /// trait has to reach each test's own step to measure it. Measured on
-    /// 2026-08-20: with this left at its default of `false` the trait ran on
-    /// the suite alone, and the whole target printed no measurement at all.
-    ///
-    /// A recursive `SuiteTrait` has to conform to `TestTrait` as well, and that
-    /// is a hard requirement rather than a matter of taste: `SuiteTrait` alone
-    /// plus this override traps the run inside
-    /// `Runner.Plan._recursivelyApplyTraits(_:to:)` on `SIGTRAP`, before any
-    /// test starts and with no diagnostic. The conformance is what lets the
-    /// plan carry the trait down onto a test.
-    var isRecursive: Bool { true }
-
-    /// Provides the scope for the suite's own step and for each of its tests'
-    /// own steps, and for no test CASE's step.
-    ///
-    /// The two scopes it does provide do different work — see
-    /// ``provideScope(for:testCase:performing:)``. A test case's step is left
-    /// alone because no `@Test` of this target is parameterized: each holds
-    /// exactly one case, so a scope there would print the same measurement a
-    /// second time.
-    ///
-    /// - Parameters:
-    ///   - test: The test the trait is deciding a scope for.
-    ///   - testCase: The test case, if this is a test case's own step rather
-    ///     than a suite's or a test's.
-    /// - Returns: This trait for a suite's or a test's own step, or `nil` for a
-    ///   test case's.
-    func scopeProvider(for test: Test, testCase: Test.Case?) -> Self? {
-        testCase == nil ? self : nil
-    }
-
-    /// Runs one step: the suite itself under the permit, or one of its tests
-    /// under a clock.
-    ///
-    /// The SUITE's step installs the metallib symlink and takes
-    /// ``GatedSuiteSerialGate/shared``. That scope is the whole target's single
-    /// metallib trigger, and the single place its permit is taken.
-    ///
-    /// A TEST's step takes no permit — its suite already holds one, and this
-    /// value-1 permit taken a second time inside itself would deadlock — and
-    /// prints the test's own wall clock however the test ended, so a run past
-    /// ``integrationTestBudgetMinutes`` states what it cost as well as failing.
-    ///
-    /// - Parameters:
-    ///   - test: The suite or the test this step belongs to.
-    ///   - testCase: Always `nil` here; ``scopeProvider(for:testCase:)``
-    ///     provides no per-test-case scope.
-    ///   - function: The step's own work.
-    /// - Throws: Whatever `function` throws, rethrown once the permit is back
-    ///   and the measurement is printed.
-    func provideScope(
-        for test: Test,
-        testCase: Test.Case?,
-        performing function: @Sendable () async throws -> Void
-    ) async throws {
-        guard test.isSuite else {
-            try await GatedWallClock.printing(
-                label: Self.measurementLabel,
-                subject: "test=\(test.displayName ?? test.name)"
-            ) {
-                try await function()
-            }
-            return
-        }
-        _ = MetalLibraryTestBootstrap.ensureColocatedMetallib
-        try await GatedSuiteSerialGate.shared.withPermit {
-            try await function()
-        }
-    }
-}
+/// The tag every wall-clock line of this target carries, so one `grep` collects
+/// the whole run's measurements.
+///
+/// Its own tag rather than the sibling target's, because the two targets
+/// measure different things: one test here, a whole suite there.
+private let integrationMeasurementLabel = "gatedTest"
 
 extension Trait where Self == GatedRealModelSuiteTrait {
     /// Serializes this suite against every other gated real-model suite in the
     /// target, installs the metallib symlink before the suite runs, and prints
     /// each of the suite's tests' own wall clock.
     ///
+    /// The trait itself is ``GatedRealModelSuiteTrait``, in
+    /// `FoundationModelsRouterTestSupport`, which the sibling eval target
+    /// carries as well. This property is what binds that one trait to THIS
+    /// target's permit and THIS target's tag — read the type for why the two
+    /// targets keep separate permits, and for why the whole job sits in a
+    /// suite-scoped trait rather than in the test bodies.
+    ///
+    /// The clock is per test rather than per suite. The budget is stated per
+    /// test, Swift Testing charges `.timeLimit` per test, and a suite of this
+    /// target holds many tests, so a per-test clock is the measurement that can
+    /// be read straight against ``integrationTestBudgetMinutes``. No suite here
+    /// asks for teardown as it ends: each gated `@Test` body evicts whatever it
+    /// loaded for itself.
+    ///
     /// - Returns: The trait.
     static var exclusiveRealModel: Self {
-        GatedRealModelSuiteTrait()
+        GatedRealModelSuiteTrait(
+            measurementLabel: integrationMeasurementLabel,
+            measuring: .eachTest,
+            holding: GatedSuiteSerialGate.shared
+        )
     }
 }

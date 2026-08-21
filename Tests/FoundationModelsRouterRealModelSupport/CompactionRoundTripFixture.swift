@@ -12,7 +12,10 @@ import FoundationModelsRouter
 /// suite lives in the hermetic unit target, so the fixture lives here, in
 /// the plain support target both of them read (task ^cvsh3m9) — a change to
 /// any value reaches both suites at once, and the sizing suite goes red on
-/// every plain `swift test` before a 20-minute gated run can.
+/// every plain `swift test` before a gated run can. The gated run stated a
+/// limit of 20 minutes when this sentence was written; it runs under
+/// `integrationTestBudgetMinutes` of 2 and measures 17.3 seconds now (task
+/// ^k0d30s4), and the sizing suite is still the cheaper of the two.
 public enum CompactionRoundTripFixture {
     /// The working context the round trip resolves the tiny model at —
     /// smaller than ``RealModels/context`` so scripted turns cross the 0.80

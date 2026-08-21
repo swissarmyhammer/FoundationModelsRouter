@@ -344,7 +344,7 @@ actor CompactionContinuityEvalRealSubjectRunner: GatedEvalRealModelRunner {
     }
 
     /// Evicts the resident model, if one was ever loaded — called once by
-    /// ``GatedEvalResidencyTrait`` as the gated suite ends, however it ended,
+    /// `.exclusiveResidentModel(of:)` as the gated suite ends, however it ended,
     /// mirroring ``CompactionEvalRealSubjectRunner/evictIfLoaded()``.
     func evictIfLoaded() async {
         guard let loaded else { return }

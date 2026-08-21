@@ -49,8 +49,10 @@ public enum MetalLibraryTestBootstrap {
     ///
     /// Each gated target reads it from exactly one place, and that place is a
     /// suite-scoped `TestScoping` trait rather than a test body:
-    /// `GatedRealModelSuiteTrait` in `FoundationModelsRouterIntegrationTests`
-    /// and `GatedEvalResidencyTrait` in `FoundationModelsRouterEvals`. A trait
+    /// ``GatedRealModelSuiteTrait``, which both
+    /// `FoundationModelsRouterIntegrationTests` and
+    /// `FoundationModelsRouterEvalIntegrationTests` carry on every gated
+    /// `@Suite`. A trait
     /// written once on the `@Suite` line cannot be forgotten by a test the
     /// suite later gains, and a suite's scope opens before any child step
     /// exists, so it encloses every test-level trait no matter where among the

@@ -1118,20 +1118,27 @@ struct CompactionEvalRepresentativeSubsetTests {
     ///
     /// ONE size, and not a band. `CompactionEvalTierBarTests` holds
     /// ``compactionEvalSubsetTimeLimitMinutes`` to the next whole minute above
-    /// the bound its own seed count derives, from BOTH sides, so the limit as it
-    /// stands states a measurement for exactly one seed count. At eight seeds
-    /// the derived bound rises to 46.9 minutes and the 42 the limit states no
-    /// longer covers it. At six seeds the bound falls to 35.3 minutes and 42 is
-    /// no longer the next whole minute above it.
+    /// the bound its own seed count derives, from both sides. At eight seeds
+    /// the derived bound rises to 2.14 minutes and the 2 the limit states no
+    /// longer covers it, so the upper side of that binding still refuses a
+    /// larger subset.
     ///
-    /// So the `6...8` band this replaced, and the `6...7` it first narrowed to,
-    /// each permitted a size the limit binding refuses: a subset really moved to
-    /// six seeds passed this test and failed
+    /// The lower side no longer refuses one. At six seeds the bound falls to
+    /// 1.61 minutes, which 2 still covers and is still the next whole minute
+    /// above — the two sides only pinned one seed count while the tier drove
+    /// the 30B model at 42 minutes, and tasks ^6ssbakk and ^m03heaa replaced
+    /// that rate with the canary's. So this literal, and
+    /// `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst` below, are what
+    /// hold a SMALLER subset to account now.
+    ///
+    /// The size is stated once for that reason. The `6...8` band this replaced,
+    /// and the `6...7` it first narrowed to, each permitted a size the limit
+    /// binding refused at the time: a subset really moved to six seeds passed
+    /// this test and failed
     /// `subsetTimeLimitIsTheNextWholeMinuteAboveItsBound`. Two tests that
-    /// disagree about which sizes are legal state no property, so the size is
-    /// stated once, and a subset moved to any other count fails here and there
-    /// together until the limit is measured again and edited with it (tasks
-    /// ^6ssbakk, ^xscp198).
+    /// disagree about which sizes are legal state no property, so a subset moved
+    /// to any other count fails here until the limit is measured again and
+    /// edited with it (tasks ^6ssbakk, ^xscp198).
     ///
     /// Written as a literal rather than read back from
     /// ``compactionEvalRepresentativeSeeds``, so the test below compares two

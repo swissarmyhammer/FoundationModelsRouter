@@ -261,10 +261,14 @@ struct CompactionContinuityEvaluationHermeticTests {
 /// Hermetic proof that the continuity tier leaves a live trail naming where a
 /// run stopped (task ^aktsp2e).
 ///
-/// This tier costs 20 minutes against a 30B model and used to print nothing at
-/// all until it ended, so a run that hit its own limit reported one bit — "not
+/// This tier stated a limit of 20 minutes against a 30B model when these lines
+/// were added, and it used to print nothing at all until it ended, so a run
+/// that hit its own limit reported one bit — "not
 /// finished" — and no reading of its output could say whether the model load,
 /// one of a task's dozen-odd steps, or the final instruction had spent the time.
+/// The tier runs under `gatedEvalSuiteTimeLimitMinutes` of 2 against a 1B model
+/// now, measured at 26.2 to 41.4 seconds (task ^k0d30s4). The trail is what
+/// still names the step a red run stopped in, whatever the limit is.
 ///
 /// These tests pin the lines that answer that question, and they pin the one
 /// property the two tiers share: ``CompactionEvalProgressLog/linePrefix`` and

@@ -166,6 +166,49 @@ comments:
     - test evidence: root `swift test` 1025 tests in 96 suites pass with the 1 known issue, plus 77 tests in 9 suites. `swift build --build-tests -Xswiftc -warnings-as-errors` clean on both packages. `swift test --package-path IntegrationTests --skip CompactionEvalFullDataset` ran every test inside the budget with no time-limit cancellation and no Metal abort; its 2 failures are the two known-red items this card does not own — the KV cache reuse test (^de1yq0p) and the continuity eval tier (^mx4jqrn).
     - next: a person settles the whole-dataset tier, then `/review`. Task ^bpwfbyz carries the thin margin on the two dearest tests.
   timestamp: 2026-08-21T03:29:16.677244+00:00
+- actor: claude-code
+  id: 01m0h6wt02mgwk3ph2sgcvzx0t
+  text: |-
+    ### review — findings
+    - evidence: `review sha fe9be35~1..fe9be35` (backend local) — 1 finding, 1 confirmed, 1 refuted, 17 files reviewed, 4 excluded by `.reviewignore`. The finding is at `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift:187` (`reuse/reuse`). The directed doc audit adds 4 more items: `Support/GatedSuiteSerialGate.swift:58`, `Tests/FoundationModelsRouterTests/RealModelHarnessTests.swift:15`, `Tests/FoundationModelsRouterRealModelSupport/CompactionRoundTripFixture.swift:15`, `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift:264`. All four stated percentages of the budget agree with the arithmetic against 120 s. Card column: review.
+    - next: A person must settle the open acceptance criterion for `CompactionEvalFullDatasetIntegrationTests` — delete the tier, or declare it the opt-in tier the everyday command skips. The card does not go to `done` before that choice. The 5 open findings above are the other work.
+  timestamp: 2026-08-21T03:47:36.066508+00:00
+- actor: claude-code
+  id: 01m0h6y137d2mjqxvvf8c0a774
+  text: |-
+    ### finish iteration — findings
+    - implement: changed — 17 files; the round trip 541.6 s to 17.3 s; `integrationTestBudgetMinutes = 2` replaces four per-suite limits; the new `GatedWallClock` prints each test's own wall clock
+    - test: green — 31 of 32 tests under 120 s over three runs; root swift test 1025 in 96 suites plus 77 in 9 suites; both packages build with -warnings-as-errors
+    - commit: fe9be35
+    - review: findings — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift:187 (reuse/reuse), plus 4 doc items from the directed audit at Support/GatedSuiteSerialGate.swift:58, Tests/FoundationModelsRouterTests/RealModelHarnessTests.swift:15, Tests/FoundationModelsRouterRealModelSupport/CompactionRoundTripFixture.swift:15, Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift:264
+    - open, and for a person: criterion 1 on `CompactionEvalFullDatasetIntegrationTests`, which measures 369.1 s and cannot fit two minutes
+  timestamp: 2026-08-21T03:48:16.103225+00:00
+- actor: claude-code
+  id: 01m0h7xbp1zyjja9zza16jc558
+  text: |-
+    Notes for the next agent, 2026-08-21.
+
+    - The `reuse/reuse` rule was read before the extraction. Its second clause is the one that applies: "an existing function is *almost* what is needed, and the right move was to generalize it (parameterize the difference) rather than write a parallel copy". So the two traits are one type with four arguments, and no argument is a guess: each is a difference the two targets really carry.
+    - `import Testing` compiles in the plain `.target` `FoundationModelsRouterTestSupport`. This was probed with a throwaway file and `swift build --target FoundationModelsRouterTestSupport` before any design rested on it. `FoundationModelsRouterEvalSupport` already imports the test-only `Evaluations` framework the same way, and the root manifest records why that works.
+    - `AsyncSemaphore` is `public`, so the shared trait takes each target's own permit as an ordinary argument. Nothing in the extraction needed a widened access level.
+    - The shared trait conforms to `SuiteTrait, TestTrait, TestScoping`. The `TestTrait` conformance is what makes `isRecursive` legal; with `SuiteTrait` alone the run traps on SIGTRAP inside `Runner.Plan._recursivelyApplyTraits(_:to:)` before any test starts. The eval mode leaves `isRecursive` false, so that conformance changes nothing for it.
+    - The doc sweep was run over every "minute" line of both packages, not over the four sites the findings named. Five more sites were wrong. The whole list is in the card's "What landed, 2026-08-21" table.
+    - One sweep hit is worth reading before the next eval change: the subset tier's seed count is no longer pinned from both sides by its limit. Eight seeds derive 2.14 minutes and the limit of 2 refuses them; six seeds derive 1.61 minutes and the limit still covers them. Only the literal `subsetSeedCount` and `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst` refuse a smaller subset now.
+    - No test was added for the trait. The `.wholeSuite` branch cannot be reached hermetically: every suite of the eval target loads a real model, and `Testing.Test` has no public initializer, so no unit test can drive `provideScope` directly. The card's verification plan runs no eval tier, so that branch rests on the build and on the `.eachTest` run below.
+  timestamp: 2026-08-21T04:05:22.753599+00:00
+- actor: claude-code
+  id: 01m0h7xvh5s88fd0y5n0rd87b6
+  text: |-
+    ### implement — changed
+    - evidence: 12 files. New `Tests/FoundationModelsRouterTestSupport/GatedRealModelSuiteTrait.swift` (the one shared trait). Edited `Tests/FoundationModelsRouterTestSupport/GatedWallClock.swift`, `Tests/FoundationModelsRouterTestSupport/MetalLibraryTestBootstrap.swift`, `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift`, `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/GatedEvalSerialGate.swift`, `.../Support/CompactionEvalRealSubjectRunner.swift`, `.../Support/CompactionContinuityEvalRealSubjectRunner.swift`, `.../CompactionEvalRealModelTests.swift`, `.../CompactionContinuityRealModelTests.swift`, `.../AutoCompactionTriggerIntegrationTests.swift`, `.../CompactionSmokeIntegrationTests.swift`, `.../RecordedTranscriptCompactionIntegrationTests.swift`, `Tests/FoundationModelsRouterTests/RealModelHarnessTests.swift`, `Tests/FoundationModelsRouterRealModelSupport/CompactionRoundTripFixture.swift`, `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift`, `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`.
+    - finding 1 CLOSED: `GatedEvalResidencyTrait` is deleted. One public `GatedRealModelSuiteTrait` stands in `FoundationModelsRouterTestSupport`, beside `GatedWallClock`, and each target binds it to its OWN permit, its own tag, its own measurement granularity and its own teardown.
+    - findings 2 to 5 CLOSED, and the cause swept: nine doc sites corrected, not four. The table is in the card.
+    - build: `swift build --build-tests -Xswiftc -warnings-as-errors` clean in the root package AND in `IntegrationTests`. Zero warnings.
+    - test: root `swift test` gives 1025 tests in 96 suites passed with the 1 known issue, plus 77 tests in 9 suites passed.
+    - test: `swift test --package-path IntegrationTests --filter 'CompactionSmokeIntegrationTests|AutoCompactionTriggerIntegrationTests|RecordedTranscriptCompactionIntegrationTests|CompactionRoundTripIntegrationTests|MetalLibraryBootstrapIntegrationTests'` gives 7 tests in 5 suites passed in 52.634 seconds, and EVERY test printed its `[gatedTest] ... wallClockSeconds=` line: 0.0, 14.3, 18.4, 5.0, 17.3, 0.0, 11.9. The shared trait works end to end.
+    - not run, as the card directs: the whole integration target, and every eval tier.
+    - next: /review. Acceptance criterion 1 stays open for a person — the choice for `CompactionEvalFullDatasetIntegrationTests`.
+  timestamp: 2026-08-21T04:05:38.981706+00:00
 position_column: doing
 position_ordinal: '80'
 title: Every integration test must run in under 2 minutes — boot from a recording, or make the test smarter
@@ -249,4 +292,76 @@ Nothing in this card's body decides it: the card's own table does not list this 
 > 8 file(s) not reviewed — excluded by an ignore rule:
 > - `.kanban/ (from .reviewignore)` — 8 file(s)
 
-- [x] `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift:511` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants. #compaction #eval #test-debt
+- [x] `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityDataset.swift:511` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+
+## Review Findings (2026-08-20 22:32)
+
+> Scope: `review sha fe9be35~1..fe9be35` — reviewed the diffs only — lines this change added or modified. 17 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift:187` `reuse/reuse` — GatedRealModelSuiteTrait reimplements a trait that already exists in the eval tests as GatedEvalResidencyTrait. The two traits are 0.97 similar in structure and logic, suggesting one should extend or unify the other rather than duplicate. Extract a shared base trait or unified implementation to Tests/FoundationModelsRouterTestSupport/ (where GatedWallClock already lives) that both integration and eval test targets can inherit from, rather than maintaining two nearly-identical copies. This keeps the single canonical implementation centralized and reduces future maintenance burden when the behavior needs to change.
+
+### Directed doc audit, 2026-08-20
+
+The review asked for two more checks on the docs of this commit: that each stated percentage agrees with the value the constant holds, and that no doc still gives a limit this commit removed.
+
+**The percentages are correct.** `integrationTestBudgetMinutes` is 2, thus 120 seconds. The repository states four percentages of the budget, and all four agree with the measurement:
+
+| site | stated | measured / 120 s | agrees |
+|---|---|---|---|
+| `Support/GatedSuiteSerialGate.swift:129` | 116.4 s is 97 percent | 97.00 % | yes |
+| `SessionTreeRestorationIntegrationTests.swift:54` | 116.4 s is 97 percent | 97.00 % | yes |
+| `RealToolTurnComparisonTests.swift:64` | 86.7 s is 72 percent | 72.25 % | yes |
+| `RecordingHandleIntegrationTests.swift:49` | 101.5 s is 85 percent | 84.58 % | yes |
+
+The ratios agree also: 541.6 s is 4.5 times the budget, 101.5 s is six times the 16.7 s of run 1, and 67.2 s is 2.8 times the 24.4 s of run 3. The two derived eval limits agree with their own arithmetic: 7 times 15.9 s plus 1.3 s is 112.6 s, thus 2 minutes; 24 times 15.9 s plus 1.3 s is 382.9 s, thus 7 minutes.
+
+No doc names a constant that this commit deleted. `compactionSmokeTimeLimitMinutes`, `recordedTranscriptCompactionTimeLimitMinutes`, `autoCompactionTriggerTimeLimitMinutes` and `compactionRoundTripTinyModel` have no reference left in the tree.
+
+**These doc items are open:**
+
+- [x] `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift:58` — The doc of `integrationTestBudgetMinutes` says "Every suite of this target reads this one value, so the budget cannot hold for some suites and not for others, and a suite cannot buy itself more time by stating a limit of its own." This is not correct. `MetalLibraryBootstrapIntegrationTests.swift:11` holds its own `metalLibraryBootstrapTimeLimitMinutes` of 1 and applies it at line 60. This commit changed both files. The limit of 1 minute is stricter and is deliberate, but the doc must give the exception, or the claim must be made more narrow.
+- [x] `Tests/FoundationModelsRouterTests/RealModelHarnessTests.swift:15` — The doc says `CompactionRoundTripIntegrationTests` and `SessionTreeRestorationIntegrationTests` "are gated suites with a 20-minute limit against a 30B model". Two facts are now wrong: both suites run at `integrationTestBudgetMinutes` of 2, and the round trip drives `mlx-community/Qwen2.5-3B-Instruct-4bit`, not the 30B.
+- [x] `Tests/FoundationModelsRouterRealModelSupport/CompactionRoundTripFixture.swift:15` — The doc says "every plain `swift test` before a 20-minute gated run can". The gated run it gives is now limited to 2 minutes and measures 17.3 s.
+- [x] `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift:264` — The doc says "This tier costs 20 minutes against a 30B model", in the present tense. The tier now runs under `gatedEvalSuiteTimeLimitMinutes` of 2 against the 1B `CompactionContinuityRealModel`, measured at 26.2 to 41.4 s.
+
+The last three files are outside the diff of this commit, so the engine could not give them. The review asked for the check, thus they are recorded here. Other docs that give the old limits as history ("stated before", "used to", "replaces") are correct and need no change.
+
+## What landed, 2026-08-21
+
+The five open findings above are corrected.
+
+**Finding 1, the shared trait.** `GatedRealModelSuiteTrait` is now ONE public type in `Tests/FoundationModelsRouterTestSupport/GatedRealModelSuiteTrait.swift`, beside `GatedWallClock`. `GatedEvalResidencyTrait` is gone. The three jobs both copies did — install the metallib symlink, hold a value-1 permit for the suite, measure and print — stand there once. What really differs between the two targets is an argument:
+
+- the permit: each target keeps its OWN value-1 permit, because each is a separate `swift test` process, and one shared permit would bound neither;
+- the measurement: `.eachTest` for the integration target, whose suites hold many tests, and `.wholeSuite` for the eval target, whose `.evaluates(...)` trait runs the whole evaluation ahead of the one test body;
+- the tag: `gatedTest` against `gatedEvalSuite`, so one grep still reads one target's whole run;
+- the teardown: the eval target evicts its runner's model as the suite ends, and the integration target asks for nothing, because each of its test bodies evicts what it loaded.
+
+Each target keeps its own convenience — `.exclusiveRealModel` in `GatedSuiteSerialGate.swift`, `.exclusiveResidentModel(of:)` in `GatedEvalSerialGate.swift` — and each binds the shared trait to its own permit and its own tag. `isRecursive` follows the measurement, so the `TestTrait` conformance the recursive mode needs is stated once and the SIGTRAP hazard is recorded once.
+
+**Findings 2 to 5, and the sweep.** The rule that a finding samples a cause was applied: both packages were grepped for every doc that states a limit this work removed, or that describes a suite as a 30B suite in the present tense. Nine sites were corrected, not four:
+
+| site | what was wrong |
+|---|---|
+| `Support/GatedSuiteSerialGate.swift` | the claim that no suite states a limit of its own; `MetalLibraryBootstrapIntegrationTests` states a STRICTER 1 minute |
+| `Tests/FoundationModelsRouterTests/RealModelHarnessTests.swift` | "20-minute limit against a 30B model" |
+| `Tests/FoundationModelsRouterRealModelSupport/CompactionRoundTripFixture.swift` | "before a 20-minute gated run can" |
+| `Tests/FoundationModelsRouterEvals/CompactionContinuityEvaluationTests.swift` | "This tier costs 20 minutes against a 30B model" |
+| `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift` | "the derived bound rises to 46.9 minutes and the 42 the limit states" — the 30B rate, and a limit of 42 that is now 2 |
+| `AutoCompactionTriggerIntegrationTests.swift` | the eval tier named as `FoundationModelsRouterEvals` "against the 30B model" |
+| `CompactionSmokeIntegrationTests.swift` | the same, plus "in tens of minutes" and "answers one bit for 28 minutes" |
+| `RecordedTranscriptCompactionIntegrationTests.swift` | the same, plus "in tens of minutes" |
+| `Tests/FoundationModelsRouterTestSupport/MetalLibraryTestBootstrap.swift` | named the deleted `GatedEvalResidencyTrait`, in the wrong target |
+
+Docs that frame the old limits as history are correct and were left as they stand.
+
+**One thing the sweep found that is more than a doc correction.** `CompactionEvalRepresentativeSubsetTests` claimed its stated seed count is pinned from BOTH sides by the limit binding. At the 30B rate it was. At the canary's rate it is not: eight seeds derive 2.14 minutes, which the limit of 2 refuses, but six seeds derive 1.61 minutes, which 2 still covers and is still the next whole minute above. So the upper side still refuses a larger subset and the lower side refuses nothing. The doc now states that, and names `subsetHoldsTheSeedCountItsTimeLimitWasMeasuredAgainst` as what holds a smaller subset to account.
+
+**What this pass did NOT exercise at run time.** The `.wholeSuite` branch of the shared trait — the eval target's mode. The card's own verification plan runs the fast gated integration suites and no eval tier, so that branch is proved by the build and by the `.eachTest` branch it shares every line with, and the eval tiers measure it on the next full run.
+
+## The card stays in Review
+
+One acceptance criterion is open and needs a person, not an agent: the choice for `CompactionEvalFullDatasetIntegrationTests` between deletion and a declared opt-in tier. That criterion holds this card in `review`, together with the findings above. #compaction #eval #test-debt

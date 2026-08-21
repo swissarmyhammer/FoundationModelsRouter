@@ -187,9 +187,10 @@ private func expectFactRetention(of runner: CompactionEvalRealSubjectRunner) asy
 /// load failure that no real-model suite in this repository could get past.
 /// That was wrong: the failure was a resource-colocation bug in `swift test`'s
 /// binary layout, which ``MetalLibraryTestBootstrap`` now fixes from inside
-/// ``GatedEvalResidencyTrait``, this suite's own trait.
+/// ``GatedRealModelSuiteTrait``, this suite's own trait.
 ///
-/// ``GatedEvalResidencyTrait`` holds this suite's real model exclusive against
+/// `.exclusiveResidentModel(of:)` holds this suite's real model exclusive
+/// against
 /// every other real-model eval suite and evicts it when the suite ends, and
 /// ``compactionEvalSubsetTimeLimitMinutes`` bounds a hung real-model load — see
 /// ``GatedEvalSerialGate`` for why the target needs both.
