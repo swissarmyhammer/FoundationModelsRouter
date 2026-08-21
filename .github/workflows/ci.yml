@@ -1,5 +1,40 @@
 name: CI
 
+# This workflow calls the shared swift-ci workflow. It runs no repo-local
+# test job of its own.
+#
+# The unit/integration split is structural. The root `Package.swift` declares
+# no integration target. The real-model suites live in the nested
+# `IntegrationTests/` package (`FoundationModelsRouterIntegrationTests` and
+# `FoundationModelsRouterEvalIntegrationTests`), so `swift test` at the root
+# cannot reach them, and `swift test --package-path IntegrationTests` runs
+# them. A run of a package executes every suite in it, so neither command can
+# silently match nothing. No environment variable selects a suite, and none
+# may start to: this workflow passes no `integration-gate-env` input (a LEGACY
+# input, kept only for callers that have not migrated).
+#
+# The shared workflow does what the two repo-local jobs did before:
+#
+# - Its unit job builds the nested package on EVERY run. The root build does
+#   not compile the nested package, so this build step keeps a broken
+#   integration test visible between the runs that execute it.
+# - Its integration job builds the nested package and runs
+#   `swift test --package-path IntegrationTests`.
+# - Its integration job runs after the unit job, through the shared
+#   workflow's own `needs:` edge. The two jobs are ordered, not parallel, on
+#   purpose: both run on the self-hosted macOS pool, and a real-model run
+#   holds a multi-gigabyte model resident on the GPU for the whole of it. A
+#   hermetic failure is also cheap to learn before that half hour is spent.
+#
+# No `integration-metallib-glob` is passed. The shared workflow can copy a
+# metallib beside each `.xctest` bundle, but this repository does not need
+# that copy today: `MetalLibraryTestBootstrap` installs the link from inside
+# each real-model process, and `MetalLibraryBootstrapIntegrationTests` is the
+# suite that proves the shaders load. Card ^q8gkngy probes whether even that
+# bootstrap is still necessary. This call passes no glob in either outcome.
+#
+# `CIWorkflowTests` pins this call and its input.
+
 on:
   push:
     branches: [main]
@@ -10,59 +45,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# The real-model suites are selected by PACKAGE, never by an environment
-# variable and never by a name regex. The root package declares no integration
-# target, so `swift test` at the root runs only the hermetic targets
-# (`FoundationModelsRouterTests`, `FoundationModelsRouterEvals`) by
-# construction. The nested `IntegrationTests/` package holds the two
-# real-model targets (`FoundationModelsRouterIntegrationTests`,
-# `FoundationModelsRouterEvalIntegrationTests`), and
-# `swift test --package-path IntegrationTests` runs them. A run of a package
-# executes every suite in it, so neither command can silently match nothing —
-# the guard script the name-regex selectors needed is gone with them.
 jobs:
-  test:
-    name: Build & hermetic tests
-    runs-on: [self-hosted, macOS]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Toolchain versions
-        run: |
-          sw_vers
-          swift --version
-
-      - name: Clean build directory
-        run: rm -rf .build
-
-      - name: Build (incl. tests)
-        run: swift build --build-tests
-
-      - name: Run the hermetic tests
-        run: swift test
-
-  real-model:
-    name: Real-model tests
-    # After the hermetic job, and not beside it: both run on the self-hosted
-    # macOS pool, and a real-model run holds a multi-gigabyte model resident on
-    # the GPU for the whole of it. A hermetic failure also costs nothing to
-    # learn before that half hour is spent.
-    needs: test
-    runs-on: [self-hosted, macOS]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Clean build directory
-        run: rm -rf .build IntegrationTests/.build
-
-      - name: Build (incl. tests)
-        run: swift build --build-tests --package-path IntegrationTests
-
-      # No metallib is copied beside the test bundle here, as the shared
-      # workflow used to do: `MetalLibraryTestBootstrap` installs that link from
-      # inside each real-model process, and `MetalLibraryBootstrapIntegrationTests`
-      # is the suite that proves the shaders load.
-      - name: Run the real-model tests
-        run: |
-          swift test \
-            --package-path IntegrationTests
+  ci:
+    uses: swissarmyhammer/workflows/.github/workflows/swift-ci.yaml@main
+    with:
+      # The real-model suites are a nested package. This input makes the unit
+      # job build it on every run and makes the integration job run it.
+      integration-package-path: IntegrationTests
