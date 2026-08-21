@@ -28,10 +28,12 @@ name: CI
 #
 # No `integration-metallib-glob` is passed. The shared workflow can copy a
 # metallib beside each `.xctest` bundle, but this repository does not need
-# that copy today: `MetalLibraryTestBootstrap` installs the link from inside
-# each real-model process, and `MetalLibraryBootstrapIntegrationTests` is the
-# suite that proves the shaders load. Card ^q8gkngy probes whether even that
-# bootstrap is still necessary. This call passes no glob in either outcome.
+# that copy: `MetalLibraryTestBootstrap` installs the link from inside each
+# real-model process, and `MetalLibraryBootstrapIntegrationTests` is the
+# suite that proves the shaders load. Card ^q8gkngy measured on 2026-08-21
+# that mlx-swift 0.31.6 (revision 0bb916c6) still aborts without that
+# bootstrap, so the bootstrap stays; the header of
+# `MetalLibraryTestBootstrap.swift` holds the measurement.
 #
 # `CIWorkflowTests` pins this call and its input.
 

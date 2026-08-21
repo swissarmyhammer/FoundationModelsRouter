@@ -38,6 +38,29 @@ import Foundation
 ///
 /// Ported from the sibling `FoundationModelsMultitool` package, which resolves
 /// the same `mlx-swift`/`Cmlx` dependency and so carries the same defect.
+///
+/// ## Measured on 2026-08-21: this bootstrap is still necessary
+///
+/// Do not delete this type before you repeat the probe below on a newer
+/// mlx-swift. The probe (card ^q8gkngy) removed the one call of
+/// ``ensureColocatedMetallib`` from ``GatedRealModelSuiteTrait``, deleted the
+/// `mlx.metallib` symlinks that earlier runs had left beside each `.xctest`
+/// binary, and ran
+/// `swift test --package-path IntegrationTests --filter MetalLibraryBootstrapIntegrationTests`
+/// against mlx-swift revision `0bb916c67f4b9e5c682cbe02a42c701c93ab5021`
+/// (tag 0.31.6) and mlx-swift-lm fork revision
+/// `ba8ff43b9040ceec43c84f28637a250f33590633` (branch `stable`). The first
+/// GPU-device `MLXArray` evaluation aborted the process with this text:
+///
+/// ```
+/// MLX error: Failed to load the default metallib. library not found library
+/// not found library not found library not found  at
+/// .../mlx-swift/Source/Cmlx/mlx-c/mlx/c/array.cpp:232
+/// ```
+///
+/// With the call restored, the same command passed and the symlink was in
+/// place again. mlx-swift 0.31.6 does not find its shader library on its own
+/// under a plain `swift test` of the nested package.
 public enum MetalLibraryTestBootstrap {
 
     /// Installs the symlink exactly once per test process.

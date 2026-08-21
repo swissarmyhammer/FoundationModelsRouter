@@ -145,8 +145,24 @@ comments:
     - evidence: 8 files — new `Tests/FoundationModelsRouterTestSupport/TextFileLines.swift`, new `Tests/FoundationModelsRouterTests/TextFileLinesTests.swift`; edited `CIWorkflowTests.swift`, `RecorderTests.swift`, `RecordingDurabilityTests.swift`, `SessionTreeRestorationTests.swift`, `TranscriptFidelityTests.swift`, `TranscriptNestingTests.swift`. Root `swift test`: 1031 + 77 passed, 0 failed, exit 0. `swift build --build-tests --package-path IntegrationTests`: complete, exit 0.
     - next: `/review h56as4j`
   timestamp: 2026-08-21T14:29:32.913217+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0jbxhbw19xafxw0x7kbrss9
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 57b00df) — 0 findings, 0 confirmed, 0 refuted; 8 files reviewed, 2 skipped by .reviewignore (.kanban/). The prior finding at CIWorkflowTests.swift:83 is checked.
+    - next: none — task moved to done
+  timestamp: 2026-08-21T14:34:37.308713+00:00
+- actor: claude-code
+  id: 01m0jby38eb7t1ee6tjjdyvaan
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 8 files (new TextFileLines.swift + TextFileLinesTests.swift; six tests now call TextFileLines.read(from:))
+    - test: green — swift test, 1031 + 77 passed, 0 failed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: 57b00df
+    - review: clean — 0 findings on HEAD~1..HEAD; prior finding CIWorkflowTests.swift:83 checked; task moved to done
+  timestamp: 2026-08-21T14:34:55.630090+00:00
+position_column: done
+position_ordinal: ffe080
 title: The unit CI job does not build the nested IntegrationTests package — replace the repo-local jobs with the shared swift-ci.yaml call
 ---
 Found by the verification pass of ^zaz79a4 on 2026-08-21.
