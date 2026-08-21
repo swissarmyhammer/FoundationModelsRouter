@@ -34,8 +34,35 @@ comments:
     - gated run: all four suites in one process. Wall clocks are in the description. The 2 red issues are only the `cachedTokenCount` pair of `secondTurnReusesFirstTurnsKVCache` (card ^de1yq0p, fork card ^7fy0d2z); apart from them the 15 tests passed. No test came near its limit; the dearest is 84.5 s of 120 s.
     - next: /review.
   timestamp: 2026-08-21T06:49:08.716977+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0hhvafz5cv95j1wbfq0t01w
+  text: |-
+    ### review — clean
+
+    - evidence: `review sha d9bc148~1..d9bc148`. 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 6 files reviewed; the 4 `.kanban/` files are not reviewed because of `.reviewignore`. No `## Review Findings` section was on this card before, and all 4 acceptance criteria are marked.
+    - tripwire widening (question 1): SAFE. There are 11 call sites of `RealModelHarness.make`. No site can embed through a harness profile. A repo-wide search for `.embedding.embed(`, `EmbedTool(`, `.embedding.dimension` and `.embedding.makeSession` gives 7 driving sites, and every one of them takes its profile from `router.resolve(profile:reporting:)`, not from the harness. In `Sources/`, only `RoutedEmbedder.embed(texts:)` and `EmbedTool.embed` can touch a `LoadedEmbeddingContainer`, and `Sources/FoundationModelsRouter/Compaction/` has no match for `embed` at all. `RoutedSessionActor` holds no `RoutedEmbedder`. `SessionTreeRestoration` throws `slotNotInProfile` for an `.embedding` slot instead of an embed call. Thus a plain `.standard` turn cannot reach the stub. The only caller that embeds is the new test itself, and it holds the call in `withKnownIssue`.
+    - dropped properties (question 2): NONE. Each difference the survey records is kept or is removed on purpose:
+      - Context window: `SlotResolution.init` has `contextTokens: Int = ProfileDefinition.defaultContext` (8192). The four suites now state that same value. `RealModelHarnessTests.statingTheProfileDefaultMatchesOmittingIt` holds the two spellings equal.
+      - Greedy decoding: `RealModelContainer.load` makes a new `LiveModelLoader` for each call and returns a new `MLXFoundationModelsContainer` value. It caches weights only, not the sampling mode, so `respondRun()` and `streamRun()` cannot contaminate each other. `RealModelHarness.make` sends the container through without a change, and `GenerationOptions(samplingMode:)` reads it at generation. The re-wrap is correctly removed.
+      - `definitionName`: no code in `Sources/` reads `LanguageModelProfile.definitionName`. The four suites do not contain the word. The harness writes its sidecars with `profile: nil`, so the name does not go to `session.json`.
+      - Router `recordingsDir`: `Router.recordingsDir` is internal, so the separate `IntegrationTests` package cannot read it. Its only uses in `Sources/` are the `recorder == nil` fallback (dead here, because both the old code and the new code give an explicit `JSONLRecorder`) and `Router.makeDurableRecording`, which only `Router.resolve` calls. The suite never calls `resolve`. Session recording reads `durableRecording.root`, which is the same directory as before. The change of the field is inert.
+      - `Harness.router` field: no use of `harness.router` is left. `RealModelHarness.make` gives every handle `routerId: router.id`, so `profile.standard.routerId` is the same value as the old `harness.router.id`.
+      - Gates and recorder: one `JSONLRecorder` goes to the router and to all three handles; one `ResidentModelGates` set is shared by `.standard` and `.flash`; a second set goes to `.embedding`. This is the shape of all four copies that were removed.
+    - root test count: the 2 known issues of the root `swift test` are `BoundedWaitTests` (which was there before) and the new tripwire test. This agrees with the card.
+    - next: none. The card goes to `done`.
+  timestamp: 2026-08-21T06:59:01.759520+00:00
+- actor: claude-code
+  id: 01m0hhwf9b2r9yz583hbmdaqnn
+  text: |-
+    ### finish iteration — clean
+    - implement: changed — 6 source files; the four suites call `RealModelHarness.make` and no hand-built profile is left in the integration target; the embedding tripwire was kept and moved onto the harness stub, written test-first, so three more suites gain it
+    - test: green — root swift test 1026 in 96 suites plus 77 in 9 suites; both packages build with -warnings-as-errors; the four gated suites ran in one process at 16.8, 18.3, 125.3 and 281.5 s, with no test near its 120-second limit
+    - commit: d9bc148
+    - review: clean — 0 findings; the reviewer proved the widened tripwire cannot fire on correct behaviour (11 harness call sites, none can embed) and checked each surveyed difference for silent loss; task moved to `done`
+    - stays red on purpose: the `cachedTokenCount` pair, whose cause is in the vendored fork (^de1yq0p here, ^7fy0d2z on the fork board)
+  timestamp: 2026-08-21T06:59:39.435511+00:00
+position_column: done
+position_ordinal: ffdc80
 title: Move the four remaining hand-built profile copies in the integration target onto RealModelHarness
 ---
 Task `^hxyj3q1` moved the THREE profile copies it names onto `RealModelHarness.make`. A survey done for that card found FOUR more suites in `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/` that build a `LanguageModelProfile` by hand:

@@ -322,11 +322,11 @@ struct RoutedEmbedder {
 // Transcripts & recording). `fork` sets `parentID = self.id`, nests its directory
 // under the parent, and diverges into an independent child session that correctly
 // **inherits the parent's conversation history** (seeded from the parent's
-// transcript via `LanguageModelSession.init(model:tools:transcript:)`) — but does
-// NOT inherit the parent's prefilled-prefix *compute* cheaply: that reuse is a
-// performance gap in the pinned `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`,
-// which has no persisted-cache state to copy at the pinned revision, not a
-// correctness gap (see Backends).
+// transcript via `LanguageModelSession.init(model:tools:transcript:)`). Whether the
+// child also reuses the parent's prefilled-prefix *compute* is decided inside the
+// pinned `mlx-swift-lm` dependency's `MLXLanguageModel.Executor`, which does carry a
+// prompt cache at the pinned revision — a performance property of that dependency,
+// not a correctness gap (see Backends).
 protocol RoutedSession: Actor {
     var profile: LanguageModelProfile { get }    // retained: keeps the models resident
     var routerID: ULID { get }                   // the recording group
@@ -500,26 +500,16 @@ transcript. So **conversation history is correctly inherited across a fork** —
 child sees everything its parent said and heard up to the fork point, and forking
 mid-conversation no longer silently drops that context.
 
-What this primitive does **not** give back is cheap prefix reuse at the GPU level.
-Verified by reading the pinned `swissarmyhammer/mlx-swift-lm` fork's
-`Libraries/MLXFoundationModels/MLXLanguageModel.swift` (branch
-`mlx-foundationmodels`, revision `e6ccd2721` as of 2026-06-29, tracking upstream PR
-#334): `MLXLanguageModel`'s `Executor.respond(to:model:streamingInto:)` re-derives
-its full `LMInput` from `TranscriptConverter.mlxMessages(for: request.transcript)`
-and runs a fresh `MLXLMCommon.generate(...)` call on **every** turn — there is no
-`KVCache`, prompt cache, or any other persisted-across-turns state anywhere in that
-module (confirmed by grep: zero `KVCache`/`promptCache`/`trim(`/`savePromptCache`
-references in `Libraries/MLXFoundationModels`). So every turn of every session —
-forked or not — reprocesses its whole transcript from scratch under this backend.
+What this primitive does **not** guarantee is cheap prefix reuse at the GPU level.
+The pinned `swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor` does
+carry a prompt cache between the turns of one session, but it refuses that cache
+for the model the gated suite drives. "Sessions & KV cache" holds the evidence and
+the revision; it is not repeated here.
 **This is a performance observation, not a correctness gap**: conversation
 correctness (fork inherits the right history; a session sees its own prior turns)
-is fully implemented and tested today; only the *compute-reuse* optimization
-(skipping re-derivation of the shared prefix's `LMInput`/KV state) is unavailable,
-because the upstream `MLXLanguageModel` executor this router depends on has no
-persisted-cache mechanism to reuse it against. That upstream gap is filed and
-tracked as its own concern against the `mlx-swift-lm` fork, not as an open item of
-this router's design — revisit if a future `mlx-swift-lm` release adds a
-persisted-cache executor.
+is fully implemented and tested today. The correction that would make the reuse
+engage is one guard in the fork, filed on the fork's own board, not an open item of
+this router's design.
 
 ## Guided generation
 
@@ -631,8 +621,8 @@ recognize with a typed `ConversionError` (see "The engine").
 
 ## Sessions & KV cache
 
-**Correctness: implemented. Compute-reuse: a performance gap in a dependency we
-don't control, not a correctness gap.** The mechanism originally sketched here was
+**Correctness: implemented. Compute-reuse: a performance property of the vendored
+`mlx-swift-lm` fork, corrected on that fork's own board, not a correctness gap.** The mechanism originally sketched here was
 designed for owning MLX's KV cache directly below `ChatSession`, which we no
 longer construct. Under `LanguageModelSession`, the real primitive is
 transcript continuation: `LanguageModelSession.init(model:tools:transcript:)`
@@ -648,27 +638,42 @@ integration suite, against a real model
 `makeForkSeedsFromParentTranscript`) — not aspirational. That same gated file also
 carries `secondTurnReusesFirstTurnsKVCache`, a hard, never-weakened assertion that
 `usage.input.cachedTokenCount > 0` on a session's second turn — written as the
-acceptance test for the upstream compute-reuse fix described below. It is
-currently expected to fail against the pinned revision (every `usage` this
-backend's `Executor` constructs hardcodes `cachedTokenCount: 0` — see the
-compute-reuse discussion just below), and it lives in the
+acceptance test for the compute-reuse fix described below. It is red against the
+pinned revision, and the reason is the executor's own input guard, NOT a missing
+prompt cache — see the compute-reuse discussion just below. It lives in the
 `FoundationModelsRouterIntegrationTests` target in the nested
 `IntegrationTests/` package, which an everyday root `swift test` leaves out;
-it will start passing the moment the upstream fix lands.
+it turns green when the fork accepts the input this model's processor renders.
 
-What is *not* recovered is cheap prefix reuse at the compute layer. Reading the
-pinned `swissarmyhammer/mlx-swift-lm` fork's `MLXLanguageModel.Executor` (branch
-`mlx-foundationmodels`, revision `e6ccd2721`) found it re-derives its full model
-input from the request's `Transcript` and runs a *fresh* `MLXLMCommon.generate(...)`
-on every single turn — there is no `KVCache`, prompt cache, or any
-persisted-across-turns state anywhere in `Libraries/MLXFoundationModels`
-(confirmed by grep: zero hits for `KVCache`/`promptCache`/`trim(`/`savePromptCache`).
-So every turn, forked or not, reprocesses its whole transcript from scratch under
-this backend today. This is purely a **performance** characteristic of the
-upstream `MLXLanguageModel` executor this router depends on — it has no
-persisted-cache mechanism to reuse a shared prefix's compute against, at the
-pinned revision. That upstream fix is filed and tracked as its own concern against
-the `mlx-swift-lm` fork, not as an open correctness item of this router's design.
+What is *not* recovered is cheap prefix reuse at the compute layer — and the
+reason is not the one this document used to give. The `IntegrationTests` package
+pins the `swissarmyhammer/mlx-swift-lm` fork at branch `stable`, revision
+`ba8ff43b`, and that revision **does** carry a prompt cache:
+`Libraries/MLXFoundationModels/ExecutorPromptCache.swift` keeps one `[KVCache]` for
+each live session in an actor-backed store, the executor checks that cache out
+before it generates and checks it back in when the turn ends, and
+`MLXLanguageModel.swift` stamps `cachedTokenCount: promptCache.reusedTokenCount`.
+Nothing on that path hardcodes a zero.
+
+The cache never engages for the model the gated suite drives.
+`ExecutorPromptCachePlan.make` opens with `guard input.image == nil, input.video ==
+nil, input.audio == nil, input.text.mask == nil, input.text.tokens.ndim == 1 else
+{ return nil }`. `RealModels.standard` is `mlx-community/Muse-Glimmer-30B-4bit`,
+which `MuseGlimmerProcessor` prepares; its text-only branch returns
+`MLXArray(promptTokens).expandedDimensions(axis: 0)` with an all-ones mask — rank
+2, and a mask. The guard refuses that input, the turn generates with no carried
+cache, and the slot reports a reuse of 0. One cause thus gives BOTH the lost reuse
+and the zero count. The correction is one guard in the fork, filed on the fork's
+own board as `^7fy0d2z`, not an open correctness item of this router's design.
+
+**A local hazard, not a repository defect.** `Package.resolved` is gitignored, and
+the root package and the nested `IntegrationTests` package resolve the same
+`stable` branch independently. On the machine that proved the above they sat at
+two different revisions — the root at `acc9205`, which predates
+`ExecutorPromptCache.swift`, and `IntegrationTests` at `ba8ff43b`, which carries
+it. So the two `swift test` commands of one machine can build two different fork
+revisions, which makes a failure hard to reproduce. Read the revision of the
+package you are actually running before you trust a claim about the fork.
 
 1. A session — root or fork — is driven through its own persistent
    `LanguageModelSessionBackend`, which owns one `LanguageModelSession` for the
@@ -685,22 +690,27 @@ the `mlx-swift-lm` fork, not as an open correctness item of this router's design
    can't be freed out from under it; the profile evicts only once its handle and
    all sessions/forks are released.
 
-Substrate previously verified below `ChatSession` (**confirmed absent from the
-`LanguageModelSession`/`MLXLanguageModel` path at the pinned revision** — see
-above): `KVCache.copy()` (compute-level fork), `trim(_:)` (serial reuse — recycle
-one cache instead of copying), `savePromptCache` / `loadPromptCache` (spill a warm
-prefix to disk). None of these are reachable through `MLXLanguageModel.Executor`
-today; `fork()`'s conversation-history inheritance above does not depend on any of
-them.
+Substrate previously verified below `ChatSession`, split by what the pinned
+revision now reaches. `trim(_:)`-style serial reuse — recycle one cache instead of
+copying — **is** on the path: `reusablePromptPrefix`
+(`Libraries/MLXLMCommon/PromptCacheReusePolicy.swift`) asks
+`canTrimPromptCache(caches)` and calls `rewindPromptCache(caches, to:)`.
+`KVCache.copy()` (compute-level fork) and `savePromptCache` / `loadPromptCache`
+(spill a warm prefix to disk) are **not**: nothing in
+`Libraries/MLXFoundationModels` calls them. The executor names a session by the
+identifier of the FIRST entry of its transcript, so a fork seeded from its parent's
+transcript names the same cache as its parent, and a check-out removes the entry,
+so at most one of the two holds it at a time. `fork()`'s conversation-history
+inheritance above depends on none of this.
 
-**Budget caveat (moot at the pinned revision, kept for when compute-level reuse
-becomes real):** a hypothetical `copy()`-based cache is a *deep* copy, so K
-concurrent forks would hold K× the prefix KV. KV is a **reclaimable, pooled**
-resource separate from pinned weights, and the footprint math budgets only one
-cache per model — so a wide fan-out would need a KV budget
-carved from headroom and a bound on concurrent forks, or it would OOM a machine
-that held the models comfortably, *if and when* a persisted-cache executor exists
-to make this a real cost.
+**Budget caveat:** a `copy()`-based cache is a *deep* copy, so K concurrent forks
+would hold K× the prefix KV. The pinned executor does not copy — it keeps one cache
+for each session key and bounds its store to four sessions — so the K× cost is not
+real today. KV is a **reclaimable, pooled** resource separate from pinned weights,
+and the footprint math budgets only one cache per model — so a wide fan-out would
+need a KV budget carved from headroom and a bound on concurrent forks, or it would
+OOM a machine that held the models comfortably, *if and when* an executor that
+copies caches per fork makes this a real cost.
 
 ## Concurrency
 
@@ -1247,11 +1257,12 @@ are additive within schema v2 (see `RecordingSchemaVersion` for the recorded rea
   backed by `MLXLanguageModel` (`MLXFoundationModels`). No `ChatSession` construction
   and no hand-rolled generation/tool-dispatch loop anywhere in
   `Sources/FoundationModelsRouter`. `fork()`'s cheap-*compute*-reuse under this backend
-  is a **performance gap in the upstream dependency, not a correctness gap** (see
-  Backends) — verified against the pinned `mlx-swift-lm` dependency's
-  `MLXLanguageModel.Executor`, which has no persisted-cache mechanism at the pinned
-  revision, so `KVCache.copy()` does not apply; fork's *conversation-history*
-  inheritance, by contrast, is implemented and tested (see below).
+  is a **performance property of the upstream dependency, not a correctness gap**
+  (see Backends and "Sessions & KV cache") — the pinned `mlx-swift-lm` revision does
+  carry a prompt cache, but its executor refuses that cache for the model the gated
+  suite drives, and it never copies a cache per fork, so `KVCache.copy()` does not
+  apply; fork's *conversation-history* inheritance, by contrast, is implemented and
+  tested (see below).
 - **Session-as-factory (replaces the stateless invoker):** a `LoadedLLMContainer`
   manufactures a `LanguageModelSessionBackend` once per session
   (`makeSession(instructions:)`), and that backend holds one `LanguageModelSession`
@@ -1286,9 +1297,9 @@ are additive within schema v2 (see `RecordingSchemaVersion` for the recorded rea
   backend is seeded from the parent's accumulated `Transcript` via
   `LanguageModelSession.init(model:tools:transcript:)` — **conversation-history
   inheritance is implemented and tested**, not aspirational. What it does **not** do
-  is reuse the parent's prefilled-prefix *compute* — verified against the pinned
-  `mlx-swift-lm` dependency, whose `MLXLanguageModel.Executor` has no persisted-cache
-  mechanism to reuse it against (see Backends and "Sessions & KV cache" for
+  today is reuse the parent's prefilled-prefix *compute* — the pinned `mlx-swift-lm`
+  dependency's `MLXLanguageModel.Executor` does carry a prompt cache, but refuses it
+  for the model the gated suite drives (see Backends and "Sessions & KV cache" for
   the citation); this is a performance property of that upstream dependency, not a
   gap in this router's own correctness.
 - **Concurrency:** generation is serialized per resident model (FIFO, one at a time);

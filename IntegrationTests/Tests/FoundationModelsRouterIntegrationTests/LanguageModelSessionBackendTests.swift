@@ -523,12 +523,21 @@ struct LanguageModelSessionBackendIntegrationTests {
         )
         let turn2Usage = backend.session.usage
 
-        // THE required proof: a zero cachedTokenCount here means the
-        // executor-level KV-cache-reuse fix (tracked separately against the
-        // vendored mlx-swift-lm fork) has not landed against the pinned
-        // commit — a hard failure, not a warning, per this task's exit
-        // criterion. This assertion is deliberately never weakened or made
-        // non-fatal.
+        // THE required proof, and it is red today. The reason is NOT that the
+        // pinned fork carries no prompt cache. That revision does carry one:
+        // ExecutorPromptCache.swift keeps a live cache for each session, and
+        // MLXLanguageModel stamps `cachedTokenCount: promptCache.reusedTokenCount`.
+        // The reason is the executor's own input guard. ExecutorPromptCachePlan.make
+        // refuses any input that has a mask, or whose tokens have a rank other
+        // than 1, and the text-only branch of MuseGlimmerProcessor renders exactly
+        // that shape: a rank-2 prompt with an all-ones mask. The turn then
+        // generates with no carried cache and reports a reuse of zero, so one
+        // cause gives both the lost reuse and the zero count. The correction is
+        // one guard in the fork, filed on the fork's own board as ^7fy0d2z. The
+        // two packages of this repository also resolve the fork branch
+        // independently, and Package.resolved is gitignored, so read the revision
+        // this package resolved before you trust any claim about the fork.
+        // This assertion is deliberately never weakened or made non-fatal.
         #expect(
             turn2Usage.input.cachedTokenCount > 0,
             "turn 2 must reuse turn 1's KV cache; cachedTokenCount == 0 means no cache reuse happened"
