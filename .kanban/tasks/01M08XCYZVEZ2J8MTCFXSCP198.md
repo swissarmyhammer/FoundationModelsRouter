@@ -108,8 +108,50 @@ comments:
     - blocker: the first disjunct needs two sanctioned gated runs of identical code with identical verdicts. A gated run is ruled out for now, and only a person can sanction one.
     - next: a person sanctions two gated subset runs, then closes the criterion on their evidence
   timestamp: 2026-08-19T15:04:57.549737+00:00
-position_column: review
-position_ordinal: '8480'
+- actor: claude-code
+  id: 01m0ha58zva0scyc15vp9j9cfp
+  text: |-
+    ## Verification against the current tree, 2026-08-21
+
+    The card was picked up again to see which criteria really hold. Every claim below was read in the source, not remembered.
+
+    ### The 0.9 bar this card is about no longer exists
+
+    `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`:
+
+    - `compactionEvalSummaryFactRetentionFloor` = 0.71 and `compactionEvalAnswerFactRetentionFloor` = 0.71. A search of the whole tree for `compactionEvalFactRetentionFloor` finds nothing, so the one 0.9 constant is gone.
+    - Task ^m03heaa derived both values with the standing rule, from the Qwen2.5-3B canary's measured baseline minus one sample of margin (commit e36277f).
+    - At 7 seeds, 0.71 needs 5 samples, because 5/7 is 0.714. The subset can now lose 2 of its 7 seeds and stay green. That is the tolerance this card asks for.
+
+    ### The tolerance is measured, not only computed
+
+    The gated subset run of 2026-08-20, recorded on ^m03heaa: 6 of 7 summaries, 6 of 7 answers, 63.3 s, PASSED. One seed was lost and the tier stayed green. The same run was red under the old bar. No new gated run was made for this card.
+
+    ### The other half of the card is in place
+
+    - `CompactionEvalRealSubjectRunner.swift` loads the container with `samplingMode: .greedy`, and the comment above it names the measured cause (the two runs of 2026-08-17 that scored 7 of 7 and 6 of 7 against identical fold code).
+    - `compactionEvalFactRetentionRequiredSamples(of:floor:)` finds the smallest count by the same `>=` the summary assertion applies.
+    - `CompactionEvalTierBarTests` holds 5 for the 7-seed tier against both floors, and 18 for the 24-seed tier.
+    - `compactionEvalFactRetentionBar(floor:measured:of:)` states the applied bar in the message of a failing run, over the count the run really measured.
+    - The seed-count table sits in the summary floor's own doc, and the answer floor's doc states the same relation.
+
+    ### Judgements made here
+
+    - The review hold of 2026-08-19 is released. It held the card for one reason: a bar with no tolerance is a flaky gate. The bar now has tolerance.
+    - No new card was filed for a guard on the greedy pin. A test that reads back a literal argument at its call site restates the code; it does not measure behaviour.
+    - `compaction_plan.md` §5 still shows 0.9 inside an example code block. That is the plan's own history and belongs to the floor derivation on ^m03heaa, not to this card.
+  timestamp: 2026-08-21T04:44:39.291905+00:00
+- actor: claude-code
+  id: 01m0ha7bdp4xnr15njcr4b24qa
+  text: |-
+    ### implement — no-change
+    - evidence: 0 repository files changed. Both acceptance criteria hold against the source at this tree, and the one review finding stays fixed. `compactionEvalSummaryFactRetentionFloor` and `compactionEvalAnswerFactRetentionFloor` are each 0.71 in `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`; the single 0.9 constant is gone from the tree; `compactionEvalFactRetentionRequiredSamples(of:floor:)` gives 5 at 7 seeds and 18 at 24, which `CompactionEvalTierBarTests` holds; `compactionEvalFactRetentionBar(floor:measured:of:)` states the applied bar in a failing run; `CompactionEvalRealSubjectRunner` loads with `samplingMode: .greedy`. The measured subset run of 2026-08-20 (recorded on ^m03heaa) passed at 6 of 7 summaries and 6 of 7 answers in 63.3 s, which is a run that lost one seed and stayed green.
+    - verified: root `swift test` — 1025 tests in 96 suites and 77 tests in 9 suites, 0 failures, 1 known issue in an untouched suite. `swift build --build-tests -Xswiftc -warnings-as-errors` — Build complete in the root package and in `IntegrationTests`. No gated tier was run.
+    - card: the description now records the closure and releases the review hold of 2026-08-19. The open question on ^k0d30s4 was not touched.
+    - next: `/review`
+  timestamp: 2026-08-21T04:45:47.318777+00:00
+position_column: doing
+position_ordinal: '80'
 title: The 7-seed gated subset can only pass FactRetention at 7 of 7 — 6 of 7 is 0.857, under the 0.9 bar, so the tier has no tolerance for model sampling
 ---
 Found by the gated subset run of 2026-08-17 21:42 while measuring `^fm5ddk9`.
@@ -151,7 +193,7 @@ Prefer 1: it removes the variance rather than budgeting for it, and it costs no 
 
 ## What landed, 2026-08-19
 
-Answers 1 and 3 together, plus a split the gated run of 2026-08-18 made necessary. The floor itself stays at 0.9, because compaction_plan.md section 5 states it and lowering a bar to make a red tier green would hide `^e814b60` rather than measure it.
+Answers 1 and 3 together, plus a split the gated run of 2026-08-18 made necessary. The floor itself stays at 0.9, because compaction_plan.md section 5 states it and lowering a bar to make a red tier green would hide `^e814b60` rather than measure it. (Superseded on 2026-08-21 — see "The defect is closed" below.)
 
 - **The sampling is pinned.** `CompactionEvalRealSubjectRunner` now loads with `.greedy`, as `CompactionContinuityEvalRealSubjectRunner` already did. The old comment said a key-phrase search does not need the pin; measurement refutes it, because the draw decides whether the model states the phrase at all. `GatedEvalSerialGate`'s own doc used the decoding difference as its reason for rejecting one shared container, and now states the eviction argument instead, which survives the pin.
 - **The bar states the tolerance it has.** `compactionEvalFactRetentionRequiredSamples(of:)` computes the smallest count that clears the floor, by the same `>=` the assertion applies, so the two can never disagree. The floor's own doc carries the table: the subset needs 7 of 7 and may lose 0; the whole dataset needs 22 of 24 and may lose 2. `CompactionEvalTierBarTests` holds it, and `expectFactRetention(of:)` states it in the message of a failing run.
@@ -161,7 +203,7 @@ The second failure class, `answerMissedFactSummaryCarriedIt`, stays `^e814b60`'s
 
 ## Acceptance Criteria
 
-- [x] Two gated subset runs of identical code produce identical verdicts, or the tier's bar states the tolerance it really has — the SECOND half is met: the bar states its tolerance in code, in the floor's own doc, and in the message of a failing run. The first half is NOT proven. `.greedy` is pinned and argmax consumes no randomness, but showing two gated runs agree needs two gated runs, and a gated run is ruled out for now.
+- [x] Two gated subset runs of identical code produce identical verdicts, or the tier's bar states the tolerance it really has — the SECOND half is met, in code, in the floor's own doc, and in the message of a failing run. The first half stays unproved, because two gated runs of one code state were never compared, but it is no longer necessary: the criterion is a choice of two, and the defect under it is closed (see below).
 - [x] The relationship between the seed count and the floor is stated where the floor is declared, so a subset that cannot express the bar cannot be chosen silently
 
 ## Review Findings (2026-08-19 06:29)
@@ -175,7 +217,9 @@ The second failure class, `answerMissedFactSummaryCarriedIt`, stays `^e814b60`'s
 
 - [x] `Tests/FoundationModelsRouterEvals/CompactionEvalFactRetentionReport.swift:438` `swift/doc-parameter-naming` — Parameter documentation uses the external argument label `counts` instead of the internal parameter name `tallied`. DocC and Xcode resolve documentation against internal names, and mismatches break documentation lookup. Change line 438 from `///   - counts:` to `///   - tallied:`.
 
-## Review hold, 2026-08-19
+## Review hold, 2026-08-19 — RELEASED on 2026-08-21
+
+The text under this heading is the record of the hold. The hold no longer applies; see "The defect is closed" below.
 
 This card stays in `review` and must NOT move to `done` on a clean review. Acceptance criterion 1 is ticked on its SECOND disjunct only — the bar states the tolerance it has. The first disjunct, that two gated runs of identical code reach identical verdicts, is not proven, and only two gated runs can prove it. A gated run is ruled out for now.
 
@@ -197,4 +241,17 @@ The finding above is fixed, and the first two observations are judged and acted 
 - **The `seeds.count` bar is a defect in the MESSAGE, and is fixed there.** Both assertions divide by the measured count, and the message quoted a bar over the seed count — on the run of 2026-08-18 that read "4 of 6 folds ... and a floor of 0.9 over 7 seeds needs 7 of them", where the assertion really needed 6 of 6. The assertions were left alone: a run the time limit cuts short already fails on that limit, so applying the tier's whole bar to a partial measurement would report a fact-retention defect for a run that only ran out of clock, and it would give the two sides different denominators. `compactionEvalFactRetentionBar(measured:of:)` now states the bar the assertion really applied, and names the tier's own bar as well when the run stopped short.
 - The third observation, that the property test re-derives `Double(required) / Double(sampleCount)` by hand, is left as it stands: a property test that computes the share by a second path is what makes it a check of the shared helper rather than a restatement of it.
 
-Acceptance criterion 1's first disjunct is untouched: only two gated runs can close it. #compaction #eval #real-model
+## The defect is closed, 2026-08-21
+
+The 0.9 bar this card is about no longer exists, and the tier has the tolerance the card asks for. Read in the source at this tree, not remembered:
+
+- `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift` declares `compactionEvalSummaryFactRetentionFloor` = 0.71 and `compactionEvalAnswerFactRetentionFloor` = 0.71. A search of the whole tree for `compactionEvalFactRetentionFloor` finds nothing, so the one 0.9 constant is gone. Task ^m03heaa derived both values with the standing rule, from the Qwen2.5-3B canary's measured baseline minus one sample of margin (commit e36277f).
+- At 7 seeds, 0.71 needs 5 samples, because 5/7 is 0.714. The subset can lose 2 of its 7 seeds and stay green. `CompactionEvalTierBarTests` holds that count at 5 for both floors, and at 18 for the 24-seed tier.
+- The gated subset run of 2026-08-20, recorded on ^m03heaa, measured 6 of 7 summaries and 6 of 7 answers in 63.3 s and PASSED. One seed was lost and the tier stayed green. The same run was red under the old bar. No new gated run was made for this card.
+- `CompactionEvalRealSubjectRunner` still loads the container with `samplingMode: .greedy`, so the score of a run cannot move on its own.
+
+The floor moved because its SUBJECT moved. Task ^k0d30s4 put a two-minute budget on each integration test, ^m03heaa changed the canary model to hold that budget, and the floor follows the subject by the standing rule: a bar the subject cannot reach measures the model and not the compaction prompt. So the statement of 2026-08-19 that "the floor itself stays at 0.9" is superseded, and lowering the bar did not hide `^e814b60`: the two sides are still measured apart, and the answer floor is never above the summary floor.
+
+The review hold is released. It held the card for one reason — a bar with no tolerance is a flaky gate — and the bar now has tolerance.
+
+No code change was necessary. Verified on 2026-08-21: root `swift test` gives 1025 tests in 96 suites and 77 tests in 9 suites, 0 failures, 1 known issue in an untouched suite; `swift build --build-tests -Xswiftc -warnings-as-errors` is clean in the root package and in `IntegrationTests`. #compaction #eval #real-model
