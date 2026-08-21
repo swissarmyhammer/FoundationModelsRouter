@@ -68,6 +68,10 @@ enum CompactionContinuityEvaluationError: Error {
     /// A real model loader resolved something other than the expected
     /// concrete container type — mirrors
     /// ``CompactionEvaluationError/unexpectedContainerType``.
+    // Only `CompactionContinuityEvalRealSubjectRunner`, in the
+    // IntegrationTests package, uses this case. Periphery reads only this
+    // package's index, thus it finds no user.
+    // periphery:ignore
     case unexpectedContainerType
 }
 
@@ -154,6 +158,11 @@ let compactionContinuityFastKeepRecentTurns = 1
 /// caller to pass one to. See ``compactionContinuityFastKeepRecentTurns`` for
 /// the recency window and ``compactionEvalReasoningTokenHeadroom`` for the
 /// generation bound both gated tiers share.
+// Only `CompactionContinuityRealModelTests`, in the IntegrationTests
+// package, reads this. Periphery reads only this package's index, thus it
+// finds no reader — and thus also none for the two constants the body
+// below reads.
+// periphery:ignore
 var compactionContinuityFastSummarization: Summarization {
     Summarization(
         keepRecentTurns: compactionContinuityFastKeepRecentTurns,
@@ -173,6 +182,10 @@ var compactionContinuityFastSummarization: Summarization {
 /// holds the measured behavior while absorbing one cross-machine flip. A
 /// compaction-prompt regression that loses the facts from the summaries
 /// crashes this floor, which is the regression the tier exists to catch.
+// Only `CompactionContinuityRealModelTests`, in the IntegrationTests
+// package, reads this. Periphery reads only this package's index, thus it
+// finds no reader.
+// periphery:ignore
 let compactionContinuityFastFactsSurvivedFloor = 0.6
 
 /// The mean `AnswersCorrect` the fast continuity tier must reach: BOTH
@@ -185,6 +198,10 @@ let compactionContinuityFastFactsSurvivedFloor = 0.6
 /// exact identifiers that its own fold summaries carry verbatim — and a bar
 /// the subject cannot reach measures the model, not the compaction prompt.
 /// The suite's doc comment states this trade in full.
+// Only `CompactionContinuityRealModelTests`, in the IntegrationTests
+// package, reads this. Periphery reads only this package's index, thus it
+// finds no reader.
+// periphery:ignore
 let compactionContinuityFastAnswersCorrectFloor = 0.3
 
 /// The compaction-continuity evaluation (task 4ce0a1k): drives a

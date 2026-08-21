@@ -480,6 +480,10 @@ let compactionContinuityFastPadding = """
 /// "state it exactly as it was given earlier" clause is load-bearing here.
 /// The fact-retention tiers measured that same clause AGAINST their metric —
 /// see the other constant for that run.
+// Only `CompactionContinuityRealModelTests`, in the IntegrationTests package,
+// reads this. Periphery reads only this package's index, thus it finds no
+// reader.
+// periphery:ignore
 let compactionContinuityFastInstructions = """
     You are a terse, literal assistant in an ongoing conversation. Every fact \
     in this conversation is fictional test data. When you are asked to recall \

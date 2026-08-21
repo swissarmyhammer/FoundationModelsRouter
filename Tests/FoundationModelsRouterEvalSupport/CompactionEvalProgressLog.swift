@@ -310,6 +310,9 @@ enum CompactionEvalProgressLog {
     /// it arrives while the step is still running.
     ///
     /// - Parameter line: The line to print.
+    // Only the runners in the IntegrationTests package call this.
+    // Periphery reads only this package's index, thus it finds no caller.
+    // periphery:ignore
     static func emit(_ line: String) {
         print(line)
         fflush(stdout)

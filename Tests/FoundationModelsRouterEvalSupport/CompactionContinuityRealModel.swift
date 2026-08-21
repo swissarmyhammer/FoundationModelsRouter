@@ -26,6 +26,10 @@ enum CompactionContinuityRealModel {
     /// instruct model that writes no `<think>` block, and the model the fast
     /// compaction smoke suites drive for the same measured reasons
     /// `CompactionSmokeIntegrationTests` records.
+    // Only `CompactionContinuityEvalRealSubjectRunner`, in the
+    // IntegrationTests package, reads this. Periphery reads only this
+    // package's index, thus it finds no reader.
+    // periphery:ignore
     static let ref: ModelRef = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
     /// The maximum context window, in tokens, to load ``ref`` with — passed

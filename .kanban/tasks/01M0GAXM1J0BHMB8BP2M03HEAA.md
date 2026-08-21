@@ -103,6 +103,77 @@ comments:
     - also red, and not this card's: `LanguageModelSessionBackendTests` KV cache reuse, card ^de1yq0p.
     - next: a person settles ^mx4jqrn — the continuity tier's subject and floors — then this card's remaining item (a green continuity tier after the split) can close.
   timestamp: 2026-08-21T00:27:06.213143+00:00
+- actor: claude-code
+  id: 01m0gw67g81mtdc2wxf2exq4yv
+  text: |
+    ### review — findings
+
+    - evidence: `review sha e36277f~1..e36277f` — 1 finding, 1 confirmed, 0 refuted, 7 validators attempted, 0 failed. The finding is `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityRealModel.swift:29` `code-hygiene/dead-code-swift`. The card stays in `review`.
+    - acceptance criteria, against the recorded evidence: criterion 1 is met — the subset tier measured 6 of 7 stored summaries, and the bar is 5 of 7. Criterion 2 is met — the floors are 0.71 on both sides, and `CompactionEvalTierBarTests` (in `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`, ungated) asserts the required counts of 5 and 18; the root `swift test` is green at 1025 tests in 96 suites. Criterion 3 is met — `compactionEvalSubsetTimeLimitMinutes` is 2, and the subset tier measured 63.3 s.
+    - context for the finding: `CompactionContinuityRealModel.ref` has three use sites, and all three are in the second package — `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/CompactionContinuityEvalRealSubjectRunner.swift`, at the `ref:` argument, at the `model:` argument, and at `ref.stringValue`. The `context` property, which the root package reads, was not named by the finding. Do not delete `ref`: the second package does not compile without it. Prove the use with a compiler rename probe, record the probe result, and then either check the finding off or stage the declaration with a `// periphery:ignore` marker and its reason.
+    - a second fact for a person, which the engine did not name: the doc comments state the subset suite wall clock as 63.5 s (`Tests/FoundationModelsRouterEvalSupport/CompactionEvalRealModel.swift` and `Tests/FoundationModelsRouterEvalSupport/CompactionEvalTiers.swift`), and the commit body and this card state 63.3 s. The two numbers state the same measurement — the same date, the same 6 of 7 summaries, the same 369.1 s whole-dataset figure. No derived constant reads the suite wall clock, so no constant is wrong: the derivation reads the dearest sample, 15.9 s, and the model load, 1.3 s. The 2-minute limit bounds 63.3 s and 63.5 s alike.
+    - next: correct the dead-code finding on ^m03heaa, then run `review sha` again on the correction.
+  timestamp: 2026-08-21T00:40:30.472110+00:00
+- actor: claude-code
+  id: 01m0gwh7h40awjbej068evy93g
+  text: |-
+    Compiler rename probe on the dead-code finding, and the measured class it samples.
+
+    First I read the `dead-code-swift` rule itself. Three parts of it decide this finding:
+    - "The scope is `workspace` because periphery reads a whole package's index." The nested `IntegrationTests` package is a second package with its own index. The scan at the root never reads it.
+    - The report filter comes from `swift package describe --type json`, and it excludes only targets of type `test`. `FoundationModelsRouterEvalSupport` is a plain `.target`, not a `.testTarget` (Package.swift states why: two packages must share these sources). So this target is reported, while `Tests/FoundationModelsRouterTests` and `Tests/FoundationModelsRouterEvals` are not.
+    - `--retain-public` retains only `public` and `open`. Every declaration in this target is internal.
+
+    Together these three make one cause: an internal declaration in `Tests/FoundationModelsRouterEvalSupport` whose only consumer is in the `IntegrationTests` package always reports as dead.
+
+    I ran the validator's own command to measure the whole class, instead of the one line the finding names. `periphery 3.8.0`, `--skip-build --index-store-path .build/out`, with the same retain flags and the same two `--report-exclude` globs the rule's script builds. It gives 11 findings in this target. The review reported only 1 of them because the engine keeps the findings on the lines a change touched.
+
+    Compiler rename probe, in two parts:
+
+    Part 1 — rename the 9 declarations, build the ROOT package:
+    `swift build --build-tests` => `Build complete!`, 0 errors, 0 warnings. So periphery is CORRECT about the root package: nothing there reads these 9.
+
+    Part 2 — the same 9 renamed, build the SECOND package:
+    `swift build --package-path IntegrationTests --build-tests` => `error: Build failed`. The compiler names each use site:
+
+    | renamed declaration | error site in IntegrationTests |
+    |---|---|
+    | `CompactionContinuityRealModel.ref` | `Support/CompactionContinuityEvalRealSubjectRunner.swift:120`, `:208`, `:342` |
+    | `CompactionContinuityEvaluationError.unexpectedContainerType` | `Support/CompactionContinuityEvalRealSubjectRunner.swift:123` |
+    | `compactionContinuityFastInstructions` | `CompactionContinuityRealModelTests.swift:17` |
+    | `compactionContinuityFastSummarization` | `CompactionContinuityRealModelTests.swift:18` |
+    | `compactionContinuityFastFactsSurvivedFloor` | `CompactionContinuityRealModelTests.swift:103` |
+    | `compactionContinuityFastAnswersCorrectFloor` | `CompactionContinuityRealModelTests.swift:106` |
+    | `CompactionEvalRealModel.context` | `Support/CompactionEvalRealSubjectRunner.swift:158` |
+    | `CompactionEvaluationError.unexpectedContainerType` | `Support/CompactionEvalRealSubjectRunner.swift:160` |
+    | `CompactionEvalProgressLog.emit(_:)` | `Support/CompactionEvalRealSubjectRunner.swift:225`, `:244`, `:254`, `:260` |
+
+    The probe ran in two builds, because SwiftPM stops at the first file that fails. Build A renamed all 9 and reported the 3 symbols that `CompactionEvalRealSubjectRunner.swift` reads. I then put those 3 back and ran build B, which reported the other 6. Every rename was restored with `git checkout --`, and `grep -rn probeRenamed Tests/` finds nothing.
+
+    Verdict: all 9 are LIVE. The finding is a true positive about the root package and a false positive about the program. None may be deleted.
+
+    Two findings of the 11 are NOT in this class, and they need no marker. They are transitive casualties of the chain:
+    - `compactionContinuityFastKeepRecentTurns` (`CompactionContinuityEvaluation.swift:149`)
+    - `compactionEvalReasoningTokenHeadroom` (`CompactionEvalTiers.swift:347`)
+    Each IS read in the root package — both at `CompactionContinuityEvaluation.swift:159` and `:160`, in the body of `compactionContinuityFastSummarization`. Periphery reports them only because that body is itself unreachable in the root index. When the chain root gets its marker, periphery reaches the body again and the two stop reporting. I verify this below.
+
+    This also corrects one item of the review comment above: `gatedEvalSuiteTimeLimitMinutes` is NOT in this target. It is declared in the second package, at `IntegrationTests/Tests/FoundationModelsRouterEvalIntegrationTests/Support/GatedEvalSerialGate.swift:128`, so periphery at the root never sees the declaration and never reports it.
+  timestamp: 2026-08-21T00:46:30.948181+00:00
+- actor: claude-code
+  id: 01m0gws5q8wape9t2ek98hd0hm
+  text: |-
+    ### implement — changed
+
+    - evidence: 6 files changed, 36 insertions, 0 deletions, all in `Tests/FoundationModelsRouterEvalSupport/`: `CompactionContinuityRealModel.swift`, `CompactionContinuityDataset.swift`, `CompactionContinuityEvaluation.swift`, `CompactionEvaluation.swift`, `CompactionEvalProgressLog.swift`, `CompactionEvalRealModel.swift`. Every change is a `// periphery:ignore` marker with its reason on the comment line above it. No declaration was deleted, and no behavior changed.
+    - probe: renamed the 9 declarations, then built both packages. ROOT `swift build --build-tests` => `Build complete!`, 0 errors. `swift build --package-path IntegrationTests --build-tests` => `error: Build failed`, naming every use site. The comment above holds the table. All renames restored; `grep -rn probeRenamed Tests/` finds nothing.
+    - sweep: the validator's own periphery command reported 11 findings in this target before the change and reports 0 after it. The 2 findings that got no marker (`compactionContinuityFastKeepRecentTurns`, `compactionEvalReasoningTokenHeadroom`) stopped reporting on their own, which is the evidence that they were transitive casualties of `compactionContinuityFastSummarization` and never needed a marker. Marking them would have hidden real dead code later, because the root package does read both.
+    - builds: `swift build --build-tests -Xswiftc -warnings-as-errors` => `Build complete!` at the root, and `Build complete!` in `IntegrationTests`. No error, no warning in either.
+    - tests: root `swift test` => `Test run with 1025 tests in 96 suites passed ... with 1 known issue`, and `Test run with 77 tests in 9 suites passed`. No gated real-model suite was run.
+    - filed: ^sqcp252, for the 4 findings of the SAME cause that stand outside this card's files — 3 in `Tests/FoundationModelsRouterRealModelSupport` and 1 in `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`. They are pre-existing and this card touched none of those files, so they get their own card instead of widening this diff.
+    - corrected on the card: `gatedEvalSuiteTimeLimitMinutes` is declared in the SECOND package, not in this target, so it is not in this class and needs nothing.
+    - still open, and not this card's: ^mx4jqrn (the continuity tier's subject and floors) and ^de1yq0p (the KV cache reuse test).
+    - next: `/review` on the correction.
+  timestamp: 2026-08-21T00:50:51.240672+00:00
 position_column: doing
 position_ordinal: '80'
 title: Choose a fast eval canary model that the redesigned compaction prompt serves, and restore meaningful retention floors
@@ -136,4 +207,21 @@ The continuity tier was found RED on unmodified `main` during this work: `factsS
 - [x] The chosen canary's measured subset baseline is at least 5 of 7 stored summaries under the current `router-default-v3` prompt and span-budget trim
 - [x] The floors are re-derived from the new measurements with the standing rule, and `CompactionEvalTierBarTests` holds the new required counts
 - [x] The subset tier stays inside the fast budget
-#compaction #eval #real-model
+
+## Review Findings (2026-08-20 19:31)
+
+> Scope: `review sha e36277f~1..e36277f` — reviewed the diffs only — lines this change added or modified. 11 file(s) reviewed, 12 not reviewed.
+
+> 12 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 12 file(s)
+
+- [x] `Tests/FoundationModelsRouterEvalSupport/CompactionContinuityRealModel.swift:29` `code-hygiene/dead-code-swift` — var.static `ref` is unused.
+
+Corrected on 2026-08-20. A compiler rename probe proves the symbol is live: with `ref` renamed, the ROOT package still builds, and `swift build --package-path IntegrationTests --build-tests` fails at `Support/CompactionContinuityEvalRealSubjectRunner.swift:120`, `:208` and `:342`. The cause is that `periphery` scans one package's index, so it cannot see the second package.
+
+The finding samples a class. Running the validator's own command over the whole target gives 11 findings in `Tests/FoundationModelsRouterEvalSupport`, and the review reported only 1 because the engine keeps the findings on the lines a change touched. The probe was run over all of them:
+
+- 9 declarations are live and consumed only from the `IntegrationTests` package. Each now carries `// periphery:ignore`, with the reason on its own comment line above the marker, in the house wording. They are `compactionContinuityFastInstructions`, `CompactionEvaluationError.unexpectedContainerType`, `CompactionContinuityEvaluationError.unexpectedContainerType`, `compactionContinuityFastSummarization`, `compactionContinuityFastFactsSurvivedFloor`, `compactionContinuityFastAnswersCorrectFloor`, `CompactionContinuityRealModel.ref`, `CompactionEvalProgressLog.emit(_:)` and `CompactionEvalRealModel.context`.
+- 2 declarations need NO marker, and get none: `compactionContinuityFastKeepRecentTurns` and `compactionEvalReasoningTokenHeadroom`. The root package reads both, in the body of `compactionContinuityFastSummarization`. They reported only because that body was itself unreachable. After the marker on the chain root, the scan reports neither.
+
+The scan over `Tests/FoundationModelsRouterEvalSupport` is now empty. Four findings of the same cause stay open in `Tests/FoundationModelsRouterRealModelSupport` and `Sources/FoundationModelsRouter/Resolution/LiveModelLoader.swift`, which this card did not touch; card ^sqcp252 holds them. #compaction #eval #real-model

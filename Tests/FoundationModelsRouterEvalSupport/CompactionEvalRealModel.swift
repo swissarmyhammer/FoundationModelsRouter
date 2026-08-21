@@ -55,5 +55,9 @@ enum CompactionEvalRealModel {
     /// Unchanged by the model swaps. Every seed transcript, every fold prompt
     /// chunk (bounded by ``Summarization/maxChunkTokens``), and every resumed
     /// answering turn fits this window.
+    // Only `CompactionEvalRealSubjectRunner`, in the IntegrationTests
+    // package, reads this. Periphery reads only this package's index, thus
+    // it finds no reader.
+    // periphery:ignore
     static let context = 8192
 }

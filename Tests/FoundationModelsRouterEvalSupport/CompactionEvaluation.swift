@@ -69,6 +69,10 @@ enum CompactionEvaluationError: Error {
 
     /// A real model loader resolved something other than the expected
     /// concrete container type — see ``CompactionEvalRealSubjectRunner``.
+    // Only `CompactionEvalRealSubjectRunner`, in the IntegrationTests
+    // package, uses this case. Periphery reads only this package's index,
+    // thus it finds no user.
+    // periphery:ignore
     case unexpectedContainerType
 }
 
