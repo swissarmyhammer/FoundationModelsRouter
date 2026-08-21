@@ -24,8 +24,25 @@ comments:
     - removed tests: `mismatchedTwinTokensAreRejected` and `editedProseIsRejected` assumed one fixed suffix; design B makes an edited sentence a valid envelope. `renderedEnvelopeTeachesTheCollectStep` became `defaultCollectInstructionTeachesTheCollectStep`. Added: `toolSuppliedCollectInstructionIsRendered`, `renderedEnvelopeIsRecognizedWithAnyCollectInstruction`, `tokenCappingPassesRenderedEnvelopesThrough`, and two malformed-`next` rows in `nonEnvelopeOutputIsRejected`.
     - next: /review. Box 4 (tell Multitool on `^4qcf1v9`) stays open for the orchestrator.
   timestamp: 2026-08-21T15:02:42.660550+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0jdvtb0kdw6rgfnhwrk67gt
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (commit 7f22018) — 0 findings, 7 attempted, 0 refuted; 3 files reviewed: Sources/FoundationModelsRouter/Hosting/DetachingTool.swift, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift, Tests/FoundationModelsRouterTests/DetachingToolTests.swift; .kanban/ files skipped by .reviewignore
+    - next: the orchestrator sends the message to Multitool card ^4qcf1v9 (fourth acceptance box); the card is in done
+  timestamp: 2026-08-21T15:08:38.112575+00:00
+- actor: claude-code
+  id: 01m0jdwrd0sqbw7ae1tasbrhfy
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files (Sources/FoundationModelsRouter/Hosting/DetachingTool.swift, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift, Tests/FoundationModelsRouterTests/DetachingToolTests.swift); design B, state-free default sentence
+    - test: green — swift test, 1032 + 77 passed, 0 failed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: 7f22018
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+    - box 4: the FoundationModelsMultitool session was told by cross-session message on 2026-08-21 (commit 7f22018, local, not pushed; bump the pin after the push)
+  timestamp: 2026-08-21T15:09:08.896639+00:00
+position_column: done
+position_ordinal: ffe280
 title: The pending envelope's `next` text prescribes a `runCode` snippet that cannot collect the run
 ---
 Filed from FoundationModelsMultitool card `^4qcf1v9`. This card is native to Router: the text lives in Router, and only Router can change it.
@@ -59,6 +76,8 @@ Two designs. The choice is Router's:
 - A. Change the fixed text. Example: "Call the wait tool with completionToken "<T>". When its state is "complete", answer from its detail. When its result is "timeout", call wait again with the same completionToken." Keep `isRendered(text:)` exact.
 - B. Let the wrapped tool supply the collect sentence through `DetachmentParameterProviding` (an optional requirement with a default). The tool that owns the collect verb then owns the sentence. `PendingRunEnvelope.isRendered(text:)` then recognizes the prefix, the token, and a `next` field, not one fixed suffix. `TokenCappingTool` is the one `isRendered` caller.
 
+Router took design B on 2026-08-21, with a default sentence that names the `wait` tool and the token and no state (commit 7f22018).
+
 Call sites: `DetachingTool.detach(...)` builds the envelope. `Tests/FoundationModelsRouterTests/DetachingToolTests.swift` asserts the current snippet text `return await wait("<token>", 60)` near its line 460. `Tests/FoundationModelsRouterTests/SessionOutboxToolWiringTests.swift` uses `isRendered`.
 
 Multitool has touched nothing in the Router tree.
@@ -68,4 +87,4 @@ Multitool has touched nothing in the Router tree.
 - [x] The `next` text does not prescribe a `runCode` snippet, and names the same completionToken for a collect step that returns in band.
 - [x] `isRendered(text:)` recognizes every rendered envelope, and `TokenCappingTool` passes it through.
 - [x] Router tests green.
-- [ ] Multitool is told on its card `^4qcf1v9`, so it can bump its Router pin and re-measure the elevation scenario.
+- [x] Multitool is told on its card `^4qcf1v9`, so it can bump its Router pin and re-measure the elevation scenario. (Cross-session message sent 2026-08-21; the commit is local until the user pushes.)
