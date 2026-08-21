@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import FoundationModelsRouterTestSupport
 import Testing
 
 @testable import FoundationModelsRouter
@@ -43,16 +44,36 @@ private let recordingHandleTinyModel: ModelRef = RealModels.standard
 /// `swift test` leaves this suite out, because the root package cannot see
 /// this package.
 ///
+/// ## What it NO LONGER proves (task ^bpwfbyz)
+///
+/// Until that task the turn took the provider's default sampling, temperature
+/// 0.6 out of MLX's clock-seeded, process-global PRNG, and no reply ceiling.
 /// The three runs of 2026-08-20 measured this suite's one test at 16.7, then
 /// 40.9, then 101.5 seconds, with no code change between the runs, and the run
-/// of 2026-08-21 measured it at 21.4 seconds. The 101.5 is six times run 1,
-/// and 85 percent of ``integrationTestBudgetMinutes``, so this suite is one of
-/// the two of this target that run closest to the budget. The spread comes
-/// from the provider-default sampling
-/// ``SessionTreeRestorationIntegrationTests`` states, and task ^bpwfbyz carries
-/// bringing this suite well inside the budget. That budget is the limit, and
-/// it replaces the 15 minutes this suite stated before; see it for the whole
-/// three-run table.
+/// of 2026-08-21 above measured it at 21.4 seconds. The 101.5 was six times
+/// run 1 and 85 percent of ``integrationTestBudgetMinutes``. The 30B writes a
+/// `<think>` block before each round of a tool turn, and under the sampler
+/// that block, and the number of rounds, differed on every run. Two changes
+/// bring the test inside half the budget, and ``turnOptions`` states both:
+/// argmax decoding, and ``GatedRealModelBudget/responseTokenCeiling`` as each
+/// round's reply ceiling. Measured in isolation on 2026-08-21 under those
+/// options: 32.5 seconds, of which 3.4 seconds the load and 28.9 seconds the
+/// turn, in two rounds.
+///
+/// What is no longer proven is:
+///
+/// - **The sampled path.** The turn decodes with argmax, so a red run is
+///   attributable to the change under test, and the round trip under the
+///   provider's default sampling is not measured here.
+/// - **A round past the ceiling.** Each round of the tool turn stops at
+///   ``GatedRealModelBudget/responseTokenCeiling`` tokens. A round that
+///   generated past it, and what the recording shows of such a round, is no
+///   longer measured here.
+///
+/// Everything else is untouched: the model, the handle, the tool, the prompt,
+/// the instructions, and every assertion on the disk sequence, the sidecar and
+/// the reconstruction are exactly what they were. See
+/// ``integrationTestBudgetMinutes`` for the whole run table.
 @Suite(
     "Gated real-model integration: a tool-using turn over a RecordingLanguageModel handle round-trips to disk (task 0n38p3w)",
     .serialized,
@@ -83,6 +104,31 @@ struct RecordingHandleIntegrationTests {
             "echoed: \(arguments.text)"
         }
     }
+
+    // MARK: - The turn's options
+
+    /// The options the one turn below passes to `session.respond(to:options:)`.
+    ///
+    /// Two things are stated here, and deliberately here rather than on
+    /// ``RealModelContainer/load(ref:context:samplingMode:)``. A sampling mode
+    /// pinned at load time is read by the session backend a `RoutedSession`
+    /// drives, and this suite drives no `RoutedSession`: it drives a raw
+    /// `LanguageModelSession` over a ``RecordingLanguageModel`` handle, which
+    /// wraps the container's language model directly and passes each request
+    /// through untouched. The only options that reach the model on that path
+    /// are the ones the turn passes.
+    ///
+    /// - Argmax decoding, for the reason ``SessionTreeRestorationIntegrationTests``
+    ///   pins it: the provider default samples at temperature `0.6` from MLX's
+    ///   process-global PRNG, which seeds itself from the clock, so the
+    ///   `<think>` block before each round of this tool turn, and the number of
+    ///   rounds, differed on every run of identical code. Argmax decoding
+    ///   consumes no randomness at all.
+    /// - ``GatedRealModelBudget/responseTokenCeiling`` as each round's reply
+    ///   ceiling, the same ceiling every other gated turn of this target states,
+    ///   where this turn stated none.
+    private static let turnOptions = GenerationOptions(
+        samplingMode: .greedy, maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
 
     // MARK: - Harness
 
@@ -204,7 +250,8 @@ struct RecordingHandleIntegrationTests {
                 """
         )
 
-        let response = try await session.respond(to: "Call the echo tool with the text 'ping'.")
+        let response = try await session.respond(
+            to: "Call the echo tool with the text 'ping'.", options: Self.turnOptions)
         #expect(!response.content.isEmpty)
 
         // Before sync: the diff-on-generate chokepoint has already back-filled

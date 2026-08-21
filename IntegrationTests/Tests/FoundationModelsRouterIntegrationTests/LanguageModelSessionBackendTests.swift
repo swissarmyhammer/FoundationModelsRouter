@@ -44,7 +44,7 @@ private let sessionBackendTinyModel: ModelRef = RealModels.standard
 /// spread comes from the provider-default sampling
 /// ``SessionTreeRestorationIntegrationTests`` states. The limit is
 /// ``integrationTestBudgetMinutes``, which replaces the 15 minutes this suite
-/// stated before; see it for the whole three-run table.
+/// stated before; see it for the whole run table.
 @Suite(
     "Gated real-model coverage: MLXFoundationModelsSessionBackend (milestone 7)",
     .serialized,

@@ -137,7 +137,7 @@ private let autoCompactionTriggerSamplingMode: GenerationOptions.SamplingMode = 
 /// makes more model work for each fold. The three runs of 2026-08-20 that
 /// measured the whole target reported 5.2, then 5.1, then 5.1 seconds. The
 /// limit is the shared ``integrationTestBudgetMinutes``, which this suite
-/// states in place of a bound of its own, and which states the whole three-run
+/// states in place of a bound of its own, and which states the whole run
 /// table.
 ///
 /// One of the three compaction smoke suites, with

@@ -96,7 +96,7 @@ private let propagationProbeToolName = "context_probe"
 /// out of the probe. Its dearest run is 2.8 times its cheapest, out of the
 /// provider-default sampling ``SessionTreeRestorationIntegrationTests`` states.
 /// The limit is now ``integrationTestBudgetMinutes``, replacing the 15 minutes
-/// this suite stated before; see it for the whole three-run table.
+/// this suite stated before; see it for the whole run table.
 @Suite(
     "Gated propagation probe: does the ToolContext task local survive respond()? (task c25mpnw)",
     .serialized,

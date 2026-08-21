@@ -47,7 +47,7 @@ private let cancellationDelaySeconds = 2
 ///
 /// The three runs of 2026-08-20 measured this suite's one test at 5.8, then
 /// 5.7, then 5.7 seconds, against the shared ``integrationTestBudgetMinutes``
-/// this suite now states as its limit; see it for the whole three-run table.
+/// this suite now states as its limit; see it for the whole run table.
 @Suite(
     "Gated real-model coverage: cancellation mid-generation does not abort the process (task bkdm97c)",
     .serialized,

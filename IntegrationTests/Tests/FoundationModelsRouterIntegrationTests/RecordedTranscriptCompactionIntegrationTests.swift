@@ -151,7 +151,7 @@ private let recordedTranscriptCompactionSamplingMode: GenerationOptions.Sampling
 /// The three runs of 2026-08-20 measured the fold at 12.1, then 11.7, then
 /// 12.2 seconds, and the entry-kind check at 0.012, then 0.011, then 0.0
 /// seconds, against ``integrationTestBudgetMinutes``, which is now the limit
-/// and which states the whole three-run table. This suite carried
+/// and which states the whole run table. This suite carried
 /// a three-minute limit of its own before, derived from its own dearest
 /// measured run on a busy box; task ^k0d30s4 replaces that direction with one
 /// budget every suite of this target shares, so a suite states no limit of its

@@ -7,7 +7,7 @@ import Testing
 /// model-loading suites take: this suite adds four integers and downloads
 /// nothing. The three runs of 2026-08-20 measured it at 0.001, then 0.001,
 /// then 0.0 seconds; see ``integrationTestBudgetMinutes`` for the whole
-/// three-run table.
+/// run table.
 private let metalLibraryBootstrapTimeLimitMinutes = 1
 
 /// The first operand in the run the probe below adds on the GPU.

@@ -143,7 +143,7 @@ private let compactionSmokeSamplingMode: GenerationOptions.SamplingMode = .greed
 /// seconds.
 ///
 /// The limit is the shared ``integrationTestBudgetMinutes``, which this suite
-/// states in place of a bound of its own, and which states the whole three-run
+/// states in place of a bound of its own, and which states the whole run
 /// table. An earlier run of 2026-08-20 measured the two tests at 60.1 seconds
 /// for the pair, with 7.3-second model loads, under task ^xx02yn6's two-call
 /// folds. The three runs of 2026-08-20 that measured the whole target reported

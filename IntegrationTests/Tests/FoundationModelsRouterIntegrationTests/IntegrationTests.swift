@@ -221,7 +221,7 @@ private struct DownloadObservingLoader: ModelLoader {
 /// The three runs of 2026-08-20 measured this test at 46.6, then 48.7, then
 /// 44.9 seconds, against the 30 minutes the limit stated before task ^k0d30s4's
 /// budget replaced it. See ``integrationTestBudgetMinutes`` for the whole
-/// three-run table.
+/// run table.
 @Suite(
     "Gated real-model integration (milestone 7)",
     .serialized,

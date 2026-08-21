@@ -63,11 +63,12 @@ private let realToolTurnModel: ModelRef = RealModels.standard
 /// and the transcript-shape test at 41.9, then 41.1, then 41.0 seconds. The
 /// 86.7 seconds is 72 percent of ``integrationTestBudgetMinutes``, which is now
 /// the limit, replacing the 30 minutes this suite stated before; see it for the
-/// whole three-run table. How many tool rounds the model takes varies from run
-/// to run, so the cost varies with it. Two suites of this target still run
-/// nearer the budget than this 72 percent: the fork-tree restoration in
-/// ``SessionTreeRestorationIntegrationTests`` and the recording handle in
-/// ``RecordingHandleIntegrationTests``.
+/// whole run table. How many tool rounds the model takes varies from run to
+/// run, so the cost varies with it. The two whole-target runs of 2026-08-21,
+/// after task ^bpwfbyz converted the two suites that ran nearer the budget,
+/// measured the both-surfaces test at 109.4 and 110.7 seconds, 92 percent of
+/// the budget, on a box whose GPU another process held for both runs. That
+/// makes this the test nearest the limit; task ^6ww73dm carries it.
 @Suite(
     "Gated real-model integration: a real tool-using turn delivers its tools' data on both session surfaces (task ^w8dzvee)",
     .serialized,

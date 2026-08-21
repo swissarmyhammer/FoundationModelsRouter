@@ -6,9 +6,33 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The same real `mlx-community` generation model the rest of this target's
-/// gated suites use for the `.standard` slot.
-private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
+/// The real `mlx-community` model the fork-tree test drives, and deliberately
+/// NOT ``RealModels/standard``.
+///
+/// ``RealModels/standard`` is `Muse-Glimmer-30B-4bit`, and it is what the
+/// fork-tree test drove until task ^bpwfbyz. That test drives five turns and
+/// no tool, and three of its turns are filler turns whose reply nothing reads.
+/// The 30B writes a `<think>` block of 196 to 275 tokens before it answers a
+/// filler prompt, so the three fillers were 74 of the test's 112 seconds, and
+/// the test could not reach half of ``integrationTestBudgetMinutes`` on the
+/// 30B. The suite doc states the measurements and what the change no longer
+/// proves.
+///
+/// `Qwen2.5-3B-Instruct-4bit` writes no `<think>` block, and it is the subject
+/// ``CompactionRoundTripIntegrationTests`` already recalls a planted fact
+/// against, which is the property the fork-tree test's last step asserts.
+private let sessionTreeForkTreeModel: ModelRef = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+
+/// The real `mlx-community` model the tool-calling test drives: the same
+/// ``RealModels/standard`` the rest of this target's gated suites use for the
+/// `.standard` slot.
+///
+/// Not ``sessionTreeForkTreeModel``, and that is measured. On 2026-08-21 the 3B
+/// answered the tool-calling test's prompt with
+/// `<tool_call>{{"name": "echo", "arguments": {"text": "ping"}}}`, which the
+/// provider rejected as an incomplete tool-call payload, so that test keeps the
+/// subject whose tool calling is dependable.
+private let sessionTreeToolCallingModel: ModelRef = RealModels.standard
 
 // MARK: - Suite
 
@@ -39,7 +63,7 @@ private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
 ///    from a reconstructed `Transcript` behaves indistinguishably from a
 ///    never-torn-down session.
 ///
-/// Builds ``LanguageModelProfile``s directly over an already-loaded tiny
+/// Builds ``LanguageModelProfile``s directly over an already-loaded
 /// model's ``MLXFoundationModelsContainer`` (bypassing
 /// `Router.resolve(_:reporting:)`, which would need real `.flash`/`.embedding`
 /// downloads too) — the same technique
@@ -49,26 +73,68 @@ private let sessionTreeRestorationTinyModel: ModelRef = RealModels.standard
 /// (`makeSession`/`fork`/`restoreSessionTree`), since this test's whole point
 /// is proving that public surface end-to-end, not just its backend seam.
 ///
-/// The three runs of 2026-08-20 measured the fork-tree test at 94.1, then
-/// 114.1, then 116.4 seconds, and the tool-calling test at 54.4, then 61.7,
-/// then 58.5 seconds. The 116.4 is 97 percent of
-/// ``integrationTestBudgetMinutes`` and the dearest test of the whole target.
+/// ## What it NO LONGER proves (task ^bpwfbyz)
 ///
-/// The number moves that much because this suite loads ``RealModels/standard``,
-/// which is `Muse-Glimmer-30B-4bit`, and takes the provider's default
-/// sampling: temperature 0.6 out of MLX's clock-seeded, process-global PRNG.
-/// The 30B always writes a `<think>` block before its answer, and that block is
-/// a different length on every run of identical code, so the wall clock differs
-/// with it. The other suites of this target sample the same way, and their
-/// numbers move for the same reason.
+/// Until that task both tests drove ``RealModels/standard``, the 30B, and took
+/// the provider's default sampling: temperature 0.6 out of MLX's clock-seeded,
+/// process-global PRNG. The three runs of 2026-08-20 measured the fork-tree
+/// test at 94.1, then 114.1, then 116.4 seconds, and the tool-calling test at
+/// 54.4, then 61.7, then 58.5 seconds. The 116.4 was 97 percent of
+/// ``integrationTestBudgetMinutes``, the dearest test of the whole target, and
+/// a run alone decided the number: the 30B always writes a `<think>` block
+/// before its answer, that block is a different length on every run of
+/// identical code, and the box that measured it decodes near ten tokens a
+/// second. Three changes bring the suite inside the budget, and each one is
+/// stated on the constant that carries it:
+///
+/// - ``samplingMode`` pins argmax decoding on every container this suite
+///   loads.
+/// - ``sessionTreeForkTreeModel`` moves the fork-tree test onto a 3B model
+///   that writes no `<think>` block. Measured in isolation on 2026-08-21 with
+///   argmax decoding: on the 30B the fork-tree test took 112.4 seconds, 74 of
+///   them the three filler turns (275, 208 and 196 tokens of `<think>` at 37.0,
+///   19.2 and 18.4 seconds), beside a 16.0-second root turn, a 14.2-second
+///   recall turn and two 3.5-second loads. A filler turn cut inside its
+///   `<think>` block at 32 tokens took the test to 65.0 seconds, but the cut
+///   transcript made the recall turn grow from 151 to 267 tokens and pushed the
+///   tool-calling test's turn over the restored root past the two-minute
+///   limit, so a cut filler is not a technique. With complete filler replies
+///   the 30B's root turn, recall turn and two loads are 37 seconds before the
+///   first filler, and no complete filler reply of the 30B is under 100 tokens,
+///   so the test cannot reach half the budget on the 30B. On the 3B the same
+///   test measures 3.0 seconds.
+/// - ``sessionTreeToolCallingModel`` keeps the tool-calling test on the 30B,
+///   because the 3B garbled its tool call. That test measured 51.6 seconds in
+///   isolation with argmax decoding: a 25.7-second filler turn, an 18.5-second
+///   two-round tool turn, and two loads.
+///
+/// What is no longer proven is:
+///
+/// - **The fork-tree round trip over the 30B's transcripts.** The fork-tree
+///   test restores and continues a tree the 3B recorded. That tree holds no
+///   `.reasoning` entry, because the 3B writes no `<think>` block, so this test
+///   no longer shows a tree of reasoning entries surviving the trip to disk
+///   and back. The tool-calling test still does: its root turn is a 30B turn
+///   with a reasoning entry, and the restored root drives a live turn over it.
+/// - **The standard model's recall through a restored tree.** That the 3B
+///   recalls 42 three levels down says nothing about the 30B, and a fact this
+///   subject lost might survive under the larger one.
+///   ``CompactionRoundTripIntegrationTests`` records the same trade for its own
+///   recall step.
+/// - **The sampled path.** Both tests decode with argmax now, so a red run is
+///   attributable to the change under test, and the behavior under the
+///   provider's default sampling is not measured here.
+///
+/// Everything else is untouched: the five-turn tree, the sync-as-they-happen
+/// check, the two routers, the restore by root id, every structural and
+/// byte-level assertion, the live recall, and the tool-calling round trip are
+/// exactly what they were.
 ///
 /// A test the limit cancels is worse than a plain red result. The cancellation
 /// lands mid-generation, and a cancellation on GPU work aborts the whole
 /// process on a Metal assertion (fork card ^3axg80k), which takes every other
-/// suite's results with it.
-///
-/// Task ^bpwfbyz carries bringing this suite well inside the budget. See
-/// ``integrationTestBudgetMinutes`` for the whole three-run table.
+/// suite's results with it. See ``integrationTestBudgetMinutes`` for the whole
+/// run table.
 @Suite(
     "Gated real-model end-to-end coverage: restoreSessionTree(root:) (task zcxnbst)",
     .serialized,
@@ -104,11 +170,13 @@ struct SessionTreeRestorationIntegrationTests {
     /// `Router.resolve(_:reporting:)`-adjacent behavior without downloading the
     /// `.flash`/`.embedding` slots too.
     ///
-    /// A wrapper rather than four spelled-out calls, because this suite's model
-    /// and context are the same at each of its four sites and only the container
-    /// and the router id move.
+    /// A wrapper rather than four spelled-out calls, because this suite's
+    /// context is the same at each of its four sites and only the model, the
+    /// container and the router id move.
     ///
     /// - Parameters:
+    ///   - model: The model reference to stamp every slot with — the one
+    ///     `container` was loaded from.
     ///   - container: The model that is already loaded and resident.
     ///   - cacheDir: The directory the router caches under.
     ///   - recordingsDir: The directory the router records under.
@@ -116,13 +184,14 @@ struct SessionTreeRestorationIntegrationTests {
     ///     to continue the same recording root; a fresh one starts a new root.
     /// - Returns: The profile to vend sessions from.
     private static func makeProfile(
+        model: ModelRef,
         container: MLXFoundationModelsContainer,
         cacheDir: URL,
         recordingsDir: URL,
         routerId: ULID = .generate()
     ) -> LanguageModelProfile {
         RealModelHarness.make(
-            model: sessionTreeRestorationTinyModel,
+            model: model,
             // The window this suite's own hand-built profile resolved at before
             // it moved onto the harness: it stated no `contextTokens` at all, so
             // every slot took `SlotResolution`'s own default. Stated explicitly
@@ -134,6 +203,17 @@ struct SessionTreeRestorationIntegrationTests {
             routerId: routerId
         )
     }
+
+    /// The decoding every container this suite loads is pinned to.
+    ///
+    /// Argmax. The provider default samples at temperature `0.6` from MLX's
+    /// process-global PRNG, which seeds itself from the clock, so the length of
+    /// the `<think>` block the 30B writes before each answer, and the wall
+    /// clock with it, differed on every run of identical code. Argmax decoding
+    /// consumes no randomness at all, which is what lets a red run here be
+    /// attributed to the change under test, and what lets the wall clock be
+    /// measured against the budget rather than against the run.
+    private static let samplingMode: GenerationOptions.SamplingMode = .greedy
 
     /// Decodes every event from a session directory's `transcript.jsonl`, or
     /// an empty array if the file does not exist yet.
@@ -186,8 +266,10 @@ struct SessionTreeRestorationIntegrationTests {
     /// goes out of scope with it, simulating discarding the router and every
     /// in-memory session.
     private func driveOriginalTree(cacheDir: URL, recordingsDir: URL) async throws -> OriginalTree {
-        let container = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
-        let profile = Self.makeProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+        let container = try await RealModelContainer.load(
+            ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
+        let profile = Self.makeProfile(
+            model: sessionTreeForkTreeModel, container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
         // The router's own id, read off the handle it stamped. The harness
         // returns no `Router`, because this is the only fact this suite needs of
         // one and every handle already carries it.
@@ -253,8 +335,10 @@ struct SessionTreeRestorationIntegrationTests {
         // Step 5: a brand-new Router/profile over the same recordings
         // directory and the same router id — a fresh process continuing the
         // same recording root, with a freshly (re-)loaded model container.
-        let container2 = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
+        let container2 = try await RealModelContainer.load(
+            ref: sessionTreeForkTreeModel, samplingMode: Self.samplingMode)
         let profile2 = Self.makeProfile(
+            model: sessionTreeForkTreeModel,
             container: container2,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
@@ -331,8 +415,11 @@ struct SessionTreeRestorationIntegrationTests {
         // Record a root session with no tools at all, then discard everything
         // that built it, mirroring `driveOriginalTree`'s teardown discipline.
         let (routerId, rootId): (ULID, ULID) = try await {
-            let container = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
-            let profile = Self.makeProfile(container: container, cacheDir: cacheDir, recordingsDir: recordingsDir)
+            let container = try await RealModelContainer.load(
+                ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
+            let profile = Self.makeProfile(
+                model: sessionTreeToolCallingModel, container: container, cacheDir: cacheDir,
+                recordingsDir: recordingsDir)
             let root = profile.standard.makeSession()
             _ = try await root.respond(to: "Say hi in one word.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
             await container.model.evict()
@@ -341,9 +428,11 @@ struct SessionTreeRestorationIntegrationTests {
 
         // A fresh process continuing the same recording root, restoring with
         // a real tool this time — the seam that used to hardcode `tools: []`.
-        let container2 = try await RealModelContainer.load(ref: sessionTreeRestorationTinyModel)
+        let container2 = try await RealModelContainer.load(
+            ref: sessionTreeToolCallingModel, samplingMode: Self.samplingMode)
         let profile2 = Self.makeProfile(
-            container: container2, cacheDir: cacheDir, recordingsDir: recordingsDir, routerId: routerId)
+            model: sessionTreeToolCallingModel, container: container2, cacheDir: cacheDir,
+            recordingsDir: recordingsDir, routerId: routerId)
         let restored = try await profile2.standard.restoreSessionTree(root: rootId, tools: [EchoTool()])
         // The same invariant the tree-restoration test above asserts: this
         // profile continues the first router's recording root.
