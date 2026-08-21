@@ -141,8 +141,32 @@ comments:
     - board: new card `^zz6kam0` filed for the four hand-built profile copies that remain in the integration target and were never in this card's scope.
     - next: `/review`. The card is in `doing` with every box checked.
   timestamp: 2026-08-21T05:15:49.454947+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0hc3dp1yz7bb77vb7xt05m5
+  text: |
+    ### review — clean
+    - evidence: `review sha 2520850~1..2520850` — 0 findings, 0 confirmed, 0 refuted. Commit 2520850 changes 6 files, and all 6 are in `.kanban/`. The `.reviewignore` rule keeps that directory out of a review. Thus the engine had 0 files to read. This is a clean review, and not an empty scope: the card was satisfied with NO change to the source.
+    - read from the tree, and not from the summary:
+      - `RealModelHarness` is at `Tests/FoundationModelsRouterRealModelSupport/RealModelHarness.swift`. The root package publishes that plain target as a product, thus each test target in the two packages can import it.
+      - Criterion 1 and criterion 2: `CompactionRoundTripIntegrationTests` calls `RealModelHarness.make` two times. The second call gives the first router's id, thus a restore reads the same recording root. `SessionTreeRestorationIntegrationTests` calls it from its own thin wrapper. `AutoCompactionTriggerIntegrationTests` calls it too.
+      - Criterion 4: `CompactionContinuityEvalRealSubjectRunner` calls `RealModelHarness.make`. The criterion permits a call or a written reason, and the tree takes the better half (task ^bh97dp7).
+      - Criterion 3: the card records the gated run — `swift test --package-path IntegrationTests --filter 'CompactionRoundTripIntegrationTests|SessionTreeRestorationIntegrationTests'`, 3 tests in 2 suites, all green, 209.5 s. The table of the wall clock per test is on the card: 17.3 s, 104.6 s, 87.6 s. This review did NOT do the run again, because the run is recorded.
+      - The blocker of the three earlier sessions is gone. No file in the tree contains `FM_ROUTER_INTEGRATION_TESTS`. Commit 1db2b56 removed it and made the selection of the tests structural.
+    - The card moves to `done`. All four acceptance criteria are marked, and each one agrees with the tree.
+    - next: none for this card. Card ^zz6kam0 holds the four more hand-built profile copies in the integration target. Those four were never in the scope of this card.
+  timestamp: 2026-08-21T05:18:35.713651+00:00
+- actor: claude-code
+  id: 01m0hc430ymph94nt2nv9wb2a3
+  text: |-
+    ### finish iteration — clean
+    - implement: no-change — all three named copies already call `RealModelHarness.make`; criterion 3's stated blocker, the `FM_ROUTER_INTEGRATION_TESTS` variable, was deleted by commit 1db2b56, so the gated run was made: 3 tests in 2 suites green in 209.5 s (17.3 / 104.6 / 87.6 s)
+    - test: green — root swift test 1025 in 96 suites plus 77 in 9 suites; both packages build with -warnings-as-errors
+    - commit: 2520850 (board state only)
+    - review: clean — 0 findings; task moved to `done`
+    - filed: ^zz6kam0 for four more hand-built profile copies that were never in this card's scope
+  timestamp: 2026-08-21T05:18:57.566940+00:00
+position_column: done
+position_ordinal: ffd880
 title: Move the three hand-built gated-model profile copies onto the shared RealModelHarness
 ---
 `^d02ryqj` added `RealModelHarness`, which builds a real `LanguageModelProfile` over an already-loaded container. It is the same consolidation commit d82c33e made for `RealModelContainer.load`.

@@ -175,6 +175,9 @@ public enum CompactionFold {
     ///     that folds twice can tell its two runs apart in the output.
     /// - Returns: Everything the run measured.
     /// - Throws: Whatever the fold throws.
+    // Only the suites in the IntegrationTests package call this.
+    // Periphery reads only this package's index, thus it finds no caller.
+    // periphery:ignore
     package static func run(
         _ transcript: Transcript,
         summarization: Summarization,

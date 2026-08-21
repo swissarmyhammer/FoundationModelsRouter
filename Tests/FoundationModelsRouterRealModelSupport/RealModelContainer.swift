@@ -52,6 +52,9 @@ public enum RealModelContainer {
     /// - Throws: Whatever ``LiveModelLoader/loadLLM(ref:slot:context:reporting:)``
     ///   throws, or an expectation failure if what it loaded is not an
     ///   ``MLXFoundationModelsContainer``.
+    // Only the suites in the IntegrationTests package call this.
+    // Periphery reads only this package's index, thus it finds no caller.
+    // periphery:ignore
     package static func load(
         ref: ModelRef,
         context: Int = RealModels.context,

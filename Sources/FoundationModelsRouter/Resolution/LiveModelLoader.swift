@@ -298,6 +298,13 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// turns, or matches a fork's parent at fork time). Deliberately not part
     /// of ``LanguageModelSessionBackend`` — this is test-only surface, not
     /// something a caller of the protocol should drive.
+    ///
+    /// ``liveSession`` is `private`, thus no code outside this type can
+    /// read it, and `@testable import` does not raise `private`. This
+    /// accessor must therefore stay here. Only the suites in the
+    /// IntegrationTests package read it, and periphery reads only this
+    /// package's index, thus it finds no reader.
+    // periphery:ignore
     internal var session: LanguageModelSession { liveSession }
 
     /// Creates a backend over an already-constructed session and the model it
