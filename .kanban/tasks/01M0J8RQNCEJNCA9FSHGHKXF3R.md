@@ -19,8 +19,24 @@ comments:
     - tests: `swift test --filter 'CompactionEvalRepresentativeSubsetTests|CompactionEvalTierBarTests'` — 15 tests in 2 suites passed (10 subset bars, 5 tier bars); subset still seven seeds. Whole root `swift test` — FoundationModelsRouterTests 1032 tests in 98 suites passed (2 pre-existing known issues), FoundationModelsRouterEvals 83 tests in 10 suites passed; zero failures. The only warning is SwiftPM's pre-existing `missing creator for mutated node` on the mlx bundle, which is not from this change. `swift build --build-tests --package-path IntegrationTests` — Build complete. The gated tier was not run. No floor, no fixture count, no `compactionEvalMeasuredBytesPerToken` touched.
     - next: /review
   timestamp: 2026-08-21T22:29:47.643681+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0k7dpfcd1b0edxch5y294m0
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit bafe2f1) — 2 files reviewed (`Tests/FoundationModelsRouterEvalSupport/CompactionEvalDataset.swift`, `Tests/FoundationModelsRouterEvals/CompactionEvaluationTests.swift`); 7 validator runs attempted, 0 findings, 0 confirmed, 0 refuted; `.kanban/` files skipped by `.reviewignore`
+    - next: none — task moved to `done`
+  timestamp: 2026-08-21T22:35:18.380427+00:00
+- actor: claude-code
+  id: 01m0k7eee69b8w3p5anhf5h1vb
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — budget-cap-tool-and-owner probes index 1 by tool; three-facts-support-escalation probes index 1 of three; two two-field bars; corpus unchanged (41 pieces, 9824 bytes; 4.79 stays); 2 Swift files
+    - test: green — root swift test 1032 + 83 passed; swift build --build-tests --package-path IntegrationTests complete; gated tier not run (per card)
+    - commit: bafe2f1
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-21T22:35:42.918947+00:00
+position_column: done
+position_ordinal: ffeb80
 title: 'Two fold shapes are no longer measured: a three-fact head probed in the middle, and a tool-delivered head probed after the first fact'
 ---
 Found by the review of commit `134342a` (task ^k0d30s4). It is a statement of span, not a defect of that commit.

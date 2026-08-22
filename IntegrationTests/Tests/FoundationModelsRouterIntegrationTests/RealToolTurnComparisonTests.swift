@@ -7,9 +7,33 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The same real `mlx-community` generation model this target's other gated
-/// suites drive for the `.standard` slot.
-private let realToolTurnModel: ModelRef = RealModels.standard
+/// The real `mlx-community` generation model this suite drives: a 4B model
+/// that reasons and calls tools.
+///
+/// Until task ^6ww73dm this constant was ``RealModels/standard``, the 30B.
+/// Measured in isolation on 2026-08-21, with argmax decoding, one load for
+/// both surfaces, ``GatedRealModelBudget/responseTokenCeiling`` as each
+/// round's reply ceiling and ``RealToolTurnComparisonTests/instructions``
+/// asking for both calls in one step, on a box that ran a GPU-heavy game for
+/// the whole measurement (load average above 12): the 30B took 3.6 seconds to
+/// load and 51.2 and 49.5 seconds for the two turns, 544 output tokens each,
+/// near eleven tokens a second — 104.2 seconds for the both-surfaces test, 87
+/// percent of ``integrationTestBudgetMinutes``. The same code with the old
+/// instructions, which left the round count to the model, took three rounds a
+/// turn and 106.4 seconds, so the round count was not the cost. The turns
+/// are: the two tool calls and the answer are under 60 of the 544 tokens, and
+/// the rest is the `<think>` block the 30B writes before its calls and before
+/// its answer. No Router-side change shortens that block, and this suite never
+/// disables thinking, so on the 30B the test cannot reach half the budget.
+///
+/// The 4B makes the same turn: both calls in one round, the same entry kinds,
+/// a `<think>` block before the calls and before the answer, and an answer
+/// that carries both markers. Measured the same way on the same box under
+/// the same load: 1.4 seconds to load, 8.3 and 8.3 seconds for the two turns,
+/// 417 output tokens each — 18.0 seconds for the both-surfaces test and 8.2
+/// for the transcript-shape test. The suite doc states what the move no
+/// longer proves.
+private let realToolTurnModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
 // MARK: - Suite
 
@@ -58,17 +82,53 @@ private let realToolTurnModel: ModelRef = RealModels.standard
 ///
 /// See ``NormalizedTranscriptEntry`` for the normalization and its rationale.
 ///
-/// The three runs of 2026-08-20 measured the both-surfaces tool turn, which
-/// drives two multi-round tool turns, at 86.7, then 85.3, then 85.8 seconds,
-/// and the transcript-shape test at 41.9, then 41.1, then 41.0 seconds. The
-/// 86.7 seconds is 72 percent of ``integrationTestBudgetMinutes``, which is now
-/// the limit, replacing the 30 minutes this suite stated before; see it for the
-/// whole run table. How many tool rounds the model takes varies from run to
-/// run, so the cost varies with it. The two whole-target runs of 2026-08-21,
-/// after task ^bpwfbyz converted the two suites that ran nearer the budget,
-/// measured the both-surfaces test at 109.4 and 110.7 seconds, 92 percent of
-/// the budget, on a box whose GPU another process held for both runs. That
-/// makes this the test nearest the limit; task ^6ww73dm carries it.
+/// ## What it NO LONGER proves (task ^6ww73dm)
+///
+/// Until that task the suite drove ``RealModels/standard``, the 30B, loaded
+/// once for each surface, with no reply ceiling on a round, and with
+/// instructions that named the two calls and left the round count to the
+/// model. The three runs of 2026-08-20 measured the both-surfaces test at
+/// 86.7, then 85.3, then 85.8 seconds, and the two whole-target runs of
+/// 2026-08-21 at 109.4 and 110.7 seconds — 92 percent of
+/// ``integrationTestBudgetMinutes``, the dearest test of the target. Four
+/// changes bring the test inside half the budget, and each one is stated on
+/// the declaration that carries it: ``realToolTurnModel`` moves the suite onto
+/// a 4B model that reasons and calls tools, with the measurement that rules
+/// the 30B out; ``loadContainer()`` loads one container for each test;
+/// ``respondRun(over:)`` and ``streamRun(over:)`` pass
+/// ``GatedRealModelBudget/responseTokenCeiling`` as each round's reply
+/// ceiling; and ``instructions`` asks for both calls in one step. Measured in
+/// isolation on 2026-08-21 under those four: 18.0 seconds for the
+/// both-surfaces test and 8.2 for the transcript-shape test. See
+/// ``integrationTestBudgetMinutes`` for the whole run table.
+///
+/// What is no longer proven is:
+///
+/// - **The standard model's tool turn on both surfaces.** The 30B's
+///   `respond(to:)` tool path is still driven by
+///   ``RecordingHandleIntegrationTests`` and by the tool-calling test of
+///   ``SessionTreeRestorationIntegrationTests``. No suite drives its
+///   `streamEvents(to:)` tool path now, and nothing compares the two surfaces
+///   over it. The 4B writes a `<think>` block before its calls and before its
+///   answer and makes both calls in one round, as the 30B did under the same
+///   instructions, so the shape every assertion reads is the same; the model
+///   is not.
+/// - **Two loads in one test.** Both surfaces drive sessions over one
+///   container, as every session of ``SessionTreeRestorationIntegrationTests``
+///   does. A second load of the same model in one process is not measured
+///   here.
+/// - **A round past the ceiling.** Each round of a tool turn stops at
+///   ``GatedRealModelBudget/responseTokenCeiling`` tokens. A round that
+///   generated past it is no longer measured here.
+/// - **A model left to choose its round count.** The instructions ask for both
+///   calls in one step. A model that splits the calls over rounds still
+///   measures, because nothing asserts the round count, but the suite no
+///   longer drives one that was left to decide.
+///
+/// Everything else is untouched: the two marker tools, the prompt, the
+/// normalization, argmax decoding, and every assertion on delivery, on the
+/// answer, on the call ordinals and on the streamed ids are exactly what they
+/// were.
 @Suite(
     "Gated real-model integration: a real tool-using turn delivers its tools' data on both session surfaces (task ^w8dzvee)",
     .serialized,
@@ -117,11 +177,21 @@ struct RealToolTurnComparisonTests {
     private static let secondTool = "lookup-beta"
 
     /// The instructions that make a real model play the scenario out: two
-    /// named calls, then an answer quoting both identifiers.
+    /// named calls, made together in one step, then an answer quoting both
+    /// identifiers.
+    ///
+    /// "In one step" is the shape the scripted scenario has — one round that
+    /// asks for two independent calls at once (see
+    /// `ScriptedToolTurnComparisonTests`). Before task ^6ww73dm the
+    /// instructions named the two calls and left the round count to the
+    /// model, and the 30B took one round per call, each with its own
+    /// `<think>` block. No assertion reads this text; the tools, the prompt
+    /// and the normalization are unchanged.
     private static let instructions = """
         You have two tools. To answer the user you must call \
         `\(firstTool)` with step "\(ToolTurnScenario.firstStep)" and \
         `\(secondTool)` with step "\(ToolTurnScenario.secondStep)". \
+        Make both calls together, in one step, before you reply. \
         Then reply with both identifiers the tools returned, exactly as they \
         were returned, and nothing else.
         """
@@ -150,9 +220,9 @@ struct RealToolTurnComparisonTests {
     /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
     /// which this suite's own hand-built copy was folded onto (task ^zz6kam0).
     /// Two things the copy did differently went with the move. It re-wrapped the
-    /// container it was handed to pin greedy decoding; ``respondRun()`` and
-    /// ``streamRun()`` now ask ``RealModelContainer/load(ref:context:samplingMode:)``
-    /// for a greedy container at load time instead, as
+    /// container it was handed to pin greedy decoding; ``loadContainer()`` now
+    /// asks ``RealModelContainer/load(ref:context:samplingMode:)`` for a greedy
+    /// container at load time instead, as
     /// ``CompactionRoundTripIntegrationTests`` does. And its `.embedding` stub
     /// recorded an issue if anything embedded through it; that tripwire is on
     /// the harness stub now, so every caller of the harness carries it.
@@ -199,22 +269,53 @@ struct RealToolTurnComparisonTests {
         return await actor.backend.transcriptEntries()
     }
 
+    /// Reads the session's cumulative token usage back off its backend, as
+    /// text for the run's printed record.
+    ///
+    /// A session here drives exactly one turn, so the cumulative count is that
+    /// turn's own count. Printed beside the turn's wall clock so the run table
+    /// in `integrationTestBudgetMinutes` can state tokens as well as seconds.
+    ///
+    /// - Parameter session: The session whose turn has already returned.
+    /// - Returns: `in=<input> out=<output>`, or `unmetered` when the backend
+    ///   cannot report usage.
+    private func usageDescription(of session: RoutedSession) async -> String {
+        guard let actor = session as? RoutedSessionActor,
+            let usage = await actor.backend.usageTokenCounts()
+        else { return "unmetered" }
+        return "in=\(usage.input) out=\(usage.output)"
+    }
+
     // MARK: - Runs
+
+    /// Loads the real model once, pinned to ``samplingMode``.
+    ///
+    /// Each test loads one container and drives every session of the test
+    /// over it. Before task ^6ww73dm each run loaded its own container, so
+    /// the both-surfaces test loaded the 30B twice for one test; the suite
+    /// doc states what that change no longer proves.
+    ///
+    /// - Returns: The loaded container.
+    /// - Throws: Whatever loading throws.
+    private static func loadContainer() async throws -> MLXFoundationModelsContainer {
+        try await RealModelContainer.load(ref: realToolTurnModel, samplingMode: samplingMode)
+    }
 
     /// Drives one real turn through `respond(to:)`.
     ///
+    /// - Parameter container: The loaded model container the turn runs over.
     /// - Returns: The run's answer and normalized transcript.
-    /// - Throws: Whatever loading or the turn throws.
-    private func respondRun() async throws -> ToolTurnRunOutcome {
-        let container = try await RealModelContainer.load(
-            ref: realToolTurnModel, samplingMode: Self.samplingMode)
+    /// - Throws: Whatever the turn throws.
+    private func respondRun(over container: MLXFoundationModelsContainer) async throws -> ToolTurnRunOutcome {
         let (session, profile, directory) = makeSession(over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
         // has to stay referenced for the whole turn.
         defer { withExtendedLifetime(profile) {} }
 
-        let answer = try await session.respond(to: Self.prompt)
+        let answer = try await session.respond(
+            to: Self.prompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        print("REAL-RESPOND usage: \(await usageDescription(of: session))")
         return ToolTurnRunOutcome(
             answer: answer,
             calledIds: [],
@@ -227,11 +328,10 @@ struct RealToolTurnComparisonTests {
     /// twice — once applying ``SessionEvent/textReset`` and once ignoring it —
     /// plus every tool id the turn reported.
     ///
+    /// - Parameter container: The loaded model container the turn runs over.
     /// - Returns: The run's answers, ids, and normalized transcript.
-    /// - Throws: Whatever loading or the turn throws.
-    private func streamRun() async throws -> ToolTurnRunOutcome {
-        let container = try await RealModelContainer.load(
-            ref: realToolTurnModel, samplingMode: Self.samplingMode)
+    /// - Throws: Whatever the turn throws.
+    private func streamRun(over container: MLXFoundationModelsContainer) async throws -> ToolTurnRunOutcome {
         let (session, profile, directory) = makeSession(over: container)
         defer { try? FileManager.default.removeItem(at: directory) }
         // The session's handle holds its owning profile weakly, so the profile
@@ -243,7 +343,9 @@ struct RealToolTurnComparisonTests {
         var calledIds: [String] = []
         var completedIds: [String] = []
         var failedIds: [String] = []
-        for try await event in await session.streamEvents(to: Self.prompt) {
+        let events = await session.streamEvents(
+            to: Self.prompt, maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        for try await event in events {
             switch event {
             case .textDelta(let delta):
                 answer += delta
@@ -261,6 +363,7 @@ struct RealToolTurnComparisonTests {
                 break
             }
         }
+        print("REAL-STREAM usage: \(await usageDescription(of: session))")
         return ToolTurnRunOutcome(
             answer: answer,
             rawAnswer: rawAnswer,
@@ -333,13 +436,26 @@ struct RealToolTurnComparisonTests {
 
     @Test("a real tool-using turn delivers its own tools' data, on each surface, in the answer that surface reports")
     func realTurnDeliversToolDataOnBothSurfaces() async throws {
-        let responded = try await respondRun()
-        let streamed = try await streamRun()
+        // One container for both surfaces; see `loadContainer()`.
+        let loadStarted = ContinuousClock.now
+        let container = try await Self.loadContainer()
+        let loadDuration = ContinuousClock.now - loadStarted
+
+        let respondStarted = ContinuousClock.now
+        let responded = try await respondRun(over: container)
+        let respondDuration = ContinuousClock.now - respondStarted
+
+        let streamStarted = ContinuousClock.now
+        let streamed = try await streamRun(over: container)
+        let streamDuration = ContinuousClock.now - streamStarted
 
         // Printed so the scripted-versus-real comparison is checkable by a
-        // reader rather than asserted and thrown away.
+        // reader rather than asserted and thrown away, and so the run table in
+        // `integrationTestBudgetMinutes` can split the test's cost into its
+        // load and its two turns.
         print(
             """
+            REAL load: \(loadDuration), respond turn: \(respondDuration), stream turn: \(streamDuration)
             REAL-RESPOND transcript:
             \(responded.transcriptDescription)
             REAL-RESPOND answer: \(responded.answer.debugDescription)
@@ -433,7 +549,7 @@ struct RealToolTurnComparisonTests {
         #expect(streamed.failedIds.isEmpty)
 
         // Nothing here relates `streamed.rawAnswer` to `streamed.answer`.
-        // `streamRun()` accumulates both from the same `.textDelta` events and
+        // `streamRun(over:)` accumulates both from the same `.textDelta` events and
         // clears only `answer` on ``SessionEvent/textReset``, so every relation
         // between the two holds by that loop's own construction and would hold
         // just as well if Router stopped reporting the reset at all — coverage
@@ -451,7 +567,8 @@ struct RealToolTurnComparisonTests {
 
     @Test("the real transcript has the same entry kinds the scripted scenario produces")
     func realTranscriptShapeMatchesScriptedShape() async throws {
-        let kinds = try await streamRun().transcript.map(\.kind)
+        let container = try await Self.loadContainer()
+        let kinds = try await streamRun(over: container).transcript.map(\.kind)
 
         // The scripted scenario's own shape, which
         // `ScriptedToolTurnComparisonTests.transcriptCarriesToolCallsAndToolOutputs`
