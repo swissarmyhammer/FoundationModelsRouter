@@ -66,8 +66,25 @@ comments:
 
     - next: `/review`
   timestamp: 2026-08-22T12:29:45.839630+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0mqcg8xqg9m0v5jkambbf88
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 82c9aec) — 7 validators attempted, 0 failed, 0 findings. 2 source files reviewed: `PropagationProbeIntegrationTests.swift`, `Support/GatedSuiteSerialGate.swift`. 6 `.kanban/` files excluded by `.reviewignore`.
+    - next: no open findings, and all acceptance items are checked. Task moved to `done`.
+  timestamp: 2026-08-22T12:33:30.909223+00:00
+- actor: claude-code
+  id: 01m0mqd6b5qyrg5rp7vp0wtt09
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — PropagationProbeIntegrationTests.swift (per-phase clock, argmax pin on turnOptions, MLX path moved to mlx-community/Qwen3-4B-4bit) and GatedSuiteSerialGate.swift (runs 10 and 11 in the run table)
+    - test: green — two whole-target runs of `swift test --package-path IntegrationTests`, 29 tests in 14 suites plus 2 tests in 2 suites, both green; root `swift test` green, 1032 tests in 98 suites with 2 known issues, and 83 tests in 10 suites. The MLX path measured 7.2 seconds at load average 14.32 (run 10) and 8.7 seconds at load average 11.08 (run 11), against a 60-second half-budget. The runs were made inside the implement step and are not made again here.
+    - commit: 82c9aec — test(integration): pin argmax decoding and move the MLX propagation probe to Qwen3-4B (^s49ya8p)
+    - review: clean — 7 validators attempted, 0 failed, 0 findings on `review sha HEAD~1..HEAD`
+    - next: none. The task is in done. A new card ^g1s1efb holds the test that is now nearest the budget.
+  timestamp: 2026-08-22T12:33:53.509346+00:00
+position_column: done
+position_ordinal: ffee80
 title: '`MLX path: whether the ToolContext bound around respond() arrives` measured 118.7 seconds, 99 percent of the two-minute budget'
 ---
 Filed by task ^pa5q5dt, which took `resolve real profile, then generate, embed, guide, fork, and record` under half of `integrationTestBudgetMinutes`. The two whole-target runs of 2026-08-22 after that change (runs 8 and 9 in the table in the doc comment of `integrationTestBudgetMinutes`) measured this test of `PropagationProbeIntegrationTests` at 60.6 and 118.7 seconds. The 118.7 is 99 percent of the budget, and this test is now the nearest to the limit in the target.

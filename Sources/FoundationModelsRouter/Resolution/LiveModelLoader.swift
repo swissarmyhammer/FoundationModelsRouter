@@ -659,12 +659,17 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// `usage.output.totalTokenCount` are both positive after one turn.
     /// `usage.input.cachedTokenCount` is positive on the second turn of a
     /// session: `secondTurnReusesFirstTurnsKVCache` printed
-    /// `turn1In=49 turn1Out=93 turn2Cached=50`. This implementation returns
-    /// the SDK's value as it is — never a fabricated zero and never a
-    /// preemptive `nil`. `Package.resolved` is gitignored and the root package
-    /// and the nested package resolve the fork branch independently, so read
-    /// the revision your package resolved before you apply this measurement
-    /// to a different revision.
+    /// `turn1In=49 turn1Out=93 turn2Cached=50`. Both of those measurements come
+    /// from a run that took the provider's default sampling, so the generated
+    /// counts in them do not repeat: the same test printed `turn1Out=84` on
+    /// another run of the same code. That suite pins argmax decoding from task
+    /// ^g1s1efb on, and the two whole runs of 2026-08-22 each printed
+    /// `tokensIn=62 tokensOut=128` and `turn1In=49 turn1Out=76 turn2Cached=50`.
+    /// This implementation returns the SDK's value as it is — never a
+    /// fabricated zero and never a preemptive `nil`. `Package.resolved` is
+    /// gitignored and the root package and the nested package resolve the fork
+    /// branch independently, so read the revision your package resolved before
+    /// you apply this measurement to a different revision.
     func usageTokenCounts() -> (input: Int, output: Int)? {
         let usage = liveSession.usage
         return (usage.input.totalTokenCount, usage.output.totalTokenCount)

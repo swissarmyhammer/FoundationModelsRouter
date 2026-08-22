@@ -8,7 +8,13 @@ import Testing
 
 /// The same real `mlx-community` generation model the rest of this target's
 /// gated suites use for the `.standard` slot.
-private let sessionBackendTinyModel: ModelRef = RealModels.standard
+///
+/// The 30B. This constant was named `sessionBackendTinyModel` until task
+/// ^g1s1efb, and no model it ever held was tiny: it has read
+/// ``RealModels/standard`` throughout. The name is corrected rather than kept,
+/// because a reader who believed it went looking for the cost of this suite in
+/// the wrong place.
+private let sessionBackendModel: ModelRef = RealModels.standard
 
 // MARK: - Suite
 
@@ -23,28 +29,69 @@ private let sessionBackendTinyModel: ModelRef = RealModels.standard
 /// Both are only observable against a real, generating model — there is nothing
 /// to assert GPU-free here (the GPU-free coverage in
 /// `Tests/FoundationModelsRouterTests/LanguageModelSessionBackendTests.swift`
-/// covers the schema-conversion seam instead). This suite loads the tiny model
+/// covers the schema-conversion seam instead). This suite loads the model
 /// directly through ``LiveModelLoader``, bypassing ``Router``/``RoutedSession``,
 /// so the backend itself — not the one-backend-per-call path
 /// ``RoutedSessionActor`` still drives today (see plan.md) — is what's under
 /// test. `internal var session` on the backend exists specifically so this
 /// `@testable import` can read `transcript.count` directly.
 ///
-/// This suite holds 11 tests, and each of them loads the model once. The three
-/// runs of 2026-08-20 measured them at 48.7, 45.7, 40.3, 28.8, 23.3, 19.5,
-/// 19.2, 19.1, 19.0, 16.6 and 16.0 seconds, then at 62.3, 48.3, 40.4, 30.0,
-/// 27.9, 21.0, 20.4, 20.0, 17.2, 16.6 and 15.0 seconds, then at 58.6, 46.5,
-/// 41.8, 39.7, 23.0, 21.7, 21.6, 20.3, 19.3, 17.9 and 17.5 seconds.
+/// This suite holds 11 tests, and each of them loads the model once. The limit
+/// is ``integrationTestBudgetMinutes``, which replaces the 15 minutes this
+/// suite stated before; see it for the whole run table, which holds a row for
+/// each of the eleven.
 ///
-/// Which test is the dearest changes from run to run, so this comment names
-/// none of them. `makeFork() seeds the child's transcript from the parent's at
-/// fork time` was the dearest test of run 2 at 62.3 seconds and stands fourth
-/// in run 3 at 39.7 seconds, while `a second respond() call on the same backend
-/// sees the first turn` is the dearest test of run 3 at 58.6 seconds. The
-/// spread comes from the provider-default sampling
-/// ``SessionTreeRestorationIntegrationTests`` states. The limit is
-/// ``integrationTestBudgetMinutes``, which replaces the 15 minutes this suite
-/// stated before; see it for the whole run table.
+/// ## What it NO LONGER proves (task ^g1s1efb)
+///
+/// Until that task every container this suite loaded took the provider's own
+/// sampling, and each turn stated a reply ceiling alone. The eleven runs in the
+/// table of ``integrationTestBudgetMinutes`` measured `makeFork() seeds the
+/// child's transcript from the parent's` at 28.8 to 76.3 seconds. The 76.3 is
+/// 64 percent of the budget, and the very next run of the same code on the same
+/// box measured 28.9 — a factor of 2.6 with no change to the suite between
+/// them.
+///
+/// The per-phase clock ``makeForkSeedsFromParentTranscript()`` now prints named
+/// the cost before the pin was made. Measured in isolation on 2026-08-22, on a
+/// box at load average 2.3, under the provider default: the load took 3.4
+/// seconds, the parent's first turn 23.5, the fork's own turn 9.4, the parent's
+/// second turn 2.3 and the eviction 0.1, for 38.6 seconds in total. A second
+/// run of the same code measured 3.1, 24.6, 13.4, 2.2 and 0.1, for 43.4. So the
+/// load is 8 percent of the test and a repair aimed at it buys nothing; the
+/// three turns are the test, and the fork's own turn moved by 43 percent
+/// between two runs of identical code on a quiet box.
+///
+/// ``samplingMode`` pins argmax decoding on every container this suite loads,
+/// which takes the spread out rather than the work. Measured in isolation on
+/// the same box directly after: 45.6 seconds, then 44.7. The two splits agree
+/// phase by phase — the fork's own turn measured 13.157 and then 13.126
+/// seconds — so what is left of the spread is the box, not the decode.
+///
+/// What is no longer proven is:
+///
+/// - **The sampled path.** Every turn of this suite decodes with argmax now, so
+///   a red run is attributable to the change under test, and the behavior under
+///   the provider's default sampling is not measured here. This never disables
+///   thinking: the model still writes a `<think>` block ahead of each answer,
+///   and ``permittedTurnEntryKinds`` still admits the `.reasoning` entry that
+///   block leaves.
+/// - **That each recalled fact survives a sampled decode.** The three recall
+///   checks — teal in ``secondRespondSeesPriorTurn()``, and 42 across the fork
+///   and across a seeding transcript — each read one deterministic reply now
+///   rather than a fresh draw on every run. A subject that recalls the fact at
+///   argmax and loses it at temperature `0.6` would pass here.
+///   ``SessionTreeRestorationIntegrationTests`` records the same trade for its
+///   own recall step.
+///
+/// Everything else is untouched: the model, the eleven tests, each turn's reply
+/// ceiling, the transcript-count checks, the per-kind entry checks, the
+/// chokepoint fidelity pair, the usage delta, the KV-cache bounds and the
+/// timing print are exactly what they were.
+///
+/// A test the limit cancels is worse than a plain red result. The cancellation
+/// lands mid-generation, and a cancellation on GPU work aborts the whole
+/// process on a Metal assertion (fork card ^3axg80k), which takes every other
+/// suite's results with it.
 @Suite(
     "Gated real-model coverage: MLXFoundationModelsSessionBackend (milestone 7)",
     .serialized,
@@ -52,9 +99,48 @@ private let sessionBackendTinyModel: ModelRef = RealModels.standard
     .exclusiveRealModel
 )
 struct LanguageModelSessionBackendIntegrationTests {
+    /// The tag the per-phase wall-clock line of
+    /// ``makeForkSeedsFromParentTranscript()`` opens with.
+    ///
+    /// Its own tag, and not the target's `gatedTest` one, so a grep that
+    /// collects the run table's per-test measurements never picks up a phase
+    /// line. See ``integrationTestBudgetMinutes`` for that table.
+    private static let phaseLabel = "sessionBackendPhase"
+
+    /// The decoding every container this suite loads is pinned to.
+    ///
+    /// Argmax. The provider default samples at temperature `0.6` from MLX's
+    /// process-global PRNG, which seeds itself from the clock, so the length of
+    /// the `<think>` block the 30B writes before each answer, and the wall
+    /// clock with it, differed on every run of identical code. Argmax decoding
+    /// consumes no randomness at all, which is what lets a red run here be
+    /// attributed to the change under test, and what lets the wall clock be
+    /// measured against the budget rather than against the run.
+    ///
+    /// The pin is stated at LOAD time rather than on each turn's
+    /// `GenerationOptions`, because every test here drives
+    /// ``MLXFoundationModelsSessionBackend``, and that backend is the one type
+    /// that reads the decoding its container stored. A suite that drives a raw
+    /// `LanguageModelSession` needs the other pin; this one does not.
+    private static let samplingMode: GenerationOptions.SamplingMode = .greedy
+
+    /// Loads ``sessionBackendModel`` into the concrete container each test of
+    /// this suite drives, pinned to ``samplingMode``.
+    ///
+    /// Each test loads its own container and evicts it as it ends, exactly as
+    /// each did before. One loader rather than eight spelled-out calls, so the
+    /// decoding cannot drift between them.
+    ///
+    /// - Returns: The loaded container.
+    /// - Throws: Whatever ``RealModelContainer/load(ref:context:samplingMode:)``
+    ///   throws.
+    private static func makeContainer() async throws -> MLXFoundationModelsContainer {
+        try await RealModelContainer.load(ref: sessionBackendModel, samplingMode: samplingMode)
+    }
+
     @Test("a second respond() call on the same backend sees the first turn's content in context")
     func secondRespondSeesPriorTurn() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
@@ -83,13 +169,36 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("makeFork() seeds the child's transcript from the parent's at fork time")
     func makeForkSeedsFromParentTranscript() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        // Each phase's own wall clock, printed however the test ends, so the
+        // cost can be read against the phase that carries it rather than
+        // against the total alone. `PropagationProbeIntegrationTests` and
+        // `IntegrationTests` print the same split for the same reason. This
+        // test drives three turns on one load, so a total alone cannot say
+        // which of the four costs the run.
+        var loadDuration: Duration = .zero
+        var parentTurnDuration: Duration = .zero
+        var childTurnDuration: Duration = .zero
+        var parentSecondTurnDuration: Duration = .zero
+        var evictDuration: Duration = .zero
+        defer {
+            print(
+                "[\(Self.phaseLabel)] load=\(loadDuration) parentTurn=\(parentTurnDuration) "
+                    + "childTurn=\(childTurnDuration) "
+                    + "parentSecondTurn=\(parentSecondTurnDuration) evict=\(evictDuration)"
+            )
+        }
+
+        let loadStarted = ContinuousClock.now
+        let container = try await Self.makeContainer()
+        loadDuration = ContinuousClock.now - loadStarted
         let parent = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
         )
 
+        let parentTurnStarted = ContinuousClock.now
         _ = try await parent.respond(to: "Remember the number 42.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        parentTurnDuration = ContinuousClock.now - parentTurnStarted
         let parentEntryCountAtForkTime = parent.session.transcript.count
 
         let child = try #require(parent.makeFork() as? MLXFoundationModelsSessionBackend)
@@ -106,20 +215,26 @@ struct LanguageModelSessionBackendIntegrationTests {
         // the same content-awareness proof ``secondRespondSeesPriorTurn`` above
         // uses for same-backend continuity, applied here across the fork
         // boundary.
+        let childTurnStarted = ContinuousClock.now
         let childReply = try await child.respond(
             to: "What number should I remember? Answer with just the number.",
             maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
+        childTurnDuration = ContinuousClock.now - childTurnStarted
         #expect(childReply.contains("42"))
         let childEntryCountAfterOwnTurn = child.session.transcript.count
 
         // The two then diverge independently: a further parent turn does not
         // retroactively change the child's already-seeded (and now
         // independently-grown) transcript.
+        let parentSecondTurnStarted = ContinuousClock.now
         _ = try await parent.respond(to: "Remember the number 7 too.", maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        parentSecondTurnDuration = ContinuousClock.now - parentSecondTurnStarted
         #expect(child.session.transcript.count == childEntryCountAfterOwnTurn)
 
+        let evictStarted = ContinuousClock.now
         await container.model.evict()
+        evictDuration = ContinuousClock.now - evictStarted
     }
 
     // MARK: - Transcript-seeded factory (task bkhj6ya)
@@ -128,7 +243,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "makeSession(transcript:) seeds a fresh backend that recalls content from a prior session's transcript"
     )
     func makeSessionFromTranscriptRecallsPriorContent() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         let prior = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
@@ -195,7 +310,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "each respond() call leaves exactly one prompt entry and one response entry across two turns"
     )
     func eachTurnLeavesOnePromptAndOneResponse() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         // No instructions: an instructions-carrying session's transcript opens
         // with an extra `.instructions` entry, which no turn owes. Omitting
         // instructions leaves only turn-driven entries to check.
@@ -214,7 +329,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("a fork taken after one turn begins holding exactly that turn's entries")
     func forkAfterOneTurnHoldsThatTurnsEntries() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         let parent = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
@@ -233,7 +348,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     @Test("transcriptEntries().count equals session.transcript.count and grows across turns")
     func transcriptEntriesMatchesSessionTranscriptAndGrows() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
@@ -258,7 +373,7 @@ struct LanguageModelSessionBackendIntegrationTests {
 
     /// The pieces ``recordedEntryKindsMatchSessionTranscriptKinds()`` and its
     /// streaming counterpart both need: a real ``RoutedSessionActor`` wired
-    /// directly to the already-loaded tiny model's backend (bypassing
+    /// directly to the already-loaded model's backend (bypassing
     /// ``Router/resolve(profile:reporting:)``, which would need a real
     /// `.flash`/`.embedding` download too), plus the on-disk locations its
     /// transcript is recorded under, via the same `internal` initializers
@@ -274,7 +389,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         let cacheDir: URL
     }
 
-    /// Builds a ``ChokepointHarness`` over a freshly loaded tiny model.
+    /// Builds a ``ChokepointHarness`` over a freshly loaded model.
     ///
     /// The profile comes from ``RealModelHarness/make(model:context:container:cacheDir:recordingsDir:routerId:)``,
     /// which this harness's own hand-built copy was folded onto (task
@@ -291,7 +406,7 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// directory. Nothing in this suite reads the field, so the move corrects
     /// an inconsistency and changes no assertion.
     private func makeChokepointHarness() async throws -> ChokepointHarness {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         let backend = try #require(
             container.makeSession(instructions: nil) as? MLXFoundationModelsSessionBackend
         )
@@ -304,7 +419,7 @@ struct LanguageModelSessionBackendIntegrationTests {
                 "LanguageModelSessionBackendTests-cache-\(UUID().uuidString)", isDirectory: true)
 
         let profile = RealModelHarness.make(
-            model: sessionBackendTinyModel,
+            model: sessionBackendModel,
             // The window the hand-built copy resolved at: it stated no
             // `contextTokens` at all, so every slot took `SlotResolution`'s own
             // default. Stated explicitly here, because the harness has no
@@ -334,7 +449,7 @@ struct LanguageModelSessionBackendIntegrationTests {
             workingDirectory: recordingDirectory,
             backend: backend,
             slot: .standard,
-            model: sessionBackendTinyModel,
+            model: sessionBackendModel,
             recorder: standard.recorder,
             instructions: nil,
             grammar: nil,
@@ -446,9 +561,13 @@ struct LanguageModelSessionBackendIntegrationTests {
     /// and it prints the observed counts for a human to read. Whether
     /// `MLXLanguageModel`'s `Executor` populates real, positive
     /// `usage.input`/`usage.output` totals is answered by the print: measured
-    /// 2026-08-21 at fork pin `41e9f41` it printed `tokensIn=62 tokensOut=149`,
-    /// the measurement ``MLXFoundationModelsSessionBackend/usageTokenCounts()``'s
-    /// doc comment records.
+    /// 2026-08-22 at fork pin `41e9f41`, under the argmax decoding
+    /// ``samplingMode`` pins, it printed `tokensIn=62 tokensOut=128` in each of
+    /// two whole runs of the target. The sampled measurement
+    /// ``MLXFoundationModelsSessionBackend/usageTokenCounts()``'s doc comment
+    /// records is `tokensIn=62 tokensOut=149`, from one run of 2026-08-21. The
+    /// input count is the same because the prompt is; only the generated count
+    /// moved.
     @Test("recorded tokensIn/tokensOut on the turn's response event exactly match the live backend's own usageTokenCounts() delta")
     func recordedTokenUsageMatchesLiveBackendDelta() async throws {
         let harness = try await makeChokepointHarness()
@@ -495,7 +614,7 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2's usage.input.cachedTokenCount is positive, covers turn 1's whole prompt, and does not exceed everything turn 1 processed — the KV cache is reused, not recomputed"
     )
     func secondTurnReusesFirstTurnsKVCache() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         let backend = try #require(
             container.makeSession(instructions: "You are a terse, literal assistant.")
                 as? MLXFoundationModelsSessionBackend
@@ -557,8 +676,12 @@ struct LanguageModelSessionBackendIntegrationTests {
         // model such as Muse Glimmer reasons in a `to=self` channel directly
         // after the generation prompt, so turn 2's render diverges from the
         // ledger at the first generated token, and the fork rewinds the cache
-        // to the end of turn 1's prompt. Measured 2026-08-21 at fork pin
-        // 41e9f41: turn1In=49 turn1Out=84 turn2Cached=50. An equality against
+        // to the end of turn 1's prompt. Measured 2026-08-22 at fork pin
+        // 41e9f41, under the argmax decoding `samplingMode` pins:
+        // turn1In=49 turn1Out=76 turn2Cached=50. Two whole runs of the target
+        // printed those same three numbers, because a pinned decode repeats.
+        // The sampled measurement this comment held before printed
+        // turn1Out=84 on one run and 93 on another. An equality against
         // prompt plus response thus rests on a premise that is false for a
         // reasoning model. The two bounds still fail on a zero, on a partial
         // reuse of the prompt, and on an over-report. Decision: card ^dmxsxb0.
@@ -586,11 +709,11 @@ struct LanguageModelSessionBackendIntegrationTests {
         "turn 2 tends to be faster than turn 1 on a session with a long system instruction (heuristic timing signal, never fails CI)"
     )
     func secondTurnTendsToBeFasterThanFirst() async throws {
-        let container = try await RealModelContainer.load(ref: sessionBackendTinyModel)
+        let container = try await Self.makeContainer()
         // A long instruction makes the fixed, cacheable prefix turn 2 should
         // reuse a much larger share of the input than a short one would, so a
         // real speed-up (if the cache is working) is more likely to be
-        // visible above run-to-run noise on a tiny model.
+        // visible above run-to-run noise.
         let longInstructions = String(
             repeating:
                 "You are a careful, terse assistant who always answers in as few words as possible. ",
