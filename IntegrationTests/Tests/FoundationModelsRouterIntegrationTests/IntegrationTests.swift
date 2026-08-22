@@ -1,5 +1,7 @@
 import Foundation
+import FoundationModels
 import FoundationModelsRouterRealModelSupport
+import FoundationModelsRouterTestSupport
 import HuggingFace
 import MLXHuggingFace
 import MLXLMCommon
@@ -222,6 +224,58 @@ private struct DownloadObservingLoader: ModelLoader {
 /// 44.9 seconds, against the 30 minutes the limit stated before task ^k0d30s4's
 /// budget replaced it. See ``integrationTestBudgetMinutes`` for the whole
 /// run table.
+///
+/// ## What it NO LONGER proves (task ^pa5q5dt)
+///
+/// Runs 6 and 7 of 2026-08-21 measured this test at 89.8 and 55.0 seconds, and
+/// the 89.8 was 75 percent of ``integrationTestBudgetMinutes`` and the dearest
+/// test of the target. The per-phase clock this test now prints says where the
+/// cost stands. Measured in isolation on 2026-08-22, on a box that ran a
+/// GPU-heavy game for the whole measurement (load average above 10): resolve
+/// 5.4 seconds, the plain turn 22.4, the embedding 0.03, the guided turn 5.2,
+/// the fork turn 20.6 and the parent turn 2.0 — 55.8 seconds, of which the two
+/// first turns of a session are 43. Each of those turns is one short prompt
+/// answered by the 30B, so the cost is the `<think>` block it writes ahead of
+/// the answer.
+///
+/// Three changes stand against that, and each is stated where it is made:
+/// ``samplingMode`` pins argmax decoding; every turn passes
+/// ``GatedRealModelBudget/responseTokenCeiling`` as its reply ceiling; and the
+/// test body is no longer `@MainActor`, so only the `@MainActor`
+/// ``ResolutionProgress`` reads hop to the main actor. The measurement after
+/// them, on the same box under the same load: 57.1 seconds, with the plain
+/// turn at 22.5 and the fork turn at 22.2.
+///
+/// ``RealModels/standard`` stays. This is the one test of the target that
+/// drives `Router.resolve(profile:reporting:)` end to end over the real Hub —
+/// real sizing, real joint fit and two real containers co-resident — and the
+/// profile it resolves is the one the rest of the target names. Every other
+/// gated suite loads a container directly and never reaches the resolver, so
+/// a smaller generation model here would stop proving that the standard
+/// profile resolves at all. `RealToolTurnComparisonTests` states the same
+/// trade in the other direction, for a suite whose point is the tool turn
+/// rather than the resolution.
+///
+/// What is no longer proven is:
+///
+/// - **The sampled path.** Every turn decodes with argmax now, so a red run is
+///   attributable to the change under test, and the behavior under the
+///   provider's default sampling is not measured here. This never disables
+///   thinking: the 30B still writes its `<think>` block before each answer.
+/// - **A turn past the ceiling.** Each of the four turns stops at
+///   ``GatedRealModelBudget/responseTokenCeiling`` tokens rather than at
+///   `LiveModelLoader`'s own default of 8192. A turn that generated past it is
+///   no longer measured here.
+/// - **The whole test body on the main actor.** The four turns run off the
+///   main actor now. That change was measured and it moved no phase: on the
+///   same box the plain turn went 22.4 to 22.7 seconds, resolve 5.37 to 5.38
+///   and the embedding 0.026 to 0.026. It is kept because the target's rule
+///   asks for it, not because it bought time.
+///
+/// Everything else is untouched: the profile, the resolver, the phase and
+/// byte-progress assertions, the generation, the embedding, the guided
+/// grammar, the fork lineage and the merged transcript's total order are
+/// exactly what they were.
 @Suite(
     "Gated real-model integration (milestone 7)",
     .serialized,
@@ -229,9 +283,31 @@ private struct DownloadObservingLoader: ModelLoader {
     .exclusiveRealModel
 )
 struct IntegrationTests {
+    /// The tag the per-phase wall-clock line of ``endToEnd()`` opens with.
+    ///
+    /// Its own tag, and not the target's `gatedTest` one, so a grep that
+    /// collects the run table's per-test measurements never picks up a phase
+    /// line. See ``integrationTestBudgetMinutes`` for that table.
+    private static let phaseLabel = "endToEndPhase"
+
+    /// The decoding strategy every container this test loads generates with.
+    ///
+    /// Until task ^pa5q5dt the test built its ``LiveModelLoader`` with no
+    /// sampling mode, so every turn took the provider's own default —
+    /// temperature 0.6 out of MLX's clock-seeded, process-global PRNG. The 30B
+    /// always writes a `<think>` block before its answer, that block is a
+    /// different length on every run of identical code, and this test's whole
+    /// cost is that block, so the wall clock was a property of the run rather
+    /// than of the code. Two isolation runs on 2026-08-22 measured the fork
+    /// turn at 20.6 and then 1.0 seconds with nothing between them that could
+    /// reach the model. Argmax decoding makes each turn repeat exactly.
+    ///
+    /// This never disables thinking: the model still writes its `<think>`
+    /// block, and this only fixes which tokens it picks.
+    private static let samplingMode: GenerationOptions.SamplingMode = .greedy
+
     /// Resolves the real profile and asserts every live capability against it.
     @Test("resolve real profile, then generate, embed, guide, fork, and record")
-    @MainActor
     func endToEnd() async throws {
         let cacheDir = Self.makeTempDir()
         let recordingsDir = Self.makeTempDir()
@@ -240,10 +316,28 @@ struct IntegrationTests {
             try? FileManager.default.removeItem(at: recordingsDir)
         }
 
+        // Each phase's own wall clock, printed however the test ends, so the
+        // cost can be read against the phase that carries it rather than
+        // against the total alone. `RealToolTurnComparisonTests` prints the
+        // same split for the same reason.
+        var resolveDuration: Duration = .zero
+        var plainTurnDuration: Duration = .zero
+        var embedDuration: Duration = .zero
+        var guidedTurnDuration: Duration = .zero
+        var forkTurnDuration: Duration = .zero
+        var parentTurnDuration: Duration = .zero
+        defer {
+            print(
+                "[\(Self.phaseLabel)] resolve=\(resolveDuration) plainTurn=\(plainTurnDuration) "
+                    + "embed=\(embedDuration) guidedTurn=\(guidedTurnDuration) "
+                    + "forkTurn=\(forkTurnDuration) parentTurn=\(parentTurnDuration)"
+            )
+        }
+
         // A real Hub-backed loader (the fork's macros supply the concrete
         // Downloader + TokenizerLoader) and the real Hub metadata source, each
         // wrapped so the suite can observe the resolution phase progression.
-        let progress = ResolutionProgress()
+        let progress = await MainActor.run { ResolutionProgress() }
         let source = PhaseRecordingMetadataSource(
             wrapping: HuggingFaceMetadataSource(),
             progress: progress
@@ -259,7 +353,8 @@ struct IntegrationTests {
                             repo: Repo.ID(rawValue: id) ?? Repo.ID(namespace: id, name: ""),
                             kind: .model
                         ) ?? FileManager.default.temporaryDirectory
-                    }
+                    },
+                    samplingMode: Self.samplingMode
                 ),
                 observer: byteObserver
             ),
@@ -273,15 +368,24 @@ struct IntegrationTests {
             loader: loader
         )
 
+        let resolveStarted = ContinuousClock.now
         let profile = try await router.resolve(profile: realProfile, reporting: progress)
+        resolveDuration = ContinuousClock.now - resolveStarted
 
         // 1. Progress advanced sizing -> downloading -> loading -> ready.
-        #expect(progress.phase == .ready)
-        #expect(progress.fraction == 1.0)
-        for slot in [ModelSlot.standard, .flash, .embedding] {
-            let sp = try #require(progress.slots[slot])
-            #expect(sp.state == .ready)
-            #expect(sp.chosen != nil)
+        //
+        //    `ResolutionProgress` is `@MainActor`, so its reads hop to the main
+        //    actor here rather than isolating the whole test body to it. The
+        //    four generation turns below then run off the main actor, which is
+        //    what the target's own rule asks for.
+        try await MainActor.run {
+            #expect(progress.phase == .ready)
+            #expect(progress.fraction == 1.0)
+            for slot in [ModelSlot.standard, .flash, .embedding] {
+                let sp = try #require(progress.slots[slot])
+                #expect(sp.state == .ready)
+                #expect(sp.chosen != nil)
+            }
         }
         #expect(await source.observedPhases.contains(.sizing))
         #expect(await loader.observedLoadPhases.allSatisfy { $0 == .downloading })
@@ -307,17 +411,31 @@ struct IntegrationTests {
         }
 
         // 2. A standard session returns non-empty text.
+        //
+        //    Every turn below states `GatedRealModelBudget.responseTokenCeiling`
+        //    as its reply ceiling. Without one each turn takes
+        //    `LiveModelLoader`'s own default of 8192 tokens, so a run whose
+        //    `<think>` block does not stop cannot be held inside the budget.
+        //    The ceiling gives space to the `<think>` block and to the answer —
+        //    see that constant — and a turn that stops earlier still costs only
+        //    the tokens it generated.
         let session = profile.standard.makeSession(
             instructions: "You are a terse assistant."
         )
-        let reply = try await session.respond(to: "Say hello in one short sentence.")
+        let plainTurnStarted = ContinuousClock.now
+        let reply = try await session.respond(
+            to: "Say hello in one short sentence.",
+            maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        plainTurnDuration = ContinuousClock.now - plainTurnStarted
         #expect(!reply.isEmpty)
 
         // 3. Embedding returns dimension-length vectors AND records an embedding
         //    transcript event.
         let dimension = profile.embedding.dimension
         #expect(dimension > 0)
+        let embedStarted = ContinuousClock.now
         let vectors = try await profile.embedding.embed(texts: ["first document", "second document"])
+        embedDuration = ContinuousClock.now - embedStarted
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == dimension })
 
@@ -326,10 +444,13 @@ struct IntegrationTests {
         let schema = #"""
             {"type":"object","properties":{"city":{"type":"string"},"country":{"type":"string"}},"required":["city","country"],"additionalProperties":false}
             """#
+        let guidedTurnStarted = ContinuousClock.now
         let guided = try await profile.standard.respond(
             to: "Name a city to visit in Japan, as JSON.",
-            matching: schema
+            matching: schema,
+            maxTokens: GatedRealModelBudget.responseTokenCeiling
         )
+        guidedTurnDuration = ContinuousClock.now - guidedTurnStarted
         guard case .object(let object) = guided else {
             Issue.record("guided output was not a JSON object: \(guided)")
             return
@@ -354,14 +475,22 @@ struct IntegrationTests {
             childRecordingDirectory.deletingLastPathComponent().standardizedFileURL
                 == session.recordingDirectory.standardizedFileURL
         )
-        let childReply = try await #require(child).respond(to: "Say hi in one word.")
+        let forkTurnStarted = ContinuousClock.now
+        let childReply = try await #require(child).respond(
+            to: "Say hi in one word.",
+            maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        forkTurnDuration = ContinuousClock.now - forkTurnStarted
         #expect(!childReply.isEmpty)
 
         // Dropping the only reference releases the fork. No other binding
         // retains it, so this is a genuine release; the parent is unaffected
         // and keeps generating.
         child = nil
-        let afterRelease = try await session.respond(to: "Still there?")
+        let parentTurnStarted = ContinuousClock.now
+        let afterRelease = try await session.respond(
+            to: "Still there?",
+            maxTokens: GatedRealModelBudget.responseTokenCeiling)
+        parentTurnDuration = ContinuousClock.now - parentTurnStarted
         #expect(!afterRelease.isEmpty)
 
         // 6. Recording: the fork's transcript.jsonl is physically nested under

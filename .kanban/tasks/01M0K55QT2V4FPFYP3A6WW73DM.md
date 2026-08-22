@@ -41,8 +41,24 @@ comments:
     evidence: 2 files — IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/RealToolTurnComparisonTests.swift, IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift; whole-target runs 6 and 7: both-surfaces 17.4 s and 17.0 s (was 109.4 and 110.7); root swift test 1032/98 and 83/10 passed; new card ^pa5q5dt
     task: ^6ww73dm
   timestamp: 2026-08-22T03:34:44.578394+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0krwzq50x22hn727yxda4j2
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 2858f37); counts findings 0, confirmed 0, refuted 0, attempted 7, failed 0; 2 files reviewed (RealToolTurnComparisonTests.swift, Support/GatedSuiteSerialGate.swift), 6 `.kanban/` files skipped by `.reviewignore`
+    - next: none; task moved to done
+  timestamp: 2026-08-22T03:40:45.157973+00:00
+- actor: claude-code
+  id: 01m0krxkaj0a363076mk39dkfz
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — one container load per test, round ceiling, one-step instructions, Qwen3-4B-4bit (measured: same turn shape, both markers delivered); the 30B stayed at 104–106 s because its <think> block is ~490 of 544 tokens a turn; whole-target runs 6 and 7: 17.4 s and 17.0 s (was 109.4 / 110.7), all green, box under a GPU-heavy game (load 11–22); ^pa5q5dt filed for the next-dearest test (resolve real profile…, 89.8 s)
+    - test: green — root swift test 1032 + 83 passed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: 2858f37
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-22T03:41:05.234709+00:00
+position_column: done
+position_ordinal: ffec80
 title: RealToolTurnComparisonTests both-surfaces test measures 109 to 111 seconds, 92 percent of the two-minute budget
 ---
 Filed by task ^bpwfbyz, which converted the two tests that ran nearest the budget on 2026-08-20. The two whole-target runs of 2026-08-21 (`swift test --package-path IntegrationTests`, every model in the Hugging Face cache, runs 4 and 5 in the table in the doc comment of `integrationTestBudgetMinutes`) measured `RealToolTurnComparisonTests/realTurnDeliversToolDataOnBothSurfaces` at 109.4 and 110.7 seconds. That is 92 percent of `integrationTestBudgetMinutes` and the dearest test of the target now. The three runs of 2026-08-20 measured it at 86.7, 85.3 and 85.8 seconds.
