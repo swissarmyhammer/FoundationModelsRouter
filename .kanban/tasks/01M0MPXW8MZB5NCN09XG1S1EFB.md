@@ -133,8 +133,25 @@ comments:
     - `makeForkSeedsFromParentTranscript()` prints a five-phase clock under its own `sessionBackendPhase` tag — its own tag, so a grep for the run table's `gatedTest` lines never picks up a phase line.
     - Two recorded measurements that describe replies the pinned code no longer writes are corrected to what it does write, and each states that the old number came from a sampled run: the KV-cache comment in this suite, and the `usageTokenCounts()` doc in `LiveModelLoader.swift`. That production doc is the only file outside the integration package this change touches, and the edit is a doc comment.
   timestamp: 2026-08-22T14:25:25.247289+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0my163j7venbfjqfzy2b9c9
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit d01b6c2) — 7 validators attempted, 0 findings, 0 confirmed, 0 refuted, 0 failed. 3 files reviewed; 4 `.kanban/` files excluded by `.reviewignore`.
+    - next: none. The task moves to `done`.
+  timestamp: 2026-08-22T14:29:40.082445+00:00
+- actor: claude-code
+  id: 01m0my1ss18g6k1hg52v66fmxb
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files, 250 insertions and 95 deletions. `LanguageModelSessionBackendTests.swift` (pin `samplingMode: .greedy` at load time, per-phase clock under its own `sessionBackendPhase` tag, eight loads folded onto one `makeContainer()`, `sessionBackendTinyModel` renamed to `sessionBackendModel`), `GatedSuiteSerialGate.swift` (runs 12 and 13 in the run table), `LiveModelLoader.swift` (one doc comment, a corrected recorded measurement).
+    - test: green — two whole-target runs of `swift test --package-path IntegrationTests`, both exit 0, 29 tests in 14 suites plus 2 tests in 2 suites. The test measured 46.9 seconds at load average 2.33 (run 12) and 51.8 seconds at load average 7.36 (run 13), against a 60-second half-budget, and against 76.3 and 28.9 before. Root `swift test` green: 1032 and 83 tests pass, zero failures, zero warnings. Assertion counts unchanged: 30 `#expect`, 13 `#require`, 11 `@Test`. `integrationTestBudgetMinutes` untouched. The runs were made inside the implement step and are not made again here.
+    - commit: d01b6c2 — test(integration): pin greedy decoding and fold eight loads into one for the fork transcript test (^g1s1efb)
+    - review: clean — 7 validators attempted, 0 findings on `review sha HEAD~1..HEAD`
+    - next: none. The task is in done. No successor card: no test of runs 12 or 13 reaches half the budget.
+  timestamp: 2026-08-22T14:30:00.225382+00:00
+position_column: done
+position_ordinal: ffef80
 title: '`makeFork() seeds the child''s transcript from the parent''s` measured 76.3 seconds, 64 percent of the budget, and 2.6 times its sibling run'
 ---
 Filed by task ^s49ya8p, which took `MLX path: whether the ToolContext bound around respond() arrives` under half of `integrationTestBudgetMinutes`. The two whole-target runs of 2026-08-22 after that change (runs 10 and 11 in the table in the doc comment of `integrationTestBudgetMinutes`) measured this test of `LanguageModelSessionBackendTests` at 76.3 and 28.9 seconds. The 76.3 is 64 percent of the budget, and this test is now the nearest to the limit in the target.
