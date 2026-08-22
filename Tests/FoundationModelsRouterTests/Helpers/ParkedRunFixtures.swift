@@ -60,14 +60,23 @@ enum FakeRun {
     static let op = "run task"
 }
 
-/// Parks a fake swift-task run on `mailbox`: its settling task suspends on
+/// Parks a fake run of `kind` on `mailbox`: its settling task suspends on
 /// `latch` (opening it on cooperative cancellation), then produces a terminal
 /// `.completed` event whose outcome honestly reports whether it was cancelled.
-/// The canceler cancels the settling task and reports `cancelerOutcome`.
+/// The canceler reports `cancelerOutcome`, and what it does before reporting is
+/// `kind`'s own cancellation authority:
+///
+/// - ``RunKind/swiftTask``: cancellation is cooperative, so the canceler
+///   cancels the settling task and the body ends on its own schedule.
+/// - ``RunKind/process``: `killpg(SIGKILL)` is authoritative and lives in the
+///   capability, not in the fixture, so the canceler only reports. The body
+///   stands for the run's wait on the killed process group, and it ends when a
+///   test opens `latch`.
 ///
 /// - Parameters:
 ///   - mailbox: The mailbox the run parks on.
 ///   - latch: The latch the run's body suspends on until a test opens it.
+///   - kind: What kind of work the fake run is.
 ///   - detailOnSettle: The detail the terminal event carries.
 ///   - cancelerOutcome: The outcome the run's canceler reports.
 ///   - counter: Counts this run's canceler invocations, when a test supplies
@@ -76,6 +85,7 @@ enum FakeRun {
 func parkFakeRun(
     on mailbox: SessionMailbox,
     latch: RunLatch,
+    kind: RunKind = .swiftTask,
     detailOnSettle: String = "done",
     cancelerOutcome: OperationOutcome = .cancelled,
     counter: CancelCounter? = nil
@@ -99,12 +109,20 @@ func parkFakeRun(
     await mailbox.park(
         tool: FakeRun.tool,
         op: FakeRun.op,
-        kind: .swiftTask,
+        kind: kind,
         completionToken: token,
         settling: settling,
         canceler: {
             await counter?.increment()
-            settling.cancel()
+            switch kind {
+            case .swiftTask:
+                // Cooperative: the canceler only requests the end.
+                settling.cancel()
+            case .process:
+                // Authoritative, and owned by the capability: the fixture
+                // reports the kill and leaves the body to the test's latch.
+                break
+            }
             return cancelerOutcome
         }
     )

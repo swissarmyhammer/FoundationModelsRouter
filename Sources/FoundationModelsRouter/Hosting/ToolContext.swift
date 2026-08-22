@@ -297,10 +297,14 @@ public struct ToolContext: Sendable {
     /// Requests cancellation of a parked run and reports the outcome its
     /// canceler reports — verbatim, never a guess.
     ///
-    /// The run stays parked until it actually settles: for a
-    /// ``RunKind/swiftTask`` run cancellation is cooperative, so the body
-    /// ends on its own schedule and ``wait(completionToken:seconds:)`` is
-    /// what collects the terminal event.
+    /// The run stays parked until it actually settles, and the reported
+    /// outcome says how much the canceler knows. A ``RunKind/swiftTask`` run
+    /// is cancelled cooperatively, so the body ends on its own schedule and
+    /// the canceler reports ``OperationOutcome/cancelled``. A
+    /// ``RunKind/process`` run is killed with `killpg(SIGKILL)` by the
+    /// capability that owns the group, so the canceler reports
+    /// ``OperationOutcome/stopped``. Either way,
+    /// ``wait(completionToken:seconds:)`` is what collects the terminal event.
     ///
     /// - Parameter completionToken: The run's completion token.
     /// - Returns: The ``CancelOutcome``.

@@ -1,14 +1,28 @@
 /// What kind of work a parked run is — the discriminator that selects the
 /// cancellation semantics its canceler closure carries.
 ///
-/// Phase 1 ships ``swiftTask`` only; this enum is the seam where the
-/// `process` (phase 2) and `mcpRequest` (phase 4) kinds land.
+/// Phase 1 shipped ``swiftTask`` and phase 2 adds ``process``; this enum stays
+/// the seam where the `mcpRequest` (phase 4) kind lands.
+///
+/// Router owns the vocabulary and none of the machinery: each kind's canceler
+/// comes from the capability that started the run, so the router never spawns
+/// a process and never signals one.
 public enum RunKind: String, Codable, Sendable, Equatable {
     /// An in-process Swift `Task`: cancellation is cooperative
     /// (`Task.cancel()`), so a canceler honestly reports
     /// ``OperationOutcome/cancelled`` — requested, the work may still be
     /// running — never ``OperationOutcome/stopped``.
     case swiftTask
+
+    /// An OS process group, which a shell capability owns: `killpg(SIGKILL)`
+    /// is authoritative, so a canceler for this kind reports
+    /// ``OperationOutcome/stopped`` — the work is over, and that is certain —
+    /// never ``OperationOutcome/cancelled``.
+    ///
+    /// The signal itself belongs to the capability that spawned the group. The
+    /// run plane holds the canceler closure and reports the outcome it
+    /// returns; it never calls `killpg` itself.
+    case process
 }
 
 /// One row of the run plane's snapshot: a parked run's token, tool, op, kind,

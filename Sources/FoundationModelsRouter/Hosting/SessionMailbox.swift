@@ -22,12 +22,14 @@ import Foundation
 /// token a caller holds and the correlation on the run's posted events are
 /// one and the same identifier.
 ///
-/// Phase 1 ships the ``RunKind/swiftTask`` run kind only; ``RunKind`` is the
-/// seam where `process` (phase 2) and `mcpRequest` (phase 4) land, each
-/// carrying its own cancellation semantics through the parked run's canceler
-/// closure and the honest ``OperationOutcome`` vocabulary that closure must
-/// report (`.cancelled` is a request, `.stopped` is certainty, `.lost` is
-/// unknowable — never flattened).
+/// ``RunKind`` carries the ``RunKind/swiftTask`` and ``RunKind/process`` kinds,
+/// and it stays the seam where `mcpRequest` (phase 4) lands. Each kind carries
+/// its own cancellation semantics through the parked run's canceler closure and
+/// the honest ``OperationOutcome`` vocabulary that closure must report
+/// (`.cancelled` is a request, `.stopped` is certainty, `.lost` is unknowable —
+/// never flattened). The mailbox holds those closures and never knows what a
+/// kind does to end its work: a `process` run's `killpg(SIGKILL)` belongs to the
+/// capability that spawned the group.
 ///
 /// Teardown is ``sweep()``, driven by ``RoutedSession/close()``: every parked
 /// run's canceler is invoked with its kind's semantics and exactly one
@@ -330,11 +332,15 @@ public actor SessionMailbox {
     /// Invokes a parked run's canceler and reports the outcome the canceler
     /// reports — verbatim, never a guess.
     ///
-    /// The run stays parked until it actually settles: for a
-    /// ``RunKind/swiftTask`` run cancellation is cooperative, so the body
-    /// ends on its own schedule and settlement (observed by ``park``'s
-    /// background observer) is what resumes any waiters with the terminal
-    /// event.
+    /// The run stays parked until it actually settles, and the reported
+    /// outcome says how much the canceler knows. A ``RunKind/swiftTask`` run
+    /// is cancelled cooperatively, so the body ends on its own schedule and
+    /// the canceler reports ``OperationOutcome/cancelled``. A
+    /// ``RunKind/process`` run is killed with `killpg(SIGKILL)` by the
+    /// capability that owns the group, so the canceler reports
+    /// ``OperationOutcome/stopped``. Either way, settlement (observed by
+    /// ``park``'s background observer) is what resumes any waiters with the
+    /// terminal event.
     ///
     /// - Parameter completionToken: The run's completion token.
     /// - Returns: ``CancelOutcome/reported(_:)`` with the canceler's honest
