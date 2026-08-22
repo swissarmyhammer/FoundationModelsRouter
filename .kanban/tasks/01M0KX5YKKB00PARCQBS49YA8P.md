@@ -1,7 +1,72 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01m0mncyjysz9wp3znrf2yjgn6
+  text: |-
+    Research and per-phase measurement, as the card asks.
+
+    Added a per-phase clock to `mlxPathPropagationVerdict()` first, before choosing a repair shape. It prints `dropInherited`, `load`, `turn` and `evict` under its own `propagationProbePhase` tag, as `IntegrationTests` does under `endToEndPhase`.
+
+    What the clock said (all measurements in isolation, `swift test --package-path IntegrationTests --filter mlxPathPropagationVerdict`, on a box that ran a GPU-heavy game the whole time):
+
+    | what | drop | load | turn | evict | total |
+    |---|---|---|---|---|---|
+    | 30B, provider default, load average 14.3 | 3.8 | 3.5 | 79.4 | 0.13 | 86.9 |
+    | 30B, argmax, load average 8.0 | 3.6 | 3.5 | 74.9 | 0.13 | 82.1 |
+    | 30B, argmax, load average 9.1 | 3.7 | 3.5 | 74.7 | 0.12 | 82.0 |
+    | 4B, argmax, load average 11.6 | 1.5 | 1.4 | 5.7 | 0.03 | 8.6 |
+    | 4B, argmax, load average 12.3 | 1.5 | 1.4 | 5.6 | 0.03 | 8.5 |
+
+    Three things the clock settled:
+
+    1. **The two loads were never the cost.** They are 7.3 of 86.9 seconds. So the `RealToolTurnComparisonTests` "one container for each test" half of that repair buys nothing here, and the double load stays. It is what keeps an inherited prompt cache out of the probe.
+    2. **Argmax alone is not sufficient.** It pins the number exactly — 82.1 and 82.0 — but 82 seconds is 68 percent of the budget, over half. The turn takes two rounds and the 30B writes a `<think>` block ahead of each one.
+    3. **The 4B reaches half the budget with a real margin.** 8.6 and 8.5 seconds, 7 percent of the budget.
+
+    One discovery worth keeping: the sampling pin could NOT go on the container load. `RealModelContainer.load(ref:samplingMode:)` stores the mode on `MLXFoundationModelsContainer`, and only `MLXFoundationModelsSessionBackend` reads it. This suite drives a raw `LanguageModelSession` over `container.model`, so a load-time pin is not read at all. The pin therefore goes in the `GenerationOptions` the turn passes, which is what `RecordingHandleIntegrationTests` does and states, for the same reason.
+
+    The 4B keeps the probe honest. Its turn has exactly the entry kinds the 30B's turn had — `instructions, prompt, response, reasoning, toolCalls, toolOutput, response, reasoning` — one recorded `context_probe` call, `call(arguments:)` run, and the bound `completionToken` inside it.
+  timestamp: 2026-08-22T11:58:48.414743+00:00
+- actor: claude-code
+  id: 01m0mq5mffe7zr7s4pvpm03ayk
+  text: |-
+    ### implement — changed
+
+    - evidence: 2 files —
+      `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/PropagationProbeIntegrationTests.swift`,
+      `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift`
+
+    What the change is. Three edits, each stated on the declaration that carries it:
+
+    1. `mlxPathPropagationVerdict()` prints a per-phase clock under its own `propagationProbePhase` tag — `dropInherited`, `load`, `turn`, `evict`. `makeUncontaminatedContainer()` returns an `UncontaminatedLoad` so each of the two loads has its own number. The tag is the suite's own, not `gatedTest`, so a grep of the run table never picks up a phase line.
+    2. `turnOptions` pins argmax decoding beside the reply ceiling the turn already stated. It is stated on the turn's own `GenerationOptions`, and not on the container load, because this suite drives a raw `LanguageModelSession`. `RecordingHandleIntegrationTests` states the same thing for the same reason.
+    3. `propagationProbeModel` moves the MLX path from the 30B onto `mlx-community/Qwen3-4B-4bit`, the model `RealToolTurnComparisonTests` already drives. The constant carries the 30B measurement that rules it out.
+
+    Nothing else moved. The probe tool, the instructions, the prompt, the double load, the four stages, and every assertion on the arriving context and its `completionToken` are what they were. `integrationTestBudgetMinutes` is still 2.
+
+    Measurements. Two whole-target runs, `swift test --package-path IntegrationTests`, on the same box, which ran a GPU-heavy game the whole time:
+
+    - run 10, load average 14.32 at start and 12.10 at end: MLX path 7.2 seconds, system-model path 2.2. 29 tests in 14 suites passed in 661.7 seconds, plus 2 tests in 2 suites of the eval target in 103.6.
+    - run 11, load average 11.08 at start and 11.29 at end: MLX path 8.7 seconds, system-model path 1.9. 29 tests in 14 suites passed in 609.3 seconds, plus 2 tests in 2 suites in 106.8.
+
+    7.2 and 8.7 are 6 and 7 percent of the budget. The card asks for under half, which is 60 seconds.
+
+    Root `swift test` also green: 1032 tests in 98 suites with 2 known issues, and 83 tests in 10 suites.
+
+    Acceptance criteria, each checked against the diff:
+
+    - The test measures under half of the budget across two whole-target runs — 7.2 and 8.7 seconds.
+    - No assertion is weakened and the budget is not raised — no `#expect` or `#require` changed, and `integrationTestBudgetMinutes` is still 2.
+    - The suite doc states what the conversion no longer proves — `## What it NO LONGER proves (task ^s49ya8p)` names two losses: the 30B's tool dispatch through `LanguageModelSession`, and the sampled path.
+    - The run table records the new measurements — runs 10 and 11 are two new columns, every row of the table is filled, and the margin prose names the new nearest-the-limit test.
+
+    New work found. `makeFork() seeds the child's transcript from the parent's` measured 76.3 seconds in run 10 and 28.9 in run 11 — 64 percent of the budget, and 2.6 times its sibling run of the same code. It is now the test nearest the limit. Filed as ^g1s1efb, with the load-time-versus-turn-time sampling discovery this card made, so the next agent does not repeat it.
+
+    - next: `/review`
+  timestamp: 2026-08-22T12:29:45.839630+00:00
+position_column: doing
 position_ordinal: '80'
 title: '`MLX path: whether the ToolContext bound around respond() arrives` measured 118.7 seconds, 99 percent of the two-minute budget'
 ---
@@ -15,7 +80,7 @@ The box ran a GPU-heavy game for both runs, at load average 12.0 and 14.6, so so
 
 ## Acceptance Criteria
 
-- [ ] The test measures under half of `integrationTestBudgetMinutes` across two runs of the whole target, or the card records why it cannot and what was tried
-- [ ] No assertion is weakened and the budget is not raised
-- [ ] The suite doc states what the conversion no longer proves, as `IntegrationTests` and `SessionTreeRestorationIntegrationTests` do
-- [ ] The run table in `integrationTestBudgetMinutes` records the new measurements #integration #real-model #test-debt
+- [x] The test measures under half of `integrationTestBudgetMinutes` across two runs of the whole target, or the card records why it cannot and what was tried
+- [x] No assertion is weakened and the budget is not raised
+- [x] The suite doc states what the conversion no longer proves, as `IntegrationTests` and `SessionTreeRestorationIntegrationTests` do
+- [x] The run table in `integrationTestBudgetMinutes` records the new measurements #integration #real-model #test-debt

@@ -5,9 +5,32 @@ import Testing
 @testable import FoundationModelsRouter
 @testable import FoundationModelsRouterRealModelSupport
 
-/// The same real `mlx-community` generation model the rest of this target's
-/// gated suites use for the `.standard` slot.
-private let propagationProbeModel: ModelRef = RealModels.standard
+/// The real `mlx-community` generation model the MLX path drives: a 4B model
+/// that reasons and calls tools, the same one ``RealToolTurnComparisonTests``
+/// drives.
+///
+/// Until task ^s49ya8p this constant was ``RealModels/standard``, the 30B.
+/// Measured in isolation on 2026-08-22, with the argmax decoding
+/// ``PropagationProbeIntegrationTests/turnOptions`` states, on a box that ran
+/// a GPU-heavy game for the whole measurement (load average 8 to 9): the 30B
+/// took 3.6 seconds to drop the inherited container, 3.5 seconds for the
+/// clean load and 74.9 seconds for the turn — 82.1 seconds, 68 percent of
+/// ``integrationTestBudgetMinutes``. A second run of the same code measured
+/// 3.7, 3.5 and 74.7, for 82.0 seconds, so argmax decoding takes the spread
+/// out and leaves the work: the turn takes two rounds, and the 30B writes a
+/// `<think>` block ahead of each one. No Router-side change shortens those
+/// blocks, and this suite never disables thinking, so on the 30B the test
+/// cannot reach half the budget.
+///
+/// The 4B makes the same turn, and the turn is what the probe reads: two
+/// rounds, the same entry kinds — `instructions, prompt, response, reasoning,
+/// toolCalls, toolOutput, response, reasoning` — one recorded
+/// `context_probe` call, `call(arguments:)` run, and the bound
+/// `completionToken` inside it. Measured the same way on the same box under
+/// the same load: 1.5 seconds to drop the inherited container, 1.4 for the
+/// clean load and 5.7 for the turn — 8.6 seconds, and 8.5 on a second run.
+/// The suite doc states what the move no longer proves.
+private let propagationProbeModel: ModelRef = "mlx-community/Qwen3-4B-4bit"
 
 /// The probe tool's model-facing `name`, bound once.
 ///
@@ -32,7 +55,7 @@ private let propagationProbeToolName = "context_probe"
 /// proving the arriving context is the test's own binding rather than a
 /// stray one). The test binds the context around `respond()` and forces one
 /// probe-tool call on the MLX path (`MLXLanguageModel` over
-/// ``RealModels/standard``) and one on the system model
+/// ``propagationProbeModel``) and one on the system model
 /// (`SystemLanguageModel.default`). Each path's verdict is a definite
 /// boolean: a run where the model never invokes the probe fails via
 /// `#require` — never a silent skip-as-pass.
@@ -53,6 +76,11 @@ private let propagationProbeToolName = "context_probe"
 /// recorded exactly one `context_probe` call in the session's own transcript,
 /// `call(arguments:)` ran, and the arriving context carried the bound
 /// `completionToken` (task `^f9zt7c5`).
+///
+/// Reconfirmed 2026-08-22 on the 4B ``propagationProbeModel`` the MLX path
+/// moved to, and on the system model beside it: one recorded `context_probe`
+/// call on each path, `call(arguments:)` run, and the bound `completionToken`
+/// inside it (task ^s49ya8p).
 ///
 /// Branch decision executed per the observed answer: native tools get the
 /// ambient context free, so the tool-side event-subscription protocol and
@@ -89,14 +117,46 @@ private let propagationProbeToolName = "context_probe"
 /// outcome, and why the real cause here turned out to be an inherited cache
 /// rather than the prompt (see ``makeUncontaminatedContainer()``).
 ///
-/// The three runs of 2026-08-20 measured the MLX path at 67.2, then 27.4, then
-/// 24.4 seconds, and the system-model path at 2.1, then 2.3, then 2.1 seconds.
-/// The MLX-path test is the dearer of the two because it loads the model twice,
-/// on purpose: the second, uncontaminated load is what keeps an inherited cache
-/// out of the probe. Its dearest run is 2.8 times its cheapest, out of the
-/// provider-default sampling ``SessionTreeRestorationIntegrationTests`` states.
-/// The limit is now ``integrationTestBudgetMinutes``, replacing the 15 minutes
-/// this suite stated before; see it for the whole run table.
+/// ## What it NO LONGER proves (task ^s49ya8p)
+///
+/// Until that task the MLX path drove ``RealModels/standard``, the 30B, and its
+/// turn stated a reply ceiling but no sampling mode. The nine runs in the table
+/// of ``integrationTestBudgetMinutes`` measured that test at 21.0 to 118.7
+/// seconds — the widest spread of the table, a factor of five with no code
+/// change to the suite, and 118.7 is 99 percent of the budget. The per-phase
+/// clock ``PropagationProbeIntegrationTests/mlxPathPropagationVerdict()`` now
+/// prints named the cost before either change was made: measured in isolation
+/// on 2026-08-22 under the provider default, the two loads took 3.8 and 3.5
+/// seconds and the turn took 79.4, so the two loads were never the cost.
+///
+/// Two changes bring the test inside half the budget, and each one is stated on
+/// the declaration that carries it:
+/// ``PropagationProbeIntegrationTests/turnOptions`` pins argmax decoding on
+/// every turn, and ``propagationProbeModel`` moves the MLX path onto a 4B model
+/// that reasons and calls tools, with the measurement that rules the 30B out.
+/// Measured in isolation on 2026-08-22 under both: 8.6 seconds, and 8.5 on a
+/// second run.
+///
+/// What is no longer proven is:
+///
+/// - **The standard model's tool dispatch through `LanguageModelSession`.** The
+///   30B still goes through Apple's own tool dispatch in
+///   ``RecordingHandleIntegrationTests`` and in the tool-calling test of
+///   ``SessionTreeRestorationIntegrationTests``. The propagation question is
+///   about that dispatch rather than about the weights behind it, and the 4B
+///   makes the same two-round turn with the same entry kinds, so the shape the
+///   four stages read is the same; the model is not.
+/// - **The sampled path.** Both paths decode with argmax now, so a red run is
+///   attributable to the change under test, and the behavior under the
+///   provider's default sampling is not measured here. This never disables
+///   thinking: the model still writes a `<think>` block ahead of each round.
+///
+/// Everything else is untouched: the probe tool, the instructions, the prompt,
+/// the double load that keeps an inherited prompt cache out of the turn, the
+/// four stages, and every assertion on the arriving context and on its
+/// `completionToken` are exactly what they were. The system-model path drives
+/// the same `SystemLanguageModel.default` it always drove. See
+/// ``integrationTestBudgetMinutes`` for the whole run table.
 @Suite(
     "Gated propagation probe: does the ToolContext task local survive respond()? (task c25mpnw)",
     .serialized,
@@ -104,6 +164,14 @@ private let propagationProbeToolName = "context_probe"
     .exclusiveRealModel
 )
 struct PropagationProbeIntegrationTests {
+    /// The tag the per-phase wall-clock line of ``mlxPathPropagationVerdict()``
+    /// opens with.
+    ///
+    /// Its own tag, and not the target's `gatedTest` one, so a grep that
+    /// collects the run table's per-test measurements never picks up a phase
+    /// line. See ``integrationTestBudgetMinutes`` for that table.
+    private static let phaseLabel = "propagationProbePhase"
+
     // MARK: - Probe tool
 
     /// The scripted tool argument schema the turn's prompt reliably drives:
@@ -195,6 +263,30 @@ struct PropagationProbeIntegrationTests {
     /// its own training, short enough to keep a failure message readable.
     private static let diagnosticAnswerPrefixLength = 400
 
+    /// The options every probe turn passes to `session.respond(to:options:)`.
+    ///
+    /// Stated here, and deliberately here rather than on
+    /// ``RealModelContainer/load(ref:context:samplingMode:)``, for the reason
+    /// ``RecordingHandleIntegrationTests`` states on its own `turnOptions`: a
+    /// sampling mode pinned at load time is read by the session backend a
+    /// `RoutedSession` drives, and this suite drives no `RoutedSession`. It
+    /// drives a raw `LanguageModelSession` over the container's own language
+    /// model, so the only options that reach the model are the ones the turn
+    /// passes.
+    ///
+    /// - Argmax decoding, which task ^s49ya8p added. The provider default
+    ///   draws at temperature `0.6` from MLX's process-global PRNG, which
+    ///   seeds itself from the clock, so the `<think>` block ahead of each
+    ///   round was a different length on every run of identical code, and the
+    ///   wall clock was a property of the run rather than of the code. Argmax
+    ///   decoding consumes no randomness at all. This never disables thinking:
+    ///   the model still writes its `<think>` block, and this only fixes which
+    ///   tokens it picks.
+    /// - ``GatedRealModelBudget/responseTokenCeiling`` as each round's reply
+    ///   ceiling, which this turn already stated.
+    private static let turnOptions = GenerationOptions(
+        samplingMode: .greedy, maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
+
     /// Builds the ``ToolContext`` the test binds around `respond()` — a
     /// real mailbox and a minted completion token, so a context that arrives
     /// inside the probe is checkable as this exact binding.
@@ -217,10 +309,12 @@ struct PropagationProbeIntegrationTests {
     /// `MLXLanguageModel` keeps a process-global container cache keyed by model
     /// id, and alongside it a per-model prompt cache that stores each completed
     /// round's KV state as content-addressed chunks shared by *every*
-    /// conversation on that model. Every gated suite in this target drives the
-    /// same ``RealModels/standard``, so by the time this suite runs, that shared
-    /// pool holds chunks from other suites' conversations — several of which are
-    /// themselves tool-calling turns.
+    /// conversation on that model. ``RealToolTurnComparisonTests`` drives the
+    /// same ``propagationProbeModel`` this suite drives, and every round of it
+    /// is a tool-calling round, so by the time this suite runs that shared pool
+    /// can hold chunks from another suite's tool-calling conversation. The
+    /// hazard stood when both suites drove ``RealModels/standard`` and it
+    /// stands now, so this drop stays.
     ///
     /// That inheritance decides this probe's outcome. Measured 2026-08-08: run
     /// alone the turn calls the probe tool every time, but under a full
@@ -242,13 +336,38 @@ struct PropagationProbeIntegrationTests {
     /// ``LiveModelLoader/preload(container:)`` is a no-op, so weights only
     /// materialize on the turn's own `respond()`.
     ///
-    /// - Returns: A container for ``propagationProbeModel`` with no inherited
-    ///   prompt-cache state.
+    /// - Returns: The container for ``propagationProbeModel`` with no inherited
+    ///   prompt-cache state, and each of the two loads' own wall clock.
     /// - Throws: If either load fails.
-    private func makeUncontaminatedContainer() async throws -> MLXFoundationModelsContainer {
+    private func makeUncontaminatedContainer() async throws -> UncontaminatedLoad {
+        let dropStarted = ContinuousClock.now
         let inherited = try await RealModelContainer.load(ref: propagationProbeModel)
         await inherited.model.evict()
-        return try await RealModelContainer.load(ref: propagationProbeModel)
+        let dropDuration = ContinuousClock.now - dropStarted
+
+        let loadStarted = ContinuousClock.now
+        let container = try await RealModelContainer.load(ref: propagationProbeModel)
+        return UncontaminatedLoad(
+            container: container,
+            dropDuration: dropDuration,
+            loadDuration: ContinuousClock.now - loadStarted
+        )
+    }
+
+    /// One uncontaminated load, and each of its two phases' own wall clock.
+    ///
+    /// ``makeUncontaminatedContainer()`` loads the model two times on purpose,
+    /// so one total cannot say which of the two carries the cost. The MLX-path
+    /// test prints these beside its own turn.
+    private struct UncontaminatedLoad {
+        /// The container with no inherited prompt-cache state.
+        let container: MLXFoundationModelsContainer
+
+        /// How long the inherited load and its eviction took together.
+        let dropDuration: Duration
+
+        /// How long the clean load that followed took.
+        let loadDuration: Duration
     }
 
     // MARK: - One turn's measured facts
@@ -349,11 +468,7 @@ struct PropagationProbeIntegrationTests {
         let context = makeBoundContext(completionToken: boundCompletionToken)
 
         let response = try await ToolContext.$current.withValue(context) {
-            try await session.respond(
-                to: probePrompt,
-                options: GenerationOptions(
-                    maximumResponseTokens: GatedRealModelBudget.responseTokenCeiling)
-            )
+            try await session.respond(to: probePrompt, options: turnOptions)
         }
         let transcript = session.transcript
         return ProbeTurn(
@@ -460,22 +575,43 @@ struct PropagationProbeIntegrationTests {
 
     @Test("MLX path: whether the ToolContext bound around respond() arrives inside call(arguments:)")
     func mlxPathPropagationVerdict() async throws {
-        let container = try await makeUncontaminatedContainer()
+        // Each phase's own wall clock, printed however the test ends, so the
+        // cost can be read against the phase that carries it rather than
+        // against the total alone. `IntegrationTests` prints the same split for
+        // the same reason.
+        var dropDuration: Duration = .zero
+        var loadDuration: Duration = .zero
+        var turnDuration: Duration = .zero
+        var evictDuration: Duration = .zero
+        defer {
+            print(
+                "[\(Self.phaseLabel)] dropInherited=\(dropDuration) load=\(loadDuration) "
+                    + "turn=\(turnDuration) evict=\(evictDuration)"
+            )
+        }
+
+        let loaded = try await makeUncontaminatedContainer()
+        dropDuration = loaded.dropDuration
+        loadDuration = loaded.loadDuration
         let log = ProbeObservationLog()
         let session = LanguageModelSession(
-            model: container.model,
+            model: loaded.container.model,
             tools: [ContextProbeTool(log: log)],
             instructions: Self.probeInstructions
         )
 
+        let turnStarted = ContinuousClock.now
         let propagated = try await Self.probeVerdict(
             session: session, log: log, pathLabel: "MLX")
+        turnDuration = ContinuousClock.now - turnStarted
         // The observed 2026-08-04 verdict, pinned: the task local
         // propagates on the MLX path. A future toolchain that starts
         // dispatching tools on a detached task must break this loudly.
         #expect(propagated, "MLX path: the ToolContext task local must survive respond()")
 
-        await container.model.evict()
+        let evictStarted = ContinuousClock.now
+        await loaded.container.model.evict()
+        evictDuration = ContinuousClock.now - evictStarted
     }
 
     @Test(

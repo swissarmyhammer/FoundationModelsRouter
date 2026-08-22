@@ -1,0 +1,25 @@
+---
+assignees:
+- claude-code
+position_column: todo
+position_ordinal: '80'
+title: '`makeFork() seeds the child''s transcript from the parent''s` measured 76.3 seconds, 64 percent of the budget, and 2.6 times its sibling run'
+---
+Filed by task ^s49ya8p, which took `MLX path: whether the ToolContext bound around respond() arrives` under half of `integrationTestBudgetMinutes`. The two whole-target runs of 2026-08-22 after that change (runs 10 and 11 in the table in the doc comment of `integrationTestBudgetMinutes`) measured this test of `LanguageModelSessionBackendTests` at 76.3 and 28.9 seconds. The 76.3 is 64 percent of the budget, and this test is now the nearest to the limit in the target.
+
+The 76.3 is also 2.6 times the 28.9 the very next run of the same code measured, on the same box under the same load. Runs 1 to 9 measured it at 28.8, 62.3, 39.7, 63.8, 45.6, 39.9, 30.4, 44.7 and 48.6 seconds, so the number moves by a factor of two or more with no code change to the suite.
+
+That shape says the turn takes the provider's default sampling: the 30B writes a `<think>` block of a different length on every run. Task ^s49ya8p found the same cause under the propagation probe, and it found one thing a reader of this card needs. A sampling mode pinned at load time — `RealModelContainer.load(ref:samplingMode:)` — is stored on `MLXFoundationModelsContainer` and read only by `MLXFoundationModelsSessionBackend`. A suite that drives a raw `LanguageModelSession` does not read it, and the pin must go in the `GenerationOptions` the turn passes. Read `LanguageModelSessionBackendTests` to see which of the two it drives.
+
+Read `IntegrationTests`, `RealToolTurnComparisonTests` and `PropagationProbeIntegrationTests` for the three shapes of the repair. Add a per-phase clock before choosing one: task ^s49ya8p's clock proved that the two model loads were 7.3 of 86.9 seconds and the turn was the rest, so a repair aimed at the loads would have bought nothing.
+
+A test the limit cancels is worse than a plain red result. The cancellation lands mid-generation, and a cancellation on GPU work aborts the whole process on a Metal assertion (fork card ^3axg80k), which takes every other suite's results with it.
+
+The box ran a GPU-heavy game for both runs, at load average 14.3 and 11.1, so some of the spread is the box. Measure on a quiet box first.
+
+## Acceptance Criteria
+
+- [ ] The test measures under half of `integrationTestBudgetMinutes` across two runs of the whole target, or the card records why it cannot and what was tried
+- [ ] No assertion is weakened and the budget is not raised
+- [ ] The suite doc states what the conversion no longer proves, as `IntegrationTests`, `PropagationProbeIntegrationTests` and `SessionTreeRestorationIntegrationTests` do
+- [ ] The run table in `integrationTestBudgetMinutes` records the new measurements #integration #real-model #test-debt

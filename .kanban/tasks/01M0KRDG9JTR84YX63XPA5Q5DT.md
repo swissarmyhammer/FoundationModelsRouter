@@ -90,8 +90,25 @@ comments:
     - root `swift test`: exit 0, 1032 tests in 98 suites and 83 tests in 10 suites. `swift build --build-tests --package-path IntegrationTests`: exit 0.
     - next: review.
   timestamp: 2026-08-22T04:57:00.655427+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0kxk73bm80tyaj98nrpnf34
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (b56bc39) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 2 files reviewed: `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/IntegrationTests.swift`, `IntegrationTests/Tests/FoundationModelsRouterIntegrationTests/Support/GatedSuiteSerialGate.swift`. 6 `.kanban/` files not reviewed, because `.reviewignore` excludes them.
+    - next: card moved to done. All four acceptance criteria are marked complete. No open findings.
+  timestamp: 2026-08-22T05:02:47.915513+00:00
+- actor: claude-code
+  id: 01m0kxky2r9yjj1nxnczsysgr6
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — per-phase clock, greedy pinned on the loader, responseTokenCeiling on all four turns, @MainActor off the test (measured: it bought no time; kept off for the target's rule), suite doc and run-table rows 8 and 9; whole target 57.5 s and 58.2 s, both green (was 89.8 s); the first run of this step died on an API quota limit and was restarted with no work lost
+    - test: green — root swift test 1032 + 83 passed; swift build --build-tests --package-path IntegrationTests complete
+    - commit: b56bc39
+    - review: clean — 0 findings on HEAD~1..HEAD; task moved to done
+    - follow-on: ^s49ya8p for the ToolContext propagation probe, now the dearest test at 118.7 s in run 9
+  timestamp: 2026-08-22T05:03:11.448814+00:00
+position_column: done
+position_ordinal: ffed80
 title: '`resolve real profile, then generate, embed, guide, fork, and record` measured 89.8 seconds, 75 percent of the two-minute budget'
 ---
 Filed by task ^6ww73dm, which moved `RealToolTurnComparisonTests` under half of `integrationTestBudgetMinutes`. The two whole-target runs of 2026-08-21 after that move (runs 6 and 7 in the table in the doc comment of `integrationTestBudgetMinutes`) measured this test of `RealModelEndToEndIntegrationTests` at 89.8 and 55.0 seconds. The earlier runs measured 46.6, 48.7, 44.9, 84.9 and 60.9. The 89.8 is 75 percent of the budget and the largest number of runs 6 and 7. The box ran a GPU-heavy game for both runs, so some of the spread is the box; measure on a quiet box first.
