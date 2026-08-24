@@ -46,8 +46,24 @@ comments:
     - evidence: 4 files — `Sources/FoundationModelsRouter/Hosting/DetachingTool.swift` (modified: two new public protocol requirements with blanket defaults, two new private readers, the park now reads both), `Tests/FoundationModelsRouterTests/DeclaredRunKindTests.swift` (new, 4 tests), `Tests/FoundationModelsRouterTests/Helpers/DiscardingOperationEventSink.swift` (new), `Tests/FoundationModelsRouterTests/ElicitationRoutingTests.swift` (modified: its private no-op sink now comes from the shared helper). `swift test`: 1041 tests in 100 suites + 83 tests in 10 suites, 0 failures, 2 pre-existing known issues, no new warning. Every acceptance-criteria and test checkbox on the card is checked and met.
     - next: `/review`
   timestamp: 2026-08-24T16:42:17.396502+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0tanza9pm71f6b645kknkpk
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 8260def) — 0 findings, 0 confirmed, 0 refuted, 7 validator passes attempted, 0 failed. 4 files reviewed; 2 `.kanban/` files excluded by `.reviewignore`.
+    - next: task moved to done. No prior findings sections; nothing open.
+  timestamp: 2026-08-24T16:46:56.329044+00:00
+- actor: claude-code
+  id: 01m0tapfg2mjypmwx9pp7hdfgv
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files (Sources/FoundationModelsRouter/Hosting/DetachingTool.swift, Tests/FoundationModelsRouterTests/DeclaredRunKindTests.swift new, Tests/FoundationModelsRouterTests/Helpers/DiscardingOperationEventSink.swift new, Tests/FoundationModelsRouterTests/ElicitationRoutingTests.swift)
+    - test: green — swift test, 83 tests in 10 suites, 0 failed, 0 warnings, 0 skipped
+    - commit: 8260def
+    - review: clean — zero findings, scope HEAD~1..HEAD; task moved to done
+  timestamp: 2026-08-24T16:47:12.898611+00:00
+position_column: done
+position_ordinal: fff180
 title: Let a tool declare its RunKind and supply its own canceler
 ---
 ## What
