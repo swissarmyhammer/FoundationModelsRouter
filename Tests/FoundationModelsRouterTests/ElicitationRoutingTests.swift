@@ -70,12 +70,6 @@ struct ElicitationRoutingTests {
         func preload(container: any LoadedModelContainer) async throws {}
     }
 
-    /// A sink that drops every posted event — these tests observe the
-    /// mailbox and the resumed continuation, never the outbound event chain.
-    private struct DiscardingSink: OperationEventSink {
-        func post(event: OperationEvent) async {}
-    }
-
     private static let configJSON = Data("""
         {
             "num_hidden_layers": 2,
@@ -160,7 +154,7 @@ struct ElicitationRoutingTests {
         ToolContext(
             sessionID: session.id,
             mailbox: session.mailbox,
-            sink: DiscardingSink(),
+            sink: DiscardingOperationEventSink(),
             tool: "fake",
             op: "ask user",
             completionToken: SessionMailbox.makeCompletionToken(),

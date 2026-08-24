@@ -5,7 +5,7 @@ import Synchronization
 /// Declares a wrapped tool's own detachment parameters.
 ///
 /// The hook a tool states its own detachment behaviour through. A tool that
-/// conforms makes up to three declarations, and the ``DetachingTool`` engine
+/// conforms makes up to five declarations, and the ``DetachingTool`` engine
 /// reads each of them over the wrap-time ``DetachConfiguration`` its
 /// composition site applies:
 ///
@@ -16,10 +16,22 @@ import Synchronization
 /// - ``detachmentCollectInstruction(forCompletionToken:)`` states the `next`
 ///   sentence of the pending envelope a parked call hands the model: the
 ///   collect step the tool's own host offers.
+/// - ``detachmentRunKind`` states what kind of work a parked call of this
+///   tool is.
+/// - ``detachmentCanceler(forCompletionToken:)`` supplies the canceler that
+///   kind's own cancellation authority needs.
+///
+/// The last two are one pair, and they are how a capability outside this
+/// module parks a run that reports the truth. The router owns the ``RunKind``
+/// vocabulary and none of the machinery, so a tool that owns an OS process
+/// group declares ``RunKind/process`` and hands over a canceler that ends the
+/// group and reports ``OperationOutcome/stopped``. The router never spawns a
+/// process and never signals one.
 ///
 /// Each declaration has a default, so a tool states only the part it needs,
 /// and a tool that does not conform at all keeps the configuration its
-/// composition site gave it and the default collect sentence.
+/// composition site gave it, the default collect sentence, and the engine's
+/// own ``RunKind/swiftTask`` run under its own cooperative canceler.
 public protocol DetachmentParameterProviding {
     /// The mount this tool needs whatever mount its composition site
     /// applies, or `nil` to take that site's own.
@@ -82,6 +94,43 @@ public protocol DetachmentParameterProviding {
     /// - Returns: The `next` text as plain prose; the envelope escapes it
     ///   for the wire.
     func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String
+
+    /// What kind of work a parked call of this tool is — the discriminator
+    /// that selects the cancellation semantics
+    /// ``detachmentCanceler(forCompletionToken:)`` must carry.
+    ///
+    /// A tool whose work is an in-process Swift `Task` leaves this at its
+    /// default. A capability that spawns an OS process group declares
+    /// ``RunKind/process``, and then owes a canceler of its own: the run plane
+    /// reports what a canceler reports, so a `.process` run whose canceler
+    /// still reports ``OperationOutcome/cancelled`` reports a request where its
+    /// kind promises certainty.
+    var detachmentRunKind: RunKind { get }
+
+    /// Returns the canceler for the run parked under `completionToken`, or
+    /// `nil` to take the engine's own.
+    ///
+    /// This is where a kind's cancellation authority lives. The engine's own
+    /// canceler is cooperative — it requests the run's task stop and reports
+    /// ``OperationOutcome/cancelled``, a request and nothing more — which is
+    /// honest for ``RunKind/swiftTask`` and a lie for every other kind. A
+    /// capability that owns an OS process group sends `killpg(SIGKILL)` here
+    /// and reports ``OperationOutcome/stopped``, because the work is then
+    /// certainly over. The two are never flattened.
+    ///
+    /// ``ToolContext/cancel(completionToken:)`` and the session-end sweep are
+    /// what invoke the returned closure, and the run plane reports its outcome
+    /// verbatim, never a guess. The run stays parked until it really settles,
+    /// so a canceler that only requests must leave the run's body to end on
+    /// its own schedule.
+    ///
+    /// - Parameter completionToken: The parked run's completion token — the
+    ///   key a capability looks its own work up by.
+    /// - Returns: The canceler for that run, or `nil` to take the engine's
+    ///   cooperative one.
+    func detachmentCanceler(
+        forCompletionToken completionToken: String
+    ) -> (@Sendable () async -> OperationOutcome)?
 }
 
 extension DetachmentParameterProviding {
@@ -110,6 +159,25 @@ extension DetachmentParameterProviding {
         from arguments: GeneratedContent
     ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
         (nil, nil)
+    }
+
+    /// Blanket default: ``RunKind/swiftTask``, which assumes the tool's work
+    /// is the in-process Swift `Task` the engine itself started — the only
+    /// kind of work the engine can end on its own.
+    public var detachmentRunKind: RunKind { .swiftTask }
+
+    /// Blanket default: `nil`, which assumes the engine's own cooperative
+    /// canceler is honest for this tool's work — it requests the run's task
+    /// stop and reports ``OperationOutcome/cancelled``, a request and nothing
+    /// more.
+    ///
+    /// - Parameter completionToken: The parked run's completion token, which
+    ///   this default does not read.
+    /// - Returns: `nil`.
+    public func detachmentCanceler(
+        forCompletionToken completionToken: String
+    ) -> (@Sendable () async -> OperationOutcome)? {
+        nil
     }
 }
 
@@ -505,8 +573,10 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 ///    `waitSeconds` using a continuation-based race (never a task group — a
 ///    group cannot exit with a suspended child). In-window completion
 ///    returns the rendered output inline; nothing resets `waitSeconds`.
-/// 3. On window elapse, parks the still-running call in the mailbox (kind
-///    ``SessionMailbox/RunKind/swiftTask``, cooperative canceler), posts
+/// 3. On window elapse, parks the still-running call in the mailbox — under
+///    the kind and the canceler the wrapped tool declares through
+///    ``DetachmentParameterProviding``, and under ``RunKind/swiftTask`` with
+///    the engine's own cooperative canceler when it declares neither — posts
 ///    one synthesized `progress` event iff the run has posted no events of
 ///    its own yet, and returns ``PendingRunEnvelope/rendered``.
 /// 4. Enforces terminal-scoped synthesis at a single posting funnel:
@@ -767,6 +837,47 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         return provider.detachmentCollectInstruction(forCompletionToken: completionToken)
     }
 
+    /// What kind of work a parked call of this tool is: the wrapped tool's own
+    /// through ``DetachmentParameterProviding/detachmentRunKind``, or
+    /// ``RunKind/swiftTask`` when it does not conform.
+    private var runKind: RunKind {
+        parameterProvider?.detachmentRunKind ?? .swiftTask
+    }
+
+    /// The canceler the run parked under `completionToken` is registered with:
+    /// the wrapped tool's own through
+    /// ``DetachmentParameterProviding/detachmentCanceler(forCompletionToken:)``,
+    /// or the engine's cooperative one when it supplies none.
+    ///
+    /// The cooperative one requests the run stop — through the sticky flag the
+    /// tool reads as ``ToolContext/isCancelled``, and through the work task's
+    /// own cancellation — and reports exactly that, never certainty.
+    ///
+    /// - Parameters:
+    ///   - completionToken: The parked run's completion token.
+    ///   - workTask: The run's body, which the cooperative canceler cancels.
+    ///   - cancellationFlag: The run's sticky request flag, which the
+    ///     cooperative canceler sets.
+    /// - Returns: The canceler to register the run with.
+    private func canceler(
+        forCompletionToken completionToken: String,
+        workTask: Task<RunSettlement, Never>,
+        cancellationFlag: CancellationRequestFlag
+    ) -> @Sendable () async -> OperationOutcome {
+        if let supplied = parameterProvider?.detachmentCanceler(
+            forCompletionToken: completionToken
+        ) {
+            return supplied
+        }
+        return {
+            // A swiftTask run's cancellation is cooperative: request it
+            // and report exactly that, never certainty.
+            cancellationFlag.request()
+            workTask.cancel()
+            return .cancelled
+        }
+    }
+
     // MARK: - Detachment
 
     /// Detaches a call whose window elapsed: parks the still-running work
@@ -802,16 +913,14 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         await mailbox.park(
             tool: context.tool,
             op: context.op,
-            kind: .swiftTask,
+            kind: runKind,
             completionToken: context.completionToken,
             settling: settling,
-            canceler: {
-                // A swiftTask run's cancellation is cooperative: request it
-                // and report exactly that, never certainty.
-                cancellationFlag.request()
-                workTask.cancel()
-                return .cancelled
-            }
+            canceler: canceler(
+                forCompletionToken: context.completionToken,
+                workTask: workTask,
+                cancellationFlag: cancellationFlag
+            )
         )
         return envelope.rendered
     }
