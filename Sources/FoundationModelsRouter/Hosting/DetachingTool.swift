@@ -55,7 +55,7 @@ public protocol DetachmentParameterProviding {
     ///
     /// Detachment reaches a tool whose `Output` is `String` alone, so this
     /// declaration reaches no other tool either — see
-    /// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:configuration:)``.
+    /// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:op:configuration:)``.
     var detachmentMount: DetachConfiguration? { get }
 
     /// Returns the per-call clocks encoded in `arguments`, or `nil` fields
@@ -628,6 +628,12 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// The upstream sink every run's events funnel into.
     private let sink: any OperationEventSink
 
+    /// The canonical `"verb noun"` op this tool's registration site declared,
+    /// or `nil` when it declared none and the wrapped tool's own `name` fills
+    /// both identity fields — see
+    /// ``ToolContext/init(stamping:op:sessionID:mailbox:sink:completionToken:isCancelled:)``.
+    private let op: String?
+
     /// The mount every call of this tool runs under: the tool's own
     /// ``DetachmentParameterProviding/detachmentMount`` when it declares
     /// one, and the configuration the composition site passed otherwise.
@@ -655,6 +661,9 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the run's events are posted to.
+    ///   - op: The canonical `"verb noun"` op this decorator's registration
+    ///     site declares, or `nil` — the default — to stamp `wrapped`'s own
+    ///     name into the op as well.
     ///   - configuration: The mode and clock defaults to mount `wrapped`
     ///     under, unless `wrapped` declares a mount of its own through
     ///     ``DetachmentParameterProviding/detachmentMount``.
@@ -663,12 +672,14 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
+        op: String? = nil,
         configuration: DetachConfiguration
     ) {
         self.wrapped = wrapped
         self.sessionID = sessionID
         self.mailbox = mailbox
         self.sink = sink
+        self.op = op
         // The tool's own declaration wins, and it is read here rather than
         // per call because a mode is a property of the tool: a session
         // mounts tools that no single policy fits, and each of them must
@@ -720,6 +731,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         )
         let context = ToolContext(
             stamping: wrapped,
+            op: op,
             sessionID: sessionID,
             mailbox: mailbox,
             sink: funnel,
@@ -1115,7 +1127,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 /// The shared per-tool session-mount composition,
 /// ``sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``,
 /// extends this namespace from `Session/ToolOutputCapping.swift` — it
-/// layers `ToolOutputCapping` over ``wrapping(tool:sessionID:mailbox:sink:configuration:)``,
+/// layers `ToolOutputCapping` over ``wrapping(tool:sessionID:mailbox:sink:op:configuration:)``,
 /// and lives beside the capping layer so this file carries no dependency
 /// on it.
 public enum ToolDetachment {
@@ -1126,7 +1138,7 @@ public enum ToolDetachment {
     /// correlation this way).
     ///
     /// ``ToolContext/mailbox`` is internal (task ^j0pp9yp), so such a binder
-    /// cannot call ``wrapping(tool:sessionID:mailbox:sink:configuration:)``
+    /// cannot call ``wrapping(tool:sessionID:mailbox:sink:op:configuration:)``
     /// itself. It has no need to name either value: a captured ambient
     /// context already carries the session identity and the mailbox, and
     /// this reads both off it. The decision, the decorators, and every
@@ -1142,6 +1154,14 @@ public enum ToolDetachment {
     ///   - context: The enclosing call's ambient context, captured while its
     ///     binding was still in scope.
     ///   - sink: The upstream sink the run's events are posted to.
+    ///   - op: The canonical `"verb noun"` op this registration site declares
+    ///     for `tool` — the string the verb cannot know, because its noun
+    ///     belongs to the site. `nil`, the default, stamps `tool`'s own name
+    ///     into the op as well, so a mount that declares nothing keeps the
+    ///     behaviour it has. See
+    ///     ``ToolContext/init(stamping:op:sessionID:mailbox:sink:completionToken:isCancelled:)``
+    ///     for which plane the declared pair appears on — and why the
+    ///     enclosing snippet's own event journal is not it.
     ///   - configuration: The mode and clock defaults to mount `tool` under,
     ///     unless it declares a mount of its own through
     ///     ``DetachmentParameterProviding/detachmentMount``.
@@ -1151,6 +1171,7 @@ public enum ToolDetachment {
         tool: any Tool,
         inheriting context: ToolContext,
         sink: any OperationEventSink,
+        op: String? = nil,
         configuration: DetachConfiguration
     ) -> any Tool {
         wrapping(
@@ -1158,6 +1179,7 @@ public enum ToolDetachment {
             sessionID: context.sessionID,
             mailbox: context.mailbox,
             sink: sink,
+            op: op,
             configuration: configuration
         )
     }
@@ -1191,6 +1213,14 @@ public enum ToolDetachment {
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the run's events are posted to.
+    ///   - op: The canonical `"verb noun"` op this registration site declares
+    ///     for `tool` — the string the verb cannot know, because its noun
+    ///     belongs to the site. `nil`, the default, stamps `tool`'s own name
+    ///     into the op as well, so a mount that declares nothing keeps the
+    ///     behaviour it has. See
+    ///     ``ToolContext/init(stamping:op:sessionID:mailbox:sink:completionToken:isCancelled:)``
+    ///     for which plane the declared pair appears on — and why the
+    ///     enclosing snippet's own event journal is not it.
     ///   - configuration: The mode and clock defaults to mount `tool` under,
     ///     unless it declares a mount of its own through
     ///     ``DetachmentParameterProviding/detachmentMount``.
@@ -1201,6 +1231,7 @@ public enum ToolDetachment {
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
+        op: String? = nil,
         configuration: DetachConfiguration
     ) -> any Tool {
         func openArguments<A: ConvertibleFromGeneratedContent & Sendable>(
@@ -1212,6 +1243,7 @@ public enum ToolDetachment {
                 sessionID: sessionID,
                 mailbox: mailbox,
                 sink: sink,
+                op: op,
                 configuration: configuration
             )
         }
@@ -1221,7 +1253,8 @@ public enum ToolDetachment {
                     wrapping: tool,
                     sessionID: sessionID,
                     mailbox: mailbox,
-                    sink: sink
+                    sink: sink,
+                    op: op
                 )
             }
             // A type-system bridge, not a runtime filter: `Sendable` is a
@@ -1259,10 +1292,11 @@ public enum ToolDetachment {
 /// nothing this decorator adds.
 ///
 /// Per call, the decorator mints a fresh `completionToken` (run scope,
-/// never session scope), stamps ``ToolContext/tool``/``ToolContext/op``
-/// with the wrapped tool's `name` (the phase-1 stamping rule — see
-/// ``ToolContext/init(stamping:sessionID:mailbox:sink:completionToken:isCancelled:)``),
-/// and posts the tool's own ambient events straight to the session's sink.
+/// never session scope), stamps ``ToolContext/tool`` with the wrapped tool's
+/// `name` and ``ToolContext/op`` with the op its registration site declared —
+/// that same `name` when the site declared none (see
+/// ``ToolContext/init(stamping:op:sessionID:mailbox:sink:completionToken:isCancelled:)``)
+/// — and posts the tool's own ambient events straight to the session's sink.
 /// It synthesizes nothing: no progress, no terminal — a silent run posts no
 /// events at all, and the calling task's cancellation is mirrored into the
 /// context's honest ``ToolContext/isCancelled`` probe.
@@ -1286,6 +1320,12 @@ public struct ContextBindingTool<
     /// The upstream sink the bound context posts the tool's events to.
     private let sink: any OperationEventSink
 
+    /// The canonical `"verb noun"` op this tool's registration site declared,
+    /// or `nil` when it declared none and the wrapped tool's own `name` fills
+    /// both identity fields — see
+    /// ``ToolContext/init(stamping:op:sessionID:mailbox:sink:completionToken:isCancelled:)``.
+    private let op: String?
+
     /// The wrapped tool's name.
     public var name: String { wrapped.name }
 
@@ -1305,16 +1345,21 @@ public struct ContextBindingTool<
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink the bound context posts events to.
+    ///   - op: The canonical `"verb noun"` op this decorator's registration
+    ///     site declares, or `nil` — the default — to stamp `wrapped`'s own
+    ///     name into the op as well.
     public init(
         wrapping wrapped: any Tool<Arguments, Output>,
         sessionID: ULID,
         mailbox: SessionMailbox,
-        sink: any OperationEventSink
+        sink: any OperationEventSink,
+        op: String? = nil
     ) {
         self.wrapped = wrapped
         self.sessionID = sessionID
         self.mailbox = mailbox
         self.sink = sink
+        self.op = op
     }
 
     /// Runs one call under a fresh per-call ``ToolContext`` binding — see
@@ -1334,6 +1379,7 @@ public struct ContextBindingTool<
         let cancellationFlag = CancellationRequestFlag()
         let context = ToolContext(
             stamping: wrapped,
+            op: op,
             sessionID: sessionID,
             mailbox: mailbox,
             sink: sink,

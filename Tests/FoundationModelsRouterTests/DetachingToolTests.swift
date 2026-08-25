@@ -368,7 +368,7 @@ struct DetachingToolTests {
 
     /// Blocks on a ``RunLatch`` and then returns the ambient run's session
     /// identity — the subject of
-    /// ``ToolDetachment/wrapping(tool:inheriting:sink:configuration:)``: the
+    /// ``ToolDetachment/wrapping(tool:inheriting:sink:op:configuration:)``: the
     /// inner run must be bound on the session plane the inherited context
     /// names.
     private struct GatedSessionIdentityTool: Tool {

@@ -17,13 +17,15 @@ import FoundationModels
 /// already a safe no-op. Capture the context one time, at operation start,
 /// into the object that continues after the call.
 ///
-/// Event field sourcing for a plain wrapped `Tool` (the phase-1 stamping
-/// rule; `OperationEvent.tool` and `.op` are non-optional and the journal's
-/// `renderedLine(for:)` consumes both): the binder stamps ``tool`` with the
-/// wrapped tool's `name` — the session-visible tool identity — and ``op``
-/// with that same `name`, until noun/verb registration lands in phase 2 and
-/// supplies the canonical `"verb noun"` string. Both are stamped into the
-/// context at bind time, never left empty (see ``init(stamping:sessionID:mailbox:sink:completionToken:isCancelled:)``).
+/// Event field sourcing for a plain wrapped `Tool` (`OperationEvent.tool` and
+/// `.op` are non-optional and the journal's `renderedLine(for:)` consumes
+/// both): the binder stamps ``tool`` with the wrapped tool's `name` — the
+/// session-visible tool identity — and ``op`` with the canonical
+/// `"verb noun"` string the registration site declared for this mount,
+/// falling back to that same `name` when the site declares none. Both are
+/// stamped into the context at bind time, never left empty (see
+/// ``init(stamping:op:sessionID:mailbox:sink:completionToken:isCancelled:)``,
+/// which also states which plane the declared pair appears on).
 public struct ToolContext: Sendable {
     /// The context bound to the current task, or `nil` outside any binding —
     /// including inside a detached task started under one (the
@@ -92,12 +94,12 @@ public struct ToolContext: Sendable {
     // MARK: - Run scope
 
     /// The session-visible tool identity stamped on every event this run
-    /// posts. Never empty — see the phase-1 stamping rule above.
+    /// posts. Never empty — see the stamping rule above.
     public let tool: String
 
-    /// The op string stamped on every event this run posts. Never empty:
-    /// phase 1 stamps the wrapped tool's `name` here too, until noun/verb
-    /// registration supplies the canonical `"verb noun"` string.
+    /// The op string stamped on every event this run posts. Never empty: the
+    /// canonical `"verb noun"` string the mount's registration site declared,
+    /// or the wrapped tool's `name` when it declared none.
     public let op: String
 
     /// The run's completion token — the ULID string (see
@@ -142,15 +144,49 @@ public struct ToolContext: Sendable {
         self.cancellationProbe = isCancelled
     }
 
-    /// Creates a context for a plain wrapped `Tool` per the phase-1 stamping
-    /// rule: both ``tool`` and ``op`` are stamped with the wrapped tool's
-    /// `name`, never left empty — a tool whose `name` is empty falls back to
-    /// its type name, so the stamp survives the journal's non-optional
-    /// `OperationEvent.tool`/`.op` fields regardless of the conformer.
+    /// Creates a context for a plain wrapped `Tool`, stamping its identity:
+    /// ``tool`` takes the wrapped tool's `name`, and ``op`` takes `op` when
+    /// the mount's registration site declared one and that same `name`
+    /// otherwise. Neither is ever left empty — a tool whose `name` is empty
+    /// falls back to its type name, so the stamp survives the journal's
+    /// non-optional `OperationEvent.tool`/`.op` fields regardless of the
+    /// conformer.
+    ///
+    /// A capability verb cannot supply its own `op`, which is why it arrives
+    /// here rather than off the tool: the canonical `"verb noun"` pair —
+    /// `"execute shell"` for `tools.shell.execute` — needs the noun, and the
+    /// noun belongs to the `register(noun:tool:)` site that mounts the verb,
+    /// never to the verb. That site declares it through
+    /// ``ToolDetachment/wrapping(tool:inheriting:sink:op:configuration:)`` or
+    /// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:op:configuration:)``,
+    /// and the two decorators carry it in here.
+    ///
+    /// ### The plane the declared pair appears on
+    ///
+    /// It appears on the **run plane**, and there alone: ``ParkedRun/op``,
+    /// which ``parkedRuns()`` reports, and ``ToolInvocationRecord/op``, which
+    /// the binding layers post through
+    /// ``OperationEventSink/post(invocation:)``. Both are built from this
+    /// context's stamps directly, so both carry the declared string verbatim.
+    ///
+    /// It does **not** appear in the event journal of an enclosing snippet.
+    /// ``post(_:)`` re-stamps every event it forwards with its own run's
+    /// ``tool``, ``op`` and ``completionToken``, so an inner `tools.*` call
+    /// mounted inside a `runCode` snippet — whose sink posts through the
+    /// snippet's own captured context — reaches the session outbox under the
+    /// OUTER run's op. That journal is the enclosing run's, and it is meant to
+    /// read as one operation. A test that looked for the declared op there
+    /// would be asserting the wrong plane.
     ///
     /// - Parameters:
     ///   - tool: The plain wrapped tool whose `name` (or, when that is
-    ///     empty, whose type name) stamps both identity fields.
+    ///     empty, whose type name) stamps ``tool``.
+    ///   - op: The canonical `"verb noun"` op the mount's registration site
+    ///     declares, or `nil` — the default — to stamp the tool's own name
+    ///     into ``op`` as well. An empty string reads as `nil`, exactly as an
+    ///     empty `name` falls back to the type name, so a declaration that
+    ///     came out empty degrades to the existing behaviour rather than
+    ///     tripping the explicit initializer's precondition.
     ///   - sessionID: The owning session's identity.
     ///   - mailbox: The owning session's mailbox.
     ///   - sink: The upstream sink capabilities post through.
@@ -160,6 +196,7 @@ public struct ToolContext: Sendable {
     ///     requested.
     public init(
         stamping tool: any Tool,
+        op: String? = nil,
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
@@ -167,12 +204,13 @@ public struct ToolContext: Sendable {
         isCancelled: @escaping @Sendable () -> Bool
     ) {
         let stamp = tool.name.isEmpty ? String(describing: type(of: tool)) : tool.name
+        let declared = op.flatMap { $0.isEmpty ? nil : $0 }
         self.init(
             sessionID: sessionID,
             mailbox: mailbox,
             sink: sink,
             tool: stamp,
-            op: stamp,
+            op: declared ?? stamp,
             completionToken: completionToken,
             isCancelled: isCancelled
         )

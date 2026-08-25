@@ -157,7 +157,7 @@ extension ToolDetachment {
     /// survives any configured limit.
     ///
     /// A non-String-output tool takes a narrower path through the same
-    /// chain (task ^6htgvw2): ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:configuration:)``
+    /// chain (task ^6htgvw2): ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:op:configuration:)``
     /// mounts it in the binding-only ``ContextBindingTool`` — its ambient
     /// posts still carry the tool's own identity and a fresh per-call
     /// `correlationID` — and the capping layer passes it through unwrapped,

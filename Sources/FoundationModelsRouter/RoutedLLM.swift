@@ -364,7 +364,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// `cappedToTokenLimit` is set, capped outermost. A non-String-output
     /// tool is wrapped in the binding-only ``ContextBindingTool`` instead
     /// (task ^6htgvw2; see
-    /// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:configuration:)``):
+    /// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:op:configuration:)``):
     /// its ambient posts carry the tool's own identity and a fresh per-call
     /// `correlationID` exactly as a detached tool's do — never the
     /// turn-scope binding's `"session"`/`"respond"` stamps — while the call
