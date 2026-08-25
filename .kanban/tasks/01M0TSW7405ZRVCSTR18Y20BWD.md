@@ -79,8 +79,24 @@ comments:
     - evidence: 7 files — Sources/FoundationModelsRouter/Hosting/ToolContext.swift, Sources/FoundationModelsRouter/Hosting/DetachingTool.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift, Tests/FoundationModelsRouterTests/RegisteredJournalOpTests.swift (new, 5 tests), Tests/FoundationModelsRouterTests/DetachingToolTests.swift, Tests/FoundationModelsRouterTests/Helpers/ScriptedMarkerTools.swift. `swift test`: 1046 tests in 101 suites passed, plus 83 in 10 suites — 0 failures, 0 new warnings, the 2 known issues pre-existing in RealModelHarnessTests and BoundedWaitTests, neither touched.
     - next: ready for `/review`
   timestamp: 2026-08-25T02:04:10.244193+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0vb7bypqqqsj7abyaxq4jg5
+  text: |
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD — 0 findings, 0 confirmed, 0 refuted, 14 attempted, 0 failed; 7 files reviewed, 2 excluded by .reviewignore (.kanban/)
+    - next: task moved to done
+  timestamp: 2026-08-25T02:15:40.758628+00:00
+- actor: claude-code
+  id: 01m0vb7sgtvs9ns9drfgjx3ec1
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 7 files, 5 new tests in RegisteredJournalOpTests.swift
+    - test: green — swift test, 1129 passed (1046 + 83), 0 failed, 0 skipped
+    - commit: 6756975
+    - review: clean — zero new findings, 14 validator/file pairs, task moved to done
+  timestamp: 2026-08-25T02:15:54.650801+00:00
+position_column: done
+position_ordinal: fff280
 title: Let a registration site give a tool its journal op
 ---
 ## What
