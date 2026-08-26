@@ -16,10 +16,6 @@ public struct ResponseFragment: Sendable, Equatable {
     public let restartsResponse: Bool
 
     /// Creates a fragment.
-    ///
-    /// - Parameters:
-    ///   - text: The new text this fragment adds.
-    ///   - restartsResponse: Whether this fragment begins a new response. Defaults to `false`.
     public init(text: String, restartsResponse: Bool = false) {
         self.text = text
         self.restartsResponse = restartsResponse
@@ -30,33 +26,23 @@ public struct ResponseFragment: Sendable, Equatable {
 /// ``LoadedLLMContainer/makeSession(instructions:)``.
 ///
 /// A backend holds the session's system instructions and accumulates the
-/// transcript across calls. ``makeFork()`` makes a child backend that starts
-/// from this transcript and then diverges.
+/// transcript across calls. On every generating method below, a `nil`
+/// `maxTokens` means the backend's own default.
 ///
 /// It is class-bound and `Sendable` so an actor can hold one across isolation
 /// boundaries.
 public protocol LanguageModelSessionBackend: AnyObject, Sendable {
-    /// Generates a complete text response to `prompt`. A `nil` `maxTokens`
-    /// uses the backend default.
-    ///
-    /// - Returns: The model's complete text response.
-    /// - Throws: If the generation fails.
+    /// Generates a complete text response to `prompt`.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
-    /// Streams a text response to `prompt` as it is produced. A `nil`
-    /// `maxTokens` uses the backend default.
-    ///
-    /// - Returns: A stream of text chunks. It throws if generation fails.
+    /// Streams a text response to `prompt` as it is produced.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
     /// Streams a text response as ``ResponseFragment``s. A backend that
     /// abandons one response and begins another mid-turn reports that here.
     ///
-    /// The default implementation maps every chunk of
-    /// ``streamResponse(to:maxTokens:)`` to a continuing fragment. Only a
-    /// backend that can restart a response overrides it.
-    ///
-    /// - Returns: A stream of response fragments. It throws if generation fails.
+    /// There is a default implementation. Only a backend that can restart a
+    /// response overrides it.
     func streamResponseFragments(
         to prompt: String,
         maxTokens: Int?
@@ -65,27 +51,20 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// Generates a complete text response to `prompt` that `grammar`
     /// constrains. There is no constrained streaming variant.
     ///
-    /// - Returns: The constrained text response.
-    /// - Throws: ``GuidedRequestError`` for an invalid grammar, or if the generation fails.
+    /// - Throws: ``GuidedRequestError`` when `grammar` is invalid.
     func respond(
         to prompt: String,
         following grammar: Grammar,
         maxTokens: Int?
     ) async throws -> String
 
-    /// Produces a new backend seeded from this session's accumulated transcript.
-    /// The new backend then diverges and shares no further state.
-    ///
-    /// - Returns: A new, independent backend seeded from this session's history.
+    /// Produces a new backend seeded from this session's accumulated
+    /// transcript. The new backend then diverges and shares no further state.
     func makeFork() -> any LanguageModelSessionBackend
 
-    /// Produces a new backend seeded from this session's accumulated transcript,
-    /// with `tools` given to the fork's model-facing session.
+    /// ``makeFork()``, with `tools` given to the fork's model-facing session.
     ///
     /// The default ignores `tools` and forwards to ``makeFork()``.
-    ///
-    /// - Parameter tools: The tools for the fork's model-facing session.
-    /// - Returns: A new, independent backend seeded from this session's history.
     func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend
 
     /// The backend's current full transcript, in order.
@@ -95,8 +74,6 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// call of the owning session's own turn
     /// (``RoutedSessionActor/isInsideOwnTurnToolCall``), where no concurrent
     /// writer exists.
-    ///
-    /// - Returns: Every transcript entry this backend has accumulated so far.
     func transcriptEntries() -> [FoundationModels.Transcript.Entry]
 
     /// The backend's cumulative input/output token usage, or `nil` when the
@@ -105,22 +82,16 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// Call this only while the owning session's turn lock
     /// (``RoutedSessionActor/turnLock``) is held. The counts are running
     /// totals since the session began, not a per-turn delta.
-    ///
-    /// - Returns: The cumulative `(input, output)` token counts, or `nil`.
     func usageTokenCounts() -> (input: Int, output: Int)?
 
     /// Produces a new backend over the same underlying model, seeded from
     /// `transcript` instead of this backend's own history. An empty
     /// `transcript` gives a blank-slate backend.
-    ///
-    /// - Parameter transcript: The transcript to seed the new backend from.
-    /// - Returns: A new, independent backend whose history begins with `transcript`.
     func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend
 }
 
 /// Drives an `AsyncThrowingStream<String, Error>` iterator from the task that
-/// calls ``next()``, so ``streamResponseFragments(to:maxTokens:)`` relays
-/// chunks without a second, independently-cancellable consumer task.
+/// calls ``next()``.
 ///
 /// `@unchecked Sendable`: `iterator` is mutated without a lock. This is sound
 /// because an `AsyncThrowingStream` has one active reader at a time.
@@ -140,12 +111,9 @@ extension LanguageModelSessionBackend {
     /// Default ``streamResponseFragments(to:maxTokens:)``: every chunk of
     /// ``streamResponse(to:maxTokens:)`` becomes a continuing fragment.
     ///
-    /// The stream is pull-based. A relay `Task` would be a second
-    /// cancellable consumer, and a propagated cancellation could drop a chunk
-    /// it had already received. Pulling from the iterator directly removes
-    /// that race.
-    ///
-    /// - Returns: A stream of continuing fragments, one per underlying chunk.
+    /// The stream is pull-based. A relay `Task` would be a second cancellable
+    /// consumer, and a propagated cancellation could drop a chunk it had
+    /// already received. Pulling from the iterator directly removes that race.
     func streamResponseFragments(
         to prompt: String,
         maxTokens: Int?

@@ -1,15 +1,14 @@
 import Foundation
 
-/// One tool call's live lifecycle record: opened when a per-call binding
-/// layer (``RunToCompletionRunner`` or ``BackgroundToolRunner`` for `String`-output
+/// One tool call's live lifecycle record: opened when a per-call binding layer
+/// (``RunToCompletionRunner`` or ``BackgroundToolRunner`` for `String`-output
 /// tools, ``ContextBindingTool`` for the rest) is about to run the wrapped
-/// call, and closed when that call
-/// returns — including when it throws.
+/// call, and closed when that call returns — including when it throws.
 ///
 /// The binding layers post these through the same ``OperationEventSink`` route
 /// operation events take (``OperationEventSink/post(invocation:)``), and the
 /// session delivers each one live on the current turn's event stream as
-/// ``SessionEvent/toolInvocation(_:)`` — the open record arrives while the
+/// ``SessionEvent/toolInvocation(_:)``. The open record arrives while the
 /// tool's own work is still running, which is what gives a UI a truthful
 /// "running tool" signal mid-turn instead of only after the turn's diff.
 ///
@@ -28,9 +27,6 @@ import Foundation
 /// explicitly — the live record identifies the run (``correlationID``,
 /// ``tool``, open order inside the turn frame) and the diff's `.toolCall`
 /// identifies the SDK call — and neither id may be stamped into the other.
-///
-/// `Codable`/`Equatable`/`Sendable` so a turn's records can be surfaced
-/// directly without the event stream.
 public struct ToolInvocationRecord: Sendable, Equatable, Codable {
     /// The session-visible tool identity the run's ``ToolContext`` stamps on
     /// every event it posts — never empty.
@@ -40,10 +36,9 @@ public struct ToolInvocationRecord: Sendable, Equatable, Codable {
     /// wrapped tool's `name` here too, never empty.
     public let op: String
 
-    /// The run's `completionToken`, the same value that is the
-    /// `correlationID` on every `OperationEvent` the run posts. See the
-    /// identity rule in the type documentation: this is never an SDK
-    /// `Transcript.ToolCall.id`.
+    /// The run's `completionToken`, the same value as the `correlationID` on
+    /// every `OperationEvent` the run posts. See the identity rule in the type
+    /// documentation.
     public let correlationID: String
 
     /// The owning session's identity — ``RoutedSession/id``.
@@ -56,22 +51,12 @@ public struct ToolInvocationRecord: Sendable, Equatable, Codable {
     /// still running — an open record.
     public let closedAt: Date?
 
-    /// How long the call ran, derived as ``closedAt`` minus ``openedAt``, or
-    /// `nil` while the record is still open.
+    /// How long the call ran, or `nil` while the record is still open.
     public var duration: TimeInterval? {
         closedAt.map { $0.timeIntervalSince(openedAt) }
     }
 
     /// Creates a record with every field explicit.
-    ///
-    /// - Parameters:
-    ///   - tool: The session-visible tool identity.
-    ///   - op: The op string the run's context stamps.
-    ///   - correlationID: The run's `completionToken`.
-    ///   - sessionID: The owning session's identity.
-    ///   - openedAt: When the binding opened.
-    ///   - closedAt: When the wrapped call returned, or `nil` (the default)
-    ///     for an open record.
     init(
         tool: String,
         op: String,
@@ -88,11 +73,7 @@ public struct ToolInvocationRecord: Sendable, Equatable, Codable {
         self.closedAt = closedAt
     }
 
-    /// The closed form of this record: same identity, same ``openedAt``, with
-    /// ``closedAt`` set to `instant` — from which ``duration`` derives.
-    ///
-    /// - Parameter instant: When the wrapped call returned.
-    /// - Returns: The closed record.
+    /// The closed form of this record, with ``closedAt`` set to `instant`.
     func closed(at instant: Date) -> ToolInvocationRecord {
         ToolInvocationRecord(
             tool: tool,

@@ -11,10 +11,8 @@ private let recordingLogger = makeModuleLogger(category: "Recording")
 /// As an actor it serializes appends, so the single `seq` it stamps and the order
 /// lines land in agree across *every* directory it writes: concurrent sessions
 /// and forks appending into their own lineage-nested files still share one total
-/// order. Each event is written to its `directory`'s `transcript.jsonl` (or the
-/// recorder's own ``directory`` when the caller passes `nil`); the open handle
-/// per directory is created lazily and reused. Writing is best-effort: any I/O
-/// failure is logged and the event dropped — ``append(_:to:)`` never throws.
+/// order. Writing is best-effort: any I/O failure is logged and the event
+/// dropped — ``append(_:to:)`` never throws.
 ///
 /// ## Durability
 ///
@@ -36,11 +34,9 @@ package actor JSONLRecorder: TranscriptRecorder {
     private let now: @Sendable () -> Date
     /// Encodes each event to a single compact JSON line (no embedded newlines).
     private let encoder = JSONEncoder()
-    /// The next sequence number to stamp — global across all directories, so the
-    /// whole recorder is one monotonic log.
+    /// The next sequence number to stamp — global across all directories.
     private var seq = 0
-    /// The append handles, one per directory, opened lazily and reused across
-    /// appends and keyed by the directory's standardized path.
+    /// One append handle per directory, opened lazily and reused.
     private var handles: [String: any TranscriptAppendHandle] = [:]
     /// Opens the append handle for a directory on first use. The production
     /// opener creates the directory and its `transcript.jsonl` on disk; tests
@@ -53,8 +49,6 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// every append another live writer's claim refused.
     private var rootOwnership: RecordingRootOwnership?
 
-    /// The production handle opener: creates the directory and its
-    /// `transcript.jsonl` on disk on first use.
     private static let productionOpenHandle: @Sendable (URL) throws -> any TranscriptAppendHandle = {
         try openHandleForAppending(fileName: "transcript.jsonl", in: $0)
     }
@@ -67,12 +61,6 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// root, every append is logged and dropped — never interleaved — until
     /// that writer releases it. To learn about a held root at open time
     /// instead, use the throwing ``init(owningDirectory:now:)``.
-    ///
-    /// - Parameters:
-    ///   - directory: The directory to write `transcript.jsonl` into for appends
-    ///     that carry no explicit session directory; created on demand at first
-    ///     append. Per-session appends are written under their own directory.
-    ///   - now: The clock used to stamp each event's `ts`.
     package init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         self.init(
             directory: directory,
@@ -92,15 +80,10 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// logged warning. The root is released when this recorder deallocates:
     /// the marker is removed and the root is immediately claimable again.
     ///
-    /// - Parameters:
-    ///   - directory: The recording root to own; created — along with its
-    ///     lock marker — at construction.
-    ///   - now: The clock used to stamp each event's `ts`.
     /// - Throws: ``RecordingRootLockError/alreadyOwned(root:owner:)`` when a
-    ///   live writer already owns the root, naming that owner;
-    ///   ``RecordingRootLockError/contested(root:)`` when a stale-lock
-    ///   takeover loses its race; otherwise any file-system error creating
-    ///   the root or its marker.
+    ///   live writer already owns the root, naming that owner, or
+    ///   ``RecordingRootLockError/contested(root:)`` when a stale-lock takeover
+    ///   loses its race.
     init(owningDirectory directory: URL, now: @escaping @Sendable () -> Date = { Date() }) throws {
         let ownership = try RecordingRootOwnership.acquire(root: directory)
         self.init(
@@ -113,14 +96,6 @@ package actor JSONLRecorder: TranscriptRecorder {
 
     /// Creates a JSONL recorder with an injected handle opener, so a test can
     /// observe exactly when this recorder writes and synchronizes.
-    ///
-    /// - Parameters:
-    ///   - directory: The default directory for appends that carry no explicit
-    ///     session directory.
-    ///   - now: The clock used to stamp each event's `ts`.
-    ///   - openHandle: Opens the append handle for a directory on first use.
-    ///   - rootOwnership: An already-held claim on `directory` as a recording
-    ///     root, or `nil` to take the claim lazily at first append.
     init(
         directory: URL,
         now: @escaping @Sendable () -> Date = { Date() },
@@ -133,11 +108,9 @@ package actor JSONLRecorder: TranscriptRecorder {
         self.rootOwnership = rootOwnership
     }
 
-    /// Stamps and appends an event as one JSON line into `directory`'s
-    /// `transcript.jsonl` (or the recorder's default directory when `nil`); logs
-    /// and drops it on any I/O failure. A `.response`-kind event is a turn
-    /// close, so it additionally synchronizes the target's handle (see the
-    /// type's Durability section).
+    /// Stamps and appends an event into `directory`, or into the recorder's
+    /// default directory when `nil`. A `.response`-kind event is a turn close,
+    /// so it additionally synchronizes the target's handle (see Durability).
     ///
     /// The first append also claims the recording root (see ``rootOwnership``);
     /// while another live writer holds it, the event is logged and dropped
@@ -163,12 +136,12 @@ package actor JSONLRecorder: TranscriptRecorder {
 
     /// Claims the recording root before a write when no claim is held yet,
     /// matching the best-effort append policy: a refusal is logged, never
-    /// thrown. Retried on every refused append, so this recorder takes the
-    /// root over once its current owner releases it (or dies and leaves a
-    /// stale marker).
+    /// thrown. Retried on every refused append, so this recorder takes the root
+    /// over once its current owner releases it (or dies and leaves a stale
+    /// marker).
     ///
-    /// - Returns: `true` when this recorder owns the root and may write;
-    ///   `false` when another live writer holds it and the event must drop.
+    /// - Returns: `false` when another live writer holds the root and the event
+    ///   must drop.
     private func ensureRootOwnership() -> Bool {
         if rootOwnership != nil { return true }
         do {
@@ -182,17 +155,12 @@ package actor JSONLRecorder: TranscriptRecorder {
         }
     }
 
-    /// Best-effort fsync of `directory`'s cached append handle, called after
-    /// a turn-close (`.response`-kind) append so the completed turn is durable
-    /// (see the type's Durability section). A directory with no cached handle
-    /// recorded nothing — the append itself already failed and was logged —
-    /// so there is nothing to synchronize. A sync failure is logged, matching
-    /// the best-effort write policy.
+    /// Best-effort fsync of `directory`'s cached append handle, called after a
+    /// turn-close append (see Durability). A directory with no cached handle
+    /// recorded nothing — the append itself already failed and was logged — so
+    /// there is nothing to synchronize.
     ///
-    /// - Parameters:
-    ///   - directory: The directory whose append handle to synchronize.
-    ///   - eventSeq: The just-appended turn-close event's sequence number,
-    ///     named by the log when the sync fails.
+    /// - Parameter eventSeq: Named by the log when the sync fails.
     private func synchronizeHandle(in directory: URL, afterSeq eventSeq: Int) {
         guard let handle = handles[handleKey(for: directory)] else { return }
         do {
@@ -207,13 +175,11 @@ package actor JSONLRecorder: TranscriptRecorder {
         }
     }
 
-    /// Returns the reusable append handle for a directory, opening it (via
-    /// ``openHandle``, which creates the directory and its `transcript.jsonl`
-    /// in production) on first use.
+    /// The reusable append handle for a directory, opened through
+    /// ``openHandle`` on first use.
     ///
-    /// - Parameter directory: The directory whose `transcript.jsonl` to append to.
-    /// - Returns: A handle positioned at the end of that file.
-    /// - Throws: If the directory or file cannot be created or opened.
+    /// - Returns: A handle positioned at the end of that directory's
+    ///   `transcript.jsonl`.
     private func handleForAppending(in directory: URL) throws -> any TranscriptAppendHandle {
         let key = handleKey(for: directory)
         if let handle = handles[key] { return handle }
@@ -222,10 +188,8 @@ package actor JSONLRecorder: TranscriptRecorder {
         return handle
     }
 
-    /// The ``handles`` key for a directory: its standardized path.
-    ///
-    /// - Parameter directory: The directory to key.
-    /// - Returns: The standardized path that identifies its cached handle.
+    /// The ``handles`` key for a directory: its standardized path, so two URLs
+    /// naming the same directory share one handle.
     private func handleKey(for directory: URL) -> String {
         directory.standardizedFileURL.path
     }
@@ -239,14 +203,11 @@ package actor JSONLRecorder: TranscriptRecorder {
 actor InMemoryRecorder: TranscriptRecorder {
     /// The stamped events in append (and therefore `seq`) order.
     private(set) var events: [TranscriptEvent] = []
-    /// The next sequence number to stamp.
     private var seq = 0
     /// The clock used to stamp each event's `ts`.
     private let now: @Sendable () -> Date
 
     /// Creates an in-memory recorder.
-    ///
-    /// - Parameter now: The clock used to stamp each event's `ts`.
     init(now: @escaping @Sendable () -> Date = { Date() }) {
         self.now = now
     }
@@ -269,6 +230,5 @@ struct NoneRecorder: TranscriptRecorder {
     /// Creates the no-op sink.
     init() {}
 
-    /// Accepts and discards an event, ignoring the session directory.
     func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {}
 }

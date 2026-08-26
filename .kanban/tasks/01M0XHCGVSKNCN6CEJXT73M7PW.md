@@ -215,10 +215,36 @@ comments:
 
     A follow-up card ^zj146zb holds two stale references neither criterion covers: `ToolMount.defaultWaitSeconds` in `ScenarioTools.swift` and `ElevationConfiguration.defaultTimeoutSeconds` in `docs/SECURITY.md`. Neither type exists.
   timestamp: 2026-08-26T17:20:49.229087+00:00
+- actor: claude-code
+  id: 01m0zkmyefz0ghkjecnkhv2b9x
+  text: |-
+    ## Review Findings (2026-08-26 18:00) — clean, and the coverage gap is closed
+
+    Four passes in total, run by session `foundationmodelsmultitool-7b` because the engine cannot reach that repository from a Router session (^kq4cxva).
+
+    **Pass 1 — `review sha HEAD~1..HEAD` on `18ad811`:** findings 0, confirmed 0, refuted 0, attempted 14, failed 0. 31 files reviewed.
+
+    **But pass 1 left a hole, and it was silent.** Nine rule-declines, all on the three renamed files, all one cause: the diff names the OLD path and the rule finds no file there. `code-hygiene/function-length-swift`, `code-hygiene/magic-numbers-swift` and `code-hygiene/missing-docs-swift` each declined on `ElevationTests.swift`, `ShellElevationTests.swift` and `Support/ShellElevationRunner.swift`. So three rule families never judged the three files this card renamed — including `ShellBackgroundRunner.swift`, at 243 changed lines the largest file in the commit.
+
+    **Passes 2, 3 and 4 — file-scoped at the NEW paths — close it:**
+    - `Support/ShellBackgroundRunner.swift`: findings 0, confirmed 0, **refuted 1**, attempted 7, failed 0.
+    - `ShellBackgroundTests.swift`: findings 0, attempted 7, failed 0.
+    - `BackgroundTests.swift`: findings 0, attempted 7, failed 0.
+
+    All three rule families read all three files this time and found nothing.
+
+    **The `refuted: 1` is the most reassuring number here.** A finder raised a candidate against the 243 changed lines of `ShellBackgroundRunner.swift`, and the adversarial pass killed it before it reached me. That is a stronger result than a bare zero: something read those lines closely enough to form a theory, then could not make it stand up.
+
+    **The "parked" survivors were checked independently.** The peer read every remaining occurrence it could reach and agreed each one describes something genuinely stopped — threads on a condition variable, a caller on a continuation with no cancellation handler, a nested `respond` inside its outer turn, "165 seconds parked". None describes something in motion, so there is no finding against them.
+
+    **One honest gap in that check.** The peer counted 21 occurrences where I counted 28. The difference is scope, not disagreement: my count came from `rg -c` over the whole `IntegrationTests` tree including `Fixtures/`, and its glob covered `Sources + Tests + IntegrationTests/Tests`. Every line it read supports the claim. The seven it could not reach are recorded as **unverified**, not as verified.
+
+    **The rename trap is now in that project's durable memory**, not only in a transcript: the mechanism, that it fails silently as a rule-decline while the run still reports findings 0 with a healthy `attempted` count, the three affected rule families, and the file-scoped follow-up as the remedy. Both sightings are noted — this card and `MultiTool+Detachment.swift`. Any future rename commit in that repository needs the same follow-up, or three rule families quietly skip it.
+  timestamp: 2026-08-26T17:59:52.015789+00:00
 depends_on:
 - 01M0XGSGZHRNAFH48D4DMTTQZ1
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fffe80
 title: 'Multitool: purge waitSeconds from sources and tests'
 ---
 ## What

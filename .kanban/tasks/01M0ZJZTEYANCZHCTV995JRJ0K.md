@@ -1,8 +1,225 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8e80'
+comments:
+- actor: claude-code
+  id: 01m0zkd268tk1ptwh6ba94h438
+  text: |-
+    ### research done — the rule set, and the two structural risks
+
+    `dump validators` gave 55 rules for `.swift`. Only three can break on a doc-comment-only edit, and each breaks by REMOVAL or REORDER, never by shorter prose:
+
+    1. `code-hygiene/missing-docs-swift` — swiftlint `missing_docs` reports every `open` and `public` declaration with no doc comment. It reads presence only, never a word of the text, so a shorter block is still a block. Measured in the rule: `excludes_inherited_types: true`, `excludes_extensions: true`, `excludes_trivial_init: false`. Thus a `public init()` is NOT exempt.
+    2. `code-hygiene/dead-code-swift` — a `// periphery:ignore` marker must keep its reason on a separate line above it.
+    3. `code-hygiene/function-length-swift` and `magic-numbers-swift` — a `// swiftlint:disable:next <rule>` must stay DIRECTLY above its declaration. A doc line BETWEEN the directive and the declaration makes the finding come back.
+
+    **Checked: none of the seven files holds a `periphery:ignore`, a `swiftlint:disable` or a `swiftlint:enable`.** So risks 2 and 3 cannot occur on this card.
+
+    `swift/doc-parameter-naming` governs each surviving `- Parameter <name>:` key: the key names the internal parameter, never the argument label. The prose may use the label freely, and a DocC symbol link keeps the labels.
+
+    **No validator rewards this card.** The dump holds no rule that bans a doc comment which repeats a signature, no rule on comment length, and no rule on doc writing style. The only Swift doc gate is presence on `open` and `public`. So the cut is reviewable ONLY by the kept-fact list, exactly as ^yzj5ht0 found.
+
+    Two more constraints found while reading the files:
+    - `Recording/MergedTranscript.swift` and `Hosting/OperationOutcome.swift` each hold `//` (not `///`) comments inside function bodies. The comment-only gate filters `///` lines alone, so a `//` line must not be touched. In `MergedTranscript.checkSchemaVersion` the `//` inside the `catch` already carries the sidecar-corruption reason, so the `///` paragraph above may point at the contract instead of repeating it.
+    - The `"… [truncated: N of M tokens]"` marker that `ToolOutputCapping.capped(text:toTokenLimit:)` builds is asserted by 7 tests and is already documented at `TokenBudget/toolOutputLimit`. Its `- Returns:` block repeats the format string of the body below it, so the block goes and the "never silent" invariant stays.
+
+    Baseline doc lines, measured now and equal to the card's table: 125/188, 152/249, 98/171, 62/108, 60/106, 148/274, 54/103.
+  timestamp: 2026-08-26T17:55:33.704015+00:00
+- actor: claude-code
+  id: 01m0zm5xvdr7vzg3r1rbjeyhd8
+  text: |-
+    ## The cut: all seven files in one working-tree change
+
+    Per the dispatcher's instruction, this pass does NOT commit, and does not use one file per commit.
+
+    | File | Before | After | Doc lines cut |
+    |---|---|---|---|
+    | `Session/ToolOutputCapping.swift` | 125/188 (66%) | 64/127 (50%) | 61 |
+    | `Session/DiscoveryPriming.swift` | 152/249 (61%) | 89/186 (47%) | 63 |
+    | `Session/LanguageModelSessionBackend.swift` | 98/171 (57%) | 66/139 (47%) | 32 |
+    | `Recording/MergedTranscript.swift` | 62/108 (57%) | 49/95 (51%) | 13 |
+    | `Hosting/ToolInvocationRecord.swift` | 60/106 (56%) | 41/87 (47%) | 19 |
+    | `Recording/Sinks.swift` | 148/274 (54%) | 108/234 (46%) | 40 |
+    | `Hosting/OperationOutcome.swift` | 54/103 (52%) | 45/94 (47%) | 9 |
+    | **TOTAL** | **699/1199 (58%)** | **462/962 (48%)** | **237** |
+
+    The card was right that these fall further than `RoutedSession.swift`'s 67.7%: they hold real function bodies, so the largest waste class — a comment that says the body again — does exist here. No percentage was aimed for. Two files stop above 50% and the reason is below.
+
+    ---
+
+    # THE DELIVERABLE: every fact KEPT, by line
+
+    Line numbers are in the files as they now stand.
+
+    ## 1. `Session/ToolOutputCapping.swift`
+
+    - **L3-6** — Capping happens BEFORE the model, or the transcript's own recorded `.toolOutput` entry, ever sees the text. Applied at the tool-instancing seam, so no consumer keeps its own capping wrapper.
+    - **L8-9** — The size is ``Compactor``'s character-ratio ESTIMATE, not an exact count.
+    - **L11-12** — Never silent: the marker tells a caller that the result was capped, and by how much.
+    - **L22-24** — Capping is discovered dynamically. A tool does not opt in — the same "no cooperation needed" contract ``ForkableTool`` has.
+    - **L26-31** — The check is a runtime existential cast against `Tool`'s own primary associated types. A non-`String` `Output` passes through UNCAPPED because `FoundationModels.Prompt` exposes no generic way to recover and re-truncate its textual content. This is the reason a reader would otherwise undo by "fixing" the non-String path.
+    - **L40-42** — The nil-guard-and-wrap exists because BOTH of Router's tool-instancing seams need it; a reader would otherwise inline it back into each.
+    - **L49-51** — Points at ``ToolOutputCapping`` for the truncation rule and the dynamic discovery, instead of stating them a second time.
+    - **L53-58** — The decorator is applied OUTERMOST over whatever the tool-instancing pipeline already produced, so the model-facing tool the SDK actually calls is the capped one: continued generation AND the recorded `.toolOutput` entry (therefore `toolStatus`'s `summary`) see capped text, never the oversized original.
+    - **L71-75** — A rendered ``PendingRunEnvelope`` is EXEMPT under any limit. It is control-plane data, and truncation would destroy the `completionToken` the model needs. Recognition is ``PendingRunEnvelope/isRendered(text:)``, which accepts no ordinary tool output.
+    - **L89-97** — The mount is run-to-completion, bounded by ``ToolMount/defaultTimeoutSeconds``, so a hanging synchronous tool is reported as ``ToolMountError/timedOut(tool:timeoutSeconds:)`` instead of holding the turn forever. NO timer and NO race decide whether a call goes to the background. A tool's own ``ToolMount/Mode/background`` declaration WINS over the ``ToolMount/synchronous`` passed here — the trap, because the hard-coded `.synchronous` two lines below is not the last word.
+    - **L99-100** — A non-`String`-output tool is mounted in the binding-only ``ContextBindingTool``.
+    - **L102-105** — Every argument must be the OWNING session's own: `sessionID` is stamped into each background run's ``ToolContext``, `mailbox` tracks the background runs, `sink` is the session's outbox.
+    - **L107-110** — ``RoutedSessionActor/fork(workingDirectory:)`` forks each tool FIRST and hands the forked copy here. The ordering is a fact about the caller.
+
+    ## 2. `Session/DiscoveryPriming.swift`
+
+    - **L8-15** — The three openings a model gives a data question (refuse, announce and stop, answer from training) are ONE event: a first assistant turn with zero tool calls. Upfront prose does not eliminate that class, it only shifts its FREQUENCY. Seeding eliminates it, because nothing is left for the model to decide. This is the reason a reader would otherwise undo by replacing seeding with prompt text.
+    - **L17-21** — The seeded call is a REAL call, through the session's own instanced tool, and its actual output lands in the entry. Nothing is fabricated, which is what lets the seeded entries be recorded, diffed and restored by the ordinary machinery with NO special case.
+    - **L23-26** — Off by default. A fork INHERITS its parent's opt-in. With it off, transcript construction is untouched.
+    - **L28-29** — Any discovery tool whose arguments carry a single string-valued query property can be primed.
+    - **L31** — ``tool`` is the mounted tool's `name` as the session's tool list shows it, not the Swift type.
+    - **L34-41** — The seeded arguments are exactly `{"<queryProperty>": "<prompt>"}`, decoded into the tool's own `Arguments` type BEFORE the call runs, so a property the schema rejects fails as ``argumentsRejected`` rather than reaching the tool as nonsense.
+    - **L53-55** — Every failure case is recoverable by ONE rule: the turn generates UNSEEDED rather than failing. A priming failure can never block a turn.
+    - **L56-60** — Each failure is surfaced as ``SessionEvent/discoveryPrimingFailed(_:)`` — on ``streamSessionEvents()`` for every turn whichever entry point ran it, and ADDITIONALLY on the turn's own stream when the turn was started through ``streamEvents(to:maxTokens:)``. Which streams carry it.
+    - **L65-67** — `toolOutputNotText` exists because a non-`String` `Output` carries no recoverable text — the same limitation ``ToolOutputCapping`` documents. Stated as a pointer, not repeated.
+    - **L70-72** — `argumentsRejected` is typically a schema with no such property, or one that requires more than that one.
+    - **L79-81** — The seed is `.prompt` → `.toolCalls` → `.toolOutput`, the entries a turn resumes from. The ORDER.
+    - **L83-85** — ``DiscoveryPrimer`` deliberately knows nothing of sessions, backends or recording, so the actor that owns the transcript decides and this stays pure and directly testable. A reader would otherwise reach into a session from here.
+    - **L87-89** — `prompt` is BOTH the tool's query and the seeded `.prompt` entry.
+    - **L91-93** — `mountedTools` must be the session's model-facing list, the same instanced tools the model would call, so the seeded call runs through the SAME mounting and capping layers.
+    - **L108-111** — The arguments object is carried UNCHANGED into the recorded `Transcript.ToolCall`, so the persisted arguments are the real call's real arguments.
+    - **L123-128** — The existential must be opened generically because that is the ONLY way to decode into the tool's own `Arguments` and invoke `call(arguments:)`. A reader would otherwise flatten the nested `open` function.
+    - **L130-132** — `property` is carried ONLY so ``argumentsRejected`` can name it.
+    - **L160-162** — The `.toolOutput` entry's id **is** the `Transcript.ToolCall`'s id. That is what correlates the two — the same pairing an SDK-native call has, and what ``toolStatus`` is derived from.
+
+    ## 3. `Session/LanguageModelSessionBackend.swift`
+
+    - **L8-9** — A tool-using turn can close one response and start a new one; an accumulator MUST use ``restartsResponse`` to drop the superseded text. Naive accumulation double-counts.
+    - **L14-15** — A restart supersedes EVERY fragment delivered so far this turn.
+    - **L28-30** — A backend holds the system instructions and ACCUMULATES the transcript across calls. A `nil` `maxTokens` on every generating method means the backend's own default. **Moved here** from four separate method docs, so the fact is stated once.
+    - **L32-33** — Class-bound and `Sendable` so an actor can hold one across isolation boundaries.
+    - **L44-45** — There IS a default implementation; only a backend that can restart a response overrides it.
+    - **L52** — There is NO constrained streaming variant. An absence the signatures cannot show.
+    - **L54** — ``GuidedRequestError`` when `grammar` is invalid. WHICH failure, among several a bare `throws` allows.
+    - **L61-62** — A fork diverges and shares NO further state.
+    - **L65-67** — The default `makeFork(tools:)` IGNORES `tools`. The trap for a caller that passes them.
+    - **L72-76** — Call ``transcriptEntries()`` only while the owning session's turn lock is held. The ONE exception is a tool call of the session's own turn, where no concurrent writer exists.
+    - **L79-80** — `nil` when the backend cannot report usage.
+    - **L82-84** — The same turn-lock constraint, AND the counts are running totals since the session began, NOT a per-turn delta. Kept on both methods, because each declaration owns the constraint for its own caller.
+    - **L87-89** — `replacingTranscript` is over the SAME underlying model, and an empty transcript gives a blank-slate backend.
+    - **L96-97** — The `@unchecked Sendable` soundness argument: `iterator` is mutated without a lock, which is sound because an `AsyncThrowingStream` has one active reader at a time. Never removable.
+    - **L114-116** — The stream is pull-based. A relay `Task` would be a second cancellable consumer, and a propagated cancellation could drop a chunk it had ALREADY received. Pulling from the iterator directly removes that race.
+    - **L128-129, L134-135** — Each default IGNORES its argument and forwards to ``makeFork()``.
+
+    ## 4. `Recording/MergedTranscript.swift`
+
+    - **L5-6** — The case covers a line that is NOT the file's last one. That discrimination is the whole point of the case.
+    - **L8-12** — A torn FINAL line is the expected crash artifact of ``JSONLRecorder``'s durability policy and is dropped with a warning instead. Corruption before it means the log was damaged AFTER it was written, which no policy expects, so it is reported loudly.
+    - **L29-31** — Each session and each fork records into its own lineage-nested file, so the tree mirrors the fork lineage but NO ONE FILE holds the whole run. The reason this type exists.
+    - **L33-37** — Order is `(ts, seq)`. The ULID-nested paths give only NEAR-order; the true total order is what the single recorder stamped. `ts` is primary and `seq` — globally monotonic across every session and fork — is the tiebreaker, so events sharing an instant still fall into exact recorded order under concurrent generation. The trap is sorting by path.
+    - **L42-44** — Line decoding is SHARED with ``TranscriptTree`` so the two readers cannot drift; a torn final line is dropped with a warning naming the file and byte offset, rather than failing the merge.
+    - **L46-48** — `routerDirectory` is `recordings/<routerId>/`. Which directory LEVEL to pass.
+    - **L49-53** — WHICH two typed failures reach a caller: `transcriptLineCorrupt` for a corrupt line before the last, and `recordingFromNewerRouter` for a sidecar newer than ``RecordingSchemaVersion/current``.
+    - **L69-70** — The version gate runs BEFORE any of the file's lines are decoded.
+    - **L72-76** — The version is stamped once per session on the `session.json` beside the transcript, so the merge consults that sidecar for each file — the same gate ``TranscriptTree/load(under:)`` reaches through ``SessionSidecar/read(in:)``, so the two readers cannot drift.
+    - **L78-81** — The merge stays otherwise sidecar-free: a missing or undecodable sidecar merges as before, and ``TranscriptTree`` is the reader that reports sidecar absence and corruption loudly. A reader would otherwise "fix" the empty `catch` by making it throw.
+
+    ## 5. `Hosting/ToolInvocationRecord.swift`
+
+    - **L3-6** — Opened before the wrapped call runs, closed when it returns — INCLUDING when it throws.
+    - **L8-13** — Posted through the same ``OperationEventSink`` route operation events take, delivered live as ``SessionEvent/toolInvocation(_:)``. The OPEN record arrives while the tool's work is still running, which is what gives a UI a truthful "running tool" signal mid-turn instead of only after the turn's diff.
+    - **L15-18** — **Delivery-only.** Never staged in the outbox, never recorded to the transcript. The post-turn snapshot diff stays the ONE authority for what is RECORDED, byte for byte, and if the diff and the live records disagree, the diff wins.
+    - **L20-29** — **The identity rule.** ``correlationID`` is the run's `completionToken`, the same space as `OperationEvent.correlationID`. It is NEVER an SDK `Transcript.ToolCall.id` and never appears inside a ``toolCall``/``toolStatus`` id. A consumer joins the two views explicitly, and NEITHER id may be stamped into the other.
+    - **L31-32** — ``tool`` is what the run's ``ToolContext`` stamps on every event it posts, and is NEVER EMPTY.
+    - **L35-36** — ``op``: phase 1 stamps the wrapped tool's `name` here too, never empty.
+    - **L39-41** — ``correlationID`` is the same value as the `correlationID` on every `OperationEvent` the run posts.
+    - **L44** — ``sessionID`` is ``RoutedSession/id``.
+    - **L47** — ``openedAt`` is IMMEDIATELY BEFORE the wrapped call started.
+    - **L50-51** — ``closedAt`` is `nil` while the call is still running — an open record.
+    - **L54** — ``duration`` is `nil` while the record is still open.
+
+    ## 6. `Recording/Sinks.swift`
+
+    - **L4** — The logger best-effort sinks report DROPPED events to.
+    - **L7-9** — One globally monotonic `seq` across the per-session directories.
+    - **L11-15** — As an actor it serializes appends, so the single `seq` and the order lines land in agree across EVERY directory: concurrent sessions and forks appending into their own lineage-nested files still share ONE total order. Writing is best-effort — any I/O failure is logged and the event dropped, and ``append(_:to:)`` NEVER throws.
+    - **L17-28 (Durability)** — Each event is ONE `write` call, a whole line written once. The sync point is the turn close: after a `.response`-kind event (the turn-final event both diff paths stamp usage onto) the target handle is fsynced, so a completed turn is durable the moment its closing event lands. Between turn closes the window is the OS's — a power cut can lose the open turn's events and tear AT MOST the final line. That torn tail is the policy's expected crash artifact, and ``TranscriptTree`` tolerates it. Synchronization is best-effort like the writes: a failed sync is logged, never thrown.
+    - **L30-31** — ``directory`` is the DEFAULT, used only when an append carries no explicit session directory.
+    - **L33** — ``now`` stamps each event's `ts`.
+    - **L35** — The encoder writes ONE compact JSON line with NO embedded newlines. The JSONL invariant.
+    - **L37** — ``seq`` is global across all directories.
+    - **L39** — One handle per directory, opened lazily and reused.
+    - **L41-43** — The production opener creates the directory and its `transcript.jsonl` on disk; TESTS inject a spy here to observe writes and syncs without disk I/O. The reason the injection point exists.
+    - **L45-49** — The claim means two live writers can NEVER append into the same root. Held from construction by ``init(owningDirectory:now:)``, taken lazily just before the first append otherwise: `nil` until then, and `nil` on every append another live writer's claim refused.
+    - **L58-63** — Ownership is taken just before the FIRST append, which keeps this initializer non-throwing and writes nothing to disk until an event lands. When another live writer owns the root, every append is logged and DROPPED — never interleaved — until that writer releases it. To learn at open time instead, use the throwing initializer. The trap is the silent drop.
+    - **L72-75** — The owning initializer is the OPEN-TIME CHOKEPOINT that turns a second concurrent writer into a typed error instead of silent transcript corruption discovered at restore time.
+    - **L77-81** — The claim spans processes (an atomically created `owner.lock` marker naming this process) and recorders within this process (a process-wide registry). A stale marker from a crashed owner is taken over with a logged warning. The root is released when this recorder DEALLOCATES, and is immediately claimable again.
+    - **L83-86** — WHICH two typed failures: `alreadyOwned(root:owner:)` naming that owner, and `contested(root:)` when a stale-lock takeover loses its race.
+    - **L97-98** — The injected-opener initializer exists so a TEST can observe exactly when this recorder writes and synchronizes.
+    - **L111-113** — A `nil` directory means the recorder's default; a `.response`-kind event is a turn close and additionally synchronizes.
+    - **L115-118** — The FIRST append also claims the root. While another live writer holds it the event is logged and dropped BEFORE it is stamped, so no line ever interleaves into a root this recorder does not own AND `seq` spends nothing on refused appends.
+    - **L137-141** — The claim is retried on EVERY refused append, so this recorder takes the root over once its owner releases it, or dies and leaves a stale marker.
+    - **L143-144** — `false` means another live writer holds the root and the event must drop. WHICH value means what, on a bare `-> Bool`.
+    - **L158-161** — A directory with NO cached handle recorded nothing — the append itself already failed and was logged — so there is nothing to synchronize. Without this the `guard` reads as a bug.
+    - **L163** — `eventSeq` is named by the log when the sync fails. Why the parameter exists at all.
+    - **L181-182** — The handle is POSITIONED AT THE END of that directory's `transcript.jsonl`.
+    - **L191-192** — The key is the STANDARDIZED path, so two URLs naming the same directory share one handle.
+    - **L200-202** — As an actor, ``events`` is the stamped log in `seq` order, CONTIGUOUS FROM `0`, regardless of how many tasks append concurrently. A directly testable invariant.
+    - **L215-216** — The session directory is IGNORED, since this sink keeps a single in-memory log rather than an on-disk layout.
+    - **L223-224** — Recording turned "off" as a SINK, rather than as a `nil` recorder.
+    - **L226-228** — It shares the IDENTICAL ``append(_:)`` call path, so a session born with `.none` behaves exactly like one born with a real sink, only without any record.
+
+    ## 7. `Hosting/OperationOutcome.swift`
+
+    - **L3-9** — Envelope-grade because every host consuming `OperationEvent` must answer "how did the run end" without parsing each tool's private `detail` dialect. `detail` stays OPAQUE for everything else — exit codes, `isError` provenance, progress counts — and ONLY this one fact is promoted. The constraint is: promote nothing more.
+    - **L11-17** — The authority distinction between `.stopped`, `.cancelled` and `.lost` is deliberate and MUST NOT BE FLATTENED: authoritative termination (Shelltool's `killpg(SIGKILL)` on the child's own process group), only a request (MCP's advisory `notifications/cancelled`), and unknowable (MCP's transport drop, where a `ProgressToken` is meaningless across connections).
+    - **L19-23** — Not every tool can produce every case, but each case means the SAME ONE THING to every consumer, and downstream mappings must respect it: the ACP agent maps `.lost` to `_lost`, never `.failed`, because "we do not know if this ran" is not the claim "this ran and failed".
+    - **L25-28** — Unknown-preserving: an unrecognized wire value decodes to `.other(_)` instead of failing, mirroring ACP's `_`-prefixed extensible-enum position, so a tool can ship a novel outcome without a lockstep release of this package.
+    - **L33-35** — `.failed` is DEFINITIVELY KNOWN: `isError`, a nonzero exit, or a local synthesis that never launched.
+    - **L38** — `.timedOut` is the run's OWN hard timeout.
+    - **L41** — `.stopped`: certainly dead.
+    - **L44** — `.cancelled`: the work MAY CONTINUE.
+    - **L47** — `.lost`: unknowable.
+    - **L50-51** — `.other` carries its ORIGINAL wire-format value.
+    - **L54-56** — The vocabulary is consulted from BOTH `rawValue` and `init(rawValue:)`, so the case-to-string mapping cannot drift between the two directions.
+
+    ---
+
+    # Facts MOVED, not deleted
+
+    Three facts now live at one declaration instead of several. Each is still in the file.
+
+    1. **"a `nil` `maxTokens` means the backend default"** — was on four method docs in `LanguageModelSessionBackend.swift`, now on the protocol header (L28-30) covering them all.
+    2. **The pending-envelope capping exemption** — was on `ToolMounting.makeSessionMounted` AND on `TokenCappingTool/call(arguments:)`. It stays at `call(arguments:)`, which owns the behaviour.
+    3. **`RecordingSchemaVersionError/recordingFromNewerRouter`** — was named on the private `checkSchemaVersion(besideTranscript:)` and on the public `merged(under:)`. It stays on the public entry point, which owns the caller-facing contract.
+
+    # The four judgement calls, stated so they can be reversed
+
+    These are the cuts where a reviewer could reasonably disagree. Each is named, with the reason.
+
+    1. **The `swift` usage example in `DiscoveryPriming`'s type doc.** Six lines. It constructed `DiscoveryPriming(tool:queryProperty:)` and passed it to `makeSession`. It restated the memberwise initializer, and both properties already state what each string must be. An example is not one of the five things the card says to keep — an invariant, a constraint, a trap, a reason, or a measurement. **Cut.** Say so if you want it back; it is the only cut on this card that removed a whole worked example.
+    2. **The `- Returns:` on `ToolOutputCapping.capped(text:toTokenLimit:)`** naming the `"… [truncated: N of M tokens]"` format. The return statement one line below builds that exact string, and ``TokenBudget/toolOutputLimit`` already states the marker for a reader who never opens this file. The "never silent" invariant, which the format alone does not carry, stays.
+    3. **`- Throws: Whatever wrapped.call(arguments:) throws, unmodified.` on `TokenCappingTool.call`.** This is the card's hard case, and I judged it a restatement: it names NO failure among several, the one-line body shows the rethrow, and it is the same shape as "throws any error thrown by the model". The counter-argument is real — a decorator is exactly where an error would get wrapped — so this is the cut most worth a second opinion.
+    4. **`"Never fails: ..."` on `OperationOutcome.init(rawValue:)`.** The signature is `init(rawValue: String)`, not `init?`, which already shows it cannot fail. The `.other(_)` preservation it also stated is at the type doc (L25-28).
+
+    # Why two files stop above 50%
+
+    - **`Recording/MergedTranscript.swift` at 51%** — 46 of its 95 lines are not doc. Its remaining prose is the total-order rule, the torn-final-line policy, and the sidecar gate. The sidecar paragraph is already trimmed against the `//` comment inside the `catch`, which the comment-only gate forbids touching. Cutting further removes one of those three.
+    - **`Session/ToolOutputCapping.swift` at 50%** — 63 of its 127 lines are not doc, and 22 of those are a declaration list (`name`, `description`, `parameters`, `includesSchemaInInstructions`, and two `let`s) with no bodies at all. What is left is the layering order, the non-`String` constraint, the pending-envelope exemption, and the background-declaration-wins trap. Each is a thing a reader would undo.
+
+    # Gates, run by me
+
+    - **Comment-only**: `git diff -U0 -- Sources` with the `///` lines filtered out is **EMPTY** — 0 lines across all 7 files. No code line changed.
+    - **`swift build --build-tests`**: Build complete, 0 errors, 0 warnings from our code. The one `missing creator for mutated node` warning is from the mlx-swift dependency and predates this change.
+    - **`swift test`**: 1058 tests in 104 suites passed with the same 2 known issues (`RealModelHarness profile shape (ungated)`, `BoundedWait ends every wait on a wall clock`), plus 83 tests in 10 suites passed. Baseline matched exactly.
+    - **No public symbol lost its doc comment.** Checked by script over every `public`/`open`/`package` declaration in the seven files: 0 undocumented. Every enum case and every protocol requirement (which carry no access modifier but are public) keeps its doc as well.
+    - **`- Parameter` keys.** Four survive, and each names the INTERNAL parameter, not the argument label: `routerDirectory` (label `under`), `eventSeq` (label `afterSeq`), `mountedTools` (no separate label), `property` (no separate label).
+  timestamp: 2026-08-26T18:09:08.461355+00:00
+- actor: claude-code
+  id: 01m0zm670dwcxdt1xt75t0n841
+  text: |-
+    ### implement — changed
+    - evidence: 7 files, comment-only, uncommitted. `Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift` 125/188 to 64/127; `Session/DiscoveryPriming.swift` 152/249 to 89/186; `Session/LanguageModelSessionBackend.swift` 98/171 to 66/139; `Recording/MergedTranscript.swift` 62/108 to 49/95; `Hosting/ToolInvocationRecord.swift` 60/106 to 41/87; `Recording/Sinks.swift` 148/274 to 108/234; `Hosting/OperationOutcome.swift` 54/103 to 45/94. Total 699/1199 (58%) to 462/962 (48%), 237 doc lines cut. A `git diff -U0 -- Sources` with the `///` lines filtered out is EMPTY. `swift build --build-tests`: 0 errors, 0 warnings from our code. `swift test`: 1058 tests in 104 suites with the same 2 known issues, plus 83 tests in 10 suites, all passed.
+    - next: /review. The kept-fact list is the comment above this one, and it is the only way this cut can be checked. Four judgement calls are named there for a second opinion. The user commits; this pass did not.
+  timestamp: 2026-08-26T18:09:17.837623+00:00
+position_column: doing
+position_ordinal: '8180'
 title: 'Router: cut the doc comments in the remaining seven files'
 ---
 ## What
