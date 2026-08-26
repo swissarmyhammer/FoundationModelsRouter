@@ -726,6 +726,26 @@ comments:
 
     - next: the peer review. When it returns clean the card closes.
   timestamp: 2026-08-26T21:12:24.390666+00:00
+- actor: claude-code
+  id: 01m0zyrvpxafkr1yb4aq9gj74d
+  text: |
+    ### Directed kept-fact check of the two `description` cuts — holds
+
+    I checked the pass-3 claim that the deleted `description` rationale describes text the literal no longer carries. Method: read the deleted block from `git show dbe7f10~1`, then grep the current tree for each fact it asserted. The claim holds, but not for the reason a quick read suggests, so the detail is worth recording.
+
+    **The three cut items were stale as quotes.** `SearchToolsTool.description` is prose with no numbered steps, so "the numbered procedure comes first" described a literal that no longer exists. The quoted trigger `"if you have not called searchTools in this conversation"` appears nowhere in the current literal. `getDocument`/`getRevision` appear nowhere in the repository at all.
+
+    **Two of them also carried live constraints, and those are the risk.** A stale quote can wrap a rule that is still binding — the same shape as the `help()`/`docs()` bullet the adversarial pass caught earlier in this card. I checked both:
+
+    1. *Why the rule keys on conversational state and not on model confidence* — "a confident model always passes an `if you are unsure` test". This survives at `Tests/FoundationModelsMultitoolTests/SearchToolsToolTests.swift:143`, as a test comment on a test that asserts it. A test is a stronger home than the doc comment that was cut, because it fails when someone rewrites the literal the wrong way.
+    2. *Why example data must not be fixture-shaped* — "would hand a model the very value an integration scenario grades on". This survives at `Sources/FoundationModelsMultitool/Discovery/SampleSnippet.swift:273`, the symbol that builds the samples. That is the correct home; the constraint binds whoever edits sample generation, not whoever edits this description.
+
+    Both live constraints survive, and both moved toward better homes rather than being lost. The cut is correct.
+
+    **A correction to my own reading.** Partway through this check I recorded that I had found a real defect, on seeing that an anti-guessing rule still lives in the literal as "Never name a function yourself, and never ask the user for data a function can fetch." That was wrong. The surviving rule is the *rule*; what the doc quoted was its old *trigger clause*, which is gone. The rule being present is what makes the cut safe, not what makes it a defect.
+
+    - next: peer verdict on `dbe7f10` still outstanding — resend requested.
+  timestamp: 2026-08-26T21:14:14.621846+00:00
 position_column: doing
 position_ordinal: '8380'
 title: 'Multitool: cut the doc comments back to what the code cannot say'
