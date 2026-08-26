@@ -375,16 +375,6 @@ extension RoutedSession {
         try await compact(prompt: .default, budget: nil)
     }
 
-    /// See ``compact(prompt:budget:)``, with `budget` at `nil`.
-    ///
-    /// - Parameter prompt: The compaction prompt for the summarizer.
-    /// - Returns: What the fold did.
-    /// - Throws: The summarizer's error.
-    @discardableResult
-    func compact(prompt: CompactionPrompt) async throws -> CompactionResult {
-        try await compact(prompt: prompt, budget: nil)
-    }
-
     /// See ``compact(prompt:budget:)``, with `prompt` at ``CompactionPrompt/default``.
     ///
     /// - Parameter budget: The token budget to fold against, or `nil` for this session's resolved working context.

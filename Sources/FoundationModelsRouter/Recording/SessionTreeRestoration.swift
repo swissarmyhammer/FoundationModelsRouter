@@ -54,9 +54,15 @@ struct SessionConfigurationRestorationReport: Sendable, Equatable {
     /// session.
     struct MissingTool: Sendable, Equatable {
         /// The restored session whose envelope recorded the name.
+        ///
+        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
+        // periphery:ignore
         let session: ULID
 
         /// The recorded ``FoundationModels/Tool/name`` with no supplied instance.
+        ///
+        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
+        // periphery:ignore
         let toolName: String
     }
 
@@ -77,12 +83,21 @@ struct RestoredSessionTree: Sendable {
     /// can resolve a different context on a different machine.
     struct ContextMismatch: Sendable, Equatable {
         /// The restored session whose ``SessionSidecar/context`` differs.
+        ///
+        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
+        // periphery:ignore
         let session: ULID
 
         /// The working context, in tokens, the session was recorded at.
+        ///
+        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
+        // periphery:ignore
         let recorded: Int
 
         /// The working context, in tokens, the restoring profile resolved.
+        ///
+        /// Read by the synthesized `Equatable` conformance; periphery sees no caller.
+        // periphery:ignore
         let resolved: Int
     }
 

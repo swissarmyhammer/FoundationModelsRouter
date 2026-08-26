@@ -5,13 +5,13 @@ import os
 /// The raw bytes of the two Hub artifacts that sizing needs. No weights are downloaded.
 public struct RawRepoMetadata: Sendable {
     /// The bytes of `config.json` at the revision, or `nil` when absent.
-    let configJSON: Data?
+    public let configJSON: Data?
 
     /// The bytes of the repo tree listing JSON (`…/tree/{rev}`).
-    let treeJSON: Data
+    public let treeJSON: Data
 
     /// Creates a raw metadata bundle.
-    init(configJSON: Data?, treeJSON: Data) {
+    public init(configJSON: Data?, treeJSON: Data) {
         self.configJSON = configJSON
         self.treeJSON = treeJSON
     }

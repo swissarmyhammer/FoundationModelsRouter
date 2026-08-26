@@ -24,16 +24,16 @@ public struct ProfileDefinition: Sendable, Codable {
     public var name: String
 
     /// A short description of the profile's intent.
-    var description: String
+    public var description: String
 
     /// Candidate models for the `standard` slot, in preference order.
-    var standard: [ModelRef]
+    public var standard: [ModelRef]
 
     /// Candidate models for the `flash` slot, in preference order.
-    var flash: [ModelRef]
+    public var flash: [ModelRef]
 
     /// Candidate models for the `embedding` slot, in preference order.
-    var embedding: [ModelRef]
+    public var embedding: [ModelRef]
 
     /// The working context size in tokens, or `nil` to derive it at resolve time from each candidate's native max context (``RepoMetadata/nativeMaxContext``) instead of a caller-supplied figure.
     ///
@@ -41,7 +41,7 @@ public struct ProfileDefinition: Sendable, Codable {
     /// resolved to a concrete value. Defaults to ``defaultContext`` (8192)
     /// when the initializer's `context` parameter is omitted; pass `nil`
     /// explicitly to opt into derivation.
-    var context: Int?
+    public var context: Int?
 
     /// Creates a profile definition.
     ///

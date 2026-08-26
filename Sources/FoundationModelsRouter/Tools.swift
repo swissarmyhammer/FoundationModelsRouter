@@ -51,13 +51,10 @@ struct EmbedTool: Sendable {
         self.model = model
     }
 
-    /// The length of every vector this tool produces.
-    var dimension: Int { model.dimension }
-
     /// Embeds each input string with one recorded call.
     ///
     /// - Parameter texts: The strings to embed.
-    /// - Returns: One ``dimension``-length vector per input, in order.
+    /// - Returns: One ``RoutedEmbedder/dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the embedder.
     func embed(texts: [String]) async throws -> [[Float]] {
         try await model.embed(texts: texts)

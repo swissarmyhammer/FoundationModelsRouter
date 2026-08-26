@@ -5,19 +5,19 @@ import FoundationModels
 /// arrived out of the total.
 public struct DownloadProgress: Sendable, Equatable {
     /// Bytes downloaded so far.
-    let bytesDownloaded: Int64
+    public let bytesDownloaded: Int64
 
     /// Total bytes expected, or `0` when not yet known.
-    let bytesTotal: Int64
+    public let bytesTotal: Int64
 
     /// Creates a download-progress observation.
-    init(bytesDownloaded: Int64, bytesTotal: Int64) {
+    public init(bytesDownloaded: Int64, bytesTotal: Int64) {
         self.bytesDownloaded = bytesDownloaded
         self.bytesTotal = bytesTotal
     }
 
     /// The fraction downloaded in `0...1`, or `0` when the total is unknown.
-    var fraction: Double {
+    public var fraction: Double {
         bytesTotal > 0 ? Double(bytesDownloaded) / Double(bytesTotal) : 0
     }
 }

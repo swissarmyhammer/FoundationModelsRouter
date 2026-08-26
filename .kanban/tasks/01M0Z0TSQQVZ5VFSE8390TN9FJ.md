@@ -74,6 +74,75 @@ comments:
     - evidence: 59 files, 413 insertions / 413 deletions, all in FoundationModelsRouter. `public` declarations 812 -> 402 (gate 406); public types 172 -> 104. Access level only: every changed file has the same line count as HEAD, and every added line pairs with a removed line once the leading access keyword (or one `@testable`) is stripped; a scan for a `public` member inside a non-public container returns 0. Router `swift build --build-tests` after touching every changed file: 0 errors, 0 warnings from our code. Router `swift test`: "Test run with 1058 tests in 104 suites passed ... with 2 known issues" plus "Test run with 83 tests in 10 suites passed" — the same counts and the same 2 known issues as before the change. Router `swift build --build-tests --package-path IntegrationTests`: clean. Multitool `swift build --build-tests`: clean; `swift test`: "Test run with 1023 tests in 73 suites passed"; `swift build --build-tests --package-path IntegrationTests`: clean. No commit in either repository, and no file in the Multitool checkout was edited.
     - next: /review
   timestamp: 2026-08-26T15:22:25.334730+00:00
+- actor: claude-code
+  id: 01m0zbn724kmmppky0vhtf056j
+  text: |-
+    ### review — findings
+    - evidence: 14 findings (14 confirmed, 17 refuted) over `review sha HEAD~1..HEAD` — Core/ProfileDefinition.swift:27, Recording/RecordingSchemaVersion.swift:12, Recording/SessionTreeRestoration.swift:57,60,80,83,86, Session/GenerationStall.swift:24,27, Session/RoutedSession.swift:384, Session/SessionEvent.swift:100, Session/SessionOutbox.swift:310,317, Tools.swift:55
+    - next: correct every item in the `## Review Findings (2026-08-26 10:24)` section. The task stays in `review`.
+  timestamp: 2026-08-26T15:40:12.228418+00:00
+- actor: claude-code
+  id: 01m0zbp7mbapw8sw4m8k7beqkv
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 59 files, 413 insertions / 413 deletions; public declarations 812 -> 402, public types 172 -> 104
+    - test: green — Router `swift test` 1058 tests in 104 suites + 83 tests in 10 suites (2 known issues, unchanged); Multitool `swift test` 1023 tests in 73 suites; all four consumer packages build clean
+    - commit: fe5ce0e refactor(api): close the public surface to what a host actually calls
+    - review: findings — Core/ProfileDefinition.swift:27, Recording/RecordingSchemaVersion.swift:12, Recording/SessionTreeRestoration.swift:57, :60, :80, :83, :86, Session/GenerationStall.swift:24, :27, Session/RoutedSession.swift:384, Session/SessionEvent.swift:100, Session/SessionOutbox.swift:310, :317, Tools.swift:55
+  timestamp: 2026-08-26T15:40:45.579648+00:00
+- actor: claude-code
+  id: 01m0zchp1x94wxnss67cdjmjv5
+  text: |-
+    All 14 review findings are corrected. This is how each group was decided.
+
+    GROUP 2 — `code-hygiene/dead-code-swift`. The rule has two different remedies, and the finding text says which one applies.
+
+    Three findings say "is unused". The rule deletes those. Deleted:
+    - `RecordingSchemaVersion.v1` and its doc comment. No file in the four packages reads it.
+    - `RoutedSession.compact(prompt:)`, the one-argument convenience. The sibling overloads `compact()` and `compact(budget:)` both have callers; this one has none.
+    - `EmbedTool.dimension` and its doc comment. `RoutedEmbedder.dimension` has callers; the `EmbedTool` wrapper over it has none. The `- Returns:` line of `embed(texts:)` linked to the deleted symbol, so it now links to ``RoutedEmbedder/dimension``.
+
+    Five findings say "is assignOnlyProperty", and the rule forbids deleting those. Its own section, "`assignOnlyProperty` and the reads periphery cannot see", was measured on THIS repository: "the index ... cannot see the `==` and `hash(into:)` the compiler *synthesizes* for an `Equatable` or `Hashable` type". It states "**Do not delete such a property.**" and prescribes `// periphery:ignore` with the reason on its own line above the marker.
+
+    Both structs are exactly that case, and the reader is proved by file and line:
+    - `SessionConfigurationRestorationReport.MissingTool` is `Equatable`. `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:879-882` compares whole values: `restored.configurationReport.missingTools == [SessionConfigurationRestorationReport.MissingTool(session: root.id, toolName: "ambient-emitter")]`. The synthesized `==` reads `session` and `toolName`.
+    - `RestoredSessionTree.ContextMismatch` is `Equatable`. `Tests/FoundationModelsRouterTests/SessionTreeRestorationTests.swift:1008-1011` compares whole values: `restored.contextMismatches == [RestoredSessionTree.ContextMismatch(session: root.id, recorded: recordedContext, resolved: resolvedContext)]`. The synthesized `==` reads `session`, `recorded` and `resolved`.
+
+    Each of the five properties now carries the marker with the reason the rule's own example uses. This adds 15 lines to `SessionTreeRestoration.swift` deliberately.
+
+    GROUP 1 — `swift/access-control` and `completeness/public-output-contract`. The rule is that a public type must be usable, not only nameable. Each type was decided on the role an outside module can play.
+
+    `ProfileDefinition` — a host authors one and gives it to `Router.resolve(profile:)`. `description`, `standard`, `flash`, `embedding` and `context` are public again. `candidatesBySlot` stays internal: it is a lookup view over three properties that are now public, so an outside caller can build it.
+
+    `GenerationStall` — a host receives one in `SessionEvent.generationStalled(_:)`. The finding named two properties; `visibility` had the same defect on the same type, so all three are public again.
+
+    `TokenUsage` — carried by `SessionEvent.turnEnded(_:)`. The `init` is public again.
+
+    `SessionOutbox.QueueDepth` — `promptQueueDepth()` is a requirement of the public `RoutedSession` protocol, so a protocol requirement makes it public and no access keyword can undo that. The finding named `total` and `init`; `queued` and `dispatched` had the same defect, so all four are public again.
+
+    FOUR MORE TYPES had the same defect and no finding of their own. The earlier comment on this card recorded them as a deliberate decision ("DECISION 2 — a type public only because a listed signature names it stays NAMEABLE, not usable"). That decision is wrong: a public protocol an outside module cannot implement is a broken contract. All four are corrected, and a scan for a public type with no publicly usable member now returns 0:
+    - `TranscriptEvent.Partial` — `TranscriptRecorder.append(_:to:)` hands one to a recorder. An outside recorder must read every field to persist the event, so all 12 properties are public. The `init` stays internal, because only the Router builds one.
+    - `DownloadProgress` — `ModelLoader.loadLLM(...reporting:)` and `loadEmbedder(...reporting:)` name it, and `Router.init(loader:)` is public, so an outside loader must build one. `init`, both properties and `fraction` are public.
+    - `ResponseFragment` — `LanguageModelSessionBackend.streamResponseFragments(to:maxTokens:)` returns a stream of them, so an outside backend must build one. Its own doc says an accumulator reads `restartsResponse`. `init`, `text` and `restartsResponse` are public.
+    - `RawRepoMetadata` — `MetadataSource.fetchRawMetadata(repo:revision:)` returns one, and `Router.init(metadataSource:)` is public, so an outside source must build one. `init` and both properties are public.
+
+    COUNTS. Public declarations moved from 402 to 437 of the 812 baseline. Public types stay at 107. The 35 restored members are 13 the findings demanded and 22 from the four types above. 437 is 54% of the baseline, so the "at most half" acceptance criterion no longer holds; that criterion is now unchecked with the figure recorded on it. Nothing was demoted to compensate, because the earlier pass already proved each remaining public symbol against the four consumer packages.
+
+    MECHANICAL GUARDS, both re-run. Every changed file has the same line count as HEAD, except four files whose line count changed on purpose: `RecordingSchemaVersion.swift` -4, `RoutedSession.swift` -10, `Tools.swift` -3 (the three deletions) and `SessionTreeRestoration.swift` +15 (the periphery markers). A scan for a public member inside a non-public container reports one row, `Core/ULID.swift:25` `public static func generate()`; that row is a false positive of the scan, because `ULID` comes from `@_exported import ULID` and is public in that package, so the real count is 0.
+
+    Nothing in `../FoundationModelsMultitool` was edited, and nothing was committed in either repository.
+  timestamp: 2026-08-26T15:55:45.085167+00:00
+- actor: claude-code
+  id: 01m0zchzcxeaa6xphgbrv8q487
+  text: |-
+    ### implement — changed
+    - evidence: 10 files in FoundationModelsRouter — Core/ProfileDefinition.swift, Recording/RecordingSchemaVersion.swift, Recording/SessionTreeRestoration.swift, Recording/TranscriptEvent.swift, Resolution/ModelLoader.swift, Session/GenerationStall.swift, Session/LanguageModelSessionBackend.swift, Session/RoutedSession.swift, Session/SessionEvent.swift, Session/SessionOutbox.swift, Sizing/RepoMetadata.swift, Tools.swift. All 14 findings of `## Review Findings (2026-08-26 10:24)` are checked. Public declarations 402 -> 437; public types 107, unchanged. Gates: Router `swift build --build-tests` clean; Router `swift test` "1058 tests in 104 suites passed ... with 2 known issues" plus "83 tests in 10 suites passed", the same counts and the same 2 known issues as before; Router `swift build --build-tests --package-path IntegrationTests` clean; Multitool `swift build --build-tests` clean and `swift test` "1023 tests in 73 suites passed"; Multitool `swift build --build-tests --package-path IntegrationTests` clean. Line counts match HEAD except four deliberate files (-4, -10, -3 deletions, +15 periphery markers). Public types with no publicly usable member: 0. Public members stranded in a non-public container: 0.
+    - next: /review. The first acceptance criterion is now unchecked, because the count 437 is above the 406 that criterion asks for.
+  timestamp: 2026-08-26T15:55:54.653927+00:00
+- actor: claude-code
+  id: 01m0zcj8kk0h1ycqsddhmzkkgn
+  text: 'Correction to the step record above: the file count is 12, not 10. `git diff --stat -- Sources` reports 12 files changed, 51 insertions and 53 deletions. The 12 names in that record are correct; only the number was wrong.'
+  timestamp: 2026-08-26T15:56:04.083093+00:00
 depends_on:
 - 01M0YZ7Y58NKMZFVT7TD1C69AB
 position_column: doing
@@ -95,7 +164,8 @@ Work folder by folder, largest first — `Recording/` (42 public types), `Hostin
 - [x] `RoutedSessionActor` and its extensions, `ToolRun`, `RunEventFunnel`, `SessionOutbox`, `SessionMailbox`'s run-plane members, `BackgroundToolRunner`, `RunToCompletionRunner`, and the Recording sidecar/restoration internals are prime candidates — verify each against the two consumers before deciding.
 
 ## Acceptance Criteria
-- [x] The `public` declaration count in Sources is at most half the recorded baseline.
+- [ ] The `public` declaration count in Sources is at most half the recorded baseline.
+  - Measured after the review findings were corrected: 437 declarations of the 812 baseline. That is 54%, above the 406 the criterion asks for. The findings made 13 members public again. The same defect in four more types made 22 more members public. A person must decide if 437 is acceptable, or if a type must leave the public surface completely. See the comment of 2026-08-26.
 - [x] Every remaining public type is named by an outside module (Router's own tests do not count) or is on the host/tool-author API list above.
 - [x] `swift build --build-tests` and the full suite are green in FoundationModelsRouter.
 - [x] `../FoundationModelsMultitool` builds and its suite is green against the changed Router.
@@ -105,3 +175,25 @@ Work folder by folder, largest first — `Recording/` (42 public types), `Hostin
 
 ## Workflow
 - [x] Use `/tdd` — run both suites before and after each folder pass. #api #cleanup
+
+## Review Findings (2026-08-26 10:24)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 59 file(s) reviewed, 6 not reviewed.
+
+> 6 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 6 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Core/ProfileDefinition.swift:27` `completeness/public-output-contract` — Public struct ProfileDefinition has multiple properties (lines 27, 30, 33, 36, 44) changed from public to package-level, making these essential configuration properties inaccessible to external code. External consumers of this public type cannot read its profile configuration. Either (1) restore `public` to the properties on lines 27, 30, 33, 36, and 44 to maintain API access, or (2) make ProfileDefinition package-level to match the visibility of its members.
+- [x] `Sources/FoundationModelsRouter/Recording/RecordingSchemaVersion.swift:12` `code-hygiene/dead-code-swift` — var.static `v1` is unused.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:57` `code-hygiene/dead-code-swift` — var.instance `session` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:60` `code-hygiene/dead-code-swift` — var.instance `toolName` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:80` `code-hygiene/dead-code-swift` — var.instance `session` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:83` `code-hygiene/dead-code-swift` — var.instance `recorded` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift:86` `code-hygiene/dead-code-swift` — var.instance `resolved` is assignOnlyProperty.
+- [x] `Sources/FoundationModelsRouter/Session/GenerationStall.swift:24` `swift/access-control` — Public struct `GenerationStall` has a property that lost the `public` keyword, making it internal. Clients cannot access properties of a public struct with internal visibility, breaking the public API. Restore `public` to the property: `public let timeWithoutProgress: Duration`.
+- [x] `Sources/FoundationModelsRouter/Session/GenerationStall.swift:27` `swift/access-control` — Public struct `GenerationStall` has a property that lost the `public` keyword, making it internal. Clients cannot access properties of a public struct with internal visibility, breaking the public API. Restore `public` to the property: `public let timeInFlight: Duration`.
+- [x] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:384` `code-hygiene/dead-code-swift` — function.method.instance `compact(prompt:)` is unused.
+- [x] `Sources/FoundationModelsRouter/Session/SessionEvent.swift:100` `swift/access-control` — Public struct `TokenUsage` has an initializer that lost the `public` keyword, making it internal. Clients cannot construct instances of a public struct with an internal initializer, breaking the public API. Restore `public` to the `init` at line 100: `public init(tokensIn: Int, tokensOut: Int, contextFill: Double) {`.
+- [x] `Sources/FoundationModelsRouter/Session/SessionOutbox.swift:310` `swift/access-control` — Public struct `QueueDepth` has a computed property that lost the `public` keyword, making it internal. Clients cannot access properties of a public struct with internal visibility, breaking the public API. Restore `public` to the property: `public var total: Int { queued + (dispatched == nil ? 0 : 1) }`.
+- [x] `Sources/FoundationModelsRouter/Session/SessionOutbox.swift:317` `swift/access-control` — Public struct `QueueDepth` has an initializer that lost the `public` keyword, making it internal. Clients cannot construct instances of a public struct with an internal initializer, breaking the public API. Restore `public` to the initializer: `public init(queued: Int, dispatched: ItemID?) {`.
+- [x] `Sources/FoundationModelsRouter/Tools.swift:55` `code-hygiene/dead-code-swift` — var.instance `dimension` is unused.

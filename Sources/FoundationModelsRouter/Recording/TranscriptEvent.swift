@@ -122,29 +122,29 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// recorder assigns both atomically at append.
     public struct Partial: Sendable, Equatable {
         /// The recording root id.
-        let routerId: ULID
+        public let routerId: ULID
         /// The session span id.
-        let sessionId: ULID
+        public let sessionId: ULID
         /// The forking session's span id, or `nil` for a root.
-        let parentId: ULID?
+        public let parentId: ULID?
         /// The routed model slot, or `nil`.
-        let slot: ModelSlot?
+        public let slot: ModelSlot?
         /// The concrete model reference, or `nil`.
-        let model: ModelRef?
+        public let model: ModelRef?
         /// What kind of moment this records.
-        let kind: Kind
+        public let kind: Kind
         /// The guided-generation grammar, or `nil`.
-        let grammar: String?
+        public let grammar: String?
         /// The event's body text, or `nil` when the event carries no body.
-        let text: String?
+        public let text: String?
         /// Input tokens metered, or `nil`.
-        let tokensIn: Int?
+        public let tokensIn: Int?
         /// Output tokens metered, or `nil`.
-        let tokensOut: Int?
+        public let tokensOut: Int?
         /// Duration in milliseconds, or `nil`.
-        let ms: Int?
+        public let ms: Int?
         /// The structural entry payload, or `nil`.
-        let entry: TranscriptEntryPayload?
+        public let entry: TranscriptEntryPayload?
 
         /// Describes an event without its recorder-owned ordering fields.
         init(

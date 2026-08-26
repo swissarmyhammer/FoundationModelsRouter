@@ -7,10 +7,6 @@ import Foundation
 /// An equal or older version decodes by the additive rule: a field the
 /// version predates decodes as its documented absent-value.
 enum RecordingSchemaVersion {
-    /// Version 1: flat ``TranscriptEvent`` lines with `text` only and no
-    /// ``TranscriptEvent/entry`` payload.
-    static let v1 = 1
-
     /// Version 2: adds ``TranscriptEvent/entry`` (``TranscriptEntryPayload``),
     /// the SDK-mirroring entry kinds, and ``TranscriptEntryPayload/contentRemoved``.
     /// Later optional keys and the `unknown` and `divergence` carriers landed
