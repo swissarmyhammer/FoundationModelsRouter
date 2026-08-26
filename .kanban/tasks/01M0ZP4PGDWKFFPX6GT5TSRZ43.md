@@ -67,8 +67,82 @@ comments:
 
     `no-commented-code` applies to every language. Each rewritten block reads as English prose, not as statements of Swift.
   timestamp: 2026-08-26T19:10:35.022795+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0zqzhqv3d23aspsvz2vrzwb
+  text: |-
+    Three things the next agent must know.
+
+    1. THE WORK WAS COMMITTED, AND NOT BY THIS STEP. The card and the dispatching instruction both said not to commit. I ran no commit. The work is now `937c96b` "docs: correct four claims about how a runCode call goes to the background", and it holds exactly the six files of this change and names task ^5tsrz43. The Router repository also moved, to `27c6db0` "chore(kanban): close zj146zb and record the 5tsrz43 pass plus two follow-up cards". Neither commit came from this step. No hook is configured in `.claude/settings.json`, `.claude/settings.local.json`, or the user settings, and `/Users/wballard/github/swissarmyhammer/FoundationModelsRouter/.ralph` holds an instruction owned by session `01M0XFPJMXZ1K2NFAPWJ0BYJQE`, which is not this session. The commit message reproduces the content of my card comments, including the adversarial-check finding. A peer session driving this card made both commits. Nothing needs to be undone, but the commit gate did not hold on this card.
+
+    2. ONE TEST RUN REPORTED A TARGET FAILURE THAT DOES NOT REPRODUCE. A `swift test` at 19:14 printed "Some test targets reported failures: FoundationModelsMultitoolTests (Swift Testing)" with no failing test named in the tail. Three runs after it are green at 1023 tests in 73 suites, as are the four runs before it. The peer session above was committing to both repositories at that moment and shares this `.build` directory, so build contention is the likely cause. I could not name the failing test, because the failure did not come back. Recording it rather than hiding it: if it returns during review, this is the first sighting.
+
+    3. THE VALIDATOR RULES ARE CHECKED AGAINST THE COMMITTED DIFF, not against a guess at them. Five rules bear on a comment-only Swift change, and all five pass.
+    - `no-commented-code`: the longest added comment run is 8 lines, in `SandboxGlobalsFixtures.swift`, over the 5-line threshold. The rule's own standard decides it: "a block is commented-out code when the text inside it, with the comment delimiters removed, reads as several statements or items of the file's own language. A block that reads as English is prose however much punctuation it carries." With the `//` removed the block is English sentences, so it is prose. A reviewer should still look at it, because it grew from 5 lines to 8.
+    - `missing-docs-swift`: every declaration I touched keeps its doc comment — `Registry.directMode()`, `Registry.makeSessionTools(librarian:sampleGenerator:)`, `JSCInterpreter.init(timeLimit:)`, `GatedScriptedTool.progress`.
+    - `function-length-swift` and `magic-numbers-swift`: a doc line between `// swiftlint:disable:next <rule>` and its declaration makes the directive inert. No edited file holds a swiftlint directive.
+    - `dead-code-swift`: `// periphery:ignore` takes no trailing text and must sit directly above its declaration. No edited file holds a periphery marker.
+    - `swift/doc-parameter-naming`: every `- <key>:` entry in the touched fixture names the internal parameter, not the external label — `mailbox` for `in mailbox:`, and so on. I changed only the prose after `- progress:`, never a key.
+    - `swift/concurrency`: `JSCInterpreter.swift` holds two `@unchecked Sendable` types, each with its synchronization invariant stated above it. My only hunk in that file is at the `init(timeLimit:)` doc comment and reaches neither.
+    - `test-integrity/no-test-cheating` and `completeness/inverse-operation-coverage`: no test body became comments alone, and the renamed test claims no round trip, inverse, or read-back that its body does not make.
+  timestamp: 2026-08-26T19:15:33.755920+00:00
+- actor: claude-code
+  id: 01m0zr29pxftfkswa671r6931g
+  text: |-
+    ### correction — the "unrequested commit" was me, and the gate did hold
+
+    The implement record says the work "got committed, and not by me", names commits `937c96b` and `27c6db0`, and concludes "a peer session driving this card made both commits" and "the gate did not hold". That reading is wrong, and the record must not stand.
+
+    **I made both commits.** I am the orchestrator that spawned the implement step. The `/finish` pipeline is implement, then test, then commit, then review, and the commit step is mine. The step was told not to commit precisely so that I would do it after verifying the gates myself, which is what happened:
+    - `937c96b` in the Multitool holds exactly the six files of that step.
+    - `27c6db0` in the Router holds only `.kanban` board state.
+
+    **So the gate held exactly as designed.** The step did not commit. No unknown session acted. The evidence the step read was real but pointed the wrong way: the commit names ^5tsrz43 and reproduces text from the card comments because I wrote the message from the step's own report, and `.ralph` is owned by another session id because this loop has run across a restart.
+
+    **Why I am correcting it rather than letting it go.** A card that records an unexplained commit by an unidentified actor is a card that will make the next reader distrust the whole history. The step was right to report what it saw and right not to touch the commit. It drew the wrong conclusion from correct observations, which is a good failure — but leaving it uncorrected would be a bad record.
+
+    **The step also corrected itself on two narration errors**, which is worth keeping: it had said a rule dump "arrived" and the rules "are in" before the result had actually returned. It flagged that itself. Reporting a pending result as delivered is the failure mode to keep watching for.
+
+    ### The non-reproducing test failure is real and stays recorded
+
+    One run printed `Some test targets reported failures: FoundationModelsMultitoolTests` naming no test. Three runs after it were green at 1023/73, and I have since run the suite four more times, all green at 1023/73.
+
+    The likely cause is contention rather than a defect: I was building and testing the same `.build` directory from this session while that step ran. That is my doing, not a flaky test.
+
+    It stays on the card as a first sighting rather than being swept away. If it appears again with no concurrent build, it is a real defect and this note is the first data point.
+  timestamp: 2026-08-26T19:17:03.837981+00:00
+- actor: claude-code
+  id: 01m0zrpx5bnmjqj2xgzkee71t4
+  text: |-
+    ## Review Findings (2026-08-26 19:25) — clean, full coverage, and all four claims verified
+
+    **Engine — `review sha HEAD~1..HEAD` on `937c96b`:** findings 0, confirmed 0, refuted 0, attempted 7, failed 0. **6 of 6 files reviewed**, no declines. Unlike ^zj146zb, nothing fell out for being markdown, because all six files are Swift.
+
+    **The four replacement claims, checked adversarially rather than for shape.** Session `foundationmodelsmultitool-7b` hunted specifically for the absolutes that this card's own verifier had already caught three of. All four hold:
+
+    1. **`MultiTool.swift` — TRUE, and properly SCOPED.** The reviewer deliberately tested whether "every `runCode` call goes to the background" survives without its context, since an unscoped absolute is exactly the failure mode. It does not stand alone, and it does not have to: the preceding sentence scopes it to a `RoutedSession` putting each tool through Router's mounting path, and the following sentence gives the contrasting case — a bare `LanguageModelSession` cannot background at all. Bounded on both sides.
+    2. **`ShellBackgroundRunner.swift` — TRUE.** `ToolMounting` really is `(typed as? any BackgroundTool)?.mount ?? configuration`. No clock is involved, so dropping the "wait clock of zero" story was right.
+    3. **`WaitToolTests.swift` — TRUE.** `WaitTool.swift:99` is `public var mount: ToolMount? { .synchronousUnbounded }`.
+    4. **`SandboxGlobalsFixtures.swift` — TRUE on both halves.** `BackgroundToolRunner` has the start gate (`await run.open()` at line 70, and line 80 states "The body waits on the start gate until the run is tracked"). And a repository-wide search of the Router for a synthesized progress event or a silent-run concept returns nothing, so deleting those two claims was correct.
+
+    ### One real defect the engine could not see
+
+    `MultiTool.swift` lines 148-149 break a code span mid-identifier across a line boundary:
+
+    ```
+    /// Mounted on a bare `FoundationModels
+    /// .LanguageModelSession` the same tools cannot go to the background at all:
+    ```
+
+    DocC renders that as `FoundationModels .LanguageModelSession` with a space, and it will not resolve as a symbol link. Correct in substance, wrong on the rendered page — in SHIPPED source. Fixed separately.
+
+    ### The process note worth keeping
+
+    This card's implementer ran its own adversarial verifier and it caught **three false absolutes before the engine ever saw the commit**. The engine then returned 0 findings from 7 validators — and would not have caught any of the three, because it reads structure.
+
+    So the verifier protected this commit, not the validators. That is now demonstrated twice on this body of work, in opposite directions: here the pre-commit verifier caught what the engine could not, and on the Router side a false completeness claim slipped past the engine twice because no such verifier ran.
+  timestamp: 2026-08-26T19:28:19.115207+00:00
+position_column: done
+position_ordinal: ffff8280
 title: 'Multitool: the deleted wait design is still described as a "wait clock" in four more places'
 ---
 ## What
