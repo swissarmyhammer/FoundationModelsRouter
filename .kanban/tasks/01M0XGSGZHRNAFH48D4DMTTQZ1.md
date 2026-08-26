@@ -268,11 +268,29 @@ comments:
 
     A rule that matches a declaration by name will find whichever comes first and then read the other one's contract. Any name-matching rule can make this same error. Whoever meets it next should check WHICH `wait` a finding is talking about before believing it.
   timestamp: 2026-08-26T16:30:09.243202+00:00
+- actor: claude-code
+  id: 01m101hhz72rx9wp6xq0tmwzx8
+  text: |
+    ## Review Findings — resolved by the user (2026-08-26)
+
+    - [x] `MultiTool+Background.swift:42` `completeness/public-output-contract` — "The collectInstruction method omits the seconds parameter when instructing to call wait()."
+
+    **The user read the refutation and closed the card.** The finding is a false positive. No code change was made, and none was correct: the mounted `wait` tool declares `completionToken: String?` and `timeout: Double?`, both Optional and neither named `seconds`. The `seconds` the finding cites belongs to the JS sandbox global, which is a line of TypeScript inside a string literal at `MultiTool+SandboxGlobals.swift:266` and states no Swift contract. Applying the fix would have told the model to send an argument `WaitArguments` does not declare, breaking the collect path this card exists to build.
+
+    **The two observations are both closed, and neither is a finding.**
+
+    1. The garbled sentence at line 49 is repaired. It now reads: "The mount every `runCode` call carries. It is always background." Verified in the tree, not assumed.
+    2. The doc-length observation was taken up as its own card, `^f1j3ymz`, which is done. This file now stands at 79 doc lines to 57 code lines. Still doc-heavy, and deliberately so: what survives here is the two-clocks safety property and the `^4qcf1v9` measurement, which the code cannot state.
+
+    **One thing to carry forward.** The review engine is stateless, so this finding will very likely be raised again by any future pass over this file. There is nowhere to suppress it. The cause is a real property of the design: two surfaces named `wait`, one a tool with Optional arguments that a model calls, one a JS global with required positional arguments that a snippet calls. Any rule that matches a declaration by name can read the wrong one's contract. This card is the durable record of that trap.
+
+    - next: none. Card closes.
+  timestamp: 2026-08-26T22:02:40.999507+00:00
 depends_on:
 - 01M0XGRJD4TZTZAFTCSBZEKMFD
 - 01M0XGRYMR1GPMY1X52FTDMR58
-position_column: review
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffff8780
 title: 'Multitool: declare the background tools'
 ---
 ## What

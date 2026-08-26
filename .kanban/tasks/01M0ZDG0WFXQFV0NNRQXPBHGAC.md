@@ -112,8 +112,35 @@ comments:
 
     **A general point this card exposes.** Any card whose whole change is prose can never reach `done` through `/review`. That is worth a decision: either such a card is exempt from the gate and closes on a human read, or the engine must gain an opinion about markdown. Recording it here rather than inventing a rule.
   timestamp: 2026-08-26T17:21:37.168231+00:00
-position_column: review
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m101tgc2ymjtsgbbhdxwhb6e
+  text: |
+    ### review — closed by the user; the gate itself is the bug
+
+    **The writing was already finished.** Three commits did it: `1c57491`, `2347c0c`, `c818020`. Verified in the tree, not assumed — `grep` for `DetachConfiguration`, `nativeSessionMount`, "cannot detach" and "never detachment" in `README.md` finds nothing. Every stale symbol the card named is gone.
+
+    The README now states the contract at lines 20-30, and the load-bearing sentence is this one:
+
+    > A bare `FoundationModels.LanguageModelSession` reads no such declaration, so it applies no background wrapper and `MultiTool`'s own `call(arguments:)` runs in band: the snippet blocks, no envelope is written, and `wait` has nothing to join.
+
+    I had recorded that this needed a person, because it is a design statement about a framework type and I must not invent one. That was over-cautious: the claim is test-covered. `IntegrationTests/Tests/FoundationModelsMultitoolIntegrationTests/InBandCollectionCanaryTests.swift` is a canary for exactly this path. The README describes behaviour a test pins.
+
+    **Why the card could not close on its own.** The change is Markdown only, and the review engine gives a Markdown file `attempted 0`:
+
+        review file README.md
+        counts: findings 0, confirmed 0, refuted 0, attempted 0, failed 0, skipped 0
+        "0 file(s) reviewed, 0 not reviewed. Nothing in scope to review."
+
+    `skipped` is 0 and `skipped_files` is empty, so the file is not reported as skipped. It is not reported at all, and the counts are identical to a clean pass. Reading them strictly, no documentation task can ever close; reading them loosely, every documentation task closes unreviewed. Neither is acceptable, so the gate was not something this card could satisfy.
+
+    **The user's call: that is a defect in the engine, not in this task.** Filed against the SwissArmyHammer board as `^g7d3tzq`, "review: a Markdown file reports attempted 0, which is indistinguishable from a clean pass", with the reproduction above and the acceptance criterion that a caller must tell "nothing looked at this" from "this is clean" using the counts alone.
+
+    Closed here on the user's instruction, with the coverage gap recorded rather than papered over.
+
+    - next: none. Card closes.
+  timestamp: 2026-08-26T22:07:34.274385+00:00
+position_column: done
+position_ordinal: ffff8880
 title: 'Multitool: correct the README''s stale mount vocabulary'
 ---
 ## What

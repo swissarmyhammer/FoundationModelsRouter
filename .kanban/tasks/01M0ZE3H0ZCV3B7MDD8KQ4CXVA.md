@@ -23,8 +23,35 @@ comments:
 
     I have not changed the card's column or its tags, because moving a card between products is a decision for a person.
   timestamp: 2026-08-26T16:31:08.443230+00:00
-position_column: todo
-position_ordinal: 8b80
+- actor: claude-code
+  id: 01m101txsswtqv4tkwnb2wr0rb
+  text: |
+    ### closed here, filed upstream as `^eknn45e`
+
+    **What the bug is, stated plainly.** The `review` engine binds to the repository root of the calling session and rejects any path outside it. Exact reproduction, run from this repository:
+
+        review file ../FoundationModelsMultitool/Sources/FoundationModelsMultitool/MultiTool.swift
+
+        Error: review pipeline failed: Validator 'scope' error: path
+        '../FoundationModelsMultitool/Sources/FoundationModelsMultitool/MultiTool.swift'
+        escapes the repository root
+
+    An absolute path fails identically. `cwd`, `root`, `workspace` and `path` do not move the root.
+
+    **Why it matters here.** `FoundationModelsRouter` declares the protocol and `FoundationModelsMultitool` conforms to it. One change lands in both, and `swift package edit` links them into one build. The change is a single unit of work, but a session in this repository can review only half of it.
+
+    **The workaround, and its cost.** A second session opened in the sibling checkout runs the review and reports the counts back over the cross-session channel. It works — it is what closed `^dmttqz1` and `^f1j3ymz` — but it needs a person to open that session, and it puts the review result in a different context from the change that caused it.
+
+    **The sharper failure behind it, which is the reason this is worth fixing.** A cross-repository review must be scoped by hand, and a diff scope over a commit that renames a file silently declines whole rule families while still reporting `findings: 0`. On `^dmttqz1`, `function-length-swift`, `magic-numbers-swift` and `missing-docs-swift` each reported "found no file at Sources/FoundationModelsMultitool/MultiTool+Detachment.swift" because a later commit had renamed it to `MultiTool+Background.swift`. The run returned zero findings anyway. A person reading the declined-rule list is the only reason that gap was caught, and a second pass at the new path is what closed it.
+
+    **Where it now lives.** `^eknn45e` on the SwissArmyHammer board, "review: cannot review a sibling checkout — path escapes the repository root". It carries the reproduction, the rename trap, and an acceptance criterion that the engine either supports an explicit root or says which alternative is supported rather than reading as a path error.
+
+    Closed here on the user's instruction: the defect belongs to the engine's own repository, and this board cannot fix it.
+
+    - next: none. Card closes.
+  timestamp: 2026-08-26T22:07:48.025522+00:00
+position_column: done
+position_ordinal: ffff8980
 title: Review engine cannot review the sibling repository from a Router session
 ---
 ## What
