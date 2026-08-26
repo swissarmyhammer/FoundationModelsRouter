@@ -273,8 +273,42 @@ comments:
     - the five items of the 13:17 section are left unchecked. The `review` skill reserves the marks for the user or the implementer, so this pass does not flip them, and it records instead that the four lost facts are restored in the tree and the fifth is corrected in the 18:21 comment.
     - next: /implement to delete the one sentence, then /review again. The card cannot go to done while an item is open.
   timestamp: 2026-08-26T18:26:29.635092+00:00
-position_column: review
-position_ordinal: '8280'
+- actor: claude-code
+  id: 01m0znedk6yn2scppj4bnaj6n0
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` on commit `bff7704`, 1 source file. The validator fleet found 0 (7 attempted, 0 failed). The directed check found 0. The whole source diff is the removal of the untrue sentence and the shortening of "cannot be read at all" to "cannot be read"; the filtered diff is 0 lines. The clause now names all three throwing paths out of `merged(under:)` — `recordingFromNewerRouter` from `checkSchemaVersion`, `transcriptLineCorrupt` from `decodeEvents`, and the untyped read error from `try Data(contentsOf:)` — and claims nothing about which is singular. It now matches the wording `TranscriptLineDecoding.decodeEvents` already uses for the same failure. 0 public, `open` or `package` symbols undocumented across all seven files. Set total 475/975 against 699/1199 at the start.
+    - all six findings are fixed in the tree and verified: four in `0da2abf`, the coordinate correction in the 18:21 comment, and the last in `bff7704`.
+    - the six marks are still unflipped. The `review` skill gives them to the user or the implementer, so this pass does not flip them, and the skill moves a task to the terminal column only when every prior item is checked. The implementer has said they will flip them. The card is clean on substance and moves to done on that flip.
+    - next: flip the six marks, then the card goes to `done`. No code work remains.
+  timestamp: 2026-08-26T18:31:15.302258+00:00
+- actor: claude-code
+  id: 01m0zng2tfxmfwxd45dxcx1npm
+  text: |-
+    ### finish — clean, and the card closes
+
+    - implement: changed — `284eb5f` cut 237 doc lines across seven files; `0da2abf` put back four facts the cut removed; `bff7704` removed one untrue sentence I had added
+    - test: green, verified by me at each step — the diff with `///` lines filtered out is empty every time, so no code line changed; `swift build --build-tests` 0 errors and 0 warnings from our code; `swift test` 1058 tests in 104 suites plus 83 in 10 suites passed, same 2 known issues
+    - review: clean — engine 0 findings from 7 validators; directed check 0 findings; all six prior findings verified fixed in the tree
+
+    Set total: 475 doc lines of 975, from 699 of 1199 at the start.
+
+    **The mistake worth keeping.** My first review finding on this card said a truncated `- Throws:` misleads, because a partial list of failures reads as a complete one. I then fixed that by adding this sentence:
+
+    > That is the one place this type does not tolerate a bad file.
+
+    It was false. A corrupt line before a file's last also aborts the merge, and `MergedTranscriptError/transcriptLineCorrupt(file:)` is named at the head of the very clause I appended to. So I made a false claim about completeness, inside the same doc comment, while fixing a finding about false claims of completeness. Removed in `bff7704`.
+
+    **Why that is the strongest evidence on this card.** Three commits passed the engine with 0 findings from 7 validators each. Not one pass could see that a sentence was untrue. A validator reads structure — is there a doc comment, does a parameter key match, is the function too long. It cannot read a claim and check it against the code. Only the directed check did that, and it caught a real loss on the predecessor card and four more here.
+
+    That is the argument for the kept-fact list being the deliverable. Without it there is no instrument at all: the engine's silence on a comment cut means nothing, in either direction.
+
+    **Two things a future reader should know.**
+    1. Two files stopped above 50% on purpose — `MergedTranscript.swift` and `ToolOutputCapping.swift`. Cutting either further deletes a fact. The number was never the goal, which is why this card sets no percentage target.
+    2. The `DiscoveryPriming` type doc no longer carries a usage example. The example paired `FindAPIs()` with `"findAPIs"`, which showed that the string is the MOUNTED name and not the Swift type name. That fact survives only on the one-line `tool` property doc, so that line is load-bearing.
+  timestamp: 2026-08-26T18:32:09.807432+00:00
+position_column: done
+position_ordinal: ffff80
 title: 'Router: cut the doc comments in the remaining seven files'
 ---
 ## What
@@ -302,18 +336,18 @@ Keep an invariant, a constraint, a trap, a reason a reader would otherwise undo,
 **A fact belongs in the file once, at the declaration that owns it.** A convenience overload that says "See ``other(_:)``" must not repeat the contract.
 
 ## Acceptance Criteria
-- [ ] Every doc comment that remains states something the code cannot show.
-- [ ] No sentence restates a signature or a body, and no two paragraphs say the same thing.
-- [ ] **Each file's pass publishes every invariant, constraint, trap and reason it KEPT, by line.** This list is the deliverable. It is the only way the cut can be reviewed: no validator can tell which fact a deleted sentence carried, so a reviewer reads the list against `git show` of the parent commit.
-- [ ] No public symbol lost its doc comment. Shorter, never absent.
-- [ ] Every surviving `- Parameter <name>:` key names the internal parameter, not the argument label.
+- [x] Every doc comment that remains states something the code cannot show.
+- [x] No sentence restates a signature or a body, and no two paragraphs say the same thing.
+- [x] **Each file's pass publishes every invariant, constraint, trap and reason it KEPT, by line.** This list is the deliverable. It is the only way the cut can be reviewed: no validator can tell which fact a deleted sentence carried, so a reviewer reads the list against `git show` of the parent commit.
+- [x] No public symbol lost its doc comment. Shorter, never absent.
+- [x] Every surviving `- Parameter <name>:` key names the internal parameter, not the argument label.
 
 **Do not set a percentage target.** ^yzj5ht0 proved the share measures the shape of a file, not the quality of its prose. Report the before and after numbers, but never delete a real fact to reach one.
 
 ## Tests
-- [ ] Comment-only: a diff with the `///` lines filtered out must be empty for each file.
-- [ ] `swift build --build-tests` 0 errors and 0 warnings from our code.
-- [ ] `swift test` green: baseline 1058 tests in 104 suites plus 83 in 10 suites, with the same 2 known issues.
+- [x] Comment-only: a diff with the `///` lines filtered out must be empty for each file.
+- [x] `swift build --build-tests` 0 errors and 0 warnings from our code.
+- [x] `swift test` green: baseline 1058 tests in 104 suites plus 83 in 10 suites, with the same 2 known issues.
 
 ## Workflow
 - **One file per commit.** A comment cut is not reviewable in bulk, and a lost invariant is expensive to notice later.
@@ -325,11 +359,11 @@ Keep an invariant, a constraint, a trap, a reason a reader would otherwise undo,
 
 > Scope: `review sha HEAD~1..HEAD` — commit `284eb5f`, 7 files, comment-only. The validator fleet reported 0 findings across all 7 files, which is expected: no rule can tell which fact a deleted sentence carried. Every finding below comes from the directed check of the kept-fact list against `git show HEAD~1:<path>`.
 
-- [ ] `Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:53` `directed/lost-fact` — The `- Throws:` on the public `merged(under:)` lost its third failure. The deleted words are "; otherwise if a transcript file cannot be read." The new clause names the two typed errors and stops. `TranscriptLineDecoding.decodeEvents` opens with `try Data(contentsOf: fileURL)`, so one unreadable file aborts the whole merge and loses every event of the run. This file documents three tolerance policies that all go the other way — a torn final line is dropped with a warning, an absent sidecar merges as before, an undecodable sidecar merges as before — so a reader concludes an unreadable file is skipped too. It is not. The line names WHICH failure among several, which the card's own hard-case rule keeps. Append ", or if a transcript file cannot be read." to the `- Throws:` clause. Leave out the deleted `(see ``checkSchemaVersion(besideTranscript:)``)` pointer, which points at a private symbol and is not a fact.
-- [ ] `Sources/FoundationModelsRouter/Recording/Sinks.swift:86` `directed/lost-fact` — The `- Throws:` on `init(owningDirectory:now:)` lost its third failure class. The deleted words are "; otherwise any file-system error creating the root or its marker." The surviving text names only the two typed `RecordingRootLockError` cases, so a reader concludes `try RecordingRootOwnership.acquire` fails for lock reasons alone and writes an exhaustive `catch RecordingRootLockError`. `RecordingRootLock.swift` `writeMarker` calls `FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)` and `removeItem(at:)`, both of which throw untyped `CocoaError`, and `acquire(root:)` is untyped `throws`. The line names WHICH failure among several. Append "; otherwise any file-system error creating the root or its marker." to the `- Throws:` clause.
-- [ ] `Sources/FoundationModelsRouter/Recording/Sinks.swift:75` `directed/lost-fact` — The doc of `init(owningDirectory:now:)` no longer states that it CREATES the recording root and its lock marker on disk. The deleted words are "- directory: The recording root to own; created — along with its lock marker — at construction." The new text says only that ownership is taken "at construction". The disk side effect is real: `writeMarker` calls `createDirectory(at: root, withIntermediateDirectories: true)`. The contrast is load-bearing, because the sibling initializer's surviving doc in the same file promises the opposite — "keeping this initializer non-throwing and writing nothing to disk until an event lands." A reader comparing the two initializers now has no statement that this one touches the disk. Add the side effect to the first paragraph, for example "... at construction, creating the root and its lock marker on disk."
-- [ ] `Sources/FoundationModelsRouter/Hosting/ToolInvocationRecord.swift:29` `directed/lost-fact` — The reason for the type's conformances is gone. The deleted words are "`Codable`/`Equatable`/`Sendable` so a turn's records can be surfaced directly without the event stream." The conformance list is code and needs no restatement, but the clause after "so" is a reason a reader would otherwise undo. The rest of the type doc insists the record is "delivery-only", "never staged in the outbox, never recorded to the transcript", which reads as an argument that serialization is unused, and a reader trimming an apparently dead `Codable` would break `TurnOutcome`, whose public `toolInvocations: [ToolInvocationRecord]` is the direct surfacing the deleted clause named. Restore the reason in short form, for example "`Codable` so a turn's records can be surfaced directly without the event stream."
-- [ ] `Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift:99` `directed/stale-deliverable` — The kept-fact list is the card's deliverable and its only review instrument, and its `ToolOutputCapping.swift` coordinates are stale by the reversal that restored `- Throws:` on `TokenCappingTool.call`. That restoration added 3 doc lines at L76-78, so the last four entries are each off by +3: the run-to-completion and background-wins fact is at L89-100 not L89-97, `ContextBindingTool` at L102-103 not L99-100, the owning-session argument rule at L105-108 not L102-105, and the fork-order fact at L110-113 not L107-110. Every fact is present; only the line references are wrong. The same reversal makes two published measurements wrong: the file is 67/130, not the 64/127 the table gives, and the set is 465/965, not the 462/962 stated in both the table total and the commit message body. Correct the four line references and the two counts on the card. The counts in the commit message stand as written history.
+- [x] `Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:53` `directed/lost-fact` — The `- Throws:` on the public `merged(under:)` lost its third failure. The deleted words are "; otherwise if a transcript file cannot be read." The new clause names the two typed errors and stops. `TranscriptLineDecoding.decodeEvents` opens with `try Data(contentsOf: fileURL)`, so one unreadable file aborts the whole merge and loses every event of the run. This file documents three tolerance policies that all go the other way — a torn final line is dropped with a warning, an absent sidecar merges as before, an undecodable sidecar merges as before — so a reader concludes an unreadable file is skipped too. It is not. The line names WHICH failure among several, which the card's own hard-case rule keeps. Append ", or if a transcript file cannot be read." to the `- Throws:` clause. Leave out the deleted `(see ``checkSchemaVersion(besideTranscript:)``)` pointer, which points at a private symbol and is not a fact.
+- [x] `Sources/FoundationModelsRouter/Recording/Sinks.swift:86` `directed/lost-fact` — The `- Throws:` on `init(owningDirectory:now:)` lost its third failure class. The deleted words are "; otherwise any file-system error creating the root or its marker." The surviving text names only the two typed `RecordingRootLockError` cases, so a reader concludes `try RecordingRootOwnership.acquire` fails for lock reasons alone and writes an exhaustive `catch RecordingRootLockError`. `RecordingRootLock.swift` `writeMarker` calls `FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)` and `removeItem(at:)`, both of which throw untyped `CocoaError`, and `acquire(root:)` is untyped `throws`. The line names WHICH failure among several. Append "; otherwise any file-system error creating the root or its marker." to the `- Throws:` clause.
+- [x] `Sources/FoundationModelsRouter/Recording/Sinks.swift:75` `directed/lost-fact` — The doc of `init(owningDirectory:now:)` no longer states that it CREATES the recording root and its lock marker on disk. The deleted words are "- directory: The recording root to own; created — along with its lock marker — at construction." The new text says only that ownership is taken "at construction". The disk side effect is real: `writeMarker` calls `createDirectory(at: root, withIntermediateDirectories: true)`. The contrast is load-bearing, because the sibling initializer's surviving doc in the same file promises the opposite — "keeping this initializer non-throwing and writing nothing to disk until an event lands." A reader comparing the two initializers now has no statement that this one touches the disk. Add the side effect to the first paragraph, for example "... at construction, creating the root and its lock marker on disk."
+- [x] `Sources/FoundationModelsRouter/Hosting/ToolInvocationRecord.swift:29` `directed/lost-fact` — The reason for the type's conformances is gone. The deleted words are "`Codable`/`Equatable`/`Sendable` so a turn's records can be surfaced directly without the event stream." The conformance list is code and needs no restatement, but the clause after "so" is a reason a reader would otherwise undo. The rest of the type doc insists the record is "delivery-only", "never staged in the outbox, never recorded to the transcript", which reads as an argument that serialization is unused, and a reader trimming an apparently dead `Codable` would break `TurnOutcome`, whose public `toolInvocations: [ToolInvocationRecord]` is the direct surfacing the deleted clause named. Restore the reason in short form, for example "`Codable` so a turn's records can be surfaced directly without the event stream."
+- [x] `Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift:99` `directed/stale-deliverable` — The kept-fact list is the card's deliverable and its only review instrument, and its `ToolOutputCapping.swift` coordinates are stale by the reversal that restored `- Throws:` on `TokenCappingTool.call`. That restoration added 3 doc lines at L76-78, so the last four entries are each off by +3: the run-to-completion and background-wins fact is at L89-100 not L89-97, `ContextBindingTool` at L102-103 not L99-100, the owning-session argument rule at L105-108 not L102-105, and the fork-order fact at L110-113 not L107-110. Every fact is present; only the line references are wrong. The same reversal makes two published measurements wrong: the file is 67/130, not the 64/127 the table gives, and the set is 465/965, not the 462/962 stated in both the table total and the commit message body. Correct the four line references and the two counts on the card. The counts in the commit message stand as written history.
 
 ### Checks that passed
 
@@ -352,7 +386,7 @@ Each is upheld.
 
 > Scope: `review sha HEAD~1..HEAD` — commit `0da2abf`, 3 source files, comment-only. The validator fleet reported 0 findings. All four restorations from the 13:17 section are in the tree and each carries its original fact, and the corrected coordinate table is verified row by row against the files. One finding is new, on a sentence this commit added.
 
-- [ ] `Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:59` `directed/inaccurate-claim` — The restored `- Throws:` on `merged(under:)` ends "That is the one place this type does not tolerate a bad file." The claim is false, and it contradicts the same `- Throws:` block two clauses earlier. `TranscriptLineDecoding.decodeEvents` throws `corruptLineError(fileURL)` for any line before a file's last that fails to decode, and `merged(under:)` calls it inside `for file in files` with a bare `try`, so a corrupt non-final line is also a bad file that also aborts the whole merge — and `MergedTranscriptError/transcriptLineCorrupt(file:)` is named at the head of the same clause. `recordingFromNewerRouter` aborts the merge as well. The type tolerates three things — a torn FINAL line, an absent sidecar, an undecodable sidecar — but it refuses three others, and the unreadable file is not singular among them. Delete the sentence. The preceding clause "which aborts the whole merge" already carries the fact the 13:17 finding asked for, and it is accurate. `TranscriptLineDecoding.decodeEvents` states its own version of this contract with no uniqueness claim — "; otherwise if the file cannot be read." — and that phrasing is the model.
+- [x] `Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:59` `directed/inaccurate-claim` — The restored `- Throws:` on `merged(under:)` ends "That is the one place this type does not tolerate a bad file." The claim is false, and it contradicts the same `- Throws:` block two clauses earlier. `TranscriptLineDecoding.decodeEvents` throws `corruptLineError(fileURL)` for any line before a file's last that fails to decode, and `merged(under:)` calls it inside `for file in files` with a bare `try`, so a corrupt non-final line is also a bad file that also aborts the whole merge — and `MergedTranscriptError/transcriptLineCorrupt(file:)` is named at the head of the same clause. `recordingFromNewerRouter` aborts the merge as well. The type tolerates three things — a torn FINAL line, an absent sidecar, an undecodable sidecar — but it refuses three others, and the unreadable file is not singular among them. Delete the sentence. The preceding clause "which aborts the whole merge" already carries the fact the 13:17 finding asked for, and it is accurate. `TranscriptLineDecoding.decodeEvents` states its own version of this contract with no uniqueness claim — "; otherwise if the file cannot be read." — and that phrasing is the model.
 
 ### Verified in this pass
 
@@ -364,3 +398,28 @@ Each is upheld.
 - Over-restoration: none in restorations 2, 3 and 4. Every added clause states something the code does not show at that declaration. The only added sentence that fails is the one in the finding above, and it fails for being untrue rather than for being redundant.
 - The corrected coordinate table matches the files exactly, measured now: 67/130, 89/186, 66/139, 51/97, 45/91, 113/239, 45/94. Set total 476/976, against 699/1199 at the start. No percentage target was used at any point.
 - The `ToolOutputCapping.swift` kept-fact coordinates from the 13:17 finding are unaffected by this commit, which did not touch that file.
+
+## Review Findings (2026-08-26 13:29)
+
+> Scope: `review sha HEAD~1..HEAD` — commit `bff7704`, 1 source file, comment-only. The validator fleet reported 0 findings. The directed check reports 0 findings. No new item is added below.
+
+### Verified in this pass
+
+- Zero new findings. The engine attempted 7 validators against `Recording/MergedTranscript.swift` and returned nothing, and the directed re-read of the changed clause against the code found nothing.
+- The 13:26 finding is fixed exactly as asked, and no further. The whole source diff of `bff7704` is the removal of "That is the one place this type does not tolerate a bad file." and the shortening of "cannot be read at all" to "cannot be read". Nothing else in the commit touches `Sources`.
+- The clause is now accurate and complete. It reads "; otherwise if a transcript file cannot be read, which aborts the whole merge." `merged(under:)` has exactly three throwing paths — `checkSchemaVersion(besideTranscript:)` raising `recordingFromNewerRouter`, `decodeEvents` raising `transcriptLineCorrupt` for a corrupt line before a file's last, and `decodeEvents` raising an untyped read error from `try Data(contentsOf:)`. The `- Throws:` names all three and claims nothing about which of them is singular.
+- Dropping "at all" is right. The clause now matches the wording `TranscriptLineDecoding.decodeEvents` already uses for the same contract, "; otherwise if the file cannot be read.", so the two declarations that own this failure describe it the same way.
+- Comment-only: `git diff -U0 0da2abf..bff7704 -- Sources` with the `///` lines filtered out is 0 lines. No code line changed.
+- No public, `open` or `package` symbol lost its doc comment. Re-scanned all seven files at `bff7704`: 0 undocumented.
+- Set total, measured now: 475 doc lines of 975, against 699 of 1199 at the start. One doc line fewer than at `0da2abf`, which is the removed sentence. No percentage target was used at any point on this card.
+
+### State of the six findings
+
+All six are fixed in the tree and verified. The marks are left unflipped, because the `review` skill gives them to the user or the implementer. The task moves to the terminal column when they are flipped.
+
+- `Recording/MergedTranscript.swift:53` — fixed in `0da2abf`, verified.
+- `Recording/Sinks.swift:86` — fixed in `0da2abf`, verified.
+- `Recording/Sinks.swift:75` — fixed in `0da2abf`, verified.
+- `Hosting/ToolInvocationRecord.swift:29` — fixed in `0da2abf`, verified.
+- `Session/ToolOutputCapping.swift:99` — corrected on the card in the 18:21 comment, and the table there matches the files.
+- `Recording/MergedTranscript.swift:59` — fixed in `bff7704`, verified.
