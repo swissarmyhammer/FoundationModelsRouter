@@ -62,6 +62,56 @@ struct SessionOutboxToolWiringTests {
         }
     }
 
+    /// Thrown by a fixture tool that finds no ambient ``ToolContext`` bound
+    /// around its call.
+    private struct ToolContextMissing: Error {}
+
+    /// Posts one progress report through the ambient ``ToolContext``, then
+    /// holds on its latch until a test opens it.
+    private struct ProgressReportingBackgroundTool: Tool, DetachmentParameterProviding {
+        /// The progress detail the tool reports.
+        static let progressDetail = "halfway through"
+
+        let name = "progress-background"
+        let description = "test-only background tool that reports progress"
+        let gate: RunLatch
+
+        var detachmentMount: DetachConfiguration? {
+            DetachConfiguration(mode: .background, timeout: nil)
+        }
+
+        func call(arguments: BackgroundFixtureArguments) async throws -> String {
+            guard let context = ToolContext.current else { throw ToolContextMissing() }
+            await context.progress(Self.progressDetail)
+            await gate.waitUntilOpen()
+            return "progress done"
+        }
+    }
+
+    /// Raises one form elicitation through the ambient ``ToolContext`` and
+    /// answers with the action the user chose.
+    private struct ElicitingBackgroundTool: Tool, DetachmentParameterProviding {
+        /// The question the tool asks.
+        static let question = "Which account?"
+
+        let name = "eliciting-background"
+        let description = "test-only background tool that elicits"
+        let elicitationId: ULID
+
+        var detachmentMount: DetachConfiguration? {
+            DetachConfiguration(mode: .background, timeout: nil)
+        }
+
+        func call(arguments: BackgroundFixtureArguments) async throws -> String {
+            guard let context = ToolContext.current else { throw ToolContextMissing() }
+            let request = ElicitationRequest(
+                message: Self.question, elicitationId: elicitationId,
+                requestedSchema: ElicitationRequestedSchema(properties: [:]))
+            let answer = try await context.elicit(request)
+            return "answered: \(answer.action.rawValue)"
+        }
+    }
+
     // MARK: - Stub container capturing the threaded tool list
 
     /// A ``LoadedLLMContainer`` that records the `tools` it was handed at
@@ -1294,5 +1344,125 @@ struct SessionOutboxToolWiringTests {
         }
         #expect(terminal.outcome == .succeeded)
         #expect(terminal.detail == "gated: cancel me")
+    }
+
+    // MARK: - The run signals a background run owes the model (task ^ftdmr58)
+
+    /// Vends a session over a fresh ``BackgroundingLLMContainer`` mounting
+    /// `tools`, and hands back the backend that drives it.
+    ///
+    /// - Parameters:
+    ///   - tools: The tools the session mounts.
+    ///   - dir: The temporary directory the router caches under.
+    /// - Returns: The session and its backend.
+    private static func makeBackgroundingSession(
+        tools: [any Tool], dir: URL
+    ) async throws -> (session: RoutedSession, backend: BackgroundingBackend) {
+        let container = BackgroundingLLMContainer()
+        let router = makeRouter(container: container, cacheDir: dir)
+        let profile = try await router.resolve(profile: profile, reporting: ResolutionProgress())
+        let session = profile.standard.makeSession(tools: tools)
+        let backend = try #require(container.lastBackend)
+        return (session, backend)
+    }
+
+    /// Opens `gate` and waits for every run tracked on `session` to settle.
+    ///
+    /// - Parameters:
+    ///   - session: The session whose runs are settled.
+    ///   - gate: The latch the runs' bodies wait on.
+    private static func settleBackgroundRuns(on session: RoutedSession, opening gate: RunLatch) async {
+        let tokens = await session.mailbox.backgroundRuns().map(\.completionToken)
+        await gate.open()
+        for token in tokens {
+            _ = await session.mailbox.wait(completionToken: token, seconds: mailboxWaitTimeoutSeconds)
+        }
+    }
+
+    @Test("signal 1, I started: the pending envelope is what the tool call hands the model, and it names the run tracked on the session")
+    @MainActor
+    func startedSignalReachesTheModelAsThePendingEnvelope() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let gate = RunLatch()
+        let (session, backend) = try await Self.makeBackgroundingSession(
+            tools: [LatchedBackgroundTool(name: "job", gate: gate, output: "job done")], dir: dir)
+
+        for try await _ in await session.streamEvents(to: "start the job") {}
+
+        let rendered = try #require(backend.toolOutputs.first)
+        let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
+        #expect(envelope.pending)
+        #expect(await session.mailbox.backgroundRuns().map(\.completionToken) == [envelope.completionToken])
+
+        await Self.settleBackgroundRuns(on: session, opening: gate)
+    }
+
+    @Test("signal 2, I am making progress: a progress report updates the run's latest detail and rides the next dispatched turn's preamble")
+    @MainActor
+    func progressSignalReachesTheModel() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let gate = RunLatch()
+        let (session, backend) = try await Self.makeBackgroundingSession(
+            tools: [ProgressReportingBackgroundTool(gate: gate)], dir: dir)
+
+        for try await _ in await session.streamEvents(to: "start the job") {}
+
+        // The report lands on the run plane and in the staging area.
+        #expect(
+            await BoundedWait.conditionReached("the progress report staged for the next turn") {
+                await session.outbox.pending().events.contains { $0.event.kind == .progress }
+            })
+        let run = try #require(await session.mailbox.backgroundRuns().first)
+        #expect(run.latestProgressDetail == ProgressReportingBackgroundTool.progressDetail)
+
+        // The next dispatched turn carries it to the model.
+        _ = await session.enqueue(prompt: "how is it going?")
+        _ = try await session.dispatchNextPrompt()
+        let progress = OperationEvent(
+            tool: run.tool, op: run.op, correlationID: run.completionToken,
+            kind: .progress, detail: ProgressReportingBackgroundTool.progressDetail)
+        let composed = try #require(backend.receivedPrompts.last)
+        #expect(composed.contains(OperationEventSegment.renderedLine(for: progress)))
+
+        await Self.settleBackgroundRuns(on: session, opening: gate)
+    }
+
+    @Test(
+        "signal 3, I need to elicit: the question reaches the model and the host, only that run suspends, and the answer resumes it"
+    )
+    @MainActor
+    func elicitationSignalReachesTheModelAndTheAnswerResumesTheRun() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let elicitationId = ULID.generate()
+        let (session, backend) = try await Self.makeBackgroundingSession(
+            tools: [ElicitingBackgroundTool(elicitationId: elicitationId)], dir: dir)
+
+        let responding = Task { try await session.respond(to: "start the job") }
+
+        // The question is staged for the model, addressed by its own id.
+        #expect(
+            await BoundedWait.conditionReached("the elicitation staged for the next turn") {
+                await session.outbox.pending().events.contains { $0.event.kind == .elicitation }
+            })
+        let staged = try #require(await session.outbox.pending().events.first { $0.event.kind == .elicitation }?.event)
+        #expect(staged.elicitation?.elicitationId == elicitationId)
+
+        // Only the run suspends: the session still runs a turn while the
+        // question is pending, and that turn carries the question.
+        _ = await session.enqueue(prompt: "status?")
+        _ = try await session.dispatchNextPrompt()
+        let composed = try #require(backend.receivedPrompts.last)
+        #expect(composed.contains(OperationEventSegment.renderedLine(for: staged)))
+
+        // The answer resumes the run, which settles with what the user chose.
+        #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .delivered)
+        let answer = try await responding.value
+        #expect(answer.contains("answered: accept"))
     }
 }

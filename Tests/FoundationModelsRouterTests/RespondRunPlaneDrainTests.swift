@@ -8,125 +8,16 @@ import Testing
 /// run plane before it returns, so a turn that backgrounds its tool work still
 /// answers from that work's own results rather than from the completion token
 /// the tool handed back — while ``RoutedSession/streamEvents(to:maxTokens:)``
-/// keeps backgrounding as its feature.
+/// keeps backgrounding as its feature. Task ^ftdmr58 adds the run signals a
+/// settled run owes the model on each surface: its honest outcome in the
+/// drained answer, and ``SessionEvent/runSettled(_:)`` on the event stream.
 ///
 /// Everything runs against stubs — tools gated on a ``RunLatch``, a backend
 /// that calls them, and an ``InMemoryRecorder`` — so the suite needs no
 /// network and no GPU.
 @Suite("respond(to:): the run-plane drain, and the surfaces that keep backgrounding")
 struct RespondRunPlaneDrainTests {
-    // MARK: - Test tools
-
-    /// The argument schema the gated fixture tool takes: one string, the same
-    /// smallest surface the other tool-wiring suites use.
-    @Generable
-    struct DrainToolArguments {
-        let value: String
-    }
-
-    /// Blocks on a ``RunLatch`` and declares background for itself through
-    /// ``DetachmentParameterProviding``, so the session mounts it as a
-    /// ``BackgroundTool`` that hands each call back as a token at once: one
-    /// model turn leaves a real background run behind, and the test decides
-    /// when it settles.
-    private struct GatedBackgroundTool: Tool, DetachmentParameterProviding {
-        let name: String
-        let description = "test-only slow tool that declares background"
-
-        var detachmentMount: DetachConfiguration? {
-            DetachConfiguration(mode: .background, timeout: nil)
-        }
-
-        /// The latch this tool's body waits on before producing its output.
-        let gate: RunLatch
-
-        /// The output the body returns once the latch opens — the run's own
-        /// result, which a grounded answer has to carry.
-        let output: String
-
-        func call(arguments: DrainToolArguments) async throws -> String {
-            await gate.waitUntilOpen()
-            return output
-        }
-    }
-
     // MARK: - Backends
-
-    /// The backend the drain tests drive: its first turn calls every composed
-    /// detaching tool — each of which backgrounds its call — and answers with the last
-    /// pending envelope; every later turn answers *from the prompt it was
-    /// given*, so an answer grounded in the drained results is provable by
-    /// reading the answer.
-    ///
-    /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
-    /// owning session drives one backend method at a time (its turn lock
-    /// serializes turns), and the test reads the captures only after the
-    /// driving call returned.
-    private final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendable {
-        /// The prefix every non-first turn's answer opens with, so a test can
-        /// tell a drained continuation turn's answer from the first turn's
-        /// pending envelope.
-        static let answerPrefix = "answered from: "
-
-        private let inner = StubSessionBackend()
-
-        /// The session's own composed tool list.
-        private let tools: [any Tool]
-
-        /// Every prompt this backend was asked to respond to, in turn order.
-        private(set) var receivedPrompts: [String] = []
-
-        /// How many composed tool calls this backend made, across every turn.
-        private(set) var toolCallCount = 0
-
-        init(tools: [any Tool]) {
-            self.tools = tools
-        }
-
-        func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            receivedPrompts.append(prompt)
-            _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
-            guard toolCallCount == 0 else {
-                return Self.answerPrefix + prompt
-            }
-            var rendered = ""
-            for tool in tools {
-                guard let detached = tool as? BackgroundTool<DrainToolArguments> else { continue }
-                toolCallCount += 1
-                rendered = try await detached.call(arguments: DrainToolArguments(value: prompt))
-            }
-            return rendered
-        }
-
-        func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-            AsyncThrowingStream { continuation in
-                Task {
-                    do {
-                        continuation.yield(try await self.respond(to: prompt, maxTokens: maxTokens))
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
-                    }
-                }
-            }
-        }
-
-        func respond(to prompt: String, following grammar: Grammar, maxTokens: Int?) async throws -> String {
-            try await inner.respond(to: prompt, following: grammar, maxTokens: maxTokens)
-        }
-
-        func makeFork() -> any LanguageModelSessionBackend {
-            inner.makeFork()
-        }
-
-        func transcriptEntries() -> [Transcript.Entry] {
-            inner.transcriptEntries()
-        }
-
-        func usageTokenCounts() -> (input: Int, output: Int)? {
-            inner.usageTokenCounts()
-        }
-    }
 
     /// A backend whose every turn tracks one fresh run on the session's own
     /// mailbox — the shape the termination rule exists for: a drained turn
@@ -215,32 +106,6 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - Containers
 
-    /// Vends one retained ``BackgroundingBackend`` per session, handing it the
-    /// composed tool list `makeSession` threaded through.
-    ///
-    /// `@unchecked Sendable` invariant: `lastBackend` is written once,
-    /// synchronously, inside `makeSession(instructions:tools:)` — itself
-    /// called synchronously from `RoutedModel.makeSession` on the vending
-    /// thread — and read only by the `@MainActor` test method after that vend
-    /// returns.
-    private final class BackgroundingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
-        private(set) var lastBackend: BackgroundingBackend?
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            makeSession(instructions: instructions, tools: [])
-        }
-
-        func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            let backend = BackgroundingBackend(tools: tools)
-            lastBackend = backend
-            return backend
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(entries: Array(transcript))
-        }
-    }
-
     /// Vends one retained ``AlwaysSuspendingBackend`` per session, under the same
     /// `@unchecked Sendable` invariant ``BackgroundingLLMContainer`` documents.
     private final class AlwaysSuspendingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
@@ -271,6 +136,11 @@ struct RespondRunPlaneDrainTests {
     /// generous, because the latch is opened first and the wait only has to
     /// observe an already-finishing run.
     private static let mailboxWaitTimeoutSeconds: Double = 30
+
+    /// The no-progress timeout the timed-out run's tool declares: short, so
+    /// the run settles as ``OperationOutcome/timedOut`` well inside the
+    /// mailbox wait, and its latch never opens before then.
+    private static let fixtureTimeoutSeconds: TimeInterval = 0.05
 
     // MARK: - Fixtures
 
@@ -348,6 +218,53 @@ struct RespondRunPlaneDrainTests {
         return await session.mailbox.backgroundRuns().map(\.completionToken)
     }
 
+    /// Waits, bounded by ``mailboxWaitTimeoutSeconds``, for the run `token`
+    /// names to settle, and reports its terminal event.
+    ///
+    /// - Parameters:
+    ///   - token: The run's completion token.
+    ///   - session: The session whose mailbox tracks the run.
+    /// - Returns: The run's terminal event.
+    /// - Throws: ``SignalNeverArrived`` when the run did not settle inside the
+    ///   bound.
+    private static func settledTerminal(of token: String, on session: RoutedSession) async throws -> OperationEvent {
+        let outcome = await session.mailbox.wait(completionToken: token, seconds: mailboxWaitTimeoutSeconds)
+        guard case .settled(let terminal) = outcome else {
+            Issue.record("expected the run to settle inside the bound, got \(outcome)")
+            throw SignalNeverArrived()
+        }
+        return terminal
+    }
+
+    /// Drives one `respond(to:)` call over `tool`, lets its run settle, and
+    /// reports the drained answer with the run's own terminal event.
+    ///
+    /// - Parameters:
+    ///   - tool: The one tool the session mounts.
+    ///   - gate: The tool's latch, opened once the run is tracked when
+    ///     `opening` is set, and always opened before returning.
+    ///   - opening: Whether the run settles because the latch opens, or on
+    ///     its own — by its timeout.
+    ///   - dir: The temporary directory the router caches and records under.
+    /// - Returns: The answer `respond` returned and the run's terminal event.
+    private static func drainedAnswer(
+        over tool: LatchedBackgroundTool, gate: RunLatch, opening: Bool, dir: URL
+    ) async throws -> (answer: String, terminal: OperationEvent) {
+        let container = BackgroundingLLMContainer()
+        let profile = try await makeProfile(container: container, dir: dir)
+        let session = profile.standard.makeSession(tools: [tool])
+
+        let responding = Task { try await session.respond(to: "run the job") }
+        let token = try #require(await backgroundTokens(atLeast: 1, on: session).first)
+        if opening {
+            await gate.open()
+        }
+        let terminal = try await settledTerminal(of: token, on: session)
+        let answer = try await responding.value
+        await gate.open()
+        return (answer, terminal)
+    }
+
     // MARK: - respond(to:) drains before it returns
 
     @Test(
@@ -363,8 +280,8 @@ struct RespondRunPlaneDrainTests {
         let firstGate = RunLatch()
         let secondGate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            GatedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
-            GatedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
+            LatchedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
+            LatchedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
         ])
         let backend = try #require(container.lastBackend)
 
@@ -395,6 +312,52 @@ struct RespondRunPlaneDrainTests {
         #expect(await session.mailbox.backgroundRuns().isEmpty)
         #expect(backend.receivedPrompts.count == 2)
         #expect(backend.toolCallCount == 2)
+    }
+
+    // MARK: - The run signals a settled run owes the model
+
+    @Test("signal 5, I am done: a run that finishes reports succeeded, and its terminal line reaches the model in the drained answer")
+    @MainActor
+    func doneSignalReachesTheModelAsASucceededTerminal() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let gate = RunLatch()
+        let tool = LatchedBackgroundTool(name: "finishing-job", gate: gate, output: Self.firstToolOutput)
+        let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: true, dir: dir)
+
+        #expect(terminal.outcome == .succeeded)
+        #expect(terminal.detail == Self.firstToolOutput)
+        #expect(answer.contains(OperationEventSegment.renderedLine(for: terminal)))
+    }
+
+    @Test("signal 4, I have an error: a run whose body throws reports failed, and its terminal line reaches the model in the drained answer")
+    @MainActor
+    func errorSignalReachesTheModelAsAFailedTerminal() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let gate = RunLatch()
+        let tool = LatchedBackgroundTool(name: "failing-job", gate: gate, output: Self.firstToolOutput, fails: true)
+        let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: true, dir: dir)
+
+        #expect(terminal.outcome == .failed)
+        #expect(answer.contains(OperationEventSegment.renderedLine(for: terminal)))
+    }
+
+    @Test("a run its own timeout ends reports timedOut, and its terminal line reaches the model the same way")
+    @MainActor
+    func timedOutRunReachesTheModelAsATimedOutTerminal() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let gate = RunLatch()
+        let tool = LatchedBackgroundTool(
+            name: "hanging-job", gate: gate, output: Self.firstToolOutput, timeout: Self.fixtureTimeoutSeconds)
+        let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: false, dir: dir)
+
+        #expect(terminal.outcome == .timedOut)
+        #expect(answer.contains(OperationEventSegment.renderedLine(for: terminal)))
     }
 
     // MARK: - The termination rule
@@ -441,7 +404,7 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - streamEvents(to:) still backgrounds
 
-    @Test("streamEvents(to:) is unchanged: it finishes with the turn's runs still running, and runs no drained turn")
+    @Test("streamEvents(to:) still backgrounds: it finishes with the turn's runs still running, and runs no drained turn")
     @MainActor
     func streamEventsKeepsBackgroundingItsBackgroundRuns() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
@@ -452,8 +415,8 @@ struct RespondRunPlaneDrainTests {
         let firstGate = RunLatch()
         let secondGate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            GatedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
-            GatedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
+            LatchedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
+            LatchedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
         ])
         let backend = try #require(container.lastBackend)
 
@@ -474,6 +437,39 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
+    @Test("streamEvents(to:) emits runSettled for a run that settles before the stream ends")
+    @MainActor
+    func streamEventsEmitsTheTerminalOfARunThatSettlesBeforeTheStreamEnds() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // The first turn is held open after its tool call, so the run settles
+        // while the stream is still running.
+        let holdTurn = RunLatch()
+        let container = BackgroundingLLMContainer(holdFirstTurn: holdTurn)
+        let profile = try await Self.makeProfile(container: container, dir: dir)
+        let gate = RunLatch()
+        let session = profile.standard.makeSession(tools: [
+            LatchedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+        ])
+
+        let collecting = Task { () -> [SessionEvent] in
+            var events: [SessionEvent] = []
+            for try await event in await session.streamEvents(to: "run the job") {
+                events.append(event)
+            }
+            return events
+        }
+
+        let token = try #require(await Self.backgroundTokens(atLeast: 1, on: session).first)
+        await gate.open()
+        let terminal = try await Self.settledTerminal(of: token, on: session)
+        await holdTurn.open()
+
+        let events = try await collecting.value
+        #expect(events.contains(.runSettled(terminal)))
+    }
+
     // MARK: - Cancelling a call suspended in its drain
 
     @Test(
@@ -488,7 +484,7 @@ struct RespondRunPlaneDrainTests {
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            GatedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+            LatchedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
         let backend = try #require(container.lastBackend)
 
@@ -531,7 +527,7 @@ struct RespondRunPlaneDrainTests {
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            GatedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+            LatchedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
         let backend = try #require(container.lastBackend)
 

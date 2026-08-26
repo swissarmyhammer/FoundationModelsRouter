@@ -27,11 +27,30 @@ extension RoutedSessionActor: OperationEventJournal {
     /// would falsify that order to flatter a renderer. A view that wants them
     /// grouped groups by the parent id every one of them carries.
     ///
+    /// A run's one terminal is also delivered live as
+    /// ``SessionEvent/runSettled(_:)`` — the signal a host hears on the turn's
+    /// stream or the session feed the moment the run settles (task ^ftdmr58).
+    ///
     /// - Parameter event: The event the outbox has just accepted.
     func record(event: OperationEvent) async {
         guard claimJournalWrite(for: event) else { return }
         await recordSessionMetaIfNeeded()
         await append(partial: makeRunEventPartial(for: event))
+        if event.kind == .completed {
+            deliverLive(.runSettled(event))
+        }
+    }
+
+    /// Hands `event` to the turn in flight, or to the session-scoped feed
+    /// between turns — the one live route every run-plane report takes.
+    ///
+    /// - Parameter event: The event to deliver.
+    func deliverLive(_ event: SessionEvent) {
+        if let currentTurnEventSink {
+            currentTurnEventSink(event)
+        } else {
+            emitSessionScopedEvent(event)
+        }
     }
 
     /// Whether `event` may be journaled, claiming a run's one recorded ending
@@ -184,19 +203,13 @@ extension RoutedSessionActor: ToolInvocationObserver {
     /// Delivers one live ``ToolInvocationRecord`` as
     /// ``SessionEvent/toolInvocation(_:)``.
     ///
-    /// During a turn the record goes through ``currentTurnEventSink`` — the
-    /// turn's composed sink, which reaches the turn's own stream and every
-    /// session-scoped subscription. Between turns — a detached run's late
-    /// close, self-attributed by the record's `correlationID` — it reaches
-    /// the session-scoped feed alone.
+    /// During a turn the record reaches the turn's own stream and every
+    /// session-scoped subscription; between turns — a detached run's late
+    /// close, self-attributed by the record's `correlationID` — the
+    /// session-scoped feed alone. See ``deliverLive(_:)``.
     ///
     /// - Parameter record: The record the outbox forwarded.
     func deliver(invocation record: ToolInvocationRecord) {
-        let event = SessionEvent.toolInvocation(record)
-        if let currentTurnEventSink {
-            currentTurnEventSink(event)
-        } else {
-            emitSessionScopedEvent(event)
-        }
+        deliverLive(.toolInvocation(record))
     }
 }

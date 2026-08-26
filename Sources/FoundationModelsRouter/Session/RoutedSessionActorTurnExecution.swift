@@ -769,9 +769,17 @@ extension RoutedSessionActor {
     /// the turn runs, which is what makes a drained-but-unfinished prompt
     /// observable instead of falling between the queue and the transcript.
     ///
-    /// - Returns: The response text the dispatched turn produced, or `nil` when
-    ///   nothing was queued to dispatch — including the case where a concurrent
-    ///   ``cancel(id:)`` won the race for the only queued prompt.
+    /// **The delivery rule (task ^ftdmr58).** A drain that finds no queued
+    /// prompt but holds a settled run's terminal runs a *delivery turn*: the
+    /// terminal rides that turn's preamble ahead of
+    /// ``settledRunDeliveryPrompt``, so a driver woken by a settlement hears
+    /// it without any `wait` call from the model. A drain that holds only
+    /// progress or elicitation reports re-queues them and runs no turn.
+    ///
+    /// - Returns: The response text the dispatched or delivery turn produced,
+    ///   or `nil` when nothing was queued and no run had settled — including
+    ///   the case where a concurrent ``cancel(id:)`` won the race for the only
+    ///   queued prompt.
     /// - Throws: Whatever the dispatched turn throws, recorded exactly as any
     ///   other failed turn is.
     func dispatchNextPrompt() async throws -> String? {
@@ -781,58 +789,80 @@ extension RoutedSessionActor {
         let drained = await outbox.drainForDispatch()
         let pendingEvents = drained.events.map(\.event)
         guard let queued = drained.prompt else {
-            // Nothing was queued to dispatch — including the case where a
-            // concurrent `cancel(id:)` won the race for the only queued
-            // prompt just before this drain. Any events this drain still
-            // claimed were never actually delivered on any turn, so
-            // re-queue them rather than let this drain silently destroy
-            // them (the same "claimed but never delivered" situation
-            // ``finishTurnAndRequeueIfUnattached(grammar:since:usageBefore:pendingEvents:onEvent:)``
-            // guards against on the ordinary respond/streamResponse path).
-            //
-            // Deliberately does NOT call `recordSessionMetaIfNeeded()` on
-            // this path: a session that never actually runs a turn must
-            // never write its `session` meta line either — the same
-            // "writes no file at all until it generates" invariant
-            // `generate(grammar:prompt:_:)` upholds, load-bearing for
-            // ``TranscriptTree``/``recordSessionMetaIfNeeded()``'s own
-            // contract. A driver following the documented
-            // `outbox.nextEvent()`-then-dispatch loop can reach this guard
-            // on a wakeup caused by a plain posted event with no prompt
-            // queued at all, so this must stay a true no-op.
-            await requeueUnattachedPendingEvents(events: pendingEvents)
-            await outbox.finishDispatch()
-            return nil
+            return try await deliverSettledRunsIfAny(turnId: turnId, pendingEvents: pendingEvents)
         }
 
         // Only now — with a prompt confirmed to actually dispatch as a turn
         // — is it safe to record the session's first-line meta event.
         await recordSessionMetaIfNeeded()
-        let ownPrompt = TranscriptEntryMapper.flattenedText(queued.prompt)
+        return try await runDispatchedTurn(
+            turnId: turnId, promptId: queued.id, pendingEvents: pendingEvents,
+            ownPrompt: TranscriptEntryMapper.flattenedText(queued.prompt))
+    }
 
-        // The turn's outcome is captured rather than returned directly so the
-        // outbox's dispatched slot is released on every exit — a `defer` cannot,
-        // because releasing it is an `await` on another actor.
+    /// The empty-queue half of ``dispatchNextPrompt()``: runs a delivery turn
+    /// when `pendingEvents` holds a run's terminal, and re-queues them
+    /// otherwise.
+    ///
+    /// Nothing was queued to dispatch — including the case where a concurrent
+    /// `cancel(id:)` won the race for the only queued prompt just before the
+    /// drain. Events the drain claimed and no turn carries were never
+    /// delivered, so they are re-queued rather than destroyed (the same
+    /// "claimed but never delivered" rule the respond/streamResponse path
+    /// applies). That path deliberately does NOT record the session meta
+    /// line: a session that never runs a turn writes no file at all.
+    ///
+    /// - Parameters:
+    ///   - turnId: This turn's identity, minted by ``beginTurn()``.
+    ///   - pendingEvents: The events the drain claimed, in outbox order.
+    /// - Returns: The delivery turn's response, or `nil` when no turn ran.
+    /// - Throws: Whatever the delivery turn throws.
+    private func deliverSettledRunsIfAny(turnId: TurnID, pendingEvents: [OperationEvent]) async throws -> String? {
+        guard pendingEvents.contains(where: { $0.kind == .completed }) else {
+            await requeueUnattachedPendingEvents(events: pendingEvents)
+            await outbox.finishDispatch()
+            return nil
+        }
+        await recordSessionMetaIfNeeded()
+        return try await runDispatchedTurn(
+            turnId: turnId, promptId: nil, pendingEvents: pendingEvents,
+            ownPrompt: Self.settledRunDeliveryPrompt)
+    }
+
+    /// Runs one turn under the dispatch bracket and releases the outbox's
+    /// dispatched slot on every exit.
+    ///
+    /// The turn's outcome is captured rather than returned directly so the
+    /// slot is released on every exit — a `defer` cannot, because releasing
+    /// it is an `await` on another actor. That release suspends after the
+    /// outcome is decided and before `endTurn()` clears `currentTurnId`, so a
+    /// ``RoutedSession/cancelPrompt(id:)`` scheduled into that suspension
+    /// still finds the id in the slot and a turn in flight (the
+    /// completed-turn window documented there). The slot is emptied while
+    /// this turn holds the lock, so it never names a finished prompt while a
+    /// later turn runs.
+    ///
+    /// - Parameters:
+    ///   - turnId: This turn's identity, minted by ``beginTurn()``.
+    ///   - promptId: The queued prompt this turn dispatched, or `nil` for a
+    ///     delivery turn.
+    ///   - pendingEvents: The events the drain claimed, in outbox order.
+    ///   - ownPrompt: This turn's own prompt text.
+    /// - Returns: The response text the turn produced.
+    /// - Throws: Whatever the turn throws.
+    private func runDispatchedTurn(
+        turnId: TurnID, promptId: SessionOutbox.ItemID?, pendingEvents: [OperationEvent], ownPrompt: String
+    ) async throws -> String {
         let outcome: Result<String, any Error>
         do {
             outcome = .success(
                 try await runTurn(
-                    grammar: grammar, turnId: turnId, promptId: queued.id, pendingEvents: pendingEvents,
+                    grammar: grammar, turnId: turnId, promptId: promptId, pendingEvents: pendingEvents,
                     ownPrompt: ownPrompt, respondBody(grammar: grammar, maxTokens: nil)
                 ))
         } catch {
             outcome = .failure(error)
         }
-        // This cross-actor release suspends after the turn's outcome is
-        // decided and before the `defer { endTurn() }` clears `currentTurnId`.
-        // A `RoutedSession/cancelPrompt(id:)` scheduled into that suspension
-        // still finds the id in the dispatched slot and a turn in flight, so
-        // it reports turn-cancelled for a turn whose response is returned
-        // below regardless — the completed-turn window documented on
-        // ``RoutedSession/cancelPrompt(id:)``. Releasing the slot before
-        // `endTurn()` is still the right order: the slot is emptied while
-        // this turn holds the lock, so it can never name a finished prompt
-        // while a later, unrelated turn runs.
         await outbox.finishDispatch()
         return try outcome.get()
     }

@@ -451,7 +451,11 @@ public protocol RoutedSession: Actor {
     /// Like ``streamResponse(to:maxTokens:)``, and unlike
     /// ``respond(to:maxTokens:)``, this surface does **not** drain the run
     /// plane: the stream finishes while a run the turn backgrounded is still in
-    /// flight, and that run's result reaches the model on a later turn.
+    /// flight, and that run's result reaches the model on a later turn. A run
+    /// that settles before the stream ends is reported here as
+    /// ``SessionEvent/runSettled(_:)``; one that settles later is reported on
+    /// ``streamSessionEvents()`` and delivered to the model by the next
+    /// dispatch (see ``dispatchNextPrompt()``).
     ///
     /// - Returns: A stream of session events, finishing when the turn
     ///   completes or throwing if it fails (after yielding whatever the turn
@@ -799,6 +803,16 @@ public protocol RoutedSession: Actor {
     /// An opt-in mode that runs this loop automatically inside the session is
     /// a recorded non-goal for now.
     ///
+    /// ## A settled run wakes the loop and runs a delivery turn
+    ///
+    /// A background run's settlement stages its terminal and wakes
+    /// ``awaitQueuedWork()``. A dispatch that then finds no queued prompt but
+    /// a staged terminal runs a *delivery turn*: the terminal rides the turn's
+    /// preamble ahead of a fixed delivery prompt, so the model hears "I am
+    /// done" or "I have an error" without any `wait` call. A wake that carries
+    /// only progress or elicitation reports runs no turn; they ride the next
+    /// dispatched prompt.
+    ///
     /// ## Ordering against the direct path
     ///
     /// A session has two submission paths, and they are deliberately
@@ -833,11 +847,12 @@ public protocol RoutedSession: Actor {
     ///   keeps the queue's fairness intact rather than letting a cancelled turn
     ///   corrupt the count.
     ///
-    /// - Returns: The model's response text, or `nil` if no prompt was queued
-    ///   at the moment this call drained the outbox (including a prompt
-    ///   ``RoutedSession/cancel(id:)``-ed just before the drain) — any pending
-    ///   events this drain also claimed in that case are re-queued rather
-    ///   than lost.
+    /// - Returns: The model's response text — the dispatched prompt's turn, or
+    ///   a delivery turn's — or `nil` if no prompt was queued and no run had
+    ///   settled at the moment this call drained the outbox (including a
+    ///   prompt ``RoutedSession/cancel(id:)``-ed just before the drain) — any
+    ///   pending events this drain also claimed in that case are re-queued
+    ///   rather than lost.
     /// - Throws: Any error thrown by the model.
     func dispatchNextPrompt() async throws -> String?
 
@@ -848,10 +863,10 @@ public protocol RoutedSession: Actor {
     /// The idle-wakeup signal of the ``dispatchNextPrompt()`` driver loop
     /// (see that method's doc comment for the loop's shape): a driver suspends
     /// here instead of polling, wakes when
-    /// ``enqueue(prompt:)-(Transcript.Prompt)`` stages a prompt or a
-    /// long-running tool posts an event, and asks ``dispatchNextPrompt()``
-    /// to run whatever arrived. One wake-up per call — a driver loops,
-    /// re-suspending after each dispatch.
+    /// ``enqueue(prompt:)-(Transcript.Prompt)`` stages a prompt, a
+    /// long-running tool posts an event, or a background run settles, and
+    /// asks ``dispatchNextPrompt()`` to run whatever arrived. One wake-up per
+    /// call — a driver loops, re-suspending after each dispatch.
     func awaitQueuedWork() async
 
     /// Stages a queued user prompt for a future turn.

@@ -177,10 +177,11 @@ struct PromptQueueTests {
     }
 
     /// Builds a fresh router + resolved profile + vended session over
-    /// `container`, recording through `recorder`.
+    /// `container`, recording through `recorder`, mounting `tools`.
     private static func makeSession(
         recorder: any TranscriptRecorder,
-        container: any LoadedLLMContainer
+        container: any LoadedLLMContainer,
+        tools: [any Tool] = []
     ) async throws -> (session: RoutedSession, dir: URL) {
         let dir = Self.makeTempDir()
         let router = Router(
@@ -191,7 +192,7 @@ struct PromptQueueTests {
             loader: StubModelLoader(container: container, dimension: stubDimension)
         )
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-        return (profile.standard.makeSession(), dir)
+        return (profile.standard.makeSession(tools: tools), dir)
     }
 
     // MARK: - Prompt <-> text helpers
@@ -378,6 +379,76 @@ struct PromptQueueTests {
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         let expectedLine = OperationEventSegment.renderedLine(for: posted)
         #expect(promptEvent.text == expectedLine + "\n\nwhat happened?")
+    }
+
+    // MARK: - dispatchNextPrompt() delivers a settled run on an empty queue
+
+    /// The output the delivery-turn test's background tool returns, so the
+    /// terminal line the model hears is recognizable.
+    private static let deliveredToolOutput = "background result: the job finished"
+
+    /// How long the delivery-turn test waits for a run it has already released
+    /// to settle.
+    private static let mailboxWaitTimeoutSeconds: Double = 30
+
+    @Test(
+        "an event-only wake with a settled run runs a delivery turn on an EMPTY prompt queue: the model hears the terminal, with no wait call"
+    )
+    @MainActor
+    func settledRunOnEmptyQueueRunsADeliveryTurn() async throws {
+        let recorder = InMemoryRecorder()
+        let container = BackgroundingLLMContainer()
+        let gate = RunLatch()
+        let (session, dir) = try await Self.makeSession(
+            recorder: recorder, container: container,
+            tools: [LatchedBackgroundTool(name: "job", gate: gate, output: Self.deliveredToolOutput)])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let backend = try #require(container.lastBackend)
+
+        // The first dispatched turn backgrounds the job; the queue is empty
+        // after it.
+        _ = await session.enqueue(prompt: "start the job")
+        _ = try await session.dispatchNextPrompt()
+        let token = try #require(await session.mailbox.backgroundRuns().first?.completionToken)
+        #expect(await session.pendingPrompts().isEmpty)
+
+        await gate.open()
+        let settled = await session.mailbox.wait(completionToken: token, seconds: Self.mailboxWaitTimeoutSeconds)
+        guard case .settled(let terminal) = settled else {
+            Issue.record("expected the run to settle after the gate opened, got \(settled)")
+            return
+        }
+
+        // The driver loop's shape: the settlement wakes the driver, and the
+        // dispatch it makes runs a delivery turn with nothing queued.
+        await session.awaitQueuedWork()
+        let delivered = try await session.dispatchNextPrompt()
+        #expect(delivered != nil)
+
+        // The model heard the terminal on that turn, and never called wait:
+        // one tool call, and nothing left staged.
+        let deliveryPrompt = try #require(backend.receivedPrompts.last)
+        #expect(backend.receivedPrompts.count == 2)
+        #expect(deliveryPrompt.contains(OperationEventSegment.renderedLine(for: terminal)))
+        #expect(deliveryPrompt.hasSuffix(RoutedSessionActor.settledRunDeliveryPrompt))
+        #expect(backend.toolCallCount == 1)
+        #expect(await session.outbox.pending().events.isEmpty)
+    }
+
+    @Test("an event-only wake carrying only progress runs no turn: the report stays staged for the next dispatched prompt")
+    @MainActor
+    func progressOnlyWakeOnEmptyQueueRunsNoTurn() async throws {
+        let recorder = InMemoryRecorder()
+        let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let progress = OperationEvent(tool: "shell", op: "run command", correlationID: "1", kind: .progress, detail: "12 lines so far")
+        await session.outbox.post(event: progress)
+
+        await session.awaitQueuedWork()
+        #expect(try await session.dispatchNextPrompt() == nil)
+        #expect(await recorder.events.isEmpty)
+        #expect(await session.outbox.pending().events.map(\.event) == [progress])
     }
 
     // MARK: - dispatchNextPrompt() flattens the queued prompt to backend text

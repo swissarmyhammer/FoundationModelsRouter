@@ -245,6 +245,13 @@ public enum SessionEvent: Sendable, Equatable {
     /// which claim this one makes.
     case generationStalled(GenerationStall)
 
+    /// A background run of this session settled: its one terminal
+    /// ``OperationEvent``, with the run's honest ``OperationOutcome`` and
+    /// bounded output tail. Yielded on the turn's own stream when the run
+    /// settles inside a turn, and on ``RoutedSession/streamSessionEvents()``
+    /// always; the same terminal rides the next dispatched turn to the model.
+    case runSettled(OperationEvent)
+
     /// One physical generate attempt closed, carrying its own measured token
     /// usage and the session's resulting ``RoutedSession/contextFill``.
     ///

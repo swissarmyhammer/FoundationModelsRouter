@@ -31,6 +31,13 @@ extension RoutedSessionActor {
         Answer the request now, from those results.
         """
 
+    /// The prompt a delivery turn carries: the one ``dispatchNextPrompt()``
+    /// runs when a settled run's terminal is staged and no prompt is queued.
+    static let settledRunDeliveryPrompt = """
+        Background work you started has settled, and its result is above. \
+        Act on it, or say what you did with it.
+        """
+
     /// Generates a complete text response to a prompt, recording the call.
     ///
     /// Routes through the guided path when ``grammar`` is set, constraining the
@@ -61,11 +68,12 @@ extension RoutedSessionActor {
     ///   terminals is teardown, and belongs to ``close()`` alone
     ///   (``SessionMailbox/sweep()``). A drain waits for work to finish; a
     ///   sweep ends it.
-    /// - It **does not change the streaming surfaces**.
+    /// - It **does not drain the streaming surfaces**.
     ///   ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
     ///   still return while a run they backgrounded is in flight: backgrounding is
-    ///   the feature there, and a consumer of those surfaces watches the run
-    ///   plane itself.
+    ///   the feature there. A run that settles before the stream ends is
+    ///   reported as ``SessionEvent/runSettled(_:)``; a later settlement is
+    ///   delivered to the model by the next ``dispatchNextPrompt()``.
     ///
     /// **How often this drain enters its loop.**
     ///

@@ -108,9 +108,10 @@ struct TurnOutcomeFold {
             // attempt's usage with the retry's — the closing value.
             usage = attemptUsage
         case .turnStarted, .reasoningDelta, .entryRecorded, .discoveryPrimingFailed,
-            .generationStalled:
+            .generationStalled, .runSettled:
             // Deliberately not carried by the outcome: the frame, the priming
-            // report, and the stall report are live-driver concerns — a stall
+            // report, the stall report, and a background run's settlement are
+            // live-driver concerns — a stall
             // report says the turn is still running and changes nothing about
             // what it finally produced, so it has no place in a finished
             // turn's outcome. Reasoning is model prose the reply excludes, and

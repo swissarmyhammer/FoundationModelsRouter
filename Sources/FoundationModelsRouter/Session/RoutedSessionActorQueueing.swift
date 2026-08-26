@@ -63,7 +63,8 @@ extension RoutedSessionActor {
     /// Suspends until the session's staging area holds work for a future
     /// turn — see ``RoutedSession/awaitQueuedWork()``. Delegates to
     /// ``SessionOutbox/nextEvent()``, which resumes for a queued prompt
-    /// exactly as it does for a pending event.
+    /// exactly as it does for a pending event — a settled run's terminal
+    /// included, which the next ``dispatchNextPrompt()`` delivers in a turn.
     nonisolated func awaitQueuedWork() async {
         await outbox.nextEvent()
     }

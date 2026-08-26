@@ -35,11 +35,27 @@ comments:
     - evidence: new Sources/FoundationModelsRouter/Hosting/{RunToCompletionTool.swift (91 lines), BackgroundTool.swift (158 lines), ToolRun.swift (367), DetachConfiguration.swift (156), PendingRunEnvelope.swift (135), ToolDetachment.swift (105), ContextBindingTool.swift (106)}; deleted Hosting/DetachingTool.swift (1,570 lines). New tests: BackgroundToolTests, RunToCompletionToolTests, ToolDetachmentTests, PendingRunEnvelopeTests, Helpers/ToolMountFixtures.swift; deleted DetachingToolTests.swift. 14 wiring/helper test files and 14 Sources doc sites updated. `rg waitSeconds Sources` = no match. `swift build --build-tests`: 0 errors, 0 warnings from our code. `swift test`: 1047 tests in 104 suites passed + 83 in 10 suites passed; the 2 known issues are pre-existing `withKnownIssue` cases in RealModelHarness and BoundedWait. New suites (40 tests) passed 3 of 3 repeat runs.
     - next: /review. Note for the follow-up task: ../FoundationModelsMultitool still names `DetachingTool` and was not edited.
   timestamp: 2026-08-26T03:47:04.075235+00:00
+- actor: claude-code
+  id: 01m0y57g8p3eq4zt4q78n5pjkr
+  text: |-
+    ### review — clean
+    - evidence: review sha HEAD~1..HEAD (local) — 42 checks attempted, 0 findings, 0 confirmed, 2 refuted. All prior checklist items are checked.
+    - next: none. The task is in done.
+  timestamp: 2026-08-26T04:28:37.014133+00:00
+- actor: claude-code
+  id: 01m0y57wev5rj91k5pesppyabp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — DetachingTool.swift (1,570 lines) deleted; BackgroundTool (158) + RunToCompletionTool (91) + shared ToolRun (367); tests split into four suites
+    - test: green — swift test, 1047 + 83 tests, 0 failed (run inside implement)
+    - commit: 42d23b2
+    - review: clean — 43 files, 42 checks, 0 findings, 2 refuted; task moved to done
+  timestamp: 2026-08-26T04:28:49.499154+00:00
 depends_on:
 - 01M0XGQCF19BT6PM14919C9VV4
 - 01M0XH9NMH6DYRNZDR06858XAS
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fff680
 title: Split the engine into two small wrappers; a background call always returns the handle
 ---
 ## What

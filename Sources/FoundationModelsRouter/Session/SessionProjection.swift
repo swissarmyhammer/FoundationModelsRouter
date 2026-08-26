@@ -260,8 +260,10 @@ public final class SessionProjection {
             phase = .compacting
             transcript.append(
                 TranscriptEntry(id: result.id, kind: .compaction(result), sourceEntryId: result.summaryEntryId))
-        case .discoveryPrimingFailed, .generationStalled:
-            // Handled explicitly, and deliberately changes nothing. A turn whose
+        case .discoveryPrimingFailed, .generationStalled, .runSettled:
+            // Handled explicitly, and deliberately changes nothing. A settled
+            // run's terminal reaches this mirror as the recorded tool output
+            // of the turn that next carries it. A turn whose
             // discovery priming could not seed generates exactly as an unprimed
             // turn does (see ``SessionEvent/discoveryPrimingFailed(_:)``), and a
             // stall report bounds nothing at all — the turn is still running and
