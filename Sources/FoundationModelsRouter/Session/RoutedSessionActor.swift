@@ -211,7 +211,7 @@ actor RoutedSessionActor: RoutedSession {
     /// fork → detach → cap at a fork, detach at
     /// restore (task ^k4nygqa); a non-String-output tool is wrapped in the
     /// binding-only ``ContextBindingTool`` — same per-call, per-tool-stamped
-    /// ambient ``ToolContext``, no pending-envelope/park machinery — and
+    /// ambient ``ToolContext``, no pending-envelope/backgrounding machinery — and
     /// passes through the capping layer unwrapped (see
     /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``).
     /// This is the
@@ -240,13 +240,13 @@ actor RoutedSessionActor: RoutedSession {
     /// delivery never migrates between sessions.
     nonisolated let outbox: SessionOutbox
 
-    /// This session's own mailbox: the registry of parked detached runs and
+    /// This session's own mailbox: the registry of tracked detached runs and
     /// pending elicitations. See ``SessionMailbox``.
     ///
     /// Fresh per session, with the same scope rule as ``outbox``: a root
     /// session is constructed already holding a brand-new, empty mailbox,
     /// ``fork(workingDirectory:)`` builds another fresh one for the child,
-    /// and a restored session gets a brand-new one — so parked runs and
+    /// and a restored session gets a brand-new one — so background runs and
     /// pending elicitations never migrate between sessions.
     nonisolated let mailbox: SessionMailbox
 
@@ -256,7 +256,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Taken for the whole of every turn and never handed back early, so this
     /// session never has two turns in flight and a concurrent
     /// ``fork(workingDirectory:)``'s read of ``backend``'s conversation state is
-    /// serialized against any turn still in flight — including one parked in
+    /// serialized against any turn still in flight — including one suspended in
     /// ``awaitingUser(_:)``. Fresh per session: a fork gets its own, since it
     /// drives its own backend.
     ///
@@ -383,13 +383,13 @@ actor RoutedSessionActor: RoutedSession {
     /// two callers can be draining this session at the same time.
     var runPlaneDrainCount = 0
 
-    /// The gates the run-plane drain waits parked on this session are suspended
+    /// The gates the run-plane drain waits suspended on this session are suspended
     /// on, keyed by a fresh waiter id.
     ///
     /// The handle ``cancelCurrentTurn()`` resumes to end a call already
-    /// suspended on a parked run: ``SessionMailbox/wait(completionToken:seconds:)``
+    /// suspended on a background run: ``SessionMailbox/wait(completionToken:seconds:)``
     /// ignores task cancellation by design and its ceiling is a day
-    /// (``ToolContext/deadlineSecondsCeiling``), so a drain parked on one ends
+    /// (``ToolContext/deadlineSecondsCeiling``), so a drain suspended on one ends
     /// early only because something else resumes it.
     ///
     /// A dictionary rather than one gate because the drain runs outside
@@ -786,7 +786,7 @@ actor RoutedSessionActor: RoutedSession {
     /// Deliberately does **not** run ``close()``'s mailbox sweep — it cannot:
     /// a `deinit` can neither await an actor nor journal events. A session
     /// must be closed explicitly where its life ends; an unclosed crashed
-    /// session's parked runs are the `.lost` restoration path's territory,
+    /// session's background runs are the `.lost` restoration path's territory,
     /// never silently reconciled here.
     deinit {
         if holdsAdmissionPermit {

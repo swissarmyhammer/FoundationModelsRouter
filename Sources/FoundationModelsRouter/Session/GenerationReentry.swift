@@ -12,7 +12,7 @@ import Synchronization
 /// session's ``RoutedSessionActor/turnLock`` is the correctness gate, held for
 /// the whole turn so a session never has two turns writing one transcript, and
 /// it is not lent to anybody. Before this error existed such a call simply
-/// parked on that lock and never came back.
+/// blocked on that lock and never came back.
 ///
 /// Not every same-session call is refused. Reading
 /// ``RoutedSession/transcript`` from inside the session's own tool call is
@@ -80,7 +80,7 @@ public enum SessionReentryError: Error, Equatable, LocalizedError {
 /// Two conditions have to hold together before a permit is lent, and both can
 /// change during the model call:
 ///
-/// - The lender still **holds** its permit. A turn parked in
+/// - The lender still **holds** its permit. A turn suspended in
 ///   ``RoutedSession/awaitingUser(_:)`` has handed its permit back, so there is
 ///   nothing to lend and a nested turn queues for one of its own.
 /// - The lender is **inside a tool call it is awaiting**. That is what says the
@@ -154,7 +154,7 @@ final class GenerationPermitLoan: Sendable {
     /// tool call right now.
     ///
     /// This is the narrower question ``lends(over:)`` asks, minus the permit:
-    /// a turn parked in ``RoutedSession/awaitingUser(_:)`` has handed its
+    /// a turn suspended in ``RoutedSession/awaitingUser(_:)`` has handed its
     /// permit back and still holds its session's
     /// ``RoutedSessionActor/turnLock``, so it still answers `true` here. What
     /// the tool-call depth adds over a bare session match is the proof that

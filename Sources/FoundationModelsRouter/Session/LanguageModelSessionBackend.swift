@@ -175,7 +175,7 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// own turn (``RoutedSessionActor/isInsideOwnTurnToolCall``). The turn that
     /// holds the lock is the only writer there is, and it is suspended in the
     /// tool that is asking, so ``RoutedSession/transcript`` reads through this
-    /// unlocked there rather than parking on a lock its own caller keeps. That
+    /// unlocked there rather than blocking on a lock its own caller keeps. That
     /// is the whole exemption; every other caller takes the lock.
     ///
     /// - Returns: Every transcript entry this backend has accumulated so far,

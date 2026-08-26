@@ -114,12 +114,12 @@ struct MultiTurnSessionTests {
         }
     }
 
-    // MARK: - Parkable stub backend (generation-gate race proof)
+    // MARK: - Suspendable stub backend (generation-gate race proof)
 
     /// A synchronized event log a test polls without sleeping, recording the
     /// order generation and fork work actually ran in.
     ///
-    /// A plain lock-guarded class rather than an actor: ``ParkableSessionBackend/makeFork()``
+    /// A plain lock-guarded class rather than an actor: ``SuspendableSessionBackend/makeFork()``
     /// is a synchronous, non-async protocol requirement, so it must record
     /// synchronously — an actor would force it onto a detached `Task`, losing
     /// the exact ordering this suite needs to observe.
@@ -136,7 +136,7 @@ struct MultiTurnSessionTests {
         }
     }
 
-    /// A ``LanguageModelSessionBackend`` whose `respond` parks on a
+    /// A ``LanguageModelSessionBackend`` whose `respond` suspends on a
     /// test-controlled ``AsyncSemaphore`` after entering, so a test can hold a
     /// generation call open for as long as it needs to observe what a
     /// concurrent ``RoutedSession/fork(workingDirectory:)`` does while it is
@@ -149,7 +149,7 @@ struct MultiTurnSessionTests {
     /// `RoutedSessionActor` drives every method call on one backend through
     /// the owning session's turn lock — the very property this test suite proves —
     /// so there is no concurrent access to guard against in practice.
-    private final class ParkableSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    private final class SuspendableSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let log: EventLog
         private let releaseGate: AsyncSemaphore
 
@@ -158,7 +158,7 @@ struct MultiTurnSessionTests {
             self.releaseGate = releaseGate
         }
 
-        /// Records entry, parks on ``releaseGate`` until the test signals it,
+        /// Records entry, suspends on ``releaseGate`` until the test signals it,
         /// then records exit — giving the test a window in which this
         /// backend's owning session is provably mid-generation.
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
@@ -181,14 +181,14 @@ struct MultiTurnSessionTests {
         }
 
         /// No synthetic transcript is tracked here — nothing in this suite
-        /// exercises this backend's transcript, only its parking/ordering
+        /// exercises this backend's transcript, only its suspension/ordering
         /// behavior via ``log``.
         func transcriptEntries() -> [Transcript.Entry] {
             []
         }
 
         /// No usage is tracked here — nothing in this suite exercises token
-        /// metering, only parking/ordering behavior via ``log``.
+        /// metering, only suspension/ordering behavior via ``log``.
         func usageTokenCounts() -> (input: Int, output: Int)? {
             nil
         }
@@ -198,17 +198,17 @@ struct MultiTurnSessionTests {
         /// matching `respond-exit`.
         func makeFork() -> any LanguageModelSessionBackend {
             log.record("makeFork")
-            return ParkableSessionBackend(log: log, releaseGate: releaseGate)
+            return SuspendableSessionBackend(log: log, releaseGate: releaseGate)
         }
     }
 
-    /// A ``LoadedLLMContainer`` vending ``ParkableSessionBackend``s wired to a
+    /// A ``LoadedLLMContainer`` vending ``SuspendableSessionBackend``s wired to a
     /// shared log and release gate.
     ///
     /// `@unchecked Sendable` is safe because both stored properties are `let`
     /// references to independently `Sendable`/lock-guarded types, set once at
     /// initialization and never mutated afterward.
-    private final class ParkableLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+    private final class SuspendableLLMContainer: LoadedLLMContainer, @unchecked Sendable {
         private let log: EventLog
         private let releaseGate: AsyncSemaphore
 
@@ -218,15 +218,15 @@ struct MultiTurnSessionTests {
         }
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            makeParkableSessionBackend()
+            makeSuspendableSessionBackend()
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            makeParkableSessionBackend()
+            makeSuspendableSessionBackend()
         }
 
-        private func makeParkableSessionBackend() -> any LanguageModelSessionBackend {
-            ParkableSessionBackend(log: log, releaseGate: releaseGate)
+        private func makeSuspendableSessionBackend() -> any LanguageModelSessionBackend {
+            SuspendableSessionBackend(log: log, releaseGate: releaseGate)
         }
     }
 
@@ -417,18 +417,18 @@ struct MultiTurnSessionTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let log = EventLog()
-        // Starts at 0: the in-flight respond() call parks on this until the
+        // Starts at 0: the in-flight respond() call suspends on this until the
         // test explicitly signals it, holding the turn open indefinitely.
         let releaseGate = AsyncSemaphore(value: 0)
-        let container = ParkableLLMContainer(log: log, releaseGate: releaseGate)
+        let container = SuspendableLLMContainer(log: log, releaseGate: releaseGate)
         let router = Self.makeRouter(container: container, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let session = profile.standard.makeSession()
         let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
-        // Start a respond() call; it acquires this session's turn lock and parks
-        // inside the backend body, holding the lock the whole time it is parked.
+        // Start a respond() call; it acquires this session's turn lock and suspends
+        // inside the backend body, holding the lock the whole time it is suspended.
         let respondTask = Task { try await session.respond(to: "turn") }
         await Self.spin(until: { turnLock.availablePermits == 0 })
         await Self.spin(until: { log.events.contains("respond-enter") })
@@ -441,11 +441,11 @@ struct MultiTurnSessionTests {
         let forkTask = Task { try await session.fork(workingDirectory: nil) }
         await Self.spin(until: { turnLock.waiterCount >= 1 })
 
-        // The fork has not reached makeFork() yet: it is parked behind the
+        // The fork has not reached makeFork() yet: it is suspended behind the
         // still-open respond() call.
         #expect(!log.events.contains("makeFork"))
 
-        // Release the parked respond(); only once it completes and releases
+        // Release the suspended respond(); only once it completes and releases
         // the turn lock can the fork proceed to call makeFork().
         releaseGate.signal()
         _ = try await respondTask.value

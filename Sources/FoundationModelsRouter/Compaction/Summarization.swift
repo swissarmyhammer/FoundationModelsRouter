@@ -332,9 +332,9 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     ``stageName`` is appended to produce the resulting
     ///     ``CompactionSegment/Content/stagesApplied``.
     ///   - summarizer: The model called to condense text.
-    ///   - pendingRuns: The run-plane summaries of the runs still parked in
+    ///   - pendingRuns: The run-plane summaries of the runs still running in
     ///     the session's `SessionMailbox` at the moment this boundary is
-    ///     written, in park order. When non-empty they land in the resulting
+    ///     written, in tracking order. When non-empty they land in the resulting
     ///     ``CompactionSegment/Content/pendingRuns`` and as an additional
     ///     model-visible text segment on the summary entry
     ///     (``CompactionSegment/renderedPendingRuns(_:)``), and the
@@ -440,7 +440,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     ///     ``Compactor/contentByteCount(of:)`` — the same measure the guard
     ///     reads.
     ///   - renderingBytes: The pending-runs rendering's UTF-8 size, `0` when
-    ///     the fold parks no runs.
+    ///     the fold carries no runs.
     /// - Returns: The budget, in UTF-8 bytes — possibly zero or negative.
     static func summaryByteBudget(forSpanBytes spanBytes: Int, pendingRunsRenderingBytes renderingBytes: Int) -> Int {
         spanBytes - shrinkMarginBytes - renderingBytes

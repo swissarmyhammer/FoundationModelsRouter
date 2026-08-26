@@ -38,7 +38,7 @@ struct PooledResidencyTests {
 
     // MARK: - Concurrency-observing container (shared-gate test)
 
-    /// Tracks how many bodies are concurrently inside a parked `respond`
+    /// Tracks how many bodies are concurrently inside a suspended `respond`
     /// call, so the shared-model concurrency test can assert non-overlap
     /// without sleeps.
     private actor ConcurrencyObserver {
@@ -57,10 +57,10 @@ struct PooledResidencyTests {
         }
     }
 
-    /// A generation backend that parks on a release gate while inside
+    /// A generation backend that suspends on a release gate while inside
     /// `respond`, so a test can observe whether two concurrent calls
     /// serialize (never overlap) or interleave.
-    private final class ParkingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    private final class SuspendingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
         private let observer: ConcurrencyObserver
         private let releaseGate: AsyncSemaphore
 
@@ -92,14 +92,14 @@ struct PooledResidencyTests {
         func makeFork() -> any LanguageModelSessionBackend { self }
     }
 
-    private struct ParkingLLMContainer: LoadedLLMContainer {
+    private struct SuspendingLLMContainer: LoadedLLMContainer {
         let observer: ConcurrencyObserver
         let releaseGate: AsyncSemaphore
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            ParkingSessionBackend(observer: observer, releaseGate: releaseGate)
+            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate)
         }
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            ParkingSessionBackend(observer: observer, releaseGate: releaseGate)
+            SuspendingSessionBackend(observer: observer, releaseGate: releaseGate)
         }
     }
 
@@ -136,7 +136,7 @@ struct PooledResidencyTests {
         let spy: LoadSpy
         let dimension: Int
         /// Optional override so the concurrency test can vend a
-        /// ``ParkingLLMContainer`` instead of the plain ``StubLLMContainer``.
+        /// ``SuspendingLLMContainer`` instead of the plain ``StubLLMContainer``.
         var llmContainer: (@Sendable (ModelRef) -> any LoadedLLMContainer)?
 
         /// When set, `loadLLM` for exactly this ref signals `entrySignal`
@@ -449,7 +449,7 @@ struct PooledResidencyTests {
             recommendedMaxWorkingSetSize: Self.oneTrioFootprint + Self.reusedTrioCharge
                 + Self.headroomBufferBytes,
             cacheDir: dir,
-            llmContainer: { _ in ParkingLLMContainer(observer: observer, releaseGate: releaseGate) }
+            llmContainer: { _ in SuspendingLLMContainer(observer: observer, releaseGate: releaseGate) }
         )
 
         let shared = ProfileDefinition(
@@ -463,7 +463,7 @@ struct PooledResidencyTests {
         async let firstReply: String = first.standard.makeSession(instructions: nil).respond(to: "0")
         async let secondReply: String = second.standard.makeSession(instructions: nil).respond(to: "1")
 
-        // Let both calls actually reach (and park inside) the shared model
+        // Let both calls actually reach (and suspend inside) the shared model
         // before releasing them, so the gate — not scheduling luck — is what
         // is under test.
         while await observer.active == 0 { await Task.yield() }

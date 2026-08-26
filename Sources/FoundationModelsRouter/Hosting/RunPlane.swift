@@ -1,4 +1,4 @@
-/// What kind of work a parked run is — the discriminator that selects the
+/// What kind of work a background run is — the discriminator that selects the
 /// cancellation semantics its canceler closure carries.
 ///
 /// Phase 1 shipped ``swiftTask`` and phase 2 adds ``process``; this enum stays
@@ -25,12 +25,12 @@ public enum RunKind: String, Codable, Sendable, Equatable {
     case process
 }
 
-/// One row of the run plane's snapshot: a parked run's token, tool, op, kind,
+/// One row of the run plane's snapshot: a background run's token, tool, op, kind,
 /// and latest progress detail — envelopes only, never bulk output.
 ///
-/// This is what ``ToolContext/parkedRuns()`` reports, and what a tool host
+/// This is what ``ToolContext/backgroundRuns()`` reports, and what a tool host
 /// renders for a model that asked which of its runs are still going.
-public struct ParkedRun: Sendable, Equatable {
+public struct BackgroundRun: Sendable, Equatable {
     /// The run's completion token — the ULID string that is also the run's
     /// event `correlationID`.
     public let completionToken: String
@@ -38,7 +38,7 @@ public struct ParkedRun: Sendable, Equatable {
     /// The fused tool's name that owns the run.
     public let tool: String
 
-    /// The canonical `"verb noun"` op string of the parked operation.
+    /// The canonical `"verb noun"` op string of the background operation.
     public let op: String
 
     /// What kind of work the run is.
@@ -56,10 +56,10 @@ public enum WaitOutcome: Sendable, Equatable {
     /// ``ToolContext/terminalDetailTailLimit``), and its honest outcome.
     case settled(OperationEvent)
 
-    /// The deadline elapsed before the run settled; the run stays parked.
+    /// The deadline elapsed before the run settled; the run stays running.
     case deadlineElapsed
 
-    /// No run — parked or settled — is known under this token. A safe,
+    /// No run — running or settled — is known under this token. A safe,
     /// reportable no-op, never a throw or a crash.
     case unknownToken
 }
@@ -76,7 +76,7 @@ public enum CancelOutcome: Sendable, Equatable {
     /// finished first.
     case alreadySettled(OperationEvent)
 
-    /// No run — parked or settled — is known under this token. A safe,
+    /// No run — running or settled — is known under this token. A safe,
     /// reportable no-op, never a throw or a crash.
     case unknownToken
 }

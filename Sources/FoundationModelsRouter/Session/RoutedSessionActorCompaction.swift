@@ -395,11 +395,11 @@ extension RoutedSessionActor {
         let resolvedBudget = budget ?? TokenBudget(limit: contextTokens)
 
         // Read at the moment the compaction boundary is written: the runs
-        // still parked in this session's mailbox, as run-plane summaries
+        // still running in this session's mailbox, as run-plane summaries
         // (token, op, latest progress — never output content), so a
         // post-compaction model can rediscover its in-flight work from the
         // boundary and call status() for the live view.
-        let pendingRuns = await mailbox.parkedRuns().map { run in
+        let pendingRuns = await mailbox.backgroundRuns().map { run in
             CompactionSegment.PendingRunSummary(
                 completionToken: run.completionToken,
                 op: run.op,
@@ -556,8 +556,8 @@ extension RoutedSessionActor {
     ///     scale (see `foldedUsage(tokensBefore:tokensAfter:)`), written to
     ///     the checkpoint and to ``usageState`` as one value so live and
     ///     restored fill cannot drift.
-    ///   - pendingRuns: The run-plane summaries of the runs still parked in
-    ///     this session's mailbox, in park order — carried on the manifest
+    ///   - pendingRuns: The run-plane summaries of the runs still running in
+    ///     this session's mailbox, in tracking order — carried on the manifest
     ///     and rendered model-visibly exactly as a summarized boundary
     ///     carries them.
     /// - Returns: `folded` plus the boundary entry, in that order — the

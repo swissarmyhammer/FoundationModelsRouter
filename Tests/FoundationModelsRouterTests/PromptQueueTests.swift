@@ -237,14 +237,14 @@ struct PromptQueueTests {
         #expect(promptTexts == ["first", "second", "third"])
     }
 
-    @Test("awaitQueuedWork() resumes a parked driver once a prompt is enqueued, and returns at once while work is still queued")
+    @Test("awaitQueuedWork() resumes a suspended driver once a prompt is enqueued, and returns at once while work is still queued")
     @MainActor
     func awaitQueuedWorkWakesForQueuedPrompt() async throws {
         let recorder = InMemoryRecorder()
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: BasicLLMContainer())
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Park a driver first, then enqueue. Whichever side runs first, the
+        // Suspend a driver first, then enqueue. Whichever side runs first, the
         // waiter must complete: a wait that starts before the enqueue is
         // resumed by it, and a wait that starts after finds the queue
         // non-empty and returns at once.
@@ -253,7 +253,7 @@ struct PromptQueueTests {
         await waiter.value
 
         // The prompt is still queued, so a fresh wait returns immediately
-        // rather than parking until more work arrives.
+        // rather than suspending until more work arrives.
         await session.awaitQueuedWork()
 
         let dispatched = try await session.dispatchNextPrompt()
@@ -662,9 +662,9 @@ struct PromptQueueTests {
         #expect(await session.pendingPrompts().isEmpty)
     }
 
-    @Test("a prompt whose dispatch is parked behind another turn is still withdrawable, and its dispatch then runs no turn")
+    @Test("a prompt whose dispatch is suspended behind another turn is still withdrawable, and its dispatch then runs no turn")
     @MainActor
-    func cancelPromptWithdrawsAPromptParkedOnTheTurnLock() async throws {
+    func cancelPromptWithdrawsAPromptWaitingOnTheTurnLock() async throws {
         let recorder = InMemoryRecorder()
         let backend = GatedStubBackend(responseText: "gated response")
         let (session, dir) = try await Self.makeSession(recorder: recorder, container: GatedLLMContainer(backend: backend))
@@ -674,19 +674,19 @@ struct PromptQueueTests {
         let blockingTurn = Task { try await session.respond(to: "blocking turn") }
         await backend.started.wait()
 
-        // A dispatch for this prompt now parks on the turn lock: its drain has
+        // A dispatch for this prompt now suspends on the turn lock: its drain has
         // not run, so the prompt is still in the queue and still withdrawable.
-        let id = await session.enqueue(prompt: "parked prompt")
-        let parkedDispatch = Task { try await session.dispatchNextPrompt() }
+        let id = await session.enqueue(prompt: "suspended prompt")
+        let suspendedDispatch = Task { try await session.dispatchNextPrompt() }
 
         let result = await session.cancelPrompt(id: id)
         #expect(result == .withdrawn)
 
         backend.proceed.signal()
         _ = try await blockingTurn.value
-        // The parked dispatch never reaches the backend: its drain finds the
+        // The suspended dispatch never reaches the backend: its drain finds the
         // withdrawn prompt gone and it runs no turn at all.
-        #expect(try await parkedDispatch.value == nil)
+        #expect(try await suspendedDispatch.value == nil)
 
         let promptTexts = await recorder.events.filter { $0.kind == .prompt }.map(\.text)
         #expect(promptTexts == ["blocking turn"])

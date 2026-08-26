@@ -67,7 +67,7 @@ struct AsyncSemaphoreTests {
         let total = n + 2
         let gate = AsyncSemaphore(value: n)
         let counter = ConcurrencyCounter()
-        // Bodies park on `hold` (value 0) so we can observe the steady state
+        // Bodies suspend on `hold` (value 0) so we can observe the steady state
         // before any of them exits and frees a permit.
         let hold = AsyncSemaphore(value: 0)
 
@@ -84,7 +84,7 @@ struct AsyncSemaphoreTests {
 
             // Wait until exactly N bodies are inside the gate...
             while await counter.active < n { await Task.yield() }
-            // ...and the remaining (total - N) are parked on the gate.
+            // ...and the remaining (total - N) are suspended on the gate.
             while gate.waiterCount < (total - n) { await Task.yield() }
 
             #expect(await counter.active == n)
@@ -106,7 +106,7 @@ struct AsyncSemaphoreTests {
         let probe = OrderProbe()
         let n = 5
 
-        // The test task takes the only permit; every waiter must park.
+        // The test task takes the only permit; every waiter must suspend.
         await semaphore.wait()
 
         await withTaskGroup(of: Void.self) { group in
@@ -117,7 +117,7 @@ struct AsyncSemaphoreTests {
                     semaphore.signal()
                 }
                 // Deterministically establish arrival order: only launch the
-                // next waiter once this one has actually parked.
+                // next waiter once this one has actually suspended.
                 while semaphore.waiterCount < i + 1 { await Task.yield() }
             }
 
@@ -147,12 +147,12 @@ struct AsyncSemaphoreTests {
         #expect(semaphore.availablePermits == 1)
     }
 
-    @Test("a cancelled parked waiter still acquires in turn and strands no one")
+    @Test("a cancelled suspended waiter still acquires in turn and strands no one")
     func cancelledWaiterDoesNotLeakOrStrand() async {
         let semaphore = AsyncSemaphore(value: 1)
         let probe = OrderProbe()
 
-        // The test task takes the only permit; both waiters must park.
+        // The test task takes the only permit; both waiters must suspend.
         await semaphore.wait()
 
         let first = Task {
@@ -169,7 +169,7 @@ struct AsyncSemaphoreTests {
         }
         while semaphore.waiterCount < 2 { await Task.yield() }
 
-        // Cancel the front waiter while it is parked. The non-interrupting
+        // Cancel the front waiter while it is suspended. The non-interrupting
         // acquire keeps it queued, so it must still be served in FIFO turn and
         // must not strand the waiter behind it.
         first.cancel()

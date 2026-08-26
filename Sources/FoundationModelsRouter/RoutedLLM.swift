@@ -375,7 +375,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// The outbox and mailbox are minted here, never accepted from the
     /// caller, because both share one scope rule: fresh per session, never
     /// shared, so a tool's events post to *this* session's own outbox
-    /// rather than a sibling or ancestor's, and parked runs and pending
+    /// rather than a sibling or ancestor's, and background runs and pending
     /// elicitations never migrate between sessions or survive a restore
     /// (see ``RoutedSessionActor/mailbox``).
     ///

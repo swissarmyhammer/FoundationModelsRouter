@@ -88,7 +88,7 @@ struct SharedGenerationGateContentionTests {
     /// holds the pair to the one-gate contract.
     ///
     /// The standard turn takes the one permit and stays inside its model call
-    /// until the latch opens. The flash turn then parks on the very same gate,
+    /// until the latch opens. The flash turn then suspends on the very same gate,
     /// so one generation is in flight over the one container rather than two.
     /// Both turns answer once the latch opens, and the gate is left as it was
     /// found.
@@ -133,16 +133,16 @@ struct SharedGenerationGateContentionTests {
                 await observer.maximumActive == 1
             })
 
-        // The flash session's turn now parks in `beginTurn()`, on the very
+        // The flash session's turn now suspends in `beginTurn()`, on the very
         // same gate. This is the contention: two handles, one container, one
         // gate.
         let waiterTurn = Task { try await waiter.respond(to: Self.secondPrompt) }
         #expect(
-            await BoundedWait.conditionReached("the flash session's turn parking on the shared gate") {
+            await BoundedWait.conditionReached("the flash session's turn suspending on the shared gate") {
                 gate.waiterCount == 1
             })
 
-        // The parked turn never reached the container, so one generation is in
+        // The suspended turn never reached the container, so one generation is in
         // flight rather than two.
         #expect(await observer.maximumActive == 1)
 

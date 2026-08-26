@@ -7,7 +7,7 @@ import Testing
 /// Exercises task e6wb8ak: the ``RoutedSession``-level elicitation reply
 /// surface — ``RoutedSession/respond(elicitationId:response:)`` and
 /// ``RoutedSession/complete(elicitationId:)`` — routing an app host's answer
-/// through the session's own ``SessionMailbox`` to the parked
+/// through the session's own ``SessionMailbox`` to the suspended
 /// ``ToolContext/elicit(_:)`` continuation.
 ///
 /// The route uses no task locals: session → that session's mailbox → the
@@ -148,7 +148,7 @@ struct ElicitationRoutingTests {
     }
 
     /// Binds a ``ToolContext`` over `session`'s own mailbox — the same shape
-    /// the invoker binds around a wrapped tool call — so a test can park a
+    /// the invoker binds around a wrapped tool call — so a test can suspend a
     /// real ``ToolContext/elicit(_:)`` continuation on the session.
     private static func makeContext(for session: RoutedSession) -> ToolContext {
         ToolContext(
@@ -162,15 +162,15 @@ struct ElicitationRoutingTests {
         )
     }
 
-    /// Parks a real `elicit(_:)` on `session` and waits until its pending
+    /// Suspends a real `elicit(_:)` on `session` and waits until its pending
     /// entry is registered, returning the run that resumes with the answer.
     ///
     /// The run is an ``AnswerDrivenRun`` rather than a bare `Task` so that
     /// every test reads its answer under a bound: a break anywhere on the
-    /// inbound answer route leaves the run parked forever, and awaiting it
+    /// inbound answer route leaves the run suspended forever, and awaiting it
     /// directly would hang the whole suite instead of failing the test that
     /// caught the break.
-    private static func parkElicitation(
+    private static func suspendOnElicitation(
         _ request: ElicitationRequest,
         on session: RoutedSession
     ) async -> AnswerDrivenRun<ElicitationResponse> {
@@ -188,14 +188,14 @@ struct ElicitationRoutingTests {
 
     // MARK: - Form-mode round trip
 
-    @Test("a parked ToolContext.elicit resumes when respond() is called on the session, with the exact response passed through")
+    @Test("a suspended ToolContext.elicit resumes when respond() is called on the session, with the exact response passed through")
     @MainActor
     func formRoundTripThroughSessionRespond() async throws {
         let (session, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.parkElicitation(Self.formRequest(elicitationId: elicitationId), on: session)
+        let answering = await Self.suspendOnElicitation(Self.formRequest(elicitationId: elicitationId), on: session)
 
         let answer = ElicitationResponse.accept(content: ["name": .string("Ada")])
         #expect(await session.respond(elicitationId: elicitationId.description, response: answer) == .delivered)
@@ -213,7 +213,7 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.parkElicitation(Self.formRequest(elicitationId: elicitationId), on: session)
+        let answering = await Self.suspendOnElicitation(Self.formRequest(elicitationId: elicitationId), on: session)
 
         #expect(await session.respond(elicitationId: elicitationId.description, response: .decline) == .delivered)
         #expect(try await answering.deliveredAnswer() == .decline)
@@ -221,17 +221,17 @@ struct ElicitationRoutingTests {
 
     // MARK: - URL-mode two-step
 
-    @Test("URL mode: after respond(.accept) the run is still parked; it resumes only on complete(); a duplicate complete is a no-op")
+    @Test("URL mode: after respond(.accept) the run is still running; it resumes only on complete(); a duplicate complete is a no-op")
     @MainActor
     func urlTwoStepThroughSessionSurface() async throws {
         let (session, dir) = try await Self.makeSession()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.parkElicitation(try Self.urlRequest(elicitationId: elicitationId), on: session)
+        let answering = await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: elicitationId), on: session)
 
         // The accept only means the user agreed to open the URL — the entry
-        // stays open and the run stays parked.
+        // stays open and the run stays running.
         #expect(await session.respond(elicitationId: elicitationId.description, response: .accept(content: nil)) == .acceptedAwaitingCompletion)
         #expect(await session.mailbox.pendingElicitationIds() == [elicitationId])
 
@@ -246,7 +246,7 @@ struct ElicitationRoutingTests {
 
     // MARK: - Independence and no-ops
 
-    @Test("two pending elicitations on one run resolve independently: responding to one leaves the other parked")
+    @Test("two pending elicitations on one run resolve independently: responding to one leaves the other suspended")
     @MainActor
     func doubleElicitResolvesIndependently() async throws {
         let (session, dir) = try await Self.makeSession()
@@ -271,7 +271,7 @@ struct ElicitationRoutingTests {
         #expect(await session.respond(elicitationId: firstId.description, response: firstAnswer) == .delivered)
         #expect(try await firstAnswering.deliveredAnswer() == firstAnswer)
 
-        // The other elicitation is untouched: still parked, still pending.
+        // The other elicitation is untouched: still running, still pending.
         #expect(await session.mailbox.pendingElicitationIds() == [secondId])
 
         #expect(await session.respond(elicitationId: secondId.description, response: .decline) == .delivered)
@@ -304,7 +304,7 @@ struct ElicitationRoutingTests {
         // of a pending id route to its elicitation instead of falling into the
         // malformed no-op path. Cover both functions with both cases.
         let upperRespondId = ULID.generate()
-        let upperAnswering = await Self.parkElicitation(try Self.urlRequest(elicitationId: upperRespondId), on: session)
+        let upperAnswering = await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: upperRespondId), on: session)
         #expect(
             await session.respond(
                 elicitationId: upperRespondId.description.uppercased(),
@@ -315,7 +315,7 @@ struct ElicitationRoutingTests {
         #expect(try await upperAnswering.deliveredAnswer() == .accept(content: nil))
 
         let lowerRespondId = ULID.generate()
-        let lowerAnswering = await Self.parkElicitation(try Self.urlRequest(elicitationId: lowerRespondId), on: session)
+        let lowerAnswering = await Self.suspendOnElicitation(try Self.urlRequest(elicitationId: lowerRespondId), on: session)
         #expect(
             await session.respond(
                 elicitationId: lowerRespondId.description.lowercased(),
@@ -335,10 +335,10 @@ struct ElicitationRoutingTests {
         defer { try? FileManager.default.removeItem(at: dirB) }
 
         let elicitationId = ULID.generate()
-        let answering = await Self.parkElicitation(Self.formRequest(elicitationId: elicitationId), on: sessionB)
+        let answering = await Self.suspendOnElicitation(Self.formRequest(elicitationId: elicitationId), on: sessionB)
 
         // Session A knows nothing about B's elicitation: the answer is a
-        // no-op there, and B's run stays parked.
+        // no-op there, and B's run stays running.
         #expect(await sessionA.respond(elicitationId: elicitationId.description, response: .decline) == .noPendingElicitation)
         #expect(await sessionA.complete(elicitationId: elicitationId.description) == .noPendingElicitation)
         #expect(await sessionB.mailbox.pendingElicitationIds() == [elicitationId])

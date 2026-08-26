@@ -496,7 +496,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // Per-node event wiring plus per-session tool instancing —
             // the shared helper mints every restored node its own fresh
             // outbox and mailbox, so a tool's events post to *this* node's
-            // own outbox rather than a sibling or ancestor's, and parked
+            // own outbox rather than a sibling or ancestor's, and background
             // runs and pending elicitations never survive a restore (see
             // ``RoutedSessionActor/mailbox``).
             // This site's chain is detach only, plus capping when the

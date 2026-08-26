@@ -22,7 +22,7 @@ import Testing
 struct CompactionSegmentTests {
     // MARK: - Fixture content
 
-    /// The parked-run summary `makeContent` carries by default, so every
+    /// The background-run summary `makeContent` carries by default, so every
     /// fixture-driven round trip in this suite also proves `pendingRuns`
     /// survives the path under test.
     private static let fixturePendingRun = CompactionSegment.PendingRunSummary(

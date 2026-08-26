@@ -36,7 +36,7 @@ public struct ToolContext: Sendable {
 
     /// The largest seconds-valued deadline the run plane honors, in seconds
     /// (one day). A larger — or infinite — requested deadline is clamped here
-    /// rather than trapped on: the run stays parked past the clamp, so a
+    /// rather than trapped on: the run stays running past the clamp, so a
     /// caller can simply wait again.
     ///
     /// One ceiling bounds every such deadline, which is why the name says
@@ -66,13 +66,13 @@ public struct ToolContext: Sendable {
     /// The owning session's identity — ``RoutedSession/id``.
     public let sessionID: ULID
 
-    /// The owning session's mailbox: where ``elicit(_:)`` parks its pending
+    /// The owning session's mailbox: where ``elicit(_:)`` suspends its pending
     /// continuation, keyed by the request's `elicitationId`, and the run
     /// plane the three run-plane capabilities below read.
     ///
     /// Internal, deliberately: a tool reaches elicitation through the typed
     /// ``elicit(_:)`` capability (task ^j0pp9yp) and the run plane through
-    /// ``parkedRuns()``, ``wait(completionToken:seconds:)`` and
+    /// ``backgroundRuns()``, ``wait(completionToken:seconds:)`` and
     /// ``cancel(completionToken:)`` (task ^k0mecjp) — never through the raw
     /// mailbox. The binder supplies the mailbox at construction and keeps its
     /// own reference when it needs one.
@@ -163,8 +163,8 @@ public struct ToolContext: Sendable {
     ///
     /// ### The plane the declared pair appears on
     ///
-    /// It appears on the **run plane**, and there alone: ``ParkedRun/op``,
-    /// which ``parkedRuns()`` reports, and ``ToolInvocationRecord/op``, which
+    /// It appears on the **run plane**, and there alone: ``BackgroundRun/op``,
+    /// which ``backgroundRuns()`` reports, and ``ToolInvocationRecord/op``, which
     /// the binding layers post through
     /// ``OperationEventSink/post(invocation:)``. Both are built from this
     /// context's stamps directly, so both carry the declared string verbatim.
@@ -257,12 +257,12 @@ public struct ToolContext: Sendable {
     }
 
     /// Asks the user a question in the middle of the run — only another
-    /// detachment, with no second machinery: the run parks as a pending
+    /// detachment, with no second machinery: the run suspends as a pending
     /// promise in the session's mailbox (keyed by the request's
     /// `elicitationId`), the request rides the event chain upstream as an
     /// elicitation-kind event on this run's correlation, and the answer
     /// comes down through ``SessionMailbox/respond(elicitationId:_:)`` and
-    /// resumes the parked continuation. One run can hold several pending
+    /// resumes the suspended continuation. One run can hold several pending
     /// elicitations at once — each answer addresses its own id.
     ///
     /// Registration happens-before the post: the mailbox installs the
@@ -271,7 +271,7 @@ public struct ToolContext: Sendable {
     /// the instant a host observes the posted event always finds the pending
     /// entry — never a dropped answer.
     ///
-    /// Cancellation of the calling task does not unpark a pending
+    /// Cancellation of the calling task does not resume a pending
     /// elicitation: the suspension resumes only through
     /// ``SessionMailbox/respond(elicitationId:_:)``,
     /// ``SessionMailbox/complete(elicitationId:)``, or the session-teardown
@@ -281,7 +281,7 @@ public struct ToolContext: Sendable {
     /// signature.
     ///
     /// - Parameter request: The typed request whose `elicitationId` keys the
-    ///   parked continuation.
+    ///   suspended continuation.
     /// - Returns: The user's answer.
     public func elicit(_ request: ElicitationRequest) async throws -> ElicitationResponse {
         let event = OperationEvent(
@@ -300,7 +300,7 @@ public struct ToolContext: Sendable {
 
     // MARK: - Run-plane capabilities
 
-    /// Every run still parked on this session's run plane, in park order.
+    /// Every run still running on this session's run plane, in tracking order.
     ///
     /// The host route onto the run plane (task ^k0mecjp): a tool host that
     /// shows the plane to a model renders these rows, and never holds the
@@ -308,12 +308,12 @@ public struct ToolContext: Sendable {
     /// run's token, identity, kind, and latest progress — never a
     /// capability's bulk output.
     ///
-    /// - Returns: One ``ParkedRun`` per still-parked run.
-    public func parkedRuns() async -> [ParkedRun] {
-        await mailbox.parkedRuns()
+    /// - Returns: One ``BackgroundRun`` per still-background run.
+    public func backgroundRuns() async -> [BackgroundRun] {
+        await mailbox.backgroundRuns()
     }
 
-    /// Awaits a parked run's settlement with a deadline.
+    /// Awaits a background run's settlement with a deadline.
     ///
     /// The result is the run's terminal event — its bounded output tail
     /// (capped at ``terminalDetailTailLimit``) plus the run's identifier —
@@ -332,10 +332,10 @@ public struct ToolContext: Sendable {
         await mailbox.wait(completionToken: completionToken, seconds: seconds)
     }
 
-    /// Requests cancellation of a parked run and reports the outcome its
+    /// Requests cancellation of a background run and reports the outcome its
     /// canceler reports — verbatim, never a guess.
     ///
-    /// The run stays parked until it actually settles, and the reported
+    /// The run stays running until it actually settles, and the reported
     /// outcome says how much the canceler knows. A ``RunKind/swiftTask`` run
     /// is cancelled cooperatively, so the body ends on its own schedule and
     /// the canceler reports ``OperationOutcome/cancelled``. A

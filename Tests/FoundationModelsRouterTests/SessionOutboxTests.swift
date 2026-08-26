@@ -275,10 +275,10 @@ struct SessionOutboxTests {
     /// One ``SessionOutbox/nextEvent()`` wait, started so a test observes
     /// whether it woke instead of awaiting it.
     ///
-    /// The indirection is the point: `nextEvent()` parks on a
+    /// The indirection is the point: `nextEvent()` suspends on a
     /// `CheckedContinuation<Void, Never>` that only a later
     /// ``SessionOutbox/post(event:)`` or ``SessionOutbox/enqueue(prompt:)`` resumes,
-    /// and nothing can break such a wait — cancelling it does not unpark it. This
+    /// and nothing can break such a wait — cancelling it does not resume it. This
     /// target sets no `.timeLimit` trait, so a regression anywhere on the wakeup
     /// route would hang the whole `swift test` run rather than fail the test that
     /// caught it. ``wokeUp()`` reports through a signal ``BoundedWait`` observes
@@ -292,7 +292,7 @@ struct SessionOutboxTests {
         /// is observed without awaiting the wait itself.
         private let woke: AsyncSemaphore
 
-        /// The parked wait.
+        /// The suspended wait.
         private let task: Task<Void, Never>
 
         /// Starts one ``SessionOutbox/nextEvent()`` wait on `outbox`.
@@ -311,7 +311,7 @@ struct SessionOutboxTests {
         }
 
         /// Whether the wait is still suspended, read without awaiting it.
-        var isStillParked: Bool { woke.availablePermits == 0 }
+        var isStillSuspended: Bool { woke.availablePermits == 0 }
 
         /// Whether the wait woke inside ``BoundedWait``'s bound, recording an
         /// issue and giving up when it did not.
@@ -319,7 +319,7 @@ struct SessionOutboxTests {
         /// - Returns: Whether `nextEvent()` returned.
         func wokeUp() async -> Bool {
             guard await BoundedWait.signalArrived(woke, named: "the nextEvent() wait for \(label)") else {
-                // Cancelling cannot unpark a wait suspended in
+                // Cancelling cannot resume a wait suspended in
                 // `withCheckedContinuation`, but the test must not await that
                 // wait either.
                 task.cancel()
@@ -331,7 +331,7 @@ struct SessionOutboxTests {
     }
 
     /// How long a test lets a fresh ``OutboxWaiter`` reach its suspension point
-    /// before it posts, so the post lands on a genuinely parked wait rather than
+    /// before it posts, so the post lands on a genuinely suspended wait rather than
     /// on an outbox the wait has not looked at yet.
     private static let waiterSuspensionNanoseconds: UInt64 = 20_000_000
 
@@ -342,7 +342,7 @@ struct SessionOutboxTests {
 
         // Give the waiter a chance to actually start suspending before posting.
         try? await Task.sleep(nanoseconds: Self.waiterSuspensionNanoseconds)
-        #expect(waiter.isStillParked)
+        #expect(waiter.isStillSuspended)
 
         await outbox.post(event: Self.event(correlationID: "c1", kind: .completed, detail: "woke"))
 
@@ -366,7 +366,7 @@ struct SessionOutboxTests {
         let waiter = OutboxWaiter(on: outbox, waitingFor: "an enqueued prompt")
 
         try? await Task.sleep(nanoseconds: Self.waiterSuspensionNanoseconds)
-        #expect(waiter.isStillParked)
+        #expect(waiter.isStillSuspended)
 
         _ = await outbox.enqueue(prompt: Self.prompt("hello"))
 

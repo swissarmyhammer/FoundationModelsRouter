@@ -6,9 +6,9 @@ import FoundationModels
 /// them into its prompt.
 ///
 /// Router exists so a long tool does not block the session, and
-/// ``DetachingTool`` delivers that by parking a run and handing the model
+/// ``DetachingTool`` delivers that by backgrounding a run and handing the model
 /// `{"pending":true,"completionToken":…}`. Until this journal existed, the
-/// parked run's ending had no way back into the record: it waited in
+/// background run's ending had no way back into the record: it waited in
 /// ``outbox`` for a prompt that might never come, so a transcript could show
 /// a run starting and never show it finishing. This closes that hole, and
 /// closes it in the transcript rather than in a channel beside it.
@@ -19,7 +19,7 @@ extension RoutedSessionActor: OperationEventJournal {
     /// post order, so the transcript gains the run's report when the run made
     /// it — no further prompt required.
     ///
-    /// **Interleaving is the point, not a defect.** A parked run reports
+    /// **Interleaving is the point, not a defect.** A background run reports
     /// whenever its work reaches a milestone, so its entries land between the
     /// entries of whatever turn happened to be running, and a run's own
     /// entries need not be contiguous. Position in the transcript states when

@@ -17,7 +17,7 @@ import Testing
 ///
 /// Every fixture here reaches the run plane through the public protocol and
 /// the public ``ToolContext`` capabilities alone: no tool of this suite names
-/// `SessionMailbox.park`, and the tool that declares nothing keeps the
+/// `SessionMailbox.track`, and the tool that declares nothing keeps the
 /// behaviour it already has.
 @Suite("Declared run kind: a tool states its own RunKind and supplies its own canceler")
 struct DeclaredRunKindTests {
@@ -32,9 +32,9 @@ struct DeclaredRunKindTests {
   private static let settlementDeadline: TimeInterval = 30
 
   /// The mount every harness of this suite runs under: detaching with a
-  /// `waitSeconds` of zero, so a call parks at once and no test waits on a
-  /// wall clock.
-  private static let parkAtOnceMount = DetachConfiguration(mode: .detaching, waitSeconds: 0)
+  /// `waitSeconds` of zero, so a call is backgrounded at once and no test
+  /// waits on a wall clock.
+  private static let detachAtOnceMount = DetachConfiguration(mode: .detaching, waitSeconds: 0)
 
   // MARK: - Argument fixtures
 
@@ -61,9 +61,9 @@ struct DeclaredRunKindTests {
     }
   }
 
-  /// Parks at once, declares ``RunKind/process``, and supplies the
-  /// authoritative canceler its own capability owns — the shell-shaped tool
-  /// this seam exists for.
+  /// Backgrounds every call at once, declares ``RunKind/process``, and
+  /// supplies the authoritative canceler its own capability owns — the
+  /// shell-shaped tool this seam exists for.
   ///
   /// The canceler stands for `killpg(SIGKILL)`: it records the kill and
   /// reports ``OperationOutcome/stopped``, because a killed process group is
@@ -72,7 +72,7 @@ struct DeclaredRunKindTests {
   /// the group is `gate`, which each test opens for itself.
   private struct DeclaredProcessTool: Tool, DetachmentParameterProviding {
     let name = "declared_process_tool"
-    let description = "parks at once as a process run and kills its own group"
+    let description = "is backgrounded at once as a process run and kills its own group"
 
     /// Stands for the run's wait on its process group.
     let gate: RunLatch
@@ -105,8 +105,8 @@ struct DeclaredRunKindTests {
   }
 
   /// Sleeps until cancelled and declares nothing at all — the tool that
-  /// exists today, which must keep parking as ``RunKind/swiftTask`` under
-  /// the engine's own cooperative canceler with no edit of its own.
+  /// exists today, which must keep being backgrounded as ``RunKind/swiftTask``
+  /// under the engine's own cooperative canceler with no edit of its own.
   private struct UndeclaredKindTool: Tool {
     let name = "undeclared_kind_tool"
     let description = "sleeps until cancelled and declares no detachment parameters"
@@ -119,11 +119,11 @@ struct DeclaredRunKindTests {
 
   // MARK: - Harness
 
-  /// One test's wiring: the mailbox the run parks on, the engine that parks
-  /// it, and a ``ToolContext`` bound to that same mailbox — the public route
-  /// a tool host reads and cancels the run plane through.
+  /// One test's wiring: the mailbox the run is tracked on, the engine that
+  /// backgrounds it, and a ``ToolContext`` bound to that same mailbox — the
+  /// public route a tool host reads and cancels the run plane through.
   private struct Harness {
-    /// The session mailbox every run of this harness parks on.
+    /// The session mailbox every run of this harness is tracked on.
     let mailbox: SessionMailbox
 
     /// The host-side context that reads and cancels the run plane.
@@ -139,8 +139,9 @@ struct DeclaredRunKindTests {
   /// The op string the harness's host-side context is stamped with.
   private static let hostOp = "read runs"
 
-  /// Wraps `tool` in a ``DetachingTool`` that parks at once, over a fresh
-  /// mailbox, beside a host-side context bound to that same mailbox.
+  /// Wraps `tool` in a ``DetachingTool`` that backgrounds every call at once,
+  /// over a fresh mailbox, beside a host-side context bound to that same
+  /// mailbox.
   ///
   /// - Parameter tool: The tool to wrap.
   /// - Returns: The harness.
@@ -154,7 +155,7 @@ struct DeclaredRunKindTests {
       sessionID: sessionID,
       mailbox: mailbox,
       sink: DiscardingOperationEventSink(),
-      configuration: parkAtOnceMount
+      configuration: detachAtOnceMount
     )
     let context = ToolContext(
       sessionID: sessionID,
@@ -168,27 +169,27 @@ struct DeclaredRunKindTests {
     return Harness(mailbox: mailbox, context: context, detaching: detaching)
   }
 
-  /// Parks one call of `harness`'s engine and returns the parked run.
+  /// Backgrounds one call of `harness`'s engine and returns the background run.
   ///
   /// - Parameter harness: The harness whose engine to call.
-  /// - Returns: The one run the call parked, as ``ToolContext/parkedRuns()``
+  /// - Returns: The one run the call backgrounded, as ``ToolContext/backgroundRuns()``
   ///   reports it.
-  private static func parkOneRun(through harness: Harness) async throws -> ParkedRun {
+  private static func backgroundOneRun(through harness: Harness) async throws -> BackgroundRun {
     let rendered = try await harness.detaching.call(
       arguments: DeclaredRunKindArguments(value: "long job")
     )
     // The call really detached: the model was handed a pending envelope
     // rather than a result.
     #expect(PendingRunEnvelope.isRendered(text: rendered))
-    let parked = await harness.context.parkedRuns()
-    #expect(parked.count == 1)
-    return try #require(parked.first)
+    let runs = await harness.context.backgroundRuns()
+    #expect(runs.count == 1)
+    return try #require(runs.first)
   }
 
   // MARK: - A declared process run
 
   @Test(
-    "a tool that declares .process parks under that kind, and ToolContext.parkedRuns() lists it there"
+    "a tool that declares .process is backgrounded under that kind, and ToolContext.backgroundRuns() lists it there"
   )
   func aDeclaredProcessRunIsListedAsProcess() async throws {
     let gate = RunLatch()
@@ -196,14 +197,14 @@ struct DeclaredRunKindTests {
       wrapping: DeclaredProcessTool(gate: gate, witness: KillWitness())
     )
 
-    let parked = try await Self.parkOneRun(through: harness)
+    let run = try await Self.backgroundOneRun(through: harness)
 
-    #expect(parked.kind == .process)
+    #expect(run.kind == .process)
 
     // Let the run's body end, so the test leaves no detached work behind.
     await gate.open()
     _ = await harness.context.wait(
-      completionToken: parked.completionToken, seconds: Self.settlementDeadline
+      completionToken: run.completionToken, seconds: Self.settlementDeadline
     )
   }
 
@@ -217,43 +218,43 @@ struct DeclaredRunKindTests {
       wrapping: DeclaredProcessTool(gate: gate, witness: witness)
     )
 
-    let parked = try await Self.parkOneRun(through: harness)
+    let run = try await Self.backgroundOneRun(through: harness)
 
     // `.stopped` is certainty and `.cancelled` is a request. The engine's
     // own canceler could only ever report the second one, so this outcome
     // proves the tool's canceler is the one that ran.
     #expect(
-      await harness.context.cancel(completionToken: parked.completionToken)
+      await harness.context.cancel(completionToken: run.completionToken)
         == .reported(.stopped)
     )
-    #expect(await witness.killedTokens == [parked.completionToken])
+    #expect(await witness.killedTokens == [run.completionToken])
 
     await gate.open()
     _ = await harness.context.wait(
-      completionToken: parked.completionToken, seconds: Self.settlementDeadline
+      completionToken: run.completionToken, seconds: Self.settlementDeadline
     )
   }
 
   // MARK: - The behaviour that exists does not change
 
   @Test(
-    "a tool that declares nothing still parks as .swiftTask, and cancelling it still reports the engine's cooperative .cancelled"
+    "a tool that declares nothing is still backgrounded as .swiftTask, and cancelling it still reports the engine's cooperative .cancelled"
   )
   func aToolDeclaringNothingKeepsTheCooperativeCanceler() async throws {
     let harness = Self.makeHarness(wrapping: UndeclaredKindTool())
 
-    let parked = try await Self.parkOneRun(through: harness)
+    let run = try await Self.backgroundOneRun(through: harness)
 
-    #expect(parked.kind == .swiftTask)
+    #expect(run.kind == .swiftTask)
     #expect(
-      await harness.context.cancel(completionToken: parked.completionToken)
+      await harness.context.cancel(completionToken: run.completionToken)
         == .reported(.cancelled)
     )
 
     // The cooperative request really reaches the body: the sleep throws,
     // and the run settles as cancelled rather than running on.
     let outcome = await harness.context.wait(
-      completionToken: parked.completionToken, seconds: Self.settlementDeadline
+      completionToken: run.completionToken, seconds: Self.settlementDeadline
     )
     guard case .settled(let terminal) = outcome else {
       Issue.record("the cancelled run did not settle: \(outcome)")
@@ -274,15 +275,15 @@ struct DeclaredRunKindTests {
       wrapping: DeclaredProcessTool(gate: gate, witness: witness)
     )
 
-    let parked = try await Self.parkOneRun(through: harness)
+    let run = try await Self.backgroundOneRun(through: harness)
 
     let terminals = await harness.mailbox.sweep()
 
-    #expect(await witness.killedTokens == [parked.completionToken])
+    #expect(await witness.killedTokens == [run.completionToken])
     #expect(terminals.count == 1)
-    #expect(terminals.first?.correlationID == parked.completionToken)
+    #expect(terminals.first?.correlationID == run.completionToken)
     #expect(terminals.first?.outcome == .stopped)
-    #expect(await harness.context.parkedRuns().isEmpty)
+    #expect(await harness.context.backgroundRuns().isEmpty)
 
     await gate.open()
   }

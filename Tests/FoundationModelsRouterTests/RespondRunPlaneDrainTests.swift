@@ -27,7 +27,7 @@ struct RespondRunPlaneDrainTests {
     /// Blocks on a ``RunLatch`` and supplies a per-call `waitSeconds` of `0`
     /// through ``DetachmentParameterProviding``, so the session's own
     /// ``DetachingTool`` layer detaches it at once: one model turn leaves a
-    /// real parked run behind, and the test decides when it settles.
+    /// real background run behind, and the test decides when it settles.
     private struct GatedBackgroundTool: Tool, DetachmentParameterProviding {
         let name: String
         let description = "test-only slow tool that detaches at once"
@@ -54,7 +54,7 @@ struct RespondRunPlaneDrainTests {
     // MARK: - Backends
 
     /// The backend the drain tests drive: its first turn calls every composed
-    /// detaching tool — each of which parks — and answers with the last
+    /// detaching tool — each of which backgrounds its call — and answers with the last
     /// pending envelope; every later turn answers *from the prompt it was
     /// given*, so an answer grounded in the drained results is provable by
     /// reading the answer.
@@ -129,7 +129,7 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
-    /// A backend whose every turn parks one fresh run on the session's own
+    /// A backend whose every turn tracks one fresh run on the session's own
     /// mailbox — the shape the termination rule exists for: a drained turn
     /// that starts yet more background work.
     ///
@@ -138,16 +138,16 @@ struct RespondRunPlaneDrainTests {
     /// tool of that turn would take.
     ///
     /// `@unchecked Sendable` on the same terms as ``BackgroundingBackend``.
-    private final class AlwaysParkingBackend: LanguageModelSessionBackend, @unchecked Sendable {
+    private final class AlwaysSuspendingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         /// The answer every turn produces, so a test can assert respond
         /// returned an answer rather than a pending envelope.
         static let answerText = "started another run"
 
         private let inner = StubSessionBackend()
 
-        /// Holds every run this backend parked, so the test can release them
+        /// Holds every run this backend tracked, so the test can release them
         /// one at a time.
-        let releaser = ParkedRunReleaser()
+        let releaser = BackgroundRunReleaser()
 
         /// Every prompt this backend was asked to respond to, in turn order.
         private(set) var receivedPrompts: [String] = []
@@ -156,7 +156,7 @@ struct RespondRunPlaneDrainTests {
             receivedPrompts.append(prompt)
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
             if let mailbox = ToolContext.current?.mailbox {
-                await releaser.park(on: mailbox)
+                await releaser.track(on: mailbox)
             }
             return Self.answerText
         }
@@ -182,30 +182,30 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
-    /// Parks fake runs on a mailbox and holds each one parked until the test
+    /// Tracks fake runs on a mailbox and holds each one running until the test
     /// releases it — the controllable stand-in for background work a drained
     /// turn starts.
-    private actor ParkedRunReleaser {
-        /// One latch per parked run, keyed by the run's completion token.
+    private actor BackgroundRunReleaser {
+        /// One latch per background run, keyed by the run's completion token.
         private var gates: [String: RunLatch] = [:]
 
-        /// Parks one fresh run whose body waits for ``release(token:)``.
+        /// Tracks one fresh run whose body waits for ``release(token:)``.
         ///
-        /// - Parameter mailbox: The mailbox the run parks on.
-        func park(on mailbox: SessionMailbox) async {
+        /// - Parameter mailbox: The mailbox the run is tracked on.
+        func track(on mailbox: SessionMailbox) async {
             let gate = RunLatch()
-            let token = await parkFakeRun(on: mailbox, latch: gate)
+            let token = await trackFakeRun(on: mailbox, latch: gate)
             gates[token] = gate
         }
 
-        /// Lets one parked run settle. An unknown token is a no-op.
+        /// Lets one background run settle. An unknown token is a no-op.
         ///
         /// - Parameter token: The run's completion token.
         func release(token: String) async {
             await gates[token]?.open()
         }
 
-        /// Lets every run parked so far settle, so no fake run outlives a
+        /// Lets every run tracked so far settle, so no fake run outlives a
         /// test.
         func releaseAll() async {
             for gate in gates.values {
@@ -242,13 +242,13 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
-    /// Vends one retained ``AlwaysParkingBackend`` per session, under the same
+    /// Vends one retained ``AlwaysSuspendingBackend`` per session, under the same
     /// `@unchecked Sendable` invariant ``BackgroundingLLMContainer`` documents.
-    private final class AlwaysParkingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
-        private(set) var lastBackend: AlwaysParkingBackend?
+    private final class AlwaysSuspendingLLMContainer: LoadedLLMContainer, @unchecked Sendable {
+        private(set) var lastBackend: AlwaysSuspendingBackend?
 
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = AlwaysParkingBackend()
+            let backend = AlwaysSuspendingBackend()
             lastBackend = backend
             return backend
         }
@@ -294,7 +294,7 @@ struct RespondRunPlaneDrainTests {
     }
 
     /// Waits, bounded, for `session` to hold a ``RoutedSession/respond(to:maxTokens:)``
-    /// call parked on a wait of its own run plane.
+    /// call suspended on a wait of its own run plane.
     ///
     /// That is the state the two cancellation routes under test have to reach:
     /// the call's own turn is over, so no turn is in flight, and the call is
@@ -303,26 +303,26 @@ struct RespondRunPlaneDrainTests {
     /// drain.
     ///
     /// - Parameter session: The session whose drain is observed.
-    /// - Throws: ``SignalNeverArrived`` when no drain parked on a wait inside
+    /// - Throws: ``SignalNeverArrived`` when no drain suspended on a wait inside
     ///   the bound.
     private static func awaitDrainWait(on session: RoutedSession) async throws {
         guard
             await BoundedWait.conditionReached(
-                "a respond call parking on a wait of the run plane",
-                when: { await session.isParkedOnRunPlaneDrainWait })
+                "a respond call suspending on a wait of the run plane",
+                when: { await session.isSuspendedOnRunPlaneDrainWait })
         else {
             throw SignalNeverArrived()
         }
     }
 
-    /// Opens `gates` and waits for every run parked on `session` to settle, so
+    /// Opens `gates` and waits for every run tracked on `session` to settle, so
     /// no detached work outlives a test.
     ///
     /// - Parameters:
     ///   - session: The session whose mailbox is drained.
-    ///   - gates: The latches the parked runs' bodies are waiting on.
-    private static func releaseParkedRuns(on session: RoutedSession, opening gates: [RunLatch]) async {
-        let tokens: [String] = await session.mailbox.parkedRuns().map(\.completionToken)
+    ///   - gates: The latches the background runs' bodies are waiting on.
+    private static func releaseBackgroundRuns(on session: RoutedSession, opening gates: [RunLatch]) async {
+        let tokens: [String] = await session.mailbox.backgroundRuns().map(\.completionToken)
         for gate in gates {
             await gate.open()
         }
@@ -333,29 +333,29 @@ struct RespondRunPlaneDrainTests {
     }
 
     /// Waits, bounded, for `session`'s run plane to report at least `count`
-    /// parked runs, then reports their tokens.
+    /// background runs, then reports their tokens.
     ///
     /// - Parameters:
-    ///   - count: How many parked runs to wait for.
+    ///   - count: How many background runs to wait for.
     ///   - session: The session whose mailbox is observed.
-    /// - Returns: The parked runs' completion tokens, in park order.
-    private static func parkedTokens(
+    /// - Returns: The background runs' completion tokens, in tracking order.
+    private static func backgroundTokens(
         atLeast count: Int, on session: RoutedSession
     ) async -> [String] {
         #expect(
-            await BoundedWait.conditionReached("\(count) runs parking on the session") {
-                await session.mailbox.parkedRuns().count >= count
+            await BoundedWait.conditionReached("\(count) runs tracked on the session") {
+                await session.mailbox.backgroundRuns().count >= count
             })
-        return await session.mailbox.parkedRuns().map(\.completionToken)
+        return await session.mailbox.backgroundRuns().map(\.completionToken)
     }
 
     // MARK: - respond(to:) drains before it returns
 
     @Test(
-        "respond(to:) waits for every run its turn parked, folds their results into the same call, and returns with nothing left parked"
+        "respond(to:) waits for every run its turn backgrounded, folds their results into the same call, and returns with nothing left tracked"
     )
     @MainActor
-    func respondDrainsEveryParkedRunBeforeReturning() async throws {
+    func respondDrainsEveryBackgroundRunBeforeReturning() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -371,11 +371,11 @@ struct RespondRunPlaneDrainTests {
 
         let responding = Task { try await session.respond(to: "run both jobs") }
 
-        // Both runs park inside the first turn. Releasing them one at a time —
+        // Both runs are backgrounded inside the first turn. Releasing them one at a time —
         // and waiting for the first to settle before releasing the second —
         // is what makes a drain that collects only the first run a wrong
         // answer rather than a lucky one.
-        let tokens = await Self.parkedTokens(atLeast: 2, on: session)
+        let tokens = await Self.backgroundTokens(atLeast: 2, on: session)
         #expect(tokens.count == 2)
         await firstGate.open()
         _ = await session.mailbox.wait(
@@ -391,9 +391,9 @@ struct RespondRunPlaneDrainTests {
         #expect(answer.contains(Self.firstToolOutput))
         #expect(answer.contains(Self.secondToolOutput))
 
-        // Nothing is left parked, and the model was never asked to poll: one
+        // Nothing is left tracked, and the model was never asked to poll: one
         // turn of its own, one drained continuation turn, two tool calls.
-        #expect(await session.mailbox.parkedRuns().isEmpty)
+        #expect(await session.mailbox.backgroundRuns().isEmpty)
         #expect(backend.receivedPrompts.count == 2)
         #expect(backend.toolCallCount == 2)
     }
@@ -401,28 +401,28 @@ struct RespondRunPlaneDrainTests {
     // MARK: - The termination rule
 
     @Test(
-        "a drained turn that parks another run still terminates: respond runs its own turn plus at most the drain-round limit"
+        "a drained turn that backgrounds another run still terminates: respond runs its own turn plus at most the drain-round limit"
     )
     @MainActor
-    func drainedTurnThatParksAnotherRunTerminates() async throws {
+    func drainedTurnThatBackgroundsAnotherRunTerminates() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let container = AlwaysParkingLLMContainer()
+        let container = AlwaysSuspendingLLMContainer()
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let session = profile.standard.makeSession()
         let backend = try #require(container.lastBackend)
 
         let responding = Task { try await session.respond(to: "start") }
 
-        // Release each parked run only after it has been observed parked
+        // Release each background run only after it has been observed tracked
         // twice, so the drain's own snapshot — taken microseconds after the
-        // park, while this driver sleeps between observations — can never
+        // run is tracked, while this driver sleeps between observations — can never
         // miss it and end the loop early.
         let driver = Task {
             var seen: Set<String> = []
             while !Task.isCancelled {
-                for run in await session.mailbox.parkedRuns() {
+                for run in await session.mailbox.backgroundRuns() {
                     if seen.insert(run.completionToken).inserted { continue }
                     await backend.releaser.release(token: run.completionToken)
                 }
@@ -433,8 +433,8 @@ struct RespondRunPlaneDrainTests {
         let answer = try await responding.value
         driver.cancel()
 
-        #expect(answer == AlwaysParkingBackend.answerText)
-        #expect(backend.receivedPrompts.count == 1 + RoutedSessionActor.parkedRunDrainRoundLimit)
+        #expect(answer == AlwaysSuspendingBackend.answerText)
+        #expect(backend.receivedPrompts.count == 1 + RoutedSessionActor.backgroundRunDrainRoundLimit)
 
         // Nothing detached outlives the test.
         await backend.releaser.releaseAll()
@@ -442,9 +442,9 @@ struct RespondRunPlaneDrainTests {
 
     // MARK: - streamEvents(to:) still backgrounds
 
-    @Test("streamEvents(to:) is unchanged: it finishes with the turn's runs still parked, and runs no drained turn")
+    @Test("streamEvents(to:) is unchanged: it finishes with the turn's runs still running, and runs no drained turn")
     @MainActor
-    func streamEventsKeepsBackgroundingItsParkedRuns() async throws {
+    func streamEventsKeepsBackgroundingItsBackgroundRuns() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -462,11 +462,11 @@ struct RespondRunPlaneDrainTests {
 
         // The stream finished while both runs were still in flight — that is
         // the feature on this surface — and no continuation turn ran.
-        #expect(await session.mailbox.parkedRuns().count == 2)
+        #expect(await session.mailbox.backgroundRuns().count == 2)
         #expect(backend.receivedPrompts.count == 1)
 
-        // Settle the parked runs so no detached work outlives the test.
-        let tokens: [String] = await session.mailbox.parkedRuns().map(\.completionToken)
+        // Settle the background runs so no detached work outlives the test.
+        let tokens: [String] = await session.mailbox.backgroundRuns().map(\.completionToken)
         await firstGate.open()
         await secondGate.open()
         for token in tokens {
@@ -475,13 +475,13 @@ struct RespondRunPlaneDrainTests {
         }
     }
 
-    // MARK: - Cancelling a call parked in its drain
+    // MARK: - Cancelling a call suspended in its drain
 
     @Test(
-        "cancelCurrentTurn() reaches a respond parked in its run-plane drain: it reports requested, and the call ends with its own turn's answer"
+        "cancelCurrentTurn() reaches a respond suspended in its run-plane drain: it reports requested, and the call ends with its own turn's answer"
     )
     @MainActor
-    func cancelCurrentTurnEndsARespondParkedInItsDrain() async throws {
+    func cancelCurrentTurnEndsARespondSuspendedInItsDrain() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -516,15 +516,15 @@ struct RespondRunPlaneDrainTests {
         #expect(backend.receivedPrompts.count == 1)
 
         // A cancelled drain stops waiting; it does not sweep. The run it was
-        // waiting on is still parked, exactly as it was.
-        #expect(await session.mailbox.parkedRuns().count == 1)
+        // waiting on is still running, exactly as it was.
+        #expect(await session.mailbox.backgroundRuns().count == 1)
 
-        await Self.releaseParkedRuns(on: session, opening: [gate])
+        await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }
 
-    @Test("cancelling the caller's own task ends a respond parked in its run-plane drain")
+    @Test("cancelling the caller's own task ends a respond suspended in its run-plane drain")
     @MainActor
-    func cancellingTheCallersTaskEndsARespondParkedInItsDrain() async throws {
+    func cancellingTheCallersTaskEndsARespondSuspendedInItsDrain() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "RespondRunPlaneDrainTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -551,8 +551,8 @@ struct RespondRunPlaneDrainTests {
         let answer = try await responding.value
         #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
         #expect(backend.receivedPrompts.count == 1)
-        #expect(await session.mailbox.parkedRuns().count == 1)
+        #expect(await session.mailbox.backgroundRuns().count == 1)
 
-        await Self.releaseParkedRuns(on: session, opening: [gate])
+        await Self.releaseBackgroundRuns(on: session, opening: [gate])
     }
 }

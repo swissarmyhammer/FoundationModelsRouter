@@ -4,7 +4,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Thrown by ``AnswerDrivenRun/deliveredAnswer()`` when no answer ever reached
-/// the parked run, so the test that caught the fault stops there instead of
+/// the background run, so the test that caught the fault stops there instead of
 /// asserting on a result it never received.
 struct AnswerNeverDelivered: Error {}
 
@@ -20,13 +20,13 @@ private actor RunCompletion {
     }
 }
 
-/// Work that only finishes once an answer is delivered to it — a parked
+/// Work that only finishes once an answer is delivered to it — a suspended
 /// ``ToolContext/elicit(_:)``, a ``SessionMailbox/awaitAnswer(to:posting:)``,
 /// or a tool call blocked behind either — started so a test reads its result
 /// under a bound instead of awaiting it.
 ///
 /// The bound is the whole point. A regression anywhere on the inbound answer
-/// route leaves the run parked forever, and this test target sets no
+/// route leaves the run suspended forever, and this test target sets no
 /// `.timeLimit` trait, so awaiting such a run directly hangs the whole run of
 /// `swift test` rather than failing the test that caught the fault. That is
 /// the escape hatch `TurnCancellationTests` already carries for a stranded
@@ -34,7 +34,7 @@ private actor RunCompletion {
 /// rather than a further await — in the shape the answer-delivery suites need.
 ///
 /// ``deliveredAnswer()`` never awaits the run on its give-up path, and that is
-/// deliberate: ``SessionMailbox`` parks on a plain `withCheckedContinuation`,
+/// deliberate: ``SessionMailbox`` suspends on a plain `withCheckedContinuation`,
 /// which ignores cancellation, so a run no answer reached cannot be unwound at
 /// all. Cancelling it and then awaiting it would hang in exactly the case this
 /// bound exists to catch.
@@ -81,11 +81,11 @@ struct AnswerDrivenRun<Value: Sendable> {
         guard await finishesWithinDeliveryBound() else {
             Issue.record(
                 """
-                no answer ever reached \(label): the run is still parked, so the inbound \
+                no answer ever reached \(label): the run is still running, so the inbound \
                 answer route is broken
                 """
             )
-            // Cancelling cannot unpark a run suspended in `withCheckedContinuation`,
+            // Cancelling cannot resume a run suspended in `withCheckedContinuation`,
             // but the test must not await that run either.
             task.cancel()
             throw AnswerNeverDelivered()

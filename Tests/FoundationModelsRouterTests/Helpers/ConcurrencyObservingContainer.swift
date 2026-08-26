@@ -15,7 +15,7 @@ import FoundationModelsRouterTestSupport
 ///
 /// The open call is what makes a generation gate observable: a turn keeps the
 /// container's one generation permit for as long as its model call runs, so a
-/// second turn either parks on that permit or shows that it never had to.
+/// second turn either suspends on that permit or shows that it never had to.
 ///
 /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
 /// owning session drives one backend method at a time, and the observer it

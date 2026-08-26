@@ -1,12 +1,12 @@
 import Foundation
 
-/// The per-session registry of detached, long-running work: parked runs a
-/// caller can observe (`parkedRuns()`), await (`wait(completionToken:seconds:)`),
+/// The per-session registry of detached, long-running work: background runs a
+/// caller can observe (`backgroundRuns()`), await (`wait(completionToken:seconds:)`),
 /// and cancel (`cancel(completionToken:)`), plus the pending elicitations
 /// those runs have raised.
 ///
 /// Scope rule — identical to ``SessionOutbox``: one mailbox per session, a
-/// fork gets its own fresh one, never shared, so a run parked on one session
+/// fork gets its own fresh one, never shared, so a run tracked on one session
 /// can never be waited on, cancelled, or swept through another.
 ///
 /// This is the **run plane**, deliberately distinct from the content plane:
@@ -16,7 +16,7 @@ import Foundation
 /// plus the run's identifier — `wait(completionToken:seconds:)` returns
 /// exactly that, never a full store.
 ///
-/// A parked run is keyed by its **completion token**: a ULID string that IS
+/// A background run is keyed by its **completion token**: a ULID string that IS
 /// the run's event `correlationID` (minted through the same ULID machinery
 /// behind ``SessionOutbox/ItemID`` — see ``makeCompletionToken()``), so the
 /// token a caller holds and the correlation on the run's posted events are
@@ -24,16 +24,16 @@ import Foundation
 ///
 /// ``RunKind`` carries the ``RunKind/swiftTask`` and ``RunKind/process`` kinds,
 /// and it stays the seam where `mcpRequest` (phase 4) lands. Each kind carries
-/// its own cancellation semantics through the parked run's canceler closure and
+/// its own cancellation semantics through the background run's canceler closure and
 /// the honest ``OperationOutcome`` vocabulary that closure must report
 /// (`.cancelled` is a request, `.stopped` is certainty, `.lost` is unknowable —
 /// never flattened). The mailbox holds those closures and never knows what a
 /// kind does to end its work: a `process` run's `killpg(SIGKILL)` belongs to the
 /// capability that spawned the group.
 ///
-/// Teardown is ``sweep()``, driven by ``RoutedSession/close()``: every parked
+/// Teardown is ``sweep()``, driven by ``RoutedSession/close()``: every tracked
 /// run's canceler is invoked with its kind's semantics and exactly one
-/// terminal event per parked run is produced for the journal — no orphans, no
+/// terminal event per background run is produced for the journal — no orphans, no
 /// holes — and every pending elicitation is rejected.
 ///
 /// **Audience (tasks ^j0pp9yp, ^k0mecjp).** The public surface of this actor
@@ -41,8 +41,8 @@ import Foundation
 /// ``makeCompletionToken()`` to construct the binding, and
 /// ``respond(elicitationId:_:)``/``complete(elicitationId:)`` to answer the
 /// elicitations a hand-bound tool raises — plus the answer-delivery
-/// vocabulary those calls return. The run-plane machinery (park, wait,
-/// cancel, parked-run listing, sweep) is internal wiring the detachment
+/// vocabulary those calls return. The run-plane machinery (track, wait,
+/// cancel, background-run listing, sweep) is internal wiring the detachment
 /// engine and the session own, and it stays internal: a tool reaches
 /// elicitation through ``ToolContext/elicit(_:)``, and an app answers a
 /// session's elicitations through
@@ -53,7 +53,7 @@ import Foundation
 /// the run plane to a model, the way `FoundationModelsMultitool` mounts
 /// `status`/`wait`/`cancel` builtins — reads this plane through the three
 /// typed capabilities on the context it already holds:
-/// ``ToolContext/parkedRuns()``, ``ToolContext/wait(completionToken:seconds:)``
+/// ``ToolContext/backgroundRuns()``, ``ToolContext/wait(completionToken:seconds:)``
 /// and ``ToolContext/cancel(completionToken:)``, bounded by
 /// ``ToolContext/deadlineSecondsCeiling`` and
 /// ``ToolContext/terminalDetailTailLimit``. That is the whole host route, so
@@ -62,13 +62,13 @@ import Foundation
 public actor SessionMailbox {
     // MARK: - Vocabulary
 
-    /// What ``park(tool:op:kind:completionToken:settling:canceler:)``
+    /// What ``track(tool:op:kind:completionToken:settling:canceler:)``
     /// resolved to.
-    enum ParkResult: Sendable, Equatable {
-        /// The run is parked under its token.
-        case parked
+    enum TrackResult: Sendable, Equatable {
+        /// The run is tracked under its token.
+        case tracked
 
-        /// The token already names a parked or settled run; the incumbent
+        /// The token already names a running or settled run; the incumbent
         /// is left untouched and the new run is **not** registered — the
         /// caller violated token uniqueness (tokens are freshly minted
         /// ULIDs, see ``makeCompletionToken()``) and remains responsible
@@ -123,20 +123,20 @@ public actor SessionMailbox {
     // MARK: - Token minting
 
     /// Mints a fresh completion token: a ULID string, generated through the
-    /// same ULID machinery behind ``SessionOutbox/ItemID``, that the parking
+    /// same ULID machinery behind ``SessionOutbox/ItemID``, that the tracking
     /// caller also uses as the run's event `correlationID`.
     public static func makeCompletionToken() -> String {
         ULID.generate().description
     }
 
-    // MARK: - Parked-run storage
+    // MARK: - Background-run storage
 
-    /// One parked run's bookkeeping.
-    private struct ParkedRunEntry {
+    /// One background run's bookkeeping.
+    private struct BackgroundRunEntry {
         /// The fused tool's name that owns the run.
         let tool: String
 
-        /// The canonical `"verb noun"` op string of the parked operation.
+        /// The canonical `"verb noun"` op string of the tracked operation.
         let op: String
 
         /// What kind of work the run is.
@@ -150,12 +150,12 @@ public actor SessionMailbox {
         let canceler: @Sendable () async -> OperationOutcome
     }
 
-    /// Parked runs by completion token.
-    private var runsByToken: [String: ParkedRunEntry] = [:]
+    /// Background runs by completion token.
+    private var runsByToken: [String: BackgroundRunEntry] = [:]
 
-    /// Completion tokens in park order, so ``parkedRuns()`` and ``sweep()`` are
+    /// Completion tokens in tracking order, so ``backgroundRuns()`` and ``sweep()`` are
     /// deterministic.
-    private var parkOrder: [String] = []
+    private var trackingOrder: [String] = []
 
     /// Terminal events of settled (or swept) runs, by completion token, so a
     /// ``wait(completionToken:seconds:)`` arriving after settlement still
@@ -179,7 +179,7 @@ public actor SessionMailbox {
     /// awaits.
     private var isSweeping = false
 
-    /// Continuations parked by ``wait(completionToken:seconds:)``, keyed by
+    /// Continuations suspended by ``wait(completionToken:seconds:)``, keyed by
     /// completion token and then by a per-waiter id so a deadline can expire
     /// exactly its own waiter.
     private var waiters: [String: [UUID: CheckedContinuation<WaitOutcome, Never>]] = [:]
@@ -211,15 +211,15 @@ public actor SessionMailbox {
     /// Creates an empty mailbox.
     public init() {}
 
-    // MARK: - Parked runs
+    // MARK: - Background runs
 
     /// Registers a detached run under `completionToken`.
     ///
     /// The mailbox observes `settling` in the background: when the run's own
-    /// body ends, the run leaves ``parkedRuns()``, its terminal event (detail
+    /// body ends, the run leaves ``backgroundRuns()``, its terminal event (detail
     /// bounded to ``ToolContext/terminalDetailTailLimit``) is retained for late
     /// ``wait(completionToken:seconds:)`` calls, and every waiter currently
-    /// parked on the token resumes with it. A run that only ends because
+    /// suspended on the token resumes with it. A run that only ends because
     /// ``sweep()`` already synthesized its terminal event settles silently —
     /// exactly one terminal event per run, never two.
     ///
@@ -234,56 +234,56 @@ public actor SessionMailbox {
     ///     its body ends.
     ///   - canceler: Requests cancellation with `kind`'s own semantics and
     ///     reports the honest ``OperationOutcome`` of that request.
-    /// - Returns: ``ParkResult/parked``, or ``ParkResult/duplicateToken``
-    ///   when the token already names a parked or settled run — the
+    /// - Returns: ``TrackResult/tracked``, or ``TrackResult/duplicateToken``
+    ///   when the token already names a running or settled run — the
     ///   incumbent is never silently overwritten (that would orphan its
     ///   canceler and settling handle, the exact hole ``sweep()`` exists to
     ///   prevent).
     @discardableResult
-    func park(
+    func track(
         tool: String,
         op: String,
         kind: RunKind,
         completionToken: String,
         settling: Task<OperationEvent, Never>,
         canceler: @escaping @Sendable () async -> OperationOutcome
-    ) -> ParkResult {
+    ) -> TrackResult {
         guard runsByToken[completionToken] == nil, settledTerminalEvents[completionToken] == nil else {
             return .duplicateToken
         }
-        runsByToken[completionToken] = ParkedRunEntry(
+        runsByToken[completionToken] = BackgroundRunEntry(
             tool: tool,
             op: op,
             kind: kind,
             latestProgressDetail: nil,
             canceler: canceler
         )
-        parkOrder.append(completionToken)
+        trackingOrder.append(completionToken)
         Task { [weak self] in
             let terminal = await settling.value
             await self?.markSettled(completionToken: completionToken, terminal: terminal)
         }
-        return .parked
+        return .tracked
     }
 
-    /// Records the latest progress detail for a parked run — the value
-    /// ``parkedRuns()`` reports. Unknown token: a safe no-op.
+    /// Records the latest progress detail for a background run — the value
+    /// ``backgroundRuns()`` reports. Unknown token: a safe no-op.
     ///
     /// - Parameters:
-    ///   - completionToken: The parked run's completion token.
+    ///   - completionToken: The background run's completion token.
     ///   - detail: The run's newest progress detail.
     func updateProgress(completionToken: String, detail: String) {
         runsByToken[completionToken]?.latestProgressDetail = detail
     }
 
-    /// A run-plane snapshot of every pending run, in park order: token, op,
+    /// A run-plane snapshot of every pending run, in tracking order: token, op,
     /// kind, and latest progress — envelopes only, never bulk output.
     ///
-    /// - Returns: One ``ParkedRun`` per still-parked run.
-    func parkedRuns() -> [ParkedRun] {
-        parkOrder.compactMap { token in
+    /// - Returns: One ``BackgroundRun`` per still-background run.
+    func backgroundRuns() -> [BackgroundRun] {
+        trackingOrder.compactMap { token in
             runsByToken[token].map { run in
-                ParkedRun(
+                BackgroundRun(
                     completionToken: token,
                     tool: run.tool,
                     op: run.op,
@@ -329,17 +329,17 @@ public actor SessionMailbox {
         }
     }
 
-    /// Invokes a parked run's canceler and reports the outcome the canceler
+    /// Invokes a background run's canceler and reports the outcome the canceler
     /// reports — verbatim, never a guess.
     ///
-    /// The run stays parked until it actually settles, and the reported
+    /// The run stays running until it actually settles, and the reported
     /// outcome says how much the canceler knows. A ``RunKind/swiftTask`` run
     /// is cancelled cooperatively, so the body ends on its own schedule and
     /// the canceler reports ``OperationOutcome/cancelled``. A
     /// ``RunKind/process`` run is killed with `killpg(SIGKILL)` by the
     /// capability that owns the group, so the canceler reports
     /// ``OperationOutcome/stopped``. Either way, settlement (observed by
-    /// ``park``'s background observer) is what resumes any waiters with the
+    /// ``track``'s background observer) is what resumes any waiters with the
     /// terminal event.
     ///
     /// - Parameter completionToken: The run's completion token.
@@ -460,7 +460,7 @@ public actor SessionMailbox {
     // MARK: - Teardown sweep
 
     /// The deterministic session-teardown sweep ``RoutedSession/close()``
-    /// drives: for each parked run, in park order, invoke its canceler with
+    /// drives: for each background run, in tracking order, invoke its canceler with
     /// that kind's own semantics and produce exactly one terminal event —
     /// then reject every pending elicitation with
     /// ``ElicitationResponse/cancel``.
@@ -468,24 +468,24 @@ public actor SessionMailbox {
     /// Exactly-one-terminal is an invariant, not a hope: a run that settles
     /// naturally while its canceler is awaited contributes its natural
     /// terminal event instead of a synthesized one, and a run that settles
-    /// only after the sweep is dropped by ``park``'s observer (its token is
-    /// no longer parked). Every returned event is `.completed`-kind with the
+    /// only after the sweep is dropped by ``track``'s observer (its token is
+    /// no longer tracked). Every returned event is `.completed`-kind with the
     /// run's completion token as its `correlationID`, its detail bounded to
     /// ``ToolContext/terminalDetailTailLimit``, and the canceler's honest outcome — so
     /// the caller can journal the whole list before the session closes, with
     /// no orphans and no holes.
     ///
-    /// - Returns: One terminal event per run that was parked when the sweep
-    ///   began, in park order. A sweep that arrives while another is still
+    /// - Returns: One terminal event per run that was tracked when the sweep
+    ///   began, in tracking order. A sweep that arrives while another is still
     ///   in flight returns empty — the in-flight sweep already owns every
-    ///   parked run's single terminal event, so a concurrent second sweep
+    ///   background run's single terminal event, so a concurrent second sweep
     ///   never double-invokes a canceler or double-journals.
     func sweep() async -> [OperationEvent] {
         guard !isSweeping else { return [] }
         isSweeping = true
         defer { isSweeping = false }
         var terminals: [OperationEvent] = []
-        let tokens = parkOrder
+        let tokens = trackingOrder
         for token in tokens {
             guard let run = runsByToken[token] else {
                 continue
@@ -509,7 +509,7 @@ public actor SessionMailbox {
                 )
             )
             runsByToken.removeValue(forKey: token)
-            parkOrder.removeAll { $0 == token }
+            trackingOrder.removeAll { $0 == token }
             retainSettledTerminalEvent(synthesized, for: token)
             resumeWaiters(for: token, with: .settled(synthesized))
             terminals.append(synthesized)
@@ -536,15 +536,15 @@ public actor SessionMailbox {
         elicitationOrder.removeAll { $0 == elicitationId }
     }
 
-    /// Records a run's natural settlement: removes it from the parked set,
+    /// Records a run's natural settlement: removes it from the tracked set,
     /// retains its (detail-bounded) terminal event, and resumes every waiter
-    /// parked on its token. A token no longer parked — already swept — is
+    /// suspended on its token. A token no longer tracked — already swept — is
     /// dropped, preserving exactly-one-terminal.
     private func markSettled(completionToken: String, terminal: OperationEvent) {
         guard runsByToken.removeValue(forKey: completionToken) != nil else {
             return
         }
-        parkOrder.removeAll { $0 == completionToken }
+        trackingOrder.removeAll { $0 == completionToken }
         let bounded = boundingDetail(terminal)
         retainSettledTerminalEvent(bounded, for: completionToken)
         resumeWaiters(for: completionToken, with: .settled(bounded))
@@ -577,7 +577,7 @@ public actor SessionMailbox {
         return UInt64(clamped * nanosecondsPerSecond)
     }
 
-    /// Expires one waiter's deadline: if it is still parked, resumes it with
+    /// Expires one waiter's deadline: if it is still running, resumes it with
     /// ``WaitOutcome/deadlineElapsed``; a waiter already resumed by
     /// settlement is left alone.
     private func expireWaiter(completionToken: String, waiterID: UUID) {
@@ -587,12 +587,12 @@ public actor SessionMailbox {
         continuation.resume(returning: .deadlineElapsed)
     }
 
-    /// Resumes every waiter parked on `completionToken` with `result`.
+    /// Resumes every waiter suspended on `completionToken` with `result`.
     private func resumeWaiters(for completionToken: String, with result: WaitOutcome) {
-        guard let parked = waiters.removeValue(forKey: completionToken) else {
+        guard let suspended = waiters.removeValue(forKey: completionToken) else {
             return
         }
-        for continuation in parked.values {
+        for continuation in suspended.values {
             continuation.resume(returning: result)
         }
     }

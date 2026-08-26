@@ -600,10 +600,10 @@ struct RoutedSessionCompactTests {
     }
 
     @Test(
-        "compact() with a parked run records its completionToken, op, and latest progress in the boundary CompactionSegment and renders them into a model-visible text segment"
+        "compact() with a background run records its completionToken, op, and latest progress in the boundary CompactionSegment and renders them into a model-visible text segment"
     )
     @MainActor
-    func compactCarriesParkedRunAcrossBoundary() async throws {
+    func compactCarriesBackgroundRunAcrossBoundary() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -616,7 +616,7 @@ struct RoutedSessionCompactTests {
         try await driveTurns(6, on: session)
 
         let latch = RunLatch()
-        let token = await parkFakeRun(on: session.mailbox, latch: latch)
+        let token = await trackFakeRun(on: session.mailbox, latch: latch)
         await session.mailbox.updateProgress(completionToken: token, detail: "halfway through")
 
         let backend = try #require(container.lastBackend)

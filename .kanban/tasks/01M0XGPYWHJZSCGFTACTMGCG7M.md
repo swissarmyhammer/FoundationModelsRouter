@@ -1,8 +1,13 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01m0xs27wc0xbvybxxzfqdsdzy
+  text: 'Progress. I read the validator rules (55 rules, full dump). I completed the rename in Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift: TrackResult case `parked` -> `tracked`, `return .parked` -> `return .tracked`, doc prose changed to track/tracked for the registry and suspend/suspended for waiter continuations, local `let parked` -> `suspended` in resumeWaiters. A sub-agent now completes the same rename in DetachingTool.swift (with the three exempt doc spots the waitSeconds-removal tasks will delete), ToolContext.swift, RoutedSession.md, and the ~28 test files, then runs `swift build --build-tests` and `swift test`. Known compile breaks to repair: RespondRunPlaneDrainTests.swift `releaser.park(on:)` -> `releaser.track(on:)`, and the local `park` closure in TurnCancellationTests.swift -> `suspend`.'
+  timestamp: 2026-08-26T00:56:01.676627+00:00
+position_column: doing
+position_ordinal: '80'
 title: Finish the removal of the "park" vocabulary
 ---
 ## What

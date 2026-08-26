@@ -6,9 +6,9 @@ extension RoutedSessionActor {
     /// runs after its own turn — the whole of the drain's termination rule.
     ///
     /// A drained turn hands the model results it did not have before, so it can
-    /// start more background work and park more runs, which asks for another
+    /// start more background work and background more runs, which asks for another
     /// drain. That is a loop with no exit of its own, so the exit is stated
-    /// here: **drain every parked run, round after round, up to this many
+    /// here: **drain every background run, round after round, up to this many
     /// rounds — then answer with whatever the last turn produced.** A `respond`
     /// that can spin forever is worse than one that returns early (task
     /// ^nmpejc5), so the bound is part of the design rather than a later
@@ -18,7 +18,7 @@ extension RoutedSessionActor {
     /// chains background steps — start work, read it, start the next step —
     /// and four continuation turns cover a chain of that shape while keeping
     /// the worst case a caller can pay small and countable.
-    static let parkedRunDrainRoundLimit = 4
+    static let backgroundRunDrainRoundLimit = 4
 
     /// The prompt each drained continuation turn carries.
     ///
@@ -48,48 +48,48 @@ extension RoutedSessionActor {
     ///   turns, folded into that turn's prompt as a plain-text preamble. That
     ///   is the ordinary drain-on-turn every generation surface performs.
     /// - The **run plane** — ``SessionMailbox``, the runs a detached tool call
-    ///   parked — is drained *after* this call's own turn: every parked run is
+    ///   backgrounded — is drained *after* this call's own turn: every background run is
     ///   awaited to settlement, and a further turn is run so the settled
     ///   results reach the model in this same call. So a turn whose tool work
     ///   backgrounded still answers from that work's own output rather than
     ///   from the completion token the tool returned, and no caller has to make
-    ///   the model call a `wait` tool to get there. Every run parked at each
+    ///   the model call a `wait` tool to get there. Every run backgrounded at each
     ///   round is drained, not just the first, and the drain covers the whole
-    ///   run plane rather than only this turn's own parkings — "nothing left
-    ///   parked when `respond` returns" is a statement about the session.
-    /// - It **does not sweep**. Cancelling parked runs and synthesizing their
+    ///   run plane rather than only this turn's own backgrounded runs — "nothing left
+    ///   running when `respond` returns" is a statement about the session.
+    /// - It **does not sweep**. Cancelling background runs and synthesizing their
     ///   terminals is teardown, and belongs to ``close()`` alone
     ///   (``SessionMailbox/sweep()``). A drain waits for work to finish; a
     ///   sweep ends it.
     /// - It **does not change the streaming surfaces**.
     ///   ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
-    ///   still return while a run they parked is in flight: backgrounding is
+    ///   still return while a run they backgrounded is in flight: backgrounding is
     ///   the feature there, and a consumer of those surfaces watches the run
     ///   plane itself.
     ///
     /// **How often this drain enters its loop.**
     ///
-    /// Every park hands the model ``PendingRunEnvelope``, whose text tells it
+    /// Every backgrounded run hands the model ``PendingRunEnvelope``, whose text tells it
     /// to collect that run with a `wait` call before it answers.
     /// ``DetachingTool`` writes that text, and ``ToolContext`` publishes no
-    /// park of its own, so no host can park a run without the instruction — a
+    /// backgrounding of its own, so no host can background a run without the instruction — a
     /// host whose tools always advise collection is every host, not an unusual
     /// one. A model that obeys the instruction leaves the run plane empty,
-    /// ``settleParkedRuns(cancellationsBefore:)`` answers `false` on the first
+    /// ``settleBackgroundRuns(cancellationsBefore:)`` answers `false` on the first
     /// round, and no drained turn runs. So the loop below is a safety net for
-    /// the turn that ends with a run still parked: the model ignored the
-    /// instruction, or its own `wait` ran out. The suite parks the runs it
+    /// the turn that ends with a run still running: the model ignored the
+    /// instruction, or its own `wait` ran out. The suite backgrounds the runs it
     /// drains — through a real detaching tool whose model is a stub, or on the
     /// run plane directly — so it proves what the loop does and not how often a
     /// real model reaches it (task ^466d38p).
     ///
-    /// The drain terminates by the rule ``parkedRunDrainRoundLimit`` states.
+    /// The drain terminates by the rule ``backgroundRunDrainRoundLimit`` states.
     /// Two other things end it: a run that has not settled by the run plane's
     /// own ``ToolContext/deadlineSecondsCeiling``, since a further turn could not
     /// carry its result anyway; and a cancellation landing on this call —
     /// either ``RoutedSession/cancelCurrentTurn()`` or the caller's own task
-    /// being cancelled. A cancelled turn is never drained: whatever it parked
-    /// stays parked, exactly as it did before this surface drained anything.
+    /// being cancelled. A cancelled turn is never drained: whatever it backgrounded
+    /// stays running, exactly as it did before this surface drained anything.
     ///
     /// A cancellation lands wherever this call happens to be, and the two
     /// places need different machinery (task ^h3efdrc):
@@ -116,7 +116,7 @@ extension RoutedSessionActor {
     ///   when this call's own turn backgrounded work.
     /// - Throws: Any error thrown by the model. A turn that throws is never
     ///   drained: the failure reaches the caller as it always did, and whatever
-    ///   the failed turn parked stays parked for ``close()``'s sweep.
+    ///   the failed turn backgrounded stays running for ``close()``'s sweep.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         // `backend` is this session's own persistent generation object — never
         // recreated per call — so turns accumulate conversation state. A guided
@@ -131,7 +131,7 @@ extension RoutedSessionActor {
             grammar: grammar, prompt: prompt, respondBody(grammar: grammar, maxTokens: maxTokens))
 
         // The run-plane drain. Each round runs outside the turn lock — the
-        // chokepoint released it on its way out — so the parked runs, and any
+        // chokepoint released it on its way out — so the background runs, and any
         // other caller, are free to make progress while this call waits.
         //
         // Registered for the whole drain, and registered here rather than
@@ -141,7 +141,7 @@ extension RoutedSessionActor {
         // nothing to land on.
         runPlaneDrainCount += 1
         defer { runPlaneDrainCount -= 1 }
-        for _ in 0..<Self.parkedRunDrainRoundLimit {
+        for _ in 0..<Self.backgroundRunDrainRoundLimit {
             // A cancelled turn is never drained. Cancellation does not always
             // reach this call as a thrown error: a detached tool call answers
             // the cancellation by detaching and returning its pending envelope
@@ -150,7 +150,7 @@ extension RoutedSessionActor {
             // would wait for — and re-prompt the model with — exactly the work
             // the caller asked to stop.
             guard cancelRequestCount == cancellationsBefore, !Task.isCancelled else { break }
-            guard await settleParkedRuns(cancellationsBefore: cancellationsBefore) else { break }
+            guard await settleBackgroundRuns(cancellationsBefore: cancellationsBefore) else { break }
             answer = try await generate(
                 grammar: grammar, prompt: Self.drainedRunContinuationPrompt,
                 respondBody(grammar: grammar, maxTokens: maxTokens))
@@ -158,13 +158,13 @@ extension RoutedSessionActor {
         return answer
     }
 
-    /// Awaits the settlement of every run parked on this session's mailbox at
+    /// Awaits the settlement of every run tracked on this session's mailbox at
     /// the moment of the call — one drain round.
     ///
     /// A settled run's terminal event has already reached ``outbox`` by the
     /// time its settlement is observable here: the detachment engine awaits
     /// that post before the run's settling handle resolves, and
-    /// ``SessionMailbox/park(tool:op:kind:completionToken:settling:canceler:)``
+    /// ``SessionMailbox/track(tool:op:kind:completionToken:settling:canceler:)``
     /// observes the same handle. So a round that reports `true` leaves the
     /// results staged for the next turn's own drain-on-turn composition to
     /// fold into the prompt.
@@ -174,18 +174,18 @@ extension RoutedSessionActor {
     ///   this round starts so a cancellation landing between two waits — or
     ///   between this round's snapshot and its first wait — ends the round
     ///   instead of being waited out.
-    /// - Returns: `true` when at least one run was parked and every one of them
+    /// - Returns: `true` when at least one run was tracked and every one of them
     ///   left the run plane — settled, or gone from it between this round's
     ///   snapshot and its own wait (``WaitOutcome/unknownToken``), which is the
     ///   same fact arriving a moment earlier. `false` when the run plane was
     ///   already empty, when a run outlasted
-    ///   ``ToolContext/deadlineSecondsCeiling`` and so is still parked, or when a
+    ///   ``ToolContext/deadlineSecondsCeiling`` and so is still running, or when a
     ///   cancellation reached this call: none of the three has a settled result
     ///   for a further turn to carry.
-    private func settleParkedRuns(cancellationsBefore: UInt64) async -> Bool {
-        let parked = await mailbox.parkedRuns()
-        guard !parked.isEmpty else { return false }
-        for run in parked {
+    private func settleBackgroundRuns(cancellationsBefore: UInt64) async -> Bool {
+        let running = await mailbox.backgroundRuns()
+        guard !running.isEmpty else { return false }
+        for run in running {
             // Checked here, immediately before the wait registers its gate —
             // there is no suspension between the two, so a cancellation either
             // is seen here or finds the gate to resume.
@@ -200,7 +200,7 @@ extension RoutedSessionActor {
         return true
     }
 
-    /// Awaits one parked run's settlement, racing the mailbox's own wait
+    /// Awaits one background run's settlement, racing the mailbox's own wait
     /// against a cancellation reaching this draining call.
     ///
     /// The race is what makes a drain interruptible at all.
@@ -220,7 +220,7 @@ extension RoutedSessionActor {
     /// ends on its own terms — the run settling, the ceiling elapsing, or
     /// ``close()``'s sweep — holding nothing but the mailbox and this gate.
     ///
-    /// - Parameter completionToken: The parked run's completion token.
+    /// - Parameter completionToken: The background run's completion token.
     /// - Returns: Whichever of the mailbox's answer or a cancellation arrived
     ///   first.
     private func awaitSettlement(of completionToken: String) async -> RunPlaneDrainWaitOutcome {
@@ -241,14 +241,14 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Ends every run-plane drain wait parked on this session, so a
+    /// Ends every run-plane drain wait suspended on this session, so a
     /// ``respond(to:maxTokens:)`` call suspended between its turns returns
     /// instead of waiting the run plane out.
     ///
     /// Called by ``cancelCurrentTurn()`` when no turn is in flight — see that
     /// method for why a drain is the other thing a cancellation can land on.
     /// Each resumed drain stops at the run it was waiting on and answers with
-    /// its last turn's answer; nothing is swept, so the runs stay parked
+    /// its last turn's answer; nothing is swept, so the runs stay running
     /// exactly as they were. A drain that holds no wait right now needs nothing
     /// resumed: it reads ``cancelRequestCount`` before the next wait it starts.
     func endRunPlaneDrainWaits() {
@@ -263,10 +263,10 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Whether a ``respond(to:maxTokens:)`` call on this session is parked on a
+    /// Whether a ``respond(to:maxTokens:)`` call on this session is suspended on a
     /// wait of its own run plane — between its turns, with no turn in flight to
     /// carry a cancellation.
-    var isParkedOnRunPlaneDrainWait: Bool {
+    var isSuspendedOnRunPlaneDrainWait: Bool {
         !runPlaneDrainWaitGates.isEmpty
     }
 
@@ -573,7 +573,7 @@ extension RoutedSessionActor {
     }
 }
 
-/// Whichever of a parked run's settlement or a cancellation reaching the
+/// Whichever of a background run's settlement or a cancellation reaching the
 /// draining call arrives first — the outcome of one run-plane drain wait.
 enum RunPlaneDrainWaitOutcome: Sendable {
     /// The mailbox answered the wait: the run settled, its token was already
@@ -582,6 +582,6 @@ enum RunPlaneDrainWaitOutcome: Sendable {
 
     /// A cancellation reached the draining call first, by either route — the
     /// caller's own task, or ``RoutedSession/cancelCurrentTurn()``. The run is
-    /// left exactly as it was, still parked.
+    /// left exactly as it was, still running.
     case cancelled
 }

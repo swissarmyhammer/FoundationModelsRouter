@@ -14,15 +14,15 @@ import Synchronization
 /// - ``detachmentClocks(from:)`` reads a `waitSeconds` and/or a `timeout`
 ///   out of one call's `GeneratedContent` — however the tool encodes them.
 /// - ``detachmentCollectInstruction(forCompletionToken:)`` states the `next`
-///   sentence of the pending envelope a parked call hands the model: the
-///   collect step the tool's own host offers.
-/// - ``detachmentRunKind`` states what kind of work a parked call of this
+///   sentence of the pending envelope a backgrounded call hands the model:
+///   the collect step the tool's own host offers.
+/// - ``detachmentRunKind`` states what kind of work a backgrounded call of this
 ///   tool is.
 /// - ``detachmentCanceler(forCompletionToken:)`` supplies the canceler that
 ///   kind's own cancellation authority needs.
 ///
 /// The last two are one pair, and they are how a capability outside this
-/// module parks a run that reports the truth. The router owns the ``RunKind``
+/// module backgrounds a run that reports the truth. The router owns the ``RunKind``
 /// vocabulary and none of the machinery, so a tool that owns an OS process
 /// group declares ``RunKind/process`` and hands over a canceler that ends the
 /// group and reports ``OperationOutcome/stopped``. The router never spawns a
@@ -41,8 +41,8 @@ public protocol DetachmentParameterProviding {
     /// until it holds the catalogue: a model handed a pending envelope for
     /// discovery stops discovering and starts collecting, so it never learns
     /// what it may call, and it answers that it has no access at all. A tool
-    /// that runs a long snippet beside it must still park, because a turn
-    /// cannot wait for that snippet. The first declares
+    /// that runs a long snippet beside it must still background the call,
+    /// because a turn cannot wait for that snippet. The first declares
     /// ``DetachConfiguration/runToCompletionMount`` here, the second
     /// declares nothing, and one session mounts both.
     ///
@@ -70,8 +70,8 @@ public protocol DetachmentParameterProviding {
         from arguments: GeneratedContent
     ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?)
 
-    /// Returns the `next` sentence of the pending envelope a parked call of
-    /// this tool hands the model: the in-band collect step for
+    /// Returns the `next` sentence of the pending envelope a backgrounded
+    /// call of this tool hands the model: the in-band collect step for
     /// `completionToken`.
     ///
     /// The tool that owns the collect verb owns this sentence (task
@@ -82,7 +82,7 @@ public protocol DetachmentParameterProviding {
     ///
     /// The sentence must name `completionToken`, and it must lead to a step
     /// that returns the run's result in band. It must not prescribe a call
-    /// to the parked tool itself: a tool that parks every call would then
+    /// to the backgrounding tool itself: a tool that backgrounds every call would then
     /// hand the model a new token on each round and never the result. The
     /// engine carries the rendered envelope as the detail of the synthesized
     /// progress event, and the run plane keeps the trailing
@@ -90,12 +90,12 @@ public protocol DetachmentParameterProviding {
     /// the sentence must keep the whole envelope under that limit or the
     /// model loses the token.
     ///
-    /// - Parameter completionToken: The parked run's completion token.
+    /// - Parameter completionToken: The background run's completion token.
     /// - Returns: The `next` text as plain prose; the envelope escapes it
     ///   for the wire.
     func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String
 
-    /// What kind of work a parked call of this tool is — the discriminator
+    /// What kind of work a backgrounded call of this tool is — the discriminator
     /// that selects the cancellation semantics
     /// ``detachmentCanceler(forCompletionToken:)`` must carry.
     ///
@@ -107,7 +107,7 @@ public protocol DetachmentParameterProviding {
     /// kind promises certainty.
     var detachmentRunKind: RunKind { get }
 
-    /// Returns the canceler for the run parked under `completionToken`, or
+    /// Returns the canceler for the run backgrounded under `completionToken`, or
     /// `nil` to take the engine's own.
     ///
     /// This is where a kind's cancellation authority lives. The engine's own
@@ -120,11 +120,11 @@ public protocol DetachmentParameterProviding {
     ///
     /// ``ToolContext/cancel(completionToken:)`` and the session-end sweep are
     /// what invoke the returned closure, and the run plane reports its outcome
-    /// verbatim, never a guess. The run stays parked until it really settles,
+    /// verbatim, never a guess. The run stays running until it really settles,
     /// so a canceler that only requests must leave the run's body to end on
     /// its own schedule.
     ///
-    /// - Parameter completionToken: The parked run's completion token — the
+    /// - Parameter completionToken: The background run's completion token — the
     ///   key a capability looks its own work up by.
     /// - Returns: The canceler for that run, or `nil` to take the engine's
     ///   cooperative one.
@@ -139,7 +139,7 @@ extension DetachmentParameterProviding {
     /// renders, which names the `wait` tool and the same token, and no
     /// run-plane state.
     ///
-    /// - Parameter completionToken: The parked run's completion token.
+    /// - Parameter completionToken: The background run's completion token.
     /// - Returns: The default collect sentence for `completionToken`.
     public func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String {
         PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken)
@@ -171,7 +171,7 @@ extension DetachmentParameterProviding {
     /// stop and reports ``OperationOutcome/cancelled``, a request and nothing
     /// more.
     ///
-    /// - Parameter completionToken: The parked run's completion token, which
+    /// - Parameter completionToken: The background run's completion token, which
     ///   this default does not read.
     /// - Returns: `nil`.
     public func detachmentCanceler(
@@ -197,8 +197,8 @@ public struct DetachConfiguration: Sendable, Equatable {
     /// Whether a call detaches at ``waitSeconds`` or runs to completion.
     public enum Mode: Sendable, Equatable {
         /// Race each call against ``DetachConfiguration/waitSeconds``;
-        /// a call that does not complete in the window parks in the
-        /// session's ``SessionMailbox`` and returns the pending envelope.
+        /// a call that does not complete in the window is backgrounded in
+        /// the session's ``SessionMailbox`` and returns the pending envelope.
         /// Router's native-session mount.
         case detaching
 
@@ -257,7 +257,7 @@ public struct DetachConfiguration: Sendable, Equatable {
     ///
     /// A tool asks for this mount by declaring it as its own
     /// ``DetachmentParameterProviding/detachmentMount``, which is how one
-    /// session carries a tool that must never park beside one that must:
+    /// session carries a tool that must never background a call beside one that must:
     /// every session-mounted tool is composed with the one
     /// ``nativeSessionMount``, so a mount a host could state only for a
     /// whole session would fix the first tool by breaking the second.
@@ -375,16 +375,16 @@ public enum DetachingToolError: Error, Equatable, CustomStringConvertible {
 }
 
 /// The rendered output a detached call returns in place of its result: the
-/// `pending` discriminator, the parked run's `completionToken`, and a `next`
+/// `pending` discriminator, the background run's `completionToken`, and a `next`
 /// field spelling out the collect step the model must take instead of
 /// answering.
 ///
-/// The `completionToken` is the parked run's key in the session's
+/// The `completionToken` is the background run's key in the session's
 /// ``SessionMailbox`` and the `correlationID` on every event the run posts —
 /// one string, two planes.
 ///
 /// The `next` instruction is not decoration (task ^ywc0q4f). This envelope is
-/// the whole message a model receives when its long tool call parks, so a
+/// the whole message a model receives when its long tool call is backgrounded, so a
 /// bare token leaves it holding a key it has no reason to understand while
 /// the user waits for an answer — the measured failure was a model inventing
 /// the result outright. Every other in-band text this package hands a model
@@ -398,7 +398,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// Always `true` — the discriminator a reader branches on.
     public let pending: Bool
 
-    /// The parked run's completion token: a ULID string that is also the
+    /// The background run's completion token: a ULID string that is also the
     /// run's event `correlationID`.
     public let completionToken: String
 
@@ -406,7 +406,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// prose: the wrapped tool's own sentence, or the default.
     public let next: String
 
-    /// Creates the envelope for a run parked under `completionToken`, with
+    /// Creates the envelope for a run backgrounded under `completionToken`, with
     /// ``defaultCollectInstruction(forCompletionToken:)`` as its `next` text.
     public init(completionToken: String) {
         self.init(
@@ -415,11 +415,11 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
         )
     }
 
-    /// Creates the envelope for a run parked under `completionToken`, with
+    /// Creates the envelope for a run backgrounded under `completionToken`, with
     /// `next` as its collect sentence.
     ///
     /// - Parameters:
-    ///   - completionToken: The parked run's completion token.
+    ///   - completionToken: The background run's completion token.
     ///   - next: The collect sentence, as plain prose — the text the wrapped
     ///     tool supplied through
     ///     ``DetachmentParameterProviding/detachmentCollectInstruction(forCompletionToken:)``.
@@ -439,10 +439,10 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// `wait` tool reports outcomes under names of its own, and a sentence
     /// that named Router's would name values the model never sees. It
     /// prescribes no snippet either: a host whose detaching tool takes no
-    /// snippet has nothing to run, and a host whose every call parks would
+    /// snippet has nothing to run, and a host whose every call is backgrounded would
     /// hand the model a fresh token on each round instead of the result.
     ///
-    /// - Parameter completionToken: The parked run's completion token.
+    /// - Parameter completionToken: The background run's completion token.
     /// - Returns: The default `next` text for `completionToken`.
     public static func defaultCollectInstruction(forCompletionToken completionToken: String) -> String {
         "This run is still going. Do not answer yet, and never invent or guess its result. "
@@ -476,7 +476,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// for any sentence.
     ///
     /// - Parameters:
-    ///   - completionToken: The parked run's completion token, spliced into
+    ///   - completionToken: The background run's completion token, spliced into
     ///     the wire form's token slot.
     ///   - next: The collect sentence, as plain prose.
     /// - Returns: The envelope's JSON wire form.
@@ -555,7 +555,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 }
 
 /// The detachment engine: a decorator over `any Tool` that races each call
-/// against the soft `waitSeconds` deadline and parks a call that outlives it
+/// against the soft `waitSeconds` deadline and backgrounds a call that outlives it
 /// in the session's ``SessionMailbox`` (eventplan.md § "Elevation:
 /// waitSeconds and the completion token" — that plan's name for
 /// detachment).
@@ -573,7 +573,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 ///    `waitSeconds` using a continuation-based race (never a task group — a
 ///    group cannot exit with a suspended child). In-window completion
 ///    returns the rendered output inline; nothing resets `waitSeconds`.
-/// 3. On window elapse, parks the still-running call in the mailbox — under
+/// 3. On window elapse, backgrounds the still-running call in the mailbox — under
 ///    the kind and the canceler the wrapped tool declares through
 ///    ``DetachmentParameterProviding``, and under ``RunKind/swiftTask`` with
 ///    the engine's own cooperative canceler when it declares neither — posts
@@ -599,12 +599,12 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
 ///    model.
 /// 6. Refuses, before any work starts, a call whose resolved clocks cannot
 ///    both mean what they say (`clockRelationFailure(tool:mode:waitSeconds:timeout:)`),
-///    and refuses to park a run the timeout has already claimed — the two
+///    and refuses to background a run the timeout has already claimed — the two
 ///    clocks decide one at a time, never by race.
 /// 7. Runs under the mount the wrapped tool declares for itself
 ///    (``DetachmentParameterProviding/detachmentMount``) when it declares
 ///    one, and under the configuration its composition site passed
-///    otherwise. So one session mounts a tool that must never park beside
+///    otherwise. So one session mounts a tool that must never background a call beside
 ///    one that must, each behaving its own way.
 ///
 /// `Arguments` must be `Sendable` — beyond `Tool`'s own
@@ -622,7 +622,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// ``ToolContext``.
     private let sessionID: ULID
 
-    /// The owning session's mailbox — where detached runs park.
+    /// The owning session's mailbox — where detached runs are tracked.
     private let mailbox: SessionMailbox
 
     /// The upstream sink every run's events funnel into.
@@ -714,7 +714,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         let waitSeconds = clocks.waitSeconds ?? configuration.waitSeconds
         let timeoutSeconds = clocks.timeout ?? configuration.timeout
         // Judged before anything runs, so a refused call leaves no run, no
-        // parked token, and no event behind it.
+        // tracked token, and no event behind it.
         if let failure = DetachConfiguration.clockRelationFailure(
             tool: wrapped.name,
             mode: configuration.mode,
@@ -849,14 +849,14 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         return provider.detachmentCollectInstruction(forCompletionToken: completionToken)
     }
 
-    /// What kind of work a parked call of this tool is: the wrapped tool's own
+    /// What kind of work a backgrounded call of this tool is: the wrapped tool's own
     /// through ``DetachmentParameterProviding/detachmentRunKind``, or
     /// ``RunKind/swiftTask`` when it does not conform.
     private var runKind: RunKind {
         parameterProvider?.detachmentRunKind ?? .swiftTask
     }
 
-    /// The canceler the run parked under `completionToken` is registered with:
+    /// The canceler the run backgrounded under `completionToken` is registered with:
     /// the wrapped tool's own through
     /// ``DetachmentParameterProviding/detachmentCanceler(forCompletionToken:)``,
     /// or the engine's cooperative one when it supplies none.
@@ -866,7 +866,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     /// own cancellation — and reports exactly that, never certainty.
     ///
     /// - Parameters:
-    ///   - completionToken: The parked run's completion token.
+    ///   - completionToken: The background run's completion token.
     ///   - workTask: The run's body, which the cooperative canceler cancels.
     ///   - cancellationFlag: The run's sticky request flag, which the
     ///     cooperative canceler sets.
@@ -892,7 +892,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 
     // MARK: - Detachment
 
-    /// Detaches a call whose window elapsed: parks the still-running work
+    /// Detaches a call whose window elapsed: backgrounds the still-running work
     /// in the mailbox, posts the synthesized progress iff the run has been
     /// silent, and returns the pending envelope.
     ///
@@ -922,7 +922,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
             return try await workTask.value.result.get()
         }
         let settling = Task { await workTask.value.terminal }
-        await mailbox.park(
+        await mailbox.track(
             tool: context.tool,
             op: context.op,
             kind: runKind,
@@ -1027,7 +1027,7 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     ///
     /// A window that really elapsed claims the run through
     /// `RunEventFunnel.beginTimeout()` before this reports it, so a soft
-    /// deadline elapsing in the same instant can no longer park a run this
+    /// deadline elapsing in the same instant can no longer background a run this
     /// watcher is about to kill: `RunEventFunnel.markDetached(postingIfSilent:)`
     /// refuses a claimed run, and the caller takes the in-band timeout
     /// instead of handing the model a token for a dead run.
@@ -1281,7 +1281,7 @@ public enum ToolDetachment {
 /// The binding-only decorator over a non-`String`-output tool: binds a
 /// per-call, per-tool-stamped ``ToolContext`` around the wrapped call —
 /// exactly the ambient identity ``DetachingTool`` binds — while skipping the
-/// pending-envelope/park machinery entirely, because that machinery requires
+/// pending-envelope/backgrounding machinery entirely, because that machinery requires
 /// a `String` wire form the pending envelope can replace and this tool's
 /// `Output` has none (task ^6htgvw2).
 ///
@@ -1505,7 +1505,7 @@ actor RunEventFunnel: OperationEventSink {
         /// The call is running in-band.
         case running
 
-        /// The window elapsed and the run was parked.
+        /// The window elapsed and the run was backgrounded.
         case detached
 
         /// The run's body ended; the terminal decision has been made.
@@ -1595,7 +1595,7 @@ actor RunEventFunnel: OperationEventSink {
         await delivery.value
     }
 
-    /// Claims the run for the timeout, so no later detachment can park it.
+    /// Claims the run for the timeout, so no later detachment can background it.
     ///
     /// Called the moment a whole timeout window is known to have elapsed —
     /// before the timeout resolves its race — so the claim always lands
@@ -1614,7 +1614,7 @@ actor RunEventFunnel: OperationEventSink {
     ///   run has been silent.
     /// - Returns: `true` when the run is (now) detached; `false` when it
     ///   already settled, or when the timeout has claimed it — the caller
-    ///   returns the in-band result instead of parking a run that is
+    ///   returns the in-band result instead of backgrounding a run that is
     ///   finished or being killed.
     func markDetached(postingIfSilent progress: OperationEvent) async -> Bool {
         guard case .running = phase, !hasTimedOut else {

@@ -548,11 +548,11 @@ extension RoutedSessionActor {
     /// mailbox-addressable run. A String-output tool from the session's
     /// composed list is wrapped in ``DetachingTool`` (task ^k4nygqa), and
     /// a *detached* in-flight call answers the cancellation by detaching
-    /// instead of dying with the turn: it parks in the session's
+    /// instead of dying with the turn: it keeps running in the session's
     /// ``mailbox`` and returns the pending envelope (see
     /// `DetachingTool.raceSettlement(of:deadlineNanoseconds:)` — a caller
     /// whose wait ends, by deadline or by cancellation, has already
-    /// accepted that the work may outlive the call). The parked run stays
+    /// accepted that the work may outlive the call). The background run stays
     /// individually addressable — ``SessionMailbox/cancel(completionToken:)``
     /// — and ``close()``'s sweep settles whatever remains; its `.completed`
     /// rides a later turn through the outbox as usual. The turn's

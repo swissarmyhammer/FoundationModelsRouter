@@ -94,7 +94,7 @@ struct DetachedRunTranscriptTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // One turn, so the session is live and its journal is attached — the
-        // state a run can only be parked from.
+        // state a run can only be tracked from.
         _ = try await session.respond(to: "start the long job")
 
         let token = "01AN4Z07BY79KA1307SR9X4MV3"
@@ -251,7 +251,7 @@ struct DetachedRunTranscriptTests {
             await outbox.post(event: natural)
             return natural
         }
-        await mailbox.park(
+        await mailbox.track(
             tool: "shell",
             op: "run command",
             kind: .swiftTask,
@@ -297,7 +297,7 @@ struct DetachedRunTranscriptTests {
                 tool: "shell", op: "run command", correlationID: token, kind: .completed,
                 detail: "exit 0", outcome: .succeeded)
         }
-        await session.mailbox.park(
+        await session.mailbox.track(
             tool: "shell",
             op: "run command",
             kind: .swiftTask,

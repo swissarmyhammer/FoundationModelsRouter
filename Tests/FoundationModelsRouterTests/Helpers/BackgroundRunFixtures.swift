@@ -4,7 +4,7 @@ import Foundation
 
 /// A latch a fixture body suspends on until a test (or cooperative
 /// cancellation) opens it — the controllable stand-in for a detached run's
-/// real work, whether that body is a fake parked run or a gated tool's
+/// real work, whether that body is a fake background run or a gated tool's
 /// `call(arguments:)`.
 ///
 /// This is the one gate the test target declares. Every suite that has to
@@ -24,9 +24,9 @@ actor RunLatch {
     func open() {
         guard !isOpen else { return }
         isOpen = true
-        let parked = waiters
+        let suspendedWaiters = waiters
         waiters = []
-        for waiter in parked {
+        for waiter in suspendedWaiters {
             waiter.resume()
         }
     }
@@ -39,7 +39,7 @@ actor RunLatch {
 }
 
 /// Counts canceler invocations so a test can assert a sweep invoked each
-/// parked run's canceler exactly once.
+/// background run's canceler exactly once.
 actor CancelCounter {
     /// How many cancelers have reported in.
     private(set) var count = 0
@@ -50,7 +50,7 @@ actor CancelCounter {
     }
 }
 
-/// The identity every fake parked run is stamped with, so a suite can assert
+/// The identity every fake background run is stamped with, so a suite can assert
 /// the stamps it reads back off the run plane.
 enum FakeRun {
     /// The fused tool's name every fake run carries.
@@ -60,7 +60,7 @@ enum FakeRun {
     static let op = "run task"
 }
 
-/// Parks a fake run of `kind` on `mailbox`: its settling task suspends on
+/// Tracks a fake run of `kind` on `mailbox`: its settling task suspends on
 /// `latch` (opening it on cooperative cancellation), then produces a terminal
 /// `.completed` event whose outcome honestly reports whether it was cancelled.
 /// The canceler reports `cancelerOutcome`, and what it does before reporting is
@@ -74,7 +74,7 @@ enum FakeRun {
 ///   test opens `latch`.
 ///
 /// - Parameters:
-///   - mailbox: The mailbox the run parks on.
+///   - mailbox: The mailbox the run is tracked on.
 ///   - latch: The latch the run's body suspends on until a test opens it.
 ///   - kind: What kind of work the fake run is.
 ///   - detailOnSettle: The detail the terminal event carries.
@@ -82,7 +82,7 @@ enum FakeRun {
 ///   - counter: Counts this run's canceler invocations, when a test supplies
 ///     one.
 /// - Returns: The run's completion token.
-func parkFakeRun(
+func trackFakeRun(
     on mailbox: SessionMailbox,
     latch: RunLatch,
     kind: RunKind = .swiftTask,
@@ -106,7 +106,7 @@ func parkFakeRun(
             outcome: Task.isCancelled ? .cancelled : .succeeded
         )
     }
-    await mailbox.park(
+    await mailbox.track(
         tool: FakeRun.tool,
         op: FakeRun.op,
         kind: kind,

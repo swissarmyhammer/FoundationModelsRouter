@@ -24,7 +24,7 @@ import FoundationModels
 ///   the summary — recorded so evals and browsers can attribute quality to
 ///   prompts (compaction_plan.md §2).
 /// - ``Content/pendingRuns``: the run-plane summaries (token, op, latest
-///   progress) of the runs still parked in the session's ``SessionMailbox``
+///   progress) of the runs still running in the session's ``SessionMailbox``
 ///   when the boundary was written, so a post-compaction model can rediscover
 ///   its in-flight work — or `nil` when there were none.
 ///
@@ -39,12 +39,12 @@ import FoundationModels
 /// ``OperationEventSegment``, for the same round-trip shape applied to a
 /// different concern.
 public struct CompactionSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
-    /// One live parked run's run-plane summary, carried across the compaction
+    /// One live background run's run-plane summary, carried across the compaction
     /// boundary so a post-compaction model can rediscover its in-flight work
     /// and call `status()` for the live view.
     ///
     /// Deliberately restricted to the run plane — the same triple
-    /// ``ParkedRun`` reports (token, op, latest progress) —
+    /// ``BackgroundRun`` reports (token, op, latest progress) —
     /// and never a run's output content: the boundary carries envelopes,
     /// exactly as the mailbox itself does.
     public struct PendingRunSummary: Codable, Equatable, Sendable {
@@ -53,18 +53,18 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
         /// ``SessionMailbox``.
         public let completionToken: String
 
-        /// The canonical `"verb noun"` op string of the parked operation.
+        /// The canonical `"verb noun"` op string of the background operation.
         public let op: String
 
         /// The latest progress detail reported for the run when the boundary
         /// was written, or `nil` when none had been reported yet.
         public let latestProgressDetail: String?
 
-        /// Creates one parked run's summary.
+        /// Creates one background run's summary.
         ///
         /// - Parameters:
         ///   - completionToken: The run's completion token.
-        ///   - op: The canonical op string of the parked operation.
+        ///   - op: The canonical op string of the background operation.
         ///   - latestProgressDetail: The run's latest progress detail, or
         ///     `nil` when none had been reported yet.
         public init(completionToken: String, op: String, latestProgressDetail: String?) {
@@ -104,10 +104,10 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
         /// prompts (compaction_plan.md §2), never the prompt's full text.
         public var promptName: String
 
-        /// The run-plane summaries of the runs still parked in the session's
+        /// The run-plane summaries of the runs still running in the session's
         /// ``SessionMailbox`` at the moment this boundary was written, in
-        /// park order — or `nil` when the session held none (a session with
-        /// no parked runs adds nothing to its boundary).
+        /// tracking order — or `nil` when the session held none (a session with
+        /// no background runs adds nothing to its boundary).
         ///
         /// Optional and synthesized-`Codable`-decoded (`decodeIfPresent`
         /// semantics), so every ``CompactionSegment`` recorded before this
@@ -124,7 +124,7 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
         ///   - tokensAfter: The measured transcript size after the fold.
         ///   - stagesApplied: The pipeline stages applied, in order.
         ///   - promptName: The name of the compaction prompt used.
-        ///   - pendingRuns: The run-plane summaries of the runs still parked
+        ///   - pendingRuns: The run-plane summaries of the runs still running
         ///     when this boundary was written, or `nil` when there were none.
         ///     Defaults to `nil`.
         public init(
@@ -187,7 +187,7 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
     /// Run plane only, one line per run: token, op, and latest progress —
     /// never a run's output content.
     ///
-    /// - Parameter pendingRuns: The parked runs' summaries, in park order.
+    /// - Parameter pendingRuns: The background runs' summaries, in tracking order.
     /// - Returns: The rendered pending-run text.
     ///
     /// Deliberately `internal`, matching the repo's pattern of internal
@@ -242,7 +242,7 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
         var segments: [Transcript.Segment] = [
             .text(Transcript.TextSegment(id: "\(entryId)-text", content: summaryText))
         ]
-        // A session with no parked runs adds nothing; one with parked runs
+        // A session with no background runs adds nothing; one with background runs
         // carries their rendering as an additional text segment — the only
         // segment kind the model-facing transcript rendering reads — so a
         // post-compaction model knows its tokens and can call status().
@@ -296,7 +296,7 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
     ///   - tokensAfter: The post-fold transcript size written to the
     ///     checkpoint, on the same scale as `tokensBefore`.
     ///   - stagesApplied: The pipeline stages the fold applied, in order.
-    ///   - pendingRuns: The run-plane summaries of the runs still parked
+    ///   - pendingRuns: The run-plane summaries of the runs still running
     ///     when the boundary was written, or `nil` when there were none.
     /// - Returns: `folded` plus the boundary entry, in that order — the
     ///   boundary names itself last in its own live window.

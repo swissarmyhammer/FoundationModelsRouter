@@ -6,7 +6,7 @@ import Testing
 @testable import FoundationModelsRouter
 
 /// Exercises task ^1zt7vyg: a tool body that generates on the same resident
-/// container as the turn that invoked it must finish, not park for the life of
+/// container as the turn that invoked it must finish, not suspend for the life of
 /// that turn.
 ///
 /// This mirrors `mlx-swift-lm`'s `ToolBodyContainerReentryTests` at the
@@ -56,7 +56,7 @@ struct NestedGenerationReentryTests {
     /// host has whenever a tool ranks or summarizes with a model.
     ///
     /// It raises its own `waitSeconds` far above the stock five so a body that
-    /// parks stays parked instead of detaching into a pending envelope. The
+    /// suspends stays running instead of detaching into a pending envelope. The
     /// body has to settle in-band, which is exactly what this suite asserts.
     private struct NestedGeneratingTool: Tool, DetachmentParameterProviding {
         let name = "nested-generation-probe"
@@ -75,7 +75,7 @@ struct NestedGenerationReentryTests {
 
         /// How long one call may block before the engine detaches it.
         ///
-        /// Under the suite's own turn bound, so a park is reported as a
+        /// Under the suite's own turn bound, so a suspension is reported as a
         /// detached run rather than as a hung test, and well above the stock
         /// five seconds, so a body that settles normally never reaches it.
         static let waitSecondsBeforeDetaching: TimeInterval = 20
@@ -261,9 +261,9 @@ struct NestedGenerationReentryTests {
     ///
     /// The turn loads no weights, downloads nothing, and answers from a stub,
     /// so it finishes far inside one second on any host. Thirty seconds is well
-    /// past any scheduling delay, so only a real park reaches it. The bound
+    /// past any scheduling delay, so only a real suspension reaches it. The bound
     /// exists so this suite FAILS instead of hanging: ``AsyncSemaphore/wait()``
-    /// ignores cancellation, so a parked turn can never be unwound.
+    /// ignores cancellation, so a suspended turn can never be unwound.
     private static let turnTimeout = Duration.seconds(30)
 
     // MARK: - Turn outcome
@@ -302,7 +302,7 @@ struct NestedGenerationReentryTests {
     /// `timeout` wins.
     ///
     /// The turn runs unstructured and reports through a stream rather than
-    /// being awaited: a turn parked on a semaphore cannot be cancelled, and a
+    /// being awaited: a turn suspended on a semaphore cannot be cancelled, and a
     /// task group implicitly awaits every child, so awaiting the turn directly
     /// would hang the whole suite instead of failing this one test.
     ///
@@ -358,7 +358,7 @@ struct NestedGenerationReentryTests {
     }
 
     /// Asserts that `outcome` finished with `expected`, naming the defect this
-    /// suite covers when the turn parked instead.
+    /// suite covers when the turn suspended instead.
     ///
     /// - Parameters:
     ///   - outcome: The turn's outcome, or `nil` when the bound won.
@@ -374,7 +374,7 @@ struct NestedGenerationReentryTests {
                 \(turn) did not finish within \(turnTimeout). Work a tool body asks of a \
                 routed session has to settle in band: a turn holds its own session's turn \
                 lock and the container's one generation permit for its whole length, tool \
-                call included, so a call that waits on either parks for as long as the turn \
+                call included, so a call that waits on either suspends for as long as the turn \
                 it is part of.
                 """)
         case .failed(_, let description):
@@ -385,7 +385,7 @@ struct NestedGenerationReentryTests {
     }
 
     /// Asserts that `outcome` failed with `expected`, naming the defect this
-    /// suite covers when the call parked or was served instead.
+    /// suite covers when the call suspended or was served instead.
     ///
     /// - Parameters:
     ///   - outcome: The turn's outcome, or `nil` when the bound won.
@@ -399,7 +399,7 @@ struct NestedGenerationReentryTests {
             Issue.record(
                 """
                 The turn did not finish within \(turnTimeout). \(call) has to be refused, \
-                never parked on the turn lock its own caller holds.
+                never suspended on the turn lock its own caller holds.
                 """)
         case .finished(let answer):
             Issue.record("The turn answered \"\(answer)\" instead of refusing \(call).")
@@ -484,7 +484,7 @@ struct NestedGenerationReentryTests {
 
     // MARK: - The same session
 
-    @Test("a tool body that generates on its own session is refused, rather than parking without a sound")
+    @Test("a tool body that generates on its own session is refused, rather than suspending without a sound")
     @MainActor
     func aToolBodyThatGeneratesOnItsOwnSessionIsRefused() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
@@ -514,7 +514,7 @@ struct NestedGenerationReentryTests {
 
     // MARK: - Forking from inside a tool body
 
-    @Test("a tool body that forks its own session is refused, rather than parking without a sound")
+    @Test("a tool body that forks its own session is refused, rather than suspending without a sound")
     func aToolBodyThatForksItsOwnSessionIsRefused() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -566,7 +566,7 @@ struct NestedGenerationReentryTests {
 
     // MARK: - Reading the transcript from inside a tool body
 
-    @Test("a tool body reads its own session's transcript mid-turn, rather than parking without a sound")
+    @Test("a tool body reads its own session's transcript mid-turn, rather than suspending without a sound")
     func aToolBodyReadsItsOwnSessionsTranscript() async throws {
         let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -618,10 +618,10 @@ struct NestedGenerationReentryTests {
                 gate.availablePermits == 0
             })
 
-        // The waiter's turn now parks in `beginTurn()`, on the gate.
+        // The waiter's turn now suspends in `beginTurn()`, on the gate.
         let waiterTurn = Task { try await waiter.respond(to: Self.outerPrompt) }
         #expect(
-            await BoundedWait.conditionReached("the waiter's turn parking on the gate") {
+            await BoundedWait.conditionReached("the waiter's turn suspending on the gate") {
                 gate.waiterCount == 1
             })
 

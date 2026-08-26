@@ -21,7 +21,7 @@ import Testing
 struct RecordingLanguageModelTests {
     // MARK: - Concurrency observation
 
-    /// Tracks how many stub-model calls are concurrently "in flight" (parked
+    /// Tracks how many stub-model calls are concurrently "in flight" (suspended
     /// on ``releaseGate``, below), so a test can assert the model's shared
     /// generation gate never lets two calls overlap.
     private actor SerialObserver {
@@ -60,7 +60,7 @@ struct RecordingLanguageModelTests {
     /// executor is invoked twice per tool-using turn (once to request the
     /// call, once more with the tool's output folded into the transcript).
     ///
-    /// When ``observer``/``releaseGate`` are set, every call parks on the
+    /// When ``observer``/``releaseGate`` are set, every call suspends on the
     /// release gate after recording entry into ``observer`` — the seam
     /// ``generationGateSerializesAcrossHandles()`` uses to prove two concurrent
     /// calls sharing one model's generation gate never overlap.
@@ -514,7 +514,7 @@ struct RecordingLanguageModelTests {
         #expect(generationGate.availablePermits == 0)
 
         // handleB's call queues on the shared gate rather than reaching the
-        // model concurrently with handleA's still-parked call.
+        // model concurrently with handleA's still-running call.
         let taskB = Task { _ = try await sessionB.respond(to: "b") }
         await Self.spin(until: { generationGate.waiterCount == 1 })
         #expect(await observer.active == 1)

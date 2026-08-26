@@ -12,7 +12,7 @@ import Testing
 /// (no events / progress-only / own-terminal), exactly-one-`.completed`
 /// across the throw, cancel, and timeout paths, detachment-off mode, and the
 /// mount a tool declares for itself — which is how one session mounts a tool
-/// that must never park beside one that must.
+/// that must never background a call beside one that must.
 @Suite("DetachingTool: the two-clocks detachment engine")
 struct DetachingToolTests {
     // MARK: - Interval fixtures
@@ -226,11 +226,11 @@ struct DetachingToolTests {
 
     /// Blocks on a gate, declares no mount of its own, and supplies a
     /// per-call `waitSeconds` of `0` — the detaching half of the pair one
-    /// session mounts, which parks at once so the pair test waits on no
+    /// session mounts, which is backgrounded at once so the pair test waits on no
     /// wall clock.
     private struct ZeroWaitDetachingTool: Tool, DetachmentParameterProviding {
         let name = "zero_wait_detaching_tool"
-        let description = "parks at once and declares no mount"
+        let description = "is backgrounded at once and declares no mount"
         let gate: RunLatch
 
         func call(arguments: DetachingArguments) async throws -> String {
@@ -252,7 +252,7 @@ struct DetachingToolTests {
     /// its pending envelope.
     private struct CollectSentenceTool: Tool, DetachmentParameterProviding {
         let name = "collect_sentence_tool"
-        let description = "parks at once and names its own collect step"
+        let description = "is backgrounded at once and names its own collect step"
         let gate: RunLatch
 
         /// The sentence this tool renders for `completionToken`, so a test
@@ -701,7 +701,7 @@ struct DetachingToolTests {
 
         #expect(rendered == "fast: x")
         #expect(await harness.sink.events.isEmpty)
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
     }
 
     // MARK: - Detachment slow path
@@ -725,8 +725,8 @@ struct DetachingToolTests {
         #expect(envelope.pending)
         #expect(ULID(ulidString: envelope.completionToken) != nil)
 
-        // The mailbox holds the parked run under that token, kind swiftTask.
-        let status = await harness.mailbox.parkedRuns()
+        // The mailbox holds the background run under that token, kind swiftTask.
+        let status = await harness.mailbox.backgroundRuns()
         #expect(status.count == 1)
         #expect(status.first?.completionToken == envelope.completionToken)
         #expect(status.first?.kind == .swiftTask)
@@ -772,7 +772,7 @@ struct DetachingToolTests {
 
         let envelope = try Self.decodeEnvelope(rendered)
         #expect(envelope.pending)
-        #expect(await harness.mailbox.parkedRuns().count == 1)
+        #expect(await harness.mailbox.backgroundRuns().count == 1)
 
         await gate.open()
         let terminal = try await Self.settledTerminal(
@@ -1014,8 +1014,8 @@ struct DetachingToolTests {
         #expect(events.last?.outcome == .failed)
     }
 
-    @Test("cancelling a parked run settles it with outcome cancelled and exactly one terminal")
-    func cancellingParkedRunYieldsOneCancelledTerminal() async throws {
+    @Test("cancelling a background run settles it with outcome cancelled and exactly one terminal")
+    func cancellingBackgroundRunYieldsOneCancelledTerminal() async throws {
         let harness = Self.makeHarness(
             wrapping: SleepingTool(),
             configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
@@ -1043,7 +1043,7 @@ struct DetachingToolTests {
 
     // MARK: - Detachment off
 
-    @Test("detachment-off mode runs to completion, never parks, and never returns a pending envelope")
+    @Test("detachment-off mode runs to completion, never backgrounds a call, and never returns a pending envelope")
     func detachmentOffRunsToCompletion() async throws {
         let gate = RunLatch()
         // waitSeconds is deliberately tiny: in run-to-completion mode it must
@@ -1063,18 +1063,18 @@ struct DetachingToolTests {
         // Give the call ample room to (wrongly) act on the tiny waitSeconds
         // before letting the tool finish.
         try await Task.sleep(nanoseconds: UInt64(Self.shortInterval * 1_000_000_000))
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         await gate.open()
 
         let rendered = try await calling.value
         #expect(rendered == "gated: complete")
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         // In-band silent success: no events at all.
         #expect(await harness.sink.events.isEmpty)
     }
 
-    @Test("parked-run progress feeds the mailbox's run-plane snapshot")
-    func parkedRunProgressFeedsStatus() async throws {
+    @Test("background-run progress feeds the mailbox's run-plane snapshot")
+    func backgroundRunProgressFeedsStatus() async throws {
         let harness = Self.makeHarness(
             wrapping: HeartbeatTool(beats: 40, interval: 0.05),
             configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0.2)
@@ -1085,10 +1085,10 @@ struct DetachingToolTests {
         )
         let envelope = try Self.decodeEnvelope(rendered)
 
-        // Poll (bounded) until a beat lands in the parked run's status row.
+        // Poll (bounded) until a beat lands in the background run's status row.
         var observedDetail: String?
         for _ in 0..<1_000 {
-            let status = await harness.mailbox.parkedRuns()
+            let status = await harness.mailbox.backgroundRuns()
             if let detail = status.first?.latestProgressDetail {
                 observedDetail = detail
                 break
@@ -1291,7 +1291,7 @@ struct DetachingToolTests {
 
         // The wrapped tool's own output passes through unchanged, and a
         // silent run posts nothing at all: binding-only, with none of the
-        // pending-envelope/park machinery's synthesized events.
+        // pending-envelope/backgrounding machinery's synthesized events.
         #expect(output.text == "ignored")
         #expect(await sink.events.isEmpty)
     }
@@ -1356,7 +1356,7 @@ struct DetachingToolTests {
         #expect(inner.text != outer.completionToken)
     }
 
-    @Test("ToolDetachment.wrapping inheriting a ToolContext parks the run in that context's own mailbox")
+    @Test("ToolDetachment.wrapping inheriting a ToolContext tracks the run in that context's own mailbox")
     func factoryInheritsMailboxAndSessionIdentity() async throws {
         let gate = RunLatch()
         let mailbox = SessionMailbox()
@@ -1383,10 +1383,10 @@ struct DetachingToolTests {
         )
         let envelope = try Self.decodeEnvelope(rendered)
 
-        // The run parked in the mailbox the inherited context carries — a
+        // The run was tracked in the mailbox the inherited context carries — a
         // mailbox this call never named.
-        let parked = await mailbox.parkedRuns()
-        #expect(parked.map(\.completionToken) == [envelope.completionToken])
+        let runs = await mailbox.backgroundRuns()
+        #expect(runs.map(\.completionToken) == [envelope.completionToken])
 
         await gate.open()
         let terminal = try await Self.settledTerminal(
@@ -1412,7 +1412,7 @@ struct DetachingToolTests {
         #expect(DetachConfiguration.runToCompletionMount.timeout == nil)
     }
 
-    @Test("the run-to-completion mount blocks until the tool finishes, never parks, and reports no timeout")
+    @Test("the run-to-completion mount blocks until the tool finishes, never backgrounds a call, and reports no timeout")
     func runToCompletionMountBlocksUntilTheToolFinishes() async throws {
         let gate = RunLatch()
         let harness = Self.makeHarness(
@@ -1431,12 +1431,12 @@ struct DetachingToolTests {
                 Self.shortInterval * Self.clocklessHoldWindows * 1_000_000_000
             )
         )
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         await gate.open()
 
         let rendered = try await calling.value
         #expect(rendered == "gated: discovery")
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         // A slow call is not a failed call: the run settles silently, so
         // nothing at all is reported for it.
         #expect(await harness.sink.events.isEmpty)
@@ -1475,12 +1475,12 @@ struct DetachingToolTests {
 
     /// How long a declared run-to-completion call is held for: past both
     /// clocks of the configuration the composition site passes, so only the
-    /// declaration can explain a call that neither parks nor times out.
+    /// declaration can explain a call that is neither backgrounded nor timed out.
     private static let declaredMountHoldSeconds = shortInterval * clocklessHoldWindows
 
     /// How long the pair test holds its blocking call: past the stock soft
     /// deadline the session's own mount carries, so a call that had taken
-    /// that mount would already have parked when the parked runs are read.
+    /// that mount would already have been backgrounded when the background runs are read.
     private static let pastSessionMountWaitSeconds =
         DetachConfiguration.defaultWaitSeconds + shortInterval
 
@@ -1500,25 +1500,25 @@ struct DetachingToolTests {
             )
         }
         // Held past both of the site's clocks: a call that took them would
-        // have parked at once, and then timed out.
+        // have been backgrounded at once, and then timed out.
         try await Task.sleep(for: .seconds(Self.declaredMountHoldSeconds))
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         await gate.open()
 
         let rendered = try await calling.value
         #expect(rendered == "declared: catalogue")
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         // A slow call is not a failed call: the run settles silently.
         #expect(await harness.sink.events.isEmpty)
     }
 
-    @Test("two tools on one session hold their own modes: the declaring one blocks while the other parks")
+    @Test("two tools on one session hold their own modes: the declaring one blocks while the other backgrounds its call")
     func oneSessionMountsBothModes() async throws {
         let sessionID = ULID.generate()
         let mailbox = SessionMailbox()
         let sink = RecordingSink()
         let blockingGate = RunLatch()
-        let parkingGate = RunLatch()
+        let backgroundingGate = RunLatch()
         // Both tools take the one session-mount composition, under one
         // session identity, one mailbox, one outbox, and the one mount
         // configuration that site applies to every tool it mounts.
@@ -1532,32 +1532,32 @@ struct DetachingToolTests {
             ) as? DetachingTool<DetachingArguments>
         }
         let blocking = try #require(mounted(DeclaredRunToCompletionTool(gate: blockingGate)))
-        let parking = try #require(mounted(ZeroWaitDetachingTool(gate: parkingGate)))
+        let backgrounding = try #require(mounted(ZeroWaitDetachingTool(gate: backgroundingGate)))
 
         // The tool that declares no mount takes the session's own, so its
-        // slow call parks and hands the model a token to collect.
-        let rendered = try await parking.call(arguments: DetachingArguments(value: "snippet"))
+        // slow call is backgrounded and hands the model a token to collect.
+        let rendered = try await backgrounding.call(arguments: DetachingArguments(value: "snippet"))
         let envelope = try Self.decodeEnvelope(rendered)
         #expect(envelope.pending)
 
         // On that same session the declaring tool blocks instead, held past
-        // the soft deadline that mount would otherwise have parked it at.
+        // the soft deadline that mount would otherwise have backgrounded it at.
         let discovering = Task {
             try await blocking.call(arguments: DetachingArguments(value: "catalogue"))
         }
         try await Task.sleep(for: .seconds(Self.pastSessionMountWaitSeconds))
 
-        // One run is parked, and it is the detaching tool's. The discovery
+        // One run is tracked, and it is the detaching tool's. The discovery
         // call is still in band, with no token for the model to collect.
-        let parked = await mailbox.parkedRuns()
-        #expect(parked.count == 1)
-        #expect(parked.first?.tool == "zero_wait_detaching_tool")
+        let runs = await mailbox.backgroundRuns()
+        #expect(runs.count == 1)
+        #expect(runs.first?.tool == "zero_wait_detaching_tool")
 
         await blockingGate.open()
         let catalogue = try await discovering.value
         #expect(catalogue == "declared: catalogue")
 
-        await parkingGate.open()
+        await backgroundingGate.open()
         let terminal = try await Self.settledTerminal(
             of: envelope.completionToken, in: mailbox
         )
@@ -1594,9 +1594,9 @@ struct DetachingToolTests {
             )
         }
 
-        // The call was refused, so no work ran: nothing parked, and nothing
+        // The call was refused, so no work ran: nothing tracked, and nothing
         // was reported.
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         #expect(await harness.sink.events.isEmpty)
     }
 
@@ -1622,7 +1622,7 @@ struct DetachingToolTests {
             )
         }
 
-        #expect(await harness.mailbox.parkedRuns().isEmpty)
+        #expect(await harness.mailbox.backgroundRuns().isEmpty)
         #expect(await harness.sink.events.isEmpty)
     }
 

@@ -153,7 +153,7 @@ public actor SessionOutbox: OperationEventSink {
     /// is invisible: it has left ``prompts`` and no other surface names it.
     private var dispatched: PendingPrompt?
 
-    /// Continuations parked by ``nextEvent()`` while the outbox is empty,
+    /// Continuations suspended by ``nextEvent()`` while the outbox is empty,
     /// resumed the next time either kind gains an item.
     private var wakeups: [CheckedContinuation<Void, Never>] = []
 
@@ -571,13 +571,13 @@ public actor SessionOutbox: OperationEventSink {
         }
     }
 
-    /// Resumes every continuation parked by ``nextEvent()``, called after any
+    /// Resumes every continuation suspended by ``nextEvent()``, called after any
     /// mutation that adds an item to either ``events`` or ``prompts``.
     private func wakeUp() {
         guard !wakeups.isEmpty else { return }
-        let parked = wakeups
+        let suspended = wakeups
         wakeups = []
-        for continuation in parked {
+        for continuation in suspended {
             continuation.resume()
         }
     }

@@ -95,8 +95,8 @@ struct TurnCancellationTests {
 
     /// The mid-generation closure a test installs, standing in for a tool the
     /// SDK invokes *inside* the model call. It is handed the turn's prompt so
-    /// one hook can serve several sessions, parking only the turn a test means
-    /// to park.
+    /// one hook can serve several sessions, suspending only the turn a test means
+    /// to suspend.
     ///
     /// A plain mutable class rather than an actor because
     /// ``HookedSessionBackend/respond(to:maxTokens:)`` reads it from whatever
@@ -243,7 +243,7 @@ struct TurnCancellationTests {
         static let firstStreamedChunk = "ok-"
 
         /// Streams the response in two chunks with ``TurnHook/midTurn`` run
-        /// between them, so a streaming turn parks inside a tool call exactly like
+        /// between them, so a streaming turn suspends inside a tool call exactly like
         /// a whole-response one — and a test can tell that the consumer kept the
         /// chunk it had already been handed when the cancellation landed.
         ///
@@ -512,8 +512,8 @@ struct TurnCancellationTests {
     /// being condensed, so a prefix match on it fires for exactly the fold's model
     /// calls and for nothing else (see ``isSummarizerCall``).
     private static let foldSummarizerPrompt = CompactionPrompt(
-        name: "turn-cancellation-fold-park",
-        text: "PARK-INSIDE-THE-FOLD"
+        name: "turn-cancellation-fold-suspend",
+        text: "SUSPEND-INSIDE-THE-FOLD"
     )
 
     /// Whether the model call carrying `prompt` is a fold's own summarizer call.
@@ -522,10 +522,10 @@ struct TurnCancellationTests {
     }
 
     /// Matches a fold's **first** summarizer call and no later one — what every test
-    /// that parks inside a fold parks on.
+    /// that suspends inside a fold suspends on.
     ///
-    /// Single-shot deliberately. A fold test parks in that first call and cancels
-    /// there; a regression that then let the fold degrade to another tier would park
+    /// Single-shot deliberately. A fold test suspends in that first call and cancels
+    /// there; a regression that then let the fold degrade to another tier would suspend
     /// a *second* call on a semaphore nothing is left to signal, hanging the suite
     /// instead of failing the assertion that caught it. Letting later calls run
     /// straight through turns that same regression into a fast, ordinary failure —
@@ -586,7 +586,7 @@ struct TurnCancellationTests {
 
     /// The prompt ``cancellingTheReactiveFoldStopsTheRetry()`` drives its turn with,
     /// named because its mid-turn hook has to tell that turn's own model call (which
-    /// must overflow) from the fold's summarizer call (which must park).
+    /// must overflow) from the fold's summarizer call (which must suspend).
     private static let overflowingFoldPrompt = "overflows-then-folds"
 
     /// The prompt ``makeFoldTriggeredSession(_:budget:metersTriggeringFill:)``'s
@@ -691,7 +691,7 @@ struct TurnCancellationTests {
     /// the turn.
     ///
     /// The indirection is the point: a regression that strands a generation permit
-    /// parks every later turn over that model forever, so awaiting such a turn
+    /// blocks every later turn over that model forever, so awaiting such a turn
     /// directly would hang the whole suite instead of failing an assertion in the
     /// test that caught it.
     private static func followUpTurnCompletes(
@@ -702,8 +702,8 @@ struct TurnCancellationTests {
         let task = Task { try await session.respond(to: prompt) }
         await BoundedWait.spin(until: { await observer.exited.contains(prompt) })
         guard await observer.exited.contains(prompt) else {
-            // Never admitted to the model at all — parked on a gate. Cancelling
-            // will not unpark it (``AsyncSemaphore/wait()`` ignores cancellation
+            // Never admitted to the model at all — suspended on a gate. Cancelling
+            // will not resume it (``AsyncSemaphore/wait()`` ignores cancellation
             // by design), but the suite must not await it either.
             task.cancel()
             return false
@@ -724,7 +724,7 @@ struct TurnCancellationTests {
     /// the difference is deliberate — do not "fix" the two to match. This task
     /// consumes an `AsyncThrowingStream`, whose `next()` is cancellation-aware and
     /// ends, so cancelling it always completes it. ``followUpTurnCompletes(on:observer:prompt:)``
-    /// wraps a bare `respond(to:)` that can be parked in ``AsyncSemaphore/wait()``,
+    /// wraps a bare `respond(to:)` that can be suspended in ``AsyncSemaphore/wait()``,
     /// which ignores cancellation by design, so awaiting it there would hang exactly
     /// when the helper exists to avoid hanging.
     ///
@@ -805,7 +805,7 @@ struct TurnCancellationTests {
         return Fixture(observer: observer, hook: hook, recorder: recorder, container: container, profile: profile)
     }
 
-    /// Installs a mid-turn hook that parks the turn named `prompt` inside a tool
+    /// Installs a mid-turn hook that suspends the turn named `prompt` inside a tool
     /// call which *observes* cancellation: it suspends on a semaphore released by
     /// its own cancellation handler, then re-checks cancellation and reports what
     /// it saw — the shape a real MCP tool awaiting a reply has, rather than a poll
@@ -813,37 +813,37 @@ struct TurnCancellationTests {
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose hook to install into.
-    ///   - parksOn: Whether the model call carrying this prompt is the one to
-    ///     park. Every call it rejects runs straight through, so one hook serves a
+    ///   - suspendsOn: Whether the model call carrying this prompt is the one to
+    ///     suspend. Every call it rejects runs straight through, so one hook serves a
     ///     whole test: an ordinary turn's prompt (see
-    ///     ``parkInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``) or
+    ///     ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``) or
     ///     a fold's own summarizer call (see ``isSummarizerCall``).
     ///   - insideTool: Signalled once the turn is provably suspended inside the
     ///     tool call, so a test cancels at a known point rather than racing to
     ///     get there.
-    ///   - humanWait: The session to park inside ``RoutedSession/awaitingUser(_:)``
+    ///   - humanWait: The session to suspend inside ``RoutedSession/awaitingUser(_:)``
     ///     on — the tool-awaiting-a-person shape, which hands the generation permit
-    ///     back for the duration — or `nil` to park directly in the tool call. The
+    ///     back for the duration — or `nil` to suspend directly in the tool call. The
     ///     wait itself is identical either way, which is the point of the
-    ///     parameter: the gate-accounting test must exercise the same park as the
+    ///     parameter: the gate-accounting test must exercise the same suspension as the
     ///     others, not a copy of it.
-    /// - Returns: The semaphore the tool parks on, so
-    ///   ``awaitCancelledUnwind(_:observer:parked:)`` can force it open when a
+    /// - Returns: The semaphore the tool suspends on, so
+    ///   ``awaitCancelledUnwind(_:observer:suspended:)`` can force it open when a
     ///   regression stops cancellation reaching the tool at all.
-    private static func parkInsideCancellationAwareTool(
+    private static func suspendInsideCancellationAwareTool(
         _ fixture: Fixture,
-        parkingOn parksOn: @escaping @Sendable (String) -> Bool,
+        suspendingOn suspendsOn: @escaping @Sendable (String) -> Bool,
         insideTool: AsyncSemaphore,
         humanWait: (any RoutedSession)? = nil
     ) -> AsyncSemaphore {
         let observer = fixture.observer
-        let parked = AsyncSemaphore(value: 0)
-        let park: @Sendable () async throws -> Void = {
+        let suspended = AsyncSemaphore(value: 0)
+        let suspend: @Sendable () async throws -> Void = {
             await withTaskCancellationHandler {
                 insideTool.signal()
-                await parked.wait()
+                await suspended.wait()
             } onCancel: {
-                parked.signal()
+                suspended.signal()
             }
             do {
                 try Task.checkCancellation()
@@ -853,78 +853,78 @@ struct TurnCancellationTests {
             }
         }
         fixture.hook.midTurn = { turnPrompt in
-            guard parksOn(turnPrompt) else { return }
+            guard suspendsOn(turnPrompt) else { return }
             guard let humanWait else {
-                try await park()
+                try await suspend()
                 return
             }
-            try await humanWait.awaitingUser(park)
+            try await humanWait.awaitingUser(suspend)
         }
-        return parked
+        return suspended
     }
 
-    /// Parks the turn whose own prompt is `prompt`, matched as a **suffix** of
+    /// Suspends the turn whose own prompt is `prompt`, matched as a **suffix** of
     /// what the backend actually receives: a turn that drained outbox events is
     /// handed those events as a preamble followed by its own prompt (see
     /// ``RoutedSessionActor/composedPrompt(pendingEvents:prompt:)``), so an
     /// equality check would silently never fire for exactly the turns the outbox
-    /// tests park.
+    /// tests suspend.
     ///
     /// The common case, and a thin spelling of
-    /// ``parkInsideCancellationAwareTool(_:parkingOn:insideTool:humanWait:)`` — a
-    /// fold test parks on that one's predicate instead, since a summarizer call is
+    /// ``suspendInsideCancellationAwareTool(_:suspendingOn:insideTool:humanWait:)`` — a
+    /// fold test suspends on that one's predicate instead, since a summarizer call is
     /// identified by its *prefix*.
     ///
     /// - Parameters:
     ///   - fixture: The fixture whose hook to install into.
-    ///   - prompt: The turn's own prompt text to park on.
+    ///   - prompt: The turn's own prompt text to suspend on.
     ///   - insideTool: Signalled once the turn is provably suspended inside the
     ///     tool call.
-    ///   - humanWait: The session to park inside ``RoutedSession/awaitingUser(_:)``
-    ///     on, or `nil` to park directly in the tool call.
-    /// - Returns: The semaphore the tool parks on.
-    private static func parkInsideCancellationAwareTool(
+    ///   - humanWait: The session to suspend inside ``RoutedSession/awaitingUser(_:)``
+    ///     on, or `nil` to suspend directly in the tool call.
+    /// - Returns: The semaphore the tool suspends on.
+    private static func suspendInsideCancellationAwareTool(
         _ fixture: Fixture,
         prompt: String,
         insideTool: AsyncSemaphore,
         humanWait: (any RoutedSession)? = nil
     ) -> AsyncSemaphore {
-        parkInsideCancellationAwareTool(
-            fixture, parkingOn: { $0.hasSuffix(prompt) }, insideTool: insideTool, humanWait: humanWait)
+        suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: { $0.hasSuffix(prompt) }, insideTool: insideTool, humanWait: humanWait)
     }
 
     /// Waits for a cancellation the test has just requested to reach the tool
-    /// parked by ``parkInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``,
+    /// suspended by ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``,
     /// then asserts the turn unwound with `CancellationError`.
     ///
-    /// Deliberately not a bare `await turnTask.value`: that tool unparks only when
+    /// Deliberately not a bare `await turnTask.value`: that tool resumes only when
     /// cancellation actually reaches it, so a regression in propagation would leave
     /// the turn suspended forever and hang the whole suite — this target sets no
     /// `.timeLimit` trait — instead of failing the test that caught it. On timeout
-    /// this reports the issue and then unwinds the turn by force (open the park,
+    /// this reports the issue and then unwinds the turn by force (signal the semaphore,
     /// cancel the caller's task) so no later assertion or test inherits a stuck
     /// session.
     ///
     /// - Parameters:
     ///   - turnTask: The task awaiting the cancelled turn, whatever it returns.
-    ///   - observer: The observer the parked tool reports its cancellation to.
-    ///   - parked: The semaphore ``parkInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``
+    ///   - observer: The observer the suspended tool reports its cancellation to.
+    ///   - suspended: The semaphore ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``
     ///     returned for that tool.
     private static func awaitCancelledUnwind<Value: Sendable>(
         _ turnTask: Task<Value, Error>,
         observer: TurnObserver,
-        parked: AsyncSemaphore
+        suspended: AsyncSemaphore
     ) async {
-        guard await awaitCancellationReachingTheTool(turnTask, observer: observer, parked: parked) else { return }
+        guard await awaitCancellationReachingTheTool(turnTask, observer: observer, suspended: suspended) else { return }
         await #expect(throws: CancellationError.self) {
             try await turnTask.value
         }
     }
 
-    /// Waits for a cancellation the test has just requested to reach the parked tool,
+    /// Waits for a cancellation the test has just requested to reach the suspended tool,
     /// reporting an issue and force-unwinding the turn if it never does.
     ///
-    /// ``awaitCancelledUnwind(_:observer:parked:)`` minus its final assertion, for the
+    /// ``awaitCancelledUnwind(_:observer:suspended:)`` minus its final assertion, for the
     /// one caller that cannot make it: a consumer which cancelled *its own* task
     /// mid-`AsyncThrowingStream` sees that stream **finish** rather than throw, so
     /// there is no `CancellationError` for it to catch even though the turn behind the
@@ -934,8 +934,8 @@ struct TurnCancellationTests {
     ///
     /// - Parameters:
     ///   - turnTask: The task awaiting the cancelled turn, whatever it returns.
-    ///   - observer: The observer the parked tool reports its cancellation to.
-    ///   - parked: The semaphore ``parkInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``
+    ///   - observer: The observer the suspended tool reports its cancellation to.
+    ///   - suspended: The semaphore ``suspendInsideCancellationAwareTool(_:prompt:insideTool:humanWait:)``
     ///     returned for that tool.
     /// - Returns: Whether the cancellation reached the tool. `false` means an issue was
     ///   already recorded and the turn already unwound by force, so the caller should
@@ -943,12 +943,12 @@ struct TurnCancellationTests {
     private static func awaitCancellationReachingTheTool<Value: Sendable>(
         _ turnTask: Task<Value, Error>,
         observer: TurnObserver,
-        parked: AsyncSemaphore
+        suspended: AsyncSemaphore
     ) async -> Bool {
         await BoundedWait.spin(until: { await observer.toolSawCancellation })
         guard await observer.toolSawCancellation else {
             Issue.record("cancellation never reached the tool call running inside the model call")
-            parked.signal()
+            suspended.signal()
             turnTask.cancel()
             _ = try? await turnTask.value
             return false
@@ -968,7 +968,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
 
         let insideTool = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
+        let suspended = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
@@ -977,7 +977,7 @@ struct TurnCancellationTests {
 
         // The whole point: the tool call *inside* the model call observes the
         // cancellation, and the turn then unwinds with it.
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
         #expect(await fixture.observer.toolSawCancellation)
     }
 
@@ -991,7 +991,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
 
         let insideTool = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "caller-cancels", insideTool: insideTool)
+        let suspended = Self.suspendInsideCancellationAwareTool(fixture, prompt: "caller-cancels", insideTool: insideTool)
 
         let turnTask = Task { try await session.respond(to: "caller-cancels") }
         await insideTool.wait()
@@ -1001,7 +1001,7 @@ struct TurnCancellationTests {
         // always promised from cancelling its own enclosing `Task`.
         turnTask.cancel()
 
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
         #expect(await fixture.observer.toolSawCancellation)
 
         // Recorded the same way as a turn cancelled through `cancelCurrentTurn()`,
@@ -1024,12 +1024,12 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
 
         let insideTool = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
+        let suspended = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
         #expect(await session.cancelCurrentTurn() == .requested)
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // Whatever the SDK durably appended before the cancellation landed (the
         // turn's `.prompt` entry), plus exactly one close — the synthetic
@@ -1043,7 +1043,7 @@ struct TurnCancellationTests {
         // Nothing was left half-written: an ordinary turn on the same session
         // records its own whole prompt/response pair straight after. Run through
         // `followUpTurnCompletes` rather than awaited directly, so a regression that
-        // stranded one of this turn's permits fails here instead of parking the
+        // stranded one of this turn's permits fails here instead of suspending the
         // follow-up turn — and the suite with it — forever.
         #expect(await Self.followUpTurnCompletes(on: session, observer: fixture.observer))
         let afterEvents = await fixture.recorder.events
@@ -1053,9 +1053,9 @@ struct TurnCancellationTests {
 
     // MARK: - Gate accounting
 
-    @Test("cancelling a turn parked in awaitingUser leaves both gates balanced and blocks no other session")
+    @Test("cancelling a turn suspended in awaitingUser leaves both gates balanced and blocks no other session")
     @MainActor
-    func cancellingATurnParkedInAwaitingUserKeepsGatesBalanced() async throws {
+    func cancellingATurnSuspendedInAwaitingUserKeepsGatesBalanced() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1065,12 +1065,12 @@ struct TurnCancellationTests {
         let sessionB = fixture.model.makeSession()
         let turnLockA = try #require(sessionA as? RoutedSessionActor).turnLock
 
-        // The turn parks on a person from inside `awaitingUser`, so its
+        // The turn suspends on a person from inside `awaitingUser`, so its
         // generation permit has been lent back to the model when the
         // cancellation arrives — the interaction between in-flight cancellation
         // and the split gate.
         let insideWait = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(
+        let suspended = Self.suspendInsideCancellationAwareTool(
             fixture, prompt: "cancel-in-wait", insideTool: insideWait, humanWait: sessionA)
 
         let turnTask = Task { try await sessionA.respond(to: "cancel-in-wait") }
@@ -1078,7 +1078,7 @@ struct TurnCancellationTests {
         #expect(generationGate.availablePermits == 1)
 
         #expect(await sessionA.cancelCurrentTurn() == .requested)
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // Exactly one permit is back — not two (a permit minted by a release the
         // cancelled wait never balanced) and not none (one stranded by it).
@@ -1112,12 +1112,12 @@ struct TurnCancellationTests {
         await session.outbox.post(event: posted)
 
         let insideTool = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
+        let suspended = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
         #expect(await session.cancelCurrentTurn() == .requested)
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // Delivered, so not re-queued: the drained event rode the cancelled
         // turn's recorded prompt and is not staged again.
@@ -1143,12 +1143,12 @@ struct TurnCancellationTests {
         await session.outbox.post(event: posted)
 
         let insideTool = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
+        let suspended = Self.suspendInsideCancellationAwareTool(fixture, prompt: "cancel-me", insideTool: insideTool)
 
         let turnTask = Task { try await session.respond(to: "cancel-me") }
         await insideTool.wait()
         #expect(await session.cancelCurrentTurn() == .requested)
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event) == [posted])
@@ -1166,7 +1166,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
 
         let insideTool = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "stream-cancel", insideTool: insideTool)
+        let suspended = Self.suspendInsideCancellationAwareTool(fixture, prompt: "stream-cancel", insideTool: insideTool)
 
         // The stream is drained into `delivered` as it arrives, so what the consumer
         // had already been handed survives the error the stream finishes with.
@@ -1180,7 +1180,7 @@ struct TurnCancellationTests {
         await insideTool.wait()
 
         #expect(await session.cancelCurrentTurn() == .requested)
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // Everything the turn produced before the cancellation is still the
         // consumer's — a cancelled stream is truncated, not retracted.
@@ -1199,13 +1199,13 @@ struct TurnCancellationTests {
 
         let queued = await session.enqueue(prompt: "dispatch-cancel")
         let insideTool = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(fixture, prompt: "dispatch-cancel", insideTool: insideTool)
+        let suspended = Self.suspendInsideCancellationAwareTool(fixture, prompt: "dispatch-cancel", insideTool: insideTool)
 
         let turnTask = Task { try await session.dispatchNextPrompt() }
         await insideTool.wait()
 
         #expect(await session.cancelCurrentTurn() == .requested)
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // `drainForDispatch()` is the commit point, and a cancellation does not roll
         // it back: the prompt is spent, and its id reports what it reported the
@@ -1313,7 +1313,7 @@ struct TurnCancellationTests {
         let session = fixture.model.makeSession()
         let turnLock = try #require(session as? RoutedSessionActor).turnLock
 
-        // The first turn holds the turn lock and parks inside the model without
+        // The first turn holds the turn lock and suspends inside the model without
         // checking cancellation, so the second turn is provably queued rather than
         // racing to start.
         let insideFirstTurn = AsyncSemaphore(value: 0)
@@ -1331,7 +1331,7 @@ struct TurnCancellationTests {
         await BoundedWait.spin(until: { turnLock.waiterCount == 1 })
         #expect(turnLock.waiterCount == 1)
 
-        // Cancelled while parked on a gate. Gate acquisition ignores cancellation by
+        // Cancelled while suspended on a gate. Gate acquisition ignores cancellation by
         // design, so this turn still takes its place in line — what it does once it
         // gets there is the question.
         queuedTask.cancel()
@@ -1382,7 +1382,7 @@ struct TurnCancellationTests {
         }
         #expect(delivered == [HookedSessionBackend.firstStreamedChunk])
 
-        // Waiting for the tool to park first keeps the assertion below deterministic:
+        // Waiting for the tool to suspend first keeps the assertion below deterministic:
         // the turn's diff must run while the backend still has no `.response` entry
         // for this turn, which is exactly the state a cut-short turn is in.
         await insideTool.wait()
@@ -1394,7 +1394,7 @@ struct TurnCancellationTests {
         #expect(events.map(\.kind) == [.session, .prompt, .response])
         #expect(events.last?.text == nil)
 
-        // Let the abandoned producer drain rather than leaving it parked for the
+        // Let the abandoned producer drain rather than leaving it suspended for the
         // rest of the suite.
         release.signal()
         await BoundedWait.spin(until: { await fixture.observer.exited.contains("abandon-stream") })
@@ -1425,7 +1425,7 @@ struct TurnCancellationTests {
             guard prompt.hasSuffix("overflow-then-cancel") else { return }
             // A second call means the retry re-ran the model after the turn was
             // already cancelled — the regression this test exists for. Failing
-            // here rather than parking again keeps that a failed assertion instead
+            // here rather than suspending again keeps that a failed assertion instead
             // of a hung suite.
             guard await observer.entered.count == 1 else {
                 throw ProbeError.modelReenteredAfterCancellation
@@ -1483,7 +1483,7 @@ struct TurnCancellationTests {
     // MARK: - A stop lands during a compaction fold too
 
     @Test(
-        "cancelling a turn parked inside its proactive fold's summarizer call stops the fold instead of waiting it out",
+        "cancelling a turn suspended inside its proactive fold's summarizer call stops the fold instead of waiting it out",
         arguments: CancellationRoute.allCases)
     @MainActor
     func cancellingAProactiveFoldStopsIt(route: CancellationRoute) async throws {
@@ -1494,8 +1494,8 @@ struct TurnCancellationTests {
         let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(
-            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        let suspended = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
         let turnTask = Task { try await session.respond(to: "folds-first") }
         await insideSummarizer.wait()
@@ -1510,7 +1510,7 @@ struct TurnCancellationTests {
         // A fold's summarizer call is a model call like any other, so both routes
         // reach the work running inside it and the turn unwinds with the same
         // `CancellationError` a cancelled generation gives.
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
         #expect(await fixture.observer.toolSawCancellation)
 
         // No further model call is *entered* while unwinding: the stop costs no more
@@ -1552,7 +1552,7 @@ struct TurnCancellationTests {
             throw CancellationError()
         }
 
-        // No cancel anywhere in this test, so this turn cannot park: it either folds
+        // No cancel anywhere in this test, so this turn cannot suspend: it either folds
         // and answers, or fails.
         #expect(try await session.respond(to: "folds-first") == "ok-folds-first")
 
@@ -1580,9 +1580,9 @@ struct TurnCancellationTests {
         // test can observe (see ``RoutedSessionActor``'s abandoned-fold report).
         let insideSummarizer = AsyncSemaphore(value: 0)
         let release = AsyncSemaphore(value: 0)
-        let parksOn = Self.firstSummarizerCall()
+        let suspendsOn = Self.firstSummarizerCall()
         fixture.hook.midTurn = { prompt in
-            guard parksOn(prompt) else { return }
+            guard suspendsOn(prompt) else { return }
             insideSummarizer.signal()
             await release.wait()
             throw ProbeError.summarizerFailed
@@ -1601,7 +1601,7 @@ struct TurnCancellationTests {
         await insideSummarizer.wait()
         #expect(await session.cancelCurrentTurn() == .requested)
         // Released by the test rather than by the cancellation, so this turn unwinds
-        // through the fault's path and not through the parked tool's own.
+        // through the fault's path and not through the suspended tool's own.
         release.signal()
 
         await #expect(throws: CancellationError.self) {
@@ -1640,8 +1640,8 @@ struct TurnCancellationTests {
         let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(
-            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        let suspended = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
         let compactTask = Task {
             try await session.compact(prompt: Self.foldSummarizerPrompt, budget: Self.summarizingFoldBudget)
@@ -1665,7 +1665,7 @@ struct TurnCancellationTests {
         case .callerTask:
             compactTask.cancel()
         }
-        await Self.awaitCancelledUnwind(compactTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(compactTask, observer: fixture.observer, suspended: suspended)
         #expect(await fixture.observer.toolSawCancellation)
 
         // And it gave its gates back on the way out, so the session still generates.
@@ -1690,8 +1690,8 @@ struct TurnCancellationTests {
         await session.outbox.post(event: posted)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(
-            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        let suspended = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
         let turnTask = Task { try await session.respond(to: "folds-first") }
         await insideSummarizer.wait()
@@ -1705,7 +1705,7 @@ struct TurnCancellationTests {
         case .callerTask:
             turnTask.cancel()
         }
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // The fold threw before the turn ever reached the model, so nothing this
         // turn drained was delivered — and the drain must not have destroyed it.
@@ -1727,8 +1727,8 @@ struct TurnCancellationTests {
         let session = try await Self.makeFoldTriggeredSession(fixture, budget: Self.summarizingFoldBudget)
 
         let insideSummarizer = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(
-            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        let suspended = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
         let recordedBefore = await fixture.recorder.events.count
 
@@ -1749,13 +1749,13 @@ struct TurnCancellationTests {
         // here, and it differs for a reason outside this package: cancelling a task
         // suspended in `AsyncThrowingStream.next()` **finishes** that stream rather
         // than throwing from it. So only the router-API route can be asserted with
-        // ``awaitCancelledUnwind(_:observer:parked:)``.
+        // ``awaitCancelledUnwind(_:observer:suspended:)``.
         switch route {
         case .routerAPI:
             #expect(await session.cancelCurrentTurn() == .requested)
             // The consumer is not what was cancelled, so it is told: the stream ends
             // by throwing the turn's own `CancellationError`.
-            await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+            await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
         case .callerTask:
             // Cancelling the consumer terminates the stream, which cancels the task
             // the turn itself runs in — the abandoned-stream shape
@@ -1764,7 +1764,7 @@ struct TurnCancellationTests {
             // the consumer came back at all, not an error it could never observe.
             turnTask.cancel()
             guard await Self.awaitCancellationReachingTheTool(
-                turnTask, observer: fixture.observer, parked: parked)
+                turnTask, observer: fixture.observer, suspended: suspended)
             else { return }
             // Safe to await, for ``followUpTurnEvents(on:observer:prompt:)``'s reason:
             // a stream consumer's `next()` is cancellation-aware and always ends.
@@ -1812,8 +1812,8 @@ struct TurnCancellationTests {
         let recordedBefore = await fixture.recorder.events.count
 
         let insideSummarizer = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(
-            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        let suspended = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
 
         let turnTask = Task { try await session.respond(to: "folds-first") }
         await insideSummarizer.wait()
@@ -1827,7 +1827,7 @@ struct TurnCancellationTests {
         case .callerTask:
             turnTask.cancel()
         }
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // Never a half-applied fold: a fold records its new entries, swaps
         // `backend`, and reports its own post-fold size as this session's fill —
@@ -1849,7 +1849,7 @@ struct TurnCancellationTests {
         // `backend` for a folded one, this would measure the smaller, folded size —
         // which is what makes this an assertion about `backend` itself and not only
         // about the ordering inside `fold`. The hook is cleared first, or that next
-        // fold would park in the summarizer all over again.
+        // fold would suspend in the summarizer all over again.
         fixture.hook.midTurn = nil
         let followUp = try #require(await Self.followUpTurnEvents(on: session, observer: fixture.observer))
         let untouchedSize = Compactor.estimatedTokenCount(of: Transcript(entries: Self.warmUpEntries()))
@@ -1874,14 +1874,14 @@ struct TurnCancellationTests {
 
         let recordedBefore = await fixture.recorder.events.count
         let insideSummarizer = AsyncSemaphore(value: 0)
-        let parked = Self.parkInsideCancellationAwareTool(
-            fixture, parkingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
-        // Composed on top of the summarizer park rather than replacing it: this turn
-        // has to overflow *and then* park inside the fold that overflow triggers.
-        let parkInSummarizer = fixture.hook.midTurn
+        let suspended = Self.suspendInsideCancellationAwareTool(
+            fixture, suspendingOn: Self.firstSummarizerCall(), insideTool: insideSummarizer)
+        // Composed on top of the summarizer suspension rather than replacing it: this turn
+        // has to overflow *and then* suspend inside the fold that overflow triggers.
+        let suspendInSummarizer = fixture.hook.midTurn
         fixture.hook.midTurn = { prompt in
             guard prompt.hasSuffix(Self.overflowingFoldPrompt) else {
-                try await parkInSummarizer?(prompt)
+                try await suspendInSummarizer?(prompt)
                 return
             }
             throw LanguageModelError.contextSizeExceeded(
@@ -1891,7 +1891,7 @@ struct TurnCancellationTests {
         let turnTask = Task { try await session.respond(to: Self.overflowingFoldPrompt) }
         await insideSummarizer.wait()
         #expect(await session.cancelCurrentTurn() == .requested)
-        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, parked: parked)
+        await Self.awaitCancelledUnwind(turnTask, observer: fixture.observer, suspended: suspended)
 
         // The retry never ran: the model saw this turn exactly once, and what the
         // caller gets is the cancellation rather than the overflow it was recovering

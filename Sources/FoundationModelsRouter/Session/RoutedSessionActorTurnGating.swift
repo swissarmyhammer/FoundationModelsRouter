@@ -11,7 +11,7 @@ extension RoutedSessionActor {
     /// completes even for a cancelled task, so a cancelled human wait still
     /// leaves the gate counts balanced. `body` runs with this actor reentrant
     /// (it suspends at its own awaits, exactly as the model call it was invoked
-    /// from does), which is what lets a second turn arrive and park on
+    /// from does), which is what lets a second turn arrive and block on
     /// ``turnLock`` while a person is being waited on.
     func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
         beginHumanWait()
@@ -35,7 +35,7 @@ extension RoutedSessionActor {
     /// ``currentTurnId`` — set from the moment a turn is through *both* of its
     /// gates until it ends — is what "a turn is in flight" means here, so this
     /// reports honestly for a session with nothing running, for one whose next
-    /// turn is still parked on the turn lock, and for one still waiting on a
+    /// turn is still blocked on the turn lock, and for one still waiting on a
     /// generation permit. That last case used to answer
     /// ``TurnCancellationResult/requested`` and then cancel a model call that
     /// did not exist yet: a cancellation the caller believed had landed and
@@ -46,11 +46,11 @@ extension RoutedSessionActor {
     ///
     /// A turn is not the only thing a caller can be waiting on, though.
     /// ``respond(to:maxTokens:)`` drains the run plane *between* its turns, so a
-    /// call can be suspended on a parked run with `currentTurnId` already `nil`
+    /// call can be suspended on a background run with `currentTurnId` already `nil`
     /// — nothing to cancel, and a caller with no way out (task ^h3efdrc). That
     /// drain is what this reaches when no turn is in flight: ``runPlaneDrainCount``
     /// says such a call exists, the request is counted so the drain's own checks
-    /// see it, and every wait already parked is resumed
+    /// see it, and every wait already suspended is resumed
     /// (``endRunPlaneDrainWaits()``) rather than left to the run plane's day-long
     /// ceiling. Only when there is no turn *and* no drain is there nothing to
     /// cancel.
@@ -114,7 +114,7 @@ extension RoutedSessionActor {
     ///
     /// ``turnLock`` is not lent to anybody: it is what keeps one session's
     /// transcript written by one turn at a time, and a turn started from inside
-    /// the turn that holds it would simply park on it and never come back.
+    /// the turn that holds it would simply block on it and never come back.
     /// ``GenerationPermitLoan`` is only published to a turn's own model call, so
     /// finding one that names this session is exactly "this session is already
     /// mid-turn, on this very task".
@@ -132,7 +132,7 @@ extension RoutedSessionActor {
     /// This is what every other site that would take ``turnLock`` has to ask
     /// before it takes it. ``fork(workingDirectory:)`` refuses on a `true`
     /// answer, and ``transcript`` serves its read without the lock; both used
-    /// to park for the life of a turn that could not end until they came back.
+    /// to block for the life of a turn that could not end until they came back.
     ///
     /// Deliberately narrower than the check ``beginTurn()`` makes. That one
     /// refuses on the session identity alone, which is conservative in the
@@ -240,7 +240,7 @@ extension RoutedSessionActor {
     /// is the whole point — so this actor is reentrant across it and the lending
     /// turn can finish *inside* that window. Re-checking only before the acquire
     /// would then leave this session holding a permit no turn will ever release,
-    /// parking every later turn on every session and fork over the model forever:
+    /// blocking every later turn on every session and fork over the model forever:
     /// worse than the drifted count the check exists to prevent. So the lender is
     /// re-validated after the acquire, and an orphaned permit is handed straight
     /// back to whoever is next in the gate's queue.

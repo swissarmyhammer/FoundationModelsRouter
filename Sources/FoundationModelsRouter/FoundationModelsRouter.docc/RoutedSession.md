@@ -7,7 +7,7 @@ The public session surface, grouped by audience (tasks ^j0pp9yp, ^k0mecjp).
 A session has three audiences, and each one gets typed capabilities:
 
 - **Apps and drivers** hold a `RoutedSession` and use the members below.
-  They never touch the raw staging and parking machinery — the session's
+  They never touch the raw staging and backgrounding machinery — the session's
   `SessionOutbox` and `SessionMailbox` instances are internal wiring.
 - **Tools** do not use this protocol at all. A running tool reads the
   ambient ``ToolContext`` and uses its capabilities:
@@ -15,7 +15,7 @@ A session has three audiences, and each one gets typed capabilities:
   ``ToolContext/elicit(_:)``, and ``ToolContext/isCancelled``.
 - **Tool hosts** — a tool that shows the run plane to a model — read that
   plane through the same ambient context, never through a mailbox:
-  ``ToolContext/parkedRuns()``,
+  ``ToolContext/backgroundRuns()``,
   ``ToolContext/wait(completionToken:seconds:)``, and
   ``ToolContext/cancel(completionToken:)`` (task ^k0mecjp).
 

@@ -5,10 +5,10 @@ import Testing
 
 /// Exercises the run plane's ``RunKind`` vocabulary: the raw value of each
 /// kind, what an unknown raw value does, and the cancellation authority a kind
-/// carries through a parked run's own canceler.
+/// carries through a background run's own canceler.
 ///
-/// Everything runs against a bare ``SessionMailbox`` and the fake parked runs
-/// of `ParkedRunFixtures`, so the suite needs no network and no GPU.
+/// Everything runs against a bare ``SessionMailbox`` and the fake background runs
+/// of `BackgroundRunFixtures`, so the suite needs no network and no GPU.
 @Suite("Run plane: the run kinds and the cancellation authority each one carries")
 struct RunPlaneTests {
     // MARK: - rawValue: the wire vocabulary
@@ -40,23 +40,23 @@ struct RunPlaneTests {
         }
     }
 
-    // MARK: - A parked process run
+    // MARK: - A tracked process run
 
-    @Test("a run parked as a process is listed under that kind, and cancel() reports its canceler's authoritative .stopped")
+    @Test("a run tracked as a process is listed under that kind, and cancel() reports its canceler's authoritative .stopped")
     func processRunIsListedAndCancelReportsStopped() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
-        let token = await parkFakeRun(
+        let token = await trackFakeRun(
             on: mailbox,
             latch: latch,
             kind: .process,
             cancelerOutcome: .stopped
         )
 
-        let parked = await mailbox.parkedRuns()
-        #expect(parked.count == 1)
-        #expect(parked.first?.completionToken == token)
-        #expect(parked.first?.kind == .process)
+        let runs = await mailbox.backgroundRuns()
+        #expect(runs.count == 1)
+        #expect(runs.first?.completionToken == token)
+        #expect(runs.first?.kind == .process)
 
         // `killpg(SIGKILL)` is authoritative, so this canceler reports
         // certainty — `.stopped`, never the `.cancelled` a cooperative request
@@ -69,12 +69,12 @@ struct RunPlaneTests {
         _ = await mailbox.wait(completionToken: token, seconds: 5)
     }
 
-    @Test("sweep() invokes a parked process run's own canceler and posts the .stopped outcome that canceler reports")
+    @Test("sweep() invokes a tracked process run's own canceler and posts the .stopped outcome that canceler reports")
     func sweepPostsTheProcessCancelerOutcome() async {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
         let counter = CancelCounter()
-        let token = await parkFakeRun(
+        let token = await trackFakeRun(
             on: mailbox,
             latch: latch,
             kind: .process,
@@ -92,7 +92,7 @@ struct RunPlaneTests {
         #expect(terminals.first?.correlationID == token)
         #expect(terminals.first?.kind == .completed)
         #expect(terminals.first?.outcome == .stopped)
-        #expect(await mailbox.parkedRuns().isEmpty)
+        #expect(await mailbox.backgroundRuns().isEmpty)
 
         await latch.open()
     }

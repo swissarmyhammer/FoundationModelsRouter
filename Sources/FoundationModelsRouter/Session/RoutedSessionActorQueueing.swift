@@ -7,7 +7,7 @@ import FoundationModels
 /// The protocol deliberately does not expose the two mechanism actors
 /// themselves (task ^j0pp9yp): an app drives the queue and answers
 /// elicitations through these typed methods alone, and the raw staging and
-/// parking machinery stays internal wiring. Every method here is a thin,
+/// backgrounding machinery stays internal wiring. Every method here is a thin,
 /// `nonisolated` delegation — the mechanism actors do their own
 /// serialization, so nothing needs this session actor's isolation.
 extension RoutedSessionActor {

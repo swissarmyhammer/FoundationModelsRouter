@@ -4,8 +4,8 @@ import Testing
 
 // Deliberately NOT `@testable`. Task ^8y20bwd is about a registration site
 // OUTSIDE this module, so this suite is held to the module's public surface:
-// a route that needed `ToolContext.mailbox`, `SessionMailbox.park` or
-// `ParkResult` would not compile here at all.
+// a route that needed `ToolContext.mailbox`, `SessionMailbox.track` or
+// `TrackResult` would not compile here at all.
 import FoundationModelsRouter
 
 /// Exercises task ^8y20bwd: a registration site gives a mounted tool a journal
@@ -16,7 +16,7 @@ import FoundationModelsRouter
 /// So the op rides in from the mount, and these tests read it back off the two
 /// places it surfaces.
 ///
-/// **The plane.** The pair reaches the RUN PLANE — ``ParkedRun/op`` and
+/// **The plane.** The pair reaches the RUN PLANE — ``BackgroundRun/op`` and
 /// ``ToolInvocationRecord/op`` — and it does NOT reach the event journal of an
 /// enclosing snippet, because ``ToolContext/post(_:)`` re-stamps each event it
 /// forwards with the outer run's identity. The last test of this suite pins
@@ -31,9 +31,9 @@ struct RegisteredJournalOpTests {
   private static let settlementDeadline: TimeInterval = 30
 
   /// The mount every tool of this suite is registered under: detaching with a
-  /// `waitSeconds` of zero, so a call parks at once and no test waits on a
-  /// wall clock.
-  private static let parkAtOnceMount = DetachConfiguration(mode: .detaching, waitSeconds: 0)
+  /// `waitSeconds` of zero, so a call is backgrounded at once and no test
+  /// waits on a wall clock.
+  private static let detachAtOnceMount = DetachConfiguration(mode: .detaching, waitSeconds: 0)
 
   // MARK: - Identity fixtures
 
@@ -133,7 +133,7 @@ struct RegisteredJournalOpTests {
 
   // MARK: - Tool fixtures
 
-  /// Blocks until its gate opens, so a call of it is still parked while a test
+  /// Blocks until its gate opens, so a call of it is still running while a test
   /// reads the run plane. Its `name` is the bare verb, which is exactly what a
   /// capability verb can state about itself.
   private struct GatedVerbTool: Tool {
@@ -155,7 +155,7 @@ struct RegisteredJournalOpTests {
   /// run plane through — the public route, stamped as the enclosing run.
   ///
   /// - Parameters:
-  ///   - mailbox: The session mailbox every run of the test parks on.
+  ///   - mailbox: The session mailbox every run of the test is tracked on.
   ///   - sink: The session's own sink.
   /// - Returns: The enclosing run's context.
   private static func makeEnclosingContext(
@@ -172,15 +172,15 @@ struct RegisteredJournalOpTests {
     )
   }
 
-  /// Calls `mounted` one time and returns the one run that call parked.
+  /// Calls `mounted` one time and returns the one run that call backgrounded.
   ///
   /// - Parameters:
   ///   - mounted: The tool as its registration site mounted it.
-  ///   - host: The context whose run plane the parked run lands on.
-  /// - Returns: The one run the call parked.
-  private static func parkOneRun(
+  ///   - host: The context whose run plane the background run lands on.
+  /// - Returns: The one run the call backgrounded.
+  private static func backgroundOneRun(
     _ mounted: any Tool, on host: ToolContext
-  ) async throws -> ParkedRun {
+  ) async throws -> BackgroundRun {
     let detaching = try #require(mounted as? DetachingTool<RegisteredOpArguments>)
     let rendered = try await detaching.call(
       arguments: RegisteredOpArguments(value: "long job")
@@ -188,29 +188,29 @@ struct RegisteredJournalOpTests {
     // The call really detached: the model was handed a pending envelope rather
     // than a result.
     #expect(PendingRunEnvelope.isRendered(text: rendered))
-    let parked = await host.parkedRuns()
-    #expect(parked.count == 1)
-    return try #require(parked.first)
+    let runs = await host.backgroundRuns()
+    #expect(runs.count == 1)
+    return try #require(runs.first)
   }
 
-  /// Lets a parked run's body end, so a test leaves no detached work behind.
+  /// Lets a background run's body end, so a test leaves no detached work behind.
   ///
   /// - Parameters:
-  ///   - parked: The run to settle.
+  ///   - run: The run to settle.
   ///   - gate: The gate its body waits on.
   ///   - host: The context that collects the terminal event.
   private static func settle(
-    _ parked: ParkedRun, gate: RunLatch, on host: ToolContext
+    _ run: BackgroundRun, gate: RunLatch, on host: ToolContext
   ) async {
     await gate.open()
     _ = await host.wait(
-      completionToken: parked.completionToken, seconds: settlementDeadline
+      completionToken: run.completionToken, seconds: settlementDeadline
     )
   }
 
   // MARK: - The op a registration site gives
 
-  @Test("a registration site's op reaches ParkedRun.op, while the tool name stays the tool's own")
+  @Test("a registration site's op reaches BackgroundRun.op, while the tool name stays the tool's own")
   func aRegisteredOpReachesTheRunPlane() async throws {
     let gate = RunLatch()
     let sink = RecordingSink()
@@ -221,16 +221,16 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: sink,
       op: Self.registeredOp,
-      configuration: Self.parkAtOnceMount
+      configuration: Self.detachAtOnceMount
     )
-    let parked = try await Self.parkOneRun(mounted, on: host)
+    let run = try await Self.backgroundOneRun(mounted, on: host)
 
     // The two fields really differ, which is the whole point: no route into
     // this module could make them differ before.
-    #expect(parked.op == Self.registeredOp)
-    #expect(parked.tool == Self.verbToolName)
+    #expect(run.op == Self.registeredOp)
+    #expect(run.tool == Self.verbToolName)
 
-    await Self.settle(parked, gate: gate, on: host)
+    await Self.settle(run, gate: gate, on: host)
   }
 
   @Test("a registration site's op reaches the ToolInvocationRecord of the run")
@@ -244,18 +244,18 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: sink,
       op: Self.registeredOp,
-      configuration: Self.parkAtOnceMount
+      configuration: Self.detachAtOnceMount
     )
-    let parked = try await Self.parkOneRun(mounted, on: host)
+    let run = try await Self.backgroundOneRun(mounted, on: host)
 
-    // The run is still parked, so the open record stands alone; it is
-    // self-attributed by the parked run's own completion token.
+    // The run is still running, so the open record stands alone; it is
+    // self-attributed by the background run's own completion token.
     let records = await sink.invocations
     #expect(records.map(\.op) == [Self.registeredOp])
     #expect(records.map(\.tool) == [Self.verbToolName])
-    #expect(records.map(\.correlationID) == [parked.completionToken])
+    #expect(records.map(\.correlationID) == [run.completionToken])
 
-    await Self.settle(parked, gate: gate, on: host)
+    await Self.settle(run, gate: gate, on: host)
   }
 
   @Test(
@@ -271,16 +271,16 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: sink,
       op: Self.registeredOp,
-      configuration: Self.parkAtOnceMount
+      configuration: Self.detachAtOnceMount
     )
     let binding = try #require(
       mounted as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
     let output = try await binding.call(arguments: AmbientToolArguments(value: "bound"))
 
-    // This route never parks — there is no `String` wire form for a pending
-    // envelope to replace — so the declared op arrives on the ambient context
-    // the decorator binds, which re-stamps the tool's own post with it.
-    #expect(await host.parkedRuns().isEmpty)
+    // This route never backgrounds a call — there is no `String` wire form for
+    // a pending envelope to replace — so the declared op arrives on the ambient
+    // context the decorator binds, which re-stamps the tool's own post with it.
+    #expect(await host.backgroundRuns().isEmpty)
     let events = await sink.events
     #expect(events.map(\.op) == [Self.registeredOp])
     #expect(events.map(\.tool) == [tool.name])
@@ -306,15 +306,15 @@ struct RegisteredJournalOpTests {
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
-      configuration: Self.parkAtOnceMount
+      configuration: Self.detachAtOnceMount
     )
-    let parked = try await Self.parkOneRun(mounted, on: host)
+    let run = try await Self.backgroundOneRun(mounted, on: host)
 
-    #expect(parked.op == Self.verbToolName)
-    #expect(parked.tool == Self.verbToolName)
+    #expect(run.op == Self.verbToolName)
+    #expect(run.tool == Self.verbToolName)
     #expect(await sink.invocations.map(\.op) == [Self.verbToolName])
 
-    await Self.settle(parked, gate: gate, on: host)
+    await Self.settle(run, gate: gate, on: host)
   }
 
   // MARK: - The plane the pair appears on
@@ -332,13 +332,13 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: EnclosingRunSink(enclosing: host, upstream: sink),
       op: Self.registeredOp,
-      configuration: Self.parkAtOnceMount
+      configuration: Self.detachAtOnceMount
     )
-    let parked = try await Self.parkOneRun(mounted, on: host)
+    let run = try await Self.backgroundOneRun(mounted, on: host)
 
     // The run plane carries the pair the registration site gave.
     let records = await sink.invocations
-    #expect(parked.op == Self.registeredOp)
+    #expect(run.op == Self.registeredOp)
     #expect(records.map(\.op) == [Self.registeredOp])
 
     // The event journal of the enclosing snippet does not. The inner run posted
@@ -350,6 +350,6 @@ struct RegisteredJournalOpTests {
     #expect(events.map(\.tool) == [Self.enclosingToolName])
     #expect(events.map(\.correlationID) == [host.completionToken])
 
-    await Self.settle(parked, gate: gate, on: host)
+    await Self.settle(run, gate: gate, on: host)
   }
 }

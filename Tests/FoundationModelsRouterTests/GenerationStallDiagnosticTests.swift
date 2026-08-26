@@ -23,7 +23,7 @@ struct GenerationStallDiagnosticTests {
     // MARK: - Stalling backend
 
     /// A ``LanguageModelSessionBackend`` that produces `fragmentsBeforeStall`
-    /// stream chunks and then parks until a test releases it — a decode that
+    /// stream chunks and then suspends until a test releases it — a decode that
     /// stops making progress while the model call is still in flight.
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
@@ -34,41 +34,41 @@ struct GenerationStallDiagnosticTests {
         /// backend only has to model the stall.
         private let inner = StubSessionBackend()
 
-        /// Signalled once the model call has parked, so a test knows the stall
+        /// Signalled once the model call has suspended, so a test knows the stall
         /// has begun rather than guessing at it.
-        let parked = AsyncSemaphore(value: 0)
+        let suspended = AsyncSemaphore(value: 0)
 
-        /// Awaited by the parked model call; signalling it lets the turn finish.
+        /// Awaited by the suspended model call; signalling it lets the turn finish.
         let release = AsyncSemaphore(value: 0)
 
-        /// How many stream chunks to produce before parking.
+        /// How many stream chunks to produce before suspending.
         let fragmentsBeforeStall: Int
 
         /// Creates a stalling backend.
         ///
         /// - Parameter fragmentsBeforeStall: How many stream chunks to produce
-        ///   before the model call parks. Ignored on the non-streaming path,
+        ///   before the model call suspends. Ignored on the non-streaming path,
         ///   which produces nothing at all.
         init(fragmentsBeforeStall: Int = 0) {
             self.fragmentsBeforeStall = fragmentsBeforeStall
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
-            parked.signal()
+            suspended.signal()
             await release.wait()
             return try await inner.respond(to: prompt, maxTokens: maxTokens)
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
             let fragmentsBeforeStall = fragmentsBeforeStall
-            let parked = parked
+            let suspended = suspended
             let release = release
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     for index in 0..<fragmentsBeforeStall {
                         continuation.yield("chunk-\(index) ")
                     }
-                    parked.signal()
+                    suspended.signal()
                     await release.wait()
                     continuation.finish()
                 }
@@ -100,7 +100,7 @@ struct GenerationStallDiagnosticTests {
     /// synchronous session-vending path — and read only by the test task after
     /// that vend returns, so the write and every read happen in order.
     private final class StallingLLMContainer: PlainTranscriptStubContainer, @unchecked Sendable {
-        /// How many stream chunks each vended backend produces before parking.
+        /// How many stream chunks each vended backend produces before suspending.
         let fragmentsBeforeStall: Int
 
         /// The backend vended most recently — the one the session is driving.
@@ -109,7 +109,7 @@ struct GenerationStallDiagnosticTests {
         /// Creates a container.
         ///
         /// - Parameter fragmentsBeforeStall: How many stream chunks each vended
-        ///   backend produces before parking.
+        ///   backend produces before suspending.
         init(fragmentsBeforeStall: Int) {
             self.fragmentsBeforeStall = fragmentsBeforeStall
         }
@@ -178,7 +178,7 @@ struct GenerationStallDiagnosticTests {
     ///
     /// - Parameters:
     ///   - fragmentsBeforeStall: How many stream chunks the backend produces
-    ///     before parking.
+    ///     before suspending.
     ///   - reportInterval: The stall reporting interval to install on the
     ///     vended session.
     /// - Returns: The session, its backend, and the temp directory to remove.
@@ -228,7 +228,7 @@ struct GenerationStallDiagnosticTests {
 
         let (log, drain) = await Self.watchSessionEvents(on: session)
         let turn = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.parked, named: "the model call parked")
+        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
 
         let reported = await BoundedWait.conditionReached("a stall report") {
             await !log.stalls.isEmpty
@@ -254,7 +254,7 @@ struct GenerationStallDiagnosticTests {
 
         let (log, drain) = await Self.watchSessionEvents(on: session)
         let turn = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.parked, named: "the model call parked")
+        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
 
         backend.release.signal()
@@ -281,7 +281,7 @@ struct GenerationStallDiagnosticTests {
                 await log.append(event)
             }
         }
-        try await BoundedWait.awaitSignal(backend.parked, named: "the model call parked")
+        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
 
         let reported = await BoundedWait.conditionReached("a stall report") {
             await !log.stalls.isEmpty
@@ -304,7 +304,7 @@ struct GenerationStallDiagnosticTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (log, drain) = await Self.watchSessionEvents(on: session)
-        // Released up front, so the backend never parks and the turn runs
+        // Released up front, so the backend never suspends and the turn runs
         // straight through.
         backend.release.signal()
         _ = try await session.respond(to: Self.prompt)
@@ -334,7 +334,7 @@ struct GenerationStallDiagnosticTests {
 
         let (log, drain) = await Self.watchSessionEvents(on: session)
         let turn = Task { try await session.respond(to: Self.prompt) }
-        try await BoundedWait.awaitSignal(backend.parked, named: "the model call parked")
+        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
         _ = await BoundedWait.conditionReached("a stall report") { await !log.stalls.isEmpty }
 
         backend.release.signal()

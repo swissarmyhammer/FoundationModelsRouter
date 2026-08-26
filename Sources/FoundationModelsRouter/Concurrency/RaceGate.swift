@@ -16,7 +16,7 @@ import Synchronization
 /// - `DetachingTool`'s soft `waitSeconds` deadline, which races a run's
 ///   settlement against the window the caller allowed.
 /// - ``RoutedSessionActor/respond(to:maxTokens:)``'s run-plane drain, which
-///   races a parked run's settlement against a cancellation reaching the
+///   races a background run's settlement against a cancellation reaching the
 ///   draining call.
 final class RaceGate<Value: Sendable>: Sendable {
     /// This gate's state machine.

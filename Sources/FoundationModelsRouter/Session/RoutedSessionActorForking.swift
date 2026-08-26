@@ -12,7 +12,7 @@ extension RoutedSessionActor {
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
     /// pristine state before being wrapped in the child's own detachment
     /// layer — this site's full chain is fork → detach → cap (task ^k4nygqa),
-    /// so the child's detached runs park in the child's own mailbox. Acquires
+    /// so the child's detached runs are tracked in the child's own mailbox. Acquires
     /// ``turnLock`` just long enough to read `backend`'s conversation state
     /// and entry count together, closing the race against a concurrent
     /// in-flight turn mutating that same state. The child's
@@ -80,7 +80,7 @@ extension RoutedSessionActor {
         // composition
         // ``ToolDetachment/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
         // (tasks ^k4nygqa, 1334fk3): the forked copy is detached with the
-        // child's own identity, mailbox, and outbox — so the fork's parked
+        // child's own identity, mailbox, and outbox — so the fork's background
         // runs live in the fork's own mailbox, never the parent's — and,
         // when the fork inherits ``autoCompactionBudget``, capped outermost
         // to its ``TokenBudget/toolOutputLimit``, exactly as
@@ -88,7 +88,7 @@ extension RoutedSessionActor {
         // caps a root session's tools.
         let childOutbox = SessionOutbox()
         // The child's mailbox is fresh for the same reason its outbox is:
-        // parked runs and pending elicitations never migrate between
+        // background runs and pending elicitations never migrate between
         // sessions (see ``RoutedSessionActor/mailbox``).
         let childMailbox = SessionMailbox()
         // Minted before the tool composition below, deliberately: the
@@ -120,7 +120,7 @@ extension RoutedSessionActor {
         // keeps the hold no longer than necessary.
         //
         // The turn lock rather than the per-model generation gate, deliberately:
-        // a turn parked in ``awaitingUser(_:)`` has handed the generation gate
+        // a turn suspended in ``awaitingUser(_:)`` has handed the generation gate
         // back to let other sessions generate, but it is still very much in
         // flight and its `backend` is still mid-turn.
         await turnLock.wait()
@@ -213,7 +213,7 @@ extension RoutedSessionActor {
     /// ``record(event:)``, and so the same ``makeRunEventPartial(for:)``, a
     /// run's own reports take when they are journaled live. The journal is
     /// complete before this method returns: exactly one terminal event per
-    /// parked run, no orphans, no holes.
+    /// background run, no orphans, no holes.
     ///
     /// **Why through the outbox rather than straight to the recorder.**
     /// Every other journal write is ordered by ``SessionOutbox``'s one FIFO
@@ -227,7 +227,7 @@ extension RoutedSessionActor {
     /// ride.
     ///
     /// **A run's ending is recorded once, even though two writers can produce
-    /// it.** A sweep synthesizes a terminal only for runs still parked, but
+    /// it.** A sweep synthesizes a terminal only for runs still running, but
     /// that does not make one writer per run: `sweep()` suspends across each
     /// run's canceler, so a run can settle naturally in that window and
     /// journal its own terminal live before the sweep hands the same retained
@@ -253,7 +253,7 @@ extension RoutedSessionActor {
     /// every turn path does via `recordSessionMetaIfNeeded()`), so the
     /// journal never opens with a bare `.toolOutput` line. A close with
     /// nothing swept journals nothing at all — a session that never
-    /// generated and never parked a run still writes no file, preserving
+    /// generated and never backgrounded a run still writes no file, preserving
     /// `generate(grammar:prompt:_:)`'s "writes no file at all until it
     /// generates" invariant.
     func close() async {
@@ -264,7 +264,7 @@ extension RoutedSessionActor {
 
         let terminalEvents = await mailbox.sweep()
         guard !terminalEvents.isEmpty else { return }
-        // A run can only be parked from inside a turn, so by here the journal
+        // A run can only be backgrounded from inside a turn, so by here the journal
         // is normally attached already; attaching is idempotent, and doing it
         // unconditionally means this path never depends on that reasoning
         // holding for every future caller.

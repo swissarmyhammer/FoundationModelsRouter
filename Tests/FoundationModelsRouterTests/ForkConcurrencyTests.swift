@@ -13,7 +13,7 @@ import Testing
 ///   like the shared ``StubSessionBackend``, so a fork's ``makeFork()``-seeded
 ///   transcript inheritance and independent divergence are observed exactly;
 /// - the same backend, when wired with a test-controlled ``SerialObserver`` +
-///   release gate, can park `respond` on it, so the per-model generation gate's
+///   release gate, can suspend `respond` on it, so the per-model generation gate's
 ///   non-overlap and FIFO order are made deterministic through the semaphore's
 ///   `waiterCount` observability rather than sleeps.
 ///
@@ -56,12 +56,12 @@ struct ForkConcurrencyTests {
     /// A trackable ``LanguageModelSessionBackend`` for this suite: like the
     /// shared ``StubSessionBackend``, it records ``callCount``/``receivedPrompts``
     /// and seeds a fork's history from a copy of its own at fork time — but it
-    /// additionally supports parking a call on a test-controlled
+    /// additionally supports suspending a call on a test-controlled
     /// ``SerialObserver`` + release gate, and recording the grammar a guided
     /// call was constrained with into a ``GuidedProbe``, neither of which the
     /// other stub-container files in this target need. ``makeFork()``
     /// propagates the same wiring to the child, so a fork of an
-    /// observer/gate-wired backend still parks the same way and a fork of a
+    /// observer/gate-wired backend still suspends the same way and a fork of a
     /// guided-probe-wired backend still records into the same probe —
     /// mirroring how a fork shares its parent's underlying model.
     private final class TrackingSessionBackend: LanguageModelSessionBackend, @unchecked Sendable {
@@ -411,7 +411,7 @@ struct ForkConcurrencyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let observer = SerialObserver()
-        // Bodies park here; a permit per call is released once the test has
+        // Bodies suspend here; a permit per call is released once the test has
         // established the FIFO arrival order.
         let releaseGate = AsyncSemaphore(value: 0)
         let container = InstrumentedLLMContainer(observer: observer, releaseGate: releaseGate)
@@ -432,13 +432,13 @@ struct ForkConcurrencyTests {
 
         let generationGate = profile.standard.generationGate
 
-        // Launch call 0; it takes the only generation permit and parks in respond.
+        // Launch call 0; it takes the only generation permit and suspends in respond.
         let task0 = Task { try await callers[0].respond(to: "0") }
         await Self.spin(until: { generationGate.availablePermits == 0 })
         await Self.spin(until: { await observer.entryOrder == [0] })
 
         // Launch calls 1, 2, 3 one at a time, each only after the previous has
-        // actually parked on the generation gate — establishing a deterministic FIFO
+        // actually suspended on the generation gate — establishing a deterministic FIFO
         // arrival order without sleeping.
         let task1 = Task { try await callers[1].respond(to: "1") }
         await Self.spin(until: { generationGate.waiterCount == 1 })
@@ -492,7 +492,7 @@ struct ForkConcurrencyTests {
         await Self.spin(until: { admissionGate.waiterCount == 1 })
 
         // Releasing one fork frees its slot; the waiter is admitted. (The ceiling
-        // was never exceeded while all three were requested: the parked-state
+        // was never exceeded while all three were requested: the suspended-state
         // assertions above — two admitted, the third blocked on the gate — are the
         // robust bound evidence for the ceiling itself.)
         forkA = nil

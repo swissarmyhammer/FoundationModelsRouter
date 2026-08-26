@@ -13,9 +13,9 @@ import Testing
 /// concurrent elicitations on one run resolving independently.
 ///
 /// The run-plane capabilities a tool host reads (task ^k0mecjp) are exercised
-/// here too: `parkedRuns()`, `wait(completionToken:seconds:)` and
+/// here too: `backgroundRuns()`, `wait(completionToken:seconds:)` and
 /// `cancel(completionToken:)`, each driven against a real ``SessionMailbox``
-/// holding a fake parked run — no live model anywhere.
+/// holding a fake background run — no live model anywhere.
 @Suite("ToolContext: ambient task-local capability surface")
 struct ToolContextTests {
     // MARK: - Fixtures
@@ -409,27 +409,27 @@ struct ToolContextTests {
 
     // MARK: - Run-plane capabilities
 
-    @Test("parkedRuns() reports the session's parked runs, and a settled run leaves the report")
-    func parkedRunsReportsTheSessionsRuns() async throws {
+    @Test("backgroundRuns() reports the session's background runs, and a settled run leaves the report")
+    func backgroundRunsReportsTheSessionsRuns() async throws {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
         let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
-        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+        let token = await trackFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
 
-        let parked = await context.parkedRuns()
-        #expect(parked.count == 1)
-        #expect(parked.first?.completionToken == token)
-        #expect(parked.first?.tool == FakeRun.tool)
-        #expect(parked.first?.op == FakeRun.op)
-        #expect(parked.first?.kind == .swiftTask)
-        #expect(parked.first?.latestProgressDetail == nil)
+        let runs = await context.backgroundRuns()
+        #expect(runs.count == 1)
+        #expect(runs.first?.completionToken == token)
+        #expect(runs.first?.tool == FakeRun.tool)
+        #expect(runs.first?.op == FakeRun.op)
+        #expect(runs.first?.kind == .swiftTask)
+        #expect(runs.first?.latestProgressDetail == nil)
 
         await mailbox.updateProgress(completionToken: token, detail: "50%")
-        #expect(await context.parkedRuns().first?.latestProgressDetail == "50%")
+        #expect(await context.backgroundRuns().first?.latestProgressDetail == "50%")
 
         await latch.open()
         _ = await context.wait(completionToken: token, seconds: Self.settlementDeadline)
-        #expect(await context.parkedRuns().isEmpty)
+        #expect(await context.backgroundRuns().isEmpty)
     }
 
     @Test("wait() resolves to the run's terminal event once it settles")
@@ -437,7 +437,7 @@ struct ToolContextTests {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
         let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
-        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+        let token = await trackFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
 
         await latch.open()
         let outcome = await context.wait(
@@ -453,18 +453,18 @@ struct ToolContextTests {
         #expect(terminal.outcome == .succeeded)
     }
 
-    @Test("wait() reports its deadline elapsing and leaves the run parked")
+    @Test("wait() reports its deadline elapsing and leaves the run tracked")
     func waitReportsTheDeadlineElapsing() async throws {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
         let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
-        let token = await parkFakeRun(on: mailbox, latch: latch)
+        let token = await trackFakeRun(on: mailbox, latch: latch)
 
         #expect(
             await context.wait(completionToken: token, seconds: Self.elapsingDeadline)
                 == .deadlineElapsed
         )
-        #expect(await context.parkedRuns().count == 1)
+        #expect(await context.backgroundRuns().count == 1)
 
         // Settle the fake run so the test tears down with no suspended
         // continuation left behind.
@@ -489,7 +489,7 @@ struct ToolContextTests {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
         let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
-        let token = await parkFakeRun(on: mailbox, latch: latch, cancelerOutcome: .cancelled)
+        let token = await trackFakeRun(on: mailbox, latch: latch, cancelerOutcome: .cancelled)
 
         #expect(await context.cancel(completionToken: token) == .reported(.cancelled))
 
@@ -503,7 +503,7 @@ struct ToolContextTests {
         let mailbox = SessionMailbox()
         let latch = RunLatch()
         let context = Self.makeContext(sink: RecordingSink(), mailbox: mailbox)
-        let token = await parkFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
+        let token = await trackFakeRun(on: mailbox, latch: latch, detailOnSettle: "exit 0")
 
         await latch.open()
         _ = await context.wait(completionToken: token, seconds: Self.settlementDeadline)

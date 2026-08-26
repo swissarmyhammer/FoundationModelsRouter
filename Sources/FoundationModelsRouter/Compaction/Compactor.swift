@@ -226,9 +226,9 @@ public enum Compactor {
     ///     `Summarization()` — every knob at its own documented default, which
     ///     is what a caller that does not tune the fold gets. Unused on the
     ///     model-free path, for the same reason `prompt` is.
-    ///   - pendingRuns: The run-plane summaries of the runs still parked in
+    ///   - pendingRuns: The run-plane summaries of the runs still running in
     ///     the calling session's `SessionMailbox` at the moment this fold
-    ///     runs, in park order — carried into the synthesized boundary when
+    ///     runs, in tracking order — carried into the synthesized boundary when
     ///     ``Summarization`` runs (see
     ///     ``Summarization/apply(_:prompt:tokensBefore:priorStagesApplied:summarizer:pendingRuns:)``).
     ///     Defaults to empty — the bare-transcript callers with no mailbox —

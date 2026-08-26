@@ -4,7 +4,7 @@ import Testing
 
 /// Thrown by ``BoundedWait/awaitSignal(_:named:)`` when the signal it waited for
 /// never arrived, so the test that caught the fault stops there instead of
-/// parking on a wait nothing can break.
+/// suspending on a wait nothing can break.
 struct SignalNeverArrived: Error {}
 
 /// A bounded way to observe something a test would otherwise wait on with no way
@@ -12,8 +12,8 @@ struct SignalNeverArrived: Error {}
 ///
 /// The bound is the whole point. ``AsyncSemaphore/wait()`` suspends on a
 /// `CheckedContinuation<Void, Never>` and ignores cancellation by design, so a
-/// signal that never comes parks its waiter forever and no cancellation and no
-/// other task can unpark it. This test target sets no `.timeLimit` trait, and
+/// signal that never comes suspends its waiter forever and no cancellation and no
+/// other task can resume it. This test target sets no `.timeLimit` trait, and
 /// SwiftPM offers no manifest-level way to set one, so such a wait hangs the
 /// whole `swift test` run rather than failing the one test that caught the
 /// fault.

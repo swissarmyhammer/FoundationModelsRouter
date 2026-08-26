@@ -258,50 +258,50 @@ public protocol RoutedSession: Actor {
     ///   drained at the top of each of this call's turns and folded into that
     ///   turn's prompt as a plain-text preamble, exactly as every generation
     ///   surface drains it.
-    /// - The **run plane** (the runs a detached tool call parked) is drained
-    ///   *after* this call's own turn: every parked run is awaited to
+    /// - The **run plane** (the runs a detached tool call backgrounded) is drained
+    ///   *after* this call's own turn: every background run is awaited to
     ///   settlement, and a further turn is run so those results reach the model
     ///   in this same call. So the answer is written from what the backgrounded
     ///   work returned rather than from the completion token it handed back,
-    ///   nothing is left parked when this call returns, and no caller has to
-    ///   make the model call a `wait` tool to get there. Every run parked at
+    ///   nothing is left running when this call returns, and no caller has to
+    ///   make the model call a `wait` tool to get there. Every run backgrounded at
     ///   each round is drained, not just the first.
-    /// - It **does not sweep**: ending parked runs is teardown, and belongs to
+    /// - It **does not sweep**: ending background runs is teardown, and belongs to
     ///   ``close()``.
     /// - It **does not change the streaming surfaces**.
     ///   ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
-    ///   still return while a run they parked is in flight — backgrounding is
+    ///   still return while a run they backgrounded is in flight — backgrounding is
     ///   the feature there.
     ///
     /// The drain terminates by a stated rule: it runs at most
-    /// ``RoutedSessionActor/parkedRunDrainRoundLimit`` drained turns after this
+    /// ``RoutedSessionActor/backgroundRunDrainRoundLimit`` drained turns after this
     /// call's own, so a model that keeps starting background work from inside a
     /// drained turn is answered early rather than awaited forever.
     ///
     /// **How often the drain runs — it is a safety net, not the usual path.**
     ///
-    /// A tool call that parks its run returns ``PendingRunEnvelope``, and that
+    /// A tool call that backgrounds its run returns ``PendingRunEnvelope``, and that
     /// envelope tells the model to collect the run itself, with a `wait` call,
     /// before it answers. ``DetachingTool`` writes that instruction on every
-    /// park, so every host hands it to the model and no host can turn it off. A
+    /// backgrounding, so every host hands it to the model and no host can turn it off. A
     /// model that obeys it collects its own runs; this call then finds the run
     /// plane empty and runs no drained turn at all. The drain answers the other
-    /// case: the turn ends with a run still parked, because the model ignored
+    /// case: the turn ends with a run still running, because the model ignored
     /// the instruction or because its own `wait` ran out. So how often the drain
     /// runs is a property of the model, not of the host, and the guarantee above
-    /// — nothing is left parked when this call returns — holds in both cases.
-    /// The Router's own tests park the runs the drain collects, so they prove
+    /// — nothing is left running when this call returns — holds in both cases.
+    /// The Router's own tests background the runs the drain collects, so they prove
     /// what the drain does and not how often a real model leaves a run behind
     /// (task ^466d38p).
     ///
     /// A cancellation ends the drain too, from either route —
     /// ``cancelCurrentTurn()`` or the caller's own task — and it lands whether
-    /// the call is inside a turn or already parked on a run between turns
+    /// the call is inside a turn or already waiting on a run between turns
     /// (task ^h3efdrc). A cancelled drain **returns the last turn's answer
     /// rather than throwing**, which is what a cancellation reaching a detached
     /// tool call already produces: the turn answers with its pending envelope.
     /// It stops waiting and nothing else — the runs it was waiting on stay
-    /// parked, since ending them is ``close()``'s job.
+    /// running, since ending them is ``close()``'s job.
     ///
     /// **How long generation may take: the recorded decision (task ^z6xcmnh).**
     ///
@@ -372,7 +372,7 @@ public protocol RoutedSession: Actor {
     ///
     /// This surface drains the content plane at the top of its turn like every
     /// other, and deliberately does **not** drain the run plane: it finishes
-    /// while a run the turn parked is still in flight. Backgrounding is the
+    /// while a run the turn backgrounded is still in flight. Backgrounding is the
     /// feature here — a consumer watching a stream watches the run plane too.
     /// ``respond(to:maxTokens:)`` is the surface that waits.
     ///
@@ -448,7 +448,7 @@ public protocol RoutedSession: Actor {
     ///
     /// Like ``streamResponse(to:maxTokens:)``, and unlike
     /// ``respond(to:maxTokens:)``, this surface does **not** drain the run
-    /// plane: the stream finishes while a run the turn parked is still in
+    /// plane: the stream finishes while a run the turn backgrounded is still in
     /// flight, and that run's result reaches the model on a later turn.
     ///
     /// - Returns: A stream of session events, finishing when the turn
@@ -572,13 +572,13 @@ public protocol RoutedSession: Actor {
     ///   re-queueing it would resurrect an id the caller has already been told was
     ///   sent.
     /// - **The gates** stay exactly balanced, including when the cancellation
-    ///   lands on a turn parked in ``awaitingUser(_:)``: the wait re-acquires the
+    ///   lands on a turn suspended in ``awaitingUser(_:)``: the wait re-acquires the
     ///   permit it lent (``AsyncSemaphore``'s acquire completes even for a
     ///   cancelled task) and the turn releases it on the way out, so no permit is
     ///   minted or stranded and no other session over the model is blocked.
     ///
     /// Only the turn *in flight* is affected. A turn queued behind it (a
-    /// concurrent ``respond(to:maxTokens:)`` parked on this session's turn lock)
+    /// concurrent ``respond(to:maxTokens:)`` blocked on this session's turn lock)
     /// is untouched and will still run — cancelling that one remains its own
     /// caller's `Task`'s business, exactly as before, and cancelling a turn's
     /// enclosing `Task` still propagates into the model call the way it always
@@ -614,12 +614,12 @@ public protocol RoutedSession: Actor {
     ///
     /// A **`respond(to:maxTokens:)` draining the run plane** is reached as well,
     /// and it is the one thing this cancels that is not a turn. That call drains
-    /// *between* its turns, so it can be waiting on a parked run with no turn in
+    /// *between* its turns, so it can be waiting on a background run with no turn in
     /// flight at all — and the run plane's own wait ignores task cancellation,
     /// with a ceiling of a day, so before this there was no way out of such a
     /// call short of ``close()`` (task ^h3efdrc). A cancellation arriving then
     /// ends the wait: the call stops draining and returns its last turn's answer
-    /// rather than throwing, and the runs it was waiting on stay parked, exactly
+    /// rather than throwing, and the runs it was waiting on stay running, exactly
     /// as they were. Ending them is ``close()``'s job, never this one's.
     ///
     /// Safe at any time and any number of times: a second cancellation of the
@@ -694,7 +694,7 @@ public protocol RoutedSession: Actor {
     /// misuse; the optimization does not.
     ///
     /// Router carries elicitation's typed envelope and resume plumbing —
-    /// ``ToolContext/elicit(_:)`` parks the run in this session's ``SessionMailbox``
+    /// ``ToolContext/elicit(_:)`` suspends the run in this session's ``SessionMailbox``
     /// and ``respond(elicitationId:response:)``/``complete(elicitationId:)``
     /// deliver the answer — while the presenting UI stays the host app's.
     /// This method's contribution is orthogonal: making the wait on the
@@ -748,10 +748,10 @@ public protocol RoutedSession: Actor {
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 
     /// Tears the session down explicitly: runs the session mailbox's
-    /// ``SessionMailbox/sweep()`` — cancelling every parked run per its
+    /// ``SessionMailbox/sweep()`` — cancelling every background run per its
     /// kind's semantics and rejecting every pending elicitation — and drains
     /// the resulting terminal events into the journal (exactly one per
-    /// parked run, no orphans, no holes) before returning.
+    /// background run, no orphans, no holes) before returning.
     ///
     /// Call it wherever a session's life actually ends: a host app ending a
     /// conversation, `multitool-cli` teardown, and fork/restore paths that
@@ -816,7 +816,7 @@ public protocol RoutedSession: Actor {
     ///   prompt" must sequence the two calls itself, by awaiting the first.
     /// - **Once a caller reaches the turn lock, order is total and fair.** The
     ///   lock is a strict FIFO ``AsyncSemaphore``, so turns run in the order
-    ///   they parked on it and no caller can be starved by later arrivals.
+    ///   they blocked on it and no caller can be starved by later arrivals.
     /// - **``streamEvents(to:maxTokens:)`` and ``streamResponse(to:maxTokens:)``
     ///   reach that lock from a task of their own**, spawned when the stream is
     ///   created rather than when it is first iterated. Their position in line
@@ -843,12 +843,12 @@ public protocol RoutedSession: Actor {
     /// immediately when it already does.
     ///
     /// The idle-wakeup signal of the ``dispatchNextPrompt()`` driver loop
-    /// (see that method's doc comment for the loop's shape): a driver parks
+    /// (see that method's doc comment for the loop's shape): a driver suspends
     /// here instead of polling, wakes when
     /// ``enqueue(prompt:)-(Transcript.Prompt)`` stages a prompt or a
     /// long-running tool posts an event, and asks ``dispatchNextPrompt()``
     /// to run whatever arrived. One wake-up per call — a driver loops,
-    /// re-parking after each dispatch.
+    /// re-suspending after each dispatch.
     func awaitQueuedWork() async
 
     /// Stages a queued user prompt for a future turn.
@@ -913,7 +913,7 @@ public protocol RoutedSession: Actor {
 
     /// Delivers the user's answer to a pending elicitation raised by a run on
     /// **this** session — the inbound answer route: app host → session → this
-    /// session's own ``SessionMailbox`` → the parked ``ToolContext/elicit(_:)``
+    /// session's own ``SessionMailbox`` → the suspended ``ToolContext/elicit(_:)``
     /// continuation.
     ///
     /// The answer addresses the elicitation, never the run: one run can hold
@@ -922,7 +922,7 @@ public protocol RoutedSession: Actor {
     /// `cancel` resume with those actions — a declined elicitation is not a
     /// cancelled run, the tool decides what to do with the answer. A URL-mode
     /// `accept` only records that the user agreed to open the URL: the entry
-    /// stays open, and the run stays parked, until
+    /// stays open, and the run stays running, until
     /// ``complete(elicitationId:)`` arrives.
     ///
     /// The route uses no task locals: this call reaches exactly this
@@ -943,7 +943,7 @@ public protocol RoutedSession: Actor {
     /// finished — the second step of the URL-mode two-step: the accept
     /// delivered through ``respond(elicitationId:response:)`` only meant the
     /// user agreed to open the URL, and this completion is what resumes the
-    /// run that stayed parked past it.
+    /// run that stayed running past it.
     ///
     /// Routes by reference to this session's own ``SessionMailbox`` exactly
     /// as ``respond(elicitationId:response:)`` does. Unknown, malformed,
@@ -1052,8 +1052,8 @@ extension RoutedSession {
     ///
     /// - **Still queued** — withdrawn through ``cancel(id:)``. It never produces
     ///   a turn. This is also what a prompt whose ``dispatchNextPrompt()`` is
-    ///   parked behind another turn reports, because a dispatch drains the queue
-    ///   only *after* it holds the turn lock: the parked call never touches the
+    ///   blocked behind another turn reports, because a dispatch drains the queue
+    ///   only *after* it holds the turn lock: the blocked call never touches the
     ///   withdrawn prompt — it dispatches the next queued prompt instead, or
     ///   returns `nil` when the withdrawn prompt was the only one queued.
     /// - **Already dispatched** — its turn is the one in flight (a session runs

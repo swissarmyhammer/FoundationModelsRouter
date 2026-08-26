@@ -120,7 +120,7 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// capping wraps outside the detachment layer at every composition
     /// site) — passes through untouched. The envelope is control-plane
     /// data, not tool output: truncating it would destroy the
-    /// `completionToken` the model needs to ever hear the parked run's
+    /// `completionToken` the model needs to ever hear the background run's
     /// completion again — and the `next` instruction that tells it to collect
     /// with that token instead of answering — so the exemption holds under
     /// any `limit`, however small. Recognition is the envelope-frame check
@@ -167,7 +167,7 @@ extension ToolDetachment {
     /// tool that declares its own
     /// ``DetachmentParameterProviding/detachmentMount`` runs under that
     /// declaration instead. So this one site mounts a tool that must never
-    /// park beside one that must, and the choice stays with the tool that
+    /// background beside one that must, and the choice stays with the tool that
     /// knows — see ``DetachConfiguration/runToCompletionMount``.
     ///
     /// Shared by ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
@@ -180,7 +180,7 @@ extension ToolDetachment {
     ///   - tool: The tool to mount for one session.
     ///   - sessionID: The owning session's identity, stamped into each
     ///     detached run's ``ToolContext``.
-    ///   - mailbox: The owning session's mailbox, where detached runs park.
+    ///   - mailbox: The owning session's mailbox, which tracks the detached runs.
     ///   - sink: The upstream sink the run's events are posted to — the
     ///     session's own outbox.
     ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
