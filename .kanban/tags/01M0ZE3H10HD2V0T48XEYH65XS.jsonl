@@ -1,0 +1,1 @@
+{"id":"01M0ZE3H11CXGBQ940VQEQC69T","timestamp":"2026-08-26T16:22:58.337386Z","op":"create","item_id":"01M0ZE3H10HD2V0T48XEYH65XS","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: e36209\n+tag_name: tooling\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: e36209\n-tag_name: tooling\n","transaction_id":null}

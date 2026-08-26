@@ -1,0 +1,1 @@
+{"id":"01M0ZE3H12P455YVXTWKHE4Q1A","timestamp":"2026-08-26T16:22:58.338007Z","op":"create","item_id":"01M0ZE3H116HW7H1NGFCVQ2ZR4","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: d876e3\n+tag_name: workflow\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: d876e3\n-tag_name: workflow\n","transaction_id":null}
