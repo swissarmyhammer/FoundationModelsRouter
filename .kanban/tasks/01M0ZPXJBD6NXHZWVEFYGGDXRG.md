@@ -58,8 +58,26 @@ comments:
 
     **Still open, and it is a design decision rather than a cleanup.** An argument a tool no longer declares is invisible to the type system, to the validator, and to the tests. `TypedMockDryRunTests.swift:126` already throws on "unexpected keys" for a mock, so the idea exists in the codebase. Whether the real invoker should reject unknown keys needs a person; it is not this card.
   timestamp: 2026-08-26T19:15:58.169876+00:00
-position_column: todo
-position_ordinal: '8e80'
+- actor: claude-code
+  id: 01m0zsg7m680h9aeyv5wxehxbp
+  text: |-
+    ## Review Findings (2026-08-26 19:40) — clean, with the coverage stated
+
+    **Engine — `review sha e066988~1..HEAD`:** findings 0, confirmed 0, refuted 0, attempted 7, failed 0. No declines.
+
+    **Coverage, recorded rather than assumed: the range touches TEN files and the engine reviewed EIGHT.** The two it never opened are `README.md` and `eventplan.md`. The engine reviews code only, so it has no opinion on either and cannot acquire one. The eight Swift files got the full fleet.
+
+    **The 90-second limit: keep it, and the reviewer independently reached the same call.** Three reasons, all of which I accept:
+    - A limit's job is to catch a hang, not to preserve the arithmetic that first suggested it.
+    - 90s over a 59.471s worst measured run is about 51% headroom — a reasonable hang-catcher, not a tight budget.
+    - Lowering it would trade a real risk (flakes on a loaded machine; this suite already queues behind a single resident live profile) for no benefit.
+
+    And the point I care about most: changing the constant would have coupled a behaviour change to a comment-only commit. The new rationale is also the more durable one — "headroom over the worst measured run" stays true, while "59.471s + the block window" was a coincidence of a design that no longer exists.
+
+    This card is complete.
+  timestamp: 2026-08-26T19:42:09.030885+00:00
+position_column: done
+position_ordinal: ffff8380
 title: 'Integration scenarios still describe Execute''s deleted "block window", and one snippet still passes `wait: false`'
 ---
 ## What
@@ -68,21 +86,21 @@ title: 'Integration scenarios still describe Execute''s deleted "block window", 
 The integration target still describes that deleted mechanism, and one place still uses it in live code. Card ^5tsrz43 found these while it removed the `runCode` wait clock. They are a different mechanism, so they get their own card.
 
 ## The sites
-- [ ] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, in the prompt doc: "A call that waits instead still goes to the background — `Execute.mount` answers a 30-second block window and this command outlives it". `Execute.mount` answers `ToolMount(mode: .background, timeout: nil)`. There is no window. Keep the true point: the scenario does not depend on how the model phrased the start.
-- [ ] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, at `shellRunPlaneDeadlineSeconds`: "Longer than `Execute`'s own 30-second block window, because a call that did not ask to skip the wait goes to the background only when that window elapses." Give the deadline a live reason.
-- [ ] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, at `startSweptRun`: "because `Execute.mount` declares a background mount and `wait: false` answers a block window of zero". The first half is true. The second half is dead.
-- [ ] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, in the snippet `startSweptRun` runs: it passes `wait: false` to `tools.shell.execute`. `ExecuteArguments` declares no such argument. THIS IS CODE, not a comment. Find out what the sandbox does with the extra key, then remove it or report what it breaks.
-- [ ] `IntegrationTests/.../ShellBackgroundTests.swift`: "30-second block window. A run whose model omits that argument does pay it".
-- [ ] `IntegrationTests/.../Support/IntegrationPoll.swift`: "reaches the run plane after the block window of its own call elapses".
+- [x] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, in the prompt doc: "A call that waits instead still goes to the background — `Execute.mount` answers a 30-second block window and this command outlives it". `Execute.mount` answers `ToolMount(mode: .background, timeout: nil)`. There is no window. Keep the true point: the scenario does not depend on how the model phrased the start.
+- [x] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, at `shellRunPlaneDeadlineSeconds`: "Longer than `Execute`'s own 30-second block window, because a call that did not ask to skip the wait goes to the background only when that window elapses." Give the deadline a live reason.
+- [x] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, at `startSweptRun`: "because `Execute.mount` declares a background mount and `wait: false` answers a block window of zero". The first half is true. The second half is dead.
+- [x] `IntegrationTests/.../Support/ShellBackgroundRunner.swift`, in the snippet `startSweptRun` runs: it passes `wait: false` to `tools.shell.execute`. `ExecuteArguments` declares no such argument. THIS IS CODE, not a comment. Find out what the sandbox does with the extra key, then remove it or report what it breaks.
+- [x] `IntegrationTests/.../ShellBackgroundTests.swift`: "30-second block window. A run whose model omits that argument does pay it".
+- [x] `IntegrationTests/.../Support/IntegrationPoll.swift`: "reaches the run plane after the block window of its own call elapses".
 
 ## How
 Read each sentence. Keep the true half and cut only the dead half. Write each new sentence in ASD-STE100 Simplified Technical English.
 
 ## Acceptance Criteria
-- [ ] `rg -i 'block window' Sources Tests IntegrationTests docs` returns only sentences that say the block window is GONE.
-- [ ] No snippet passes an argument `ExecuteArguments` does not declare.
+- [x] `rg -i 'block window' Sources Tests IntegrationTests docs` returns only sentences that say the block window is GONE.
+- [x] No snippet passes an argument `ExecuteArguments` does not declare.
 
 ## Tests
-- [ ] `swift build --build-tests` clean, `swift test` green (baseline 1023 tests in 73 suites).
-- [ ] `swift build --build-tests --package-path IntegrationTests --disable-automatic-resolution` clean.
-- [ ] The `wait: false` change touches a live scenario, so say in the card comments whether the scenario was run. #cleanup #docs
+- [x] `swift build --build-tests` clean, `swift test` green (baseline 1023 tests in 73 suites).
+- [x] `swift build --build-tests --package-path IntegrationTests --disable-automatic-resolution` clean.
+- [x] The `wait: false` change touches a live scenario, so say in the card comments whether the scenario was run. #cleanup #docs

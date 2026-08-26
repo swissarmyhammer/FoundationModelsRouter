@@ -39,8 +39,8 @@ comments:
 
     Ignore `^v5kbqxr`. It refers to nothing.
   timestamp: 2026-08-26T17:26:16.819423+00:00
-position_column: todo
-position_ordinal: 8d80
+position_column: doing
+position_ordinal: '8380'
 title: 'Multitool: cut the doc comments back to what the code cannot say'
 ---
 ## What

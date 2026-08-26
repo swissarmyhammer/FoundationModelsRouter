@@ -9,8 +9,8 @@ comments:
 
     `BackgroundTests.swift` now carries the corrected sentence and still points the reader at this file, so the corrected claim cross-references the stale one until this card lands.
   timestamp: 2026-08-26T19:04:48.373802+00:00
-position_column: todo
-position_ordinal: 8f80
+position_column: done
+position_ordinal: ffff8480
 title: ScenarioRunner still says a RoutedSession mounts runCode under ToolMount.synchronous with "stock clocks"
 ---
 ## What
@@ -22,15 +22,15 @@ Card ^5tsrz43 corrected the same claim in `IntegrationTests/.../BackgroundTests.
 - `MultiTool.timeout(from:)` answers `configuration.executionTimeLimit`, the per-call work bound. There is no wait clock.
 
 ## The sites
-- [ ] `IntegrationTests/.../Support/ScenarioRunner.swift`, in the `runBackgroundIntegrationScenario` doc: "a real `RoutedSession`, which mounts every tool under `ToolMount.synchronous` — the background path on, stock clocks". Naming a mount the tool overrides misleads, and "stock clocks" describes a clock that is gone. The claim the sentence needs is that both runners build the same session and that `runCode` goes to the background on both.
-- [ ] `IntegrationTests/.../Support/ScenarioRunner.swift`, in the same doc: "so on that path a slow snippet simply blocked and a pending envelope could never appear." There is no slow/fast split. The true point is that a bare `LanguageModelSession` carries no background mount, so no snippet on that path could hand back an envelope.
+- [x] `IntegrationTests/.../Support/ScenarioRunner.swift`, in the `runBackgroundIntegrationScenario` doc: "a real `RoutedSession`, which mounts every tool under `ToolMount.synchronous` — the background path on, stock clocks". Naming a mount the tool overrides misleads, and "stock clocks" describes a clock that is gone. The claim the sentence needs is that both runners build the same session and that `runCode` goes to the background on both.
+- [x] `IntegrationTests/.../Support/ScenarioRunner.swift`, in the same doc: "so on that path a slow snippet simply blocked and a pending envelope could never appear." There is no slow/fast split. The true point is that a bare `LanguageModelSession` carries no background mount, so no snippet on that path could hand back an envelope.
 
 ## How
 Read each sentence. Keep the true half and cut only the dead half. Write each new sentence in ASD-STE100 Simplified Technical English.
 
 ## Acceptance Criteria
-- [ ] No comment says a `RoutedSession` mount decides whether `runCode` goes to the background.
-- [ ] No sentence that carried a true fact lost it.
+- [x] No comment says a `RoutedSession` mount decides whether `runCode` goes to the background.
+- [x] No sentence that carried a true fact lost it.
 
 ## Tests
-- [ ] Comment-only change: `swift test` green (baseline 1023 tests in 73 suites) and `swift build --build-tests --package-path IntegrationTests --disable-automatic-resolution` clean. #cleanup #docs
+- [x] Comment-only change: `swift test` green (baseline 1023 tests in 73 suites) and `swift build --build-tests --package-path IntegrationTests --disable-automatic-resolution` clean. #cleanup #docs

@@ -44,11 +44,39 @@ comments:
 
     One deviation from the dispatch to flag: the README item was reported as already done by ^xpbhgac. It was not. `README.md:23` still read "so a slow `runCode` starts a background run" — commits `1c57491` and `2347c0c` changed the mount direction and the bare-session sentence and left the word "slow". The `waitSeconds` gate passed independently of it. I did the item.
   timestamp: 2026-08-26T19:29:26.201667+00:00
+- actor: claude-code
+  id: 01m0zsgphq76jweqtrgefnhmgq
+  text: |-
+    ## Review Findings (2026-08-26 19:40) — clean, and the omission is confirmed load-bearing
+
+    **Engine — `review sha e066988~1..HEAD`:** findings 0, attempted 7, failed 0. Eight Swift files reviewed of ten touched; `README.md` and `eventplan.md` were never opened, because the engine reviews code only.
+
+    ### `WaitTool.description` — the omission is right, verified in the Router
+
+    This was the claim I most wanted checked, because that text is in the prompt on every turn, so a false sentence there is a behavioural defect rather than a documentation one.
+
+    - **`respond(to:)` DOES drain.** `RoutedSessionActorGeneration.swift` holds the loop: `runPlaneDrainCount += 1`, then up to `backgroundRunDrainRoundLimit` rounds of `settleBackgroundRuns(cancellationsBefore:)` followed by a re-generate on `drainedRunContinuationPrompt`.
+    - **The streaming surfaces do NOT.** `settleBackgroundRuns` is referenced in exactly one file — its definition and that one call site. No `streamEvents` or `streamResponse` path reaches it.
+
+    So on a streaming surface no result arrives unasked. A promise that one would is **false on two of the three surfaces**, and a model cannot know which surface drives it. The only sentence true on all three is the one that was written: `wait` is the normal way to read a `runCode` result, with no promise of delivery.
+
+    **The omission is load-bearing, not an oversight.** That is worth stating plainly, because a later reader might see the missing sentence as an incomplete description and "helpfully" add it back.
+
+    ### `eventplan.md` — leave the four dated mentions, and there is a stronger reason than mine
+
+    I argued internal consistency: half-renaming a file that uses the word five more times elsewhere makes it worse.
+
+    The reviewer added the reason that actually settles it. **That file is the user's own design record, and the user personally rewrote its elevation section earlier today**, in commit `d9e1fe6` "docs(eventplan): replace waitSeconds elevation with background tools by declaration". It is authored, not generated.
+
+    Vocabulary maintenance inside someone's authored design document is a different act from fixing a stale code comment, and the bar for it is the author's say-so. The one-word grammar fix ("An backgrounded" → "A backgrounded") is inside that line. Renaming dated historical mentions is outside it.
+
+    **Two markdown files in this range remain unreviewed by any tool** — `README.md` and `eventplan.md`. They need a human read, and no amount of re-running the engine will change that.
+  timestamp: 2026-08-26T19:42:24.311104+00:00
 depends_on:
 - 01M0XHCGVSKNCN6CEJXT73M7PW
 - 01M0XGRYMR1GPMY1X52FTDMR58
-position_column: doing
-position_ordinal: '8280'
+position_column: done
+position_ordinal: ffff8580
 title: 'Multitool: docs, WaitTool text, and the CLI demo'
 ---
 ## What
