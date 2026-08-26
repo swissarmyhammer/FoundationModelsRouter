@@ -24,13 +24,18 @@ struct RespondRunPlaneDrainTests {
         let value: String
     }
 
-    /// Blocks on a ``RunLatch`` and supplies a per-call `waitSeconds` of `0`
-    /// through ``DetachmentParameterProviding``, so the session's own
-    /// ``DetachingTool`` layer detaches it at once: one model turn leaves a
-    /// real background run behind, and the test decides when it settles.
+    /// Blocks on a ``RunLatch`` and declares background for itself through
+    /// ``DetachmentParameterProviding``, so the session's own
+    /// ``DetachingTool`` layer hands each call back as a token at once: one
+    /// model turn leaves a real background run behind, and the test decides
+    /// when it settles.
     private struct GatedBackgroundTool: Tool, DetachmentParameterProviding {
         let name: String
-        let description = "test-only slow tool that detaches at once"
+        let description = "test-only slow tool that declares background"
+
+        var detachmentMount: DetachConfiguration? {
+            DetachConfiguration(mode: .background, timeout: nil)
+        }
 
         /// The latch this tool's body waits on before producing its output.
         let gate: RunLatch
@@ -42,12 +47,6 @@ struct RespondRunPlaneDrainTests {
         func call(arguments: DrainToolArguments) async throws -> String {
             await gate.waitUntilOpen()
             return output
-        }
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (0, nil)
         }
     }
 

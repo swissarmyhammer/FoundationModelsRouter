@@ -546,15 +546,14 @@ extension RoutedSessionActor {
     /// ^6htgvw2), which runs in-band and dies with the turn: its per-call
     /// `completionToken` is event-correlation identity only, never a
     /// mailbox-addressable run. A String-output tool from the session's
-    /// composed list is wrapped in ``DetachingTool`` (task ^k4nygqa), and
-    /// a *detached* in-flight call answers the cancellation by detaching
-    /// instead of dying with the turn: it keeps running in the session's
-    /// ``mailbox`` and returns the pending envelope (see
-    /// `DetachingTool.raceSettlement(of:deadlineNanoseconds:)` — a caller
-    /// whose wait ends, by deadline or by cancellation, has already
-    /// accepted that the work may outlive the call). The background run stays
-    /// individually addressable — ``SessionMailbox/cancel(completionToken:)``
-    /// — and ``close()``'s sweep settles whatever remains; its `.completed`
+    /// composed list is wrapped in ``DetachingTool`` (task ^k4nygqa). One
+    /// that runs to completion dies with the turn like any other in-band
+    /// call. One that declared ``DetachConfiguration/Mode/background`` for
+    /// itself handed back its pending envelope the moment it was called, so
+    /// the cancellation never reaches its run: it keeps running in the
+    /// session's ``mailbox``. The background run stays individually
+    /// addressable — ``SessionMailbox/cancel(completionToken:)`` — and
+    /// ``close()``'s sweep settles whatever remains; its `.completed`
     /// rides a later turn through the outbox as usual. The turn's
     /// recording runs after this returns or throws and is never cancelled
     /// with it (see ``RoutedSession/cancelCurrentTurn()``).

@@ -569,7 +569,7 @@ public actor SessionMailbox {
     /// there, so no outside-supplied value can trap the `UInt64` conversion.
     ///
     /// Owned here — the run plane is what the ceiling bounds — and shared by
-    /// ``wait(completionToken:seconds:)`` and `DetachingTool`'s two clocks,
+    /// ``wait(completionToken:seconds:)`` and `DetachingTool`'s timeout,
     /// so the one clamping rule has exactly one implementation.
     static func boundedNanoseconds(clamping seconds: Double) -> UInt64 {
         guard !seconds.isNaN else { return 0 }

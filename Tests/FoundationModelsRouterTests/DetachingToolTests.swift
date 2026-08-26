@@ -4,21 +4,21 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises the ``DetachingTool`` engine (task ^vvg7ztt): the inline fast
-/// path, the detachment slow path (pending envelope, mailbox entry, event
-/// sequence), zero-wait detach, per-call clocks through
-/// ``DetachmentParameterProviding``, the two-clocks matrix (progress resets
-/// `timeout`, never `waitSeconds`), the terminal-scoped synthesis matrix
-/// (no events / progress-only / own-terminal), exactly-one-`.completed`
-/// across the throw, cancel, and timeout paths, detachment-off mode, and the
-/// mount a tool declares for itself — which is how one session mounts a tool
-/// that must never background a call beside one that must.
-@Suite("DetachingTool: the two-clocks detachment engine")
+/// Exercises the ``DetachingTool`` engine (task ^vvg7ztt): the in-band path
+/// of a run-to-completion mount, the background path (pending envelope,
+/// mailbox entry, event sequence), the per-call timeout through
+/// ``DetachmentParameterProviding``, the timeout that progress resets, the
+/// terminal-scoped synthesis matrix (no events / progress-only /
+/// own-terminal), exactly-one-`.completed` across the throw, cancel, and
+/// timeout paths, and the mount a tool declares for itself — which is how
+/// one session mounts a tool that must never background a call beside one
+/// that must.
+@Suite("DetachingTool: run to completion, or background by declaration")
 struct DetachingToolTests {
     // MARK: - Interval fixtures
 
-    /// A wait/timeout interval short enough to keep the suite fast but long
-    /// enough that an in-window fixture never spuriously elapses it.
+    /// A timeout, or a hold, short enough to keep the suite fast but long
+    /// enough that a fixture never spuriously elapses it.
     private static let shortInterval: TimeInterval = 0.2
 
     /// A deadline a test treats as "never elapses within this test".
@@ -32,12 +32,6 @@ struct DetachingToolTests {
     @Generable
     struct DetachingArguments {
         let value: String
-    }
-
-    @Generable
-    struct ClockedArguments {
-        let value: String
-        let waitSeconds: Double
     }
 
     // MARK: - Sink fixtures
@@ -132,8 +126,8 @@ struct DetachingToolTests {
     }
 
     /// Posts progress every `interval` seconds for `beats` beats, then
-    /// returns — the two-clocks matrix's subject: each beat resets the
-    /// per-call `timeout`, and none of them extends `waitSeconds`.
+    /// returns — the timeout's subject: each beat resets the per-call
+    /// `timeout`.
     private struct HeartbeatTool: Tool {
         let name = "heartbeat_tool"
         let description = "posts periodic progress then returns"
@@ -149,28 +143,8 @@ struct DetachingToolTests {
         }
     }
 
-    /// Blocks on a gate and conforms to ``DetachmentParameterProviding``,
-    /// reading its per-call `waitSeconds` out of the opaque
-    /// `GeneratedContent` — the per-call clock sourcing hook's subject.
-    private struct PerCallClockTool: Tool, DetachmentParameterProviding {
-        let name = "per_call_clock_tool"
-        let description = "supplies waitSeconds from its own arguments"
-        let gate: RunLatch
-
-        func call(arguments: ClockedArguments) async throws -> String {
-            await gate.waitUntilOpen()
-            return "clocked: \(arguments.value)"
-        }
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (try? arguments.value(Double.self, forProperty: "waitSeconds"), nil)
-        }
-    }
-
     /// Sleeps forever and conforms to ``DetachmentParameterProviding`` with a
-    /// per-call `timeout` — the timeout half of the per-call hook.
+    /// per-call `timeout` — the per-call hook's subject.
     private struct PerCallTimeoutTool: Tool, DetachmentParameterProviding {
         let name = "per_call_timeout_tool"
         let description = "supplies a short per-call timeout"
@@ -181,29 +155,24 @@ struct DetachingToolTests {
             return "never returned"
         }
 
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (nil, timeoutSeconds)
+        func detachmentTimeout(from arguments: GeneratedContent) -> TimeInterval? {
+            timeoutSeconds
         }
     }
 
-    /// Blocks on a gate and conforms to ``DetachmentParameterProviding``
-    /// returning all-nil clocks — the nil-falls-back-to-configuration case.
-    private struct NilClockTool: Tool, DetachmentParameterProviding {
-        let name = "nil_clock_tool"
-        let description = "supplies no per-call clocks at all"
-        let gate: RunLatch
+    /// Sleeps forever and conforms to ``DetachmentParameterProviding``
+    /// returning a `nil` timeout — the nil-falls-back-to-configuration case.
+    private struct NilTimeoutTool: Tool, DetachmentParameterProviding {
+        let name = "nil_timeout_tool"
+        let description = "supplies no per-call timeout at all"
 
         func call(arguments: DetachingArguments) async throws -> String {
-            await gate.waitUntilOpen()
-            return "nil-clock: \(arguments.value)"
+            try await Task.sleep(nanoseconds: 3_600_000_000_000)
+            return "never returned"
         }
 
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (nil, nil)
+        func detachmentTimeout(from arguments: GeneratedContent) -> TimeInterval? {
+            nil
         }
     }
 
@@ -224,35 +193,32 @@ struct DetachingToolTests {
         }
     }
 
-    /// Blocks on a gate, declares no mount of its own, and supplies a
-    /// per-call `waitSeconds` of `0` — the detaching half of the pair one
-    /// session mounts, which is backgrounded at once so the pair test waits on no
-    /// wall clock.
-    private struct ZeroWaitDetachingTool: Tool, DetachmentParameterProviding {
-        let name = "zero_wait_detaching_tool"
-        let description = "is backgrounded at once and declares no mount"
+    /// Blocks on a gate and declares background for itself, with no timeout
+    /// — the shape of a shell or agent tool that is known ahead of time to
+    /// run long. The background half of the pair one session mounts.
+    private struct DeclaredBackgroundTool: Tool, DetachmentParameterProviding {
+        let name = "declared_background_tool"
+        let description = "declares background and is handed back as a token at once"
         let gate: RunLatch
+
+        var detachmentMount: DetachConfiguration? {
+            DetachConfiguration(mode: .background, timeout: nil)
+        }
 
         func call(arguments: DetachingArguments) async throws -> String {
             await gate.waitUntilOpen()
-            return "detaching: \(arguments.value)"
-        }
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (0, nil)
+            return "background: \(arguments.value)"
         }
     }
 
-    /// Blocks on a gate, supplies a per-call `waitSeconds` of `0`, and
-    /// supplies its own collect sentence through
+    /// Blocks on a gate, declares background for itself, and supplies its
+    /// own collect sentence through
     /// ``DetachmentParameterProviding/detachmentCollectInstruction(forCompletionToken:)``
     /// — the tool that owns its collect verb and so owns the `next` text of
     /// its pending envelope.
     private struct CollectSentenceTool: Tool, DetachmentParameterProviding {
         let name = "collect_sentence_tool"
-        let description = "is backgrounded at once and names its own collect step"
+        let description = "declares background and names its own collect step"
         let gate: RunLatch
 
         /// The sentence this tool renders for `completionToken`, so a test
@@ -261,15 +227,13 @@ struct DetachingToolTests {
             "Call the fetch tool with ticket \"\(completionToken)\" to read the result."
         }
 
+        var detachmentMount: DetachConfiguration? {
+            DetachConfiguration(mode: .background, timeout: nil)
+        }
+
         func call(arguments: DetachingArguments) async throws -> String {
             await gate.waitUntilOpen()
             return "collected: \(arguments.value)"
-        }
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (0, nil)
         }
 
         func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String {
@@ -521,9 +485,7 @@ struct DetachingToolTests {
         let gate = RunLatch()
         let harness = Self.makeHarness(
             wrapping: CollectSentenceTool(gate: gate),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.generousInterval
-            )
+            configuration: .nativeSessionMount
         )
 
         let rendered = try await harness.detaching.call(
@@ -613,13 +575,11 @@ struct DetachingToolTests {
         let harnesses = [
             Self.makeHarness(
                 wrapping: GatedTool(gate: gate),
-                configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
+                configuration: DetachConfiguration(mode: .background)
             ),
             Self.makeHarness(
                 wrapping: CollectSentenceTool(gate: gate),
-                configuration: DetachConfiguration(
-                    mode: .detaching, waitSeconds: Self.generousInterval
-                )
+                configuration: .nativeSessionMount
             ),
         ]
 
@@ -684,15 +644,13 @@ struct DetachingToolTests {
         }
     }
 
-    // MARK: - Inline fast path
+    // MARK: - The in-band path
 
-    @Test("a fast tool returns its rendered output inline and posts no events at all")
+    @Test("a fast tool returns its rendered output in band and posts no events at all")
     func inlineFastPathIsSilent() async throws {
         let harness = Self.makeHarness(
             wrapping: FastTool(),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.generousInterval
-            )
+            configuration: DetachConfiguration(mode: .runToCompletion)
         )
 
         let rendered = try await harness.detaching.call(
@@ -704,16 +662,14 @@ struct DetachingToolTests {
         #expect(await harness.mailbox.backgroundRuns().isEmpty)
     }
 
-    // MARK: - Detachment slow path
+    // MARK: - The background path
 
-    @Test("a slow tool detaches: pending envelope, mailbox entry, synthesized progress, one terminal upstream")
+    @Test("a background call is handed back at once: pending envelope, mailbox entry, synthesized progress, one terminal upstream")
     func detachmentSlowPath() async throws {
         let gate = RunLatch()
         let harness = Self.makeHarness(
             wrapping: GatedTool(gate: gate),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.shortInterval
-            )
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let rendered = try await harness.detaching.call(
@@ -758,57 +714,7 @@ struct DetachingToolTests {
         #expect(events.last?.correlationID == envelope.completionToken)
     }
 
-    @Test("waitSeconds 0 detaches immediately")
-    func zeroWaitDetachesImmediately() async throws {
-        let gate = RunLatch()
-        let harness = Self.makeHarness(
-            wrapping: GatedTool(gate: gate),
-            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
-        )
-
-        let rendered = try await harness.detaching.call(
-            arguments: DetachingArguments(value: "detached")
-        )
-
-        let envelope = try Self.decodeEnvelope(rendered)
-        #expect(envelope.pending)
-        #expect(await harness.mailbox.backgroundRuns().count == 1)
-
-        await gate.open()
-        let terminal = try await Self.settledTerminal(
-            of: envelope.completionToken, in: harness.mailbox
-        )
-        #expect(terminal.outcome == .succeeded)
-        #expect(terminal.detail == "gated: detached")
-    }
-
-    // MARK: - Per-call clocks (DetachmentParameterProviding)
-
-    @Test("a per-call waitSeconds extracted from the arguments overrides the wrap-time default")
-    func perCallWaitSecondsOverridesConfiguration() async throws {
-        let gate = RunLatch()
-        // Wrap-time wait is generous — only the per-call value can be what
-        // detaches this call within the test's lifetime.
-        let harness = Self.makeHarness(
-            wrapping: PerCallClockTool(gate: gate),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.generousInterval
-            )
-        )
-
-        let rendered = try await harness.detaching.call(
-            arguments: ClockedArguments(value: "x", waitSeconds: Self.shortInterval)
-        )
-
-        let envelope = try Self.decodeEnvelope(rendered)
-        #expect(envelope.pending)
-
-        await gate.open()
-        let terminal = try await Self.settledTerminal(
-            of: envelope.completionToken, in: harness.mailbox
-        )
-        #expect(terminal.outcome == .succeeded)
-    }
+    // MARK: - The per-call timeout (DetachmentParameterProviding)
 
     @Test("a per-call timeout overrides the wrap-time default")
     func perCallTimeoutOverridesConfiguration() async throws {
@@ -830,32 +736,29 @@ struct DetachingToolTests {
         #expect(events.last?.outcome == .timedOut)
     }
 
-    @Test("nil per-call clocks fall back to the wrap-time configuration")
-    func nilPerCallClocksFallBackToConfiguration() async throws {
-        let gate = RunLatch()
+    @Test("a nil per-call timeout falls back to the wrap-time configuration")
+    func nilPerCallTimeoutFallsBackToConfiguration() async throws {
         let harness = Self.makeHarness(
-            wrapping: NilClockTool(gate: gate),
+            wrapping: NilTimeoutTool(),
             configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.shortInterval
+                mode: .runToCompletion, timeout: Self.shortInterval
             )
         )
 
-        // The provider returns (nil, nil), so the configured short wait is
-        // what detaches this call.
-        let rendered = try await harness.detaching.call(
-            arguments: DetachingArguments(value: "x")
-        )
+        // The provider returns `nil`, so the configured short timeout is
+        // what ends this call.
+        await #expect(throws: DetachingToolError.self) {
+            _ = try await harness.detaching.call(
+                arguments: DetachingArguments(value: "x")
+            )
+        }
 
-        let envelope = try Self.decodeEnvelope(rendered)
-        #expect(envelope.pending)
-
-        await gate.open()
-        _ = try await Self.settledTerminal(
-            of: envelope.completionToken, in: harness.mailbox
-        )
+        let events = await harness.sink.events
+        #expect(events.filter { $0.kind == .completed }.count == 1)
+        #expect(events.last?.outcome == .timedOut)
     }
 
-    // MARK: - Two clocks
+    // MARK: - The timeout
 
     @Test("progress resets the per-call timeout: a tool that beats faster than the timeout survives past it")
     func progressResetsTimeout() async throws {
@@ -877,14 +780,11 @@ struct DetachingToolTests {
         #expect(events.last?.outcome == .succeeded)
     }
 
-    @Test("progress never extends waitSeconds: a beating tool still detaches, and later yields exactly one synthesized terminal")
-    func progressDoesNotExtendWaitSeconds() async throws {
-        // The tool beats every 0.05 s — far faster than the 0.3 s wait — so
-        // if progress reset the wait clock the call would run to completion
-        // (~1 s) and return its output inline. It must detach instead.
+    @Test("a background run that beats on after it is handed back settles once, with exactly one synthesized terminal")
+    func beatingBackgroundRunSettlesOnce() async throws {
         let harness = Self.makeHarness(
             wrapping: HeartbeatTool(beats: 20, interval: 0.05),
-            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0.3)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let rendered = try await harness.detaching.call(
@@ -894,9 +794,8 @@ struct DetachingToolTests {
         let envelope = try Self.decodeEnvelope(rendered)
         #expect(envelope.pending)
 
-        // The run posted its own progress, so no synthesized progress was
-        // added at detachment — and it still gets exactly one synthesized
-        // terminal at settlement.
+        // The run posts its own progress after it is handed back, and it
+        // still gets exactly one synthesized terminal at settlement.
         let terminal = try await Self.settledTerminal(
             of: envelope.completionToken, in: harness.mailbox
         )
@@ -905,7 +804,7 @@ struct DetachingToolTests {
 
         let events = await harness.sink.events
         #expect(events.filter { $0.kind == .completed }.count == 1)
-        #expect(events.filter { $0.kind == .progress }.allSatisfy { $0.detail.hasPrefix("beat ") })
+        #expect(events.contains { $0.kind == .progress && $0.detail.hasPrefix("beat ") })
     }
 
     @Test("timeout expiry cancels the work and yields outcome timedOut, inline")
@@ -928,12 +827,12 @@ struct DetachingToolTests {
         #expect(events.last?.outcome == .timedOut)
     }
 
-    @Test("timeout expiry on a detached run settles it with outcome timedOut and exactly one terminal")
+    @Test("timeout expiry on a background run settles it with outcome timedOut and exactly one terminal")
     func timeoutExpiryOnDetachedRun() async throws {
         let harness = Self.makeHarness(
             wrapping: SleepingTool(),
             configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: 0, timeout: Self.shortInterval
+                mode: .background, timeout: Self.shortInterval
             )
         )
 
@@ -953,13 +852,11 @@ struct DetachingToolTests {
 
     // MARK: - Terminal-scoped synthesis matrix
 
-    @Test("progress-only inline run still yields exactly one synthesized terminal")
+    @Test("progress-only in-band run still yields exactly one synthesized terminal")
     func progressOnlyInlineRunGetsSynthesizedTerminal() async throws {
         let harness = Self.makeHarness(
             wrapping: ProgressOnceTool(),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.generousInterval
-            )
+            configuration: DetachConfiguration(mode: .runToCompletion)
         )
 
         let rendered = try await harness.detaching.call(
@@ -977,9 +874,7 @@ struct DetachingToolTests {
     func ownTerminalToolGetsNoDuplicate() async throws {
         let harness = Self.makeHarness(
             wrapping: OwnTerminalTool(),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.generousInterval
-            )
+            configuration: DetachConfiguration(mode: .runToCompletion)
         )
 
         let rendered = try await harness.detaching.call(
@@ -994,13 +889,11 @@ struct DetachingToolTests {
 
     // MARK: - Exactly one .completed on the abnormal paths
 
-    @Test("a tool that throws rethrows inline and yields exactly one terminal with outcome failed")
+    @Test("a tool that throws rethrows in band and yields exactly one terminal with outcome failed")
     func throwingToolYieldsOneFailedTerminal() async throws {
         let harness = Self.makeHarness(
             wrapping: ThrowingTool(),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: Self.generousInterval
-            )
+            configuration: DetachConfiguration(mode: .runToCompletion)
         )
 
         await #expect(throws: FixtureError.self) {
@@ -1018,7 +911,7 @@ struct DetachingToolTests {
     func cancellingBackgroundRunYieldsOneCancelledTerminal() async throws {
         let harness = Self.makeHarness(
             wrapping: SleepingTool(),
-            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let rendered = try await harness.detaching.call(
@@ -1041,43 +934,13 @@ struct DetachingToolTests {
         #expect(events.last?.outcome == .cancelled)
     }
 
-    // MARK: - Detachment off
-
-    @Test("detachment-off mode runs to completion, never backgrounds a call, and never returns a pending envelope")
-    func detachmentOffRunsToCompletion() async throws {
-        let gate = RunLatch()
-        // waitSeconds is deliberately tiny: in run-to-completion mode it must
-        // play no part at all.
-        let harness = Self.makeHarness(
-            wrapping: GatedTool(gate: gate),
-            configuration: DetachConfiguration(
-                mode: .runToCompletion, waitSeconds: 0.001
-            )
-        )
-
-        let calling = Task {
-            try await harness.detaching.call(
-                arguments: DetachingArguments(value: "complete")
-            )
-        }
-        // Give the call ample room to (wrongly) act on the tiny waitSeconds
-        // before letting the tool finish.
-        try await Task.sleep(nanoseconds: UInt64(Self.shortInterval * 1_000_000_000))
-        #expect(await harness.mailbox.backgroundRuns().isEmpty)
-        await gate.open()
-
-        let rendered = try await calling.value
-        #expect(rendered == "gated: complete")
-        #expect(await harness.mailbox.backgroundRuns().isEmpty)
-        // In-band silent success: no events at all.
-        #expect(await harness.sink.events.isEmpty)
-    }
+    // MARK: - The run-plane snapshot
 
     @Test("background-run progress feeds the mailbox's run-plane snapshot")
     func backgroundRunProgressFeedsStatus() async throws {
         let harness = Self.makeHarness(
             wrapping: HeartbeatTool(beats: 40, interval: 0.05),
-            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0.2)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let rendered = try await harness.detaching.call(
@@ -1186,7 +1049,7 @@ struct DetachingToolTests {
         let witness = CancellationWitness()
         let harness = Self.makeHarness(
             wrapping: CancellationFlagPollingTool(witness: witness),
-            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let rendered = try await harness.detaching.call(
@@ -1247,7 +1110,7 @@ struct DetachingToolTests {
 
     // MARK: - The untyped ToolDetachment entry point
 
-    @Test("ToolDetachment.wrapping discovers a String-output tool from any Tool and detaches it")
+    @Test("ToolDetachment.wrapping discovers a String-output tool from any Tool and mounts it in the engine")
     func factoryWrapsStringOutputTool() async throws {
         let gate = RunLatch()
         let mailbox = SessionMailbox()
@@ -1257,7 +1120,7 @@ struct DetachingToolTests {
             sessionID: ULID.generate(),
             mailbox: mailbox,
             sink: sink,
-            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let detaching = try #require(wrapped as? DetachingTool<DetachingArguments>)
@@ -1282,7 +1145,7 @@ struct DetachingToolTests {
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
             sink: sink,
-            configuration: DetachConfiguration(mode: .detaching)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let binding = try #require(
@@ -1304,7 +1167,7 @@ struct DetachingToolTests {
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
             sink: sink,
-            configuration: DetachConfiguration(mode: .detaching)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let binding = try #require(
@@ -1339,7 +1202,7 @@ struct DetachingToolTests {
             tool: AmbientNonStringOutputTool(),
             inheriting: outer,
             sink: sink,
-            configuration: DetachConfiguration(mode: .detaching)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let binding = try #require(
@@ -1374,7 +1237,7 @@ struct DetachingToolTests {
             tool: GatedSessionIdentityTool(gate: gate),
             inheriting: outer,
             sink: sink,
-            configuration: DetachConfiguration(mode: .detaching, waitSeconds: 0)
+            configuration: DetachConfiguration(mode: .background)
         )
 
         let detaching = try #require(wrapped as? DetachingTool<DetachingArguments>)
@@ -1460,29 +1323,100 @@ struct DetachingToolTests {
         #expect(events.last?.outcome == .failed)
     }
 
-    @Test("the stock timeout stays a plain TimeInterval, and the native session mount is what states it")
+    @Test("the stock timeout stays a plain TimeInterval, and the native session mount runs to completion under it")
     func stockTimeoutStaysNonOptional() {
         // The binding itself is the assertion about the type: a
         // `TimeInterval?` does not compile here. Only the timeout a
         // configuration STORES became optional.
         let stockTimeout: TimeInterval = DetachConfiguration.defaultTimeoutSeconds
 
-        #expect(DetachConfiguration.nativeSessionMount.mode == .detaching)
-        #expect(DetachConfiguration.nativeSessionMount.timeout == stockTimeout)
+        #expect(
+            DetachConfiguration.nativeSessionMount
+                == DetachConfiguration(mode: .runToCompletion, timeout: stockTimeout)
+        )
     }
 
     // MARK: - The mount a tool declares for itself
 
-    /// How long a declared run-to-completion call is held for: past both
-    /// clocks of the configuration the composition site passes, so only the
+    /// How long a declared run-to-completion call is held for: past the
+    /// timeout of the configuration the composition site passes, so only the
     /// declaration can explain a call that is neither backgrounded nor timed out.
     private static let declaredMountHoldSeconds = shortInterval * clocklessHoldWindows
 
-    /// How long the pair test holds its blocking call: past the stock soft
-    /// deadline the session's own mount carries, so a call that had taken
-    /// that mount would already have been backgrounded when the background runs are read.
-    private static let pastSessionMountWaitSeconds =
-        DetachConfiguration.defaultWaitSeconds + shortInterval
+    /// Mounts `tool` through the one session-mount composition every
+    /// session tool-instancing site shares, under `sessionID`, over
+    /// `mailbox` and `sink`.
+    private static func sessionMounted(
+        _ tool: any Tool, sessionID: ULID, mailbox: SessionMailbox, sink: RecordingSink
+    ) -> DetachingTool<DetachingArguments>? {
+        ToolDetachment.sessionMounted(
+            tool: tool,
+            sessionID: sessionID,
+            mailbox: mailbox,
+            sink: sink,
+            cappedToTokenLimit: nil
+        ) as? DetachingTool<DetachingArguments>
+    }
+
+    @Test("a tool that declares nothing mounts run-to-completion under the stock timeout, and its slow call stays in band")
+    func undeclaredToolMountsRunToCompletion() async throws {
+        let gate = RunLatch()
+        let mailbox = SessionMailbox()
+        let sink = RecordingSink()
+        let mounted = try #require(
+            Self.sessionMounted(
+                GatedTool(gate: gate), sessionID: ULID.generate(), mailbox: mailbox, sink: sink
+            )
+        )
+
+        #expect(
+            mounted.configuration
+                == DetachConfiguration(
+                    mode: .runToCompletion, timeout: DetachConfiguration.defaultTimeoutSeconds
+                )
+        )
+
+        let calling = Task {
+            try await mounted.call(arguments: DetachingArguments(value: "edit"))
+        }
+        try await Task.sleep(for: .seconds(Self.shortInterval))
+        // No token was handed out: the call is still in band.
+        #expect(await mailbox.backgroundRuns().isEmpty)
+        await gate.open()
+
+        let rendered = try await calling.value
+        #expect(rendered == "gated: edit")
+        #expect(await mailbox.backgroundRuns().isEmpty)
+    }
+
+    @Test("a tool that declares background mounts under its own declaration, and its call is handed back as a token at once")
+    func declaredToolMountsBackground() async throws {
+        let gate = RunLatch()
+        let mailbox = SessionMailbox()
+        let sink = RecordingSink()
+        let mounted = try #require(
+            Self.sessionMounted(
+                DeclaredBackgroundTool(gate: gate), sessionID: ULID.generate(),
+                mailbox: mailbox, sink: sink
+            )
+        )
+
+        #expect(mounted.configuration == DetachConfiguration(mode: .background, timeout: nil))
+
+        let rendered = try await mounted.call(arguments: DetachingArguments(value: "tests"))
+        let envelope = try Self.decodeEnvelope(rendered)
+        #expect(envelope.pending)
+        #expect(await mailbox.backgroundRuns().map(\.tool) == ["declared_background_tool"])
+
+        await gate.open()
+        let terminal = try await Self.settledTerminal(of: envelope.completionToken, in: mailbox)
+        #expect(terminal.detail == "background: tests")
+    }
+
+    /// How long the pair test holds its blocking call before it reads the
+    /// background runs: long enough that a call the session's mount had
+    /// backgrounded would be tracked by then.
+    private static let pairHoldSeconds = shortInterval
 
     @Test("a tool's declared mount wins over the configuration the composition site passes, clock and all")
     func declaredMountOverridesTheSiteConfiguration() async throws {
@@ -1490,7 +1424,7 @@ struct DetachingToolTests {
         let harness = Self.makeHarness(
             wrapping: DeclaredRunToCompletionTool(gate: gate),
             configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: 0, timeout: Self.shortInterval
+                mode: .background, timeout: Self.shortInterval
             )
         )
 
@@ -1499,8 +1433,8 @@ struct DetachingToolTests {
                 arguments: DetachingArguments(value: "catalogue")
             )
         }
-        // Held past both of the site's clocks: a call that took them would
-        // have been backgrounded at once, and then timed out.
+        // Held past the site's timeout: a call that took the site's mount
+        // would have been backgrounded at once, and then timed out.
         try await Task.sleep(for: .seconds(Self.declaredMountHoldSeconds))
         #expect(await harness.mailbox.backgroundRuns().isEmpty)
         await gate.open()
@@ -1512,7 +1446,7 @@ struct DetachingToolTests {
         #expect(await harness.sink.events.isEmpty)
     }
 
-    @Test("two tools on one session hold their own modes: the declaring one blocks while the other backgrounds its call")
+    @Test("two tools on one session hold their own modes: one blocks in band while the other is handed back as a token")
     func oneSessionMountsBothModes() async throws {
         let sessionID = ULID.generate()
         let mailbox = SessionMailbox()
@@ -1522,36 +1456,36 @@ struct DetachingToolTests {
         // Both tools take the one session-mount composition, under one
         // session identity, one mailbox, one outbox, and the one mount
         // configuration that site applies to every tool it mounts.
-        func mounted(_ tool: any Tool) -> DetachingTool<DetachingArguments>? {
-            ToolDetachment.sessionMounted(
-                tool: tool,
-                sessionID: sessionID,
-                mailbox: mailbox,
-                sink: sink,
-                cappedToTokenLimit: nil
-            ) as? DetachingTool<DetachingArguments>
-        }
-        let blocking = try #require(mounted(DeclaredRunToCompletionTool(gate: blockingGate)))
-        let backgrounding = try #require(mounted(ZeroWaitDetachingTool(gate: backgroundingGate)))
+        let blocking = try #require(
+            Self.sessionMounted(
+                DeclaredRunToCompletionTool(gate: blockingGate), sessionID: sessionID,
+                mailbox: mailbox, sink: sink
+            )
+        )
+        let backgrounding = try #require(
+            Self.sessionMounted(
+                DeclaredBackgroundTool(gate: backgroundingGate), sessionID: sessionID,
+                mailbox: mailbox, sink: sink
+            )
+        )
 
-        // The tool that declares no mount takes the session's own, so its
-        // slow call is backgrounded and hands the model a token to collect.
+        // The tool that declares background is handed back as a token to
+        // collect, whatever the session's own mount says.
         let rendered = try await backgrounding.call(arguments: DetachingArguments(value: "snippet"))
         let envelope = try Self.decodeEnvelope(rendered)
         #expect(envelope.pending)
 
-        // On that same session the declaring tool blocks instead, held past
-        // the soft deadline that mount would otherwise have backgrounded it at.
+        // On that same session the run-to-completion tool blocks instead.
         let discovering = Task {
             try await blocking.call(arguments: DetachingArguments(value: "catalogue"))
         }
-        try await Task.sleep(for: .seconds(Self.pastSessionMountWaitSeconds))
+        try await Task.sleep(for: .seconds(Self.pairHoldSeconds))
 
-        // One run is tracked, and it is the detaching tool's. The discovery
+        // One run is tracked, and it is the background tool's. The discovery
         // call is still in band, with no token for the model to collect.
         let runs = await mailbox.backgroundRuns()
         #expect(runs.count == 1)
-        #expect(runs.first?.tool == "zero_wait_detaching_tool")
+        #expect(runs.first?.tool == "declared_background_tool")
 
         await blockingGate.open()
         let catalogue = try await discovering.value
@@ -1561,83 +1495,7 @@ struct DetachingToolTests {
         let terminal = try await Self.settledTerminal(
             of: envelope.completionToken, in: mailbox
         )
-        #expect(terminal.detail == "detaching: snippet")
-    }
-
-    // MARK: - The clock relation
-
-    /// The two inverted relations a detaching mount is rejected for, each as
-    /// the `waitSeconds` it is mounted with against ``shortInterval`` as its
-    /// timeout: one equal to that timeout, one longer than it.
-    private static let invertedWaitSeconds: [TimeInterval] = [shortInterval, generousInterval]
-
-    @Test(
-        "a detaching mount whose waitSeconds does not stand under its timeout is rejected before any work starts",
-        arguments: Self.invertedWaitSeconds
-    )
-    func invertedClocksAreRejected(waitSeconds: TimeInterval) async throws {
-        let gate = RunLatch()
-        let harness = Self.makeHarness(
-            wrapping: GatedTool(gate: gate),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: waitSeconds, timeout: Self.shortInterval
-            )
-        )
-
-        await #expect(
-            throws: DetachingToolError.invalidClocks(
-                tool: "gated_tool", waitSeconds: waitSeconds, timeout: Self.shortInterval
-            )
-        ) {
-            _ = try await harness.detaching.call(
-                arguments: DetachingArguments(value: "x")
-            )
-        }
-
-        // The call was refused, so no work ran: nothing tracked, and nothing
-        // was reported.
-        #expect(await harness.mailbox.backgroundRuns().isEmpty)
-        #expect(await harness.sink.events.isEmpty)
-    }
-
-    @Test("a per-call waitSeconds that outlasts the mount's timeout is rejected on the same rule")
-    func perCallInvertedClocksAreRejected() async throws {
-        let gate = RunLatch()
-        let harness = Self.makeHarness(
-            wrapping: PerCallClockTool(gate: gate),
-            configuration: DetachConfiguration(
-                mode: .detaching, waitSeconds: 0, timeout: Self.shortInterval
-            )
-        )
-
-        await #expect(
-            throws: DetachingToolError.invalidClocks(
-                tool: "per_call_clock_tool",
-                waitSeconds: Self.generousInterval,
-                timeout: Self.shortInterval
-            )
-        ) {
-            _ = try await harness.detaching.call(
-                arguments: ClockedArguments(value: "x", waitSeconds: Self.generousInterval)
-            )
-        }
-
-        #expect(await harness.mailbox.backgroundRuns().isEmpty)
-        #expect(await harness.sink.events.isEmpty)
-    }
-
-    @Test("the rejection names the tool, both clocks, and the mount to move to")
-    func invalidClocksNamesTheMigration() {
-        let error = DetachingToolError.invalidClocks(
-            tool: "gated_tool",
-            waitSeconds: Self.shortInterval,
-            timeout: Self.shortInterval
-        )
-
-        Self.expect(
-            String(describing: error),
-            saysInOrder: ["gated_tool", "waitSeconds", "timeout", "runToCompletionMount"]
-        )
+        #expect(terminal.detail == "background: snippet")
     }
 
     // MARK: - The timeout's claim on a run

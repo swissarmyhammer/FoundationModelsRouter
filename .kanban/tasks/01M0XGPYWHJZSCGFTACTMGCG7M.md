@@ -6,8 +6,24 @@ comments:
   id: 01m0xs27wc0xbvybxxzfqdsdzy
   text: 'Progress. I read the validator rules (55 rules, full dump). I completed the rename in Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift: TrackResult case `parked` -> `tracked`, `return .parked` -> `return .tracked`, doc prose changed to track/tracked for the registry and suspend/suspended for waiter continuations, local `let parked` -> `suspended` in resumeWaiters. A sub-agent now completes the same rename in DetachingTool.swift (with the three exempt doc spots the waitSeconds-removal tasks will delete), ToolContext.swift, RoutedSession.md, and the ~28 test files, then runs `swift build --build-tests` and `swift test`. Known compile breaks to repair: RespondRunPlaneDrainTests.swift `releaser.park(on:)` -> `releaser.track(on:)`, and the local `park` closure in TurnCancellationTests.swift -> `suspend`.'
   timestamp: 2026-08-26T00:56:01.676627+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0xxp8q28gs1kb035az8x56b
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 10b8f6a, local backend) — 54 files reviewed, 77 checks attempted, 0 findings, 0 confirmed, 0 refuted. Three validators declined `Tests/FoundationModelsRouterTests/Helpers/ParkedRunFixtures.swift` because the commit deleted that file; this is not a finding.
+    - next: task moved to done. No open findings.
+  timestamp: 2026-08-26T02:16:52.194734+00:00
+- actor: claude-code
+  id: 01m0xxpks60fyrnshga3xdxmpc
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — rename completed across Hosting, ~28 test files, RoutedSession.md; two compile breaks repaired
+    - test: green — swift test, 1129 tests, 0 failed, 0 skipped
+    - commit: 10b8f6a
+    - review: clean — 54 files, 77 checks, 0 findings; task moved to done
+  timestamp: 2026-08-26T02:17:03.526725+00:00
+position_column: done
+position_ordinal: fff380
 title: Finish the removal of the "park" vocabulary
 ---
 ## What

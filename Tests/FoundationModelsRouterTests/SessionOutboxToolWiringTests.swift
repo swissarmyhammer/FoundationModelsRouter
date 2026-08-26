@@ -42,25 +42,22 @@ struct SessionOutboxToolWiringTests {
         }
     }
 
-    /// Blocks on a ``RunLatch`` and supplies a per-call `waitSeconds` of `0`
-    /// through ``DetachmentParameterProviding``, so the composition-site
-    /// ``DetachingTool`` detaches it immediately — keeping the
-    /// pending-envelope tests fast without touching the wrap-time
-    /// ``DetachConfiguration/defaultWaitSeconds``.
-    private struct GatedZeroWaitTool: Tool, DetachmentParameterProviding {
-        let name = "gated-zero-wait"
-        let description = "test-only slow tool that detaches immediately"
+    /// Blocks on a ``RunLatch`` and declares background for itself through
+    /// ``DetachmentParameterProviding``, so the composition-site
+    /// ``DetachingTool`` hands each call back as a pending envelope at once
+    /// and the pending-envelope tests wait on no wall clock.
+    private struct GatedBackgroundTool: Tool, DetachmentParameterProviding {
+        let name = "gated-background"
+        let description = "test-only slow tool that declares background"
         let gate: RunLatch
+
+        var detachmentMount: DetachConfiguration? {
+            DetachConfiguration(mode: .background, timeout: nil)
+        }
 
         func call(arguments: FakeToolArguments) async throws -> String {
             await gate.waitUntilOpen()
             return "gated: \(arguments.value)"
-        }
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (0, nil)
         }
     }
 
@@ -1113,15 +1110,15 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
-        let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
+        let session = profile.standard.makeSession(tools: [GatedBackgroundTool(gate: gate)])
         let backend = try #require(container.lastBackend)
         guard let detached = container.lastTools.first as? DetachingTool<FakeToolArguments> else {
             Issue.record("expected the composed tool list to hold a DetachingTool")
             return
         }
 
-        // The model-facing call detaches immediately (per-call waitSeconds
-        // 0) and returns the pending envelope on the wire.
+        // The tool declared background, so the model-facing call returns
+        // the pending envelope on the wire at once.
         let rendered = try await detached.call(arguments: FakeToolArguments(value: "slow"))
         let envelope = try JSONDecoder().decode(PendingRunEnvelope.self, from: Data(rendered.utf8))
         #expect(envelope.pending)
@@ -1171,7 +1168,7 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
-        let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
+        let session = profile.standard.makeSession(tools: [GatedBackgroundTool(gate: gate)])
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
@@ -1211,7 +1208,7 @@ struct SessionOutboxToolWiringTests {
         // control-plane data whose completionToken the model must keep —
         // must pass through untouched.
         let session = profile.standard.makeSession(
-            tools: [GatedZeroWaitTool(gate: gate)],
+            tools: [GatedBackgroundTool(gate: gate)],
             budget: Self.budgetWithSmallToolOutputCap
         )
 
@@ -1248,14 +1245,14 @@ struct SessionOutboxToolWiringTests {
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
         let gate = RunLatch()
-        let session = profile.standard.makeSession(tools: [GatedZeroWaitTool(gate: gate)])
+        let session = profile.standard.makeSession(tools: [GatedBackgroundTool(gate: gate)])
         let backend = try #require(container.lastBackend)
 
         // Drive a turn whose backend invokes the composed detached tool,
         // then cancel the turn while that tool call is in flight. (The
-        // per-call waitSeconds of 0 means the call detaches with or
-        // without the cancel — what this pins is what cancellation does
-        // NOT do: kill the background run.)
+        // tool declared background, so the call is handed back as a token
+        // with or without the cancel — what this pins is what cancellation
+        // does NOT do: kill the background run.)
         let turn = Task { try await session.respond(to: "cancel me") }
         for _ in 0..<600 {
             if backend.toolCallStarted { break }

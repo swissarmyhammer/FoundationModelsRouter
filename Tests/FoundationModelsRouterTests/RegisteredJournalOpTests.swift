@@ -30,10 +30,10 @@ struct RegisteredJournalOpTests {
   /// suite.
   private static let settlementDeadline: TimeInterval = 30
 
-  /// The mount every tool of this suite is registered under: detaching with a
-  /// `waitSeconds` of zero, so a call is backgrounded at once and no test
-  /// waits on a wall clock.
-  private static let detachAtOnceMount = DetachConfiguration(mode: .detaching, waitSeconds: 0)
+  /// The mount every tool of this suite is registered under: background, so
+  /// a call is handed back as a token at once and no test waits on a wall
+  /// clock.
+  private static let backgroundMount = DetachConfiguration(mode: .background)
 
   // MARK: - Identity fixtures
 
@@ -221,7 +221,7 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: sink,
       op: Self.registeredOp,
-      configuration: Self.detachAtOnceMount
+      configuration: Self.backgroundMount
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 
@@ -244,7 +244,7 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: sink,
       op: Self.registeredOp,
-      configuration: Self.detachAtOnceMount
+      configuration: Self.backgroundMount
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 
@@ -271,7 +271,7 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: sink,
       op: Self.registeredOp,
-      configuration: Self.detachAtOnceMount
+      configuration: Self.backgroundMount
     )
     let binding = try #require(
       mounted as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
@@ -306,7 +306,7 @@ struct RegisteredJournalOpTests {
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
-      configuration: Self.detachAtOnceMount
+      configuration: Self.backgroundMount
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 
@@ -332,7 +332,7 @@ struct RegisteredJournalOpTests {
       inheriting: host,
       sink: EnclosingRunSink(enclosing: host, upstream: sink),
       op: Self.registeredOp,
-      configuration: Self.detachAtOnceMount
+      configuration: Self.backgroundMount
     )
     let run = try await Self.backgroundOneRun(mounted, on: host)
 

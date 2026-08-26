@@ -55,10 +55,10 @@ struct NestedGenerationReentryTests {
     /// A tool whose body drives a whole turn on a routed session — the shape a
     /// host has whenever a tool ranks or summarizes with a model.
     ///
-    /// It raises its own `waitSeconds` far above the stock five so a body that
-    /// suspends stays running instead of detaching into a pending envelope. The
-    /// body has to settle in-band, which is exactly what this suite asserts.
-    private struct NestedGeneratingTool: Tool, DetachmentParameterProviding {
+    /// It declares no mount, so the session mounts it run-to-completion: a
+    /// body that suspends stays running in band instead of being handed back
+    /// as a pending envelope, which is exactly what this suite asserts.
+    private struct NestedGeneratingTool: Tool {
         let name = "nested-generation-probe"
         let description = "test-only tool that generates on a routed session"
 
@@ -73,13 +73,6 @@ struct NestedGenerationReentryTests {
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
         static let noTargetOutput = "no target session"
 
-        /// How long one call may block before the engine detaches it.
-        ///
-        /// Under the suite's own turn bound, so a suspension is reported as a
-        /// detached run rather than as a hung test, and well above the stock
-        /// five seconds, so a body that settles normally never reaches it.
-        static let waitSecondsBeforeDetaching: TimeInterval = 20
-
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.session else { return Self.noTargetOutput }
             return label + Self.labelSeparator + (try await session.respond(to: arguments.value))
@@ -87,12 +80,6 @@ struct NestedGenerationReentryTests {
 
         /// What a tool's ``label`` is joined to the answer it wraps with.
         static let labelSeparator = "->"
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (Self.waitSecondsBeforeDetaching, nil)
-        }
     }
 
     /// A tool whose body forks a routed session — the shape a host has
@@ -101,7 +88,7 @@ struct NestedGenerationReentryTests {
     ///
     /// It reports the child's ``RoutedSession/parentId``, so a passing answer
     /// names the session the fork really came off.
-    private struct ForkingTool: Tool, DetachmentParameterProviding {
+    private struct ForkingTool: Tool {
         let name = "fork-probe"
         let description = "test-only tool that forks a routed session"
 
@@ -120,12 +107,6 @@ struct NestedGenerationReentryTests {
             let child = try await session.fork(workingDirectory: nil)
             return child.parentId?.description ?? Self.noParentOutput
         }
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (NestedGeneratingTool.waitSecondsBeforeDetaching, nil)
-        }
     }
 
     /// A tool whose body reads a routed session's transcript — the shape a
@@ -133,7 +114,7 @@ struct NestedGenerationReentryTests {
     ///
     /// It reports the entry count, so a passing answer says how much history
     /// the read actually saw.
-    private struct TranscriptReadingTool: Tool, DetachmentParameterProviding {
+    private struct TranscriptReadingTool: Tool {
         let name = "transcript-probe"
         let description = "test-only tool that reads a routed session's transcript"
 
@@ -147,12 +128,6 @@ struct NestedGenerationReentryTests {
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.session else { return Self.noTargetOutput }
             return String(Array(await session.transcript).count)
-        }
-
-        func detachmentClocks(
-            from arguments: GeneratedContent
-        ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-            (NestedGeneratingTool.waitSecondsBeforeDetaching, nil)
         }
     }
 

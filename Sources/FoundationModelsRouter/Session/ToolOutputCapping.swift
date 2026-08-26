@@ -144,17 +144,30 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
 
 extension ToolDetachment {
     /// The per-tool session-mount composition every session tool-instancing
-    /// site shares (task ^k4nygqa): detaches `tool` under the session's own
-    /// identity, mailbox, and sink with
+    /// site shares (task ^k4nygqa): mounts `tool` in the ``DetachingTool``
+    /// engine under the session's own identity, mailbox, and sink with
     /// ``DetachConfiguration/nativeSessionMount``, then — only when
-    /// `cappedToTokenLimit` is set — caps the detached tool outermost via
+    /// `cappedToTokenLimit` is set — caps the mounted tool outermost via
     /// ``ToolOutputCapping/optionallyCapped(tool:toTokenLimit:)`` (task
     /// 1334fk3), so the SDK's own call reaches the capped decorator last
     /// and both continued generation and the recorded `.toolOutput` entry
-    /// see the capped text. Capping outside detachment is safe: a rendered
+    /// see the capped text. Capping outside the engine is safe: a rendered
     /// pending envelope is exempt from capping (see
     /// ``TokenCappingTool/call(arguments:)``), so the `completionToken`
     /// survives any configured limit.
+    ///
+    /// The mount is the default for every tool: run to completion, bounded
+    /// by ``DetachConfiguration/defaultTimeoutSeconds``, so a synchronous
+    /// tool that hangs is reported as
+    /// ``DetachingToolError/timedOut(tool:timeoutSeconds:)`` instead of
+    /// holding the turn forever. No timer and no race decide whether a call
+    /// goes to the background. A tool that is known ahead of time to run
+    /// long — a shell tool, an agent tool — declares
+    /// ``DetachConfiguration/Mode/background`` for itself through
+    /// ``DetachmentParameterProviding/detachmentMount``, and that
+    /// declaration wins over this mount. A file edit tool, a skill tool, and
+    /// a discovery tool declare nothing and run in band. So this one site
+    /// mounts both kinds, and the choice stays with the tool that knows.
     ///
     /// A non-String-output tool takes a narrower path through the same
     /// chain (task ^6htgvw2): ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:op:configuration:)``
@@ -163,17 +176,10 @@ extension ToolDetachment {
     /// `correlationID` — and the capping layer passes it through unwrapped,
     /// since there is no `String` output to truncate.
     ///
-    /// The mount named here is the session's policy, not the last word: a
-    /// tool that declares its own
-    /// ``DetachmentParameterProviding/detachmentMount`` runs under that
-    /// declaration instead. So this one site mounts a tool that must never
-    /// background beside one that must, and the choice stays with the tool that
-    /// knows — see ``DetachConfiguration/runToCompletionMount``.
-    ///
     /// Shared by ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
     /// (the root and restore sites) and
     /// ``RoutedSessionActor/fork(workingDirectory:)`` (which forks each
-    /// tool first, then hands the forked copy here), so the detach → cap
+    /// tool first, then hands the forked copy here), so the mount → cap
     /// layering is stated exactly once.
     ///
     /// - Parameters:

@@ -89,11 +89,12 @@ public enum SessionReentryError: Error, Equatable, LocalizedError {
 ///   so background work a tool started cannot borrow a permit and generate
 ///   beside the turn that started it.
 ///
-/// The one window this does not close: a detaching tool whose body starts a
-/// nested generation inside the wait window and then detaches keeps its borrow
-/// until that generation ends, so the two can overlap for that stretch. The
-/// count stays exact, and the forfeit is the serialization only — the same
-/// trade ``RoutedSession/awaitingUser(_:)`` records for a wait that overlaps a
+/// The one window this does not close: a background run inherits the turn's
+/// loan as a task local, so a nested generation it starts while that turn is
+/// suspended in a later in-band tool call borrows on that call's window, and
+/// the two can overlap for that stretch. The count stays exact, and the
+/// forfeit is the serialization only — the same trade
+/// ``RoutedSession/awaitingUser(_:)`` records for a wait that overlaps a
 /// turn it is not part of.
 final class GenerationPermitLoan: Sendable {
     /// The loan bound to the current task, or `nil` outside any turn's model

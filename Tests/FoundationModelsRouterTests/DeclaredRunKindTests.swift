@@ -31,10 +31,10 @@ struct DeclaredRunKindTests {
   /// hanging the suite.
   private static let settlementDeadline: TimeInterval = 30
 
-  /// The mount every harness of this suite runs under: detaching with a
-  /// `waitSeconds` of zero, so a call is backgrounded at once and no test
-  /// waits on a wall clock.
-  private static let detachAtOnceMount = DetachConfiguration(mode: .detaching, waitSeconds: 0)
+  /// The mount every harness of this suite runs under: background, so a
+  /// call is handed back as a token at once and no test waits on a wall
+  /// clock.
+  private static let backgroundMount = DetachConfiguration(mode: .background)
 
   // MARK: - Argument fixtures
 
@@ -86,12 +86,6 @@ struct DeclaredRunKindTests {
     }
 
     var detachmentRunKind: RunKind { .process }
-
-    func detachmentClocks(
-      from arguments: GeneratedContent
-    ) -> (waitSeconds: TimeInterval?, timeout: TimeInterval?) {
-      (0, nil)
-    }
 
     func detachmentCanceler(
       forCompletionToken completionToken: String
@@ -155,7 +149,7 @@ struct DeclaredRunKindTests {
       sessionID: sessionID,
       mailbox: mailbox,
       sink: DiscardingOperationEventSink(),
-      configuration: detachAtOnceMount
+      configuration: backgroundMount
     )
     let context = ToolContext(
       sessionID: sessionID,
