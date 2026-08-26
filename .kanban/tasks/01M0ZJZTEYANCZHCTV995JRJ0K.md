@@ -227,6 +227,52 @@ comments:
     - the three accepted judgement calls are upheld, each with its reason on the card.
     - next: /implement to clear the 5 items, then /review again. No percentage target was used, per the card.
   timestamp: 2026-08-26T18:19:07.500918+00:00
+- actor: claude-code
+  id: 01m0zmvzmvq8pb9q9htf7sz64r
+  text: |-
+    ### the four lost facts are restored, and the stale coordinates are corrected
+
+    Commit `0da2abf`. All five findings are addressed.
+
+    **Findings 1 to 3 — the same shape, and the reason they mattered.** A `- Throws:` that named WHICH failure among several was cut down to a subset. A shorter list does not read as "some of the failures". It reads as ALL of them, so a reader writes a `catch` that is not exhaustive and believes it is. That is worse than the long text it replaced, which is why these are restored with the missing half stated plainly rather than merely re-appended:
+
+    - `Recording/MergedTranscript.swift` — `merged(under:)` also throws if a transcript file cannot be read at all, which stops the whole merge. The restored text says so and adds why it is surprising: this type tolerates a bad file in three other places, so a truncated list pointed the reader the wrong way.
+    - `Recording/Sinks.swift` — `JSONLRecorder.init(owningDirectory:now:)` also throws any file-system error from creating the root or its marker, and those are untyped. The restored text says outright that a `catch` over the typed cases alone is not exhaustive.
+    - `Recording/Sinks.swift` — the same initializer writes to disk. Its sibling's surviving doc promises to write nothing until an event lands, and that contrast is the point of having two initializers.
+
+    **Finding 4 — a reason, not a restatement.** `ToolInvocationRecord` is `Codable` because `TurnOutcome.toolInvocations` hands a turn's records to a host directly, without the event stream. The conformance list is code and could go; the clause after "so" could not. Without it the type doc — which insists a record is delivery-only and never recorded — reads as an argument that the serialization is dead.
+
+    **Finding 5 — my bookkeeping error, and it is corrected here.** My reversal of the decorator's `- Throws:` added 3 doc lines to `ToolOutputCapping.swift` and I did not re-measure the card afterwards, so the last four entries in that file's kept-fact list were each off by 3, and the set total in the previous commit message was wrong.
+
+    The true counts, measured now, after all restorations:
+
+    | File | Doc / total | Share |
+    |---|---|---|
+    | `Session/ToolOutputCapping.swift` | 67 / 130 | 51% |
+    | `Session/DiscoveryPriming.swift` | 89 / 186 | 47% |
+    | `Session/LanguageModelSessionBackend.swift` | 66 / 139 | 47% |
+    | `Recording/MergedTranscript.swift` | 51 / 97 | 52% |
+    | `Hosting/ToolInvocationRecord.swift` | 45 / 91 | 49% |
+    | `Recording/Sinks.swift` | 113 / 239 | 47% |
+    | `Hosting/OperationOutcome.swift` | 45 / 94 | 47% |
+
+    Set total: 476 doc lines of 976, or 49%. It began at 699 of 1199, 58%.
+
+    That the restorations moved the numbers back up is the correct outcome. The number was never the goal.
+
+    **Gates after the fix, run by me:** the diff with `///` lines filtered out is empty, so no code changed; `swift build --build-tests` 0 errors and 0 warnings from our code; `swift test` 1058 tests in 104 suites plus 83 in 10 suites passed, same 2 known issues.
+
+    **On the `DiscoveryPriming` example.** The reviewer agreed the cut was fair but noted the deleted example paired `FindAPIs()` with `"findAPIs"`, which showed that the string is the MOUNTED name and not the Swift type name. That fact survives on the `tool` property, and that line is now the only place a caller meets it. Left as is, and recorded here so a future reader of that property knows it is load-bearing.
+  timestamp: 2026-08-26T18:21:11.195364+00:00
+- actor: claude-code
+  id: 01m0zn5pm3m7safwt99fkefpd8
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` on commit `0da2abf`, 3 source files. The validator fleet found 0 (7 attempted, 0 failed). All four restorations verified against the `284eb5f~1` originals: each carries its fact, and restorations 2, 3 and 4 add nothing the code shows at that declaration. The corrected table matches the files row by row — 67/130, 89/186, 66/139, 51/97, 45/91, 113/239, 45/94, set 476/976.
+    - 1 new finding: `Recording/MergedTranscript.swift:59`. The restored `- Throws:` ends "That is the one place this type does not tolerate a bad file." That is false and it contradicts the same block two clauses earlier. `TranscriptLineDecoding.decodeEvents` throws `corruptLineError(fileURL)` for a corrupt line before a file's last, `merged(under:)` calls it with a bare `try` inside `for file in files`, so `transcriptLineCorrupt` also aborts the whole merge, and so does `recordingFromNewerRouter`. The type tolerates three things and refuses three others. Delete the sentence; "which aborts the whole merge" already carries the fact and is accurate.
+    - the five items of the 13:17 section are left unchecked. The `review` skill reserves the marks for the user or the implementer, so this pass does not flip them, and it records instead that the four lost facts are restored in the tree and the fifth is corrected in the 18:21 comment.
+    - next: /implement to delete the one sentence, then /review again. The card cannot go to done while an item is open.
+  timestamp: 2026-08-26T18:26:29.635092+00:00
 position_column: review
 position_ordinal: '8280'
 title: 'Router: cut the doc comments in the remaining seven files'
@@ -301,3 +347,20 @@ Each is upheld.
 1. The deleted `swift` usage example in `DiscoveryPriming`'s type doc. Upheld. Both property docs state what each string must be, so the example was a second copy, and an example is not one of the five things the card keeps. One caveat for the record: the example paired `FindAPIs()` with `"findAPIs"`, which showed that the string is the mounted `name` and not the Swift type. That fact survives, but the one-line `tool` property doc is now the only place a caller meets it.
 2. The deleted `- Returns:` on `capped(text:toTokenLimit:)`. Upheld. The return statement one line below builds `"… [truncated: \(limit) of \(totalTokens) tokens]"` verbatim, and `TokenBudget/toolOutputLimit` — a public symbol — documents the marker for a reader who never opens this file. The "never silent" invariant, which the format string alone does not carry, stays.
 3. The deleted "Never fails" on `OperationOutcome.init(rawValue:)`. Upheld. `init(rawValue: String)` is neither failable nor throwing, and the compiler enforces it. The `.other(_)` preservation the same sentence carried survives twice, at the type doc and at the `.other` case doc.
+
+## Review Findings (2026-08-26 13:26)
+
+> Scope: `review sha HEAD~1..HEAD` — commit `0da2abf`, 3 source files, comment-only. The validator fleet reported 0 findings. All four restorations from the 13:17 section are in the tree and each carries its original fact, and the corrected coordinate table is verified row by row against the files. One finding is new, on a sentence this commit added.
+
+- [ ] `Sources/FoundationModelsRouter/Recording/MergedTranscript.swift:59` `directed/inaccurate-claim` — The restored `- Throws:` on `merged(under:)` ends "That is the one place this type does not tolerate a bad file." The claim is false, and it contradicts the same `- Throws:` block two clauses earlier. `TranscriptLineDecoding.decodeEvents` throws `corruptLineError(fileURL)` for any line before a file's last that fails to decode, and `merged(under:)` calls it inside `for file in files` with a bare `try`, so a corrupt non-final line is also a bad file that also aborts the whole merge — and `MergedTranscriptError/transcriptLineCorrupt(file:)` is named at the head of the same clause. `recordingFromNewerRouter` aborts the merge as well. The type tolerates three things — a torn FINAL line, an absent sidecar, an undecodable sidecar — but it refuses three others, and the unreadable file is not singular among them. Delete the sentence. The preceding clause "which aborts the whole merge" already carries the fact the 13:17 finding asked for, and it is accurate. `TranscriptLineDecoding.decodeEvents` states its own version of this contract with no uniqueness claim — "; otherwise if the file cannot be read." — and that phrasing is the model.
+
+### Verified in this pass
+
+- Comment-only: `git diff -U0 284eb5f..0da2abf -- Sources` with the `///` lines filtered out is 0 lines. No code line changed.
+- Restoration 1 carries the fact. `merged(under:)` now reads "; otherwise if a transcript file cannot be read at all, which aborts the whole merge." The original was "; otherwise if a transcript file cannot be read." The added "at all" and "which aborts the whole merge" are the disambiguation the finding asked for, because the three surrounding tolerance policies made a reader expect the file to be skipped. Kept.
+- Restoration 2 carries the fact. `JSONLRecorder.init(owningDirectory:now:)` now reads "; otherwise any file-system error from creating the root or its marker, which is untyped. A `catch` over the typed cases alone is not exhaustive." The original was "; otherwise any file-system error creating the root or its marker." Both additions are accurate — `RecordingRootOwnership.acquire(root:)` is untyped `throws` and `writeMarker` raises `CocoaError` from `createDirectory` and `removeItem` — and the second sentence states the trap rather than repeating the first. Not over-restoration. Kept.
+- Restoration 3 carries the fact. The same initializer now reads "Unlike its sibling, this initializer touches the disk: it creates the root and writes the lock marker." The original was "- directory: The recording root to own; created — along with its lock marker — at construction." The body shows only `try RecordingRootOwnership.acquire(root: directory)`, so the disk side effect is not visible in this file and the sentence is not a restatement. The sibling contrast is the one the finding named. Kept.
+- Restoration 4 carries the fact. `ToolInvocationRecord` now reads "`Codable` despite being delivery-only: a turn's records are surfaced directly through ``TurnOutcome/toolInvocations``, so a host can persist or send them without going through the event stream." The original was "`Codable`/`Equatable`/`Sendable` so a turn's records can be surfaced directly without the event stream." Naming the symbol is stronger than the original, and `TurnOutcome` is `public struct` with `public let toolInvocations: [ToolInvocationRecord]`, so the link resolves. Dropping `Equatable` and `Sendable` from the sentence is right — the conformance list is code. Kept.
+- Over-restoration: none in restorations 2, 3 and 4. Every added clause states something the code does not show at that declaration. The only added sentence that fails is the one in the finding above, and it fails for being untrue rather than for being redundant.
+- The corrected coordinate table matches the files exactly, measured now: 67/130, 89/186, 66/139, 51/97, 45/91, 113/239, 45/94. Set total 476/976, against 699/1199 at the start. No percentage target was used at any point.
+- The `ToolOutputCapping.swift` kept-fact coordinates from the 13:17 finding are unaffected by this commit, which did not touch that file.
