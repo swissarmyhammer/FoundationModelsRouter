@@ -88,8 +88,32 @@ comments:
 
     Commits for this card: `1c57491` and `2347c0c`. The tree is clean and no Swift file changed.
   timestamp: 2026-08-26T16:32:24.736958+00:00
-position_column: todo
-position_ordinal: 8a80
+- actor: claude-code
+  id: 01m0zhexcg3k0289w33v868x13
+  text: |-
+    ### finish iteration 1 — awaiting a human read, not a tool verdict
+
+    - implement: changed — `README.md` only, two commits
+    - test: not applicable — no Swift file changed, so no suite is affected
+    - commit: `1c57491` "state how a tool declares the background mount", then `2347c0c` "say only what the mounting path enforces"
+    - review: **no coverage.** `attempted 0`, 0 files reviewed. The engine's reviewable set is code, and markdown never enters it.
+
+    **This card cannot pass the normal review gate, and no amount of retrying will change that.** A markdown-only commit returns `attempted 0` every time. That is a structural property of the engine, not a fault in this change.
+
+    So the card sits in `review` waiting for a person to read two paragraphs of `README.md`. The claim to check is the one I could not have the engine judge:
+
+    > A bare `FoundationModels.LanguageModelSession` reads no such declaration, so it applies no background wrapper and `MultiTool`'s own `call(arguments:)` runs in band.
+
+    The evidence for it, checked by hand and independently confirmed by a second session:
+    - `ToolMounting.swift:44` — `let mount = (typed as? any BackgroundTool)?.mount ?? configuration`. The tool declares; the site reads; the site's own configuration is only the fallback.
+    - `ToolMounting.swift:45` — a background mount returns `BackgroundToolRunner(wrapping: typed, ...)`.
+    - `BackgroundToolRunner` and `RunToCompletionRunner` exist only in the Router. FoundationModels provides neither.
+    - Only the Router reads a tool's `.mount`. The Multitool has no reader: `as? any BackgroundTool` appears nowhere in its `Sources`.
+
+    **A general point this card exposes.** Any card whose whole change is prose can never reach `done` through `/review`. That is worth a decision: either such a card is exempt from the gate and closes on a human read, or the engine must gain an opinion about markdown. Recording it here rather than inventing a rule.
+  timestamp: 2026-08-26T17:21:37.168231+00:00
+position_column: review
+position_ordinal: '8180'
 title: 'Multitool: correct the README''s stale mount vocabulary'
 ---
 ## What
