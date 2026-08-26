@@ -71,8 +71,62 @@ comments:
 
     **Seven files in the table remain untouched.** They are ordinary source with real bodies, so the removable category this file lacked does exist there, and they should fall further than this one did.
   timestamp: 2026-08-26T17:37:57.677129+00:00
-position_column: doing
-position_ordinal: '8180'
+- actor: claude-code
+  id: 01m0zjpzy7q56q271pp612w3mc
+  text: |
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD`, 7 validators attempted, 0 findings, 0 failed. The directed kept-invariant check gave 1 finding — Sources/FoundationModelsRouter/Session/RoutedSession.swift:100.
+    - next: Put the summarizer's error back into the three `compact` `- Throws:` blocks, then review again.
+
+    #### What the directed check did
+    The engine cannot read a comment cut, because no validator knows which fact a sentence carried. Thus each doc line that the diff removed was read against the new file and against the kept list on this card.
+
+    #### The 8 items to spot-check are all present
+    - Cancellation is cooperative, and propagation past the process boundary is advisory; an MCP server may keep working — `TurnCancellationResult.requested` and `cancelCurrentTurn()`.
+    - Model work that never checks cancellation runs to completion, and the turn returns its response — `cancelCurrentTurn()`.
+    - The session retains `profile`, thus the resident models stay loaded — the protocol header.
+    - The turn lock is a strict FIFO `AsyncSemaphore`, and a cancelled caller keeps its place in line — `dispatchNextPrompt()`.
+    - A tool body that reads its own session's transcript does not wait, and sees the history mid-turn — `transcript`.
+    - Abandoning the stream cancels the turn — on `streamResponse(to:maxTokens:)` and on `streamEvents(to:maxTokens:)`.
+    - `deinit` does not run the close sweep — `close()`.
+    - `awaitingUser(_:)` exists because a tool that waits on a person would otherwise hold `RoutedModel/generationGate` and block every other session over that model — `awaitingUser(_:)`.
+
+    Also present: the full turn event order for the proactive fold and the reactive fold, that nothing bounds a decode, that each `streamSessionEvents()` subscription is buffered without bound, the gate release and re-acquire discipline, and the queue order.
+
+    #### The other checks
+    - No public symbol lost its doc comment. Only `extension RoutedSession {` has no doc line above it, and an extension is not a documented symbol. It had none before the change.
+    - All 10 `- Parameter` keys name the internal parameter: `budget` (2 times), `maxTokens` (3 times), `workingDirectory`, `id` (3 times), `elicitationId`. No key names an argument label.
+    - The 40% share criterion was not used. The replacement criterion in the comment above was used.
+
+    #### Removals that are correct, and why they are not findings
+    - "Any error thrown by the model" from `respond(to:maxTokens:)` and from `dispatchNextPrompt()`: the method calls the model as its whole job, thus `throws` shows this.
+    - "It throws if generation fails" from the two stream methods: `AsyncThrowingStream` shows this.
+    - "Rethrows any error thrown by `body`, after re-acquiring" from `awaitingUser(_:)`: the new text is stronger. It says that the re-acquire happens on every exit from `body`, a throw and a cancellation included.
+    - "A tool body cannot fork the session whose turn invoked it": kept as the `- Throws:` clause that names `SessionReentryError/forkDuringSameSessionTurn(sessionID:)`.
+    - The `- Returns:` blocks on `cancelCurrentTurn()`, `cancel(id:)` and `replace(id:prompt:)`: the cases of the two result enums carry the same text.
+    - "The identity and directory accessors are `nonisolated` immutables": the declarations show this.
+  timestamp: 2026-08-26T17:43:30.503002+00:00
+- actor: claude-code
+  id: 01m0zjsabr53pagt4rnmdtxnqr
+  text: |-
+    ### the one finding is corrected — and it was a good catch
+
+    `Sources/FoundationModelsRouter/Session/RoutedSession.swift:100` — the `- Throws:` on `compact(prompt:budget:)` had lost "The summarizer's error". Restored, and stated more fully than before, because the bare phrase did not carry the whole fact:
+
+    > - Throws: The summarizer's error. A caller-driven fold does not degrade: unlike the automatic fold, which falls back to the deterministic-only pipeline and never throws, a summarizer failure here reaches the caller. Also `CancellationError` when cancelled, or ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when called from a tool of this session's own turn.
+
+    **Why this was a real loss and not a signature restatement.** `throws` on the declaration tells a reader that something can be thrown. It does not tell them WHICH failures reach them, and here that is genuinely surprising: `performAutoCompaction(prompt:budget:)` on the same type does the opposite, degrading through its tiers to the deterministic-only pipeline, which never throws. A reader who knows the automatic fold would reasonably assume the caller-driven fold degrades the same way. The code shows no `catch` on that path, but a doc comment that leaves the reader to go and check has failed at its job.
+
+    This is exactly the line between the two categories this card is about. "Throws any error thrown by the model" says nothing a reader cannot see. "The summarizer's error reaches you, and it does NOT degrade the way the automatic fold does" says something the signature cannot.
+
+    **The two overloads are deliberately not repeating it.** `compact()` and `compact(budget:)` both say "See ``compact(prompt:budget:)``". Restating the throws contract on each would put back exactly the repetition this card removes, so the reader is pointed at the one place that holds it.
+
+    **Gates after the fix, run by me:** `swift build --build-tests` clean, 0 errors and 0 warnings from our code; `swift test` 1058 tests in 104 suites plus 83 tests in 10 suites passed, with the same 2 known issues.
+
+    **A note on how this finding was produced, worth keeping.** The engine gave 0 findings from 7 validators, and it was right to: no validator can tell which fact a deleted sentence carried. The finding came from a directed check — reading the card's kept-invariant list against `git show HEAD~1`. That is the only way a comment cut can be reviewed, and it is why this card requires the pass to publish that list.
+  timestamp: 2026-08-26T17:44:46.712512+00:00
+position_column: review
+position_ordinal: '8280'
 title: 'Router: cut the doc comments back to what the code cannot say'
 ---
 ## What
@@ -124,3 +178,14 @@ Cut:
 - Write every rewritten sentence in ASD-STE100 Simplified Technical English.
 
 #cleanup #docs
+
+## Review Findings (2026-08-26 12:38)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 1 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+The 7 engine validators gave 0 findings. The item below comes from the directed kept-invariant check: each invariant, constraint, trap and reason in `git show HEAD~1` was read against the new file and against the kept list on this card.
+
+- [ ] `Sources/FoundationModelsRouter/Session/RoutedSession.swift:100` `doc-cut/kept-invariant-lost` — The new `- Throws:` on `compact(prompt:budget:)` does not have "The summarizer's error". The old line had it, and the kept list on this card does not have it. This text does not say the signature again. `Session/RoutedSessionActorCompaction.swift` shows that the caller-driven fold calls `fold(...)` with a summarizer and catches nothing, thus a summarizer failure comes out of `compact`. `performAutoCompaction(prompt:budget:)` on the same type is different: it goes down through its tiers to "the deterministic-only pipeline, which never throws". A reader who knows the automatic fold will think that the caller-driven fold degrades in the same way. It does not. Put the summarizer's error back into the `- Throws:` of `compact(prompt:budget:)`, and into the `compact()` and `compact(budget:)` overloads in the extension, which lost the same line.

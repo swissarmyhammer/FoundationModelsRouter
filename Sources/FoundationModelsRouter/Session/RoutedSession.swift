@@ -97,7 +97,10 @@ public protocol RoutedSession: Actor {
     ///
     /// - Parameter budget: The token budget to fold against, or `nil` for this
     ///   session's resolved working context.
-    /// - Throws: `CancellationError` when cancelled, or
+    /// - Throws: The summarizer's error. A caller-driven fold does not degrade:
+    ///   unlike the automatic fold, which falls back to the deterministic-only
+    ///   pipeline and never throws, a summarizer failure here reaches the caller.
+    ///   Also `CancellationError` when cancelled, or
     ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when called
     ///   from a tool of this session's own turn.
     @discardableResult
