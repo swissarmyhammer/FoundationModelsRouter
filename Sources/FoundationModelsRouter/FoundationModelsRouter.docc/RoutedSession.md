@@ -19,6 +19,24 @@ A session has three audiences, and each one gets typed capabilities:
   ``ToolContext/wait(completionToken:seconds:)``, and
   ``ToolContext/cancel(completionToken:)`` (task ^k0mecjp).
 
+## Long-running tools
+
+A tool declares ahead of time that it runs long, through
+``DetachmentParameterProviding/detachmentMount``. Such a tool is mounted as a
+``BackgroundTool``: each call returns a ``PendingRunEnvelope`` handle at once,
+and the work goes on behind it. Every other tool is mounted as a
+``RunToCompletionTool`` and returns its result in band;
+``DetachConfiguration/timeout`` bounds the work.
+
+The session pushes settlement to the model — the model never polls:
+
+- ``respond(to:maxTokens:)`` awaits each background run and delivers its
+  result in a further turn before it answers.
+- The streaming surfaces return while a run is in flight. A run that settles
+  is reported as ``SessionEvent/runSettled(_:)``, and the next
+  ``dispatchNextPrompt()`` delivers its result to the model.
+- `status` and `wait` give an earlier look; they are not required.
+
 ## Topics
 
 ### Identity and directories

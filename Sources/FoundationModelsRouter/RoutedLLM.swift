@@ -391,8 +391,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// Each tool is composed by the shared per-tool chain
     /// ``ToolDetachment/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
-    /// — detachment with the native session mount (eventplan.md
-    /// § "Elevation", that plan's name for detachment), or with the mount a
+    /// — detachment with the native session mount, or with the mount a
     /// tool declares for itself through
     /// ``DetachmentParameterProviding/detachmentMount``, then, only when
     /// `cappedToTokenLimit` is set, capping outermost — see that helper's

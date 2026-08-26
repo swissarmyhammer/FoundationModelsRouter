@@ -32,10 +32,26 @@ comments:
     - evidence: 16 files — Sources/FoundationModelsRouter/Session/{SessionEvent,RoutedSessionActorRunJournal,RoutedSessionActorTurnExecution,RoutedSessionActorGeneration,RoutedSessionActorQueueing,RoutedSession,TurnOutcome,SessionProjection}.swift, Tests/FoundationModelsRouterTests/{RespondRunPlaneDrainTests,PromptQueueTests,SessionOutboxToolWiringTests,ScriptedToolTurnComparisonTests}.swift, Tests/FoundationModelsRouterTests/Helpers/BackgroundingBackendFixtures.swift (new), IntegrationTests/.../RealToolTurnComparisonTests.swift, Examples/MultiModelGeneration/main.swift. Delivery rule: an empty-queue dispatch that holds a settled run's terminal runs a delivery turn; a run that settles inside a turn is reported as SessionEvent.runSettled on the turn stream. Tests added: startedSignalReachesTheModelAsThePendingEnvelope, progressSignalReachesTheModel, elicitationSignalReachesTheModelAndTheAnswerResumesTheRun, errorSignalReachesTheModelAsAFailedTerminal, doneSignalReachesTheModelAsASucceededTerminal, timedOutRunReachesTheModelAsATimedOutTerminal, streamEventsEmitsTheTerminalOfARunThatSettlesBeforeTheStreamEnds, settledRunOnEmptyQueueRunsADeliveryTurn, progressOnlyWakeOnEmptyQueueRunsNoTurn. `swift build --build-tests`: 0 errors, 0 warnings from our code. `swift test`: 1056 tests in 104 suites passed + 83 in 10 suites, 0 failures (2 pre-existing known issues). IntegrationTests package builds.
     - next: /review
   timestamp: 2026-08-26T04:42:48.261067+00:00
+- actor: claude-code
+  id: 01m0y7cpbwz81xjjvdc1315j99
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit b3c9d3c, local backend) — 0 findings, 0 confirmed, 1 refuted, 21 attempted, 15 files reviewed, 4 `.kanban/` files skipped by `.reviewignore`
+    - next: task moved to done
+  timestamp: 2026-08-26T05:06:24.252300+00:00
+- actor: claude-code
+  id: 01m0y7d4rqd54yg90yzdreds70
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 16 files; empty-queue delivery turn, SessionEvent.runSettled on the stream, nine signal tests, shared BackgroundingBackendFixtures
+    - test: green — swift test, 1056 + 83 tests, 0 failed (run inside implement)
+    - commit: b3c9d3c
+    - review: clean — 15 files, 21 checks, 0 findings, 1 refuted; task moved to done
+  timestamp: 2026-08-26T05:06:38.999264+00:00
 depends_on:
 - 01M0XGRJD4TZTZAFTCSBZEKMFD
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fff780
 title: The five run signals reach the calling model
 ---
 ## What

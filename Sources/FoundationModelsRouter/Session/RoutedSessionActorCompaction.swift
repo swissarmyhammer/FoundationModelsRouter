@@ -397,8 +397,8 @@ extension RoutedSessionActor {
         // Read at the moment the compaction boundary is written: the runs
         // still running in this session's mailbox, as run-plane summaries
         // (token, op, latest progress — never output content), so a
-        // post-compaction model can rediscover its in-flight work from the
-        // boundary and call status() for the live view.
+        // post-compaction model keeps the tokens of its in-flight work
+        // until the session reports each run's settlement.
         let pendingRuns = await mailbox.backgroundRuns().map { run in
             CompactionSegment.PendingRunSummary(
                 completionToken: run.completionToken,

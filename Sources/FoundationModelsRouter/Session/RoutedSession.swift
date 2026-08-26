@@ -280,21 +280,13 @@ public protocol RoutedSession: Actor {
     /// call's own, so a model that keeps starting background work from inside a
     /// drained turn is answered early rather than awaited forever.
     ///
-    /// **How often the drain runs — it is a safety net, not the usual path.**
-    ///
-    /// A tool call that backgrounds its run returns ``PendingRunEnvelope``, and that
-    /// envelope tells the model to collect the run itself, with a `wait` call,
-    /// before it answers. ``BackgroundTool`` writes that instruction on every
-    /// backgrounding, so every host hands it to the model and no host can turn it off. A
-    /// model that obeys it collects its own runs; this call then finds the run
-    /// plane empty and runs no drained turn at all. The drain answers the other
-    /// case: the turn ends with a run still running, because the model ignored
-    /// the instruction or because its own `wait` ran out. So how often the drain
-    /// runs is a property of the model, not of the host, and the guarantee above
-    /// — nothing is left running when this call returns — holds in both cases.
-    /// The Router's own tests background the runs the drain collects, so they prove
-    /// what the drain does and not how often a real model leaves a run behind
-    /// (task ^466d38p).
+    /// **The drain is the usual path.** A tool declared as ``BackgroundTool``
+    /// (a shell or agent tool) always returns ``PendingRunEnvelope``, so a
+    /// turn that calls one ends with a run still running. The envelope tells
+    /// the model that the session reports the result when the run settles;
+    /// the model does not poll. This drain is that report for `respond`: it
+    /// awaits each run and delivers the result in a further turn. The `wait`
+    /// tool is only an earlier look (task ^466d38p).
     ///
     /// A cancellation ends the drain too, from either route —
     /// ``cancelCurrentTurn()`` or the caller's own task — and it lands whether

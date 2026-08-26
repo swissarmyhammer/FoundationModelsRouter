@@ -543,9 +543,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // "Known limitation: `.ebnf` grammar case").
             let grammar = node.sidecar.grammar.map(Grammar.jsonSchema)
 
-            // Crash-edge run-outcome durability (eventplan.md §"Elevation",
-            // that plan's name for detachment):
-            // a journaled run with a non-terminal recorded event (`.progress`
+            // Crash-edge run-outcome durability: a journaled run with a non-terminal recorded event (`.progress`
             // or `.elicitation`) and no `.completed` for the same
             // `(tool, correlationID)` pair anywhere in this node's effective
             // stream died with the crashed process — its memory-only mailbox

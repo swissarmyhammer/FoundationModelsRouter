@@ -591,9 +591,7 @@ extension RoutedSessionActor {
         if isTurnCancelled {
             throw CancellationError()
         }
-        // The host-side ambient binding (task ^k4nygqa; eventplan.md § "The
-        // vocabulary and the host substrate": "Router binds the task local
-        // around native `respond()` also"): every backend respond()/stream
+        // The host-side ambient binding (task ^k4nygqa): every backend respond()/stream
         // call runs under a ``ToolContext`` carrying this session's
         // identity, its mailbox, and its own ``SessionOutbox`` as the
         // upstream sink — so a tool Apple's runtime invokes from inside the

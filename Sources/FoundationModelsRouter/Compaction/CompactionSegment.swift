@@ -40,8 +40,8 @@ import FoundationModels
 /// different concern.
 public struct CompactionSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
     /// One live background run's run-plane summary, carried across the compaction
-    /// boundary so a post-compaction model can rediscover its in-flight work
-    /// and call `status()` for the live view.
+    /// boundary so a post-compaction model keeps the tokens of its in-flight
+    /// work until the session reports each run's settlement.
     ///
     /// Deliberately restricted to the run plane — the same triple
     /// ``BackgroundRun`` reports (token, op, latest progress) —
@@ -180,9 +180,9 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
     }
 
     /// Renders `pendingRuns` as the model-visible pending-run text a
-    /// compaction boundary carries alongside its summary — the compacted-
-    /// transcript rendering through which a post-compaction model learns its
-    /// completion tokens and knows to call `status()` for the live view.
+    /// compaction boundary carries alongside its summary. The text states
+    /// the push contract — the session reports each run when it settles —
+    /// and names `status`/`wait` for an earlier look.
     ///
     /// Run plane only, one line per run: token, op, and latest progress —
     /// never a run's output content.
@@ -202,8 +202,9 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
             return "- completionToken \(run.completionToken): \(run.op)\(progress)"
         }
         return """
-            Background runs still pending across this compaction — call status() for the live view, \
-            or wait()/cancel() with a completion token:
+            Background runs still pending across this compaction. \
+            The session reports each run when it settles. \
+            For an earlier look, call status(), or wait()/cancel() with a completion token:
             \(lines.joined(separator: "\n"))
             """
     }
@@ -245,7 +246,7 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
         // A session with no background runs adds nothing; one with background runs
         // carries their rendering as an additional text segment — the only
         // segment kind the model-facing transcript rendering reads — so a
-        // post-compaction model knows its tokens and can call status().
+        // post-compaction model keeps its tokens until each run is reported.
         if let pendingRuns = content.pendingRuns {
             segments.append(
                 .text(

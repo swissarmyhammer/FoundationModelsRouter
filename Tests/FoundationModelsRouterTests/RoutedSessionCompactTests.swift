@@ -644,14 +644,17 @@ struct RoutedSessionCompactTests {
 
         // The rendered boundary the post-compaction model reads: the summary
         // text plus one additional text segment carrying the pending-run
-        // summary, so the model knows its tokens and can call status().
+        // summary. It states the push contract — the session reports each
+        // run when it settles — and names status/wait for an earlier look.
         let texts = Self.textContents(of: response)
         #expect(texts.count == 2)
         let rendering = try #require(texts.last)
         #expect(rendering.contains(token))
         #expect(rendering.contains(FakeRun.op))
         #expect(rendering.contains("halfway through"))
+        #expect(rendering.contains("The session reports each run when it settles"))
         #expect(rendering.contains("status()"))
+        #expect(!rendering.contains("live view"))
 
         await latch.open()
     }
