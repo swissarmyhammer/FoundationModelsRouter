@@ -117,13 +117,17 @@ public struct BackgroundTool<Arguments: ConvertibleFromGeneratedContent & Sendab
     }
 
     /// The wrapped tool's own canceler, or the cooperative one that requests the run stop and reports ``OperationOutcome/cancelled``.
+    /// A ``RunKind/process`` run's canceler is authoritative: its outcome becomes the run's terminal outcome.
     private func canceler(
         forCompletionToken completionToken: String,
         work: Task<RunSettlement, Never>,
         run: ToolRun<Arguments>
     ) -> @Sendable () async -> OperationOutcome {
         if let supplied = parameterProvider?.detachmentCanceler(forCompletionToken: completionToken) {
-            return supplied
+            guard runKind == .process else {
+                return supplied
+            }
+            return { await run.stop(using: supplied) }
         }
         return {
             run.requestCancellation()

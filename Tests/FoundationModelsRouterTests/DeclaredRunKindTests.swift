@@ -118,6 +118,9 @@ struct DeclaredRunKindTests {
     /// The host-side context that reads and cancels the run plane.
     let context: ToolContext
 
+    /// The sink every run's events funnel into, so a test can count terminals.
+    let sink: MountFixtures.RecordingSink
+
     /// The background-mounted engine under test: every call is handed
     /// back as a token at once, so no test waits on a wall clock.
     let background: BackgroundTool<DeclaredRunKindArguments>
@@ -139,11 +142,12 @@ struct DeclaredRunKindTests {
   ) -> Harness {
     let mailbox = SessionMailbox()
     let sessionID = ULID.generate()
+    let sink = MountFixtures.RecordingSink()
     let background = BackgroundTool(
       wrapping: tool,
       sessionID: sessionID,
       mailbox: mailbox,
-      sink: DiscardingOperationEventSink(),
+      sink: sink,
       timeout: DetachConfiguration.defaultTimeoutSeconds
     )
     let context = ToolContext(
@@ -155,7 +159,7 @@ struct DeclaredRunKindTests {
       completionToken: SessionMailbox.makeCompletionToken(),
       isCancelled: { false }
     )
-    return Harness(mailbox: mailbox, context: context, background: background)
+    return Harness(mailbox: mailbox, context: context, sink: sink, background: background)
   }
 
   /// Backgrounds one call of `harness`'s engine and returns the background run.
@@ -221,6 +225,75 @@ struct DeclaredRunKindTests {
     await gate.open()
     _ = await harness.context.wait(
       completionToken: run.completionToken, seconds: Self.settlementDeadline
+    )
+  }
+
+  // MARK: - The natural terminal of a stopped process run
+
+  /// Waits on `run` through the host context and returns its terminal event.
+  private static func settledTerminal(
+    of run: BackgroundRun, through harness: Harness
+  ) async throws -> OperationEvent {
+    let outcome = await harness.context.wait(
+      completionToken: run.completionToken, seconds: Self.settlementDeadline
+    )
+    guard case .settled(let terminal) = outcome else {
+      Issue.record("run \(run.completionToken) did not settle: \(outcome)")
+      throw MountFixtures.FixtureError()
+    }
+    return terminal
+  }
+
+  /// Cancels `run` through the host context, lets its body end on `gate`,
+  /// and returns the terminal event the wait collected.
+  private static func stopAndSettle(
+    _ run: BackgroundRun, through harness: Harness, opening gate: RunLatch
+  ) async throws -> OperationEvent {
+    #expect(
+      await harness.context.cancel(completionToken: run.completionToken)
+        == .reported(.stopped)
+    )
+    await gate.open()
+    return try await settledTerminal(of: run, through: harness)
+  }
+
+  @Test(
+    "a .process run its canceler stopped settles with that canceler's .stopped, never .succeeded, and posts exactly one terminal"
+  )
+  func aStoppedProcessRunSettlesWithItsCancelersOutcome() async throws {
+    let gate = RunLatch()
+    let harness = Self.makeHarness(
+      backgroundMounting: DeclaredProcessTool(gate: gate, witness: KillWitness())
+    )
+    let run = try await Self.backgroundOneRun(through: harness)
+
+    // The kill does not cancel the body: it returns normally, as a reap of
+    // a killed process group does. The terminal must still say stopped.
+    let terminal = try await Self.stopAndSettle(run, through: harness, opening: gate)
+
+    #expect(terminal.outcome == .stopped)
+    #expect(terminal.correlationID == run.completionToken)
+    let events = await harness.sink.events
+    #expect(events.filter { $0.kind == .completed }.count == 1)
+    #expect(events.last?.outcome == .stopped)
+  }
+
+  @Test("wait on a .process run a cancel already stopped reports the retained .stopped terminal")
+  func waitOnAStoppedProcessRunReportsStopped() async throws {
+    let gate = RunLatch()
+    let harness = Self.makeHarness(
+      backgroundMounting: DeclaredProcessTool(gate: gate, witness: KillWitness())
+    )
+    let run = try await Self.backgroundOneRun(through: harness)
+    _ = try await Self.stopAndSettle(run, through: harness, opening: gate)
+
+    // The run is settled, so this wait reads the retained terminal event.
+    let retained = try await Self.settledTerminal(of: run, through: harness)
+
+    #expect(retained.outcome == .stopped)
+    #expect(
+      await harness.context.cancel(completionToken: run.completionToken)
+        == .alreadySettled(retained)
     )
   }
 

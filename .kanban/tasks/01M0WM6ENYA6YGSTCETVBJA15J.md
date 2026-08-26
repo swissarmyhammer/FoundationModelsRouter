@@ -1,5 +1,26 @@
 ---
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01m0yyc40wsdcssz5bsjms99b3
+  text: |-
+    Picked up. Research: the card predates the engine rework. `DetachingTool` is gone. The shared body is `ToolRun.settle` in Sources/FoundationModelsRouter/Hosting/ToolRun.swift; `terminalFacts(for:)` maps the in-band `Result` to the outcome, so a `.process` run that returns normally after `killpg` gets `.succeeded`. `BackgroundTool.canceler(forCompletionToken:work:run:)` hands a supplied canceler to the mailbox unchanged, so the engine never learns what the canceler reported.
+
+    RED: two new tests in Tests/FoundationModelsRouterTests/DeclaredRunKindTests.swift (`aStoppedProcessRunSettlesWithItsCancelersOutcome`, `waitOnAStoppedProcessRunReportsStopped`) fail on the current tree with `terminal.outcome → .succeeded` and `events.last?.outcome → .succeeded`. The defect exists.
+
+    Plan for GREEN: when the run kind is `.process`, `BackgroundTool` routes the supplied canceler through `ToolRun.stop(using:)`. That records the canceler's authoritative outcome in a small `AuthoritativeStopReport` (a pending flag plus a `RaceGate`), and `settle` awaits that report before it builds the terminal, so the natural terminal cannot race ahead of the report. The in-band detail is kept; only the outcome is replaced. A `.swiftTask` run is not changed: cooperative cancellation is a request, so a tool that returns normally after it still reports an honest `.succeeded`.
+  timestamp: 2026-08-26T11:48:02.716729+00:00
+- actor: claude-code
+  id: 01m0yyhpedpwwfvdpprprq14q4
+  text: |-
+    ### implement — changed
+    - evidence: 3 files — Sources/FoundationModelsRouter/Hosting/ToolRun.swift (new `AuthoritativeStopReport`, `ToolRun.stop(using:)`, `terminalFacts(for:stoppedAs:)` over `inBandFacts(for:)`), Sources/FoundationModelsRouter/Hosting/BackgroundTool.swift (a `.process` run's supplied canceler is routed through `run.stop(using:)`), Tests/FoundationModelsRouterTests/DeclaredRunKindTests.swift (harness gains a `MountFixtures.RecordingSink`; new tests `aStoppedProcessRunSettlesWithItsCancelersOutcome` and `waitOnAStoppedProcessRunReportsStopped`; helpers `settledTerminal(of:through:)` and `stopAndSettle(_:through:opening:)`).
+    - TDD: RED proven on the untouched engine (`terminal.outcome → .succeeded`, `events.last?.outcome → .succeeded`), then GREEN.
+    - build: `swift build --build-tests` 0 errors, 0 warnings from our code (one `missing creator for mutated node` warning from the mlx-swift bundle dependency only).
+    - test: `swift test` — 1058 tests in 104 suites passed, 83 tests in 10 suites passed, 0 failures. The 2 known issues are pre-existing `withKnownIssue` blocks in BoundedWaitTests and RealModelHarnessTests.
+    - behavior: a `.swiftTask` run is not changed. Only a `.process` run's terminal outcome takes the canceler's report; the in-band detail is kept. `settle` awaits a pending report, so the natural terminal cannot race ahead of the canceler.
+    - next: `/review`.
+  timestamp: 2026-08-26T11:51:05.421333+00:00
+position_column: doing
 position_ordinal: '80'
 title: The natural terminal of a killed process run reports .succeeded
 ---
@@ -52,19 +73,25 @@ reading of the wrapped tool's return value, and no declaration a capability
 makes changes that reading. A capability that threw instead would report
 `.failed`, which is a second wrong word rather than a fix.
 
+## Current tree note
+
+The card predates the engine rework. `DetachingTool` is now `BackgroundTool` /
+`RunToCompletionTool` with the shared body in `ToolRun` (`Hosting/ToolRun.swift`),
+and `SessionMailbox.park` is `SessionMailbox.track`. The defect was the same.
+
 ## Acceptance Criteria
 
-- [ ] The terminal event a `RunKind.process` run settles with reports the
+- [x] The terminal event a `RunKind.process` run settles with reports the
       outcome its own canceler reported, and never `.succeeded`, when a cancel
       stopped it.
-- [ ] `wait(completionToken:)` on a stopped process run reports `.stopped`.
+- [x] `wait(completionToken:)` on a stopped process run reports `.stopped`.
 
 ## Tests
 
-- [ ] A test parks a `.process` run, cancels it, lets the body settle, and
+- [x] A test tracks a `.process` run, cancels it, lets the body settle, and
       asserts the retained terminal event reports `.stopped`.
-- [ ] A test asserts `wait(completionToken:)` on that run reports `.stopped`.
-- [ ] `swift test` passes.
+- [x] A test asserts `wait(completionToken:)` on that run reports `.stopped`.
+- [x] `swift test` passes.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass.

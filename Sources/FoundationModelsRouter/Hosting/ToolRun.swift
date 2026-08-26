@@ -16,6 +16,8 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
 
     private let cancellationFlag: CancellationRequestFlag
 
+    private let stopReport = AuthoritativeStopReport()
+
     private let timeoutSeconds: TimeInterval?
 
     private let openRecord: ToolInvocationRecord
@@ -80,6 +82,15 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         cancellationFlag.request()
     }
 
+    /// Runs the tool's own authoritative `canceler` and reports its outcome.
+    /// The terminal event carries that outcome, whatever the body then returns.
+    func stop(using canceler: @Sendable () async -> OperationOutcome) async -> OperationOutcome {
+        stopReport.begin()
+        let outcome = await canceler()
+        stopReport.report(outcome)
+        return outcome
+    }
+
     /// Runs the body under the bound context, settles the funnel with one
     /// terminal, and posts the close invocation record.
     func execute(arguments: Arguments) async -> RunSettlement {
@@ -100,7 +111,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
             cancellationFlag.request()
             inner.cancel()
         }
-        let facts = Self.terminalFacts(for: result)
+        let facts = Self.terminalFacts(for: result, stoppedAs: await stopReport.outcome())
         let terminal = OperationEvent(
             tool: context.tool,
             op: context.op,
@@ -165,8 +176,20 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         }
     }
 
-    /// Maps an in-band result to its terminal outcome and detail.
+    /// The terminal outcome and detail. An authoritative stop's outcome
+    /// replaces the in-band one; the in-band detail is kept.
     private static func terminalFacts(
+        for result: Result<String, any Error>, stoppedAs stop: OperationOutcome?
+    ) -> (outcome: OperationOutcome, detail: String) {
+        let inBand = inBandFacts(for: result)
+        guard let stop else {
+            return inBand
+        }
+        return (stop, inBand.detail)
+    }
+
+    /// Maps an in-band result to its terminal outcome and detail.
+    private static func inBandFacts(
         for result: Result<String, any Error>
     ) -> (outcome: OperationOutcome, detail: String) {
         switch result {
@@ -214,6 +237,32 @@ final class CancellationRequestFlag: Sendable {
     /// Whether cancellation has been requested.
     var isRequested: Bool {
         requested.withLock { $0 }
+    }
+}
+
+/// The outcome a run's authoritative canceler reports, handed to the body's
+/// settlement. A settlement that arrives while the report is pending waits for it.
+final class AuthoritativeStopReport: Sendable {
+    private let isPending = Mutex(false)
+
+    private let gate = RaceGate<OperationOutcome>()
+
+    /// Marks a report pending, so ``outcome()`` waits for ``report(_:)``.
+    func begin() {
+        isPending.withLock { $0 = true }
+    }
+
+    /// Records the canceler's outcome and resumes a waiting ``outcome()``.
+    func report(_ outcome: OperationOutcome) {
+        gate.resume(with: outcome)
+    }
+
+    /// The reported outcome, awaited while pending; `nil` when no stop began.
+    func outcome() async -> OperationOutcome? {
+        guard isPending.withLock({ $0 }) else {
+            return nil
+        }
+        return await withCheckedContinuation { gate.register(continuation: $0) }
     }
 }
 
