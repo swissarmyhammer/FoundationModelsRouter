@@ -6,7 +6,7 @@ import FoundationModels
 /// them into its prompt.
 ///
 /// Router exists so a long tool does not block the session, and
-/// ``DetachingTool`` delivers that by backgrounding a run and handing the model
+/// ``BackgroundTool`` delivers that by backgrounding a run and handing the model
 /// `{"pending":true,"completionToken":…}`. Until this journal existed, the
 /// background run's ending had no way back into the record: it waited in
 /// ``outbox`` for a prompt that might never come, so a transcript could show
@@ -107,7 +107,7 @@ extension RoutedSessionActor: OperationEventJournal {
     /// different places.** The entry's `id` is the entry's *own* identity, and
     /// nothing else: Apple documents `Transcript.ToolOutput.id` as "A unique
     /// id for this tool output", so a fresh ULID is minted per entry. The
-    /// *parent* reference — the `completionToken` ``DetachingTool`` handed the
+    /// *parent* reference — the `completionToken` ``BackgroundTool`` handed the
     /// model, which ``ToolContext`` stamps as the same run's `correlationID`
     /// — travels in the typed payload, where the whole ``OperationEvent``
     /// already carries it. A view groups a run's entries by that

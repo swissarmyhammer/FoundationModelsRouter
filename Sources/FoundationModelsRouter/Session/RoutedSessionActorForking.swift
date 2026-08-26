@@ -62,7 +62,7 @@ extension RoutedSessionActor {
         // forked first via its own `forked()` (falling back to sharing the
         // original unchanged when it doesn't conform to `ForkableTool`),
         // *then* the forked result is wrapped in the child's own binding
-        // layer — `DetachingTool` for a String-output tool,
+        // layer — `RunToCompletionTool` or `BackgroundTool` for a String-output tool,
         // `ContextBindingTool` for a non-String-output one — whose ambient
         // `ToolContext` posts to `childOutbox`. This
         // session's own already-instanced
@@ -92,7 +92,8 @@ extension RoutedSessionActor {
         // sessions (see ``RoutedSessionActor/mailbox``).
         let childMailbox = SessionMailbox()
         // Minted before the tool composition below, deliberately: the
-        // child's binding layers (`DetachingTool` and `ContextBindingTool`)
+        // child's binding layers (`RunToCompletionTool`, `BackgroundTool`,
+        // and `ContextBindingTool`)
         // stamp this id — the fork's own session identity — into every
         // composed run's ``ToolContext``.
         let childId = ULID.generate()

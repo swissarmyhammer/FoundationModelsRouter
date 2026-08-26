@@ -137,8 +137,9 @@ public protocol LanguageModelSessionBackend: AnyObject, Sendable {
     /// constructs — the overload ``RoutedSession/fork(workingDirectory:)`` calls
     /// with its own fork-then-detach composed tool list (the child's originals,
     /// each forked via ``ForkableTool/forked()`` where applicable, then wrapped
-    /// in the child's own binding layer — ``DetachingTool`` for a
-    /// String-output tool, ``ContextBindingTool`` for a non-String-output
+    /// in the child's own binding layer — ``RunToCompletionTool`` or
+    /// ``BackgroundTool`` for a String-output tool, ``ContextBindingTool``
+    /// for a non-String-output
     /// one — posting to its own outbox), so a
     /// conformer whose model can actually call tools (``MLXFoundationModelsSessionBackend``)
     /// hands the live model the child's own instances rather than silently

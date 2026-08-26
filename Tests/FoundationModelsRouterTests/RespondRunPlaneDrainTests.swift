@@ -25,8 +25,8 @@ struct RespondRunPlaneDrainTests {
     }
 
     /// Blocks on a ``RunLatch`` and declares background for itself through
-    /// ``DetachmentParameterProviding``, so the session's own
-    /// ``DetachingTool`` layer hands each call back as a token at once: one
+    /// ``DetachmentParameterProviding``, so the session mounts it as a
+    /// ``BackgroundTool`` that hands each call back as a token at once: one
     /// model turn leaves a real background run behind, and the test decides
     /// when it settles.
     private struct GatedBackgroundTool: Tool, DetachmentParameterProviding {
@@ -91,7 +91,7 @@ struct RespondRunPlaneDrainTests {
             }
             var rendered = ""
             for tool in tools {
-                guard let detached = tool as? DetachingTool<DrainToolArguments> else { continue }
+                guard let detached = tool as? BackgroundTool<DrainToolArguments> else { continue }
                 toolCallCount += 1
                 rendered = try await detached.call(arguments: DrainToolArguments(value: prompt))
             }

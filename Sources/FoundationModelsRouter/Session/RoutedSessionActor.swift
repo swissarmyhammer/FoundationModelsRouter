@@ -204,7 +204,8 @@ actor RoutedSessionActor: RoutedSession {
     nonisolated let originalTools: [any Tool]
 
     /// This session's own per-session tool list: every String-output tool
-    /// among ``originalTools`` wrapped in the ``DetachingTool`` layer — whose
+    /// among ``originalTools`` wrapped in the ``RunToCompletionTool`` or
+    /// ``BackgroundTool`` layer — whose
     /// ambient ``ToolContext`` posts the tool's events to ``outbox`` — and,
     /// when a budget carries a `toolOutputLimit`, the capping layer, applied
     /// per the owning composition site's own chain: detach → cap at a root,

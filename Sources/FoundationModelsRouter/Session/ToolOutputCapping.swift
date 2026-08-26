@@ -94,7 +94,7 @@ enum ToolOutputCapping {
 /// Forwards `name`/`description`/`parameters`/`includesSchemaInInstructions`
 /// to `wrapped` untouched; only `call(arguments:)`'s return value is capped.
 /// `wrapped` is whatever the tool-instancing pipeline already produced (e.g.
-/// a ``DetachingTool`` wrapper) — this decorator is applied
+/// a ``RunToCompletionTool`` or ``BackgroundTool`` wrapper) — this decorator is applied
 /// outermost, so the model-facing tool the SDK actually calls is the capped
 /// one: both continued generation and the transcript's own recorded
 /// `.toolOutput` entry (and therefore
@@ -144,8 +144,8 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
 
 extension ToolDetachment {
     /// The per-tool session-mount composition every session tool-instancing
-    /// site shares (task ^k4nygqa): mounts `tool` in the ``DetachingTool``
-    /// engine under the session's own identity, mailbox, and sink with
+    /// site shares (task ^k4nygqa): mounts `tool` in the run-to-completion
+    /// or background layer under the session's own identity, mailbox, and sink with
     /// ``DetachConfiguration/nativeSessionMount``, then — only when
     /// `cappedToTokenLimit` is set — caps the mounted tool outermost via
     /// ``ToolOutputCapping/optionallyCapped(tool:toTokenLimit:)`` (task

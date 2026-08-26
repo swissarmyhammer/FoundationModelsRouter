@@ -13,8 +13,8 @@ import Synchronization
 /// implicitly awaits every child before returning and so could never abandon
 /// the loser:
 ///
-/// - `DetachingTool`'s soft `waitSeconds` deadline, which races a run's
-///   settlement against the window the caller allowed.
+/// - `ToolRun`'s per-call timeout, which races the wrapped tool's
+///   completion against a timeout window that progress resets.
 /// - ``RoutedSessionActor/respond(to:maxTokens:)``'s run-plane drain, which
 ///   races a background run's settlement against a cancellation reaching the
 ///   draining call.

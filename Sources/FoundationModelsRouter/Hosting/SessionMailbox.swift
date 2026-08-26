@@ -306,7 +306,7 @@ public actor SessionMailbox {
     ///   - completionToken: The run's completion token.
     ///   - seconds: How long to wait for settlement before reporting
     ///     ``WaitOutcome/deadlineElapsed``. The value arrives from outside
-    ///     the process (the model-supplied `waitSeconds`), so it is clamped
+    ///     the process (the model-supplied wait seconds), so it is clamped
     ///     rather than trusted: NaN and negative values floor to an
     ///     immediate deadline, and anything above ``ToolContext/deadlineSecondsCeiling``
     ///     (including infinity) is capped there — never a trap.
@@ -569,7 +569,7 @@ public actor SessionMailbox {
     /// there, so no outside-supplied value can trap the `UInt64` conversion.
     ///
     /// Owned here — the run plane is what the ceiling bounds — and shared by
-    /// ``wait(completionToken:seconds:)`` and `DetachingTool`'s timeout,
+    /// ``wait(completionToken:seconds:)`` and `ToolRun`'s timeout,
     /// so the one clamping rule has exactly one implementation.
     static func boundedNanoseconds(clamping seconds: Double) -> UInt64 {
         guard !seconds.isNaN else { return 0 }

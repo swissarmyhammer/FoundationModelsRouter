@@ -9,7 +9,7 @@ import Foundation
 ///
 /// This is the one gate the test target declares. Every suite that has to
 /// hold a run open — `SessionMailboxTests`, `ToolContextTests`,
-/// `DetachingToolTests`, `SessionOutboxToolWiringTests`,
+/// `BackgroundToolTests`, `SessionOutboxToolWiringTests`,
 /// `RoutedSessionCompactTests` — uses it, so the scaffolding lives in exactly
 /// one place and cannot drift copy from copy.
 actor RunLatch {

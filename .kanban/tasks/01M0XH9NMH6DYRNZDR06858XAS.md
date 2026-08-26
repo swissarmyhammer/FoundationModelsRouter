@@ -58,10 +58,33 @@ comments:
   id: 01m0y1hbz1m0pxqcb3ykrnn0xj
   text: 'Review finding worked (`NestedGenerationReentryTests.swift:61`, reuse). One generic `ThreadSafeBox<Value: Sendable>: Sendable` now holds the `Mutex<Value?>` with `set(_:)` and `value`. `NestedTarget` is a typealias for `ThreadSafeBox<any RoutedSession>` and `HandedBackRecord` is a typealias for `ThreadSafeBox<String>`, so each name keeps its meaning at the use sites. Use sites changed from `set(session:)`/`set(text:)` to `set(_:)` and from `.session`/`.text` to `.value`. No test was changed or removed. A search of the file found no third copy of the pattern; the only other `Mutex<T?>` in the test target (`TurnCancellationTests.swift`) is a different fixture in a different file and is out of the finding''s scope. Build: 0 errors, 0 warnings from our code. `swift test --filter NestedGenerationReentryTests`: 13 passed. `swift test`: 1048 tests in 101 suites passed (2 known issues, pre-existing), 83 tests in 10 suites passed.'
   timestamp: 2026-08-26T03:24:05.985189+00:00
+- actor: claude-code
+  id: 01m0y1sx2drm1dep5hd2q6gcn9
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift. Extracted `ThreadSafeBox<Value: Sendable>: Sendable` (`Mutex<Value?>`, `set(_:)`, `value`); `NestedTarget` and `HandedBackRecord` are now typealiases of it. Finding at `:61` checked. `swift build --build-tests`: 0 errors, 0 warnings from our code. `swift test --filter NestedGenerationReentryTests`: 13 passed. `swift test`: 1048 tests in 101 suites passed (2 known issues, pre-existing), 83 tests in 10 suites passed. Not committed.
+    - next: /review
+  timestamp: 2026-08-26T03:28:45.645649+00:00
+- actor: claude-code
+  id: 01m0y1wxranw4ekg9mqb64kqs7
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit be9dc76, local backend) — 0 findings, 7 validators attempted, 0 failed. The one prior finding (2026-08-25 22:10, ThreadSafeBox) is checked.
+    - next: none. The task is in done.
+  timestamp: 2026-08-26T03:30:24.650455+00:00
+- actor: claude-code
+  id: 01m0y1x8hx3rq8k8agntbv4zw8
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file; ThreadSafeBox<Value> replaces the two duplicate mutex fixtures; prior finding checked
+    - test: green — swift test, 1048 + 83 tests, 0 failed, 0 skipped
+    - commit: be9dc76
+    - review: clean — 0 findings, 7 checks; task moved to done
+  timestamp: 2026-08-26T03:30:35.709636+00:00
 depends_on:
 - 01M0XGQCF19BT6PM14919C9VV4
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fff580
 title: A background body can use the generation permit
 ---
 ## What

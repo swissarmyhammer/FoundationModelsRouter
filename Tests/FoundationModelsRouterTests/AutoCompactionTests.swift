@@ -740,7 +740,7 @@ struct AutoCompactionTests {
         }
         // Every String-output tool arrives wrapped in the detachment layer;
         // peel it to reach the threaded originals.
-        let innerTools = actor.tools.compactMap { ($0 as? DetachingTool<SampleToolArguments>)?.wrapped }
+        let innerTools = actor.tools.compactMap { ($0 as? RunToCompletionTool<SampleToolArguments>)?.wrapped }
         #expect(innerTools.contains { $0 is EchoTool })
         #expect(innerTools.contains { $0 is FailingTool })
 

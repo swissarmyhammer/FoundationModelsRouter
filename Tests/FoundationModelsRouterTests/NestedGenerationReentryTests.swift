@@ -228,11 +228,13 @@ struct NestedGenerationReentryTests {
             return output
         }
 
-        /// The session's composed fixture tool, or `nil` for a session that
-        /// carries none.
-        private var composedFixtureTool: DetachingTool<ReentryToolArguments>? {
+        /// The session's composed fixture tool — a ``BackgroundTool`` when the
+        /// fixture declared background, a ``RunToCompletionTool`` otherwise —
+        /// or `nil` for a session that carries none.
+        private var composedFixtureTool: (any Tool<ReentryToolArguments, String>)? {
             for tool in tools {
-                if let detached = tool as? DetachingTool<ReentryToolArguments> { return detached }
+                if let background = tool as? BackgroundTool<ReentryToolArguments> { return background }
+                if let inBand = tool as? RunToCompletionTool<ReentryToolArguments> { return inBand }
             }
             return nil
         }

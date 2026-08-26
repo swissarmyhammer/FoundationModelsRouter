@@ -574,8 +574,9 @@ final class MLXFoundationModelsSessionBackend: LanguageModelSessionBackend, @unc
     /// actually calls, with its own fork-then-detach composed child tool
     /// list (each of the parent's true originals forked via
     /// ``ForkableTool/forked()`` where applicable, then wrapped in the
-    /// child's own binding layer — ``DetachingTool`` for a String-output
-    /// tool, ``ContextBindingTool`` for a non-String-output one — posting
+    /// child's own binding layer — ``RunToCompletionTool`` or
+    /// ``BackgroundTool`` for a String-output tool, ``ContextBindingTool``
+    /// for a non-String-output one — posting
     /// to its own outbox) — so the
     /// live model backing the fork calls the child's own tool instances,
     /// wired to the child's own outbox, rather than silently carrying

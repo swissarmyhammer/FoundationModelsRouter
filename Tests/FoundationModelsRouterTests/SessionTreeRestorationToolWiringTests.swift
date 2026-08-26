@@ -249,9 +249,9 @@ struct SessionTreeRestorationToolWiringTests {
         // root's own outbox.
         guard
             let threadedDetached = container2.threadedToolsByCall.first?.first
-                as? DetachingTool<AmbientToolArguments>
+                as? RunToCompletionTool<AmbientToolArguments>
         else {
-            Issue.record("expected the container to receive a DetachingTool over the ambient fixture")
+            Issue.record("expected the container to receive a RunToCompletionTool over the ambient fixture")
             return
         }
         #expect(detachmentWrapped(threadedDetached) as? AmbientEventPostingTool === emitter)
@@ -342,10 +342,10 @@ struct SessionTreeRestorationToolWiringTests {
         #expect(restored.root.outbox !== restoredFork.outbox)
 
         guard
-            let rootDetached = container2.threadedToolsByCall[0].first as? DetachingTool<AmbientToolArguments>,
-            let forkDetached = container2.threadedToolsByCall[1].first as? DetachingTool<AmbientToolArguments>
+            let rootDetached = container2.threadedToolsByCall[0].first as? RunToCompletionTool<AmbientToolArguments>,
+            let forkDetached = container2.threadedToolsByCall[1].first as? RunToCompletionTool<AmbientToolArguments>
         else {
-            Issue.record("expected both restored nodes to receive their own DetachingTool wrapper")
+            Issue.record("expected both restored nodes to receive their own RunToCompletionTool wrapper")
             return
         }
         // Both nodes share the caller's one original instance — the
@@ -482,9 +482,9 @@ struct SessionTreeRestorationToolWiringTests {
         let child = try await restored.root.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childDetached = childActor.tools.first as? DetachingTool<AmbientToolArguments>
+            let childDetached = childActor.tools.first as? RunToCompletionTool<AmbientToolArguments>
         else {
-            Issue.record("expected the fork of a restored session to expose its own DetachingTool wrapper")
+            Issue.record("expected the fork of a restored session to expose its own RunToCompletionTool wrapper")
             return
         }
         #expect(detachmentWrapped(childDetached) as? AmbientEventPostingTool === emitter)
@@ -648,7 +648,7 @@ struct SessionTreeRestorationToolWiringTests {
         // Restore applies no capping — deliberately: no budget travels
         // through restoration, and the pending envelope is tiny.
         #expect(!(threaded is TokenCappingTool<AmbientToolArguments>))
-        guard let detaching = threaded as? DetachingTool<AmbientToolArguments>,
+        guard let detaching = threaded as? RunToCompletionTool<AmbientToolArguments>,
             let inner = detaching.wrapped as? AmbientEventPostingTool
         else {
             Issue.record("expected detach(tool) at the restore container boundary")

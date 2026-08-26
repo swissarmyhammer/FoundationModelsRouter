@@ -160,13 +160,13 @@ struct ToolInvocationLivenessTests {
         #expect(records.first?.correlationID == records.last?.correlationID)
     }
 
-    @Test("DetachingTool posts open and close records around an in-band call, before the call returns")
-    func detachingToolPostsOpenAndCloseForAnInBandCall() async throws {
+    @Test("RunToCompletionTool posts open and close records around an in-band call, before the call returns")
+    func runToCompletionToolPostsOpenAndCloseForAnInBandCall() async throws {
         let sink = RecordingInvocationSink()
         let wrapped = MarkerEmittingTool()
-        let tool = DetachingTool(
+        let tool = RunToCompletionTool(
             wrapping: wrapped, sessionID: .generate(), mailbox: SessionMailbox(), sink: sink,
-            configuration: DetachConfiguration(mode: .runToCompletion))
+            timeout: DetachConfiguration.defaultTimeoutSeconds)
 
         let output = try await tool.call(arguments: AmbientToolArguments(value: "ONE"))
         #expect(output == ScriptedToolFixture.marker(for: "ONE"))

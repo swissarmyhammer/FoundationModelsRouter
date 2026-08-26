@@ -6,7 +6,8 @@ import Testing
 
 /// Exercises task s61g2vb's per-session tool composition:
 /// ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` wrapping
-/// every String-output tool in the session's own ``DetachingTool`` layer and
+/// every String-output tool in the session's own ``RunToCompletionTool`` (or
+/// ``BackgroundTool``) layer and
 /// every non-String-output tool in the binding-only ``ContextBindingTool``
 /// (task ^6htgvw2) — either way the ambient ``ToolContext`` posts the tool's
 /// events to the session's own ``RoutedSession/outbox``, with **no explicit
@@ -44,7 +45,7 @@ struct SessionOutboxToolWiringTests {
 
     /// Blocks on a ``RunLatch`` and declares background for itself through
     /// ``DetachmentParameterProviding``, so the composition-site
-    /// ``DetachingTool`` hands each call back as a pending envelope at once
+    /// ``BackgroundTool`` hands each call back as a pending envelope at once
     /// and the pending-envelope tests wait on no wall clock.
     private struct GatedBackgroundTool: Tool, DetachmentParameterProviding {
         let name = "gated-background"
@@ -139,7 +140,7 @@ struct SessionOutboxToolWiringTests {
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             observedTurnTokens.append(ToolContext.current?.completionToken)
-            if let detached = tools.first as? DetachingTool<FakeToolArguments> {
+            if let detached = tools.first as? BackgroundTool<FakeToolArguments> {
                 toolCallStarted = true
                 let rendered = try await detached.call(arguments: FakeToolArguments(value: prompt))
                 renderedToolOutputs.append(rendered)
@@ -394,8 +395,8 @@ struct SessionOutboxToolWiringTests {
         // layer `makeSession(tools:)` composed binds the ambient
         // `ToolContext` (carrying this session's own outbox) around the
         // call, so the tool's post lands there.
-        guard let detached = container.lastTools.first as? DetachingTool<AmbientToolArguments> else {
-            Issue.record("expected the container to receive a DetachingTool over the ambient fixture")
+        guard let detached = container.lastTools.first as? RunToCompletionTool<AmbientToolArguments> else {
+            Issue.record("expected the container to receive a RunToCompletionTool over the ambient fixture")
             return
         }
         _ = try await detached.call(arguments: AmbientToolArguments(value: "auto-routed"))
@@ -423,7 +424,7 @@ struct SessionOutboxToolWiringTests {
             let instancedPlain = mixedInnerTools.first(where: { $0 is PlainTool }) as? PlainTool,
             let ambientDetached = container.lastTools.first(where: {
                 detachmentWrapped($0) is AmbientEventPostingTool
-            }) as? DetachingTool<AmbientToolArguments>
+            }) as? RunToCompletionTool<AmbientToolArguments>
         else {
             Issue.record("expected both an AmbientEventPostingTool and a PlainTool in the threaded list")
             return
@@ -566,10 +567,10 @@ struct SessionOutboxToolWiringTests {
 
         guard let parentActor = session as? RoutedSessionActor,
             let childActor = child as? RoutedSessionActor,
-            let parentDetached = parentActor.tools.first as? DetachingTool<AmbientToolArguments>,
-            let childDetached = childActor.tools.first as? DetachingTool<AmbientToolArguments>
+            let parentDetached = parentActor.tools.first as? RunToCompletionTool<AmbientToolArguments>,
+            let childDetached = childActor.tools.first as? RunToCompletionTool<AmbientToolArguments>
         else {
-            Issue.record("expected both the parent and the fork to expose their own DetachingTool wrapper")
+            Issue.record("expected both the parent and the fork to expose their own RunToCompletionTool wrapper")
             return
         }
         // Both sessions share the very same underlying tool instance —
@@ -705,9 +706,9 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [emitter])
 
         guard let parentActor = session as? RoutedSessionActor,
-            let capturedDetached = parentActor.tools.first as? DetachingTool<AmbientToolArguments>
+            let capturedDetached = parentActor.tools.first as? RunToCompletionTool<AmbientToolArguments>
         else {
-            Issue.record("expected the parent session to expose its own DetachingTool wrapper")
+            Issue.record("expected the parent session to expose its own RunToCompletionTool wrapper")
             return
         }
 
@@ -766,9 +767,9 @@ struct SessionOutboxToolWiringTests {
         guard
             let childForkableDetached = childActor.tools.first(where: {
                 detachmentWrapped($0) is ForkableAmbientTool
-            }) as? DetachingTool<AmbientToolArguments>
+            }) as? RunToCompletionTool<AmbientToolArguments>
         else {
-            Issue.record("expected the child's tool list to hold the forked tool's own DetachingTool")
+            Issue.record("expected the child's tool list to hold the forked tool's own RunToCompletionTool")
             return
         }
         _ = try await childForkableDetached.call(arguments: AmbientToolArguments(value: "from-forked-tool"))
@@ -812,9 +813,9 @@ struct SessionOutboxToolWiringTests {
         // reached the model-facing backend construction seam, not just the
         // fork's own actor-level bookkeeping array.
         #expect(rootBackend.lastForkTools.count == 1)
-        guard let forkedDetachedAtBackend = rootBackend.lastForkTools.first as? DetachingTool<AmbientToolArguments>
+        guard let forkedDetachedAtBackend = rootBackend.lastForkTools.first as? RunToCompletionTool<AmbientToolArguments>
         else {
-            Issue.record("expected the backend's makeFork(tools:) to have received the child's DetachingTool")
+            Issue.record("expected the backend's makeFork(tools:) to have received the child's RunToCompletionTool")
             return
         }
         #expect(detachmentWrapped(forkedDetachedAtBackend) as? AmbientEventPostingTool === emitter)
@@ -849,7 +850,7 @@ struct SessionOutboxToolWiringTests {
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<AmbientToolArguments>,
-            let detaching = capping.wrapped as? DetachingTool<AmbientToolArguments>,
+            let detaching = capping.wrapped as? RunToCompletionTool<AmbientToolArguments>,
             let inner = detaching.wrapped as? AmbientEventPostingTool
         else {
             Issue.record("expected cap(detach(tool)) at the container boundary")
@@ -878,7 +879,7 @@ struct SessionOutboxToolWiringTests {
         let session = profile.standard.makeSession(tools: [emitter])
 
         #expect(!(container.lastTools.first is TokenCappingTool<AmbientToolArguments>))
-        guard let detaching = container.lastTools.first as? DetachingTool<AmbientToolArguments>,
+        guard let detaching = container.lastTools.first as? RunToCompletionTool<AmbientToolArguments>,
             let inner = detaching.wrapped as? AmbientEventPostingTool
         else {
             Issue.record("expected detach(tool) at the container boundary")
@@ -910,7 +911,7 @@ struct SessionOutboxToolWiringTests {
 
         guard let childActor = child as? RoutedSessionActor,
             let capping = childActor.tools.first as? TokenCappingTool<AmbientToolArguments>,
-            let detaching = capping.wrapped as? DetachingTool<AmbientToolArguments>,
+            let detaching = capping.wrapped as? RunToCompletionTool<AmbientToolArguments>,
             let forkedInner = detaching.wrapped as? ForkableAmbientTool
         else {
             Issue.record("expected cap(detach(forked(tool))) in the fork's tool list")
@@ -943,7 +944,7 @@ struct SessionOutboxToolWiringTests {
             return
         }
         #expect(!(childActor.tools.first is TokenCappingTool<AmbientToolArguments>))
-        guard let detaching = childActor.tools.first as? DetachingTool<AmbientToolArguments>,
+        guard let detaching = childActor.tools.first as? RunToCompletionTool<AmbientToolArguments>,
             let forkedInner = detaching.wrapped as? ForkableAmbientTool
         else {
             Issue.record("expected detach(forked(tool)) in the fork's tool list")
@@ -1112,8 +1113,8 @@ struct SessionOutboxToolWiringTests {
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [GatedBackgroundTool(gate: gate)])
         let backend = try #require(container.lastBackend)
-        guard let detached = container.lastTools.first as? DetachingTool<FakeToolArguments> else {
-            Issue.record("expected the composed tool list to hold a DetachingTool")
+        guard let detached = container.lastTools.first as? BackgroundTool<FakeToolArguments> else {
+            Issue.record("expected the composed tool list to hold a BackgroundTool")
             return
         }
 
@@ -1172,9 +1173,9 @@ struct SessionOutboxToolWiringTests {
         let child = try await session.fork(workingDirectory: nil)
 
         guard let childActor = child as? RoutedSessionActor,
-            let childDetached = childActor.tools.first as? DetachingTool<FakeToolArguments>
+            let childDetached = childActor.tools.first as? BackgroundTool<FakeToolArguments>
         else {
-            Issue.record("expected the fork's composed tool list to hold a DetachingTool")
+            Issue.record("expected the fork's composed tool list to hold a BackgroundTool")
             return
         }
 

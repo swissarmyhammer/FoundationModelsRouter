@@ -284,7 +284,7 @@ public protocol RoutedSession: Actor {
     ///
     /// A tool call that backgrounds its run returns ``PendingRunEnvelope``, and that
     /// envelope tells the model to collect the run itself, with a `wait` call,
-    /// before it answers. ``DetachingTool`` writes that instruction on every
+    /// before it answers. ``BackgroundTool`` writes that instruction on every
     /// backgrounding, so every host hands it to the model and no host can turn it off. A
     /// model that obeys it collects its own runs; this call then finds the run
     /// plane empty and runs no drained turn at all. The drain answers the other

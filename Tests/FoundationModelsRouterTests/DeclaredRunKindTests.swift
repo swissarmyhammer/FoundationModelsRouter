@@ -31,11 +31,6 @@ struct DeclaredRunKindTests {
   /// hanging the suite.
   private static let settlementDeadline: TimeInterval = 30
 
-  /// The mount every harness of this suite runs under: background, so a
-  /// call is handed back as a token at once and no test waits on a wall
-  /// clock.
-  private static let backgroundMount = DetachConfiguration(mode: .background)
-
   // MARK: - Argument fixtures
 
   /// The arguments every fixture tool of this suite takes.
@@ -123,8 +118,9 @@ struct DeclaredRunKindTests {
     /// The host-side context that reads and cancels the run plane.
     let context: ToolContext
 
-    /// The wrapped engine under test.
-    let detaching: DetachingTool<DeclaredRunKindArguments>
+    /// The background-mounted engine under test: every call is handed
+    /// back as a token at once, so no test waits on a wall clock.
+    let background: BackgroundTool<DeclaredRunKindArguments>
   }
 
   /// The tool identity the harness's host-side context is stamped with.
@@ -133,23 +129,22 @@ struct DeclaredRunKindTests {
   /// The op string the harness's host-side context is stamped with.
   private static let hostOp = "read runs"
 
-  /// Wraps `tool` in a ``DetachingTool`` that backgrounds every call at once,
-  /// over a fresh mailbox, beside a host-side context bound to that same
-  /// mailbox.
+  /// Wraps `tool` in a ``BackgroundTool`` over a fresh mailbox, beside a
+  /// host-side context bound to that same mailbox.
   ///
   /// - Parameter tool: The tool to wrap.
   /// - Returns: The harness.
   private static func makeHarness(
-    wrapping tool: any Tool<DeclaredRunKindArguments, String>
+    backgroundMounting tool: any Tool<DeclaredRunKindArguments, String>
   ) -> Harness {
     let mailbox = SessionMailbox()
     let sessionID = ULID.generate()
-    let detaching = DetachingTool(
+    let background = BackgroundTool(
       wrapping: tool,
       sessionID: sessionID,
       mailbox: mailbox,
       sink: DiscardingOperationEventSink(),
-      configuration: backgroundMount
+      timeout: DetachConfiguration.defaultTimeoutSeconds
     )
     let context = ToolContext(
       sessionID: sessionID,
@@ -160,7 +155,7 @@ struct DeclaredRunKindTests {
       completionToken: SessionMailbox.makeCompletionToken(),
       isCancelled: { false }
     )
-    return Harness(mailbox: mailbox, context: context, detaching: detaching)
+    return Harness(mailbox: mailbox, context: context, background: background)
   }
 
   /// Backgrounds one call of `harness`'s engine and returns the background run.
@@ -169,7 +164,7 @@ struct DeclaredRunKindTests {
   /// - Returns: The one run the call backgrounded, as ``ToolContext/backgroundRuns()``
   ///   reports it.
   private static func backgroundOneRun(through harness: Harness) async throws -> BackgroundRun {
-    let rendered = try await harness.detaching.call(
+    let rendered = try await harness.background.call(
       arguments: DeclaredRunKindArguments(value: "long job")
     )
     // The call really detached: the model was handed a pending envelope
@@ -188,7 +183,7 @@ struct DeclaredRunKindTests {
   func aDeclaredProcessRunIsListedAsProcess() async throws {
     let gate = RunLatch()
     let harness = Self.makeHarness(
-      wrapping: DeclaredProcessTool(gate: gate, witness: KillWitness())
+      backgroundMounting: DeclaredProcessTool(gate: gate, witness: KillWitness())
     )
 
     let run = try await Self.backgroundOneRun(through: harness)
@@ -209,7 +204,7 @@ struct DeclaredRunKindTests {
     let gate = RunLatch()
     let witness = KillWitness()
     let harness = Self.makeHarness(
-      wrapping: DeclaredProcessTool(gate: gate, witness: witness)
+      backgroundMounting: DeclaredProcessTool(gate: gate, witness: witness)
     )
 
     let run = try await Self.backgroundOneRun(through: harness)
@@ -235,7 +230,7 @@ struct DeclaredRunKindTests {
     "a tool that declares nothing is still backgrounded as .swiftTask, and cancelling it still reports the engine's cooperative .cancelled"
   )
   func aToolDeclaringNothingKeepsTheCooperativeCanceler() async throws {
-    let harness = Self.makeHarness(wrapping: UndeclaredKindTool())
+    let harness = Self.makeHarness(backgroundMounting: UndeclaredKindTool())
 
     let run = try await Self.backgroundOneRun(through: harness)
 
@@ -266,7 +261,7 @@ struct DeclaredRunKindTests {
     let gate = RunLatch()
     let witness = KillWitness()
     let harness = Self.makeHarness(
-      wrapping: DeclaredProcessTool(gate: gate, witness: witness)
+      backgroundMounting: DeclaredProcessTool(gate: gate, witness: witness)
     )
 
     let run = try await Self.backgroundOneRun(through: harness)

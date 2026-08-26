@@ -41,9 +41,8 @@ public struct ToolContext: Sendable {
     ///
     /// One ceiling bounds every such deadline, which is why the name says
     /// "deadline" rather than naming one clock:
-    /// ``wait(completionToken:seconds:)``'s own deadline, a
-    /// `DetachConfiguration.waitSeconds` window, and a
-    /// `DetachConfiguration.timeout` window all clamp against it.
+    /// ``wait(completionToken:seconds:)``'s own deadline and a
+    /// `DetachConfiguration.timeout` window both clamp against it.
     ///
     /// Published because a host clamps a model-supplied deadline against it
     /// before it ever reaches the run plane, and reports the clamp it made.

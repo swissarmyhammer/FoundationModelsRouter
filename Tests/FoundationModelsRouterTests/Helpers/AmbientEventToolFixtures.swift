@@ -28,7 +28,7 @@ func postAmbientCompletedEvent(detail: String) async {
 /// A reference-typed `FoundationModels.Tool` that posts one `.completed`
 /// event through the ambient ``ToolContext`` while executing — the
 /// composition sites wire no per-tool sink, so the context the
-/// ``DetachingTool`` layer binds around each call is the only event route.
+/// ``RunToCompletionTool`` layer binds around each call is the only event route.
 ///
 /// Shared by the composition-site wiring suites
 /// (`SessionOutboxToolWiringTests`, `SessionTreeRestorationToolWiringTests`,
@@ -62,7 +62,7 @@ final class AmbientEventPostingTool: Tool, Sendable {
 /// keeps a tool outside the pending-envelope machinery (there is no `String`
 /// wire form for the envelope to replace), so the composition sites wrap its
 /// tool in the binding-only ``ContextBindingTool`` instead of
-/// ``DetachingTool``.
+/// ``RunToCompletionTool``.
 struct NonStringToolOutput: PromptRepresentable, Sendable {
     /// The text the output renders as. The ambient fixture below returns the
     /// bound run's `completionToken` here, so a test can match each call's

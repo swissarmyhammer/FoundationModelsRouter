@@ -181,8 +181,8 @@ struct RegisteredJournalOpTests {
   private static func backgroundOneRun(
     _ mounted: any Tool, on host: ToolContext
   ) async throws -> BackgroundRun {
-    let detaching = try #require(mounted as? DetachingTool<RegisteredOpArguments>)
-    let rendered = try await detaching.call(
+    let background = try #require(mounted as? BackgroundTool<RegisteredOpArguments>)
+    let rendered = try await background.call(
       arguments: RegisteredOpArguments(value: "long job")
     )
     // The call really detached: the model was handed a pending envelope rather

@@ -71,7 +71,7 @@ extension RoutedSessionActor {
     ///
     /// Every backgrounded run hands the model ``PendingRunEnvelope``, whose text tells it
     /// to collect that run with a `wait` call before it answers.
-    /// ``DetachingTool`` writes that text, and ``ToolContext`` publishes no
+    /// ``BackgroundTool`` writes that text, and ``ToolContext`` publishes no
     /// backgrounding of its own, so no host can background a run without the instruction — a
     /// host whose tools always advise collection is every host, not an unusual
     /// one. A model that obeys the instruction leaves the run plane empty,

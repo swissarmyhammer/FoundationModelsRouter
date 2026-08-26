@@ -328,9 +328,9 @@ struct ToolOutputCappingTests {
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments>,
-            capping.wrapped is DetachingTool<FakeToolArguments>
+            capping.wrapped is RunToCompletionTool<FakeToolArguments>
         else {
-            Issue.record("expected the container to receive a TokenCappingTool wrapping a DetachingTool")
+            Issue.record("expected the container to receive a TokenCappingTool wrapping a RunToCompletionTool")
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
@@ -354,7 +354,7 @@ struct ToolOutputCappingTests {
         )
 
         #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((container.lastTools.first as? DetachingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((container.lastTools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
     @Test("makeSession(tools:budget:) with no budget at all applies no capping layer — only the detachment layer wraps the tool")
@@ -371,7 +371,7 @@ struct ToolOutputCappingTests {
         _ = profile.standard.makeSession(tools: [tool])
 
         #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((container.lastTools.first as? DetachingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((container.lastTools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
     @Test("makeSession(tools:budget:) caps outermost: the detachment layer's ambient event route still reaches the session's outbox through the capped wrapper")
@@ -392,7 +392,7 @@ struct ToolOutputCappingTests {
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<AmbientToolArguments>,
-            let detaching = capping.wrapped as? DetachingTool<AmbientToolArguments>,
+            let detaching = capping.wrapped as? RunToCompletionTool<AmbientToolArguments>,
             let inner = detaching.wrapped as? AmbientEventPostingTool
         else {
             Issue.record("expected a TokenCappingTool wrapping the detached AmbientEventPostingTool")
@@ -433,9 +433,9 @@ struct ToolOutputCappingTests {
 
         guard let childActor = child as? RoutedSessionActor,
             let capping = childActor.tools.first as? TokenCappingTool<FakeToolArguments>,
-            capping.wrapped is DetachingTool<FakeToolArguments>
+            capping.wrapped is RunToCompletionTool<FakeToolArguments>
         else {
-            Issue.record("expected the fork's own tool list to contain a TokenCappingTool wrapping a DetachingTool")
+            Issue.record("expected the fork's own tool list to contain a TokenCappingTool wrapping a RunToCompletionTool")
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
@@ -464,7 +464,7 @@ struct ToolOutputCappingTests {
             return
         }
         #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((childActor.tools.first as? DetachingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((childActor.tools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
     @Test("fork() with no budget at all applies no capping layer to the child's tool list — only the detachment layer wraps it")
@@ -486,6 +486,6 @@ struct ToolOutputCappingTests {
             return
         }
         #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((childActor.tools.first as? DetachingTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((childActor.tools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 }

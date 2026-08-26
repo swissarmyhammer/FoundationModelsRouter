@@ -501,7 +501,8 @@ extension RoutedSessionActor {
     /// The `tool` identity stamped on the turn-scope ambient ``ToolContext``
     /// binding — a host-level stamp, since the binding covers a whole model
     /// call rather than one wrapped tool (per-tool stamps live in the
-    /// per-call bindings of ``DetachingTool`` and ``ContextBindingTool``).
+    /// per-call bindings of ``RunToCompletionTool``, ``BackgroundTool``, and
+    /// ``ContextBindingTool``).
     private static let turnBindingToolStamp = "session"
 
     /// The `op` stamped on the turn-scope ambient binding, alongside
@@ -546,7 +547,8 @@ extension RoutedSessionActor {
     /// ^6htgvw2), which runs in-band and dies with the turn: its per-call
     /// `completionToken` is event-correlation identity only, never a
     /// mailbox-addressable run. A String-output tool from the session's
-    /// composed list is wrapped in ``DetachingTool`` (task ^k4nygqa). One
+    /// composed list is wrapped in ``RunToCompletionTool`` or
+    /// ``BackgroundTool`` (task ^k4nygqa). One
     /// that runs to completion dies with the turn like any other in-band
     /// call. One that declared ``DetachConfiguration/Mode/background`` for
     /// itself handed back its pending envelope the moment it was called, so
@@ -598,8 +600,9 @@ extension RoutedSessionActor {
         // model call sees the same ambient capabilities the detachment
         // engine binds per call. Whether the runtime actually propagates
         // task locals into `Tool.call` is the propagation probe's question;
-        // this binding is correct either way, and ``DetachingTool`` also
-        // binds per call regardless. The `completionToken` is minted fresh
+        // this binding is correct either way, and ``RunToCompletionTool`` and
+        // ``BackgroundTool`` also bind per call regardless. The
+        // `completionToken` is minted fresh
         // per model call — run scope, never session scope — and the
         // cancellation probe mirrors this very model-call task's
         // cancellation (bound just after creation, because the context must
