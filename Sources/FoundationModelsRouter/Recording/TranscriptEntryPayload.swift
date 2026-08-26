@@ -2,39 +2,21 @@ import Foundation
 
 /// The structural mirror of one `FoundationModels.Transcript.Entry`.
 ///
-/// Apple's SDK transcript has exactly six entry cases — `.instructions`,
-/// `.prompt`, `.toolCalls`, `.toolOutput`, `.response`, `.reasoning` — and each
-/// carries its own payload shape (segments, tool definitions, tool calls,
-/// asset ids, a reasoning signature, generation options, a response format).
-/// `TranscriptEntryPayload` is one struct wide enough to carry any of those
-/// shapes: a ``TranscriptEvent`` of the matching ``TranscriptEvent/Kind``
-/// populates only the fields its entry kind uses and leaves the rest `nil`.
+/// One struct carries the payload of all six entry cases. A ``TranscriptEvent``
+/// of a given ``TranscriptEvent/Kind`` sets only the fields its entry kind
+/// uses and leaves the rest `nil`.
 ///
-/// This is schema only — mapping a real `Transcript.Entry` into this shape
-/// (and back) is a downstream concern; this type exists so the on-disk format
-/// can hold that mapping's output once it is wired in.
-///
-/// `contentRemoved` distinguishes two reasons a payload might carry no
-/// content: recorded at ``RecordingLevel/metadataOnly`` (content was stripped
-/// by design, `contentRemoved == true`) versus not yet mapped or genuinely
-/// empty (`contentRemoved == false`). Downstream reconstruction uses this to
-/// refuse a stripped payload with a typed error instead of silently rebuilding
-/// an empty entry. The field defaults to `false` and decodes as `false` when
-/// absent, so it does not need to exist in older payloads.
+/// `contentRemoved` is `true` when ``RecordingLevel/metadataOnly`` stripped
+/// the content. Reconstruction refuses a stripped payload with a typed error.
 public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     /// Apple's own `Transcript.Entry.id` for the mirrored entry.
     public let entryId: String
 
-    /// Whether this payload's content was stripped by the recording level
-    /// (``RecordingLevel/metadataOnly``) rather than never populated.
-    ///
-    /// Decodes as `false` when the key is absent, so v1-shaped and pre-gating
-    /// payloads default to "not stripped."
+    /// `true` when ``RecordingLevel/metadataOnly`` stripped the content.
+    /// Decodes as `false` when the key is absent.
     public let contentRemoved: Bool
 
-    /// The entry's segments, in order — `.instructions`, `.prompt`,
-    /// `.toolOutput`, `.response`, and `.reasoning` all carry segments;
-    /// `.toolCalls` does not.
+    /// The entry's segments, in order. `nil` for `.toolCalls`.
     public let segments: [SegmentPayload]?
 
     /// The tool definitions declared on an `.instructions` entry.
@@ -49,42 +31,20 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     /// The asset ids attached to a `.response` entry.
     public let assetIds: [String]?
 
-    /// The opaque reasoning signature carried by a `.reasoning` entry, when
-    /// the model provided one.
+    /// The opaque reasoning signature of a `.reasoning` entry.
     public let signature: Data?
 
     /// The introspectable slice of a `.prompt` entry's `GenerationOptions`.
     public let options: GenerationOptionsPayload?
 
-    /// The name of a `.prompt` entry's `Transcript.ResponseFormat`, when the
-    /// format was built from a named `Generable` type.
+    /// The name of a `.prompt` entry's `Transcript.ResponseFormat`.
     public let responseFormatName: String?
 
-    /// The JSON-encoded `GenerationSchema` backing a `.prompt` entry's
-    /// `Transcript.ResponseFormat` — what makes the format rebuildable, since
-    /// `ResponseFormat` has no `init(name:)`, only `init(schema:)`.
+    /// The JSON-encoded `GenerationSchema` of a `.prompt` entry's
+    /// `Transcript.ResponseFormat`.
     public let responseFormatSchemaJSON: String?
 
-    /// Creates an entry payload.
-    ///
-    /// - Parameters:
-    ///   - entryId: Apple's own `Transcript.Entry.id`.
-    ///   - contentRemoved: Whether content was stripped by the recording
-    ///     level rather than never populated; defaults to `false`.
-    ///   - segments: The entry's segments, or `nil` for entry kinds that carry
-    ///     none (`.toolCalls`).
-    ///   - toolDefinitions: The tool definitions on an `.instructions` entry,
-    ///     or `nil`.
-    ///   - toolCalls: The tool calls on a `.toolCalls` entry, or `nil`.
-    ///   - toolName: The tool name on a `.toolOutput` entry, or `nil`.
-    ///   - assetIds: The asset ids on a `.response` entry, or `nil`.
-    ///   - signature: The reasoning signature on a `.reasoning` entry, or `nil`.
-    ///   - options: The introspectable generation options on a `.prompt`
-    ///     entry, or `nil`.
-    ///   - responseFormatName: The named response format on a `.prompt` entry,
-    ///     or `nil`.
-    ///   - responseFormatSchemaJSON: The JSON-encoded schema backing a
-    ///     `.prompt` entry's response format, or `nil`.
+    /// Creates an entry payload. Each field not given stays `nil`.
     public init(
         entryId: String,
         contentRemoved: Bool = false,
@@ -125,9 +85,7 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
         case responseFormatSchemaJSON
     }
 
-    /// Decodes a payload, defaulting ``contentRemoved`` to `false` when the
-    /// key is absent — the compatibility rule that lets payloads recorded
-    /// before this field existed keep decoding.
+    /// Decodes a payload. ``contentRemoved`` defaults to `false` when absent.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         entryId = try container.decode(String.self, forKey: .entryId)
@@ -146,39 +104,24 @@ public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
 
 /// One `Transcript.Segment`, mirrored losslessly.
 ///
-/// Apple's SDK has three segment cases: `.text`, `.structure`, and
-/// `.attachment`. Each maps directly to concrete fields. The
-/// ``custom(id:typeDiscriminator:contentJSON:description:)`` case is the
-/// legacy carrier for `Transcript.Segment.custom`, which the macOS 27 SDK
-/// removed: nothing writes it now, and reading one rebuilds the `.structure`
-/// segment it has become (see ``TranscriptEntryMapper``).
-/// The extra ``unknown(id:description:)`` case is not an SDK case either —
-/// it is the carrier a segment case *added by a future SDK* records into, so
-/// an SDK addition degrades to text instead of crashing the host (see
-/// ``TranscriptEntryMapper``'s documented degradations).
+/// `.text`, `.structure`, and `.attachment` mirror SDK cases. `.custom` is the
+/// legacy carrier for the removed `Transcript.Segment.custom`; a reader
+/// rebuilds it as `.structure`. `.unknown` carries a segment case from a
+/// newer SDK; a reader degrades it to text.
 public enum SegmentPayload: Sendable, Codable, Equatable {
     /// A `Transcript.TextSegment`: plain text content.
     case text(id: String, content: String)
-    /// A `Transcript.StructuredSegment`: named-schema content, carried as its
+    /// A `Transcript.StructuredSegment`: a schema name and its
     /// `GeneratedContent.jsonString`.
     case structure(id: String, schemaName: String, contentJSON: String)
-    /// A `Transcript.AttachmentSegment`: a label and, when the in-memory
-    /// attachment has one, its URL. `url` is `nil` when the attachment cannot
-    /// be represented as a URL (e.g. in-memory image bytes with no backing
-    /// file).
+    /// A `Transcript.AttachmentSegment`. `url` is `nil` when the attachment
+    /// has no URL form.
     case attachment(id: String, label: String?, url: String?)
-    /// A `Transcript.Segment.custom` existential: its own `id`, a stable
-    /// type-discriminator string identifying the concrete conforming type,
-    /// its `content` encoded to JSON, and the flattened GUI convenience
-    /// description alongside — not the fidelity carrier.
+    /// A legacy `Transcript.Segment.custom`: a type discriminator, its content
+    /// as JSON, and an optional description.
     case custom(id: String, typeDiscriminator: String, contentJSON: String, description: String?)
-    /// A `Transcript.Segment` case this router build does not know — a case a
-    /// future SDK added after the mapper was written.
-    ///
-    /// Carries the segment's own `id` and the SDK value's `description` as a
-    /// best-effort text rendering; rebuild degrades it to a `.text` segment
-    /// holding that description. Never written on the current SDK, whose four
-    /// segment cases the mapper covers in full.
+    /// A `Transcript.Segment` case this build does not know. Carries the SDK
+    /// value's `description`.
     case unknown(id: String, description: String)
 
     private enum CodingKeys: String, CodingKey {
@@ -201,14 +144,8 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
         case unknown
     }
 
-    /// Decodes a segment from its flattened representation, switching on the
-    /// `type` discriminator key to decode the case-specific fields.
-    ///
-    /// Synthesized `Codable` can't consume this shape: it expects each case's
-    /// payload nested under a single key named after the case (e.g.
-    /// `{"text": {...}}`), but this format is a flat `type` field plus sibling
-    /// keys. This mirrors ``encode(to:)``, which produces that same flat
-    /// shape by switching on `self`.
+    /// Decodes a segment from its flat form: a `type` key and sibling
+    /// case-specific keys.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         switch try container.decode(SegmentType.self, forKey: .type) {
@@ -244,15 +181,8 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
         }
     }
 
-    /// Encodes a segment by hand, writing a `type` discriminator alongside
-    /// each case's associated values.
-    ///
-    /// Synthesized `Codable` can't produce this shape: Swift's compiler-
-    /// generated enum encoding nests each case's payload under a single key
-    /// named after the case (e.g. `{"text": {...}}`), but this format needs a
-    /// flat `type` field plus sibling keys so on-disk JSON stays uniform and
-    /// human-inspectable across all four segment kinds. This mirrors
-    /// ``init(from:)``, which decodes by switching on that same `type` key.
+    /// Encodes a segment in its flat form: a `type` key and sibling
+    /// case-specific keys.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
@@ -284,10 +214,7 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
     }
 }
 
-/// A `Transcript.Instructions`-entry tool definition: `name`, `description`,
-/// and its parameters schema encoded to JSON (`GenerationSchema` is `Codable`
-/// per the SDK interface, so the schema itself round-trips through its own
-/// encoding).
+/// One tool definition of a `Transcript.Instructions` entry.
 public struct ToolDefinitionPayload: Sendable, Codable, Equatable {
     /// The tool's declared name.
     public let name: String
@@ -297,11 +224,6 @@ public struct ToolDefinitionPayload: Sendable, Codable, Equatable {
     public let parametersSchemaJSON: String
 
     /// Creates a tool definition payload.
-    ///
-    /// - Parameters:
-    ///   - name: The tool's declared name.
-    ///   - description: The tool's declared description.
-    ///   - parametersSchemaJSON: The tool's parameters schema, encoded to JSON.
     public init(name: String, description: String, parametersSchemaJSON: String) {
         self.name = name
         self.description = description
@@ -309,8 +231,7 @@ public struct ToolDefinitionPayload: Sendable, Codable, Equatable {
     }
 }
 
-/// One `Transcript.ToolCalls`-entry call: `id`, `toolName`, and its arguments
-/// (a `GeneratedContent`, carried via its `jsonString` round-trip).
+/// One call of a `Transcript.ToolCalls` entry.
 public struct ToolCallPayload: Sendable, Codable, Equatable {
     /// The tool call's own id.
     public let id: String
@@ -320,11 +241,6 @@ public struct ToolCallPayload: Sendable, Codable, Equatable {
     public let argumentsJSON: String
 
     /// Creates a tool call payload.
-    ///
-    /// - Parameters:
-    ///   - id: The tool call's own id.
-    ///   - toolName: The name of the tool being called.
-    ///   - argumentsJSON: The call's arguments, as `GeneratedContent.jsonString`.
     public init(id: String, toolName: String, argumentsJSON: String) {
         self.id = id
         self.toolName = toolName
@@ -332,13 +248,8 @@ public struct ToolCallPayload: Sendable, Codable, Equatable {
     }
 }
 
-/// The on-disk mirror of one `GenerationOptions.ToolCallingMode.Kind` — the
-/// three mode kinds the macOS 27 SDK declares, carried as stable strings.
-///
-/// `ToolCallingMode` itself is not `Codable`, but its public `kind` is a
-/// three-case enum, so the mode round-trips through this mirror. A recording
-/// written before this field existed decodes it as absent (`nil` on
-/// ``GenerationOptionsPayload/toolCallingMode``) by the additive rule.
+/// The on-disk mirror of `GenerationOptions.ToolCallingMode.Kind`, carried
+/// as stable strings.
 public enum ToolCallingModePayload: String, Sendable, Codable, Equatable {
     /// Mirrors `GenerationOptions.ToolCallingMode.Kind.allowed`.
     case allowed
@@ -348,32 +259,18 @@ public enum ToolCallingModePayload: String, Sendable, Codable, Equatable {
     case disallowed
 }
 
-/// The introspectable slice of a `.prompt` entry's `GenerationOptions`.
-///
-/// `GenerationOptions` is not itself `Codable`, so this payload carries only
-/// `temperature`, `maximumResponseTokens`, and `toolCallingMode` (via its
-/// public `kind`, mirrored by ``ToolCallingModePayload``).
-/// `sampling: SamplingMode?` is omitted — not because it lacks public
-/// introspection (`SamplingMode.kind` is public and `Equatable` at macOS
-/// 27+), but because this schema has no field for it; the loss is documented
-/// and deliberate (see plan.md "Honest fidelity scope" and
-/// ``TranscriptEntryMapper``).
+/// The introspectable slice of a `.prompt` entry's `GenerationOptions`:
+/// `temperature`, `maximumResponseTokens`, and `toolCallingMode`. The schema
+/// has no field for `sampling`.
 public struct GenerationOptionsPayload: Sendable, Codable, Equatable {
     /// The sampling temperature, when set.
     public let temperature: Double?
     /// The maximum number of response tokens, when set.
     public let maximumResponseTokens: Int?
-    /// The tool-calling mode, when set — `nil` both when the recorded
-    /// options carried none and when the recording predates this field
-    /// (an additive v2 key; see ``RecordingSchemaVersion/v2``).
+    /// The tool-calling mode, when set. `nil` when absent from the recording.
     public let toolCallingMode: ToolCallingModePayload?
 
     /// Creates a generation options payload.
-    ///
-    /// - Parameters:
-    ///   - temperature: The sampling temperature, or `nil`.
-    ///   - maximumResponseTokens: The maximum response tokens, or `nil`.
-    ///   - toolCallingMode: The tool-calling mode, or `nil`.
     public init(
         temperature: Double? = nil,
         maximumResponseTokens: Int? = nil,
@@ -387,36 +284,15 @@ public struct GenerationOptionsPayload: Sendable, Codable, Equatable {
 
 // MARK: - Content sizing
 
-/// The total UTF-8 size, in bytes, of every non-`nil` string in `strings` —
-/// the one accumulator every ``contentByteCount`` below sums through, so a
-/// payload's content is measured the same way at every level.
-///
-/// - Parameter strings: The content strings to measure; `nil` entries
-///   contribute nothing.
-/// - Returns: The total size in bytes.
+/// The total UTF-8 size, in bytes, of every non-`nil` string in `strings`.
 private func utf8ByteCount(of strings: [String?]) -> Int {
     strings.reduce(0) { $0 + ($1?.utf8.count ?? 0) }
 }
 
 extension TranscriptEntryPayload {
-    /// The total UTF-8 size, in bytes, of every field this payload carries that
-    /// holds authored or model-visible content: segment content, tool
-    /// definitions, tool calls, the tool name a `.toolOutput` answers, asset
-    /// ids, a reasoning signature's bytes, and a response format's schema.
-    ///
-    /// Deliberately excludes this payload's own JSON envelope: ``entryId``,
-    /// ``contentRemoved``, every segment's and tool call's `id`, the `"type"`
-    /// discriminators ``SegmentPayload/encode(to:)`` writes, and the braces,
-    /// quotes, commas and string escaping `JSONEncoder` adds around all of it.
-    /// None of that is ever sent to a model, so none of it is ever tokenized —
-    /// measuring it would add a fixed cost per entry to
-    /// ``Compactor/estimatedTokenCount(of:)-(Transcript)`` however little
-    /// content the entry actually carries, and that estimate is compared
-    /// against real token counts (see that method's own doc comment).
-    ///
-    /// ``options`` and ``responseFormatName`` are excluded for the reason
-    /// ``strippingContent()`` states when it passes both through untouched:
-    /// generation configuration and a format's declared name are not content.
+    /// The total UTF-8 size, in bytes, of the model-visible content of this
+    /// payload. Ids, `"type"` discriminators, JSON punctuation, ``options``,
+    /// and ``responseFormatName`` do not count.
     var contentByteCount: Int {
         utf8ByteCount(of: [toolName, responseFormatSchemaJSON])
             + utf8ByteCount(of: assetIds ?? [])
@@ -428,37 +304,9 @@ extension TranscriptEntryPayload {
 }
 
 extension SegmentPayload {
-    /// The total UTF-8 size, in bytes, of this segment's content — the case's
-    /// authored text, schema name, label, and URL, never its `id` or its
-    /// `"type"` tag.
-    ///
-    /// A **router manifest segment** counts as **zero**: the router writes
-    /// one ``PersistableStructuredSegment`` per bookkeeping record
-    /// (``RouterSegmentSchemaNames``), and nothing in one is content a
-    /// reader of the transcript is shown twice. ``CompactionSegment`` is
-    /// deliberately built that way: the model-visible part of a compaction
-    /// boundary is synthesized as separate `.text` segments (the summary
-    /// itself, and ``CompactionSegment/renderedPendingRuns(_:)``), and the
-    /// segment proper carries bookkeeping — the
-    /// `liveWindowEntryIds`/`foldedEntryIds` manifest, token counts, stage
-    /// names — that only a reader of the recording ever needs. The legacy
-    /// `.custom` carrier counts zero for the same reason: it is the same
-    /// manifest, written before the SDK removed `Transcript.Segment.custom`.
-    ///
-    /// Counting that manifest is the same defect ``contentByteCount``'s owner
-    /// (``Compactor/estimatedTokenCount(of:)``) already documents having fixed
-    /// at the entry level, one level further down: entry ids, `"type"`
-    /// discriminators and JSON punctuation measured as if a tokenizer would
-    /// see them. Its cost is not marginal — a fold's boundary entry carries an
-    /// id for every entry in the live window *and* every entry it folded away,
-    /// so on a nineteen-entry transcript with UUID ids it measured about 300
-    /// estimated tokens, enough that a real fold reported a *larger*
-    /// transcript than the one it replaced (2074 -> 2143) and so raised
-    /// ``RoutedSession/contextFill``.
-    ///
-    /// A `.structure` segment that is **not** a router manifest — an
-    /// integrator's own structured segment, or a guided response the model
-    /// generated — counts in full: the model does see those.
+    /// The total UTF-8 size, in bytes, of this segment's model-visible
+    /// content. A router manifest segment (``RouterSegmentSchemaNames``) and
+    /// a legacy `.custom` carrier count as zero.
     var contentByteCount: Int {
         switch self {
         case .text(_, let content):
@@ -481,17 +329,14 @@ extension SegmentPayload {
 }
 
 extension ToolDefinitionPayload {
-    /// The total UTF-8 size, in bytes, of this tool definition's content — its
-    /// name, description, and parameters schema, every one of which the model
-    /// is shown.
+    /// The total UTF-8 size, in bytes, of the name, description, and schema.
     var contentByteCount: Int {
         utf8ByteCount(of: [name, description, parametersSchemaJSON])
     }
 }
 
 extension ToolCallPayload {
-    /// The total UTF-8 size, in bytes, of this tool call's content — the tool
-    /// name and its arguments, never the call's own `id`.
+    /// The total UTF-8 size, in bytes, of the tool name and arguments.
     var contentByteCount: Int {
         utf8ByteCount(of: [toolName, argumentsJSON])
     }
@@ -499,32 +344,11 @@ extension ToolCallPayload {
 
 // MARK: - Gating: metadataOnly stripping and full-level redaction
 
-/// Both `GatingRecorder` operations below act on the payload's content-bearing
-/// fields only — the recorder-facing seam is ``TranscriptEvent/Partial/mapBody(_:)``,
-/// which calls these methods on ``TranscriptEvent/Partial/entry``.
+/// Content gating for ``RecordingLevel/metadataOnly`` and ``RecordingLevel/full``.
 extension TranscriptEntryPayload {
-    /// Returns a copy with every content-bearing field emptied, keeping shape:
-    /// ``entryId``, segment ids and case tags, custom-segment
-    /// ``SegmentPayload/custom(id:typeDiscriminator:contentJSON:description:)``'s
-    /// `typeDiscriminator`, ``toolName``, and every array's element count
-    /// (``segments``, ``toolDefinitions``, ``toolCalls``, ``assetIds``) all
-    /// survive; only the content each element carries is removed.
-    ///
-    /// ``assetIds`` keeps its element *count* — asset identifiers are
-    /// themselves considered content, so each id is blanked to an empty
-    /// string rather than dropped, preserving the array's length as the
-    /// "how many assets" shape fact ``RecordingLevel/metadataOnly`` promises
-    /// to keep.
-    ///
-    /// ``options`` and ``responseFormatName`` are not content — generation
-    /// configuration and a format's declared name, not user- or model-authored
-    /// text — so both pass through unchanged.
-    ///
-    /// Marks ``contentRemoved`` `true`, so reconstruction can refuse a
-    /// stripped payload with a typed error instead of silently rebuilding an
-    /// empty entry.
-    ///
-    /// - Returns: A shape-only copy with `contentRemoved == true`.
+    /// Returns a copy with every content field emptied. Ids, case tags,
+    /// array counts, ``toolName``, ``options``, and ``responseFormatName``
+    /// stay. Sets ``contentRemoved`` to `true`.
     func strippingContent() -> TranscriptEntryPayload {
         TranscriptEntryPayload(
             entryId: entryId,
@@ -541,26 +365,12 @@ extension TranscriptEntryPayload {
         )
     }
 
-    /// Returns a copy with `transform` applied to every textual content site
-    /// at ``RecordingLevel/full``: segment text/structure/custom content and
-    /// custom descriptions (via ``SegmentPayload/redacted(with:)``) and
-    /// tool-call arguments (via ``ToolCallPayload/redacted(with:)``).
+    /// Returns a copy with `transform` applied to each segment text site and
+    /// each tool-call `argumentsJSON`. JSON sites are transformed as opaque
+    /// strings. Tool definitions, the schema, `signature`, and attachment
+    /// URLs are not transformed.
     ///
-    /// JSON-valued sites (``SegmentPayload/structure(id:schemaName:contentJSON:)``'s
-    /// `contentJSON`, a custom segment's `contentJSON`, and a tool call's
-    /// `argumentsJSON`) are redacted as opaque whole strings, exactly like any
-    /// other text body — a hook that must keep JSON valid after redacting it
-    /// is the caller's responsibility, consistent with the flattened `text`
-    /// contract (see the "redact is applied verbatim" tests).
-    ///
-    /// Tool definitions, the response-format schema, the reasoning
-    /// `signature`, and an attachment's `url` are declared/structural or
-    /// opaque-binary data, not user- or model-authored text, so `transform`
-    /// never touches them. ``contentRemoved`` is left as-is (`full` never
-    /// strips).
-    ///
-    /// - Parameter transform: The redaction hook applied to each content site.
-    /// - Returns: A copy with every textual content site redacted.
+    /// - Parameter transform: The redaction hook.
     func redacted(with transform: (String) -> String) -> TranscriptEntryPayload {
         TranscriptEntryPayload(
             entryId: entryId,
@@ -577,16 +387,7 @@ extension TranscriptEntryPayload {
         )
     }
 
-    /// Returns a copy with `additional` appended to ``segments``, in order,
-    /// with every other field untouched.
-    ///
-    /// Used by ``RoutedSessionActor``'s turn chokepoint to attach one
-    /// ``OperationEventSegment`` per drained pending event onto the turn's
-    /// `.prompt` entry — a segment the SDK's own transcript diff never
-    /// produced, appended only to what gets persisted.
-    ///
-    /// - Parameter additional: The segments to append.
-    /// - Returns: A copy with the combined segments.
+    /// Returns a copy with `additional` appended to ``segments``, in order.
     func appendingSegments(_ additional: [SegmentPayload]) -> TranscriptEntryPayload {
         TranscriptEntryPayload(
             entryId: entryId,
@@ -605,15 +406,8 @@ extension TranscriptEntryPayload {
 }
 
 extension SegmentPayload {
-    /// The schema name and content JSON this segment persists for a
-    /// ``PersistableStructuredSegment`` type, or `nil` for any other segment.
-    ///
-    /// Reads the ``structure(id:schemaName:contentJSON:)`` case written today
-    /// and the legacy ``custom(id:typeDiscriminator:contentJSON:description:)``
-    /// carrier written before the macOS 27 SDK removed
-    /// `Transcript.Segment.custom`. A legacy carrier's type discriminator is
-    /// the same string a schema name carries now, so both forms read the
-    /// same way and one reader serves both.
+    /// The schema name and content JSON of a `.structure` segment or a legacy
+    /// `.custom` carrier, or `nil` for any other segment.
     var persistedStructure: (schemaName: String, contentJSON: String)? {
         switch self {
         case .structure(_, let schemaName, let contentJSON):
@@ -625,11 +419,8 @@ extension SegmentPayload {
         }
     }
 
-    /// Returns a copy with this segment's content emptied, keeping its `id`
-    /// and case — and, for ``custom(id:typeDiscriminator:contentJSON:description:)``,
-    /// its `typeDiscriminator` — intact.
-    ///
-    /// - Returns: A shape-only copy of this segment.
+    /// Returns a copy with the content emptied. The `id`, case, and
+    /// `typeDiscriminator` stay.
     func strippingContent() -> SegmentPayload {
         switch self {
         case .text(let id, _):
@@ -645,14 +436,8 @@ extension SegmentPayload {
         }
     }
 
-    /// Returns a copy with `transform` applied to this segment's textual
-    /// content sites: `.text`'s `content`, `.structure`'s `contentJSON` (as an
-    /// opaque string), `.attachment`'s `label` (its `url` is untouched),
-    /// `.custom`'s `contentJSON` (as an opaque string) and `description`, and
-    /// `.unknown`'s `description`.
-    ///
-    /// - Parameter transform: The redaction hook applied to each content site.
-    /// - Returns: A copy with this segment's textual content sites redacted.
+    /// Returns a copy with `transform` applied to each text site. An
+    /// attachment `url` is not transformed.
     func redacted(with transform: (String) -> String) -> SegmentPayload {
         switch self {
         case .text(let id, let content):
@@ -675,29 +460,20 @@ extension SegmentPayload {
 }
 
 extension ToolDefinitionPayload {
-    /// Returns a copy with `description` and `parametersSchemaJSON` emptied,
-    /// keeping `name` intact.
-    ///
-    /// - Returns: A shape-only copy of this tool definition.
+    /// Returns a copy with `description` and `parametersSchemaJSON` emptied.
     func strippingContent() -> ToolDefinitionPayload {
         ToolDefinitionPayload(name: name, description: "", parametersSchemaJSON: "")
     }
 }
 
 extension ToolCallPayload {
-    /// Returns a copy with `argumentsJSON` emptied, keeping `id` and
-    /// `toolName` intact.
-    ///
-    /// - Returns: A shape-only copy of this tool call.
+    /// Returns a copy with `argumentsJSON` emptied.
     func strippingContent() -> ToolCallPayload {
         ToolCallPayload(id: id, toolName: toolName, argumentsJSON: "")
     }
 
     /// Returns a copy with `transform` applied to `argumentsJSON` as an
-    /// opaque string, keeping `id` and `toolName` untouched.
-    ///
-    /// - Parameter transform: The redaction hook applied to `argumentsJSON`.
-    /// - Returns: A copy with `argumentsJSON` redacted.
+    /// opaque string.
     func redacted(with transform: (String) -> String) -> ToolCallPayload {
         ToolCallPayload(id: id, toolName: toolName, argumentsJSON: transform(argumentsJSON))
     }

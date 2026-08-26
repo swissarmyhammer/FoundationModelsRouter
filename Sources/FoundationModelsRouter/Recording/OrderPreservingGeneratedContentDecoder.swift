@@ -2,34 +2,12 @@ import Foundation
 import FoundationModels
 
 /// Rebuilds a `GeneratedContent` from persisted JSON with the document's
-/// object key order intact.
-///
-/// `GeneratedContent(json:)` parses values faithfully but reports a
-/// structure's `orderedKeys` in dictionary order — an arbitrary order that
-/// changes across processes — while a live structure's `GeneratedContent`
-/// carries its true property order, and `GeneratedContent`'s equality
-/// compares that order. The JSON text ``TranscriptEntryMapper`` persists (a
-/// live content's own `jsonString`) is the one carrier of the true order, so
-/// this decoder scans the document for the key order at every depth and
-/// rebuilds each structure node through `GeneratedContent(kind:)` with that
-/// order. Rebuilding through `GeneratedContent(kind:)` also restores
-/// equality with a live structure: a json-parsed structure never compares
-/// equal to a live one, even with identical ordered keys, and the kind-built
-/// form does.
+/// object key order intact. `GeneratedContent(json:)` loses that order, so
+/// this decoder scans the document and rebuilds each structure node through
+/// `GeneratedContent(kind:)`, which also restores equality with a live structure.
 enum OrderPreservingGeneratedContentDecoder {
     /// Decodes `json` into a `GeneratedContent` whose structure nodes carry
-    /// the document's own key order.
-    ///
-    /// The SDK parse (`GeneratedContent(json:)`) stays the value authority:
-    /// scalars and arrays with no structure beneath them are returned
-    /// exactly as it parsed them, and only structure nodes — wherever they
-    /// sit — are rebuilt with the scanned document order. When the scan
-    /// cannot pair a document node with the parsed one (a shape the SDK's
-    /// own `jsonString` never produces), the parsed node is kept as is, so
-    /// the result is never worse than the plain parse.
-    ///
-    /// - Parameter json: The JSON document to decode.
-    /// - Returns: The decoded content, ordered like the document.
+    /// the document's own key order. When the scan fails, the plain parse is returned.
     /// - Throws: Whatever `GeneratedContent(json:)` throws for `json`.
     static func decode(json: String) throws -> GeneratedContent {
         let parsed = try GeneratedContent(json: json)
@@ -39,17 +17,7 @@ enum OrderPreservingGeneratedContentDecoder {
     }
 
     /// Returns `content` with every structure node rebuilt to carry the
-    /// document key order `order` scanned for it.
-    ///
-    /// Structure nodes are always rebuilt through `GeneratedContent(kind:)`
-    /// — the rebuild is what restores equality with a live structure, even
-    /// when the parsed order already matches the document. An array node is
-    /// rebuilt only when a structure sits beneath it; every other node is
-    /// returned as parsed.
-    ///
-    /// - Parameters:
-    ///   - content: The parsed node to reorder.
-    ///   - order: The document order node scanned for `content`.
+    /// document key order in `order`.
     private static func ordered(
         _ content: GeneratedContent, by order: JSONDocumentOrder
     ) -> GeneratedContent {
@@ -79,22 +47,18 @@ enum OrderPreservingGeneratedContentDecoder {
     }
 }
 
-/// The object key order one JSON node carries — the single fact
-/// `GeneratedContent(json:)` loses.
+/// The object key order one JSON node carries.
 private indirect enum JSONDocumentOrder {
-    /// An object node: its keys in document order, and each member's own
-    /// order node.
+    /// An object node: its keys in document order, and each member's own order node.
     case object(orderedKeys: [String], members: [String: JSONDocumentOrder])
 
     /// An array node: one order node per element, in document order.
     case array([JSONDocumentOrder])
 
-    /// A scalar node — a string, number, boolean, or null — which carries no
-    /// key order.
+    /// A scalar node, which carries no key order.
     case scalar
 
-    /// Whether an object node sits at or beneath this node — the only nodes
-    /// a rebuild must reorder.
+    /// Whether an object node sits at or beneath this node.
     var containsObject: Bool {
         switch self {
         case .object:
@@ -108,43 +72,29 @@ private indirect enum JSONDocumentOrder {
 }
 
 /// A minimal JSON scanner that extracts the object key order at every depth
-/// of a document and skips everything else.
-///
-/// It scans documents `GeneratedContent(json:)` has already parsed, so it
-/// never validates: any structural surprise makes the whole scan return
-/// `nil`, and the caller keeps the parsed content unordered instead of
-/// failing the decode.
+/// of a document. It never validates: any structural surprise makes the scan return `nil`.
 private struct JSONDocumentOrderScanner {
-    /// The characters JSON structural tokens and whitespace are matched
-    /// against; a `Character` comparison is exact for all of them because
-    /// none combines with a following scalar.
+    /// The characters of the document.
     private let characters: [Character]
 
     /// The scan position in ``characters``.
     private var index = 0
 
-    /// The characters that end a scalar token: a separator, a closing
-    /// bracket, or whitespace.
+    /// The characters that end a scalar token.
     private static let scalarTerminators: Set<Character> = [",", "}", "]", " ", "\t", "\n", "\r"]
 
     /// The JSON whitespace characters.
     private static let whitespace: Set<Character> = [" ", "\t", "\n", "\r"]
 
-    /// How many characters a backslash escape occupies at minimum — the
-    /// backslash and the character after it. Skipping both is enough to
-    /// never mistake an escaped quote for the closing quote, because the
-    /// longer `\u` escapes contain no quote in their remaining hex digits.
+    /// The minimum width of a backslash escape: the backslash and the character after it.
     private static let escapeSkipWidth = 2
 
     /// Creates a scanner over `json`.
-    ///
-    /// - Parameter json: The JSON document to scan.
     init(json: String) {
         characters = Array(json)
     }
 
-    /// Scans the whole document and returns its order tree, or `nil` when
-    /// the document does not scan as a single JSON value.
+    /// Scans the whole document and returns its order tree, or `nil` on a structural surprise.
     mutating func scanDocument() -> JSONDocumentOrder? {
         scanValue()
     }
@@ -200,9 +150,7 @@ private struct JSONDocumentOrderScanner {
         }
     }
 
-    /// Scans a string token and returns its decoded value — object keys must
-    /// match the parsed properties exactly, so escapes are decoded by a real
-    /// JSON decoder rather than by hand.
+    /// Scans a string token and returns its decoded value.
     private mutating func scanString() -> String? {
         guard index < characters.count, characters[index] == "\"" else { return nil }
         let start = index
@@ -240,9 +188,7 @@ private struct JSONDocumentOrderScanner {
         }
     }
 
-    /// Consumes `character` when it is next, reporting whether it was.
-    ///
-    /// - Parameter character: The structural character to consume.
+    /// Consumes `character` when it is next, and reports whether it was.
     private mutating func consume(_ character: Character) -> Bool {
         guard index < characters.count, characters[index] == character else { return false }
         index += 1

@@ -1,74 +1,32 @@
 import Foundation
 import os
 
-/// The logger ``SessionSidecarWriter`` reports a dropped sidecar to, mirroring
-/// ``JSONLRecorder``'s log-and-drop failure policy (see
-/// Sources/FoundationModelsRouter/Recording/Sinks.swift).
+/// The logger that reports a dropped sidecar.
 private let sessionSidecarLogger = makeModuleLogger(category: "SessionSidecar")
 
-/// The sidecar's filename within a session's own recording directory
-/// (`recordings/<routerId>/<sessionId>/session.json`), shared by the write and
-/// read paths so the name is kept in exactly one place.
+/// The sidecar's filename in a session's own recording directory.
 let sessionSidecarFileName = "session.json"
 
-/// One session's write-once sidecar: the primary facts about that session,
-/// written into its own recording directory at the moment it is created and
-/// never rewritten.
-///
-/// This is the whole of a router's non-transcript on-disk state. Everything
-/// recorded is either write-once (this) or append-only (`transcript.jsonl`), so
-/// a checked-in recording tree only ever grows — no file is edited in place, no
-/// shared file collects records from every session (see plan.md's "Transcript
-/// fidelity" section).
-///
-/// **Only primary facts.** A session's *same-tree* lineage is stated by the
-/// directory nesting — a root lives at `<routerId>/<rootId>/`, its fork at
-/// `.../<rootId>/<forkId>/`, a grandfork one level deeper — and its creation
-/// time by its ULID's own timestamp (see `Core/ULID.swift`). Neither is
-/// restated here: a fact recorded twice is a fact that can disagree with
-/// itself. ``workingDirectory`` and ``agentSpawn`` are recorded because they
-/// are *not* implied by anything else on disk — an overridden working
-/// directory, and a spawn from a session that may sit under an entirely
-/// different recording tree, are both primary facts with nowhere else to be
-/// read back from (creation-metadata task 6j4bven).
-///
-/// ``instructions``/``grammar`` are recorded (not merely implied by transcript
-/// content) so ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` can rehydrate
-/// a restored session's actor state without replaying its transcript: `grammar`
-/// in particular changes the behavior of every future `respond` and exists
-/// nowhere else on disk.
+/// One session's write-once sidecar: the primary facts about that session.
+/// It is written into the session's recording directory at creation.
+/// The directory nesting states the lineage. The session ULID states the
+/// creation time.
 public struct SessionSidecar: Codable, Sendable, Equatable {
-    /// Which concrete models won each slot for *this* machine on the run that
-    /// created this session — recorded on root sessions only.
-    ///
-    /// A run's resolution is a property of the run, not of each session in it,
-    /// so it is stated once per recorded tree (on the tree's root) rather than
-    /// repeated into every fork's sidecar.
+    /// The concrete models that won each slot on the run that created this
+    /// session. Recorded on root sessions only.
     public struct ResolvedProfile: Codable, Sendable, Equatable {
         /// The name of the ``ProfileDefinition`` this was resolved from.
         public let definitionName: String
-        /// The concrete model chosen for the `.standard` generation slot.
+        /// The concrete model chosen for the `.standard` slot.
         public let standard: ModelRef
-        /// The concrete model chosen for the `.flash` generation slot.
+        /// The concrete model chosen for the `.flash` slot.
         public let flash: ModelRef
         /// The concrete model chosen for the `.embedding` slot.
         public let embedding: ModelRef
-        /// The working context, in tokens, this profile's slots were resolved
-        /// at — the authored ``ProfileDefinition/context`` verbatim when
-        /// explicit, or the rung ``JointFit``'s context ladder settled on when
-        /// it was `nil`. Every slot shares this one figure (context is one
-        /// profile-wide parameter), so it is recorded once here rather than
-        /// per slot.
+        /// The working context, in tokens, shared by every slot.
         public let context: Int
 
         /// Creates a resolved-profile record.
-        ///
-        /// - Parameters:
-        ///   - definitionName: The authored profile's name.
-        ///   - standard: The chosen `.standard` model.
-        ///   - flash: The chosen `.flash` model.
-        ///   - embedding: The chosen `.embedding` model.
-        ///   - context: The working context, in tokens, resolved for this run.
         public init(
             definitionName: String,
             standard: ModelRef,
@@ -84,29 +42,14 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         }
     }
 
-    /// The parent session and correlating tool-call this session was spawned
-    /// from, e.g. by an agents tool creating a sub-agent session
-    /// mid-turn (creation-metadata task 6j4bven).
-    ///
-    /// Both facts travel together rather than as two independent optionals:
-    /// a transcript browser has no use for one without the other, since it is
-    /// the pair — which session, which of its tool calls — that names the
-    /// exact point in the parent's own recorded turn this session continues.
+    /// The parent session and the tool call that spawned this session.
     public struct AgentSpawn: Codable, Sendable, Equatable {
-        /// The id of the session, possibly under an entirely different
-        /// router or recording tree, whose turn spawned this session.
+        /// The id of the session whose turn spawned this session.
         public let parentSessionId: ULID
-        /// The tool-call id, within `parentSessionId`'s turn, that spawned
-        /// this session — the correlation id a transcript browser matches
-        /// against that turn's recorded tool-call entry.
+        /// The tool-call id, in the parent's turn, that spawned this session.
         public let parentToolCallId: String
 
         /// Creates an agent-spawn record.
-        ///
-        /// - Parameters:
-        ///   - parentSessionId: The spawning session's id.
-        ///   - parentToolCallId: The spawning tool-call's id, within that
-        ///     session's turn.
         public init(parentSessionId: ULID, parentToolCallId: String) {
             self.parentSessionId = parentSessionId
             self.parentToolCallId = parentToolCallId
@@ -121,203 +64,47 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     public let context: Int
     /// This session's system instructions, or `nil`.
     public let instructions: String?
-    /// This session's guided-generation grammar source, or `nil` for an
-    /// unconstrained session.
+    /// This session's guided-generation grammar source, or `nil`.
     public let grammar: String?
     /// How much of this session's activity is recorded.
     public let recordingLevel: RecordingLevel
-    /// How many entries the parent's *backend* transcript held at fork time —
-    /// the parent's ``LanguageModelSessionBackend/transcriptEntries()`` count
-    /// at the moment this session was forked from it, which is also the fork's
-    /// own transcript-diff baseline (see ``RoutedSessionActor/persistedEntryCount``).
-    ///
-    /// This is a positional count against the parent's *live* backend window,
-    /// so a parent fold rewinds it — which is why it no longer serves as the
-    /// fork's cut point on new recordings: ``forkedAtHistoryOrdinal`` records
-    /// the cut in the recorded history's own append-only coordinates instead.
-    /// Readers use this field as the cut only for a recording made before
-    /// that field existed, where it was captured with no post-fork fold
-    /// semantics attached and still names the correct raw position (see
-    /// ``TranscriptTree/effectiveEntryEvents(forSession:)``). It is still
-    /// written on every new fork, so a pre-ordinal reader of a new recording
-    /// behaves exactly as it always has.
-    ///
-    /// `nil` for a root session: a session with no parent has nothing to cut.
+    /// The number of entries the parent's backend transcript held at fork
+    /// time, or `nil` for a root session. Readers use it as the fork cut only
+    /// when ``forkedAtHistoryOrdinal`` is `nil`.
     public let forkedAtEntryCount: Int?
 
-    /// The fork's cut point in its parent's recorded history's own
-    /// append-only coordinates: how many effective entry-kind events (see
-    /// ``TranscriptEvent/Kind/isEntryKind``) the parent's recorded history
-    /// held at the moment this session was forked — the parent's
-    /// ``RoutedSessionActor/historyOrdinal`` for an actor fork, or the
-    /// resumed session's raw effective entry-event count for a handle born
-    /// via ``RoutedModel/makeLanguageModel(resuming:)``. Either
-    /// way a coordinate that only ever grows, unlike the positional
-    /// ``forkedAtEntryCount`` a fold rewinds.
-    ///
-    /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` truncates the
-    /// parent's effective events to this count, so a fork taken after a
-    /// parent fold restores the fold's live window (the checkpoint sits
-    /// inside the inherited prefix) plus the fork's own entries — never the
-    /// pre-fold span the fold discarded.
-    ///
-    /// `nil` for a root session, and for a fork recorded before this field
-    /// existed — readers then fall back to ``forkedAtEntryCount``.
-    ///
-    /// **Additive within schema v2.** An optional key old readers never look
-    /// for and old recordings never carry: an absent key decodes as `nil`,
-    /// and readers fall back to the legacy cut, so no
-    /// ``RecordingSchemaVersion`` bump is needed (see that registry's v2
-    /// entry).
+    /// The fork's cut point in the parent's recorded history, in append-only
+    /// coordinates. `nil` for a root session, and for a fork recorded before
+    /// this field existed.
     public let forkedAtHistoryOrdinal: Int?
-    /// Which concrete models won each slot on the run that created this
-    /// session, or `nil` for a fork (see ``ResolvedProfile``).
+    /// The resolved profile of the run that created this session, or `nil`
+    /// for a fork.
     public let profile: ResolvedProfile?
-    /// How many ``CompactionSegment`` checkpoints this session's own
-    /// recorded transcript carries, so a browser can badge a folded session
-    /// (compaction_plan.md §3, "Identity") — or `nil` when not yet computed.
-    ///
-    /// Never written by ``SessionSidecarWriter`` — the sidecar lands
-    /// write-once, before a session records anything, long before any
-    /// compaction could run, so this field is always absent from the
-    /// literal `session.json` bytes on disk (and decodes as `nil` for every
-    /// existing recording, old or new). ``TranscriptTree/load(under:)``
-    /// populates it on each loaded ``SessionNode/sidecar`` — via
-    /// ``withCompactionCount(_:)`` — by counting that session's own
-    /// recorded checkpoints; the physical file is never rewritten, only the
-    /// in-memory value a browser reads is enriched.
+    /// The number of ``CompactionSegment`` checkpoints in this session's own
+    /// recorded transcript, or `nil`. It is never written to disk.
     public let compactionCount: Int?
 
-    /// This session's own ``RoutedSession/workingDirectory`` — where its
-    /// tools resolved files, distinct from ``recordingDirectory`` whenever a
-    /// caller overrode it at creation (task 6j4bven creation-metadata
-    /// ask, task 6j4bven).
-    ///
-    /// Recorded for every session, root or fork, since a fork can carry its
-    /// own override too (see ``RoutedSessionActor/fork(workingDirectory:)``).
-    /// This is a primary fact with nowhere else to be read back from: unlike
-    /// lineage or creation time, an overridden working directory is not
-    /// implied by anything else on disk, so a caller restoring a stored
-    /// session (``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``) could not
-    /// otherwise reassemble its own composition-layer state (config,
-    /// AGENTS.md instructions, confinement) against the directory the live
-    /// session actually ran with.
-    ///
-    /// **Backward compatibility.** This field postdates every other one on
-    /// this type, so a recording made before it existed has no
-    /// `workingDirectory` key in its on-disk `session.json` at all. Rather
-    /// than make this `Optional` — which would push a `nil` case onto every
-    /// reader (``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)`` assigns it
-    /// straight into ``RoutedSessionActor``'s own non-optional
-    /// `workingDirectory`, with no sensible way to run a session with no
-    /// working directory at all) — this type's custom `init(from:)`
-    /// defaults an absent key to the session's own recording directory (see
-    /// ``sidecarDirectoryUserInfoKey``): the exact default a live session
-    /// used for `workingDirectory` before this field existed to override it
-    /// (see ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``),
-    /// so an old recording restores with the same working directory its live
-    /// session actually ran with.
+    /// This session's own working directory. When a recording has no
+    /// `workingDirectory` key, `init(from:)` uses the recording directory.
     public let workingDirectory: URL
 
-    /// The parent session and tool-call correlation this session was spawned
-    /// from — e.g. an agents tool creating a sub-agent session
-    /// mid-turn (creation-metadata task 6j4bven) — or
-    /// `nil` for a session vended with no such spawn context.
-    ///
-    /// Recorded on the spawned session's own root sidecar only: a fork's is
-    /// always `nil`, mirroring ``profile``'s root-only rule, since a fork's
-    /// lineage back to that root is already stated by directory nesting (see
-    /// ``forkedAtEntryCount``) — a browser walking the tree reaches the
-    /// root's sidecar and finds it there. This complements, rather than
-    /// restates, the existing same-tree fork lineage
-    /// (``RoutedSessionActor/parentId``): that lineage never crosses
-    /// recording roots, while an agent spawn routinely does — the parent
-    /// session named here may sit under an entirely different router or
-    /// recording tree, which only an explicit fact like this can bridge.
+    /// The parent session and tool call that spawned this session, or `nil`.
+    /// A fork's is always `nil`.
     public let agentSpawn: AgentSpawn?
 
-    /// The recording root id of the router that created this session — the
-    /// same fact a nested layout's `<routerId>/<sessionId>/` path segment
-    /// already states structurally (task ke41yth, "per-session recording
-    /// root + omittable routerId segment").
-    ///
-    /// Recorded so the routerId stays discoverable even when a session's
-    /// directory omits that path segment — a caller-supplied per-session
-    /// recording root (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``)
-    /// nests a session directly as `<recordingRoot>/<sessionId>/`, with
-    /// nothing above it to name the router that wrote it. `nil` only for a
-    /// recording made before this field existed — every sidecar written from
-    /// here on carries it, nested layout or flat.
+    /// The recording root id of the router that created this session, or
+    /// `nil` for a recording made before this field existed.
     public let routerId: ULID?
 
-    /// The recording schema version this session's on-disk data — this
-    /// sidecar and the `transcript.jsonl` beside it — was written under
-    /// (see ``RecordingSchemaVersion``'s registry of versions).
-    ///
-    /// Stamped as ``RecordingSchemaVersion/current`` on every new sidecar. A
-    /// recording with no `schemaVersion` key decodes as
-    /// ``RecordingSchemaVersion/implicit``, the newest shape ever written
-    /// before the stamp existed. ``read(in:)`` refuses a version newer than
-    /// ``RecordingSchemaVersion/current`` with the typed
-    /// ``RecordingSchemaVersionError``, so a recording from a newer router is
-    /// never silently misread.
+    /// The recording schema version. A recording with no `schemaVersion` key
+    /// decodes as ``RecordingSchemaVersion/implicit``.
     public let schemaVersion: Int
 
-    /// The configuration envelope this session was vended with — the
-    /// `Codable` slice of its ``SessionConfiguration`` (task ^ne5g9jn) —
-    /// or `nil` for a recording made before the envelope existed.
-    ///
-    /// Recorded on every sidecar, root and fork alike, since each node
-    /// carries its own effective configuration (a fork inherits its
-    /// parent's at fork time and records the inherited values as its own).
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``
-    /// re-applies the value-typed fields — the auto-compaction budget and
-    /// prompt, the summarization stage, and the discovery-priming opt-in —
-    /// onto each restored node, and matches
-    /// ``SessionConfiguration/Persistable/toolNames`` against the tool
-    /// instances the caller supplies, reporting the names that did not come
-    /// back in ``SessionConfigurationRestorationReport``.
-    ///
-    /// **Additive within schema v2.** An optional key old readers never look
-    /// for and old recordings never carry: an absent key decodes as `nil`,
-    /// and a `nil` envelope restores with the pre-envelope defaults — so no
-    /// ``RecordingSchemaVersion`` bump is needed (see that registry's v2
-    /// entry).
+    /// The configuration envelope this session was vended with, or `nil` for
+    /// a recording made before the envelope existed.
     public let configuration: SessionConfiguration.Persistable?
 
     /// Creates a session sidecar.
-    ///
-    /// - Parameters:
-    ///   - slot: The model slot this session runs against.
-    ///   - model: The concrete model reference.
-    ///   - context: The working context, in tokens, `model` was resolved at.
-    ///   - instructions: This session's system instructions, or `nil`.
-    ///   - grammar: This session's guided-generation grammar source, or `nil`.
-    ///   - recordingLevel: How much of this session's activity is recorded.
-    ///   - forkedAtEntryCount: The parent's backend transcript entry count at
-    ///     fork time, or `nil` for a root session.
-    ///   - forkedAtHistoryOrdinal: The fork's cut point in the parent's
-    ///     recorded history's append-only coordinates, or `nil` for a root
-    ///     session or a recording made before this field existed. Defaults
-    ///     to `nil`.
-    ///   - profile: The run's resolved-profile facts for a root session, or
-    ///     `nil` for a fork.
-    ///   - workingDirectory: This session's own working directory.
-    ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from, or `nil`. Defaults to `nil`.
-    ///   - compactionCount: This session's own recorded compaction count, or
-    ///     `nil` when not yet computed. Always `nil` for a freshly-written
-    ///     sidecar — see ``compactionCount``'s own doc comment.
-    ///   - routerId: The recording root id of the router that created this
-    ///     session, or `nil` for a recording made before this field existed.
-    ///     Defaults to `nil`.
-    ///   - schemaVersion: The recording schema version to stamp. Defaults to
-    ///     ``RecordingSchemaVersion/current``, the only value a writer ever
-    ///     stamps — an explicit value exists for tests fabricating other
-    ///     versions.
-    ///   - configuration: The configuration envelope this session was vended
-    ///     with, or `nil` for a recording made before the envelope existed
-    ///     (task ^ne5g9jn). Defaults to `nil`.
     public init(
         slot: ModelSlot,
         model: ModelRef,
@@ -352,11 +139,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         self.configuration = configuration
     }
 
-    /// The key ``read(in:)`` sets on its `JSONDecoder.userInfo` to the
-    /// session's own recording directory before decoding, so this type's
-    /// custom `init(from:)` has a fallback ready when the decoded bytes
-    /// predate ``workingDirectory`` and carry no such key at all (see that
-    /// field's "Backward compatibility" doc comment).
+    /// The `JSONDecoder.userInfo` key that ``read(in:)`` sets to the session's
+    /// recording directory, the fallback for an absent ``workingDirectory``.
     static let sidecarDirectoryUserInfoKey: CodingUserInfoKey = {
         guard let key = CodingUserInfoKey(rawValue: "SessionSidecar.sidecarDirectory") else {
             preconditionFailure("CodingUserInfoKey(rawValue:) cannot fail for a fixed, nonempty literal")
@@ -370,20 +154,12 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
             routerId, schemaVersion, configuration
     }
 
-    /// Decodes a sidecar, defaulting an absent ``workingDirectory`` key to
-    /// the directory named by ``sidecarDirectoryUserInfoKey`` in the
-    /// decoder's `userInfo` — the fallback a pre-task-6j4bven recording (one
-    /// written before this field existed) needs, since its `session.json`
-    /// carries no such key at all. An absent ``schemaVersion`` key decodes as
-    /// ``RecordingSchemaVersion/implicit`` — see that field's own doc
-    /// comment. Every other field decodes exactly as synthesis would.
+    /// Decodes a sidecar. An absent ``workingDirectory`` key defaults to the
+    /// directory under ``sidecarDirectoryUserInfoKey`` in `decoder.userInfo`.
     ///
-    /// - Parameter decoder: The decoder, whose `userInfo` supplies the
-    ///   fallback directory when ``read(in:)`` set one.
-    /// - Throws: Whatever decoding any other field throws, or
-    ///   `DecodingError.keyNotFound` when `workingDirectory` is absent and no
-    ///   fallback directory was supplied — a sidecar decoded directly, rather
-    ///   than through ``read(in:)``, has no directory to fall back to.
+    /// - Parameter decoder: The decoder.
+    /// - Throws: `DecodingError.keyNotFound` when `workingDirectory` is
+    ///   absent and no fallback directory is supplied.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         slot = try container.decode(ModelSlot.self, forKey: .slot)
@@ -419,17 +195,8 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
         }
     }
 
-    /// Returns a copy with ``compactionCount`` replaced by `count`, every
-    /// other field unchanged.
-    ///
-    /// ``TranscriptTree/load(under:)`` uses this to attach a session's own
-    /// computed compaction count onto its ``SessionNode/sidecar`` after
-    /// reading the write-once `session.json` bytes verbatim — the physical
-    /// file is never rewritten by this; it only enriches the in-memory
-    /// value a browser reads.
-    ///
-    /// - Parameter count: The computed compaction count.
-    /// - Returns: A copy carrying `count`.
+    /// Returns a copy with ``compactionCount`` replaced by `count`. The file
+    /// on disk is not rewritten.
     func withCompactionCount(_ count: Int) -> SessionSidecar {
         SessionSidecar(
             slot: slot,
@@ -451,18 +218,11 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     }
 
     /// Creates `directory` and writes `sidecar` into it as `session.json`,
-    /// exactly once.
-    ///
-    /// Write-once is enforced by the filesystem rather than by a check-then-write
-    /// (which two concurrent forks could both pass): the create is exclusive, so
-    /// a second write to a directory that already has a sidecar throws and the
-    /// original bytes stand.
+    /// exactly once. A second write to the same directory throws.
     ///
     /// - Parameters:
     ///   - sidecar: The facts to record.
-    ///   - directory: The session's own recording directory, created here along
-    ///     with the sidecar — this is the call that brings a session's directory
-    ///     into existence, before any transcript event can land in it.
+    ///   - directory: The session's own recording directory.
     /// - Throws: If `directory` cannot be created, `sidecar` cannot be encoded,
     ///   or a `session.json` already exists there.
     public static func write(_ sidecar: SessionSidecar, to directory: URL) throws {
@@ -479,27 +239,11 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
     /// Decodes the sidecar in a session's own recording directory.
     ///
-    /// Sets ``sidecarDirectoryUserInfoKey`` to `directory` on the decoder
-    /// before decoding, so a pre-task-6j4bven recording with no
-    /// `workingDirectory` key at all still decodes — falling back to this
-    /// same `directory`, the default a live session used for its working
-    /// directory before that field existed to override it.
-    ///
-    /// This is the one place every reader's sidecar decode goes through, so
-    /// the ``RecordingSchemaVersion`` gate lives here: a decoded sidecar
-    /// stamped with a version newer than ``RecordingSchemaVersion/current``
-    /// is refused with the typed
-    /// ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``,
-    /// never returned for the caller to misread.
-    ///
     /// - Parameter directory: The session's recording directory.
-    /// - Returns: The decoded sidecar, or `nil` when `directory` holds no
-    ///   `session.json` at all — the caller decides whether an absent sidecar is
-    ///   benign (a directory that is not a session's) or an error (a session
-    ///   directory whose sidecar was deleted).
-    /// - Throws: ``RecordingSchemaVersionError`` when the decoded sidecar's
-    ///   ``schemaVersion`` is newer than ``RecordingSchemaVersion/current``;
-    ///   otherwise if a `session.json` exists but cannot be read or decoded.
+    /// - Returns: The decoded sidecar, or `nil` when there is no `session.json`.
+    /// - Throws: ``RecordingSchemaVersionError`` when ``schemaVersion`` is
+    ///   newer than ``RecordingSchemaVersion/current``; otherwise a read or
+    ///   decode error.
     public static func read(in directory: URL) throws -> SessionSidecar? {
         let fileURL = directory.appendingPathComponent(sessionSidecarFileName, isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
@@ -517,97 +261,41 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     }
 }
 
-/// Where a model handle's sessions record durably, and the writer their
-/// `session.json` sidecars go through — one value, because neither half is
-/// usable without the other.
-///
-/// A durable transcripts root paired with a missing sidecar writer records a
-/// tree ``TranscriptTree/load(under:)`` refuses to read: a transcript with no
-/// sidecar beside it carries no facts to interpret it by. Two independent
-/// optionals on ``RoutedModel`` made that state not just possible but the
-/// default — it was what a caller got by passing a root and mentioning nothing
-/// else. Pairing them makes it unspeakable: hold a root, and you hold the writer
-/// that keeps it loadable.
-///
-/// ``RecordingLevel/off`` is not this type's concern. A run recording nothing
-/// still has a root to nest its sessions' working directories under, and it is
-/// the writer that declines to write at that level (see ``SessionSidecarWriter``).
+/// The durable transcripts root of a model handle, paired with the writer
+/// its sessions write their sidecars through.
 public struct DurableRecording: Sendable {
-    /// The router's durable transcripts root. A session's own recording
-    /// directory nests under it by router id and session id.
+    /// The router's durable transcripts root.
     public let root: URL
 
-    /// The writer every session under ``root`` records its `session.json`
-    /// through.
+    /// The writer every session under ``root`` records its sidecar through.
     public let sidecarWriter: SessionSidecarWriter
 
-    /// Pairs a durable transcripts root with the sidecar writer that keeps what
-    /// lands under it loadable.
-    ///
-    /// - Parameters:
-    ///   - root: The router's durable transcripts root.
-    ///   - sidecarWriter: The writer sessions under `root` record through.
+    /// Pairs a durable transcripts root with its sidecar writer.
     public init(root: URL, sidecarWriter: SessionSidecarWriter) {
         self.root = root
         self.sidecarWriter = sidecarWriter
     }
 }
 
-/// Writes each session's ``SessionSidecar`` as that session is created, from a
-/// resolved model handle's own facts.
-///
-/// One writer is born per ``RoutedModel`` (see ``Router``), carrying everything
-/// about the session that comes from the *handle* — its slot, its concrete
-/// model, the context that model was resolved at, the run's recording level,
-/// and the run's resolved-profile facts. Each creation site supplies only what
-/// is about the *session*: its instructions, its grammar, its fork cut point,
-/// and its directory. A vended session and every fork taken from it share one
-/// writer, so those handle-level facts cannot drift between them.
-///
-/// A writer exists wherever there is a durable transcripts root to write into —
-/// it travels with that root as one ``DurableRecording`` value, so a root can
-/// never be paired with a missing writer. ``RecordingLevel/off`` is the writer's
-/// own business rather than its builder's: an `.off` writer writes nothing, the
-/// same way the router's ``GatingRecorder`` drops every event at that level. The
-/// two must agree — ``TranscriptTree/load(under:)`` refuses a transcript with no
-/// sidecar beside it — and they agree because both read the one level.
-///
-/// Unlike ``TranscriptRecorder``, it needs no ``GatingRecorder``-style wrapping
-/// at ``RecordingLevel/metadataOnly``, since a sidecar carries no turn content to
-/// trim (see plan.md's "Transcript fidelity" section).
-///
-/// Writing is best-effort, mirroring ``JSONLRecorder``: any failure is logged
-/// and the sidecar dropped, so a full disk can never fail a `makeSession` or a
-/// `fork`.
+/// Writes each session's ``SessionSidecar`` when that session is created.
+/// One writer belongs to one ``RoutedModel`` and carries the handle-level
+/// facts. An ``RecordingLevel/off`` writer writes nothing. A failure is
+/// logged and the sidecar is dropped.
 public struct SessionSidecarWriter: Sendable {
     /// The slot every session written through this writer runs against.
     let slot: ModelSlot
-    /// The concrete model every session written through this writer runs
-    /// against.
+    /// The concrete model every session written through this writer runs against.
     let model: ModelRef
     /// The working context, in tokens, ``model`` was resolved at for ``slot``.
     let context: Int
     /// How much of each session's activity is recorded.
     let recordingLevel: RecordingLevel
-    /// The run's resolved-profile facts, recorded onto root sessions only.
+    /// The run's resolved profile, recorded onto root sessions only.
     let profile: SessionSidecar.ResolvedProfile?
-    /// The recording root id of the router this writer belongs to, stamped
-    /// onto every sidecar it writes (task ke41yth) — the same fact a nested
-    /// layout's `<routerId>/<sessionId>/` path segment states structurally,
-    /// kept discoverable even when a session's own directory omits it (see
-    /// ``SessionSidecar/routerId``).
+    /// The recording root id of the router this writer belongs to.
     let routerId: ULID
 
     /// Creates a sidecar writer for one resolved model handle.
-    ///
-    /// - Parameters:
-    ///   - slot: The slot sessions vended from that handle run against.
-    ///   - model: The concrete model they run against.
-    ///   - context: The working context, in tokens, `model` was resolved at.
-    ///   - recordingLevel: How much of each session's activity is recorded.
-    ///   - profile: The run's resolved-profile facts, recorded onto roots.
-    ///   - routerId: The recording root id of the router this writer belongs
-    ///     to, stamped onto every sidecar it writes.
     public init(
         slot: ModelSlot,
         model: ModelRef,
@@ -624,13 +312,10 @@ public struct SessionSidecarWriter: Sendable {
         self.routerId = routerId
     }
 
-    /// Writes one session's sidecar into its own directory, creating that
-    /// directory; logs and drops it on any failure.
-    ///
-    /// The run's ``profile`` facts are attached to root sessions only — a
-    /// session with no cut point is a root — so the rule lives here rather than
-    /// at each creation site. ``RecordingLevel/off`` is honored here for the
-    /// same reason: one gate, rather than one per creation site or per builder.
+    /// Writes one session's sidecar into its own directory and creates that
+    /// directory. Logs and drops the sidecar on a failure. Writes nothing
+    /// at ``RecordingLevel/off``. ``profile`` and `agentSpawn` are recorded
+    /// only when `forkedAtEntryCount` is `nil` (a root session).
     ///
     /// - Parameters:
     ///   - instructions: The session's system instructions, or `nil`.
@@ -638,16 +323,10 @@ public struct SessionSidecarWriter: Sendable {
     ///   - forkedAtEntryCount: The parent's backend transcript entry count at
     ///     fork time, or `nil` for a root session.
     ///   - forkedAtHistoryOrdinal: The fork's cut point in the parent's
-    ///     recorded history's append-only coordinates, or `nil` for a root
-    ///     session — see ``SessionSidecar/forkedAtHistoryOrdinal``.
+    ///     recorded history, or `nil` for a root session.
     ///   - workingDirectory: The session's own working directory.
-    ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from, or `nil`. Recorded only when `forkedAtEntryCount` is `nil`
-    ///     (a root session), mirroring ``profile``'s own root-only rule —
-    ///     see ``SessionSidecar/agentSpawn``.
-    ///   - configuration: The configuration envelope this session was vended
-    ///     with, or `nil`. Recorded on roots and forks alike — see
-    ///     ``SessionSidecar/configuration``.
+    ///   - agentSpawn: The spawn context, or `nil`.
+    ///   - configuration: The configuration envelope, or `nil`.
     ///   - directory: The session's own recording directory.
     func write(
         instructions: String?,
@@ -691,43 +370,25 @@ public struct SessionSidecarWriter: Sendable {
     }
 }
 
-/// Where a session's `session.json` comes from — the one thing a
-/// ``RoutedSessionActor`` needs to know to keep its own directory loadable.
-///
-/// A session lands its own sidecar as it comes into existence, so whoever builds
-/// one — ``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
-/// ``RoutedSessionActor/fork(workingDirectory:)``, or a composition assembling an
-/// actor by hand because it needs the backend object itself — cannot record a
-/// durable session directory holding a transcript and no sidecar beside it, the
-/// tree ``TranscriptTree/load(under:)`` refuses to read. It was a bare
-/// `SessionSidecarWriter?` and a separate hand-typed `write(...)` call that made
-/// that state reachable by *forgetting*; naming the origin makes each builder
-/// state which of the three cases it is in, and the actor do the rest.
-///
-/// A ``RecordingLevel/off`` run is not a case here: it is `.new` carrying a
-/// writer that writes nothing (see ``SessionSidecarWriter``).
+/// Where a session's `session.json` comes from. Each builder of a
+/// ``RoutedSessionActor`` states which case applies, and the actor writes
+/// the sidecar or not. A ``RecordingLevel/off`` run is `.new` with a writer
+/// that writes nothing.
 enum SessionSidecarOrigin: Sendable {
-    /// The session is coming into existence now under a durable transcripts
-    /// root — a vended root or a fork — and writes its own write-once sidecar
-    /// through this writer as it is constructed, before it exists to record any
-    /// transcript into its directory.
+    /// The session is new under a durable transcripts root. It writes its
+    /// own sidecar through this writer when it is constructed.
     case new(SessionSidecarWriter)
 
-    /// The session is a reconstruction of one already on disk (see
-    /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``): its sidecar was
-    /// written when the tree was first created and is write-once, so it is read,
-    /// never rewritten. The writer travels only for the restored session's own
-    /// new forks.
+    /// The session is a reconstruction of one already on disk. Its sidecar
+    /// is read, never rewritten. The writer serves only the restored
+    /// session's new forks.
     case restored(SessionSidecarWriter)
 
-    /// Nothing is recorded durably: the router has no transcripts root, so there
-    /// is no sidecar to write and none for a fork of this session to write
-    /// either.
+    /// Nothing is recorded durably. There is no sidecar to write.
     case memoryOnly
 
-    /// The origin of a session coming into existence now under
-    /// `durableRecording`, or ``memoryOnly`` when the router records to
-    /// memory/none.
+    /// The origin of a new session under `durableRecording`, or
+    /// ``memoryOnly`` when `durableRecording` is `nil`.
     ///
     /// - Parameter durableRecording: The vending handle's durable recording, or
     ///   `nil` when it has none.
@@ -736,11 +397,8 @@ enum SessionSidecarOrigin: Sendable {
         origin(under: durableRecording) { .new($0) }
     }
 
-    /// The origin of a session reconstructed from disk under `durableRecording`,
-    /// or ``memoryOnly`` when the router records to memory/none.
-    ///
-    /// The restored session's write-once sidecar is already on disk, so the
-    /// writer travels only for the forks the restored session takes.
+    /// The origin of a session restored from disk under `durableRecording`,
+    /// or ``memoryOnly`` when `durableRecording` is `nil`.
     ///
     /// - Parameter durableRecording: The vending handle's durable recording, or
     ///   `nil` when it has none.
@@ -749,21 +407,13 @@ enum SessionSidecarOrigin: Sendable {
         origin(under: durableRecording) { .restored($0) }
     }
 
-    /// The shared body behind ``new(under:)`` and ``restored(under:)``: maps a
-    /// durable recording's write-once sidecar writer through `wrap` into the
-    /// matching origin case, or yields ``memoryOnly`` when the router records to
-    /// memory/none.
-    ///
-    /// The two named factories carry distinct semantics in their own doc
-    /// comments but the same shape; this holds that shape in one place.
+    /// Maps a durable recording's sidecar writer through `wrap`, or yields
+    /// ``memoryOnly`` when there is no durable recording.
     ///
     /// - Parameters:
-    ///   - durableRecording: The vending handle's durable recording, or `nil`
-    ///     when it has none.
-    ///   - wrap: Wraps the recording's sidecar writer in the origin case that
-    ///     matches how the session came to be (``new(_:)`` vs ``restored(_:)``).
-    /// - Returns: The wrapped origin, or ``memoryOnly`` when there is no
-    ///   durable recording.
+    ///   - durableRecording: The vending handle's durable recording, or `nil`.
+    ///   - wrap: Wraps the sidecar writer in the matching origin case.
+    /// - Returns: The wrapped origin, or ``memoryOnly``.
     private static func origin(
         under durableRecording: DurableRecording?,
         wrappedBy wrap: (SessionSidecarWriter) -> SessionSidecarOrigin
@@ -771,11 +421,8 @@ enum SessionSidecarOrigin: Sendable {
         durableRecording.map { wrap($0.sidecarWriter) } ?? .memoryOnly
     }
 
-    /// The origin a session created *from* a session with this origin has.
-    ///
-    /// A fork is a brand-new session wherever its parent could record one, so it
-    /// writes its own sidecar through the same writer — including a fork of a
-    /// *restored* session, which is new even though its parent is not.
+    /// The origin of a fork taken from a session with this origin. A fork
+    /// is always a new session, also when its parent is restored.
     var forFork: SessionSidecarOrigin {
         switch self {
         case .new(let writer), .restored(let writer):
@@ -785,9 +432,8 @@ enum SessionSidecarOrigin: Sendable {
         }
     }
 
-    /// Writes the session's own sidecar when the session is new; does nothing for
-    /// a restored session (whose write-once sidecar is already on disk) or a
-    /// memory-only one (which records nothing).
+    /// Writes the session's own sidecar when the origin is ``new(_:)``.
+    /// Does nothing for a restored or memory-only session.
     ///
     /// - Parameters:
     ///   - instructions: The session's system instructions, or `nil`.
@@ -795,13 +441,10 @@ enum SessionSidecarOrigin: Sendable {
     ///   - forkedAtEntryCount: The parent's backend transcript entry count at
     ///     fork time, or `nil` for a root session.
     ///   - forkedAtHistoryOrdinal: The fork's cut point in the parent's
-    ///     recorded history's append-only coordinates, or `nil` for a root
-    ///     session — see ``SessionSidecar/forkedAtHistoryOrdinal``.
+    ///     recorded history, or `nil` for a root session.
     ///   - workingDirectory: The session's own working directory.
-    ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from, or `nil`. See ``SessionSidecar/agentSpawn``.
-    ///   - configuration: The configuration envelope the session was vended
-    ///     with, or `nil`. See ``SessionSidecar/configuration``.
+    ///   - agentSpawn: The spawn context, or `nil`.
+    ///   - configuration: The configuration envelope, or `nil`.
     ///   - directory: The session's own recording directory.
     func writeSidecarIfNew(
         instructions: String?,

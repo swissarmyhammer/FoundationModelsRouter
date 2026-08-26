@@ -1,113 +1,48 @@
 import Foundation
 
-/// A single recorded moment in a session's life — a prompt, a response, a tool
-/// call, an embedding, or the session's own birth — together with the
-/// provenance needed to place it in the router's transcript tree.
+/// A single recorded moment in a session's life, with the provenance needed
+/// to place it in the router's transcript tree.
 ///
-/// Events are the unit a ``TranscriptRecorder`` appends. The recorder, not the
-/// caller, stamps `seq` and `ts` at append (see ``TranscriptEvent/Partial``),
-/// so concurrent appends across forks collapse into one totally-ordered log:
-/// `seq` is the monotonic total order and `ts` is the wall-clock instant the
-/// recorder observed.
-///
-/// Provenance ids (`routerId`, `sessionId`, `parentId`) are `ULID`s: the
-/// `routerId` is the recording root, `sessionId` is this session's span, and
-/// `parentId` is the span that forked it (`nil` for a root session). The
-/// metering fields (`tokensIn`, `tokensOut`, `ms`) and `grammar` are optional
-/// because not every kind of event carries them.
-///
-/// The type is `Codable` in both directions and encodes one self-contained JSON
-/// object — the on-disk form a ``JSONLRecorder`` writes one-per-line.
-///
-/// Schema v2 is purely additive over v1: the new ``entry`` field and the new
-/// ``Kind`` cases (``Kind/instructions``, ``Kind/toolCalls``,
-/// ``Kind/reasoning``) are absent from older recordings, and every v1 line
-/// still decodes — `entry` decodes as `nil` when the key is missing, and
-/// ``Kind/toolCall`` remains a decodable case.
+/// A ``TranscriptRecorder`` appends events. The recorder stamps `seq` and
+/// `ts` at append (see ``TranscriptEvent/Partial``). `seq` is the monotonic
+/// total order. `ts` is the wall-clock instant. Each event encodes as one
+/// self-contained JSON object. Schema v2 is additive over v1: `entry`
+/// decodes as `nil` when absent, and ``Kind/toolCall`` still decodes.
 public struct TranscriptEvent: Sendable, Codable, Equatable {
-    /// What kind of moment an event records.
-    ///
-    /// v2 kinds mirror `FoundationModels.Transcript.Entry`'s own six cases —
-    /// ``instructions``, ``prompt``, ``toolCalls``, ``toolOutput``,
-    /// ``response``, ``reasoning`` — plus the three router-only kinds
-    /// (``session``, ``embedding``, ``divergence``) that never enter Apple's
-    /// transcript, and the ``unknown`` carrier for an entry case a future SDK
-    /// adds.
+    /// What kind of moment an event records. Six kinds mirror
+    /// `FoundationModels.Transcript.Entry` cases. ``session``, ``embedding``,
+    /// and ``divergence`` are router-only. ``unknown`` carries a newer SDK case.
     public enum Kind: String, Sendable, Codable, Equatable {
         /// The session was created (its first event).
         case session
-        /// An `.instructions` entry was appended to the SDK's own transcript —
-        /// the session's system prompt and its declared tool definitions.
+        /// An `.instructions` entry was appended to the SDK's own transcript.
         case instructions
-        /// A `.prompt` entry was appended to the SDK's own transcript — the
-        /// prompt segments, generation options, and response format the model
-        /// was given.
+        /// A `.prompt` entry was appended to the SDK's own transcript.
         case prompt
-        /// A `.toolCalls` entry was appended to the SDK's own transcript — one
-        /// or more tool invocations the model requested.
+        /// A `.toolCalls` entry was appended to the SDK's own transcript.
         case toolCalls
         /// A tool returned output.
         case toolOutput
-        /// A `.response` entry was appended to the SDK's own transcript — the
-        /// model's produced response.
+        /// A `.response` entry was appended to the SDK's own transcript.
         case response
         /// A `.reasoning` entry was appended to the SDK's own transcript.
         case reasoning
         /// An embedding was produced.
         case embedding
         /// The backend's transcript changed in a non-append way against the
-        /// already-recorded baseline — an entry in the recorded prefix was
-        /// displaced (a mid-transcript insertion, or a rewrite under a new
-        /// id) or rewritten in place under its original id — so the diff for
-        /// that call was dropped rather than recorded wrong, and this marker
-        /// states the discontinuity durably (see
-        /// ``TranscriptDiffer/divergence(from:in:)`` for the detection and
-        /// the documented signal shape).
-        ///
-        /// Router-only, like ``session`` and ``embedding``: it mirrors no
-        /// `Transcript.Entry`, carries no ``TranscriptEvent/entry`` payload,
-        /// and is never entry-kind, so reconstruction and
-        /// ``RoutedSessionActor/historyOrdinal`` never see it. Its
-        /// ``TranscriptEvent/text`` holds the divergence's description, for
-        /// browsers and debugging.
-        ///
-        /// Lands within schema v2 by the same rule as ``unknown`` — see
-        /// ``RecordingSchemaVersion/v2`` for the measured limit.
+        /// recorded baseline (see ``TranscriptDiffer/divergence(from:in:)``).
+        /// Router-only. ``TranscriptEvent/text`` holds the description.
         case divergence
-        /// A tool invocation was requested.
-        ///
-        /// Deprecated: superseded by ``toolCalls``, which mirrors the SDK's own
-        /// `Transcript.Entry.toolCalls` case. Kept only so pre-v2 recordings
-        /// still decode; no longer written.
+        /// A tool invocation was requested. Deprecated: ``toolCalls`` replaces
+        /// it. Kept so pre-v2 recordings decode.
         case toolCall
-        /// A `Transcript.Entry` case this router build does not know — a case
-        /// a future SDK added after this mapper was written.
-        ///
-        /// Only ever written when the router runs on an OS whose SDK has more
-        /// entry cases than the SDK this build compiled against; on the
-        /// current SDK the mapper covers every case and never emits this. The
-        /// event's payload carries the entry's own id plus one
-        /// ``SegmentPayload/unknown(id:description:)`` segment holding the
-        /// SDK value's `description` as best-effort text, and reconstruction
-        /// degrades it to a text-only entry (see ``TranscriptEntryMapper``'s
-        /// documented degradations).
+        /// A `Transcript.Entry` case this build does not know. The payload
+        /// carries one ``SegmentPayload/unknown(id:description:)`` segment.
         case unknown
 
-        /// Whether this kind mirrors a real `FoundationModels.Transcript.Entry` —
-        /// one of the six named entry cases, or ``unknown``, the carrier for an
-        /// entry case a future SDK added (it mirrors a real entry too, so
-        /// reconstruction must see it). The router-only
-        /// ``session``/``embedding``/``divergence`` kinds and the legacy
-        /// ``toolCall`` are not entry-kind.
-        ///
-        /// This is the one predicate behind the recorded history's entry
-        /// coordinates: ``TranscriptTree/effectiveEntryEvents(forSession:)``
-        /// filters by it, and ``RoutedSessionActor/historyOrdinal`` counts by it
-        /// as events are appended, so the writer's ordinal and the reader's
-        /// positions can never disagree about which events count. Exhaustive
-        /// over every case, so a future case added to this enum fails to
-        /// compile here until the switch is updated, rather than silently
-        /// defaulting either way.
+        /// `true` when this kind mirrors a real `FoundationModels.Transcript.Entry`.
+        /// ``TranscriptTree/effectiveEntryEvents(forSession:)`` and
+        /// ``RoutedSessionActor/historyOrdinal`` both use this predicate.
         var isEntryKind: Bool {
             switch self {
             case .instructions, .prompt, .toolCalls, .toolOutput, .response, .reasoning, .unknown:
@@ -136,13 +71,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let kind: Kind
     /// The guided-generation grammar in force, when applicable.
     public let grammar: String?
-    /// The event's body text — the prompt, response, or embedded input — when
-    /// the recording level keeps it.
-    ///
-    /// Present on a ``TranscriptEvent/Kind/full`` recording and `nil` once a
-    /// ``GatingRecorder`` at ``RecordingLevel/metadataOnly`` has trimmed it or a
-    /// ``RecordingLevel/off`` recorder dropped the event entirely; the ``Router``'s
-    /// `redact` hook, when set, transforms it before it is written.
+    /// The event's body text, when the recording level keeps it. `nil` after
+    /// ``RecordingLevel/metadataOnly`` trims it.
     public let text: String?
     /// Prompt/input tokens metered for this event, when applicable.
     public let tokensIn: Int?
@@ -151,37 +81,11 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// Wall-clock duration of the event in milliseconds, when applicable.
     public let ms: Int?
     /// The structural mirror of the `FoundationModels.Transcript.Entry` this
-    /// event records, when a downstream mapper populated one.
-    ///
-    /// `nil` for router-only kinds (``Kind/session``, ``Kind/embedding``,
-    /// ``Kind/divergence``), for
-    /// any event recorded before this field existed (v1), and until the
-    /// mapper that maps `Transcript.Entry` to ``TranscriptEntryPayload`` is
-    /// wired in (a downstream task — this field is schema only here).
+    /// event records. `nil` for router-only kinds and for v1 recordings.
     public let entry: TranscriptEntryPayload?
 
-    /// Creates a fully-stamped event.
-    ///
-    /// Callers normally do not build events directly — they hand a
-    /// ``TranscriptEvent/Partial`` to a recorder, which assigns `seq` and `ts`.
-    /// This initializer is the stamping point and is also used by tests.
-    ///
-    /// - Parameters:
-    ///   - routerId: The recording root id.
-    ///   - sessionId: The session span id.
-    ///   - parentId: The forking session's span id, or `nil` for a root.
-    ///   - slot: The routed model slot, or `nil`.
-    ///   - model: The concrete model reference, or `nil`.
-    ///   - seq: The monotonic sequence number assigned by the recorder.
-    ///   - ts: The instant the recorder stamped.
-    ///   - kind: What kind of moment this records.
-    ///   - grammar: The guided-generation grammar, or `nil`.
-    ///   - text: The event's body text, or `nil` when trimmed by the recording level.
-    ///   - tokensIn: Input tokens metered, or `nil`.
-    ///   - tokensOut: Output tokens metered, or `nil`.
-    ///   - ms: Duration in milliseconds, or `nil`.
-    ///   - entry: The structural entry payload mirroring the SDK's own
-    ///     `Transcript.Entry`, or `nil`.
+    /// Creates a fully-stamped event. Callers normally hand a
+    /// ``TranscriptEvent/Partial`` to a recorder instead.
     public init(
         routerId: ULID,
         sessionId: ULID,
@@ -214,12 +118,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         self.entry = entry
     }
 
-    /// An event minus the fields a recorder owns (`seq` and `ts`).
-    ///
-    /// A caller describes *what* happened; the recorder decides *when* in the
-    /// total order it lands. Handing the recorder a `Partial` — rather than a
-    /// finished event — is what lets it assign a monotonic `seq` and a stamped
-    /// `ts` atomically at append, so concurrent appends cannot collide on order.
+    /// An event minus the fields a recorder owns (`seq` and `ts`). The
+    /// recorder assigns both atomically at append.
     public struct Partial: Sendable, Equatable {
         /// The recording root id.
         public let routerId: ULID
@@ -235,8 +135,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         public let kind: Kind
         /// The guided-generation grammar, or `nil`.
         public let grammar: String?
-        /// The event's body text — the prompt, response, or embedded input — or
-        /// `nil` when the event carries no body.
+        /// The event's body text, or `nil` when the event carries no body.
         public let text: String?
         /// Input tokens metered, or `nil`.
         public let tokensIn: Int?
@@ -244,26 +143,10 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         public let tokensOut: Int?
         /// Duration in milliseconds, or `nil`.
         public let ms: Int?
-        /// The structural entry payload mirroring the SDK's own
-        /// `Transcript.Entry`, or `nil`.
+        /// The structural entry payload, or `nil`.
         public let entry: TranscriptEntryPayload?
 
         /// Describes an event without its recorder-owned ordering fields.
-        ///
-        /// - Parameters:
-        ///   - routerId: The recording root id.
-        ///   - sessionId: The session span id.
-        ///   - parentId: The forking session's span id, or `nil` for a root.
-        ///   - slot: The routed model slot, or `nil`.
-        ///   - model: The concrete model reference, or `nil`.
-        ///   - kind: What kind of moment this records.
-        ///   - grammar: The guided-generation grammar, or `nil`.
-        ///   - text: The event's body text, or `nil` when the event carries no body.
-        ///   - tokensIn: Input tokens metered, or `nil`.
-        ///   - tokensOut: Output tokens metered, or `nil`.
-        ///   - ms: Duration in milliseconds, or `nil`.
-        ///   - entry: The structural entry payload mirroring the SDK's own
-        ///     `Transcript.Entry`, or `nil`.
         public init(
             routerId: ULID,
             sessionId: ULID,
@@ -292,25 +175,12 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             self.entry = entry
         }
 
-        /// Returns a copy of this partial with its ``text`` and ``entry``
-        /// replaced by `transform(text, entry)`, leaving every other field
-        /// untouched.
+        /// Returns a copy with ``text`` and ``entry`` replaced by
+        /// `transform(text, entry)`. A ``GatingRecorder`` uses this to apply
+        /// the recording level and redaction to both fields together.
         ///
-        /// The transform seam a ``GatingRecorder`` uses to enforce the recording
-        /// level and redaction before the event is stamped and written: mapping
-        /// to `(nil, entry?.strippingContent())` trims both the flattened body
-        /// and every content-bearing field of the structured payload
-        /// (``RecordingLevel/metadataOnly``), and mapping through the
-        /// ``Router``'s `redact` hook — `(text.map(redact), entry?.redacted(with:
-        /// redact))` — redacts every textual content site in both
-        /// (``RecordingLevel/full``). Transforming ``text`` and ``entry``
-        /// together in one seam is what keeps the two from drifting: a gate that
-        /// only ever touched ``text`` would silently leak payload content once
-        /// entries carried any.
-        ///
-        /// - Parameter transform: The transform applied to the flattened body
-        ///   text and the structural entry payload together.
-        /// - Returns: A copy carrying the transformed body and payload.
+        /// - Parameter transform: The transform applied to the body text and
+        ///   the entry payload together.
         func mapBody(
             _ transform: (String?, TranscriptEntryPayload?) -> (String?, TranscriptEntryPayload?)
         ) -> Partial {
@@ -318,50 +188,15 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
             return with(text: mappedText, entry: mappedEntry)
         }
 
-        /// Returns a copy of this partial with ``tokensIn``/``tokensOut``
-        /// replaced by `tokensIn`/`tokensOut`, leaving every other field
-        /// untouched.
-        ///
-        /// The stamping seam a turn owner uses to attach a turn's measured
-        /// usage delta onto the turn-final `.response`-kind partial a diff
-        /// produced — mirrors ``RoutedSessionActor``'s own per-turn
-        /// `tokensIn`/`tokensOut` stamping in
-        /// `recordTranscriptDelta(grammar:since:usage:)`, but for the
-        /// ``RecordingLanguageModel`` handle path (see
-        /// ``RecordingLanguageModelState/diffAndRecord(current:usage:)``).
-        ///
-        /// - Parameters:
-        ///   - tokensIn: The turn's measured input tokens, or `nil`.
-        ///   - tokensOut: The turn's measured output tokens, or `nil`.
-        /// - Returns: A copy carrying the given token counts.
+        /// Returns a copy with ``tokensIn`` and ``tokensOut`` replaced by the
+        /// given values.
         func stampingUsage(tokensIn: Int?, tokensOut: Int?) -> Partial {
             with(tokensIn: tokensIn, tokensOut: tokensOut)
         }
 
-        /// Returns a copy of this partial with the given fields replaced,
-        /// leaving every other field untouched.
-        ///
-        /// The shared copy-with-modification logic ``mapBody(_:)`` and
-        /// ``stampingUsage(tokensIn:tokensOut:)`` both build on, so the full
-        /// field list only has to be repeated once no matter how many such
-        /// seams `Partial` grows.
-        ///
-        /// Each parameter is doubly-optional so a caller can distinguish
-        /// "leave this field as it is" (the default, `nil`) from "replace it
-        /// with `nil`" (pass `.some(nil)`, e.g. via a `String?` value already
-        /// known to be `nil`) — the outer optional selects whether the field
-        /// changes at all, and the inner optional is the field's own value.
-        ///
-        /// - Parameters:
-        ///   - text: The replacement for ``text``, or `nil` to leave it
-        ///     unchanged.
-        ///   - tokensIn: The replacement for ``tokensIn``, or `nil` to leave
-        ///     it unchanged.
-        ///   - tokensOut: The replacement for ``tokensOut``, or `nil` to
-        ///     leave it unchanged.
-        ///   - entry: The replacement for ``entry``, or `nil` to leave it
-        ///     unchanged.
-        /// - Returns: A copy carrying the given replacements.
+        /// Returns a copy with the given fields replaced. Each parameter is
+        /// doubly optional: the outer `nil` (the default) keeps the field.
+        /// `.some(nil)` sets the field to `nil`.
         private func with(
             text: String?? = nil,
             tokensIn: Int?? = nil,
@@ -385,13 +220,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         }
 
         // sah:allow duplication forwards a Partial's fields plus the recorder-stamped seq and ts into a TranscriptEvent's memberwise initializer; withCompactionCount in SessionSidecar.swift copies a SessionSidecar, a different type with a different field list, so the two bodies share shape only and a change to one never applies to the other
-        /// Stamps this partial with a recorder-assigned `seq` and `ts`, yielding
-        /// a finished ``TranscriptEvent``.
-        ///
-        /// - Parameters:
-        ///   - seq: The monotonic sequence number to assign.
-        ///   - ts: The instant to record.
-        /// - Returns: The fully-stamped event.
+        /// Stamps this partial with a recorder-assigned `seq` and `ts`, and
+        /// returns the finished ``TranscriptEvent``.
         public func stamped(seq: Int, ts: Date) -> TranscriptEvent {
             TranscriptEvent(
                 routerId: routerId,

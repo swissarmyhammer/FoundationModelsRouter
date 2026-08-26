@@ -40,10 +40,26 @@ comments:
     evidence: Multitool `Sources/FoundationModelsMultitool/MultiTool+Detachment.swift`, `Capabilities/Shell/Execute.swift`, `MultiTool+SandboxGlobals.swift`, `WaitTool.swift`, `Sources/MultitoolCLI/CLIRunner.swift`, 17 test files; runCode and execute declare background; searchTools, wait and file verbs do not; build clean, 1023 tests green
     task: ^dmttqz1
   timestamp: 2026-08-26T05:38:54.103364+00:00
+- actor: claude-code
+  id: 01m0y9dvnpzbqnhtdtdnxpmy0g
+  text: |-
+    ### review — stuck
+    - evidence: The review engine is bound to the Router repository root. `review sha HEAD~1..HEAD` reviewed the Router commit (4 `.kanban/` files, all excluded), not Multitool commit e4be355. `review file` with an absolute or relative Multitool path failed: "path escapes the repository root". The `cwd`, `root`, `workspace`, and `path` parameters did not change the root.
+    - next: A person must start the review from a session that has `/Users/wballard/github/swissarmyhammer/FoundationModelsMultitool` as its workspace, with scope `HEAD~1..HEAD` (commit e4be355), and then record the findings on this task. The task stays in `review`.
+  timestamp: 2026-08-26T05:41:59.606580+00:00
+- actor: claude-code
+  id: 01m0y9eqyx73d4841mnb8dmjyq
+  text: |-
+    ### finish iteration 1 — stuck
+    - implement: changed — Multitool: runCode and execute declare background, `wait` argument removed from execute, searchTools/wait/file verbs synchronous, CLIRunner handles runSettled; 22 files
+    - test: green — swift test in FoundationModelsMultitool, 1023 tests in 73 suites, 0 failed (three runs)
+    - commit: e4be355 (Multitool), 4bcaaee (Router kanban state)
+    - review: stuck — the local review engine is bound to the Router repository root and cannot read the Multitool checkout ("path escapes the repository root"). The review gate must run from a session opened in /Users/wballard/github/swissarmyhammer/FoundationModelsMultitool with scope HEAD~1..HEAD (commit e4be355); record the result on this card. Task left in review; not forced to done.
+  timestamp: 2026-08-26T05:42:28.573781+00:00
 depends_on:
 - 01M0XGRJD4TZTZAFTCSBZEKMFD
 - 01M0XGRYMR1GPMY1X52FTDMR58
-position_column: doing
+position_column: review
 position_ordinal: '80'
 title: 'Multitool: declare the background tools'
 ---

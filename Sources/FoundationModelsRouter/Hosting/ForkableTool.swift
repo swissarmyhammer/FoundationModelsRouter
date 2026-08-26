@@ -1,39 +1,17 @@
 import FoundationModels
 
-/// A `Tool` that can produce a per-session instance of itself, derived at
-/// fork time.
+/// A `Tool` that can produce a per-session instance of itself at fork time.
 ///
-/// **Usage contract**: a host discovers
-/// forkable tools in its `[any Tool]` list by conformance cast (`tool as?
-/// any ForkableTool`) and derives each child session's tool instance itself
-/// at fork time — `ForkableTool` declares no associated types precisely so
-/// that cast succeeds against an `any Tool` existential.
-///
-/// **Composition order.** At fork, a host applies `forked()` first —
-/// `((tool as? any ForkableTool)?.forked() ?? tool)` — then wraps the
-/// forked result in the child session's own layers (detachment for a
-/// String-output tool, the binding-only `ContextBindingTool` for a
-/// non-String-output one, and capping when configured — a non-String-output
-/// tool passes through the capping layer unwrapped). A tool that does not
-/// conform passes through shared, unchanged, into those same layers.
+/// A host finds forkable tools with `tool as? any ForkableTool`. The protocol declares no associated types, so that cast succeeds on an `any Tool` existential.
+/// At fork, the host applies `forked()` first and then wraps the result in the child session's own layers.
 public protocol ForkableTool: Tool {
-    /// Returns a child session's instance of this tool, derived at fork
-    /// time.
-    ///
-    /// The blanket default (below) simply returns `self` — correct for a
-    /// value-semantics (struct) tool, where returning `self` already hands
-    /// the caller a genuine new, independent instance. A class-based tool
-    /// must override this: returning `self` unchanged would hand every fork
-    /// the very same shared instance instead of one of its own.
-    ///
+    /// Returns a child session's instance of this tool.
+    /// A class-based tool must override this. The default returns `self`, which is correct only for a value-semantics tool.
     /// - Returns: The forked tool instance.
     func forked() -> any Tool
 }
 
 extension ForkableTool {
-    /// Blanket default: returns `self` unchanged. See `forked()`'s
-    /// documentation for the value-semantics assumption this default makes.
-    ///
-    /// - Returns: `self`.
+    /// Blanket default: returns `self` unchanged.
     public func forked() -> any Tool { self }
 }

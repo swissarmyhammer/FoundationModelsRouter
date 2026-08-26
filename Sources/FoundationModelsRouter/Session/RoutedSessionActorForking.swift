@@ -11,8 +11,8 @@ extension RoutedSessionActor {
     /// tools from ``originalTools`` (never this session's own already-instanced
     /// ``tools``) so a ``ForkableTool`` conformer forks exactly once from its
     /// pristine state before being wrapped in the child's own detachment
-    /// layer — this site's full chain is fork → detach → cap (task ^k4nygqa),
-    /// so the child's detached runs are tracked in the child's own mailbox. Acquires
+    /// layer — the chain is fork → detach → cap, so the child's detached
+    /// runs are tracked in the child's own mailbox. Acquires
     /// ``turnLock`` just long enough to read `backend`'s conversation state
     /// and entry count together, closing the race against a concurrent
     /// in-flight turn mutating that same state. The child's

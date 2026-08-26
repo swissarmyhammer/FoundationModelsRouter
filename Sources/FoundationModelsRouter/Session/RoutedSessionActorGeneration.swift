@@ -3,29 +3,12 @@
 /// subscriptions a host watches a whole session through.
 extension RoutedSessionActor {
     /// The most drained continuation turns one ``respond(to:maxTokens:)`` call
-    /// runs after its own turn — the whole of the drain's termination rule.
-    ///
-    /// A drained turn hands the model results it did not have before, so it can
-    /// start more background work and background more runs, which asks for another
-    /// drain. That is a loop with no exit of its own, so the exit is stated
-    /// here: **drain every background run, round after round, up to this many
-    /// rounds — then answer with whatever the last turn produced.** A `respond`
-    /// that can spin forever is worse than one that returns early (task
-    /// ^nmpejc5), so the bound is part of the design rather than a later
-    /// safeguard.
-    ///
-    /// Four rounds, because the case the rule exists for is a model that
-    /// chains background steps — start work, read it, start the next step —
-    /// and four continuation turns cover a chain of that shape while keeping
-    /// the worst case a caller can pay small and countable.
+    /// runs after its own turn. After this many rounds the call answers with
+    /// what the last turn produced.
     static let backgroundRunDrainRoundLimit = 4
 
-    /// The prompt each drained continuation turn carries.
-    ///
-    /// The settled runs' own results ride ahead of it as that turn's preamble
-    /// (see ``generate(grammar:prompt:onEvent:_:)``'s drain-on-turn
-    /// composition), so this text only has to say what the preamble is and ask
-    /// for the answer the caller is still waiting on.
+    /// The prompt each drained continuation turn carries. The settled runs'
+    /// results precede it as that turn's preamble.
     static let drainedRunContinuationPrompt = """
         The background work you started has finished, and its results are above. \
         Answer the request now, from those results.
@@ -39,86 +22,20 @@ extension RoutedSessionActor {
         """
 
     /// Generates a complete text response to a prompt, recording the call.
-    ///
-    /// Routes through the guided path when ``grammar`` is set, constraining the
-    /// response to it through the backend's whole-chunk xgrammar entry point;
-    /// otherwise runs the plain path. Both funnel through the same
-    /// ``generate(grammar:prompt:onEvent:_:)`` chokepoint.
-    ///
-    /// **What this call drains, and what it does not.**
-    ///
-    /// The two planes drain at different times, and this is the surface where
-    /// both are drained before the caller is answered:
-    ///
-    /// - The **content plane** — ``SessionOutbox``, the events long-running
-    ///   work has posted — is drained at the top of *each* of this call's
-    ///   turns, folded into that turn's prompt as a plain-text preamble. That
-    ///   is the ordinary drain-on-turn every generation surface performs.
-    /// - The **run plane** — ``SessionMailbox``, the runs a detached tool call
-    ///   backgrounded — is drained *after* this call's own turn: every background run is
-    ///   awaited to settlement, and a further turn is run so the settled
-    ///   results reach the model in this same call. So a turn whose tool work
-    ///   backgrounded still answers from that work's own output rather than
-    ///   from the completion token the tool returned, and no caller has to make
-    ///   the model call a `wait` tool to get there. Every run backgrounded at each
-    ///   round is drained, not just the first, and the drain covers the whole
-    ///   run plane rather than only this turn's own backgrounded runs — "nothing left
-    ///   running when `respond` returns" is a statement about the session.
-    /// - It **does not sweep**. Cancelling background runs and synthesizing their
-    ///   terminals is teardown, and belongs to ``close()`` alone
-    ///   (``SessionMailbox/sweep()``). A drain waits for work to finish; a
-    ///   sweep ends it.
-    /// - It **does not drain the streaming surfaces**.
-    ///   ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
-    ///   still return while a run they backgrounded is in flight: backgrounding is
-    ///   the feature there. A run that settles before the stream ends is
-    ///   reported as ``SessionEvent/runSettled(_:)``; a later settlement is
-    ///   delivered to the model by the next ``dispatchNextPrompt()``.
-    ///
-    /// **The loop below is the usual path.** A ``BackgroundTool`` always
-    /// returns ``PendingRunEnvelope``, so a turn that calls a shell or agent
-    /// tool ends with a run still running. The envelope tells the model that
-    /// the session reports the result when the run settles; the model does
-    /// not poll. For `respond`, this loop is that report: it awaits each run
-    /// and delivers the result in a further turn. A `wait` call is only an
-    /// earlier look. When no run is running,
-    /// ``settleBackgroundRuns(cancellationsBefore:)`` answers `false` on the
-    /// first round and no drained turn runs (task ^466d38p).
-    ///
-    /// The drain terminates by the rule ``backgroundRunDrainRoundLimit`` states.
-    /// Two other things end it: a run that has not settled by the run plane's
-    /// own ``ToolContext/deadlineSecondsCeiling``, since a further turn could not
-    /// carry its result anyway; and a cancellation landing on this call —
-    /// either ``RoutedSession/cancelCurrentTurn()`` or the caller's own task
-    /// being cancelled. A cancelled turn is never drained: whatever it backgrounded
-    /// stays running, exactly as it did before this surface drained anything.
-    ///
-    /// A cancellation lands wherever this call happens to be, and the two
-    /// places need different machinery (task ^h3efdrc):
-    ///
-    /// - **Between rounds** it is read off ``cancelRequestCount`` and
-    ///   `Task.isCancelled`. The count, rather than a thrown error, because a
-    ///   detached tool call answers a cancellation by detaching, so the turn
-    ///   returns a response and only the count says what happened.
-    /// - **Inside a wait** — the long case, since a wait here runs to the
-    ///   day-long ceiling — neither is enough: ``SessionMailbox/wait(completionToken:seconds:)``
-    ///   ignores task cancellation by design, and between turns there is no turn
-    ///   for `cancelCurrentTurn()` to cancel. So each wait is raced against both
-    ///   routes; see ``awaitSettlement(of:)``.
-    ///
-    /// A cancelled drain answers with the last turn's answer rather than
-    /// throwing, whichever place the cancellation landed in — the same thing the
-    /// detaching route already produces, and the only answer this call has.
+    /// After its own turn, drains the run plane: awaits every background run
+    /// in ``SessionMailbox`` and runs a further turn with the settled results,
+    /// up to ``backgroundRunDrainRoundLimit`` rounds. The drain ends early
+    /// when a run outlasts ``ToolContext/deadlineSecondsCeiling`` or when a
+    /// cancellation reaches this call; it then answers with the last turn's
+    /// answer. It does not sweep.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the underlying model's own default ceiling.
-    /// - Returns: The model's complete text response — the last drained turn's,
-    ///   when this call's own turn backgrounded work.
-    /// - Throws: Any error thrown by the model. A turn that throws is never
-    ///   drained: the failure reaches the caller as it always did, and whatever
-    ///   the failed turn backgrounded stays running for ``close()``'s sweep.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
+    ///     model's default ceiling.
+    /// - Returns: The model's complete text response.
+    /// - Throws: Any error thrown by the model. A turn that throws is not
+    ///   drained.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String {
         // `backend` is this session's own persistent generation object — never
         // recreated per call — so turns accumulate conversation state. A guided
@@ -161,29 +78,15 @@ extension RoutedSessionActor {
     }
 
     /// Awaits the settlement of every run tracked on this session's mailbox at
-    /// the moment of the call — one drain round.
+    /// the moment of the call: one drain round. A settled run's terminal event
+    /// is already in ``outbox`` when its settlement is observable here.
     ///
-    /// A settled run's terminal event has already reached ``outbox`` by the
-    /// time its settlement is observable here: the detachment engine awaits
-    /// that post before the run's settling handle resolves, and
-    /// ``SessionMailbox/track(tool:op:kind:completionToken:settling:canceler:)``
-    /// observes the same handle. So a round that reports `true` leaves the
-    /// results staged for the next turn's own drain-on-turn composition to
-    /// fold into the prompt.
-    ///
-    /// - Parameter cancellationsBefore: The ``cancelRequestCount`` this
-    ///   ``respond(to:maxTokens:)`` call started from, re-read before each wait
-    ///   this round starts so a cancellation landing between two waits — or
-    ///   between this round's snapshot and its first wait — ends the round
-    ///   instead of being waited out.
-    /// - Returns: `true` when at least one run was tracked and every one of them
-    ///   left the run plane — settled, or gone from it between this round's
-    ///   snapshot and its own wait (``WaitOutcome/unknownToken``), which is the
-    ///   same fact arriving a moment earlier. `false` when the run plane was
-    ///   already empty, when a run outlasted
-    ///   ``ToolContext/deadlineSecondsCeiling`` and so is still running, or when a
-    ///   cancellation reached this call: none of the three has a settled result
-    ///   for a further turn to carry.
+    /// - Parameter cancellationsBefore: The ``cancelRequestCount`` the
+    ///   ``respond(to:maxTokens:)`` call started from, checked before each wait.
+    /// - Returns: `true` when at least one run was tracked and every one left
+    ///   the run plane. `false` when the run plane was empty, when a run
+    ///   outlasted ``ToolContext/deadlineSecondsCeiling``, or when a
+    ///   cancellation reached this call.
     private func settleBackgroundRuns(cancellationsBefore: UInt64) async -> Bool {
         let running = await mailbox.backgroundRuns()
         guard !running.isEmpty else { return false }
@@ -202,29 +105,12 @@ extension RoutedSessionActor {
         return true
     }
 
-    /// Awaits one background run's settlement, racing the mailbox's own wait
-    /// against a cancellation reaching this draining call.
-    ///
-    /// The race is what makes a drain interruptible at all.
-    /// ``SessionMailbox/wait(completionToken:seconds:)`` ignores task
-    /// cancellation by design and its deadline here is the run plane's own
-    /// day-long ceiling, so awaiting it bare would hold this call past any
-    /// cancellation — and there is no turn in flight for
-    /// ``RoutedSession/cancelCurrentTurn()`` to cancel instead (task
-    /// ^h3efdrc). Both cancellation routes are raced: the enclosing task's own,
-    /// through the cancellation handler, and `cancelCurrentTurn()`'s, through
-    /// the gate registered in ``runPlaneDrainWaitGates``.
-    ///
-    /// A continuation-based race rather than a task group, for ``RaceGate``'s
-    /// stated reason: a group awaits every child before returning, so the
-    /// abandoned wait would still hold the call. That abandoned wait costs one
-    /// unstructured task, which cannot be cancelled out of the mailbox and so
-    /// ends on its own terms — the run settling, the ceiling elapsing, or
-    /// ``close()``'s sweep — holding nothing but the mailbox and this gate.
+    /// Awaits one background run's settlement, racing the mailbox's wait
+    /// against task cancellation and against the gate registered in
+    /// ``runPlaneDrainWaitGates`` for ``RoutedSession/cancelCurrentTurn()``.
     ///
     /// - Parameter completionToken: The background run's completion token.
-    /// - Returns: Whichever of the mailbox's answer or a cancellation arrived
-    ///   first.
+    /// - Returns: Whichever answer arrived first.
     private func awaitSettlement(of completionToken: String) async -> RunPlaneDrainWaitOutcome {
         let gate = RaceGate<RunPlaneDrainWaitOutcome>()
         let waiterID = ULID.generate()
@@ -244,15 +130,9 @@ extension RoutedSessionActor {
     }
 
     /// Ends every run-plane drain wait suspended on this session, so a
-    /// ``respond(to:maxTokens:)`` call suspended between its turns returns
-    /// instead of waiting the run plane out.
-    ///
-    /// Called by ``cancelCurrentTurn()`` when no turn is in flight — see that
-    /// method for why a drain is the other thing a cancellation can land on.
-    /// Each resumed drain stops at the run it was waiting on and answers with
-    /// its last turn's answer; nothing is swept, so the runs stay running
-    /// exactly as they were. A drain that holds no wait right now needs nothing
-    /// resumed: it reads ``cancelRequestCount`` before the next wait it starts.
+    /// ``respond(to:maxTokens:)`` call suspended between its turns returns.
+    /// Called by ``cancelCurrentTurn()`` when no turn is in flight. Nothing is
+    /// swept; the runs stay running.
     func endRunPlaneDrainWaits() {
         // Copied out and the registry emptied before any resume, so this
         // cancellation reaches exactly the waits it found: a drain that goes on
@@ -265,24 +145,19 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Whether a ``respond(to:maxTokens:)`` call on this session is suspended on a
-    /// wait of its own run plane — between its turns, with no turn in flight to
-    /// carry a cancellation.
+    /// Whether a ``respond(to:maxTokens:)`` call on this session is suspended
+    /// on a run-plane drain wait, between its turns.
     var isSuspendedOnRunPlaneDrainWait: Bool {
         !runPlaneDrainWaitGates.isEmpty
     }
 
-    /// Streams a text response to a prompt as it is produced, recording the call.
-    ///
-    /// Wraps ``streamGenerating(prompt:maxTokens:into:)`` via ``wrapAsyncStream(_:)``,
-    /// forwarding each produced chunk to the stream's continuation and
-    /// finishing it when generation completes or throws; cancelling the
-    /// stream cancels the underlying `Task`.
+    /// Streams a text response to a prompt as it is produced, recording the
+    /// call. Cancelling the stream cancels the underlying `Task`.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the underlying model's own default ceiling.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
+    ///     model's default ceiling.
     /// - Returns: A stream of response fragments, finishing when generation
     ///   completes or throwing if it fails.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
@@ -292,19 +167,10 @@ extension RoutedSessionActor {
     }
 
     /// Wraps `body` in an `AsyncThrowingStream`, running it inside a
-    /// cancellable `Task` that finishes the stream — with or without an
-    /// error — when `body` returns or throws.
+    /// cancellable `Task` that finishes the stream when `body` returns or
+    /// throws.
     ///
-    /// The `AsyncThrowingStream`/`Task`/`onTermination` scaffolding
-    /// ``streamResponse(to:maxTokens:)`` and ``streamEvents(to:maxTokens:)``
-    /// both need, differing only in the element type and the streaming work
-    /// itself — factored out once here rather than duplicated per method.
-    /// `static` (not an instance method) because it touches no actor state of
-    /// its own; `body` captures whatever isolated state it needs (typically
-    /// `self`) instead.
-    ///
-    /// - Parameter body: The streaming work, given the stream's own
-    ///   continuation to yield elements to.
+    /// - Parameter body: The streaming work, given the stream's continuation.
     /// - Returns: The wrapped stream.
     private static func wrapAsyncStream<Element>(
         _ body: @escaping @Sendable (AsyncThrowingStream<Element, Error>.Continuation) async throws -> Void
@@ -323,40 +189,18 @@ extension RoutedSessionActor {
     }
 
     /// Runs `backend.streamResponseFragments(to:maxTokens:)`, forwarding each
-    /// produced fragment's text through `wrapChunk` to `continuation` and
-    /// accumulating the raw text for the chokepoint's close event.
-    ///
-    /// The accumulation is restart-aware: a fragment marked
-    /// ``ResponseFragment/restartsResponse`` replaces the text so far rather
-    /// than extending it, so a tool-using turn's accumulated text is the answer
-    /// the SDK actually ends on — the same string
-    /// ``respond(to:maxTokens:)`` returns — instead of that answer with the
-    /// superseded pre-tool text stuck on the front (task ^w8dzvee, defect D2).
-    /// Every fragment's text is still forwarded to `continuation` as it
-    /// arrives, since a delivered chunk cannot be retracted and a live consumer
-    /// is entitled to everything the model said. `wrapFragment` is what turns a
-    /// restart into whatever the calling surface's element type can say about
-    /// it — a ``SessionEvent/textReset`` ahead of the restarting text on the
-    /// event stream, nothing at all on the plain text stream, whose `String`
-    /// element cannot carry the report.
-    ///
-    /// Shared by ``streamGenerating(prompt:maxTokens:into:)`` and
-    /// ``streamEventsGenerating(prompt:maxTokens:into:)``, which differ only in
-    /// their continuation's element type and how a chunk is wrapped for it
-    /// (verbatim vs ``SessionEvent/textDelta(_:)``) — extracted so that
-    /// difference cannot drift between the two call sites.
+    /// fragment through `wrapFragment` to `continuation` and accumulating the
+    /// text. A fragment marked ``ResponseFragment/restartsResponse`` replaces
+    /// the accumulated text.
     ///
     /// - Parameters:
-    ///   - composedPrompt: The prompt, already composed with whatever the
-    ///     outbox drained for this turn, to stream a response to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the underlying model's own default ceiling.
-    ///   - continuation: The stream continuation each wrapped element is yielded to.
-    ///   - wrapFragment: Wraps one fragment into zero or more elements of
-    ///     `continuation`'s element type, in yield order.
+    ///   - composedPrompt: The prompt, already composed with the outbox drain.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil`.
+    ///   - continuation: The stream continuation each element is yielded to.
+    ///   - wrapFragment: Wraps one fragment into zero or more elements.
     /// - Returns: The accumulated, unwrapped response text.
-    /// - Throws: Any error thrown by the model, or `CancellationError` when this
-    ///   turn's model call was cancelled part-way through the stream.
+    /// - Throws: Any error thrown by the model, or `CancellationError` when
+    ///   the model call was cancelled during the stream.
     private func streamGeneratingBody<Element: Sendable>(
         composedPrompt: String,
         maxTokens: Int?,
@@ -395,17 +239,13 @@ extension RoutedSessionActor {
     /// Runs the recorder-bracketed streaming generation, forwarding each chunk
     /// the model produces to `continuation`.
     ///
-    /// Extracted from ``streamResponse(to:)`` so that method's stream/`Task`
-    /// scaffolding stays shallow: the bracketed `for`-loop lives here instead of
-    /// nesting inside the continuation closure.
-    ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the underlying model's own default ceiling.
-    ///   - continuation: The stream continuation each produced chunk is yielded to.
-    /// - Throws: Any error thrown by the model, after the chokepoint records the
-    ///   close event.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
+    ///     model's default ceiling.
+    ///   - continuation: The stream continuation each chunk is yielded to.
+    /// - Throws: Any error thrown by the model, after the close event is
+    ///   recorded.
     private func streamGenerating(
         prompt: String,
         maxTokens: Int?,
@@ -428,19 +268,13 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Streams a rich event sequence for a prompt as it is produced,
-    /// recording the call. See ``RoutedSession/streamEvents(to:maxTokens:)``
-    /// for the full contract.
-    ///
-    /// Wraps ``streamEventsGenerating(prompt:maxTokens:into:)`` via
-    /// ``wrapAsyncStream(_:)``, mirroring ``streamResponse(to:maxTokens:)``'s
-    /// own scaffolding exactly — cancelling the stream cancels the underlying
-    /// `Task`.
+    /// See ``RoutedSession/streamEvents(to:maxTokens:)``. Cancelling the
+    /// stream cancels the underlying `Task`.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the underlying model's own default ceiling.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
+    ///     model's default ceiling.
     /// - Returns: A stream of session events, finishing when generation
     ///   completes or throwing if it fails.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error> {
@@ -449,18 +283,9 @@ extension RoutedSessionActor {
         }
     }
 
-    /// See ``RoutedSession/streamSessionEvents()``.
-    ///
-    /// Registers a fresh continuation in ``sessionEventSubscriptions`` and hands
-    /// back its stream. Buffering is unbounded because these events are reports a
-    /// consumer must not silently lose, and there are very few of them per turn —
-    /// unlike the per-token text a turn stream carries.
-    ///
-    /// The termination handler runs outside this actor's isolation (the stream can
-    /// end on any task, including by cancellation), so dropping the subscription
-    /// has to hop back in through a `Task` — the one place an unstructured task is
-    /// unavoidable here. It captures `self` weakly, so an abandoned stream never
-    /// keeps a finished session alive.
+    /// See ``RoutedSession/streamSessionEvents()``. Registers a continuation in
+    /// ``sessionEventSubscriptions`` with unbounded buffering. The termination
+    /// handler captures `self` weakly and drops the subscription.
     func streamSessionEvents() -> AsyncStream<SessionEvent> {
         let subscriptionId = ULID.generate()
         let (stream, continuation) = AsyncStream.makeStream(
@@ -473,17 +298,15 @@ extension RoutedSessionActor {
         return stream
     }
 
-    /// Forgets one ``streamSessionEvents()`` subscription, whose stream has
-    /// finished or been abandoned.
+    /// Forgets one ``streamSessionEvents()`` subscription.
     ///
     /// - Parameter subscriptionId: The subscription's id.
     private func dropSessionEventSubscription(_ subscriptionId: ULID) {
         sessionEventSubscriptions.removeValue(forKey: subscriptionId)
     }
 
-    /// Fans one session-scoped event out to every live ``streamSessionEvents()``
-    /// subscription — the route a turn that has no event stream of its own
-    /// surfaces such an event through (see ``RoutedSession/streamSessionEvents()``).
+    /// Fans one session-scoped event out to every live
+    /// ``streamSessionEvents()`` subscription.
     ///
     /// - Parameter event: The event to deliver.
     func emitSessionScopedEvent(_ event: SessionEvent) {
@@ -492,13 +315,9 @@ extension RoutedSessionActor {
         }
     }
 
-    /// Finishes every live ``streamSessionEvents()`` subscription, so a consumer
-    /// looping over one ends when the session does rather than awaiting an event
-    /// that can no longer arrive.
-    ///
-    /// Each `finish()` fires that subscription's termination handler, which drops
-    /// it from ``sessionEventSubscriptions`` on its own; the map is cleared here
-    /// too so a second ``close()`` has nothing left to finish.
+    /// Finishes every live ``streamSessionEvents()`` subscription, so a
+    /// consumer ends when the session does. Clears the map, so a second
+    /// ``close()`` has nothing left to finish.
     func finishSessionEventSubscriptions() {
         for continuation in sessionEventSubscriptions.values {
             continuation.finish()
@@ -507,23 +326,9 @@ extension RoutedSessionActor {
     }
 
     /// The events one streamed ``ResponseFragment`` implies, in yield order.
-    ///
-    /// A restarting fragment yields ``SessionEvent/textReset`` first, so a
-    /// consumer clears what it accumulated before the new response's text
-    /// arrives and ends the turn holding exactly what
-    /// ``respond(to:maxTokens:)`` returns. The text itself follows as an
-    /// ordinary ``SessionEvent/textDelta(_:)`` either way — superseded text is
-    /// still delivered, never withheld (task ^w8dzvee, defect D2).
-    ///
-    /// An empty-text fragment yields no `.textDelta`: the SDK can open a new
-    /// response before any of its text exists, and an empty delta reports
-    /// nothing while looking like output.
-    ///
-    /// The events built here are yielded straight to the per-turn stream's
-    /// continuation and deliberately bypass
-    /// ``RoutedSessionActor/emitSessionScopedEvent(_:)`` — the
-    /// ``RoutedSession/streamSessionEvents()`` feed excludes the per-token
-    /// text increments by contract; see that method for the reason.
+    /// A restarting fragment yields ``SessionEvent/textReset`` first. Non-empty
+    /// text follows as ``SessionEvent/textDelta(_:)``. These events bypass
+    /// ``emitSessionScopedEvent(_:)``.
     ///
     /// - Parameter fragment: The fragment just received from the backend.
     /// - Returns: The events to yield for it, in order.
@@ -532,24 +337,17 @@ extension RoutedSessionActor {
         return fragment.text.isEmpty ? reset : reset + [.textDelta(fragment.text)]
     }
 
-    /// Runs the recorder-bracketed streaming generation, forwarding each
-    /// text chunk the model produces as a ``SessionEvent/textDelta(_:)`` and,
-    /// once the turn's diff runs, every other ``SessionEvent`` it implies —
-    /// to `continuation`.
-    ///
-    /// Extracted from ``streamEvents(to:maxTokens:)`` so that method's
-    /// stream/`Task` scaffolding stays shallow, mirroring
-    /// ``streamGenerating(prompt:maxTokens:into:)``'s own split for the
-    /// plain-text stream.
+    /// Runs the recorder-bracketed streaming generation, forwarding each text
+    /// chunk as a ``SessionEvent/textDelta(_:)`` and, once the turn's diff
+    /// runs, every other ``SessionEvent`` it implies, to `continuation`.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the underlying model's own default ceiling.
-    ///   - continuation: The stream continuation each produced event is
-    ///     yielded to.
-    /// - Throws: Any error thrown by the model, after the chokepoint records the
-    ///   close event and yields whatever ``SessionEvent``s that close implied.
+    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the
+    ///     model's default ceiling.
+    ///   - continuation: The stream continuation each event is yielded to.
+    /// - Throws: Any error thrown by the model, after the close event is
+    ///   recorded and its events are yielded.
     private func streamEventsGenerating(
         prompt: String,
         maxTokens: Int?,
@@ -575,15 +373,14 @@ extension RoutedSessionActor {
     }
 }
 
-/// Whichever of a background run's settlement or a cancellation reaching the
-/// draining call arrives first — the outcome of one run-plane drain wait.
+/// The outcome of one run-plane drain wait: the run's settlement or a
+/// cancellation, whichever arrives first.
 enum RunPlaneDrainWaitOutcome: Sendable {
-    /// The mailbox answered the wait: the run settled, its token was already
-    /// unknown, or the run plane's own deadline elapsed.
+    /// The mailbox answered the wait: the run settled, its token was unknown,
+    /// or the run plane's deadline elapsed.
     case mailbox(WaitOutcome)
 
-    /// A cancellation reached the draining call first, by either route — the
-    /// caller's own task, or ``RoutedSession/cancelCurrentTurn()``. The run is
-    /// left exactly as it was, still running.
+    /// A cancellation reached the draining call first, by the caller's task or
+    /// by ``RoutedSession/cancelCurrentTurn()``. The run stays running.
     case cancelled
 }

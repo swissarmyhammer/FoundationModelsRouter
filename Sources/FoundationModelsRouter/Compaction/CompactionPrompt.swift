@@ -1,19 +1,9 @@
-/// The instructions given to the model-assisted ``Summarization`` compaction
-/// stage (compaction_plan.md §1.3 stage 3, §1.4, §2): what to preserve, how
-/// to structure the continuation summary, and a `name` so recorded folds can
-/// be attributed to the prompt that produced them.
-///
-/// Passed to ``Compactor/compact(_:prompt:budget:summarizer:summarization:pendingRuns:)``; consumers
-/// pass their own value to specialize summarization for their domain (e.g. a
-/// coding agent adding "always list test commands") while keeping
-/// ``default`` as the research-backed starting point.
+/// The instructions given to the ``Summarization`` compaction stage, with a
+/// `name` so recorded folds can be attributed to the prompt that produced
+/// them. Consumers pass their own value to specialize summarization.
 public struct CompactionPrompt: Sendable, Equatable, Codable {
-    /// This prompt's name, recorded verbatim in
-    /// ``CompactionSegment/Content/promptName`` — never the prompt's full
-    /// text — so evals and browsers can attribute a fold's summary quality to
-    /// the exact prompt that produced it (compaction_plan.md §2). A custom
-    /// prompt should carry a name distinguishing it from every other prompt
-    /// it might be compared against.
+    /// This prompt's name, recorded in ``CompactionSegment/Content/promptName``.
+    /// A custom prompt must carry a name distinct from every other prompt.
     public var name: String
 
     /// The summarization instructions sent to the summarizer model verbatim,
@@ -23,50 +13,16 @@ public struct CompactionPrompt: Sendable, Equatable, Codable {
     /// Creates a compaction prompt.
     ///
     /// - Parameters:
-    ///   - name: This prompt's name, recorded in the fold's
-    ///     ``CompactionSegment``.
-    ///   - text: The summarization instructions, sent to the summarizer model
-    ///     verbatim.
+    ///   - name: This prompt's name, recorded in the fold's ``CompactionSegment``.
+    ///   - text: The summarization instructions, sent to the summarizer model verbatim.
     public init(name: String, text: String) {
         self.name = name
         self.text = text
     }
 
-    /// The router's default compaction prompt (compaction_plan.md §2),
-    /// researched against Claude Code's conversation-summarization prompt
-    /// (structured numbered sections; exact paths and identifiers;
-    /// security-relevant instructions preserved verbatim) and the Claude
-    /// platform's own compaction guidance (completed / in-progress / next
-    /// steps / constraints / critical context). Eight numbered sections:
-    /// Intent, Stated facts, Constraints & decisions, Completed, In progress,
-    /// Files & code, Errors & fixes, Next steps — no padding, no
-    /// meta-commentary.
-    ///
-    /// `Stated facts` exists because the other seven have nowhere to put a
-    /// bare fact the user simply told the assistant — a location, a code, a
-    /// name, a number is not a constraint, a decision, a file, an error, or a
-    /// next step. Without a slot of its own, such content is elided into a
-    /// meta-sentence in `Intent` ("the user gave the location of the spare
-    /// toner"), which records THAT a fact was stated and discards WHAT it was:
-    /// a fold that silently drops a fact while leaving a plausible-looking
-    /// summary behind. `Tests/FoundationModelsRouterTests/SummarizationStageTests.swift`'s
-    /// `defaultPromptKeepsBareStatedFacts` pins the section so it cannot be
-    /// removed silently.
-    ///
-    /// The verbatim-value demand and the size-budget paragraph are task
-    /// ^xx02yn6's, both measured on the 2-seed Qwen3.8-27B probe of
-    /// 2026-08-20: where its demand was soft the model abstracted values
-    /// ("then stated the staging database port"), and a model never given a
-    /// size wrote 2.2-3.0 KB answers whose fact sections the old ratio cut
-    /// then discarded. The budget itself is stated per request by
-    /// ``Summarization`` (a number this static text cannot know); this text
-    /// tells the model what that number means.
-    ///
-    /// Named `"router-default-v3"` rather than plain `"default"` so a fold's
-    /// recorded ``CompactionSegment/Content/promptName`` unambiguously
-    /// identifies this exact wording, distinct from the `"router-default-v2"`
-    /// and `"router-default-v1"` revisions it supersedes and from any future
-    /// one.
+    /// The router's default compaction prompt, `"router-default-v3"`: eight
+    /// numbered sections, verbatim values, and a size budget that
+    /// ``Summarization`` states per request.
     public static let `default` = CompactionPrompt(
         name: "router-default-v3",
         text: """

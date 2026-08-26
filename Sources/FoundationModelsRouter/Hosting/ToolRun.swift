@@ -2,15 +2,10 @@ import Foundation
 import FoundationModels
 import Synchronization
 
-/// One call's correlation and body, shared by ``RunToCompletionTool`` and
-/// ``BackgroundTool``: the completion token, the cancellation flag, the
-/// event funnel, the bound ``ToolContext``, and the invocation records
-/// around the work.
+/// One call's correlation and body, shared by ``RunToCompletionTool`` and ``BackgroundTool``.
 struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable {
-    /// The wrapped tool the body calls.
     private let wrapped: any Tool<Arguments, String>
 
-    /// The upstream sink the invocation records are posted to.
     private let sink: any OperationEventSink
 
     /// The context bound around the body; its `completionToken` is the run's key.
@@ -19,26 +14,13 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
     /// The run's single posting funnel.
     let funnel: RunEventFunnel
 
-    /// The sticky request flag behind ``ToolContext/isCancelled``.
     private let cancellationFlag: CancellationRequestFlag
 
-    /// How long the body may run with no progress, or `nil` for no clock.
     private let timeoutSeconds: TimeInterval?
 
-    /// The open invocation record; its close is posted when the body ends.
     private let openRecord: ToolInvocationRecord
 
-    /// Prepares one call: mints the token, builds the funnel and context,
-    /// and resolves the timeout — the tool's per-call value over `mountTimeout`.
-    ///
-    /// - Parameters:
-    ///   - wrapped: The wrapped tool.
-    ///   - arguments: The call's arguments, read for a per-call timeout.
-    ///   - sessionID: The owning session's identity.
-    ///   - mailbox: The owning session's mailbox.
-    ///   - sink: The upstream sink for events and invocation records.
-    ///   - op: The registration site's `"verb noun"` op, or `nil`.
-    ///   - mountTimeout: The mount's timeout, or `nil` for no clock.
+    /// Prepares one call. The tool's per-call timeout wins over `mountTimeout`.
     init(
         wrapped: any Tool<Arguments, String>,
         arguments: Arguments,
@@ -75,8 +57,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         )
     }
 
-    /// The per-call timeout `wrapped` supplies through
-    /// ``DetachmentParameterProviding/detachmentTimeout(from:)``, or `nil`.
+    /// The per-call timeout `wrapped` supplies, or `nil`.
     private static func perCallTimeout(
         of wrapped: any Tool<Arguments, String>, from arguments: Arguments
     ) -> TimeInterval? {
@@ -89,24 +70,18 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         return provider.detachmentTimeout(from: convertible.generatedContent)
     }
 
-    /// Posts the open invocation record, awaited to delivery, so a live
-    /// consumer sees the invocation before the work starts.
+    /// Posts the open invocation record and awaits its delivery.
     func open() async {
         await sink.post(invocation: openRecord)
     }
 
-    /// Raises the cooperative cancellation flag the tool reads as
-    /// ``ToolContext/isCancelled``.
+    /// Raises the cooperative cancellation flag behind ``ToolContext/isCancelled``.
     func requestCancellation() {
         cancellationFlag.request()
     }
 
-    /// Runs the body under the bound context: calls the wrapped tool raced
-    /// against the timeout, settles the funnel with exactly one terminal,
-    /// and posts the close invocation record.
-    ///
-    /// - Parameter arguments: The call's arguments, forwarded untouched.
-    /// - Returns: The in-band result and the run's terminal event.
+    /// Runs the body under the bound context, settles the funnel with one
+    /// terminal, and posts the close invocation record.
     func execute(arguments: Arguments) async -> RunSettlement {
         let settlement = await ToolContext.$current.withValue(context) {
             await settle(arguments: arguments)
@@ -138,9 +113,8 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         return RunSettlement(result: result, terminal: terminal)
     }
 
-    /// Races `inner` against the resettable timeout through a ``RaceGate``.
-    /// A `nil` timeout starts no watcher. Expiry cancels `inner` and resolves
-    /// as ``DetachingToolError/timedOut(tool:timeoutSeconds:)``.
+    /// Races `inner` against the resettable timeout. Expiry cancels `inner`
+    /// and resolves as ``DetachingToolError/timedOut(tool:timeoutSeconds:)``.
     private func raceAgainstTimeout(inner: Task<String, any Error>) async -> Result<String, any Error> {
         guard let timeoutSeconds else {
             return await inner.result
@@ -168,11 +142,8 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         }
     }
 
-    /// Sleeps in full-`timeout` windows until one elapses with no progress
-    /// and no pending elicitation.
-    ///
-    /// - Returns: `true` when the call timed out; `false` when the watcher
-    ///   was cancelled because the race already resolved.
+    /// Sleeps in full-`timeout` windows until one elapses with no progress and no pending elicitation.
+    /// - Returns: `true` when the call timed out; `false` when the watcher was cancelled.
     private static func watchForTimeout(
         funnel: RunEventFunnel, timeoutSeconds: TimeInterval
     ) async -> Bool {
@@ -231,11 +202,8 @@ private enum TimeoutRaceOutcome: Sendable {
     case timedOut
 }
 
-/// A sticky request-for-cancellation flag: set by a canceler, the timeout,
-/// or the calling task's own cancellation, and never cleared. The probe
-/// behind ``ToolContext/isCancelled`` in every per-call binding layer.
+/// A sticky request-for-cancellation flag, never cleared once set.
 final class CancellationRequestFlag: Sendable {
-    /// Whether cancellation has been requested.
     private let requested = Mutex(false)
 
     /// Records the request.
@@ -249,11 +217,8 @@ final class CancellationRequestFlag: Sendable {
     }
 }
 
-/// One run's single posting funnel: every event the run produces passes
-/// through here, which is what makes "exactly one `.completed` per run"
-/// enforceable. Also the deadline state the timeout watcher compares:
-/// progress bumps the reset count, and a pending elicitation suspends the
-/// timeout. Upstream deliveries are FIFO-chained.
+/// One run's single posting funnel. It enforces one `.completed` per run,
+/// holds the deadline state the timeout watcher compares, and chains upstream deliveries FIFO.
 actor RunEventFunnel: OperationEventSink {
     /// One timeout-loop observation.
     struct TimeoutCheckpoint: Sendable, Equatable {
@@ -264,45 +229,30 @@ actor RunEventFunnel: OperationEventSink {
         let isElicitationPending: Bool
     }
 
-    /// The sink every delivery forwards to.
     private let upstream: any OperationEventSink
 
-    /// The session's mailbox: progress feeds its run-plane snapshot, and
-    /// pending elicitations are reconciled against it.
     private let mailbox: SessionMailbox
 
-    /// The run's completion token.
     private let completionToken: String
 
-    /// Whether any event has been delivered upstream for this run.
     private var hasDeliveredAnyEvent = false
 
-    /// Whether a terminal event has been delivered upstream for this run.
     private var hasDeliveredTerminal = false
 
-    /// Bumped by progress and by elicitation resolutions.
     private var deadlineResetCount = 0
 
-    /// The elicitation ids this run posted that were pending at last look.
     private var trackedElicitationIds: Set<ULID> = []
 
-    /// The FIFO chain every upstream delivery is enqueued onto.
     private var deliveryChain = SerialAsyncChain()
 
     /// Creates the funnel for one run.
-    ///
-    /// - Parameters:
-    ///   - upstream: The sink every delivery forwards to.
-    ///   - mailbox: The session's mailbox.
-    ///   - completionToken: The run's completion token.
     init(upstream: any OperationEventSink, mailbox: SessionMailbox, completionToken: String) {
         self.upstream = upstream
         self.mailbox = mailbox
         self.completionToken = completionToken
     }
 
-    /// Records what the deadline and synthesis need, then forwards `event`
-    /// upstream — except a second terminal for the run, which is dropped.
+    /// Records deadline state, then forwards `event` upstream. A second terminal is dropped.
     func post(event: OperationEvent) async {
         switch event.kind {
         case .completed:
@@ -323,11 +273,8 @@ actor RunEventFunnel: OperationEventSink {
         await delivery.value
     }
 
-    /// Delivers `terminal` upstream iff no terminal has passed yet and the
-    /// run either posted any event or ended abnormally. A silent, successful
-    /// run posts nothing at all.
-    ///
-    /// - Parameter terminal: The synthesized terminal event.
+    /// Delivers `terminal` upstream when no terminal has passed yet and the
+    /// run either posted any event or ended abnormally.
     func settleRun(with terminal: OperationEvent) async {
         let mustDeliver =
             !hasDeliveredTerminal && (hasDeliveredAnyEvent || terminal.outcome != .succeeded)
@@ -339,9 +286,7 @@ actor RunEventFunnel: OperationEventSink {
         await enqueueUpstream(event: terminal).value
     }
 
-    /// One timeout-loop observation. An elicitation that resolved since the
-    /// last look bumps the reset count, so the time a question took is never
-    /// counted as a stall.
+    /// One timeout-loop observation. An elicitation resolved since the last look bumps the reset count.
     func timeoutCheckpoint() async -> TimeoutCheckpoint {
         let tracked = trackedElicitationIds
         if !tracked.isEmpty {
@@ -358,8 +303,7 @@ actor RunEventFunnel: OperationEventSink {
         )
     }
 
-    /// Chains one upstream delivery onto ``deliveryChain`` and returns it for
-    /// the caller to await.
+    /// Chains one upstream delivery onto ``deliveryChain`` and returns it.
     private func enqueueUpstream(event: OperationEvent) -> Task<Void, Never> {
         let upstream = self.upstream
         return deliveryChain.enqueue { await upstream.post(event: event) }

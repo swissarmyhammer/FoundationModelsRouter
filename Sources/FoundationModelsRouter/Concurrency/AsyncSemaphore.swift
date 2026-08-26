@@ -1,34 +1,11 @@
 import Synchronization
 
-/// A fair (FIFO), `await`-based counting semaphore.
+/// A fair (FIFO), `await`-based counting semaphore. It never blocks a thread:
+/// a caller with no permit suspends its task and resumes in arrival order.
 ///
-/// This is the single concurrency primitive every router gate is built on (see
-/// the plan's "Concurrency" section): value `1` gives both the per-model
-/// generation gate (``RoutedModel/generationGate``) and each session's own turn
-/// lock (``RoutedSessionActor/turnLock``), and value `maxConcurrentForks` gives
-/// the fork-admission gate. Unlike `DispatchSemaphore` it never blocks a thread — a caller with no
-/// permit available suspends its task and is resumed cooperatively when a permit
-/// is signalled.
-///
-/// Fairness is strict: waiters resume in the exact order they suspended, so no
-/// caller can be starved by later arrivals. Ordering is carried by the FIFO
-/// position of each suspended continuation in `waiters` (append at the back,
-/// resume from the front).
-///
-/// ## Cancellation
-///
-/// ``wait()`` is non-`throwing` (which is what lets ``withPermit(_:)`` be
-/// `rethrows`), so acquisition cannot be reported as "half-done". A non-throwing
-/// acquire therefore cannot be abandoned partway: doing so would either strand a
-/// caller that still believes it holds a permit or, via ``withPermit(_:)``'s
-/// unconditional `signal()`, release a permit that was never acquired and corrupt
-/// the count. Acquisition consequently runs to completion even if the task is
-/// cancelled while suspended; cancellation is observed at the surrounding `await`
-/// boundaries and by the body passed to ``withPermit(_:)``. Because every
-/// ``wait()`` is paired with exactly one ``signal()`` (``withPermit(_:)``
-/// guarantees this with a `defer`), the FIFO queue always drains and no permit
-/// leaks. The only cost is that a cancelled waiter still consumes its FIFO turn
-/// before its body observes the cancellation.
+/// ``wait()`` is non-throwing, so acquisition runs to completion even when
+/// the task is cancelled while suspended. Cancellation is observed at the
+/// surrounding `await` boundaries and by the body of ``withPermit(_:)``.
 public final class AsyncSemaphore: Sendable {
     /// All mutable state, guarded as a unit so check-and-suspend is atomic.
     private struct State {

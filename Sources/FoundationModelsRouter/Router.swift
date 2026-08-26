@@ -1,31 +1,13 @@
 import Foundation
 
-/// The default in-flight fork-session ceiling per resolved profile.
-///
-/// The ceiling a ``Router`` sizes each resident container's fork-admission
-/// gate by, unless the caller of
-/// ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``
-/// states another.
-///
-/// `public` (not `internal`) because the initializer that defaults to it is
-/// `public`: a default argument expression must be at least as visible as the
-/// declaration it defaults on, since it is evaluated at every call site.
+/// The default in-flight fork-session ceiling per resolved profile. It is
+/// `public` because a `public` initializer uses it as a default argument.
 public let defaultMaxConcurrentForks = 4
 
-/// The default headroom reserved out of the machine budget for OS/app use.
-///
-/// `public` for the same reason as ``defaultMaxConcurrentForks``: it is the
-/// default argument for ``Router/init(id:headroomReserve:maxConcurrentForks:cacheDir:recordingsDir:recorder:recordingLevel:redact:probe:metadataSource:loader:)``,
-/// a `public` initializer, and a default argument expression must be at
-/// least as visible as the declaration it defaults on.
+/// The default headroom reserved out of the machine budget for OS and app use.
 public let defaultHeadroomReserveBytes: Int64 = 4 << 30
 
 /// How much of a session's activity is recorded.
-///
-/// The level (and the ``Router``'s `redact` hook) are enforced by a
-/// ``GatingRecorder`` the router wraps its sink in, so every event source — the
-/// session ``generate`` chokepoint and ``RoutedModel/embed(texts:)`` alike —
-/// honors them at record time.
 public enum RecordingLevel: String, Sendable, Codable, Equatable {
     /// Record nothing.
     case off
@@ -35,22 +17,13 @@ public enum RecordingLevel: String, Sendable, Codable, Equatable {
     case full
 }
 
-/// The exact identity of a resident model artifact: what determines whether
-/// two candidate resolutions can share one loaded instance.
+/// The exact identity of a resident model artifact.
 ///
-/// Two candidates share a pool entry only when both the ``ModelRef`` (which
-/// already carries the pinned revision, if any — see ``ModelRef``) *and* the
-/// ``Role`` match. A ref used as a generation model at two different working
-/// contexts is **not** interchangeable — the KV cache is sized into the
-/// loaded container at load time — so ``Role/llm(context:)`` carries the
-/// context; a ref used as an embedder has no such axis (``Footprint/embedder(weightBytes:)``
-/// carries no KV term), so ``Role/embedding`` carries none either. A ref
-/// loaded as an embedder is never interchangeable with the same ref loaded as
-/// a generation model, since the two produce structurally different
-/// container types (``LoadedEmbeddingContainer`` vs. ``LoadedLLMContainer``).
+/// Two candidates share a pool entry only when both the ``ModelRef`` and the
+/// ``Role`` match. A generation model is keyed by its working context because
+/// the KV cache is sized at load time.
 private struct ResidencyKey: Hashable, Sendable {
-    /// The role a resident model was loaded under, and the load-time
-    /// parameter (if any) that changes its resident bytes.
+    /// The role a resident model was loaded under.
     enum Role: Hashable, Sendable {
         /// Loaded as a generation model at this working context.
         case llm(context: Int)
@@ -71,10 +44,7 @@ private struct ResidencyKey: Hashable, Sendable {
     let role: Role
 }
 
-/// A pool entry's loaded container, distinguishing the two container
-/// protocols so a reused entry can be handed back to whichever concrete
-/// handle (``RoutedLLM`` / ``RoutedEmbedder``) needs it without a runtime
-/// cast from the common ``LoadedModelContainer`` base.
+/// A pool entry's loaded container, by container protocol.
 private enum PooledContainer: Sendable {
     case llm(any LoadedLLMContainer)
     case embedding(any LoadedEmbeddingContainer)
@@ -88,61 +58,34 @@ private enum PooledContainer: Sendable {
     }
 }
 
-/// One resident model in the router's pool: reference-counted across every
-/// slot acquisition currently holding it, evicted only once that count
-/// reaches zero.
-///
-/// The entry's ``ResidentModelGates`` is minted once, at first load, and handed
-/// to every ``RoutedModel`` built over this entry from then on — a second
-/// profile that reuses this entry gets the *same* gate instances, so generation
-/// across both profiles' handles still serializes against the one underlying
-/// model (see ``RoutedModel/generationGate``).
+/// One resident model in the router's pool, reference-counted across every
+/// slot acquisition that holds it. Every ``RoutedModel`` built over this
+/// entry shares its ``ResidentModelGates``.
 private struct PoolEntry: Sendable {
-    /// How many slot acquisitions currently hold this model — one per
-    /// profile slot, so a profile whose two generation slots share this
-    /// entry counts twice.
+    /// How many slot acquisitions currently hold this model.
     var refcount: Int
 
-    /// This model's own `× 1.2` margined footprint, as first computed when it
-    /// was loaded — the floor under ``footprintBytes`` for as long as this
-    /// entry exists, independent of whatever marginal (possibly zero) cost a
-    /// later resolve computed when reusing it.
+    /// This model's margined footprint at first load, the floor under ``footprintBytes``.
     let baseFootprintBytes: Int64
 
-    /// The sum of the bytes every live acquisition charged the shared budget
-    /// at its own joint fit: the first load's whole margined footprint, one
-    /// margined session KV cache for each further generation slot on this
-    /// entry — in the same resolve or a later one — and zero for an embedder
-    /// reuse. Each release gives back exactly its own acquisition's charge
-    /// (see ``ResidencyHold``).
+    /// The sum of the bytes every live acquisition charged the shared budget.
+    /// Each release gives back its own acquisition's charge.
     var acquiredChargeBytes: Int64
 
     /// The steady-state bytes this entry holds against the shared budget:
-    /// everything its live acquisitions charged, floored at the first load's
-    /// own footprint — so resident weights never go unaccounted when the
-    /// fully-charged first acquisition releases while a lesser-charged reuse
-    /// still holds the entry.
+    /// the live charge, floored at the first load's own footprint.
     var footprintBytes: Int64 { max(baseFootprintBytes, acquiredChargeBytes) }
 
     /// The loaded container.
     let container: PooledContainer
 
-    /// The gates this resident container carries, which every handle built over
-    /// this entry reuses.
+    /// The gates every handle built over this entry reuses.
     let gates: ResidentModelGates
 }
 
-/// One slot acquisition's hold on a pooled model: the pool key it holds,
-/// beside the bytes that acquisition charged the shared budget at its joint
-/// fit — which is exactly what its release gives back.
-///
-/// The charge differs per acquisition on one shared key: the slot that loaded
-/// the model fresh charged its whole margined footprint, each further
-/// generation slot on the same key — in the same resolve or a later one —
-/// charged one margined session KV cache, and a later resolve's embedder
-/// reuse charged zero. Storing the charge on the hold keeps
-/// ``Router/release(token:)`` able to give back each share without
-/// re-deriving it.
+/// One slot acquisition's hold on a pooled model: the pool key and the bytes
+/// that acquisition charged the shared budget. A release gives back the
+/// charge.
 private struct ResidencyHold: Sendable {
     /// The pooled model this hold references.
     let key: ResidencyKey
@@ -152,55 +95,33 @@ private struct ResidencyHold: Sendable {
 }
 
 /// The shared entry point: built once at app start, it resolves authored
-/// ``ProfileDefinition``s into resident ``LanguageModelProfile``s for *this*
+/// ``ProfileDefinition``s into resident ``LanguageModelProfile``s for this
 /// machine, reporting UI-bindable progress.
 ///
-/// The router holds the disposable host-profile and repo-metadata caches and the
-/// injected seams that keep resolution unit-testable: a ``MachineProbe`` for the
-/// budget, a ``MetadataSource`` for sizing, and a ``ModelLoader`` for the
-/// download+load. Its ``id`` is the recording root every session and transcript
-/// hangs off of, sortable by construction time.
+/// The router holds the host-profile and repo-metadata caches and the
+/// injected seams: a ``MachineProbe`` for the budget, a ``MetadataSource``
+/// for sizing, and a ``ModelLoader`` for the download and load.
 ///
-/// ## Pooled residency
-///
-/// A router admits several concurrently resident profiles, not one at a
-/// time: the memory budget still has exactly one authority (this actor), but
-/// that authority now prices the *union* of every currently resident model
-/// against the one shared budget, rather than one profile's trio against the
-/// whole budget. Residency is reference-counted per ``ResidencyKey`` (a
-/// model's ref, revision, and load-time role/context — see that type) across
-/// every profile that references it: two profiles naming the same model
-/// share one loaded instance and its generation gate, and a model stays
-/// loaded only while at least one profile still references it (see
-/// ``resolve(profile:reporting:)`` and ``release(token:)``).
-///
-/// `resolve(_:reporting:)` itself is single-flight — serialized by
-/// `poolLock` — so the budget decision for a new resolve is never
-/// made against a stale snapshot of the pool while another resolve is
-/// concurrently downloading. This does not limit concurrency where it
-/// matters: once resident, every profile's sessions generate fully
-/// concurrently against their own (possibly shared) models.
+/// A router admits several resident profiles at one time. It prices the
+/// union of every resident model against one shared budget. Residency is
+/// reference-counted per ``ResidencyKey`` across every profile that
+/// references it. ``resolve(profile:reporting:)`` and ``release(token:)``
+/// are serialized by `poolLock`.
 public actor Router {
     /// The recording root id; sortable by construction time.
-    ///
-    /// `nonisolated` because it is immutable and is read synchronously from
-    /// outside the actor (vended handles, recorded events, tests).
     public nonisolated let id: ULID
 
     /// Bytes held out of the budget for OS/app headroom.
     let headroomReserve: Int64
 
-    /// The in-flight fork-session ceiling per resolved profile (consumed for
-    /// fork admission in milestone 9, "Session fork + per-model concurrency
-    /// gates").
+    /// The in-flight fork-session ceiling per resolved profile.
     let maxConcurrentForks: Int
 
     /// The durable transcripts root, or `nil` when recording to memory/none.
     let recordingsDir: URL?
 
-    /// The recorder every vended session and embed call is born holding — the
-    /// base sink wrapped in a ``GatingRecorder`` when the level or `redact` hook
-    /// would trim or transform what is recorded.
+    /// The recorder every vended session and embed call holds: the base sink,
+    /// wrapped in a ``GatingRecorder`` when the level or `redact` hook applies.
     let recorder: any TranscriptRecorder
 
     /// How much of a session's activity is recorded, enforced through ``recorder``.
@@ -218,72 +139,35 @@ public actor Router {
     /// The download+load step behind resolution.
     private let loader: any ModelLoader
 
-    /// Serializes every entry point that mutates ``pool`` — ``resolve(profile:reporting:)``
-    /// end to end *and* ``release(token:)`` — so the budget decision (effective-
-    /// budget computation → joint fit → pool acquisition) a resolve makes is
-    /// never invalidated by a concurrent mutation. This is the single
-    /// authority the correctness requirement calls for: two concurrent
-    /// resolves must never each independently price a candidate against the
-    /// same "what's left" snapshot of the pool, and a release must never
-    /// evict a key a resolve's already-committed pricing decision assumed
-    /// was still free to reuse.
-    ///
-    /// The `release(token:)`-vs-`resolve(_:reporting:)` half of that is not
-    /// optional: `resolve(_:reporting:)` prices an already-pooled candidate
-    /// at its marginal cost up front — one session KV cache for a generation
-    /// model, zero for an embedder — then only actually re-acquires
-    /// (refcount-bumps) it several `await`s later in its acquisition loop.
-    /// Without this lock also guarding `release(token:)`, a concurrent
-    /// release could evict that exact key in between — the later acquisition
-    /// step would then find it gone, silently reload it, and permanently
-    /// record it in the pool at the stale marginal charge the pricing
-    /// decision had already committed to, eroding every future budget
-    /// computation toward an eventual OOM.
-    ///
-    /// A deliberate simplification: mutation is single-flight even though
-    /// resident profiles run fully concurrently once resolved (their
-    /// sessions never touch this lock). A finer-grained scheme — reserving
-    /// just-decided keys before releasing the lock so independent downloads
-    /// could overlap — is not needed by anything this router promises today.
+    /// Serializes every entry point that mutates ``pool``:
+    /// ``resolve(profile:reporting:)`` end to end and ``release(token:)``.
+    /// A resolve prices a pooled candidate at its marginal cost and acquires
+    /// it later, so a concurrent release must not evict that key in between.
     private let poolLock = AsyncSemaphore(value: 1)
 
     /// The resident-model pool, keyed by exact artifact identity and
-    /// reference-counted across every profile that references it. The
-    /// authority ``resolve(profile:reporting:)`` and ``release(token:)`` operate on.
+    /// reference-counted across every profile that references it.
     private var pool: [ResidencyKey: PoolEntry] = [:]
 
-    /// Which pool holds each currently resident profile (by its residency
-    /// token) was granted — exactly three per profile (standard, flash,
-    /// embedding), whose keys may repeat if a profile's own slots share a
-    /// key. Each hold carries the bytes its acquisition charged the budget,
-    /// so ``release(token:)`` gives back exactly those shares, then forgets
-    /// the token, making a double release or a stale `deinit` a safe no-op.
+    /// The pool holds each resident profile was granted, by residency token.
+    /// ``release(token:)`` gives back each hold's charge and forgets the token,
+    /// so a double release is a no-op.
     private var residentProfiles: [ULID: [ResidencyHold]] = [:]
 
     /// Creates a router.
     ///
     /// - Parameters:
-    ///   - id: The recording root id; pass one in to continue a prior recording
-    ///     root. Defaults to a fresh ULID.
-    ///   - headroomReserve: Bytes held out of the budget. Defaults to
-    ///     ``defaultHeadroomReserveBytes`` (4 GB).
-    ///   - maxConcurrentForks: In-flight fork sessions per profile. Defaults to
-    ///     ``defaultMaxConcurrentForks``.
-    ///   - cacheDir: The disposable cache directory. Defaults to the user caches
-    ///     directory under `FoundationModelsRouter`.
+    ///   - id: The recording root id. Pass one in to continue a prior root.
+    ///   - headroomReserve: Bytes held out of the budget.
+    ///   - maxConcurrentForks: In-flight fork sessions per profile.
+    ///   - cacheDir: The disposable cache directory, or `nil` for the user caches directory.
     ///   - recordingsDir: The durable transcripts root, or `nil`.
-    ///   - recorder: The recorder vended sessions are born holding. When `nil`,
-    ///     a JSONL recorder under `recordingsDir` is used if one is set,
-    ///     otherwise the no-op ``NoneRecorder``.
-    ///   - recordingLevel: How much to record. Defaults to ``RecordingLevel/full``.
+    ///   - recorder: The recorder, or `nil` for a JSONL recorder under `recordingsDir` or ``NoneRecorder``.
+    ///   - recordingLevel: How much to record.
     ///   - redact: An optional redaction hook applied to recorded text.
-    ///   - probe: The machine probe behind the budget. Defaults to ``SystemMachineProbe``.
-    ///   - metadataSource: The metadata fetch behind sizing. Defaults to
-    ///     ``HuggingFaceMetadataSource``.
-    ///   - loader: The download+load step. Defaults to
-    ///     ``UnconfiguredModelLoader`` — pass a configured ``LiveModelLoader``
-    ///     (or, in tests, a stub) for real loading, since the live download path
-    ///     requires an injected `Downloader`/`TokenizerLoader`.
+    ///   - probe: The machine probe behind the budget.
+    ///   - metadataSource: The metadata fetch behind sizing.
+    ///   - loader: The download and load step. Pass a configured ``LiveModelLoader`` for real loading.
     public init(
         id: ULID = .generate(),
         headroomReserve: Int64 = defaultHeadroomReserveBytes,
@@ -320,35 +204,20 @@ public actor Router {
         self.loader = loader
     }
 
-    /// Resolves an authored profile into a resident ``LanguageModelProfile`` for
-    /// this machine, reporting progress through `sizing → downloading → loading →
-    /// ready` (or `failed`).
+    /// Resolves an authored profile into a resident ``LanguageModelProfile``
+    /// for this machine, reporting progress through sizing, downloading,
+    /// loading, and ready or failed.
     ///
-    /// Computes the *effective* budget — the machine budget less every
-    /// currently pooled model's own footprint — sizes every candidate via repo
-    /// metadata (candidates already pool-resident are charged only their
-    /// marginal cost, see
-    /// ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``),
-    /// runs joint fit to pick the trio, then acquires each slot: reusing a
-    /// pooled model when one already matches, or downloading, loading, and
-    /// preloading a genuinely new one. On an unsatisfiable profile it sets the
-    /// progress phase to ``ResolutionProgress/Phase/failed(_:)`` and throws
-    /// ``ResolutionFailure`` carrying the per-slot diagnostics — including the
-    /// case where the profile's union with what's already resident would
-    /// exceed the budget and nothing resident is evictable (every currently
-    /// pooled model is still referenced by a live profile).
-    ///
-    /// Single-flight: the whole pipeline (through the final pool acquisition)
-    /// is serialized against any other in-flight ``resolve(profile:reporting:)`` on
-    /// this router, so the budget decision is always made against a
-    /// consistent snapshot of the pool.
+    /// The effective budget is the machine budget less every pooled model's
+    /// footprint. A pooled candidate is charged only its marginal cost. The
+    /// whole pipeline is single-flight on this router.
     ///
     /// - Parameters:
     ///   - def: The authored profile to resolve.
-    ///   - progress: The UI-bindable progress to drive (mutated on the main actor).
+    ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
     /// - Returns: The resolved, resident profile.
-    /// - Throws: ``ResolutionFailure`` when no trio co-fits the effective
-    ///   budget, or any download/load error from the ``ModelLoader``.
+    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   or any download or load error from the ``ModelLoader``.
     public func resolve(
         profile def: ProfileDefinition,
         reporting progress: ResolutionProgress
@@ -470,36 +339,21 @@ public actor Router {
 
     // MARK: - Residency
 
-    /// Acquires the pooled model identified by `key`: reuses an
-    /// already-pooled entry (bumping its refcount) or downloads through
-    /// `load` and inserts a fresh pool entry with newly-minted gates when
-    /// none exists yet.
-    ///
-    /// Shared by ``acquireLLM(key:chosen:slot:context:footprintBytes:chargedBytes:newKeys:progress:)``
-    /// and ``acquireEmbedder(key:chosen:footprintBytes:chargedBytes:newKeys:progress:)``:
-    /// the generation and embedding slots acquire identically except for the
-    /// loader call and the concrete container type, which `load` and `wrap`
-    /// supply.
+    /// Acquires the pooled model identified by `key`: bumps an existing
+    /// entry's refcount, or downloads through `load` and inserts a fresh entry.
     ///
     /// - Parameters:
     ///   - key: This candidate's exact residency identity.
     ///   - chosen: The chosen model reference.
     ///   - slot: The slot being acquired.
-    ///   - footprintBytes: This slot's whole `× 1.2` footprint, recorded on a
-    ///     fresh pool entry as the floor under its steady-state cost.
-    ///   - chargedBytes: The `× 1.2` bytes this acquisition charged the
-    ///     shared budget at its joint fit, added to the entry's live charge —
-    ///     the whole footprint on a fresh load, one session KV cache for
-    ///     each further generation slot on an already-charged or
-    ///     already-resident key, and zero for an embedder reuse.
-    ///   - newKeys: Accumulates `key` when this call inserted a fresh entry,
-    ///     so the caller knows which acquired keys still need preloading.
+    ///   - footprintBytes: This slot's whole margined footprint, the floor of a fresh entry.
+    ///   - chargedBytes: The bytes this acquisition charged the shared budget.
+    ///   - newKeys: Accumulates `key` when this call inserted a fresh entry.
     ///   - progress: The progress to drive through acquisition.
-    ///   - load: The loader call producing a fresh resident container.
-    ///   - wrap: Wraps a freshly-loaded container into the type-erased
-    ///     ``PooledContainer`` stored on the pool entry.
-    /// - Returns: `key`, for the caller's own bookkeeping.
-    /// - Throws: Any error the loader raises downloading a fresh container.
+    ///   - load: The loader call that produces a fresh resident container.
+    ///   - wrap: Wraps a fresh container into a ``PooledContainer``.
+    /// - Returns: `key`.
+    /// - Throws: Any error the loader raises.
     private func acquireModel<Loaded>(
         key: ResidencyKey,
         chosen: ModelRef,
@@ -531,26 +385,10 @@ public actor Router {
         return key
     }
 
-    /// Acquires the generation slot for `key` from its pooled entry.
-    ///
-    /// The `.standard` and `.flash` slots acquire identically, differing
-    /// only by slot and context, so both go through
+    /// Acquires a generation slot for `key` through
     /// ``acquireModel(key:chosen:slot:footprintBytes:chargedBytes:newKeys:progress:load:wrap:)``.
     ///
-    /// - Parameters:
-    ///   - key: This candidate's exact residency identity.
-    ///   - chosen: The chosen model reference.
-    ///   - slot: The slot being acquired (`.standard`/`.flash`).
-    ///   - context: The working context to load a fresh container at.
-    ///   - footprintBytes: This slot's whole `× 1.2` footprint, recorded on a
-    ///     fresh pool entry as the floor under its steady-state cost.
-    ///   - chargedBytes: The `× 1.2` bytes this acquisition charged the
-    ///     shared budget at its joint fit, added to the entry's live charge.
-    ///   - newKeys: Accumulates `key` when this call inserted a fresh entry,
-    ///     so the caller knows which acquired keys still need preloading.
-    ///   - progress: The progress to drive through acquisition.
-    /// - Returns: `key`, for the caller's own bookkeeping.
-    /// - Throws: Any error the loader raises downloading a fresh container.
+    /// - Parameter context: The working context to load a fresh container at.
     private func acquireLLM(
         key: ResidencyKey,
         chosen: ModelRef,
@@ -570,10 +408,8 @@ public actor Router {
         )
     }
 
-    /// Acquires the embedding slot for `key` from its pooled entry — the
-    /// ``acquireLLM(key:chosen:slot:context:footprintBytes:chargedBytes:newKeys:progress:)``
-    /// counterpart for the embedding role, which has no context axis and a
-    /// different loader call.
+    /// Acquires the embedding slot for `key` through
+    /// ``acquireModel(key:chosen:slot:footprintBytes:chargedBytes:newKeys:progress:load:wrap:)``.
     private func acquireEmbedder(
         key: ResidencyKey,
         chosen: ModelRef,
@@ -591,28 +427,12 @@ public actor Router {
         )
     }
 
-    /// Decrements the resident-model references a profile identified by
-    /// `token` was granted at resolve time, evicting through the loader only
-    /// whichever pooled models drop to zero references as a result — a model
-    /// another still-live profile also references stays resident.
+    /// Releases the resident-model references a profile was granted at
+    /// resolve time. A pooled model that drops to zero references is evicted.
     ///
-    /// Called by ``LanguageModelProfile/release()`` (and its `deinit`), and
-    /// by ``resolve(profile:reporting:)`` itself to roll back a failed attempt.
-    /// Idempotent and safe against staleness: `token` is looked up (and
-    /// removed) from ``residentProfiles``, so a double release — or a
-    /// `deinit` firing after an explicit release — finds nothing and is a
-    /// no-op, and can never clobber a different, still-live profile's
-    /// references. Because the token is never reused (unlike an
-    /// address-derived `ObjectIdentifier`), a freed profile's `deinit` can
-    /// never collide with a later profile's token.
+    /// Idempotent: a token not in ``residentProfiles`` is a no-op.
     ///
-    /// Also serialized by ``poolLock`` against any in-flight
-    /// ``resolve(profile:reporting:)`` — see that property's doc comment for why
-    /// this is not optional: without it, this could evict a key a
-    /// concurrent resolve's already-committed pricing decision assumed was
-    /// still free to reuse.
-    ///
-    /// - Parameter token: The residency token of the profile asking to be released.
+    /// - Parameter token: The residency token of the profile to release.
     func release(token: ULID) async {
         await poolLock.wait()
         defer { poolLock.signal() }
@@ -622,16 +442,8 @@ public actor Router {
         }
     }
 
-    /// Decrements one pooled model's refcount by one and gives back the bytes
-    /// that acquisition charged the shared budget, evicting the model through
-    /// the loader once the refcount reaches zero. A no-op if `key` is not
-    /// currently pooled.
-    ///
-    /// - Parameters:
-    ///   - key: The pooled model one acquisition is releasing.
-    ///   - chargedBytes: The `× 1.2` bytes that acquisition charged at its
-    ///     joint fit — its share of the entry's live charge, and exactly what
-    ///     this release gives back.
+    /// Decrements one pooled model's refcount and gives back `chargedBytes`.
+    /// Evicts the model at zero references. A no-op when `key` is not pooled.
     private func releaseKey(key: ResidencyKey, chargedBytes: Int64) async {
         guard var entry = pool[key] else { return }
         entry.refcount -= 1
@@ -662,16 +474,8 @@ public actor Router {
 
     // MARK: - Sizing
 
-    /// Fetches every candidate's parsed metadata once per `(slot, ref)`
-    /// occurrence, merging results for a ref shared across slots (see
-    /// ``preferSuccess(left:right:)``).
-    ///
-    /// Metadata — not a footprint baked in at one fixed context — is what's
-    /// cached here: ``JointFit``'s context ladder queries footprint and
-    /// native-max-context at however many different context rungs it needs
-    /// while deriving the working context, all purely sync from the metadata
-    /// already in hand (see ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``),
-    /// no further I/O once this returns.
+    /// Fetches every candidate's parsed metadata, merging results for a ref
+    /// shared across slots with ``preferSuccess(left:right:)``.
     private func sizeCandidates(
         profile def: ProfileDefinition
     ) async -> [ModelRef: Result<RepoMetadata, RepoMetadataError>] {
@@ -689,9 +493,8 @@ public actor Router {
         return out
     }
 
-    /// Fetches and parses one candidate's metadata, passing a thrown
-    /// ``RepoMetadataError`` through unchanged and wrapping any other thrown
-    /// error into ``RepoMetadataError/metadataUnavailable(_:)``.
+    /// Fetches and parses one candidate's metadata. A non-``RepoMetadataError``
+    /// error becomes ``RepoMetadataError/metadataUnavailable(_:)``.
     private func metadataResult(for ref: ModelRef) async -> Result<RepoMetadata, RepoMetadataError> {
         do {
             return .success(try await metadataReader.metadata(for: ref))
@@ -702,11 +505,8 @@ public actor Router {
         }
     }
 
-    /// Merges two metadata results for the same ref fetched via different
-    /// slot memberships, keeping the first successful result — or, when both
-    /// failed, the first (chronologically earliest) failure — so a transient
-    /// failure fetching one slot's occurrence never poisons a later slot's
-    /// successful one.
+    /// Merges two metadata results for one ref: the first success, or the
+    /// first failure when both failed.
     private static func preferSuccess(
         left lhs: Result<RepoMetadata, RepoMetadataError>,
         right rhs: Result<RepoMetadata, RepoMetadataError>
@@ -722,11 +522,6 @@ public actor Router {
     }
 
     /// Every slot a ref is a candidate for, across the whole profile.
-    ///
-    /// A ref shared across slots (e.g. one small model listed as both an
-    /// embedding and a standard candidate) must be sized under *every*
-    /// interpretation it could be used under — see
-    /// ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``.
     private static func slotMembership(profile def: ProfileDefinition) -> [ModelRef: Set<ModelSlot>] {
         var membership: [ModelRef: Set<ModelSlot>] = [:]
         for (slot, refs) in def.candidatesBySlot {
@@ -737,31 +532,17 @@ public actor Router {
         return membership
     }
 
-    /// The shared "no metadata fetched for this candidate" diagnostic, used
-    /// everywhere ``sizeCandidates(profile:)`` came up empty for a `ref` that
-    /// ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``
-    /// or ``runJointFit(profile:budget:metadataByRef:residentKeys:progress:)``'s
-    /// `nativeMaxContext` closure needs sized — kept in one place so both
-    /// sites can't drift out of wording sync.
+    /// The shared diagnostic for a candidate that has no fetched metadata.
     private static func unsizedCandidateMessage(for ref: ModelRef) -> String {
         "candidate \(ref.stringValue) was not sized"
     }
 
-    /// The raw footprint bytes for one candidate at a context, conservatively
-    /// sized across every slot it is a candidate for: the embedding
-    /// interpretation has no KV cache (weights alone), while standard/flash
-    /// do — a ref that is a candidate for both is sized under both and the
-    /// larger figure is kept, so neither slot's fit test under-estimates it.
+    /// The raw footprint bytes for one candidate at a context, sized under
+    /// every slot it is a candidate for, with the largest figure kept.
     ///
-    /// Pool-aware: for each interpretation, the figure charged against the
-    /// budget when that exact ``ResidencyKey`` is already resident
-    /// (`residentKeys`) is the candidate's *marginal* cost — the pool already
-    /// carries the weights, but a reused generation model still costs one
-    /// session KV cache, because this resolve's own sessions materialize new
-    /// caches on the shared container. A reused embedder is genuinely free
-    /// (``Footprint/embedder(weightBytes:)`` carries no KV term), and a
-    /// genuinely new candidate is charged its whole raw footprint against
-    /// whatever budget remains.
+    /// A candidate whose ``ResidencyKey`` is in `residentKeys` is charged its
+    /// marginal cost: one session KV cache for a generation model, zero for
+    /// an embedder.
     private static func footprintBytes(
         for ref: ModelRef,
         context: Int,
@@ -800,21 +581,8 @@ public actor Router {
     }
 
     /// The per-session KV cache bytes for one candidate loaded as a generation
-    /// model at a working context.
-    ///
-    /// This is what a second slot on one resident container still pays: the
-    /// container is shared, and each session materializes a cache of its own.
-    ///
-    /// Unlike ``footprintBytes(for:context:metadataByRef:membership:residentKeys:)``
-    /// this figure is **never** discounted for residency. A pool entry records
-    /// its container and ONE session, so a second session's cache is a cost the
-    /// pool does not yet hold, whether or not the model is already loaded.
-    /// Discounting it would let a box accept a profile it cannot hold.
-    ///
-    /// The embedding interpretation has no cache at all
-    /// (``Footprint/embedder(weightBytes:)`` carries no KV term), and only the
-    /// two generation slots can share one ``ResidencyKey``, so the generation
-    /// interpretation is the whole answer.
+    /// model at a working context. This figure is never discounted for
+    /// residency.
     ///
     /// - Parameters:
     ///   - ref: The candidate to size.
@@ -871,23 +639,8 @@ public actor Router {
 
     // MARK: - Download & load
 
-    /// Downloads and loads the chosen model for a slot through the given loader
-    /// call: marks the slot downloading, then hands the ref, slot, and
-    /// byte-progress reporter to `load`.
-    ///
-    /// The container type `C` is inferred from the loader call at each site —
-    /// ``LoadedLLMContainer`` for the generation slots, ``LoadedEmbeddingContainer``
-    /// for the embedding slot — so the generation and embedding load paths share
-    /// one body and differ only in the closure passed in.
-    ///
-    /// - Parameters:
-    ///   - chosen: The chosen model reference.
-    ///   - slot: The slot the model is being loaded for.
-    ///   - progress: The progress to mark downloading before loading.
-    ///   - load: The loader call producing the resident container, invoked with
-    ///     the ref, slot, and a best-effort download-progress reporter.
-    /// - Returns: The resident container produced by `load`.
-    /// - Throws: Any error thrown by `load`.
+    /// Marks a slot downloading, then loads its chosen model through `load`,
+    /// which receives the ref, slot, and a download-progress reporter.
     private func download<C>(
         ref chosen: ModelRef,
         slot: ModelSlot,
@@ -910,30 +663,14 @@ public actor Router {
         await setSlotState(slot, to: .ready, progress: progress)
     }
 
-    /// A best-effort, monotonic download-progress callback that updates a slot's
-    /// byte counts on the main actor.
-    ///
-    /// Each tick applies its update in its own `Task { @MainActor }`, so ticks
-    /// are unordered with respect to one another *and* to the awaited phase
-    /// transitions. Two guards keep the surfaced progress trustworthy for the
-    /// multi-GB downloads a UI bar tracks:
-    ///
-    /// - **State guard**: the update only applies while the slot is still
-    ///   ``SlotProgress/State/downloading``, so a late callback never clobbers a
-    ///   slot the orchestration has already moved to loading, ready, or failed.
-    /// - **Monotonicity**: `bytesDownloaded` only ever advances
-    ///   (`max(current, tick)`), so an out-of-order tick that arrives with a
-    ///   smaller count cannot flick the bar backward; and a known
-    ///   `bytesTotal` is adopted only when the tick actually reports one
-    ///   (`> 0`), so a later tick that has not yet learned the total (`0`)
-    ///   cannot erase it.
+    /// A monotonic download-progress callback that updates a slot's byte
+    /// counts on the main actor. A tick applies only while the slot is still
+    /// ``SlotProgress/State/downloading``, and never moves the counts backward.
     ///
     /// - Parameters:
     ///   - slot: The slot whose byte counts this callback advances.
-    ///   - progress: The UI-bindable progress whose slot is mutated (on the main
-    ///     actor) and refreshed on each tick.
-    /// - Returns: A `@Sendable` closure that applies one ``DownloadProgress`` tick
-    ///   to the slot — monotonically, and only while it is still downloading.
+    ///   - progress: The UI-bindable progress whose slot is mutated.
+    /// - Returns: A `@Sendable` closure that applies one ``DownloadProgress`` tick.
     static func reporter(
         slot: ModelSlot,
         progress: ResolutionProgress
@@ -998,29 +735,16 @@ public actor Router {
         )
     }
 
-    /// Builds a routed model handle for `slot` from its pooled entry,
-    /// stamping it with this router's id, recorder, and transcripts root, and
-    /// reusing the pool entry's own generation/fork-admission gates.
-    ///
-    /// Shared by ``makeRoutedLLM(slot:chosen:resolution:key:resolvedProfile:)``
-    /// and ``makeRoutedEmbedder(chosen:resolution:key:resolvedProfile:)``:
-    /// the `.standard`/`.flash` generation handles and the embedding handle
-    /// are built identically except for the concrete container type they
-    /// unwrap from the pool entry's type-erased ``PooledContainer``, which
-    /// `unwrap` supplies. The entry's gates are passed uniformly even though
-    /// the embedding handle acquires neither of them.
+    /// Builds a routed model handle for `slot` from its pooled entry, with
+    /// this router's id, recorder, transcripts root, and the entry's gates.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
     ///   - chosen: The chosen model reference for the slot.
     ///   - resolution: Why this model won its slot.
-    ///   - key: This slot's exact residency identity, looked up in ``pool``
-    ///     for its container and gates.
-    ///   - resolvedProfile: The run's resolved-profile facts, recorded onto
-    ///     the sidecar of every root session vended from this handle.
-    ///   - unwrap: Extracts this handle's concrete container type from the
-    ///     pooled entry's ``PooledContainer``, or `nil` if the entry holds
-    ///     the other container kind.
+    ///   - key: This slot's residency identity, looked up in ``pool``.
+    ///   - resolvedProfile: The run's resolved-profile facts for root session sidecars.
+    ///   - unwrap: Extracts the concrete container from a ``PooledContainer``, or `nil`.
     /// - Returns: The routed model handle.
     private func makeRoutedModel<Container: Sendable>(
         slot: ModelSlot,
@@ -1054,10 +778,6 @@ public actor Router {
     }
 
     /// Builds a generation handle for a slot from its pooled entry.
-    ///
-    /// The `.standard` and `.flash` slots construct identical ``RoutedLLM``
-    /// handles differing only by slot, chosen ref, resolution, and pool key,
-    /// so both go through ``makeRoutedModel(slot:chosen:resolution:key:resolvedProfile:unwrap:)``.
     private func makeRoutedLLM(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -1074,14 +794,7 @@ public actor Router {
         }
     }
 
-    /// Builds the embedding handle from its pooled entry — the
-    /// ``makeRoutedLLM(slot:chosen:resolution:key:resolvedProfile:)``
-    /// counterpart for the embedding role.
-    ///
-    /// The embedding handle never vends a session, so its writer is never
-    /// reached — it is carried anyway because a durable root and its writer
-    /// are one value, which is what keeps the generation handles from being
-    /// handed a root with no writer.
+    /// Builds the embedding handle from its pooled entry.
     private func makeRoutedEmbedder(
         chosen: ModelRef,
         resolution: SlotResolution,
@@ -1097,24 +810,8 @@ public actor Router {
         }
     }
 
-    /// Pairs this run's durable transcripts root with the sidecar writer
-    /// sessions vended from one handle record their `session.json` through, or
-    /// `nil` when this run has nowhere durable to record.
-    ///
-    /// Gated purely on "is there somewhere durable to write". The recording
-    /// level is not a gate here — it is the returned writer's own business, so
-    /// a root is never handed out without the writer that keeps what lands
-    /// under it loadable (see ``DurableRecording``).
-    ///
-    /// - Parameters:
-    ///   - slot: The slot the handle fills.
-    ///   - chosen: The concrete model resident in that slot.
-    ///   - resolution: Why that model won its slot, for the context it was
-    ///     resolved at.
-    ///   - resolvedProfile: The run's resolved-profile facts, recorded onto
-    ///     root sessions.
-    /// - Returns: The root and its writer, or `nil` when nothing is recorded
-    ///   durably.
+    /// Pairs this run's durable transcripts root with the sidecar writer for
+    /// one handle, or `nil` when there is no durable root.
     private func makeDurableRecording(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -1137,13 +834,8 @@ public actor Router {
 
     // MARK: - Resolution lookups
 
-    /// The ``SlotResolution`` for a slot in a joint resolution.
-    ///
-    /// Total by construction: a ``JointResolution`` only exists on the success
-    /// path, where ``JointFit`` always records a resolution for every slot in
-    /// allocation order — a missing slot is a broken invariant, not a runtime
-    /// condition, so it traps rather than returning an optional the callers would
-    /// have to unwrap.
+    /// The ``SlotResolution`` for a slot in a joint resolution. Traps when
+    /// the slot is missing, because ``JointFit`` records every slot.
     private static func slotResolution(for resolution: JointResolution, slot: ModelSlot)
         -> SlotResolution
     {
@@ -1159,18 +851,13 @@ public actor Router {
         slotRes.considered.first { $0.verdict == .chosen }
     }
 
-    /// The chosen candidate's `× 1.2` footprint estimate for a slot, or `0` when
-    /// unrecorded.
+    /// The chosen candidate's margined footprint estimate for a slot, or `0`.
     private static func chosenFootprint(for slotRes: SlotResolution) -> Int64 {
         chosenReport(for: slotRes)?.estimatedFootprintBytes ?? 0
     }
 
-    /// The `× 1.2` bytes ``JointFit`` charged the shared budget for a slot's
-    /// chosen candidate, or `0` when unrecorded — the whole footprint for a
-    /// fresh candidate, one session KV cache for a generation slot on an
-    /// already-charged or already-resident reference, and zero for an
-    /// embedder reuse. This is the figure the pool must hold so its
-    /// `residentFootprint` matches what joint fit reserved.
+    /// The bytes ``JointFit`` charged the shared budget for a slot's chosen
+    /// candidate, or `0`.
     private static func chosenCharge(for slotRes: SlotResolution) -> Int64 {
         chosenReport(for: slotRes)?.chargedBytes ?? 0
     }

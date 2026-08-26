@@ -1,23 +1,9 @@
 import FoundationModels
 
-/// The untyped entry point that mounts a tool for a session: Router's
-/// tool-instancing seams hold plain `[any Tool]` lists, so this is where the
-/// existential is opened and the decorator chosen.
-///
-/// `Session/ToolOutputCapping.swift` extends this namespace with
-/// ``sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``.
+/// The untyped entry point that mounts a tool for a session: it opens the `any Tool` existential and picks the decorator.
 public enum ToolDetachment {
-    /// Wraps `tool` on the session plane an ambient ``ToolContext`` names —
-    /// the entry point for a binder outside this package that mounts its own
-    /// inner calls. The decision and every guarantee are those of
-    /// ``wrapping(tool:sessionID:mailbox:sink:op:configuration:)``.
-    ///
-    /// - Parameters:
-    ///   - tool: The tool to mount.
-    ///   - context: The enclosing call's ambient context.
-    ///   - sink: The upstream sink the run's events are posted to.
-    ///   - op: The registration site's `"verb noun"` op, or `nil`.
-    ///   - configuration: The mount, unless `tool` declares its own.
+    /// Wraps `tool` on the session plane of `context`, for a binder outside this package that mounts its own inner calls.
+    /// The result is that of ``wrapping(tool:sessionID:mailbox:sink:op:configuration:)``.
     /// - Returns: The mounted tool.
     public static func wrapping(
         tool: any Tool,
@@ -36,20 +22,9 @@ public enum ToolDetachment {
         )
     }
 
-    /// Mounts `tool`: a `String`-output tool becomes a ``BackgroundTool`` or a
-    /// ``RunToCompletionTool`` per the mount it declares through
-    /// ``DetachmentParameterProviding/detachmentMount`` or, when it declares
-    /// none, per `configuration`. Any other tool becomes the binding-only
-    /// ``ContextBindingTool``, because the pending envelope replaces output
-    /// on the `String` wire alone.
-    ///
-    /// - Parameters:
-    ///   - tool: The tool to mount.
-    ///   - sessionID: The owning session's identity.
-    ///   - mailbox: The owning session's mailbox.
-    ///   - sink: The upstream sink the run's events are posted to.
-    ///   - op: The registration site's `"verb noun"` op, or `nil`.
-    ///   - configuration: The mount, unless `tool` declares its own.
+    /// Mounts `tool`. A `String`-output tool becomes a ``BackgroundTool`` or a ``RunToCompletionTool``, per the mount it declares through ``DetachmentParameterProviding/detachmentMount`` or, when it declares none, per `configuration`.
+    /// Any other tool becomes a ``ContextBindingTool``.
+    /// - Parameter op: The registration site's `"verb noun"` op, or `nil`.
     /// - Returns: The mounted tool.
     public static func wrapping(
         tool: any Tool,

@@ -29,9 +29,8 @@ import Foundation
 /// ``tool``, open order inside the turn frame) and the diff's `.toolCall`
 /// identifies the SDK call — and neither id may be stamped into the other.
 ///
-/// `Codable`/`Equatable`/`Sendable` so task ^1s8p8qt (`TurnOutcome`) can later
-/// surface a turn's records directly, giving a caller per-call durations
-/// without touching the event stream. That API is deliberately not built here.
+/// `Codable`/`Equatable`/`Sendable` so a turn's records can be surfaced
+/// directly without the event stream.
 public struct ToolInvocationRecord: Sendable, Equatable, Codable {
     /// The session-visible tool identity the run's ``ToolContext`` stamps on
     /// every event it posts — never empty.

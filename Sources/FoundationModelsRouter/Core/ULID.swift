@@ -22,16 +22,12 @@ extension ULID {
     public static let stringLength = 26
 
     /// Generates a new ULID for the current instant with random low bits.
-    ///
-    /// - Returns: A freshly generated ULID.
     public static func generate() -> ULID {
         ULID()
     }
 
     /// Parses a canonical 26-character Crockford base32 ULID string.
-    ///
-    /// - Parameter string: The text to decode.
-    /// - Returns: The decoded ULID, or `nil` if `string` is not a valid ULID.
+    /// Returns `nil` if `string` is not a valid ULID.
     public init?(_ string: String) {
         self.init(ulidString: string)
     }

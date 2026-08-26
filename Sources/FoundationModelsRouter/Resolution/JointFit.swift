@@ -1,11 +1,7 @@
 import Foundation
 
-/// The successful result of joint fit: the chosen model for each slot plus the
-/// per-slot reasoning that produced it.
-///
-/// The `embedding`, `standard`, and `flash` references are the resolved trio —
-/// always present on success. `slots` carries the full ``SlotResolution`` for
-/// each, including the candidates that were skipped, too large, or unsizable.
+/// The successful result of joint fit: the chosen model for each slot and the
+/// per-slot reasoning.
 public struct JointResolution: Sendable, Equatable {
     /// The chosen embedding model.
     public let embedding: ModelRef
@@ -20,12 +16,6 @@ public struct JointResolution: Sendable, Equatable {
     public let slots: [SlotResolution]
 
     /// Creates a joint resolution.
-    ///
-    /// - Parameters:
-    ///   - embedding: The chosen embedding model.
-    ///   - standard: The chosen standard model.
-    ///   - flash: The chosen flash model.
-    ///   - slots: Each slot's resolution, in allocation order.
     public init(embedding: ModelRef, standard: ModelRef, flash: ModelRef, slots: [SlotResolution]) {
         self.embedding = embedding
         self.standard = standard
@@ -37,70 +27,24 @@ public struct JointResolution: Sendable, Equatable {
 /// The pure joint allocation that picks the highest-preference combination of
 /// three slot models that co-fits one shared memory budget.
 ///
-/// Allocation runs in preference order against the shared budget — **embedding**
-/// first (its footprint is reserved), then **standard**, then **flash** — so
-/// later slots see only what earlier slots left behind. Within a slot the
-/// candidates are tried in the author's preference order (biggest/best first)
-/// and the first that fits wins; the author's quant choices are never
-/// substituted, only accepted or skipped.
+/// Allocation runs in order against the shared budget: embedding, then
+/// standard, then flash. Each slot sees only what earlier slots left. In a slot,
+/// the candidates are tried in the author's preference order. The first
+/// candidate that fits wins. A candidate fits when `charge × 1.2 <= remaining`.
 ///
-/// The fit margin lives here, not in ``Footprint``: a candidate is viable in
-/// `remaining` iff `charge × 1.2 <= remaining`. The `× 1.2` is applied exactly
-/// once, at the conversion from the raw bytes a candidate charges to the figure
-/// recorded in ``CandidateReport/chargedBytes`` and used for both the fit test
-/// and the budget reservation.
+/// Two slots that name one reference in one role share one resident container.
+/// The weights are charged one time. A later slot on the same container is
+/// charged only its per-session KV cache, read from `sessionBytes`.
 ///
-/// ## One resident container, one reservation
+/// When ``ProfileDefinition/context`` is explicit, every candidate is sized at
+/// that one context. When it is `nil`, the context is derived by a ladder:
+/// standard-slot candidates are the outer loop, and a descending ladder of
+/// context rungs, anchored on each candidate's native max context, is the
+/// inner loop. The first candidate with a fitting rung wins at its largest
+/// fitting rung.
 ///
-/// The router pools a loaded model on `(ModelRef, role)`, and `standard` and
-/// `flash` load the same role, so two slots naming one reference share one
-/// resident container. Charging that reference twice sizes the box for a copy
-/// the router never allocates, and rejects profiles the box can comfortably run.
-///
-/// So the **weights** are charged one time. What a repeated slot still pays for
-/// is its **KV cache**, which is per session rather than per container: two
-/// slots on one resident model open their own sessions, and each materializes
-/// its own cache. The dedupe covers the weights and nothing else — see
-/// `SharedBudget` for the reservation and `ReservationKey` for what makes two
-/// candidates one container.
-///
-/// The two injected sizing closures answer two different questions, and that
-/// difference is what keeps the second session honest.
-///
-/// - `footprint` answers what a candidate costs the budget **now**. The router
-///   answers a marginal cost for a model it already holds resident: the pool
-///   carries the weights, but a resident generation model still costs one
-///   session KV cache — this resolve's own sessions materialize new caches on
-///   the shared container — and a resident embedder costs zero.
-/// - `sessionBytes` answers the **absolute** size of one session's KV cache,
-///   which no residency discounts. A pool entry covers its container and one
-///   session, so the second slot's cache is always a cost the pool does not
-///   yet hold. Reading that cache out of `footprint` instead would charge the
-///   whole weights again for a fresh model named by both generation slots.
-///
-/// ## Deriving the working context
-///
-/// ``ProfileDefinition/context`` is the working context every slot's footprint
-/// is sized at. When the author sets it explicitly, that one figure is used
-/// for every candidate in every slot — a single implicit rung, exactly as
-/// before context derivation existed (see ``resolveAtFixedContext``).
-///
-/// When it is `nil`, the working context is *derived* via a ladder, under one
-/// policy: **model choice is the outer loop, context is the inner loop**.
-/// Standard-slot candidates are walked biggest/best-first exactly as the
-/// fixed-context path always has; for *each* candidate, a descending ladder of
-/// context rungs — anchored on that candidate's own native max context — is
-/// tried until one fits the whole trio (embedding, this candidate, flash) or
-/// the ladder is exhausted. The **first candidate with any fitting rung wins,
-/// at its largest fitting rung** — a smaller model that could reach a bigger
-/// context never displaces a bigger, higher-preference model that fits at a
-/// smaller one; there is no minimum context floor beyond wherever the ladder
-/// ends. See ``resolveViaLadder``.
-///
-/// The allocation is pure: per-candidate footprints and native max contexts are
-/// injected as closures, so it is unit-testable with injected values and never
-/// performs I/O. The real wiring to ``RepoMetadata`` happens in the router's
-/// resolve step.
+/// The allocation is pure. Footprints and native max contexts are injected as
+/// closures, so it does no I/O.
 public enum JointFit {
     /// The overhead margin numerator: footprints are scaled by `6 / 5` (`× 1.2`).
     private static let marginNumerator: Int64 = 6
@@ -108,12 +52,11 @@ public enum JointFit {
     /// The overhead margin denominator.
     private static let marginDenominator: Int64 = 5
 
-    /// The context step-down rungs a standard-slot candidate's ladder tries
-    /// below its own native max context, in descending order.
+    /// The context step-down rungs a ladder tries below the native max
+    /// context, in descending order.
     private static let ladderStepDowns: [Int] = [131_072, 65_536, 32_768, 16_384, 8_192, 4_096]
 
-    /// Applies the `× 1.2` overhead margin to a raw footprint, rounding up so the
-    /// budgeted figure is never an under-estimate.
+    /// Applies the `× 1.2` overhead margin to a raw footprint. Rounds up.
     ///
     /// - Parameter rawBytes: The raw footprint in bytes.
     /// - Returns: `ceil(rawBytes × 1.2)`.
@@ -123,13 +66,8 @@ public enum JointFit {
 
     // MARK: - Reserving one resident container once
 
-    /// The role a slot loads its chosen model under, which is the axis that
-    /// decides whether two slots share one resident container.
-    ///
-    /// `standard` and `flash` both load a generation container, so they share
-    /// one. The embedding slot loads an embedder — a different container type,
-    /// under a different pool key — so it shares nothing with a generation slot
-    /// even when both slots name the identical reference.
+    /// The role a slot loads its chosen model under. Two slots share one
+    /// resident container only when they load one reference in one role.
     private enum ResidentRole: Hashable {
         /// Loaded as a generation model, for the `standard` and `flash` slots.
         case generation
@@ -138,8 +76,6 @@ public enum JointFit {
         case embedding
 
         /// The role `slot` loads its chosen model under.
-        ///
-        /// - Parameter slot: The slot doing the loading.
         init(slot: ModelSlot) {
             switch slot {
             case .standard, .flash:
@@ -150,48 +86,21 @@ public enum JointFit {
         }
     }
 
-    /// The unit a model's weights are reserved on, exactly once.
-    ///
-    /// It is the reference **as the author wrote it** — the repository plus the
-    /// optional pinned revision — beside the role it is loaded under, because
-    /// that pair is what the router keys its resident pool on.
-    ///
-    /// Two references spelled differently are two keys even when the two would
-    /// resolve to one commit: the pool never resolves the spelling, so it loads
-    /// two containers. Deduping on a resolved identity would reserve for one of
-    /// them and let a box accept a profile it cannot hold.
-    ///
-    /// This key carries no context, while the router's own pool key does. The
-    /// two agree only because **one resolution gives one context to every
-    /// slot**: ``resolveAtFixedContext(profile:budgetBytes:context:footprint:sessionBytes:)``
-    /// writes that one figure onto all three slot resolutions, so two slots
-    /// that name one reference always name it at one context. That property is
-    /// load-bearing for memory safety. If per-slot contexts are ever added,
-    /// this key becomes coarser than the pool key, two containers collapse
-    /// onto one reservation, and a whole set of weights goes unreserved. Add
-    /// the context to this key in the same change.
+    /// The unit a model's weights are reserved on, one time: the reference as
+    /// the profile spells it, and the role it is loaded under. The key carries
+    /// no context because one resolution gives one context to every slot. If
+    /// per-slot contexts are added, add the context to this key.
     private struct ReservationKey: Hashable {
         /// The candidate reference, exactly as the profile spells it.
-        ///
-        /// Read only by the synthesized `Hashable` conformance, which is what
-        /// makes this a set key; periphery sees no caller.
         // periphery:ignore
         let ref: ModelRef
 
         /// The role the slot loads that reference under.
-        ///
-        /// Read only by the synthesized `Hashable` conformance, which is what
-        /// makes this a set key; periphery sees no caller.
         // periphery:ignore
         let role: ResidentRole
     }
 
     /// The shared budget as the slots consume it, in allocation order.
-    ///
-    /// A chosen candidate is charged one time. A later slot naming a key an
-    /// earlier slot already charged is charged its per-session KV cache alone,
-    /// because the router loads one container for both — see the injected
-    /// `sessionBytes` closure.
     private struct SharedBudget {
         /// The bytes still available to the next slot.
         private(set) var remainingBytes: Int64
@@ -200,16 +109,12 @@ public enum JointFit {
         private(set) var chargedKeys: Set<ReservationKey> = []
 
         /// Creates a budget with nothing charged yet.
-        ///
-        /// - Parameter totalBytes: The whole shared budget the trio must co-fit.
         init(totalBytes: Int64) {
             remainingBytes = totalBytes
         }
 
-        /// Charges a resolved slot's chosen candidate, and records its weights
-        /// as reserved. A slot that chose nothing charges nothing.
-        ///
-        /// - Parameter resolution: The slot resolution to charge.
+        /// Charges a resolved slot's chosen candidate and records its key as
+        /// reserved. A slot that chose nothing charges nothing.
         mutating func charge(_ resolution: SlotResolution) {
             guard let report = chosenReport(resolution) else { return }
             remainingBytes -= report.chargedBytes ?? 0
@@ -222,28 +127,13 @@ public enum JointFit {
     /// Resolves a profile's three slots against one shared budget.
     ///
     /// - Parameters:
-    ///   - profile: The authored profile whose slots supply candidates in
-    ///     preference order.
-    ///   - budgetBytes: The shared memory budget, in bytes, the three slots must
-    ///     co-fit.
-    ///   - footprint: The injected per-candidate raw footprint at a given
-    ///     working context, or ``RepoMetadataError/metadataUnavailable(_:)``
-    ///     when a candidate cannot be sized. The caller may answer a *marginal*
-    ///     cost here — the router answers one session KV cache for a
-    ///     generation model it already holds resident, and zero for a
-    ///     resident embedder.
-    ///   - sessionBytes: The injected per-candidate KV cache bytes for **one**
-    ///     session at a given working context. This one is always the absolute
-    ///     figure: a cache is materialized per session, so a second slot on one
-    ///     resident container pays for a cache the box does not yet hold. It is
-    ///     read only for a slot that reuses an earlier slot's container.
-    ///   - nativeMaxContext: The injected per-candidate native max context,
-    ///     used only to build the ladder for standard-slot candidates when
-    ///     ``ProfileDefinition/context`` is `nil`; never invoked when it is
-    ///     explicit.
+    ///   - profile: The authored profile whose slots supply candidates in preference order.
+    ///   - budgetBytes: The shared memory budget, in bytes.
+    ///   - footprint: The raw footprint of a candidate at a context. May be a marginal cost for a resident model.
+    ///   - sessionBytes: The absolute KV cache bytes of one session at a context. Read only for a slot that reuses an earlier slot's container.
+    ///   - nativeMaxContext: The native max context of a candidate. Read only when ``ProfileDefinition/context`` is `nil`.
     /// - Returns: The chosen trio and per-slot reasoning.
-    /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate in
-    ///   the budget that remains; the failure carries every slot's reasoning.
+    /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate.
     public static func resolve(
         profile: ProfileDefinition,
         budgetBytes: Int64,
@@ -271,23 +161,9 @@ public enum JointFit {
 
     // MARK: - Explicit context (single rung)
 
-    /// Resolves the trio at one fixed working context: every slot's full
-    /// candidate list is tried in preference order at that one context, first
-    /// fit wins. This is the whole of resolution when
-    /// ``ProfileDefinition/context`` is explicit, and is also the ladder's
-    /// building block for a single rung.
+    /// Resolves the trio at one fixed working context. Every slot resolution it
+    /// returns carries this one `context`.
     ///
-    /// Every slot resolution it returns carries this one `context`, which is
-    /// what lets `ReservationKey` leave the context out — see that type.
-    ///
-    /// - Parameters:
-    ///   - profile: The authored profile supplying every slot's candidates.
-    ///   - budgetBytes: The shared memory budget the trio must co-fit.
-    ///   - context: The one working context every candidate is sized at.
-    ///   - footprint: The injected per-candidate raw footprint at `context`.
-    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
-    ///     session at `context`.
-    /// - Returns: The chosen trio and per-slot reasoning.
     /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate.
     private static func resolveAtFixedContext(
         profile: ProfileDefinition,
@@ -325,20 +201,8 @@ public enum JointFit {
         )
     }
 
-    /// Resolves a single slot against the remaining budget, choosing the first
-    /// viable candidate in preference order and recording a verdict for each.
-    ///
-    /// - Parameters:
-    ///   - slot: The slot being resolved.
-    ///   - candidates: The slot's candidates, in author preference order.
-    ///   - budget: The shared budget as earlier slots left it, carrying both
-    ///     what remains and which keys they already reserved.
-    ///   - context: The working context to size every candidate at.
-    ///   - footprint: The injected per-candidate raw footprint at `context`.
-    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
-    ///     session at `context`.
-    /// - Returns: The slot's resolution, with one ``CandidateReport`` per
-    ///   candidate.
+    /// Resolves one slot against the remaining budget. The first viable
+    /// candidate in preference order wins. Each candidate gets a verdict.
     private static func resolveSlot(
         _ slot: ModelSlot,
         candidates: [ModelRef],
@@ -388,32 +252,9 @@ public enum JointFit {
         )
     }
 
-    /// Sizes one candidate against the remaining budget at a given context,
-    /// producing its verdict.
-    ///
-    /// This is the success-case logic factored out of ``resolveSlot(_:candidates:budget:context:footprint:sessionBytes:)``:
-    /// a candidate is `.chosen` when the bytes it charges fit what remains,
-    /// `.tooLarge` when they don't, and `.metadataUnavailable` when it could
-    /// not be sized at all.
-    ///
-    /// A candidate whose key an earlier slot already reserved charges its
-    /// per-session KV cache alone, because the router loads one container for
-    /// both slots. That cache is read from `sessionBytes` and never derived
-    /// from `footprint`, which for a fresh container answers the whole
-    /// weights rather than the cost of one more session. Its report still
-    /// carries the whole footprint, so a reader sees both the size of the
-    /// model and what it cost.
-    ///
-    /// - Parameters:
-    ///   - ref: The candidate being sized.
-    ///   - role: The role the slot loads the candidate under.
-    ///   - context: The working context to size the candidate at.
-    ///   - budget: The shared budget as earlier slots left it.
-    ///   - footprint: The injected per-candidate raw footprint at `context`.
-    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
-    ///     session at `context`.
-    /// - Returns: The candidate's report, with its verdict and (when sized) its
-    ///   `× 1.2` footprint and charge.
+    /// Sizes one candidate against the remaining budget at `context` and gives
+    /// its verdict. A candidate whose key an earlier slot reserved is charged
+    /// its per-session KV cache from `sessionBytes` only.
     private static func evaluateCandidate(
         _ ref: ModelRef,
         role: ResidentRole,
@@ -439,11 +280,6 @@ public enum JointFit {
     }
 
     /// The report for a candidate the injected closures could not size.
-    ///
-    /// - Parameters:
-    ///   - ref: The candidate that could not be sized.
-    ///   - reason: Why its sizing metadata could not be read.
-    /// - Returns: A report that carries no bytes and the unavailable verdict.
     private static func unsizedReport(_ ref: ModelRef, reason: String) -> CandidateReport {
         CandidateReport(
             ref: ref,
@@ -455,17 +291,6 @@ public enum JointFit {
 
     /// The report for a sized candidate: its whole `× 1.2` footprint, the
     /// `× 1.2` bytes it charges, and whether that charge fits what remains.
-    ///
-    /// The two byte figures differ for a slot that reuses an earlier slot's
-    /// container: the footprint names the size of the model, and the charge
-    /// names its own KV cache.
-    ///
-    /// - Parameters:
-    ///   - ref: The candidate being reported.
-    ///   - wholeBytes: Its whole raw footprint at the working context.
-    ///   - rawChargeBytes: The raw bytes it charges the shared budget.
-    ///   - budget: The shared budget as earlier slots left it.
-    /// - Returns: The candidate's report, with its verdict.
     private static func sizedReport(
         _ ref: ModelRef,
         wholeBytes: Int64,
@@ -482,41 +307,26 @@ public enum JointFit {
     }
 
     /// The report for the candidate a slot chose, or `nil` when it chose none.
-    ///
-    /// - Parameter resolution: The slot resolution to read.
-    /// - Returns: The chosen candidate's report, if there is one.
     private static func chosenReport(_ resolution: SlotResolution) -> CandidateReport? {
         resolution.considered.first { $0.verdict == .chosen }
     }
 
     // MARK: - Derived context (ladder)
 
-    /// One attempt at resolving the full trio — embedding, the standard
-    /// candidates on offer, and flash — at one working context.
-    ///
-    /// Kept as full ``SlotResolution``s (not just a pass/fail bit) so a
-    /// failing attempt still yields the standard candidate's own footprint at
-    /// this rung for a ``LadderAttempt`` even when a *different* slot is what
-    /// actually blocked the trio.
+    /// One attempt at resolving the full trio at one working context.
     private struct TrioAttempt {
         let embedding: SlotResolution
         let standard: SlotResolution
         let flash: SlotResolution
 
-        /// The three resolutions in allocation order: embedding reserves first,
-        /// then standard, then flash sees what is left.
+        /// The three resolutions in allocation order.
         var slots: [SlotResolution] { [embedding, standard, flash] }
 
         /// Whether every slot found a viable candidate at this rung.
         var isSucceeded: Bool { blockedSlot == nil }
 
         /// The slot that stopped this rung, or `nil` when the whole trio co-fit.
-        ///
-        /// The standard slot answers first, ahead of allocation order. A rung
-        /// prints the standard candidate's own footprint, so "this candidate
-        /// did not fit" is the fact a reader needs before any other slot's.
-        /// Only when this candidate did fit does another slot's failure become
-        /// the reason the rung failed.
+        /// The standard slot is reported first, ahead of allocation order.
         var blockedSlot: ModelSlot? {
             if standard.chosen == nil {
                 return .standard
@@ -525,23 +335,10 @@ public enum JointFit {
         }
     }
 
-    /// Resolves the full trio at one working context against one shared budget,
-    /// charging each slot's choice before the next slot sees what is left.
+    /// Resolves the full trio at one working context against one shared budget.
+    /// Each slot's choice is charged before the next slot is resolved.
     ///
-    /// Every path through joint fit runs through here: the explicit-context path
-    /// offers the profile's whole standard list, and each ladder rung offers the
-    /// one candidate its outer loop is currently trying. One body keeps the
-    /// deduped reservation in one place.
-    ///
-    /// - Parameters:
-    ///   - profile: The authored profile supplying embedding/flash candidates.
-    ///   - standardCandidates: The standard-slot candidates on offer here.
-    ///   - budgetBytes: The shared memory budget the trio must co-fit.
-    ///   - context: The working context to size every candidate at.
-    ///   - footprint: The injected per-candidate raw footprint at `context`.
-    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
-    ///     session at `context`.
-    /// - Returns: The three slot resolutions, in allocation order.
+    /// - Parameter standardCandidates: The standard-slot candidates to try here.
     private static func attemptTrio(
         profile: ProfileDefinition,
         standardCandidates: [ModelRef],
@@ -581,55 +378,34 @@ public enum JointFit {
     }
 
     /// Builds the descending context ladder for one standard-slot candidate:
-    /// its own native max context (capped defensively — ``RepoMetadata``
-    /// already clamps to ``RepoMetadata/nativeMaxContextCap``, but an injected
-    /// test double need not), followed by every step-down rung strictly below
-    /// that top rung.
-    ///
-    /// - Parameter nativeMaxContext: The candidate's own native max context.
-    /// - Returns: The descending rungs to try, largest first.
+    /// its native max context, capped at ``RepoMetadata/nativeMaxContextCap``,
+    /// then every step-down rung below that top rung.
     private static func contextLadder(nativeMaxContext: Int) -> [Int] {
         let topRung = min(nativeMaxContext, RepoMetadata.nativeMaxContextCap)
         return [topRung] + ladderStepDowns.filter { $0 < topRung }
     }
 
-    /// A standard-slot candidate's winning ``TrioAttempt``, with the
-    /// embedding and flash choices already unwrapped from it.
-    ///
-    /// Only ever constructed once ``TrioAttempt/isSucceeded`` is known `true`,
-    /// so `embedding`/`flash` are always the trio's chosen references at that
-    /// rung — never re-derived or re-checked by callers.
+    /// A standard-slot candidate's winning ``TrioAttempt``, with the embedding
+    /// and flash choices unwrapped from it.
     private struct LadderWinner {
         let attempt: TrioAttempt
         let embedding: ModelRef
         let flash: ModelRef
     }
 
-    /// The outcome of walking one standard-slot candidate's descending
-    /// context ladder: every rung attempted, plus the winning rung (if any).
+    /// The outcome of one standard-slot candidate's ladder walk.
     private struct LadderWalkResult {
-        /// Every rung tried, largest first, in the order attempted.
+        /// Every rung tried, largest first.
         let attempts: [LadderAttempt]
 
-        /// The rung the candidate won at, or `nil` when no rung co-fit the
-        /// trio.
+        /// The rung the candidate won at, or `nil` when no rung co-fit the trio.
         let winner: LadderWinner?
     }
 
-    /// Walks one standard-slot candidate's descending context ladder (see
-    /// ``contextLadder(nativeMaxContext:)``), trying each rung's full-trio
-    /// attempt largest-first, and stopping at the first rung where the whole
-    /// trio — embedding, this candidate, and flash — co-fits the budget.
+    /// Walks one standard-slot candidate's descending context ladder. Stops at
+    /// the first rung where the whole trio co-fits the budget.
     ///
-    /// - Parameters:
-    ///   - candidate: The standard-slot candidate being tried.
-    ///   - profile: The authored profile supplying embedding/flash candidates.
-    ///   - budgetBytes: The shared memory budget the trio must co-fit.
-    ///   - native: The candidate's own native max context, anchoring the ladder.
-    ///   - footprint: The injected per-candidate raw footprint at a context.
-    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
-    ///     session at a context.
-    /// - Returns: Every rung attempted and the winning rung, if any.
+    /// - Parameter native: The candidate's native max context.
     private static func walkLadder(
         candidate: ModelRef,
         profile: ProfileDefinition,
@@ -668,27 +444,12 @@ public enum JointFit {
         return LadderWalkResult(attempts: attempts, winner: nil)
     }
 
-    /// Builds the successful ``JointResolution`` once a standard-slot
-    /// candidate has won at some ladder rung.
-    ///
-    /// This is the success-case logic factored out of ``resolveViaLadder``:
-    /// it assembles the standard slot's ``SlotResolution`` from the
-    /// candidates considered before this one, the winning candidate's own
-    /// report (carrying every rung it tried), and the remaining
-    /// lower-preference candidates — recorded as skipped, since a
-    /// higher-preference candidate already won and they were never sized.
+    /// Builds the ``JointResolution`` after a standard-slot candidate won at a
+    /// ladder rung. Later candidates are recorded as skipped.
     ///
     /// - Parameters:
-    ///   - candidate: The winning standard-slot candidate.
-    ///   - index: The candidate's position in ``ProfileDefinition/standard``,
-    ///     so lower-preference candidates after it can be recorded as skipped.
-    ///   - profile: The authored profile supplying the full standard list.
-    ///   - standardConsidered: The reports for standard candidates tried
-    ///     before this one (all `.metadataUnavailable`, `.tooLarge`, or
-    ///     `.trioBlocked`).
-    ///   - ladderAttempts: Every rung tried for the winning candidate.
-    ///   - winner: The winning rung's trio attempt.
-    /// - Returns: The resolved trio and per-slot reasoning.
+    ///   - index: The candidate's position in ``ProfileDefinition/standard``.
+    ///   - standardConsidered: The reports for standard candidates tried before this one.
     private static func makeLadderSuccess(
         candidate: ModelRef,
         index: Int,
@@ -729,33 +490,12 @@ public enum JointFit {
         )
     }
 
-    /// Resolves a profile whose ``ProfileDefinition/context`` is `nil` by
-    /// deriving the working context via the ladder.
+    /// Resolves a profile whose ``ProfileDefinition/context`` is `nil`. Standard
+    /// candidates are the outer loop. Each candidate's context ladder is the
+    /// inner loop. The first candidate with a fitting rung wins at its largest
+    /// fitting rung.
     ///
-    /// **Model choice is the outer loop**: standard-slot candidates are walked
-    /// biggest/best-first, exactly as ``resolveAtFixedContext``. **Context is
-    /// the inner loop**: for each candidate, the descending ladder built from
-    /// its own native max context (see ``contextLadder(nativeMaxContext:)``) is
-    /// tried until the whole trio (embedding, this candidate, flash) co-fits
-    /// the budget, or the ladder is exhausted. The first candidate with *any*
-    /// fitting rung wins, at its largest fitting rung — a smaller model that
-    /// could reach a bigger context never displaces a bigger, higher-preference
-    /// model that fits at a smaller one.
-    ///
-    /// - Parameters:
-    ///   - profile: The authored profile; ``ProfileDefinition/context`` must be
-    ///     `nil` (callers dispatch on this in ``resolve(profile:budgetBytes:footprint:sessionBytes:nativeMaxContext:)``).
-    ///   - budgetBytes: The shared memory budget the trio must co-fit.
-    ///   - footprint: The injected per-candidate raw footprint at a context.
-    ///   - sessionBytes: The injected per-candidate KV cache bytes for one
-    ///     session at a context.
-    ///   - nativeMaxContext: The injected per-candidate native max context,
-    ///     queried once per standard candidate to build its ladder.
-    /// - Returns: The chosen trio and per-slot reasoning, with the winning
-    ///   context recorded on every slot's ``SlotResolution/contextTokens``.
-    /// - Throws: ``ResolutionFailure`` when no standard candidate has any
-    ///   fitting rung; the failure's standard slot enumerates every candidate's
-    ///   ladder attempts.
+    /// - Throws: ``ResolutionFailure`` when no standard candidate has a fitting rung.
     private static func resolveViaLadder(
         profile: ProfileDefinition,
         budgetBytes: Int64,
@@ -869,18 +609,10 @@ public enum JointFit {
         )
     }
 
-    /// The verdict for a standard-slot candidate whose whole context ladder
-    /// failed.
+    /// The verdict for a standard-slot candidate whose whole ladder failed.
     ///
-    /// The candidate is ``Verdict/tooLarge`` only when it is what blocked the
-    /// smallest rung tried — the rung it had the most budget at, and so its best
-    /// chance. When a different slot blocked that rung the candidate itself fit,
-    /// and the verdict names the slot that ran out instead. Reporting `tooLarge`
-    /// there would put that word against a candidate a later slot can accept.
-    ///
-    /// - Parameter attempts: Every rung the candidate tried, largest first.
-    /// - Returns: ``Verdict/tooLarge``, or ``Verdict/trioBlocked(_:)`` naming
-    ///   the slot that had no viable candidate.
+    /// - Returns: ``Verdict/tooLarge`` when the candidate blocked the smallest
+    ///   rung, or ``Verdict/trioBlocked(_:)`` naming the slot that blocked it.
     private static func exhaustedLadderVerdict(_ attempts: [LadderAttempt]) -> Verdict {
         guard
             let smallestRung = attempts.last,

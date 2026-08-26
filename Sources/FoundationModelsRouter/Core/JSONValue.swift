@@ -1,23 +1,13 @@
 import Foundation
 
-/// A dynamically-typed JSON value.
-///
-/// Schema-guided generation produces output whose shape is known only at
-/// runtime, so the router cannot map it onto a static Swift type. `JSONValue`
-/// models any JSON document — the six JSON kinds — and round-trips losslessly
-/// through `JSONEncoder`/`JSONDecoder`.
-///
-/// The type is pure value semantics — no dependency on MLX — and is `Sendable`,
-/// `Equatable`, and `Codable`. Its custom `Codable` conformance encodes each
-/// case as the corresponding native JSON value rather than a tagged wrapper, so
-/// the encoded form is ordinary JSON.
+/// A dynamically-typed JSON value. Its `Codable` form is ordinary JSON, not a
+/// tagged wrapper.
 public enum JSONValue: Sendable, Equatable, Codable {
     /// JSON `null`.
     case null
     /// A JSON boolean.
     case bool(Bool)
-    /// A JSON number. JSON does not distinguish integers from reals, so all
-    /// numbers are carried as `Double`.
+    /// A JSON number, carried as `Double`.
     case number(Double)
     /// A JSON string.
     case string(String)
@@ -26,10 +16,7 @@ public enum JSONValue: Sendable, Equatable, Codable {
     /// A JSON object keyed by string.
     case object([String: JSONValue])
 
-    /// Decodes a value as ordinary JSON, dispatching on the encountered kind.
-    ///
-    /// - Throws: `DecodingError.dataCorrupted` if the value is not a JSON kind
-    ///   (`null`, boolean, number, string, array, or object).
+    /// Decodes a value as ordinary JSON. Throws `DecodingError.dataCorrupted` if the value is not a JSON kind.
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
@@ -54,8 +41,7 @@ public enum JSONValue: Sendable, Equatable, Codable {
         }
     }
 
-    /// Encodes the value as ordinary JSON, emitting the native JSON value for
-    /// the case rather than a tagged wrapper.
+    /// Encodes the value as ordinary JSON.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {

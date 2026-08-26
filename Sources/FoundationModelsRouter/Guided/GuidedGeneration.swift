@@ -1,16 +1,12 @@
 import Foundation
 
-/// A failure compiling or validating a ``Grammar`` for guided generation.
+/// A failure to compile or validate a ``Grammar`` for guided generation.
 ///
-/// xgrammar accepts only a subset of JSON Schema. Grammars that use constructs
-/// outside that subset and cannot be normalized are surfaced here — like a
-/// metadata failure, not a crash — so a caller can correct the schema. The
-/// validation that raises these is pure (no GPU), so it runs and is asserted in
-/// the unit suite; real constrained decoding over MLX is gated to milestone 7.
+/// xgrammar accepts only a subset of JSON Schema. A grammar outside that
+/// subset fails here, so a caller can correct the schema.
 public enum GuidedRequestError: Error, Equatable {
-    /// The JSON-schema grammar used xgrammar-unsupported keywords that this layer
-    /// cannot normalize (a sorted, de-duplicated subset of `$ref`, `allOf`,
-    /// `format`).
+    /// The JSON-schema grammar used unsupported keywords (a sorted subset of
+    /// `$ref`, `allOf`, `format`).
     case unsupportedSchemaConstructs([String])
 
     /// The JSON-schema source was not a parseable JSON object.
@@ -19,68 +15,33 @@ public enum GuidedRequestError: Error, Equatable {
     /// The grammar source was empty.
     case emptyGrammar
 
-    /// The constrained model output could not be turned into the requested shape:
-    /// the raw text did not decode into the caller's `Generable` type (typed
-    /// shape) or did not parse into a ``JSONValue`` (dynamic shape). The
-    /// associated value is the offending raw output.
-    ///
-    /// This makes the higher-level shapes (milestone 8b) surface a decode failure
-    /// through the *same* typed error as an xgrammar-subset rejection, so a caller
-    /// handles both kinds of guided-generation failure in one `catch`.
+    /// The constrained output did not decode into the requested shape. The
+    /// associated value is the raw output.
     case decodingFailed(String)
 
-    /// A ``Grammar/ebnf(_:)`` grammar was routed to the `LanguageModelSession`-backed
-    /// live path, which has no raw-grammar entry point.
-    ///
-    /// Apple's `LanguageModelSession` only exposes guided generation through a
-    /// typed `schema: GenerationSchema` parameter — there is no API that accepts a
-    /// raw EBNF/GBNF grammar string. ``Grammar/jsonSchema(_:)`` *is* supported, but
-    /// **not** via `GenerationSchema`'s own `Codable` conformance: that decode was
-    /// tried and empirically fails on a caller's plain JSON Schema text — it
-    /// requires proprietary metadata (`x-order`, a mandatory `title`) only its own
-    /// encoder produces, and treats a titled string as a closed-enum carrier (see
-    /// `LanguageModelSessionBackendTests.GenerationSchemaDecodingTests`). Instead,
-    /// ``RuntimeJSONSchemaConverter`` hand-compiles the schema text into a
-    /// `GenerationSchema` via `DynamicGenerationSchema`. Raw EBNF has no equivalent
-    /// hook of either kind: implementing it would require driving xgrammar's EBNF
-    /// compiler ourselves outside of `LanguageModelSession` — exactly the
-    /// hand-rolled generation loop this pivot removes. So `.ebnf` is a real,
-    /// upstream-API-shaped limitation of the `LanguageModelSession` backend, not an
-    /// unimplemented convenience — see plan.md's "Guided generation" section.
+    /// A ``Grammar/ebnf(_:)`` grammar was routed to the `LanguageModelSession`
+    /// backend, which accepts only a `GenerationSchema` and has no raw-grammar
+    /// entry point.
     case ebnfNotSupportedByLanguageModelSession
 }
 
 extension Grammar {
-    /// JSON Schema keywords outside the xgrammar-supported subset that this layer
-    /// does not attempt to normalize, and therefore rejects.
+    /// JSON Schema keywords outside the xgrammar-supported subset.
     static let unsupportedSchemaKeywords: Set<String> = ["$ref", "allOf", "format"]
 
-    /// Keywords whose value is a map of *names* to subschemas — the map's keys are
-    /// property/definition names (data), not schema keywords, so they must not be
-    /// checked against ``unsupportedSchemaKeywords``; only their values are
-    /// subschemas to recurse into.
+    /// Keywords whose value maps names to subschemas.
     private static let subschemaMapKeywords: Set<String> =
         ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]
 
-    /// Keywords whose value is instance *data*, not a subschema — their contents
-    /// are not walked, so a data value that happens to contain a key named like a
-    /// keyword is not mistaken for that keyword in use.
+    /// Keywords whose value is instance data, not a subschema.
     private static let instanceDataKeywords: Set<String> =
         ["enum", "const", "default", "examples"]
 
-    /// Validates this grammar against the xgrammar-supported subset, throwing a
-    /// typed ``GuidedRequestError`` for anything that cannot be compiled.
+    /// Validates this grammar against the xgrammar-supported subset.
     ///
-    /// This is the real, GPU-free half of "compiling" a grammar: it parses and
-    /// checks the source so unsupported constructs fail loudly here rather than
-    /// deep inside the (gated) live decode. The xgrammar engine behind a
-    /// ``LoadedLLMContainer``'s guided entry point calls this before constraining
-    /// decode.
-    ///
-    /// - Throws: ``GuidedRequestError/unsupportedSchemaConstructs(_:)`` for a
-    ///   JSON schema using `$ref`/`allOf`/`format`,
-    ///   ``GuidedRequestError/invalidJSONSchema(_:)`` for a schema that is not
-    ///   valid JSON, or ``GuidedRequestError/emptyGrammar`` for empty source.
+    /// - Throws: ``GuidedRequestError/unsupportedSchemaConstructs(_:)``,
+    ///   ``GuidedRequestError/invalidJSONSchema(_:)``, or
+    ///   ``GuidedRequestError/emptyGrammar``.
     func validateForXGrammar() throws {
         switch self {
         case .jsonSchema(let schema):
@@ -92,14 +53,12 @@ extension Grammar {
         }
     }
 
-    /// Parses a JSON-schema source and rejects any xgrammar-unsupported keyword
-    /// found anywhere in the schema tree.
+    /// Parses a JSON-schema source and rejects any unsupported keyword in the
+    /// schema tree.
     ///
     /// - Parameter schema: The JSON Schema source string.
-    /// - Throws: ``GuidedRequestError/invalidJSONSchema(_:)`` when the source
-    ///   is not parseable JSON, or
-    ///   ``GuidedRequestError/unsupportedSchemaConstructs(_:)`` when it uses
-    ///   keywords outside the supported subset.
+    /// - Throws: ``GuidedRequestError/invalidJSONSchema(_:)`` or
+    ///   ``GuidedRequestError/unsupportedSchemaConstructs(_:)``.
     private static func validateJSONSchema(schema: String) throws {
         let trimmed = schema.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw GuidedRequestError.emptyGrammar }
@@ -116,20 +75,12 @@ extension Grammar {
         }
     }
 
-    /// Walks a parsed JSON *schema* node, inserting any
-    /// ``unsupportedSchemaKeywords`` used in *keyword position* into `found`.
-    ///
-    /// The walk is position-aware so a property (or definition) that merely has a
-    /// name like a keyword is not mistaken for the keyword itself: the keys of a
-    /// ``subschemaMapKeywords`` map are names, so only their values are recursed
-    /// into as subschemas, and the contents of ``instanceDataKeywords`` are
-    /// instance data and are not walked at all. An array node is a list of
-    /// subschemas (e.g. under `anyOf`/`oneOf`), so each element is walked as a
-    /// schema.
+    /// Walks a parsed JSON schema node and inserts each
+    /// ``unsupportedSchemaKeywords`` entry used in keyword position into `found`.
     ///
     /// - Parameters:
-    ///   - node: A parsed JSON value occupying a schema position.
-    ///   - found: The accumulating set of unsupported keywords encountered.
+    ///   - node: A parsed JSON value in a schema position.
+    ///   - found: The accumulating set of unsupported keywords.
     private static func collectUnsupportedKeywords(in node: Any, into found: inout Set<String>) {
         if let array = node as? [Any] {
             // An array node is a list of subschemas (e.g. under `anyOf`/`oneOf`).
@@ -152,18 +103,12 @@ extension Grammar {
         }
     }
 
-    /// Walks the *values* of a ``subschemaMapKeywords`` map (e.g.
-    /// `properties`/`definitions`), inserting any unsupported keywords found
-    /// into `found`.
-    ///
-    /// The map's keys are property/definition names, not schema keywords, so
-    /// only the values are recursed into as subschemas; a value that is not an
-    /// object is simply ignored here (already invalid JSON Schema, and not
-    /// this walk's concern).
+    /// Walks the values of a ``subschemaMapKeywords`` map and inserts any
+    /// unsupported keywords into `found`.
     ///
     /// - Parameters:
     ///   - value: The value found at a ``subschemaMapKeywords`` key.
-    ///   - found: The accumulating set of unsupported keywords encountered.
+    ///   - found: The accumulating set of unsupported keywords.
     private static func collectUnsupportedKeywords(inSubschemaMap value: Any, into found: inout Set<String>) {
         guard let submap = value as? [String: Any] else { return }
         for subschema in submap.values {
@@ -172,30 +117,17 @@ extension Grammar {
     }
 }
 
-/// The guided-generation surface on the generation handle.
-///
-/// Like ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``, these arrive
-/// as a container-constrained extension so they are invisible on
-/// ``RoutedEmbedder``. Both produce *raw* constrained text — no token streaming
-/// (``RoutedSession/streamResponse(to:)`` stays unconstrained-only) and no typed
-/// parsing (the typed/dynamic shapes build on this in milestone 8b).
+/// The raw guided-generation surface on the generation handle. It produces
+/// constrained text with no token streaming and no typed parsing.
 extension RoutedModel where Container == any LoadedLLMContainer {
-    /// Generates a single constrained response, recorded through the same
-    /// chokepoint a guided session uses.
-    ///
-    /// This vends a one-shot guided ``RoutedSession`` over the resident container
-    /// and responds through it, so the turn funnels through the recorder-bracketed
-    /// `generate` chokepoint and is stamped with `grammar` — exactly as a
-    /// long-lived guided session's turns are.
+    /// Generates one constrained response through a one-shot guided session.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - grammar: The grammar constraining the output.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the container's own default ceiling.
+    ///   - grammar: The grammar that constrains the output.
+    ///   - maxTokens: The maximum token count, or `nil` for the container default.
     /// - Returns: The constrained, unparsed text response.
-    /// - Throws: ``GuidedRequestError`` for an invalid grammar, or any error
-    ///   the model raises during constrained decoding.
+    /// - Throws: ``GuidedRequestError`` for an invalid grammar, or a model error.
     public func respond(
         to prompt: String,
         following grammar: Grammar,
@@ -205,56 +137,19 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     }
 
     // sah:allow duplication a frozen public thin alias (^pckk91c, kept undeprecated for the six call sites) whose body only forwards its parameters plus the grammar into a SessionConfiguration and on to makeSession(configuration:); the plain makeSession forwards the same nine, and neither body holds logic that can drift
-    /// Vends a guided generation session whose every ``RoutedSession/respond(to:)``
-    /// is constrained to `grammar`.
-    ///
-    /// A deliberate thin alias, kept rather than deprecated (task ^n9tdq8c): it
-    /// builds a ``SessionConfiguration`` carrying `grammar` and forwards to
-    /// ``makeSession(configuration:)``, so a configuration with a grammar and
-    /// this call vend the same session, and the existing guided call sites keep
-    /// compiling with zero warnings.
-    ///
-    /// The grammar travels with the session, so a milestone-9 fork inherits it.
-    /// The session is otherwise identical to one from
-    /// ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` — it inherits this handle's
-    /// recorder and router id, retains the owning profile, and funnels every turn
-    /// through the recorder-bracketed chokepoint, which stamps the grammar onto
-    /// each event. Its ``RoutedSession/streamResponse(to:)`` stays
-    /// unconstrained-only.
+    /// Vends a guided session whose every ``RoutedSession/respond(to:)`` is
+    /// constrained to `grammar`. A fork inherits the grammar.
     ///
     /// - Parameters:
-    ///   - grammar: The grammar constraining every `respond` on the session.
+    ///   - grammar: The grammar that constrains every `respond` on the session.
     ///   - instructions: The session's system instructions, or `nil`.
-    ///   - workingDirectory: A working directory override, or `nil` to default to
-    ///     the recording directory.
-    ///   - tools: The tools the model can call during this session, wrapped and
-    ///     threaded exactly as
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
-    ///     does it. Defaults to no tools. A guided session mounts tools for the
-    ///     same reasons an unguided one does, and `discoveryPriming` below needs
-    ///     them: priming names a *mounted* tool, so a session with none has
-    ///     nothing to prime.
-    ///   - budget: The auto-compaction opt-in (task 8213x39) — see
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
-    ///     Defaults to `nil`.
-    ///   - compactionPrompt: The compaction prompt auto-compaction's own
-    ///     folds send to the summarizer, when `budget` is set. Defaults to
-    ///     ``CompactionPrompt/default``.
-    ///   - summarization: The model-assisted compaction stage every fold on the
-    ///     vended session runs — see
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
-    ///     Defaults to `Summarization()`. A guided session folds exactly like an
-    ///     unguided one.
-    ///   - agentSpawn: The parent session/tool-call this session was spawned
-    ///     from — see
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
-    ///     Defaults to `nil`.
-    ///   - discoveryPriming: The pre-discovery seeding opt-in — see
-    ///     ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
-    ///     Defaults to `nil`, which leaves priming off. A guided session primes
-    ///     exactly like an unguided one: the seed is a real host-side call whose
-    ///     entries land in the transcript the turn resumes from, so the grammar
-    ///     constrains only what the model then generates.
+    ///   - workingDirectory: A working directory override, or `nil`.
+    ///   - tools: The tools the model can call. Defaults to none.
+    ///   - budget: The auto-compaction opt-in. Defaults to `nil`.
+    ///   - compactionPrompt: The prompt each compaction fold sends to the summarizer.
+    ///   - summarization: The model-assisted compaction stage each fold runs.
+    ///   - agentSpawn: The parent session and tool call this session was spawned from.
+    ///   - discoveryPriming: The pre-discovery seeding opt-in. Defaults to `nil`.
     /// - Returns: A new guided ``RoutedSession``.
     public func makeGuidedSession(
         grammar: Grammar,
@@ -281,29 +176,14 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     }
 }
 
-/// The pure, GPU-free steps behind the two higher-level guided response shapes
-/// (milestone 8b): deriving a JSON Schema from a `@Generable` type, decoding raw
-/// constrained output into that type, and parsing raw constrained output into a
-/// dynamically-typed ``JSONValue``.
-///
-/// These are factored out of the ``RoutedModel`` shapes so they can be exercised
-/// directly in the unit suite without a model: the only gated part of guided
-/// generation is the constrained decode itself (milestone 7), which the shapes
-/// reach through the raw ``RoutedModel/respond(to:following:maxTokens:)`` layer. The
-/// `Generable`-facing steps are compiled only where Apple's FoundationModels
-/// framework is available (see the `canImport(FoundationModels)` extension below).
+/// The pure steps behind the typed and dynamic guided response shapes: schema
+/// derivation, typed decode, and dynamic parse.
 enum GuidedShapes {
-    /// Parses raw constrained model output into a dynamically-typed ``JSONValue``.
-    ///
-    /// Used by the dynamic-JSON shape, whose schema has no Swift type, so the
-    /// output is introspected as a ``JSONValue`` rather than decoded into a fixed
-    /// type. The constrained output is already schema-valid; a parse failure here
-    /// means the raw text was not JSON at all.
+    /// Parses raw constrained output into a ``JSONValue``.
     ///
     /// - Parameter raw: The raw constrained output text.
     /// - Returns: The parsed ``JSONValue``.
-    /// - Throws: ``GuidedRequestError/decodingFailed(_:)`` if `raw` is not
-    ///   parseable JSON.
+    /// - Throws: ``GuidedRequestError/decodingFailed(_:)`` if `raw` is not JSON.
     static func parse(_ raw: String) throws -> JSONValue {
         guard let data = raw.data(using: .utf8),
             let value = try? JSONDecoder().decode(JSONValue.self, from: data)
@@ -314,32 +194,18 @@ enum GuidedShapes {
     }
 }
 
-/// The dynamic-JSON guided response shape (milestone 8b).
-///
-/// Like the raw guided surface, it arrives as a container-constrained extension so
-/// it is invisible on ``RoutedEmbedder``.
+/// The dynamic-JSON guided response shape.
 extension RoutedModel where Container == any LoadedLLMContainer {
-    /// Generates a response constrained to a runtime JSON schema that has no Swift
-    /// type, parsed into a dynamically-typed ``JSONValue``.
-    ///
-    /// This is the shape for a schema known only at runtime — an MCP tool's
-    /// `inputSchema`, say — where there is no `Generable` type to decode into. The
-    /// caller's schema string is wrapped as a ``Grammar/jsonSchema(_:)`` and
-    /// routed through the raw ``respond(to:following:maxTokens:)`` layer (which validates it
-    /// against the xgrammar subset), then the constrained output is parsed into a
-    /// ``JSONValue`` the caller introspects dynamically — never decoded to a fixed
-    /// type.
+    /// Generates a response constrained to a runtime JSON schema and parses it
+    /// into a ``JSONValue``.
     ///
     /// - Parameters:
     ///   - prompt: The prompt to respond to.
-    ///   - jsonSchema: The runtime JSON Schema source constraining the output.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` to use
-    ///     the container's own default ceiling.
+    ///   - jsonSchema: The runtime JSON Schema source that constrains the output.
+    ///   - maxTokens: The maximum token count, or `nil` for the container default.
     /// - Returns: The schema-valid output parsed into a ``JSONValue``.
-    /// - Throws: ``GuidedRequestError`` — an xgrammar-subset rejection for an
-    ///   over-spec schema, or ``GuidedRequestError/decodingFailed(_:)`` if the
-    ///   output does not parse as JSON — or any error the model raises during
-    ///   constrained decoding.
+    /// - Throws: ``GuidedRequestError`` for a rejected schema or unparseable
+    ///   output, or a model error.
     public func respond(
         to prompt: String,
         matching jsonSchema: String,
@@ -354,18 +220,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     import FoundationModels
 
     extension GuidedShapes {
-        /// Derives a JSON Schema source string from a `@Generable` type — the one
-        /// source of truth for the typed shape's constraint.
-        ///
-        /// A `Generable` type carries a `GenerationSchema`, which is itself
-        /// `Codable` and encodes to a standard JSON Schema, so encoding it yields
-        /// the schema string the raw guided layer constrains against. This is a
-        /// pure transform (no GPU), so it is asserted directly in the unit suite.
+        /// Derives a JSON Schema source string from a `@Generable` type.
         ///
         /// - Parameter type: The `Generable` type to derive a schema from.
         /// - Returns: The derived JSON Schema source string.
-        /// - Throws: An encoding error if the schema cannot be encoded (not
-        ///   expected for a valid `Generable` type).
+        /// - Throws: An encoding error if the schema cannot be encoded.
         static func derivedSchema<T: Generable>(for type: T.Type) throws -> String {
             let data = try JSONEncoder().encode(T.generationSchema)
             return String(decoding: data, as: UTF8.self)
@@ -373,16 +232,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
 
         /// Decodes raw constrained output into a `Generable` type.
         ///
-        /// The raw text is parsed into `GeneratedContent` and then initialized into
-        /// `T` through its `Generable` conformance. This is a pure transform (no
-        /// GPU), so it is asserted directly in the unit suite.
-        ///
         /// - Parameters:
         ///   - raw: The raw constrained output text.
         ///   - type: The `Generable` type to decode into.
         /// - Returns: The decoded value of type `T`.
-        /// - Throws: ``GuidedRequestError/decodingFailed(_:)`` if `raw` is not
-        ///   parseable as `T` — malformed JSON or a shape the type rejects.
+        /// - Throws: ``GuidedRequestError/decodingFailed(_:)`` if `raw` does not
+        ///   decode as `T`.
         static func decode<T: Generable>(_ raw: String, as type: T.Type) throws -> T {
             do {
                 return try T(GeneratedContent(json: raw))
@@ -392,29 +247,18 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         }
     }
 
-    /// The typed guided response shape (milestone 8b).
+    /// The typed guided response shape.
     extension RoutedModel where Container == any LoadedLLMContainer {
         /// Generates a response constrained to a `@Generable` type's schema and
-        /// decoded back into that type — one source of truth for the shape.
-        ///
-        /// The schema is *derived from* `T` (its `GenerationSchema` encoded to JSON
-        /// Schema), wrapped as a ``Grammar/jsonSchema(_:)``, and routed through the
-        /// raw ``respond(to:following:maxTokens:)`` layer; the constrained output is then
-        /// decoded into `T`. Both the derivation and the decode are pure and
-        /// unit-tested; only the constrained decode in between is gated to
-        /// milestone 7.
+        /// decodes it into that type.
         ///
         /// - Parameters:
         ///   - prompt: The prompt to respond to.
         ///   - type: The `Generable` type to generate and decode into.
-        ///   - maxTokens: The maximum number of tokens to generate, or `nil` to
-        ///     use the container's own default ceiling.
+        ///   - maxTokens: The maximum token count, or `nil` for the container default.
         /// - Returns: The decoded value of type `T`.
-        /// - Throws: ``GuidedRequestError`` — an xgrammar-subset rejection for a
-        ///   schema `T` derives that the subset cannot express, or
-        ///   ``GuidedRequestError/decodingFailed(_:)`` if the output does not
-        ///   decode into `T` — or any error the model raises during constrained
-        ///   decoding.
+        /// - Throws: ``GuidedRequestError`` for a rejected schema or a failed
+        ///   decode, or a model error.
         public func respond<T: Generable>(
             to prompt: String,
             generating type: T.Type,

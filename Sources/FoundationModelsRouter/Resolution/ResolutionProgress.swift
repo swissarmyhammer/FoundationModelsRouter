@@ -1,12 +1,8 @@
 import Foundation
 import Observation
 
-/// One slot's live progress through a resolution: which state it is in, the
-/// candidate that won it, and how much of its weights have downloaded.
-///
-/// `chosen` is set once joint fit picks the slot's model; `bytesDownloaded` and
-/// `bytesTotal` track the weight download. The value is pure data so it binds
-/// straight into a SwiftUI row.
+/// One slot's live progress through a resolution: its state, the candidate
+/// that won it, and its download progress.
 public struct SlotProgress: Sendable, Equatable {
     /// Where a single slot is in the resolution pipeline.
     public enum State: Sendable, Equatable {
@@ -37,12 +33,6 @@ public struct SlotProgress: Sendable, Equatable {
     public var bytesTotal: Int64
 
     /// Creates a slot progress value.
-    ///
-    /// - Parameters:
-    ///   - state: The slot's current state. Defaults to ``State/pending``.
-    ///   - chosen: The winning candidate, or `nil`.
-    ///   - bytesDownloaded: Bytes downloaded so far. Defaults to `0`.
-    ///   - bytesTotal: Total bytes expected, or `0` when unknown. Defaults to `0`.
     public init(
         state: State = .pending,
         chosen: ModelRef? = nil,
@@ -55,17 +45,10 @@ public struct SlotProgress: Sendable, Equatable {
         self.bytesTotal = bytesTotal
     }
 
-    /// The share of a slot's work that downloading accounts for, the rest
-    /// being the load that follows it. Fully earned the moment the last byte
-    /// lands, which is why a loading slot reads exactly this.
+    /// The share of a slot's work that downloading accounts for.
     private static let downloadShare = 0.5
 
     /// This slot's contribution to the overall fraction, in `0...1`.
-    ///
-    /// Downloading counts as the first ``downloadShare`` of a slot's work and
-    /// loading as the rest, so a slot reads `0` until it downloads, climbs to
-    /// ``downloadShare`` while bytes arrive, sits there once loading, and
-    /// reads `1` when ready.
     var progressFraction: Double {
         switch state {
         case .pending, .sizing, .failed:
@@ -82,12 +65,8 @@ public struct SlotProgress: Sendable, Equatable {
     }
 }
 
-/// The UI-bindable progress of a single ``Router/resolve(profile:reporting:)`` call.
-///
-/// It is `@MainActor @Observable` so it can be bound directly into SwiftUI and
-/// drive a `ProgressView`; the router mutates it on the main actor as resolution
-/// advances `sizing → downloading → loading → ready` (or `failed`). `fraction`
-/// is the overall `0...1` bar, derived from the per-slot ``slots`` progress.
+/// The UI-bindable progress of a single ``Router/resolve(profile:reporting:)``
+/// call. The router mutates it on the main actor as resolution advances.
 @MainActor
 @Observable
 public final class ResolutionProgress {
@@ -118,9 +97,6 @@ public final class ResolutionProgress {
     public init() {}
 
     /// Recomputes ``fraction`` as the mean of the slots' ``SlotProgress/progressFraction``.
-    ///
-    /// With no slots the fraction is `0`. When every slot is ``SlotProgress/State/ready``
-    /// the mean is exactly `1`.
     func refreshFraction() {
         guard !slots.isEmpty else {
             fraction = 0
@@ -132,42 +108,21 @@ public final class ResolutionProgress {
 }
 
 extension ResolutionProgress {
-    /// One element of ``phases``: the phase the resolution entered, and the
-    /// overall ``fraction`` at that moment.
+    /// One element of ``phases``: the phase entered and the ``fraction`` at
+    /// that moment.
     public typealias PhaseTransition = (phase: Phase, fraction: Double)
 
     /// The phase transitions of this resolution as an asynchronous sequence.
-    ///
-    /// The `@Observable` surface serves SwiftUI; this sequence serves a CLI
-    /// or a test, replacing the polling task such a caller would otherwise
-    /// write:
-    ///
-    /// ```swift
-    /// for await transition in progress.phases {
-    ///     print("phase=\(transition.phase) fraction=\(transition.fraction)")
-    /// }
-    /// ```
-    ///
-    /// The sequence yields the current phase first, then yields each observed
-    /// change of ``phase`` exactly once, and finishes after it yields
-    /// ``Phase/ready`` or ``Phase/failed(_:)``. It never polls: each element
-    /// arrives from an observation of ``phase``, so an idle resolution costs
-    /// nothing. A phase the resolution enters and leaves between two
-    /// observations is skipped — the same visibility a polling loop had.
+    /// It yields the current phase first, then each observed change of
+    /// ``phase``, and finishes after ``Phase/ready`` or ``Phase/failed(_:)``.
     public var phases: AsyncStream<PhaseTransition> {
         AsyncStream { continuation in
             yieldPhaseTransitions(into: continuation, after: nil)
         }
     }
 
-    /// Yields the current phase into `continuation` when it differs from
-    /// `lastYielded`, finishes the stream at a terminal phase, and otherwise
-    /// re-arms an observation of ``phase`` to run again on its next change.
-    ///
-    /// - Parameters:
-    ///   - continuation: The stream to yield transitions into.
-    ///   - lastYielded: The phase this chain yielded last, or `nil` before
-    ///     the first element.
+    /// Yields the current phase when it differs from `lastYielded`, finishes
+    /// the stream at a terminal phase, or re-arms an observation of ``phase``.
     private func yieldPhaseTransitions(
         into continuation: AsyncStream<PhaseTransition>.Continuation,
         after lastYielded: Phase?

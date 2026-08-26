@@ -2,21 +2,12 @@ import FoundationModels
 
 /// Caps a tool's own output to ``TokenBudget/toolOutputLimit`` tokens before
 /// the model — or the transcript's own recorded `.toolOutput` entry — ever
-/// sees it (compaction_plan.md §1.7 seam 2, task 1334fk3).
-///
-/// Tool outputs, not prompts, are what blow a turn's context window
-/// mid-turn, and Router's own tool-instancing pipeline
-/// (``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``/
-/// ``RoutedSessionActor/fork(workingDirectory:)``) is the one seam that sees
-/// every tool call's result before the model does — the same seam
-/// ``ForkableTool`` already hooks into. This absorbs the
-/// external per-tool capping wrapper job into that seam instead
-/// of a wrapper consumers would otherwise have to maintain on their own.
+/// sees it. Applied at the tool-instancing seam, so no consumer keeps its
+/// own capping wrapper.
 enum ToolOutputCapping {
     /// Truncates `text` to at most `toTokenLimit` estimated tokens
-    /// (``Compactor``'s own character-ratio estimate — compaction_plan.md
-    /// §1.5 — since there is no live model to measure exactly against at
-    /// this layer), appending an explicit truncation marker.
+    /// (``Compactor``'s character-ratio estimate), appending an explicit
+    /// truncation marker.
     ///
     /// Never silent: a caller (the model reading the returned text, or a
     /// driver watching ``SessionEvent/toolStatus(id:status:summary:output:)``,
@@ -115,18 +106,11 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     /// Calls `wrapped`, then caps its result to ``limit`` tokens via
     /// ``ToolOutputCapping/capped(text:toTokenLimit:)``.
     ///
-    /// One exemption: a rendered ``PendingRunEnvelope`` — the wire form an
-    /// detached call returns in place of its output (task ^k4nygqa;
-    /// capping wraps outside the detachment layer at every composition
-    /// site) — passes through untouched. The envelope is control-plane
-    /// data, not tool output: truncating it would destroy the
-    /// `completionToken` the model needs to ever hear the background run's
-    /// completion again — and the `next` instruction that tells it to collect
-    /// with that token instead of answering — so the exemption holds under
-    /// any `limit`, however small. Recognition is the envelope-frame check
-    /// ``PendingRunEnvelope/isRendered(text:)``, which accepts every
-    /// collect sentence a wrapped tool supplies and no ordinary tool output,
-    /// so nothing else can ride through it.
+    /// One exemption: a rendered ``PendingRunEnvelope`` passes through
+    /// untouched under any `limit`. It is control-plane data, and truncation
+    /// would destroy the `completionToken` the model needs. Recognition is
+    /// ``PendingRunEnvelope/isRendered(text:)``, which accepts no ordinary
+    /// tool output.
     ///
     /// - Parameter arguments: The call's arguments, forwarded to `wrapped`
     ///   untouched.
@@ -144,17 +128,13 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
 
 extension ToolDetachment {
     /// The per-tool session-mount composition every session tool-instancing
-    /// site shares (task ^k4nygqa): mounts `tool` in the run-to-completion
-    /// or background layer under the session's own identity, mailbox, and sink with
+    /// site shares: mounts `tool` in the run-to-completion or background
+    /// layer under the session's own identity, mailbox, and sink with
     /// ``DetachConfiguration/nativeSessionMount``, then — only when
     /// `cappedToTokenLimit` is set — caps the mounted tool outermost via
-    /// ``ToolOutputCapping/optionallyCapped(tool:toTokenLimit:)`` (task
-    /// 1334fk3), so the SDK's own call reaches the capped decorator last
-    /// and both continued generation and the recorded `.toolOutput` entry
-    /// see the capped text. Capping outside the engine is safe: a rendered
+    /// ``ToolOutputCapping/optionallyCapped(tool:toTokenLimit:)``. A rendered
     /// pending envelope is exempt from capping (see
-    /// ``TokenCappingTool/call(arguments:)``), so the `completionToken`
-    /// survives any configured limit.
+    /// ``TokenCappingTool/call(arguments:)``).
     ///
     /// The mount is the default for every tool: run to completion, bounded
     /// by ``DetachConfiguration/defaultTimeoutSeconds``, so a synchronous
@@ -169,12 +149,9 @@ extension ToolDetachment {
     /// a discovery tool declare nothing and run in band. So this one site
     /// mounts both kinds, and the choice stays with the tool that knows.
     ///
-    /// A non-String-output tool takes a narrower path through the same
-    /// chain (task ^6htgvw2): ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:op:configuration:)``
-    /// mounts it in the binding-only ``ContextBindingTool`` — its ambient
-    /// posts still carry the tool's own identity and a fresh per-call
-    /// `correlationID` — and the capping layer passes it through unwrapped,
-    /// since there is no `String` output to truncate.
+    /// A non-String-output tool is mounted in the binding-only
+    /// ``ContextBindingTool`` and passes the capping layer unwrapped, since
+    /// there is no `String` output to truncate.
     ///
     /// Shared by ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
     /// (the root and restore sites) and

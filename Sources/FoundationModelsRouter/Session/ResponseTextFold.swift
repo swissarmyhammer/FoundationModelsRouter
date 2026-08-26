@@ -1,6 +1,4 @@
-/// The one home of the ``SessionEvent/textReset`` accumulation rule — the
-/// shared reducer both response-text consumers fold through, so the rule
-/// exists exactly once (task ^1s8p8qt).
+/// The shared reducer for the ``SessionEvent/textReset`` accumulation rule.
 ///
 /// The rule: a reset supersedes every fragment accumulated so far — the model
 /// abandoned the response it was writing and began another — so the reply is

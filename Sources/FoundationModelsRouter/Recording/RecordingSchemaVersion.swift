@@ -1,108 +1,34 @@
 import Foundation
 
-/// The registry of on-disk recording schema versions — every version a
-/// recording can carry, each constant documented with what that version added.
+/// The registry of on-disk recording schema versions.
 ///
-/// One version is stamped per session, on its ``SessionSidecar`` (never per
-/// event line: a session's sidecar and its `transcript.jsonl` are written by
-/// one router build, so one stamp covers both, and per-line stamping would
-/// bloat every event for no reader benefit). The stamp is what lets a reader
-/// distinguish "this field is `nil` because the recording predates it" from
-/// "this field is `nil` because it was legitimately absent" — the ambiguity
-/// that forced ``TranscriptEntryPayload/contentRemoved``'s decode-as-`false`
-/// workaround.
-///
-/// Readers gate on it: ``SessionSidecar/read(in:)`` refuses a version newer
-/// than ``current`` with
-/// ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``,
-/// while an equal or older version keeps decoding by the additive rule — a
-/// field the version predates decodes as its documented absent-value, exactly
-/// as today.
+/// One version is stamped per session on its ``SessionSidecar``.
+/// ``SessionSidecar/read(in:)`` refuses a version newer than ``current``.
+/// An equal or older version decodes by the additive rule: a field the
+/// version predates decodes as its documented absent-value.
 public enum RecordingSchemaVersion {
-    /// Version 1: the initial recording shape.
-    ///
-    /// Flat ``TranscriptEvent`` lines carrying `text` only, the deprecated
-    /// ``TranscriptEvent/Kind/toolCall`` kind, and no
-    /// ``TranscriptEvent/entry`` payload at all.
+    /// Version 1: flat ``TranscriptEvent`` lines with `text` only and no
+    /// ``TranscriptEvent/entry`` payload.
     public static let v1 = 1
 
-    /// Version 2: additive structural payloads over ``v1``.
-    ///
-    /// Added ``TranscriptEvent/entry`` (``TranscriptEntryPayload``), the
-    /// entry kinds mirroring the SDK's own transcript cases
-    /// (``TranscriptEvent/Kind/instructions``,
-    /// ``TranscriptEvent/Kind/toolCalls``,
-    /// ``TranscriptEvent/Kind/reasoning``), and
-    /// ``TranscriptEntryPayload/contentRemoved``.
-    ///
-    /// The optional ``SessionSidecar/configuration`` envelope (task
-    /// ^ne5g9jn) landed *within* v2 by the additive rule: it is a new
-    /// optional key old readers never look for, an absent key decodes as
-    /// `nil`, and a `nil` envelope restores with the pre-envelope defaults —
-    /// so no version bump was needed.
-    ///
-    /// The optional ``GenerationOptionsPayload/toolCallingMode`` key (task
-    /// ^xsgjney) landed *within* v2 by the same additive rule: old readers
-    /// never look for it, an absent key decodes as `nil`, and a `nil` mode
-    /// rebuilds exactly as before the field existed.
-    ///
-    /// The optional ``SessionSidecar/forkedAtHistoryOrdinal`` key (task
-    /// ^6z1msg1) landed *within* v2 by the same additive rule: a fork's cut
-    /// point in its parent's append-only recorded-history coordinates. Old
-    /// readers never look for it and keep reading the legacy
-    /// ``SessionSidecar/forkedAtEntryCount``, which every new fork still
-    /// writes; an absent key decodes as `nil` and readers fall back to that
-    /// legacy cut, so an old recording restores exactly as it always has.
-    ///
-    /// The unknown-case carriers (task ^9n7fna4) also landed within v2:
-    /// ``TranscriptEvent/Kind/unknown`` and
-    /// ``SegmentPayload/unknown(id:description:)``, which record a
-    /// `Transcript.Entry` or `Transcript.Segment` case a future SDK adds. A
-    /// deliberate decision, with a known limit. This build can only write a
-    /// carrier when it runs on a future OS whose SDK has more cases than the
-    /// SDK it compiled against; on the current SDK, recordings are unchanged,
-    /// so a bump of ``current`` would make every old reader refuse every new
-    /// recording to guard against a value that cannot occur yet. The limit:
-    /// an old v2 reader that meets a carrier-bearing recording gets a decode
-    /// error rather than the typed
-    /// ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
-    /// refusal. When a future SDK case becomes known and the mapper maps it
-    /// as a real kind, that shape change must be born versioned.
-    ///
-    /// The ``TranscriptEvent/Kind/divergence`` marker (task ^4rzxjna) lands
-    /// within v2 by the same rule as the unknown-case carriers, with the
-    /// same known limit. It is only ever written when the SDK backend makes
-    /// a non-append transcript change — an in-place rewrite or a
-    /// mid-transcript insertion — which the current SDK never does, so on
-    /// today's SDK recordings are unchanged and a bump would make every old
-    /// reader refuse every new recording to guard against a line that
-    /// cannot occur yet. An old v2 reader that meets a divergence-bearing
-    /// recording gets a decode error on that line rather than the typed
-    /// refusal.
+    /// Version 2: adds ``TranscriptEvent/entry`` (``TranscriptEntryPayload``),
+    /// the SDK-mirroring entry kinds, and ``TranscriptEntryPayload/contentRemoved``.
+    /// Later optional keys and the `unknown` and `divergence` carriers landed
+    /// within v2 by the additive rule.
     public static let v2 = 2
 
-    /// The version writers stamp on every new sidecar
-    /// (see ``SessionSidecar/schemaVersion``).
+    /// The version writers stamp on every new sidecar.
     public static let current = v2
 
-    /// The version a sidecar with no `schemaVersion` key decodes as — the
-    /// newest shape ever written before the stamp existed.
-    ///
-    /// Frozen at ``v2`` forever: a future bump of ``current`` must not move
-    /// this, since every unstamped recording on disk was written at or before
-    /// the v2 shape.
+    /// The version a sidecar with no `schemaVersion` key decodes as.
+    /// Frozen at ``v2``: a future bump of ``current`` must not move this.
     public static let implicit = v2
 }
 
-/// A recording stamped with a schema version newer than this reader knows —
-/// written by a newer router, and refused rather than silently misread.
-///
-/// Thrown by ``SessionSidecar/read(in:)``, so every reader that decodes a
-/// sidecar — ``TranscriptTree/load(under:)``, ``MergedTranscript/merged(under:)``,
-/// and the restore paths built on them — surfaces the same typed refusal.
+/// A recording stamped with a schema version newer than this reader knows.
+/// Thrown by ``SessionSidecar/read(in:)`` and every reader built on it.
 public enum RecordingSchemaVersionError: Error, Equatable, LocalizedError {
-    /// `directory`'s sidecar carries `version`, newer than `supported` — the
-    /// newest version this reader knows (``RecordingSchemaVersion/current``).
+    /// The sidecar in `directory` carries `version`, newer than `supported`.
     case recordingFromNewerRouter(directory: URL, version: Int, supported: Int)
 
     /// A localized message describing what error occurred.

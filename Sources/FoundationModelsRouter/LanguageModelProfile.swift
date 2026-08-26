@@ -2,31 +2,19 @@ import Foundation
 
 /// A lock-guarded, weak holder for a routed model's owning ``LanguageModelProfile``.
 ///
-/// A ``RoutedModel`` is constructed before the profile that owns it (the profile
-/// receives the three models in its initializer), so the owning profile is
-/// registered after the fact through this box. The held reference is **weak**:
-/// the profile already holds its models strongly for residency, and a strong
-/// reference back would form a retain cycle that defeats the profile's
-/// `deinit`-driven eviction. A session vended by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
-/// reads the profile here and retains it strongly, so the resident models stay
-/// alive for the session's lifetime even after the caller drops its profile
-/// handle.
-///
-/// `@unchecked Sendable` because the weak reference is mutated through the lock,
-/// which the compiler cannot verify; the lock makes the access data-race free.
+/// The reference is weak to avoid a retain cycle with the profile. A vended
+/// session reads the profile here and retains it for the session's lifetime.
 final class OwningProfileBox: @unchecked Sendable {
-    /// Serializes the single registration against any later reads.
+    /// Serializes the registration against later reads.
     private let lock = NSLock()
 
-    /// The owning profile, weakly held, or `nil` before registration / after the
-    /// profile is released.
+    /// The owning profile, weakly held, or `nil`.
     private weak var stored: LanguageModelProfile?
 
     /// Creates an empty box, filled later by ``register(profile:)``.
     init() {}
 
-    /// Records the owning profile. Called once, from ``LanguageModelProfile``'s
-    /// initializer, before the profile escapes to any other thread.
+    /// Records the owning profile. Called once from the profile's initializer.
     ///
     /// - Parameter profile: The profile that owns the model holding this box.
     func register(profile: LanguageModelProfile) {
@@ -39,25 +27,11 @@ final class OwningProfileBox: @unchecked Sendable {
     }
 }
 
-/// A resolved, resident model — the storage a profile exposes for one slot,
+/// A resolved, resident model: the storage a profile exposes for one slot,
 /// generic over the kind of loaded container it holds.
 ///
-/// It carries why the model won (its ``SlotResolution``), what it cost
-/// (``footprintBytes``), the loaded container, and — populated by the router at
-/// resolve time — the router's recording root (``routerId``) and
-/// ``TranscriptRecorder`` so a vended session or embed call is born recorded.
-///
-/// The two concrete handles are the distinct typealiases ``RoutedLLM`` and
-/// ``RoutedEmbedder``. They share this storage but diverge in the methods that
-/// land in later milestones — `makeSession` on the generation handle (5b) and
-/// `embed(...)` plus a `dimension` on the embedding handle (5a) — which arrive
-/// as container-constrained extensions, so neither handle carries the other's
-/// API. Storage only for now.
-///
-/// `Container` is constrained to `Sendable` (not ``LoadedModelContainer``) so
-/// the concrete handles can specialize it with the container existentials
-/// `any LoadedLLMContainer` / `any LoadedEmbeddingContainer`, which satisfy the
-/// `Sendable` marker but cannot satisfy a non-marker protocol constraint.
+/// The two concrete handles are ``RoutedLLM`` and ``RoutedEmbedder``. Each
+/// gains its own methods through container-constrained extensions.
 public final class RoutedModel<Container: Sendable>: Sendable {
     /// The slot this model fills.
     public let slot: ModelSlot
@@ -65,8 +39,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// The chosen model reference.
     public let chosen: ModelRef
 
-    /// The chosen candidate's `× 1.2` footprint estimate in bytes, as used at the
-    /// joint-fit comparison.
+    /// The chosen candidate's `× 1.2` footprint estimate in bytes.
     public let footprintBytes: Int64
 
     /// Why this model won its slot, and what was skipped or rejected.
@@ -81,91 +54,32 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// The recorder a vended session or embed call is born holding.
     public let recorder: any TranscriptRecorder
 
-    /// Where this handle's sessions record durably and the writer that keeps
-    /// what lands there loadable, or `nil` when recording to memory/none.
-    ///
-    /// The root and the writer are one value on purpose: a durable root with no
-    /// sidecar writer records a tree ``TranscriptTree/load(under:)`` refuses to
-    /// read, so the type does not offer that pairing (see ``DurableRecording``).
-    ///
-    /// Only the generation-session surface consumes either half
-    /// (``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` /
-    /// ``makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)`` /
-    /// ``RoutedSessionActor/fork(workingDirectory:)``); the embedding handle
-    /// never vends sessions, so it carries this only for storage symmetry.
+    /// Where this handle's sessions record durably, with the sidecar writer, or
+    /// `nil` when recording to memory or none.
     public let durableRecording: DurableRecording?
 
     /// The router's durable transcripts root, or `nil` when recording to
-    /// memory/none. A vended session's ``RoutedSession/recordingDirectory`` nests
-    /// under this root by router id and session id.
+    /// memory or none.
     public var recordingsRoot: URL? { durableRecording?.root }
 
-    /// The sidecar writer a vended generation session writes its own
-    /// `session.json` through, or `nil` when the router has no durable
-    /// transcripts root.
-    ///
-    /// Present whenever ``recordingsRoot`` is — the two cannot disagree. At
-    /// ``RecordingLevel/off`` the writer exists and writes nothing.
+    /// The sidecar writer a vended session writes its `session.json` through,
+    /// or `nil` when there is no durable transcripts root.
     public var sessionSidecarWriter: SessionSidecarWriter? { durableRecording?.sidecarWriter }
 
-    /// The weak back-reference to the profile that owns this model, registered by
-    /// ``LanguageModelProfile``'s initializer. A session vended from this handle
-    /// reads it to retain the profile (see ``makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``).
+    /// The weak back-reference to the profile that owns this model.
     let owningProfileBox = OwningProfileBox()
 
-    /// The per-model generation gate (a fair FIFO ``AsyncSemaphore`` at value
-    /// `1`) — the throughput half of the split gate.
-    ///
-    /// Every ``RoutedSession`` vended from this handle — the root session and all
-    /// its forks alike — shares this one gate, so their generations serialize
-    /// rather than interleave. That is a throughput decision, not a safety one:
-    /// the resident container gives exclusive access on its own, so two
-    /// generations over it are safe and merely slower than one. Only the
-    /// generation-session surface acquires the gate; the embedding handle never
-    /// does.
-    ///
-    /// Deliberately *not* the lock that makes a single session's turns correct —
-    /// that is each session's own ``RoutedSessionActor/turnLock``. Keeping the
-    /// two apart is what lets a turn hand this gate back mid-turn while it waits
-    /// on a person (``RoutedSession/awaitingUser(_:)``), so one slow human
-    /// answer no longer blocks every other session on the model.
-    ///
-    /// Taken from the resident container's own ``ResidentModelGates``, which the
-    /// initializer requires. Pooled residency (``Router``) mints one set for each
-    /// resident container and hands that set to every handle over it, so two
-    /// profiles sharing one loaded model serialize generation against each
-    /// other and not only within one profile's own handle.
+    /// The per-model generation gate, a fair FIFO ``AsyncSemaphore`` at value
+    /// `1`. Every session vended from this handle shares it, so generations
+    /// serialize. A turn can hand it back while it waits on a person.
     let generationGate: AsyncSemaphore
 
-    /// The fork-admission gate (a fair FIFO ``AsyncSemaphore`` at value
-    /// `maxConcurrentForks`).
-    ///
-    /// At most `maxConcurrentForks` fork sessions over this model may be in flight
-    /// at once; a ``RoutedSession/fork(workingDirectory:)`` past the ceiling awaits
-    /// a free slot, which is freed when a fork is released. This caps the K×
-    /// prefix-KV cost of copying the parent's cache on each fork. Only the
-    /// generation-session fork surface acquires it.
-    ///
-    /// Taken from the same ``ResidentModelGates`` as ``generationGate``, for the
-    /// same reason: the ceiling counts the forks over one resident container.
+    /// The fork-admission gate, a fair FIFO ``AsyncSemaphore`` at value
+    /// `maxConcurrentForks`. A fork past the ceiling awaits a free slot.
     let forkAdmissionGate: AsyncSemaphore
 
-    /// Creates a routed model handle.
-    ///
-    /// `package`, and deliberately not `public`. A handle is meaningful only
-    /// over a container the ``Router`` holds resident: the router owns the
-    /// residency refcount, the eviction, and the gates. A public initializer
-    /// let a consumer build a second handle over an already-resident container
-    /// with a second set of gates, and the two handles then ran two concurrent
-    /// generations over one container — the exact condition the gate exists to
-    /// prevent — with no signal. ``Router/resolve(profile:reporting:)`` is the
-    /// one way a consumer obtains a handle, and it always passes the container's
-    /// own gates. `package` rather than `internal` because the plain
-    /// `FoundationModelsRouterRealModelSupport` target's `RealModelHarness`
-    /// builds hand-made handles for the gated suites and cannot use
-    /// `@testable import` (task ^cvsh3m9); `package` stops at this package's
-    /// own boundary, so the consumer-facing guarantee above still holds. A
-    /// caller here states the gates it joins.
+    /// Creates a routed model handle. ``Router/resolve(profile:reporting:)`` is
+    /// the one way a consumer obtains a handle.
     ///
     /// - Parameters:
     ///   - slot: The slot this model fills.
@@ -175,16 +89,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - container: The loaded, resident container.
     ///   - routerId: The resolving router's recording root id.
     ///   - recorder: The recorder a vended session or embed call is born holding.
-    ///   - durableRecording: Where this handle's sessions record durably and the
-    ///     sidecar writer that keeps what lands there loadable, or `nil` to
-    ///     record to memory/none. The two arrive as one ``DurableRecording``
-    ///     because a root without a writer records transcripts
-    ///     ``TranscriptTree/load(under:)`` refuses to read.
-    ///   - gates: The gates `container` carries. There is no default: every
-    ///     handle over one resident container takes that container's one set,
-    ///     so the caller states which set this handle joins rather than minting
-    ///     a second one by omission. The embedding handle acquires neither gate
-    ///     and takes its own container's set for storage symmetry.
+    ///   - durableRecording: The durable recording root and sidecar writer, or `nil`.
+    ///   - gates: The gates `container` carries.
     package init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -209,37 +115,20 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     }
 }
 
-/// A resolved, resident generation model — the handle a profile exposes for its
-/// `.standard` or `.flash` slot.
-///
-/// This is the handle to pass into a tool's constructor: it references one
-/// resident model loaded once at resolve, so many tools built from the same
-/// `profile.standard` / `profile.flash` share the identical loaded container
-/// rather than each re-resolving. See ``SummarizeTool`` for the pattern.
+/// A resolved, resident generation model: the handle a profile exposes for its
+/// `.standard` or `.flash` slot. Pass it into a tool's constructor.
 public typealias RoutedLLM = RoutedModel<any LoadedLLMContainer>
 
-/// A resolved, resident embedding model — the handle a profile exposes for its
-/// `.embedding` slot.
-///
-/// Like ``RoutedLLM``, this is the handle to pass into a tool's constructor:
-/// tools built from the same `profile.embedding` share its one resident model
-/// rather than each re-resolving. See ``EmbedTool`` for the pattern.
+/// A resolved, resident embedding model: the handle a profile exposes for its
+/// `.embedding` slot. Pass it into a tool's constructor.
 public typealias RoutedEmbedder = RoutedModel<any LoadedEmbeddingContainer>
 
-/// A profile resolved for *this* machine: the three models that co-fit the
+/// A profile resolved for this machine: the three models that co-fit the
 /// budget, held resident for the profile's lifetime.
 ///
-/// The slots are the joint-fit trio — ``standard`` and ``flash`` generation
-/// models and an ``embedding`` model — each a handle to a loaded container with
-/// its resolution reasoning.
-///
-/// Residency is pooled, not exclusive: the resolving ``Router`` may hold
-/// several profiles resident at once, sharing one machine budget and
-/// reference-counting each distinct resident model (keyed on ref, revision,
-/// and load-time role/context) across every profile that references it.
-/// ``release()`` decrements this profile's references and evicts through the
-/// router's loader only the models that drop to zero; `deinit` runs the same
-/// release best-effort, so a dropped profile cannot strand resident memory.
+/// Residency is pooled. The ``Router`` reference-counts each resident model
+/// across profiles. ``release()`` and `deinit` decrement this profile's
+/// references and evict only the models that drop to zero.
 public final class LanguageModelProfile: Sendable {
     /// The name of the ``ProfileDefinition`` this was resolved from.
     public let definitionName: String
@@ -253,42 +142,22 @@ public final class LanguageModelProfile: Sendable {
     /// The resident `.embedding` model.
     public let embedding: RoutedEmbedder
 
-    /// The router that resolved this profile and owns its residency slot;
-    /// ``release()`` routes eviction back through it.
+    /// The router that resolved this profile and owns its residency slot.
     private let router: Router
 
-    /// The router-minted residency token identifying this profile's residency.
-    ///
-    /// A unique, never-reused id (unlike an `ObjectIdentifier`, which a freed
-    /// profile's address — and therefore identity — could hand to a later
-    /// profile). The router looks up this profile's own resident keys by
-    /// this token in ``Router/release(token:)`` so a stale `deinit` firing
-    /// after this profile has already been released cannot double-decrement
-    /// pool refcounts or clobber a newer profile's residency.
+    /// The router-minted, never-reused token that identifies this residency.
     let residencyToken: ULID
 
-    /// Creates a resolved profile.
-    ///
-    /// `package`, for the reason ``RoutedModel``'s own initializer is: this
-    /// profile reports a residency the ``Router`` has to own. A hand-built
-    /// profile carries a token no pool entry matches, so ``release()`` and
-    /// `deinit` free nothing, and its three handles are whatever the caller
-    /// passed rather than what the router holds resident.
-    /// ``Router/resolve(profile:reporting:)`` is the one way a consumer obtains
-    /// a profile. `package` rather than `internal` because the plain
-    /// `FoundationModelsRouterRealModelSupport` target's `RealModelHarness`
-    /// assembles the gated suites' hand-built profiles and cannot use
-    /// `@testable import` (task ^cvsh3m9); `package` stops at this package's
-    /// own boundary, so no consumer outside the package gains the call.
+    /// Creates a resolved profile. ``Router/resolve(profile:reporting:)`` is the
+    /// one way a consumer obtains a profile.
     ///
     /// - Parameters:
     ///   - definitionName: The source ``ProfileDefinition`` name.
     ///   - standard: The resident `.standard` model.
     ///   - flash: The resident `.flash` model.
     ///   - embedding: The resident `.embedding` model.
-    ///   - router: The resolving router, which owns the residency slot and the
-    ///     loader eviction runs through.
-    ///   - residencyToken: The router-minted token identifying this residency.
+    ///   - router: The resolving router.
+    ///   - residencyToken: The router-minted token that identifies this residency.
     package init(
         definitionName: String,
         standard: RoutedLLM,
@@ -312,27 +181,14 @@ public final class LanguageModelProfile: Sendable {
         embedding.owningProfileBox.register(profile: self)
     }
 
-    /// Decrements this profile's reference on each of its resident models
-    /// (standard, flash, embedding) and evicts through the router's loader
-    /// only whichever ones drop to zero references — a model another still-
-    /// live profile also references stays resident.
-    ///
-    /// Idempotent: the router only decrements while this token still owns a
-    /// tracked reservation, so calling ``release()`` more than once — or
-    /// after `deinit` has already run it — is a safe no-op.
+    /// Decrements this profile's reference on each resident model and evicts
+    /// the models that drop to zero references. Idempotent.
     public func release() async {
         await router.release(token: residencyToken)
     }
 
-    /// Runs ``release()`` best-effort when the profile is dropped, so a profile
-    /// that goes out of scope without an explicit release still frees its
-    /// resident-model references.
-    ///
-    /// The eviction is dispatched onto an unstructured task because it is async;
-    /// the task captures only the router and the residency token as values —
-    /// never `self` — so it cannot resurrect the deallocating profile. The
-    /// token (not the profile's address) is what the router matches, so a
-    /// `deinit` racing a newer profile's residency is a safe no-op.
+    /// Runs ``release()`` best-effort when the profile is dropped. The task
+    /// captures only the router and the token, never `self`.
     deinit {
         let router = self.router
         let residencyToken = self.residencyToken

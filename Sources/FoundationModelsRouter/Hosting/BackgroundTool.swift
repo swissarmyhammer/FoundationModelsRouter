@@ -1,16 +1,8 @@
 import Foundation
 import FoundationModels
 
-/// A decorator that runs each call of the wrapped tool in the background.
-/// Every call posts one synthesized progress event, tracks the run in the
-/// session's ``SessionMailbox``, then releases the body and returns the
-/// ``PendingRunEnvelope`` — also when the body completes in microseconds.
-///
-/// The run settles with exactly one terminal event: on natural completion,
-/// on cancel through the canceler the wrapped tool declares (or the
-/// cooperative one), or on timeout, which progress resets and a pending
-/// elicitation suspends. The body borrows the parent turn's generation
-/// permit for its whole life.
+/// A decorator that runs each call of the wrapped tool in the background. Every call posts one progress event, tracks the run in the session's ``SessionMailbox``, and returns the ``PendingRunEnvelope`` at once.
+/// The run settles with exactly one terminal event: on completion, on cancel, or on timeout. Progress resets the timeout and a pending elicitation suspends it.
 public struct BackgroundTool<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
@@ -24,13 +16,10 @@ public struct BackgroundTool<Arguments: ConvertibleFromGeneratedContent & Sendab
     /// The upstream sink every run's events funnel into.
     private let sink: any OperationEventSink
 
-    /// The registration site's `"verb noun"` op, or `nil` to stamp the
-    /// wrapped tool's own name.
+    /// The registration site's `"verb noun"` op, or `nil` to stamp the wrapped tool's own name.
     private let op: String?
 
-    /// How long a run may go with no progress, or `nil` for no clock.
-    /// A per-call ``DetachmentParameterProviding/detachmentTimeout(from:)``
-    /// overrides it.
+    /// How long a run may go with no progress, or `nil` for no clock. A per-call ``DetachmentParameterProviding/detachmentTimeout(from:)`` overrides it.
     let timeout: TimeInterval?
 
     /// The wrapped tool's name.
@@ -46,14 +35,6 @@ public struct BackgroundTool<Arguments: ConvertibleFromGeneratedContent & Sendab
     public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
     /// Wraps `wrapped`.
-    ///
-    /// - Parameters:
-    ///   - wrapped: The tool to decorate.
-    ///   - sessionID: The owning session's identity.
-    ///   - mailbox: The owning session's mailbox.
-    ///   - sink: The upstream sink the run's events are posted to.
-    ///   - op: The registration site's `"verb noun"` op, or `nil`.
-    ///   - timeout: How long a run may go with no progress, or `nil`.
     public init(
         wrapping wrapped: any Tool<Arguments, String>,
         sessionID: ULID,
@@ -70,10 +51,7 @@ public struct BackgroundTool<Arguments: ConvertibleFromGeneratedContent & Sendab
         self.timeout = timeout
     }
 
-    /// Starts one call in the background and returns its pending envelope.
-    ///
-    /// - Parameter arguments: The call's arguments, forwarded untouched.
-    /// - Returns: ``PendingRunEnvelope/rendered`` for the run.
+    /// Starts one call in the background and returns ``PendingRunEnvelope/rendered`` for the run.
     public func call(arguments: Arguments) async throws -> String {
         let run = ToolRun(
             wrapped: wrapped,
@@ -138,9 +116,7 @@ public struct BackgroundTool<Arguments: ConvertibleFromGeneratedContent & Sendab
         parameterProvider?.detachmentRunKind ?? .swiftTask
     }
 
-    /// The wrapped tool's own canceler, or the cooperative one: it requests
-    /// the run stop through the flag and the work task's cancellation, and
-    /// reports exactly that.
+    /// The wrapped tool's own canceler, or the cooperative one that requests the run stop and reports ``OperationOutcome/cancelled``.
     private func canceler(
         forCompletionToken completionToken: String,
         work: Task<RunSettlement, Never>,

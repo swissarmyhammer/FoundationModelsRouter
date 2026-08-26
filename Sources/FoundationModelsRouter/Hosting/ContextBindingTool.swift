@@ -1,10 +1,7 @@
 import Foundation
 import FoundationModels
 
-/// The binding-only decorator over a non-`String`-output tool: binds a
-/// per-call, per-tool-stamped ``ToolContext`` around the wrapped call and
-/// returns the tool's own `Output` unchanged. It synthesizes no events; a
-/// silent run posts nothing at all.
+/// A decorator that binds a per-call ``ToolContext`` around a non-`String`-output tool and returns its output unchanged. It synthesizes no events.
 public struct ContextBindingTool<
     Arguments: ConvertibleFromGeneratedContent, Output: PromptRepresentable
 >: Tool {
@@ -20,8 +17,7 @@ public struct ContextBindingTool<
     /// The upstream sink the bound context posts the tool's events to.
     private let sink: any OperationEventSink
 
-    /// The registration site's `"verb noun"` op, or `nil` to stamp the
-    /// wrapped tool's own name.
+    /// The registration site's `"verb noun"` op, or `nil` to stamp the wrapped tool's own name.
     private let op: String?
 
     /// The wrapped tool's name.
@@ -37,13 +33,6 @@ public struct ContextBindingTool<
     public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
     /// Wraps `wrapped` in the binding-only decorator.
-    ///
-    /// - Parameters:
-    ///   - wrapped: The tool to decorate.
-    ///   - sessionID: The owning session's identity.
-    ///   - mailbox: The owning session's mailbox.
-    ///   - sink: The upstream sink the bound context posts events to.
-    ///   - op: The registration site's `"verb noun"` op, or `nil`.
     public init(
         wrapping wrapped: any Tool<Arguments, Output>,
         sessionID: ULID,
@@ -58,12 +47,7 @@ public struct ContextBindingTool<
         self.op = op
     }
 
-    /// Runs one call under a fresh ``ToolContext`` binding, with an open and
-    /// a close ``ToolInvocationRecord`` around it.
-    ///
-    /// - Parameter arguments: The call's arguments, forwarded untouched.
-    /// - Returns: The wrapped tool's own output, unchanged.
-    /// - Throws: Whatever the wrapped tool throws, unmodified.
+    /// Runs one call under a fresh ``ToolContext`` binding, posts an open and a close ``ToolInvocationRecord`` around it, and rethrows the wrapped tool's error unmodified.
     public func call(arguments: Arguments) async throws -> Output {
         let cancellationFlag = CancellationRequestFlag()
         let context = ToolContext(

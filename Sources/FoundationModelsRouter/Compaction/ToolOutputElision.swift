@@ -1,37 +1,26 @@
 import FoundationModels
 
-/// Deterministic compaction stage 1 (compaction_plan.md §1.3): replaces
-/// `toolOutput` payloads older than the recency window with a one-line
-/// placeholder naming the tool. Tool traffic is the bulk of an agentic
-/// transcript and old outputs are stale anyway, so this is the near-free win
-/// ``Compactor`` tries first, before falling back to ``TurnTruncation``.
-///
-/// `toolCalls`/`toolOutput` pairing is preserved: only the `toolOutput`
-/// entry's payload shrinks, in place, under its original id — its matching
-/// `toolCalls` entry, and every other entry, is untouched. The recency window
-/// (the newest ``keepRecentTurns`` turns) survives verbatim.
+/// Deterministic compaction stage 1: replaces `toolOutput` payloads older
+/// than the recency window with a one-line placeholder naming the tool. The
+/// `toolOutput` entry keeps its id; every other entry is untouched.
 public struct ToolOutputElision: CompactionStage {
     /// This stage's name, recorded in ``CompactionResult/stagesApplied``.
     public static let stageName = "ToolOutputElision"
 
-    /// How many of the newest turns are the untouchable recency window.
-    /// Defaults to `4` (compaction_plan.md §1.3).
+    /// How many of the newest turns are the untouchable recency window. Defaults to `4`.
     public var keepRecentTurns: Int
 
     /// Creates a tool-output-elision stage.
     ///
-    /// - Parameter keepRecentTurns: How many of the newest turns to leave
-    ///   untouched. Defaults to `4`.
+    /// - Parameter keepRecentTurns: How many of the newest turns to leave untouched. Defaults to `4`.
     public init(keepRecentTurns: Int = 4) {
         self.keepRecentTurns = keepRecentTurns
     }
 
-    /// Applies elision to `transcript`, returning the result. Pure: the same
-    /// input always yields the same output.
+    /// Applies elision to `transcript`. Pure.
     ///
     /// - Parameter transcript: The transcript to elide old tool output from.
-    /// - Returns: A transcript with old `toolOutput` payloads replaced by
-    ///   one-line placeholders; the header and recency window are untouched.
+    /// - Returns: A transcript with old `toolOutput` payloads replaced by placeholders.
     public func apply(_ transcript: Transcript) -> Transcript {
         let (header, turns) = TranscriptTurns.split(Array(transcript))
         let (old, recent) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)

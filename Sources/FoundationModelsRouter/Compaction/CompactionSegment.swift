@@ -1,72 +1,23 @@
 import Foundation
 import FoundationModels
 
-/// A ``PersistableStructuredSegment`` durably recording one compaction's fold
-/// metadata (compaction_plan.md §1.2).
-///
-/// A compaction's synthesized summary entry carries two segments: a plain
-/// text segment the model reads as prior context, and this segment — the
-/// self-describing record of what the fold actually did:
-///
-/// - ``Content/liveWindowEntryIds``: the ordered `Transcript.Entry.id`s that
-///   make up the compacted live window (the summary entry itself plus
-///   whatever tail survived verbatim).
-/// - ``Content/foldedEntryIds``: the ids of the entries the window replaced —
-///   what compaction folded away. Recording *ids* rather than the folded
-///   entries themselves keeps this segment small; the folded entries remain
-///   forever readable from the append-only recorded transcript (see
-///   compaction_plan.md §3, "Append-only, complete").
-/// - ``Content/tokensBefore``/``Content/tokensAfter``: the measured transcript
-///   size before and after the fold (compaction_plan.md §1.5).
-/// - ``Content/stagesApplied``: which pipeline stages ran (e.g.
-///   `"ToolOutputElision"`, `"TurnTruncation"`, `"Summarization"`), in order.
-/// - ``Content/promptName``: the `CompactionPrompt`'s `name` used to produce
-///   the summary — recorded so evals and browsers can attribute quality to
-///   prompts (compaction_plan.md §2).
-/// - ``Content/pendingRuns``: the run-plane summaries (token, op, latest
-///   progress) of the runs still running in the session's ``SessionMailbox``
-///   when the boundary was written, so a post-compaction model can rediscover
-///   its in-flight work — or `nil` when there were none.
-///
-/// `content` is `Content`, a plain `Codable & Sendable & Equatable` struct —
-/// exactly what ``PersistableStructuredSegment`` requires — so the segment
-/// travels as a `Transcript.StructuredSegment` under the schema name
-/// `FoundationModelsRouter.CompactionSegment`, and every reconstruction entry
-/// point (``TranscriptTree/effectiveTranscript(forSession:view:)``,
-/// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``,
-/// ``RoutedModel/makeLanguageModel(resuming:)``) rebuilds a recorded
-/// `CompactionSegment` with no consumer setup — see the mechanism precedent,
-/// ``OperationEventSegment``, for the same round-trip shape applied to a
-/// different concern.
+/// A ``PersistableStructuredSegment`` that records one compaction's fold
+/// metadata. It travels as a `Transcript.StructuredSegment` under the schema
+/// name `FoundationModelsRouter.CompactionSegment`.
 public struct CompactionSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
-    /// One live background run's run-plane summary, carried across the compaction
-    /// boundary so a post-compaction model keeps the tokens of its in-flight
-    /// work until the session reports each run's settlement.
-    ///
-    /// Deliberately restricted to the run plane — the same triple
-    /// ``BackgroundRun`` reports (token, op, latest progress) —
-    /// and never a run's output content: the boundary carries envelopes,
-    /// exactly as the mailbox itself does.
+    /// One background run's summary (token, op, latest progress) carried
+    /// across the compaction boundary. Never a run's output.
     public struct PendingRunSummary: Codable, Equatable, Sendable {
-        /// The run's completion token — the ULID string that is also the
-        /// run's event `correlationID` and its key in the session's
-        /// ``SessionMailbox``.
+        /// The run's completion token.
         public let completionToken: String
 
         /// The canonical `"verb noun"` op string of the background operation.
         public let op: String
 
-        /// The latest progress detail reported for the run when the boundary
-        /// was written, or `nil` when none had been reported yet.
+        /// The latest progress detail reported for the run, or `nil`.
         public let latestProgressDetail: String?
 
         /// Creates one background run's summary.
-        ///
-        /// - Parameters:
-        ///   - completionToken: The run's completion token.
-        ///   - op: The canonical op string of the background operation.
-        ///   - latestProgressDetail: The run's latest progress detail, or
-        ///     `nil` when none had been reported yet.
         public init(completionToken: String, op: String, latestProgressDetail: String?) {
             self.completionToken = completionToken
             self.op = op
@@ -76,57 +27,31 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
 
     /// The fold metadata one compaction's ``CompactionSegment`` carries.
     public struct Content: Codable, Equatable, Sendable {
-        /// The ordered `Transcript.Entry.id`s constituting the compacted live
-        /// window: the summary entry (this segment's own entry) plus whatever
-        /// recent tail survived the fold verbatim.
+        /// The ordered entry ids of the compacted live window, including the
+        /// summary entry.
         public var liveWindowEntryIds: [String]
 
-        /// The `Transcript.Entry.id`s of the entries this fold replaced — what
-        /// the live window used to be before compaction. The entries
-        /// themselves are never deleted; they remain in the append-only
-        /// recorded transcript, browsable via the `fullHistory` view.
+        /// The entry ids this fold replaced. The entries stay in the
+        /// recorded transcript.
         public var foldedEntryIds: [String]
 
-        /// The measured transcript size, in tokens, immediately before this
-        /// fold ran (compaction_plan.md §1.5 — measured, never estimated).
+        /// The measured transcript size, in tokens, before this fold.
         public var tokensBefore: Int
 
-        /// The measured transcript size, in tokens, immediately after this
-        /// fold completed.
+        /// The measured transcript size, in tokens, after this fold.
         public var tokensAfter: Int
 
-        /// The pipeline stages this fold applied, in the order they ran (e.g.
-        /// `["ToolOutputElision", "TurnTruncation", "Summarization"]`).
+        /// The pipeline stages this fold applied, in order.
         public var stagesApplied: [String]
 
-        /// The name of the `CompactionPrompt` used to produce this fold's
-        /// summary — recorded so evals and browsers can attribute quality to
-        /// prompts (compaction_plan.md §2), never the prompt's full text.
+        /// The name of the `CompactionPrompt` that produced this fold's summary.
         public var promptName: String
 
-        /// The run-plane summaries of the runs still running in the session's
-        /// ``SessionMailbox`` at the moment this boundary was written, in
-        /// tracking order — or `nil` when the session held none (a session with
-        /// no background runs adds nothing to its boundary).
-        ///
-        /// Optional and synthesized-`Codable`-decoded (`decodeIfPresent`
-        /// semantics), so every ``CompactionSegment`` recorded before this
-        /// field existed still decodes unchanged.
+        /// The summaries of the runs still running when this boundary was
+        /// written, in tracking order, or `nil` when there were none.
         public var pendingRuns: [PendingRunSummary]?
 
-        /// Creates fold metadata.
-        ///
-        /// - Parameters:
-        ///   - liveWindowEntryIds: The ordered entry ids constituting the
-        ///     compacted live window.
-        ///   - foldedEntryIds: The entry ids this fold replaced.
-        ///   - tokensBefore: The measured transcript size before the fold.
-        ///   - tokensAfter: The measured transcript size after the fold.
-        ///   - stagesApplied: The pipeline stages applied, in order.
-        ///   - promptName: The name of the compaction prompt used.
-        ///   - pendingRuns: The run-plane summaries of the runs still running
-        ///     when this boundary was written, or `nil` when there were none.
-        ///     Defaults to `nil`.
+        /// Creates fold metadata. `pendingRuns` defaults to `nil`.
         public init(
             liveWindowEntryIds: [String],
             foldedEntryIds: [String],
@@ -146,30 +71,19 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
         }
     }
 
-    /// A unique identifier for this segment — a fresh UUID for newly
-    /// synthesized folds, or the persisted id when rebuilding from disk.
+    /// The unique identifier of this segment.
     public let id: String
 
-    /// The fold metadata this segment carries: live-window and folded entry
-    /// ids, token counts, pipeline stages, and prompt name.
+    /// The fold metadata this segment carries.
     public let content: Content
 
-    /// Creates a segment wrapping `content`.
-    ///
-    /// - Parameters:
-    ///   - id: This segment's id — a fresh one for a fold newly synthesized by
-    ///     the compactor, or the persisted id when rebuilding one from disk
-    ///     (this initializer also satisfies ``PersistableStructuredSegment``'s
-    ///     `init(id:content:) throws` requirement: a non-throwing
-    ///     implementation is a valid conformance for a throwing requirement).
-    ///   - content: The wrapped fold metadata.
+    /// Creates a segment that wraps `content`. `id` defaults to a fresh UUID.
     public init(id: String = UUID().uuidString, content: Content) {
         self.id = id
         self.content = content
     }
 
-    /// The flattened GUI/debugging description persisted alongside this
-    /// segment's JSON content.
+    /// The flat description persisted with this segment's JSON content.
     public var description: String {
         let pendingRunsSuffix = content.pendingRuns.map { "; pending runs: \($0.count)" } ?? ""
         return "Compaction: \(content.foldedEntryIds.count) entries folded into a "
@@ -179,23 +93,9 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
             + "prompt: \(content.promptName)\(pendingRunsSuffix))"
     }
 
-    /// Renders `pendingRuns` as the model-visible pending-run text a
-    /// compaction boundary carries alongside its summary. The text states
-    /// the push contract — the session reports each run when it settles —
-    /// and names `status`/`wait` for an earlier look.
-    ///
-    /// Run plane only, one line per run: token, op, and latest progress —
-    /// never a run's output content.
-    ///
-    /// - Parameter pendingRuns: The background runs' summaries, in tracking order.
-    /// - Returns: The rendered pending-run text.
-    ///
-    /// Deliberately `internal`, matching the repo's pattern of internal
-    /// statics on public types (e.g. `Compactor.estimatedTokenCount(of:)`).
-    /// Two callers in this module: ``boundaryEntry(id:summaryText:content:)``
-    /// renders the segment itself, and `Summarization.apply` measures the
-    /// rendering's byte count so the span byte budget the final summary must
-    /// fit leaves room for it (tasks ^64f3hnv, ^xx02yn6).
+    /// Renders `pendingRuns` as the model-visible pending-run text of a
+    /// compaction boundary: one line per run with token, op, and latest
+    /// progress. Never a run's output.
     internal static func renderedPendingRuns(_ pendingRuns: [PendingRunSummary]) -> String {
         let lines = pendingRuns.map { run in
             let progress = run.latestProgressDetail.map { " — latest progress: \($0)" } ?? " — no progress reported yet"
@@ -209,32 +109,16 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
             """
     }
 
-    /// Builds the boundary entry an applied fold appends to the conversation
-    /// history — the one construction both fold paths call, so the recorded
-    /// checkpoint's shape cannot drift between them. ``Summarization`` calls
-    /// it with the synthesized summary; `RoutedSessionActor`'s
-    /// deterministic-only fold calls it with an empty summary (task ^h1008kb).
-    ///
-    /// The entry is a `.response` carrying, in order: a text segment with
-    /// `summaryText` (id `<entryId>-text`), an optional text segment
-    /// rendering `content.pendingRuns` model-visibly (id
-    /// `<entryId>-pending-runs`, present exactly when the manifest carries
-    /// pending runs — see ``renderedPendingRuns(_:)``), and the `.structure`
-    /// ``CompactionSegment`` manifest itself.
+    /// Builds the boundary entry an applied fold appends: a `.response` with
+    /// a text segment for `summaryText` (id `<entryId>-text`), a pending-runs
+    /// text segment (id `<entryId>-pending-runs`) when `content.pendingRuns`
+    /// is not `nil`, and the `.structure` ``CompactionSegment`` manifest.
     ///
     /// - Parameters:
-    ///   - entryId: The boundary entry's own `Transcript.Entry.id`. The text
-    ///     segment ids derive from it.
-    ///   - summaryText: The model-visible summary text — empty when the fold
-    ///     synthesized none, because the boundary's job for the model is
-    ///     then only to exist.
-    ///   - content: The fold manifest the `.structure` segment wraps. Its
-    ///     ``Content/pendingRuns`` decides the pending-runs segment: non-nil
-    ///     renders one, `nil` adds none.
-    /// - Returns: The synthesized boundary entry.
-    ///
-    /// Deliberately `internal`, matching ``renderedPendingRuns(_:)``: its
-    /// callers are this module's two fold paths.
+    ///   - entryId: The boundary entry's `Transcript.Entry.id`.
+    ///   - summaryText: The model-visible summary text, or empty.
+    ///   - content: The fold manifest the `.structure` segment wraps.
+    /// - Returns: The boundary entry.
     internal static func boundaryEntry(
         id entryId: String,
         summaryText: String,
@@ -263,44 +147,21 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
         )
     }
 
-    /// The ``Content/promptName`` a deterministic-only fold's checkpoint
-    /// carries: empty, because no summarizer read any compaction prompt —
-    /// recording the prompt the fold *would* have used would attribute
-    /// summary quality to a prompt that produced nothing.
+    /// The ``Content/promptName`` of a deterministic-only fold: empty,
+    /// because no summarizer read a prompt.
     internal static let deterministicFoldPromptName = ""
 
-    /// Returns `folded` with one synthesized boundary entry appended — the
-    /// checkpoint a deterministic-only fold must still leave (tasks
-    /// ^h1008kb, ^dcgkd66).
-    ///
-    /// The deterministic stages add no new entry ids of their own
-    /// (``ToolOutputElision`` rewrites segments under the entry's original
-    /// id, ``TurnTruncation`` only removes entries), so an id-diff over
-    /// `folded` alone would record no checkpoint and a restore would rebuild
-    /// the whole pre-fold history. Both fold paths — `RoutedSessionActor`'s
-    /// in-place `compact()` swap and the bare-recipe
-    /// ``RecordingLanguageModel/noteCompaction(_:result:)`` — append their
-    /// deterministic boundary through this one construction, built on
-    /// ``boundaryEntry(id:summaryText:content:)`` with an empty summary
-    /// (there is no summary to show the model) and
-    /// ``deterministicFoldPromptName``, so the two recorded boundary shapes
-    /// cannot drift apart.
+    /// Returns `folded` with one boundary entry appended. The boundary has an
+    /// empty summary and ``deterministicFoldPromptName``.
     ///
     /// - Parameters:
     ///   - folded: The transcript the deterministic pipeline produced.
-    ///   - preFoldEntryIds: The entry ids of the transcript before the fold
-    ///     ran; the ones absent from `folded` become
-    ///     ``Content/foldedEntryIds``.
-    ///   - tokensBefore: The pre-fold transcript size written to the
-    ///     checkpoint — measured where the caller holds a measurement (the
-    ///     session path), else the pipeline's estimate (the bare recipe).
-    ///   - tokensAfter: The post-fold transcript size written to the
-    ///     checkpoint, on the same scale as `tokensBefore`.
+    ///   - preFoldEntryIds: The entry ids before the fold; the ones absent from `folded` become ``Content/foldedEntryIds``.
+    ///   - tokensBefore: The pre-fold transcript size.
+    ///   - tokensAfter: The post-fold transcript size, on the same scale as `tokensBefore`.
     ///   - stagesApplied: The pipeline stages the fold applied, in order.
-    ///   - pendingRuns: The run-plane summaries of the runs still running
-    ///     when the boundary was written, or `nil` when there were none.
-    /// - Returns: `folded` plus the boundary entry, in that order — the
-    ///   boundary names itself last in its own live window.
+    ///   - pendingRuns: The summaries of the runs still running, or `nil`.
+    /// - Returns: `folded` plus the boundary entry, in that order.
     internal static func appendingDeterministicBoundary(
         to folded: Transcript,
         preFoldEntryIds: [String],
