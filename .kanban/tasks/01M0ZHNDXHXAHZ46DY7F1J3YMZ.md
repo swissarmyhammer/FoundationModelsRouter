@@ -699,6 +699,33 @@ comments:
     - evidence: 3 files — `/Users/wballard/github/swissarmyhammer/FoundationModelsMultitool/Sources/FoundationModelsMultitool/Discovery/SearchToolsTool.swift`, `/Users/wballard/github/swissarmyhammer/FoundationModelsMultitool/Sources/FoundationModelsMultitool/Surface/MultiToolBuilder.swift`, `/Users/wballard/github/swissarmyhammer/FoundationModelsMultitool/Sources/FoundationModelsMultitool/MultiTool.swift`. `git diff --stat`: +328 / −666. Filtered diff (dropping `///` and `//`) EMPTY. `swift build --build-tests` clean, 0 warnings from our code. `swift test`: 1023 tests in 73 suites passed. `swift build --build-tests --package-path IntegrationTests --disable-automatic-resolution`: Build complete. 0 undocumented public/open/package symbols and enum cases. Adversarial verifier: REVISE, 5 findings, all 5 correct, all 5 fixed, gates re-run green after the fixes. Router not edited. Nothing committed.
     - next: `/review`. The card's remaining work is zero — all eight files in the table are cut.
   timestamp: 2026-08-26T21:07:33.169833+00:00
+- actor: claude-code
+  id: 01m0zyng2646cjywh9vhxzc0yf
+  text: |
+    ### finish iteration 4 — awaiting review
+
+    - implement: `changed` — pass 3, commit `dbe7f10`, three files, 666 doc lines cut and 328 written, no code line touched
+    - test: `green` — `swift test`, 1023 tests in 73 suites; Router `swift test`, 1058 in 104 suites
+    - commit: `dbe7f10 docs: cut the last three files, and repair six older errors`
+    - review: requested from peer session `foundationmodelsmultitool-7b`. The local engine cannot reach this repository from a Router session (see `^kq4cxva`).
+
+    **Orchestrator verification, done here and not delegated.** I read the highest-risk claim of the commit against the code myself, because it rewrites a doc comment from a reading of the initializer, and a wrong reading writes a new error while it removes an old one.
+
+    `MultiTool.init` — the old `- configuration:` said an explicit override "always wins". `MultiTool.swift:424` reads:
+
+        self.interpreter = (interpreter ?? JSCInterpreter()).withTimeLimit(configuration.executionTimeLimit)
+
+    The injected sandbox is re-armed with the configured ceiling, so "always wins" was false for `interpreter`. The claim was correct and the repair is real. The replacement text is also correctly narrow: it limits itself to `interpreter`, and `- limits:` still says it defaults to `configuration.resultLimits`, which line 425 (`limits ?? configuration.resultLimits`) shows is a true pass-through. One parameter was wrong, one was right, and the new text separates them.
+
+    **Vocabulary sweep, both repositories, final.** Zero hits in either `Sources` tree for `detach`, `DetachingTool`, `waitSeconds`, `ToolDetachment`, `ParkedRun`, or `parked`. Two hits remain for "block window" and "wait clock", both in `FoundationModelsMultitool`:
+
+    - `Capabilities/Shell/Execute.swift:37` — "there is no block window"
+    - `Interpreter/JSCInterpreter.swift:277` — "there is no `runCode` wait clock for it to race"
+
+    Both are negations. They tell a reader the removed thing is absent, which is the opposite of stale vocabulary. Kept on purpose.
+
+    - next: the peer review. When it returns clean the card closes.
+  timestamp: 2026-08-26T21:12:24.390666+00:00
 position_column: doing
 position_ordinal: '8380'
 title: 'Multitool: cut the doc comments back to what the code cannot say'
