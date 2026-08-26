@@ -20,6 +20,23 @@ comments:
     - behavior: a `.swiftTask` run is not changed. Only a `.process` run's terminal outcome takes the canceler's report; the in-band detail is kept. `settle` awaits a pending report, so the natural terminal cannot race ahead of the canceler.
     - next: `/review`.
   timestamp: 2026-08-26T11:51:05.421333+00:00
+- actor: claude-code
+  id: 01m0yz6d269xb8q9e8jbn8sjw1
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (local) — 2 findings, 2 confirmed, 0 refuted — Sources/FoundationModelsRouter/Hosting/ToolRun.swift:256, Tests/FoundationModelsRouterTests/DeclaredRunKindTests.swift:250
+    - next: apply the two swift/fluent-usage findings (label the first parameter of `report` and `stopAndSettle`), then run the review again
+  timestamp: 2026-08-26T12:02:23.942380+00:00
+- actor: claude-code
+  id: 01m0yzab5qwggasx1dvq373ehq
+  text: |-
+    ### implement — changed
+    - evidence: 2 files. Sources/FoundationModelsRouter/Hosting/ToolRun.swift: `AuthoritativeStopReport.report(_:)` is now `report(outcome:)`; the one call site in `ToolRun.stop(using:)` and the doc reference on `begin()` are updated. Tests/FoundationModelsRouterTests/DeclaredRunKindTests.swift: `stopAndSettle(_:through:opening:)` is now `stopAndSettle(run:through:opening:)`; both call sites (`aStoppedProcessRunSettlesWithItsCancelersOutcome`, `waitOnAStoppedProcessRunReportsStopped`) are updated. A scan of the diff of HEAD~1..HEAD found no other side-effect method with an unlabeled first parameter. Both findings are checked on the card.
+    - build: `swift build --build-tests` 0 errors, 0 warnings from our code (one `missing creator for mutated node` warning from the mlx-swift bundle dependency only).
+    - test: `swift test --filter DeclaredRunKindTests` 6 tests in 1 suite passed. `swift test` 1058 tests in 104 suites passed with 2 known issues (pre-existing `withKnownIssue` blocks), and 83 tests in 10 suites passed. 0 failures.
+    - not committed.
+    - next: `/review`.
+  timestamp: 2026-08-26T12:04:33.079497+00:00
 position_column: doing
 position_ordinal: '80'
 title: The natural terminal of a killed process run reports .succeeded
@@ -97,3 +114,13 @@ and `SessionMailbox.park` is `SessionMailbox.track`. The defect was the same.
 - Use `/tdd` — write failing tests first, then implement to make them pass.
 
 #eventplan #phase-2
+
+## Review Findings (2026-08-26 06:52)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 3 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Hosting/ToolRun.swift:256` `swift/fluent-usage` — The `report` method's parameter is unlabeled, but this is not a value-preserving conversion. Per the fluent-usage rule, the first argument label should only be omitted for value-preserving conversions like type conversions; side-effect methods should have labeled parameters for clarity. Change `func report(_ outcome: OperationOutcome)` to `func report(outcome: OperationOutcome)`.
+- [x] `Tests/FoundationModelsRouterTests/DeclaredRunKindTests.swift:250` `swift/fluent-usage` — The first parameter of `stopAndSettle` is unlabeled, but this is not a value-preserving conversion. Per the fluent-usage rule, the first argument label should only be omitted for value-preserving conversions; side-effect methods should have labeled parameters for clarity. Change `_ run: BackgroundRun` to `run: BackgroundRun` on line 250.

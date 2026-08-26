@@ -87,7 +87,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
     func stop(using canceler: @Sendable () async -> OperationOutcome) async -> OperationOutcome {
         stopReport.begin()
         let outcome = await canceler()
-        stopReport.report(outcome)
+        stopReport.report(outcome: outcome)
         return outcome
     }
 
@@ -247,13 +247,13 @@ final class AuthoritativeStopReport: Sendable {
 
     private let gate = RaceGate<OperationOutcome>()
 
-    /// Marks a report pending, so ``outcome()`` waits for ``report(_:)``.
+    /// Marks a report pending, so ``outcome()`` waits for ``report(outcome:)``.
     func begin() {
         isPending.withLock { $0 = true }
     }
 
     /// Records the canceler's outcome and resumes a waiting ``outcome()``.
-    func report(_ outcome: OperationOutcome) {
+    func report(outcome: OperationOutcome) {
         gate.resume(with: outcome)
     }
 

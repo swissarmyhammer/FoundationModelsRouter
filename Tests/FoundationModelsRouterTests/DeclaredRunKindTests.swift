@@ -247,7 +247,7 @@ struct DeclaredRunKindTests {
   /// Cancels `run` through the host context, lets its body end on `gate`,
   /// and returns the terminal event the wait collected.
   private static func stopAndSettle(
-    _ run: BackgroundRun, through harness: Harness, opening gate: RunLatch
+    run: BackgroundRun, through harness: Harness, opening gate: RunLatch
   ) async throws -> OperationEvent {
     #expect(
       await harness.context.cancel(completionToken: run.completionToken)
@@ -269,7 +269,7 @@ struct DeclaredRunKindTests {
 
     // The kill does not cancel the body: it returns normally, as a reap of
     // a killed process group does. The terminal must still say stopped.
-    let terminal = try await Self.stopAndSettle(run, through: harness, opening: gate)
+    let terminal = try await Self.stopAndSettle(run: run, through: harness, opening: gate)
 
     #expect(terminal.outcome == .stopped)
     #expect(terminal.correlationID == run.completionToken)
@@ -285,7 +285,7 @@ struct DeclaredRunKindTests {
       backgroundMounting: DeclaredProcessTool(gate: gate, witness: KillWitness())
     )
     let run = try await Self.backgroundOneRun(through: harness)
-    _ = try await Self.stopAndSettle(run, through: harness, opening: gate)
+    _ = try await Self.stopAndSettle(run: run, through: harness, opening: gate)
 
     // The run is settled, so this wait reads the retained terminal event.
     let retained = try await Self.settledTerminal(of: run, through: harness)
