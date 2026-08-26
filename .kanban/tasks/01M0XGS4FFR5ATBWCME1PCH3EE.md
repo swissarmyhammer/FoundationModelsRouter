@@ -22,10 +22,26 @@ comments:
     - evidence: 9 files — Sources/FoundationModelsRouter/Compaction/CompactionSegment.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Sources/FoundationModelsRouter/RoutedLLM.swift, Sources/FoundationModelsRouter/Recording/SessionTreeRestoration.swift, Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md, Tests/FoundationModelsRouterTests/RoutedSessionCompactTests.swift. Gate 1: `rg -i 'waitSeconds|soft deadline|two clocks|eventplan|elevat' Sources README.md` -> no match (exit 1). Gate 2: `rg 'call status' Sources` -> one hit, CompactionSegment.swift renderedPendingRuns, in a string that first states "The session reports each run when it settles". `swift build --build-tests` -> Build complete, 0 errors, 0 warnings from our code (one build-system warning about the mlx bundle, not our code). `swift test` -> 1056 tests in 104 suites passed with 2 known issues (pre-existing withKnownIssue), plus 83 tests in 10 suites passed.
     - next: /review
   timestamp: 2026-08-26T05:10:48.885339+00:00
+- actor: claude-code
+  id: 01m0y7zermq34k00se06tk2s2m
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 45a031a, local backend) — 0 findings, 7 validator runs attempted, 0 failed. 8 files reviewed. 4 `.kanban/` files skipped by `.reviewignore`.
+    - next: task moved to done.
+  timestamp: 2026-08-26T05:16:39.060716+00:00
+- actor: claude-code
+  id: 01m0y7zvmscrhan44wkzmhn8t5
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 9 files; eventplan/Elevation citations and dual-mode narration removed, renderedPendingRuns no longer tells the model to poll, docc "Long-running tools" section added
+    - test: green — swift test, 1056 + 83 tests, 0 failed (run inside implement)
+    - commit: 45a031a
+    - review: clean — 8 files, 7 checks, 0 findings; task moved to done
+  timestamp: 2026-08-26T05:16:52.249835+00:00
 depends_on:
 - 01M0XGRJD4TZTZAFTCSBZEKMFD
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fff880
 title: Purge dual-mode language and stale eventplan citations
 ---
 ## What
