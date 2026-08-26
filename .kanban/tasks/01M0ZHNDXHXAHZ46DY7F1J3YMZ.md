@@ -746,8 +746,32 @@ comments:
 
     - next: peer verdict on `dbe7f10` still outstanding — resend requested.
   timestamp: 2026-08-26T21:14:14.621846+00:00
-position_column: doing
-position_ordinal: '8380'
+- actor: claude-code
+  id: 01m0zz18medecypgsznv8cjszc
+  text: |
+    ### review — clean
+
+    - evidence: peer session `foundationmodelsmultitool-7b` on `dbe7f10`. findings 0, confirmed 0, refuted 0, attempted 7, failed 0, skipped 0. Coverage: 3 files reviewed of 3 touched, 0 not reviewed, no rule declined. This is a real pass, not the silent-decline shape that a comment-only diff can produce.
+
+    The four aimed items all verified: the `description` "survives nowhere" claims true against the literals; the restored `help()`/`docs()` bullet true **at** `makeHelpDocsHostFunctions`, which is the function that builds those two globals, so not a fact rehomed to the wrong owner; `nextStepFooter` genuinely un-fused and now carrying a specific doc; `MultiTool.init` agreed.
+
+    **Two corrections to my own records. Neither is a defect in the commit.**
+
+    **1. My vocabulary sweep was wrong, and I reported it to the user as clean.** I claimed both `Sources` trees were free of `waitSeconds`. They are not. It survives twice, and my method is why I missed it: I ran the full word list against the Router tree only, then ran a `detach`-only check against this tree. `waitSeconds` was never tested here at all. Re-run with plain `grep -rn`:
+
+    - `MultiTool.swift:200` — "This schema carries no clock, and must not grow one back. A `waitSeconds` would bound a wait that no longer exists." The word is named in order to forbid it. This is the requirement encoded at the schema it constrains, and it is the strongest form the rule takes in the source.
+    - `Capabilities/Shell/GetLines.swift:17` — "The sibling carries a `waitSeconds` long-poll for that." "The sibling" is a **third repository**, `../FoundationModelsShelltool`, named at the head of the same file. Verified: `FoundationModelsShelltool/Sources/ShellTool/Operations/GetLines.swift:64` declares `var waitSeconds: Int?`. The contrast is true, and it explains why this package differs.
+
+    Both are correct. The substance of the claim holds — no `waitSeconds` field exists in either package — and `Tests/FoundationModelsMultitoolTests/MultiToolExecutionTests.swift:29` guards it: `#expect(!schema.contains("waitSeconds"))`. The requirement is test-enforced, not merely documented. But the sweep I ran did not prove that, and I should not have reported it as though it had.
+
+    **2. The `turnLock` attribution on this card was wrong.** I listed the deadlock argument among `MultiTool.swift`'s survivors. `turnLock` appears zero times in `MultiTool.swift`, before this commit and after. It lives at `Discovery/SearchToolsTool.swift:152-168`, intact. Corrected here so a later reader does not search the wrong file and conclude the argument was lost.
+
+    **A method note worth keeping.** The peer independently hit a false zero from a counting grep — `rg -c` summed to 0 for a phrase demonstrably present. Counting greps have now produced a wrong absence result twice on this card, in two different sessions. An absence proof in this repository must print lines, not counts.
+
+    - next: none. Card closes.
+  timestamp: 2026-08-26T21:18:49.998441+00:00
+position_column: done
+position_ordinal: ffff8680
 title: 'Multitool: cut the doc comments back to what the code cannot say'
 ---
 ## What
