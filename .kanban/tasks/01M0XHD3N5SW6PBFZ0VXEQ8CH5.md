@@ -27,11 +27,27 @@ comments:
     - evidence: `///` count 6006 vs baseline 16450 (gate <= 8225); citation grep `rg -n '^\s*///.*(\^[a-z0-9]{7}|plan\.md|eventplan)' Sources` returns nothing; `swift build --build-tests` 0 errors, 0 warnings from our code; `swift test` 1056 tests in 104 suites + 83 tests in 10 suites passed.
     - next: /review
   timestamp: 2026-08-26T11:14:23.334584+00:00
+- actor: claude-code
+  id: 01m0yy4sr4w9wxy99pmvw6gkq6
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (local backend), 77 files reviewed, 56 validator runs, 0 findings, 0 confirmed, 0 refuted
+    - next: none. The task is in the done column.
+  timestamp: 2026-08-26T11:44:02.820673+00:00
+- actor: claude-code
+  id: 01m0yy5e5gsd2w0t5fc5g7rrsp
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 77 Sources files; `///` lines 16,450 → 6,006; no task-id or plan-file citations; no code line changed (two implementer runs were cut by usage limits and resumed)
+    - test: green — swift test, 1056 + 83 tests, 0 failed
+    - commit: c0b2b6e
+    - review: clean — 77 files, 56 checks, 0 findings; task moved to done
+  timestamp: 2026-08-26T11:44:23.728565+00:00
 depends_on:
 - 01M0XGRJD4TZTZAFTCSBZEKMFD
 - 01M0XGS4FFR5ATBWCME1PCH3EE
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: fff980
 title: Cut the doc-comment bloat across Router sources
 ---
 ## What
