@@ -1,7 +1,7 @@
 import Foundation
 
 /// A failure reading the recorded transcripts a merge covers.
-public enum MergedTranscriptError: Error, Equatable, LocalizedError {
+enum MergedTranscriptError: Error, Equatable, LocalizedError {
     /// A line of the transcript at `file` that is NOT the file's last line
     /// failed to decode.
     ///
@@ -13,7 +13,7 @@ public enum MergedTranscriptError: Error, Equatable, LocalizedError {
     case transcriptLineCorrupt(file: URL)
 
     /// A localized message describing what error occurred.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .transcriptLineCorrupt(let file):
             return """

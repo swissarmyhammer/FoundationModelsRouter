@@ -4,7 +4,7 @@ import Foundation
 private let transcriptFileName = "transcript.jsonl"
 
 /// A failure looking up or reconstructing data from a ``TranscriptTree``.
-public enum TranscriptTreeError: Error, Equatable, LocalizedError {
+enum TranscriptTreeError: Error, Equatable, LocalizedError {
     /// No session with this id exists in the loaded tree.
     case sessionNotFound(ULID)
 
@@ -31,7 +31,7 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
     case transcriptLineCorrupt(session: ULID, file: URL)
 
     /// A localized message describing what error occurred.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .sessionNotFound(let id):
             return "No session with id \(id.description) exists in this transcript tree."
@@ -71,25 +71,25 @@ public enum TranscriptTreeError: Error, Equatable, LocalizedError {
 /// One session in a router's fork hierarchy, as ``TranscriptTree`` loads it.
 /// A node is a complete subtree snapshot. ``children`` is ordered by ``id``,
 /// which is creation order.
-public struct SessionNode: Sendable, Equatable {
+package struct SessionNode: Sendable, Equatable {
     /// This session's span id, read from the name of its own directory.
-    public let id: ULID
+    package let id: ULID
     /// The span id of the session that forked this one, or `nil` for a root.
-    public let parentId: ULID?
+    let parentId: ULID?
     /// This session's own write-once facts, as it recorded them at creation.
-    public let sidecar: SessionSidecar
+    let sidecar: SessionSidecar
     /// This session's recording directory.
-    public let directory: URL
+    let directory: URL
     /// This session's own forks, ordered by ``id`` (creation order).
-    public let children: [SessionNode]
+    let children: [SessionNode]
 }
 
 /// The read side of the fork hierarchy. Fetch any session's transcript by
 /// its ``ULID`` and inspect the tree as data. ``MergedTranscript`` gives the
 /// flattened view of every session; this type gives the per-session view.
-public struct TranscriptTree: Sendable {
+package struct TranscriptTree: Sendable {
     /// A router's root sessions, ordered by ``SessionNode/id``.
-    public let roots: [SessionNode]
+    package let roots: [SessionNode]
 
     /// Every session, keyed by id.
     private let nodesById: [ULID: SessionNode]
@@ -111,7 +111,7 @@ public struct TranscriptTree: Sendable {
     /// - Throws: ``TranscriptTreeError``, or
     ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
     ///   when a sidecar carries a newer schema version.
-    public static func load(under routerDirectory: URL) throws -> TranscriptTree {
+    package static func load(under routerDirectory: URL) throws -> TranscriptTree {
         let sessionDirectories = TranscriptFileDiscovery
             .fileURLs(named: sessionSidecarFileName, under: routerDirectory)
             .map { $0.deletingLastPathComponent() }
@@ -230,12 +230,12 @@ public struct TranscriptTree: Sendable {
     // MARK: - Tree access
 
     /// Returns the session with id `id`, or `nil` if no such session was loaded.
-    public func session(_ id: ULID) -> SessionNode? {
+    func session(_ id: ULID) -> SessionNode? {
         nodesById[id]
     }
 
     /// A session's direct forks, ordered by id. Empty if `id` is unknown or a leaf.
-    public func children(of id: ULID) -> [SessionNode] {
+    func children(of id: ULID) -> [SessionNode] {
         nodesById[id]?.children ?? []
     }
 
@@ -246,7 +246,7 @@ public struct TranscriptTree: Sendable {
     ///
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
     ///   ``TranscriptTreeError/transcriptLineCorrupt(session:file:)``.
-    public func events(forSession id: ULID) throws -> [TranscriptEvent] {
+    func events(forSession id: ULID) throws -> [TranscriptEvent] {
         guard let node = nodesById[id] else {
             throw TranscriptTreeError.sessionNotFound(id)
         }
@@ -262,7 +262,7 @@ public struct TranscriptTree: Sendable {
     ///
     /// - Throws: ``TranscriptTreeError/sessionNotFound(_:)`` or
     ///   ``TranscriptTreeError/forkCutPointMissing(session:directory:)``.
-    public func effectiveEntryEvents(forSession id: ULID) throws -> [TranscriptEvent] {
+    func effectiveEntryEvents(forSession id: ULID) throws -> [TranscriptEvent] {
         guard let node = nodesById[id] else {
             throw TranscriptTreeError.sessionNotFound(id)
         }

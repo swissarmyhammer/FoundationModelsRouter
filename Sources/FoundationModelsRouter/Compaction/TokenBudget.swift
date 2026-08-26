@@ -69,13 +69,13 @@ public struct TokenBudget: Sendable, Equatable, Codable {
 /// usage is at or above ``TokenBudget/ceilingTokens``. Auto-compaction
 /// treats it like `LanguageModelError.contextSizeExceeded`: it folds and
 /// retries once.
-public enum ContextBudgetError: Error, Equatable, LocalizedError {
+enum ContextBudgetError: Error, Equatable, LocalizedError {
     /// Measured usage (`fill`, as a fraction of ``TokenBudget/limit``) was at
     /// or above ``TokenBudget/hardCeiling`` (`ceiling`).
     case hardCeilingExceeded(fill: Double, ceiling: Double)
 
     /// A description that names the measured fill and the ceiling.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .hardCeilingExceeded(let fill, let ceiling):
             return """
@@ -88,7 +88,7 @@ public enum ContextBudgetError: Error, Equatable, LocalizedError {
 
 /// The value ``RoutedSession/contextFill`` reports when fill cannot be
 /// measured. It is `Double.nan`; test with `.isNaN`.
-public let unknownContextFill = Double.nan
+let unknownContextFill = Double.nan
 
 /// The measured usage state that ``RoutedSessionActor/contextFill`` reads.
 enum ContextUsageState: Sendable, Equatable {

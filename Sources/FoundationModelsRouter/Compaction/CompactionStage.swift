@@ -4,7 +4,7 @@ import FoundationModels
 /// transcript lands under target. Every stage is a pure
 /// `Transcript -> Transcript` function. ``Summarization`` is async and does
 /// not conform.
-public protocol CompactionStage: Sendable {
+package protocol CompactionStage: Sendable {
     /// This stage's name, recorded in ``CompactionResult/stagesApplied``.
     static var stageName: String { get }
 

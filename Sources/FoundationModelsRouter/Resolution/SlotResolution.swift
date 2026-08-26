@@ -1,7 +1,7 @@
 import Foundation
 
 /// Why a candidate ``ModelRef`` did or did not win its slot during joint fit.
-public enum Verdict: Sendable, Equatable {
+enum Verdict: Sendable, Equatable {
     /// This candidate fit the remaining budget and was selected for the slot.
     case chosen
 
@@ -22,23 +22,23 @@ public enum Verdict: Sendable, Equatable {
 
 /// One context rung tried for a standard-slot candidate while the working
 /// context was derived by the ladder. See ``JointFit``.
-public struct LadderAttempt: Sendable, Equatable {
+struct LadderAttempt: Sendable, Equatable {
     /// The context size in tokens tried at this rung.
-    public let contextTokens: Int
+    let contextTokens: Int
 
     /// This candidate's own `× 1.2` footprint at this rung, or `nil` when it
     /// could not be sized.
-    public let estimatedFootprintBytes: Int64?
+    let estimatedFootprintBytes: Int64?
 
     /// The slot that found no viable candidate at this rung, or `nil` when the
     /// whole trio co-fit.
-    public let blockedSlot: ModelSlot?
+    let blockedSlot: ModelSlot?
 
     /// Whether the full trio co-fit the budget at this rung.
-    public var fits: Bool { blockedSlot == nil }
+    var fits: Bool { blockedSlot == nil }
 
     /// Creates a ladder attempt record.
-    public init(contextTokens: Int, estimatedFootprintBytes: Int64?, blockedSlot: ModelSlot?) {
+    init(contextTokens: Int, estimatedFootprintBytes: Int64?, blockedSlot: ModelSlot?) {
         self.contextTokens = contextTokens
         self.estimatedFootprintBytes = estimatedFootprintBytes
         self.blockedSlot = blockedSlot
@@ -54,7 +54,7 @@ public struct CandidateReport: Sendable, Equatable {
 
     /// The candidate's whole resident footprint with the `× 1.2` margin
     /// applied, or `nil` when the candidate was not sized.
-    public let estimatedFootprintBytes: Int64?
+    let estimatedFootprintBytes: Int64?
 
     /// The bytes this candidate charged the shared budget, with the `× 1.2`
     /// margin applied, or `nil` when not sized. Smaller than
@@ -62,14 +62,14 @@ public struct CandidateReport: Sendable, Equatable {
     public let chargedBytes: Int64?
 
     /// Why this candidate was or was not chosen.
-    public let verdict: Verdict
+    let verdict: Verdict
 
     /// The context rungs tried for this candidate. Non-empty only for a
     /// standard-slot candidate sized by the ladder.
-    public let ladderAttempts: [LadderAttempt]
+    let ladderAttempts: [LadderAttempt]
 
     /// Creates a candidate report.
-    public init(
+    init(
         ref: ModelRef,
         estimatedFootprintBytes: Int64?,
         chargedBytes: Int64?,
@@ -88,13 +88,13 @@ public struct CandidateReport: Sendable, Equatable {
 /// budget available, the working context, and the per-candidate reasoning.
 public struct SlotResolution: Sendable, Equatable {
     /// The slot this resolution is for.
-    public let slot: ModelSlot
+    let slot: ModelSlot
 
     /// The budget available to this slot, less earlier slots' reservations.
-    public let remainingBudgetBytes: Int64
+    let remainingBudgetBytes: Int64
 
     /// The candidate selected for the slot, or `nil` when none fit.
-    public let chosen: ModelRef?
+    let chosen: ModelRef?
 
     /// Every candidate considered, in author preference order, with its verdict.
     public let considered: [CandidateReport]
@@ -104,7 +104,7 @@ public struct SlotResolution: Sendable, Equatable {
     public let contextTokens: Int
 
     /// Creates a slot resolution.
-    public init(
+    package init(
         slot: ModelSlot,
         remainingBudgetBytes: Int64,
         chosen: ModelRef?,
@@ -121,18 +121,18 @@ public struct SlotResolution: Sendable, Equatable {
 
 /// The error thrown when a profile's three slots cannot co-fit one budget. It
 /// carries every slot's ``SlotResolution``. A slot with no viable candidate has `chosen == nil`.
-public struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
+struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
     /// The name of the profile that could not be resolved.
-    public let profileName: String
+    let profileName: String
 
     /// The shared memory budget, in bytes, the slots had to co-fit.
-    public let budgetBytes: Int64
+    let budgetBytes: Int64
 
     /// Every slot's resolution, in allocation order (embedding, standard, flash).
-    public let slots: [SlotResolution]
+    let slots: [SlotResolution]
 
     /// Creates a resolution failure.
-    public init(profileName: String, budgetBytes: Int64, slots: [SlotResolution]) {
+    init(profileName: String, budgetBytes: Int64, slots: [SlotResolution]) {
         self.profileName = profileName
         self.budgetBytes = budgetBytes
         self.slots = slots
@@ -140,7 +140,7 @@ public struct ResolutionFailure: Error, Equatable, CustomStringConvertible {
 
     /// A multi-line rendering of the failure: each slot, its candidates, and
     /// their footprints.
-    public var description: String {
+    var description: String {
         var lines = [
             "ResolutionFailure: profile \"\(profileName)\" cannot co-fit a budget of \(budgetBytes) bytes."
         ]

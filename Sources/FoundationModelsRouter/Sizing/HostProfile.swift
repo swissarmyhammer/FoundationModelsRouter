@@ -26,15 +26,15 @@ public protocol MachineProbe: Sendable {
 /// `(chip, totalRAM)` (see ``HostProfileCache``). Every value is a byte count;
 /// the type is pure data — `Sendable` and `Codable` — with no dependency on the
 /// hardware it describes, so it serializes and round-trips cleanly.
-public struct HostProfile: Sendable, Codable, Equatable {
+struct HostProfile: Sendable, Codable, Equatable {
     /// The chip / machine identifier.
-    public let chip: String
+    let chip: String
 
     /// Total physical RAM in bytes.
-    public let totalRAM: Int64
+    let totalRAM: Int64
 
     /// The GPU working set in bytes; typically ≈ 70–75% of RAM on Apple Silicon.
-    public let recommendedMaxWorkingSetSize: Int64
+    let recommendedMaxWorkingSetSize: Int64
 
     /// Creates a host profile from explicit measurements.
     ///
@@ -42,7 +42,7 @@ public struct HostProfile: Sendable, Codable, Equatable {
     ///   - chip: The chip / machine identifier.
     ///   - totalRAM: Total physical RAM in bytes.
     ///   - recommendedMaxWorkingSetSize: The GPU working set in bytes.
-    public init(chip: String, totalRAM: Int64, recommendedMaxWorkingSetSize: Int64) {
+    init(chip: String, totalRAM: Int64, recommendedMaxWorkingSetSize: Int64) {
         self.chip = chip
         self.totalRAM = totalRAM
         self.recommendedMaxWorkingSetSize = recommendedMaxWorkingSetSize
@@ -52,7 +52,7 @@ public struct HostProfile: Sendable, Codable, Equatable {
     ///
     /// - Parameter probe: The machine probe to read; pass ``SystemMachineProbe``
     ///   for a live measurement or a stub for tests.
-    public init(probe: MachineProbe) {
+    init(probe: MachineProbe) {
         self.init(
             chip: probe.chip,
             totalRAM: probe.totalRAM,
@@ -68,7 +68,7 @@ public struct HostProfile: Sendable, Codable, Equatable {
     ///
     /// - Parameter headroomReserve: Fixed slack in bytes held out of the budget.
     /// - Returns: The usable budget in bytes.
-    public func budget(headroomReserve: Int64) -> Int64 {
+    func budget(headroomReserve: Int64) -> Int64 {
         min(recommendedMaxWorkingSetSize, totalRAM - headroomReserve)
     }
 }

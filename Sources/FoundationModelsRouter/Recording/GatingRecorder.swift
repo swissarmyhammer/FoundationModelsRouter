@@ -33,7 +33,7 @@ import Foundation
 /// all); the inner sink still owns `seq`/`ts` stamping and the best-effort
 /// swallow of any write failure, so a failed sink write under gating is logged
 /// and dropped, never surfaced into generation or embedding.
-public struct GatingRecorder: TranscriptRecorder {
+struct GatingRecorder: TranscriptRecorder {
     /// How much of each event to record.
     private let level: RecordingLevel
 
@@ -50,7 +50,7 @@ public struct GatingRecorder: TranscriptRecorder {
     ///   - level: How much of each event to record.
     ///   - redact: The redaction hook for body text, or `nil` to record verbatim.
     ///   - inner: The sink each gated event is forwarded to.
-    public init(
+    init(
         level: RecordingLevel,
         redact: (@Sendable (String) -> String)?,
         wrapping inner: any TranscriptRecorder
@@ -62,7 +62,7 @@ public struct GatingRecorder: TranscriptRecorder {
 
     /// Applies the level and redaction to `partial`, then forwards it to the
     /// inner sink — or drops it entirely at ``RecordingLevel/off``.
-    public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
+    func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
         switch level {
         case .off:
             return

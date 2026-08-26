@@ -82,7 +82,7 @@ public enum OperationOutcome: Sendable, Equatable {
     ///
     /// Never fails: a value not recognized by this version of the package
     /// is preserved as `.other(rawValue)`.
-    public init(rawValue: String) {
+    init(rawValue: String) {
         self = Self.wireVocabulary.first(where: { $0.rawValue == rawValue })?.outcome ?? .other(rawValue)
     }
 }

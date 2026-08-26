@@ -5,19 +5,19 @@ import FoundationModels
 /// arrived out of the total.
 public struct DownloadProgress: Sendable, Equatable {
     /// Bytes downloaded so far.
-    public let bytesDownloaded: Int64
+    let bytesDownloaded: Int64
 
     /// Total bytes expected, or `0` when not yet known.
-    public let bytesTotal: Int64
+    let bytesTotal: Int64
 
     /// Creates a download-progress observation.
-    public init(bytesDownloaded: Int64, bytesTotal: Int64) {
+    init(bytesDownloaded: Int64, bytesTotal: Int64) {
         self.bytesDownloaded = bytesDownloaded
         self.bytesTotal = bytesTotal
     }
 
     /// The fraction downloaded in `0...1`, or `0` when the total is unknown.
-    public var fraction: Double {
+    var fraction: Double {
         bytesTotal > 0 ? Double(bytesDownloaded) / Double(bytesTotal) : 0
     }
 }
@@ -52,19 +52,19 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
 
 extension LoadedLLMContainer {
     /// Traps. See ``LoadedLLMContainer/languageModel``.
-    public var languageModel: any FoundationModels.LanguageModel {
+    var languageModel: any FoundationModels.LanguageModel {
         preconditionFailure(
             "this LoadedLLMContainer does not expose a languageModel; RoutedModel.makeLanguageModel() is unavailable for it"
         )
     }
 
     /// Ignores `tools` and forwards to ``makeSession(instructions:)``.
-    public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
+    func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions)
     }
 
     /// Ignores `tools` and forwards to ``makeSession(transcript:)``.
-    public func makeSession(transcript: FoundationModels.Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
+    func makeSession(transcript: FoundationModels.Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeSession(transcript: transcript)
     }
 }

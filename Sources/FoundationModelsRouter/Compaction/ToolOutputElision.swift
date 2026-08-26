@@ -3,17 +3,17 @@ import FoundationModels
 /// Deterministic compaction stage 1: replaces `toolOutput` payloads older
 /// than the recency window with a one-line placeholder naming the tool. The
 /// `toolOutput` entry keeps its id; every other entry is untouched.
-public struct ToolOutputElision: CompactionStage {
+package struct ToolOutputElision: CompactionStage {
     /// This stage's name, recorded in ``CompactionResult/stagesApplied``.
-    public static let stageName = "ToolOutputElision"
+    package static let stageName = "ToolOutputElision"
 
     /// How many of the newest turns are the untouchable recency window. Defaults to `4`.
-    public var keepRecentTurns: Int
+    package var keepRecentTurns: Int
 
     /// Creates a tool-output-elision stage.
     ///
     /// - Parameter keepRecentTurns: How many of the newest turns to leave untouched. Defaults to `4`.
-    public init(keepRecentTurns: Int = 4) {
+    package init(keepRecentTurns: Int = 4) {
         self.keepRecentTurns = keepRecentTurns
     }
 
@@ -21,7 +21,7 @@ public struct ToolOutputElision: CompactionStage {
     ///
     /// - Parameter transcript: The transcript to elide old tool output from.
     /// - Returns: A transcript with old `toolOutput` payloads replaced by placeholders.
-    public func apply(_ transcript: Transcript) -> Transcript {
+    package func apply(_ transcript: Transcript) -> Transcript {
         let (header, turns) = TranscriptTurns.split(Array(transcript))
         let (old, recent) = TranscriptTurns.partition(turns, keepRecentTurns: keepRecentTurns)
 

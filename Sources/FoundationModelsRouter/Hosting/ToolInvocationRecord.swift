@@ -72,7 +72,7 @@ public struct ToolInvocationRecord: Sendable, Equatable, Codable {
     ///   - openedAt: When the binding opened.
     ///   - closedAt: When the wrapped call returned, or `nil` (the default)
     ///     for an open record.
-    public init(
+    init(
         tool: String,
         op: String,
         correlationID: String,
@@ -93,7 +93,7 @@ public struct ToolInvocationRecord: Sendable, Equatable, Codable {
     ///
     /// - Parameter instant: When the wrapped call returned.
     /// - Returns: The closed record.
-    public func closed(at instant: Date) -> ToolInvocationRecord {
+    func closed(at instant: Date) -> ToolInvocationRecord {
         ToolInvocationRecord(
             tool: tool,
             op: op,

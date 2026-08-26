@@ -7,7 +7,7 @@ private let transcriptReconstructionLogger = makeModuleLogger(category: "Recordi
 
 /// A failure reconstructing a `FoundationModels.Transcript` from a session's
 /// effective entry-kind events. Each case names the event's `session` and `seq`.
-public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
+enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     /// An entry-kind event with `entry == nil`, from a v1 recording line.
     /// Reconstruction refuses it.
     case legacyEventMissingPayload(session: ULID, seq: Int)
@@ -25,7 +25,7 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     case checkpointEntryMissing(session: ULID, seq: Int, entryId: String)
 
     /// A localized message describing what error occurred.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .legacyEventMissingPayload(let session, let seq):
             return """
@@ -52,7 +52,7 @@ public enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
 }
 
 /// Which view ``TranscriptTree/effectiveTranscript(forSession:view:)`` reconstructs.
-public enum TranscriptReconstructionView: Sendable, Equatable {
+package enum TranscriptReconstructionView: Sendable, Equatable {
     /// The newest ``CompactionSegment`` checkpoint's live window plus every
     /// entry recorded after it. A session with no checkpoint reconstructs in
     /// full. This is the default.
@@ -186,7 +186,7 @@ extension TranscriptTree {
     ///   - id: The session's span id.
     ///   - view: Which view to reconstruct. Defaults to ``TranscriptReconstructionView/restore``.
     /// - Throws: ``TranscriptTreeError`` or ``TranscriptReconstructionError``.
-    public func effectiveTranscript(
+    package func effectiveTranscript(
         forSession id: ULID,
         view: TranscriptReconstructionView = .restore
     ) throws -> Transcript {

@@ -301,20 +301,20 @@ public actor SessionOutbox: OperationEventSink {
     /// whose turn is running.
     public struct QueueDepth: Sendable, Equatable {
         /// How many prompts are still waiting in the queue.
-        public let queued: Int
+        let queued: Int
 
         /// The dispatched prompt whose turn has not finished, or `nil`.
-        public let dispatched: ItemID?
+        let dispatched: ItemID?
 
         /// Every prompt this session still owes a turn.
-        public var total: Int { queued + (dispatched == nil ? 0 : 1) }
+        var total: Int { queued + (dispatched == nil ? 0 : 1) }
 
         /// Creates a queue-depth snapshot.
         ///
         /// - Parameters:
         ///   - queued: How many prompts are still waiting.
         ///   - dispatched: The dispatched prompt's id, or `nil`.
-        public init(queued: Int, dispatched: ItemID?) {
+        init(queued: Int, dispatched: ItemID?) {
             self.queued = queued
             self.dispatched = dispatched
         }

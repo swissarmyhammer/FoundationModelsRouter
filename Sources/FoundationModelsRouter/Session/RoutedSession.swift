@@ -15,7 +15,7 @@ public enum TurnCancellationResult: Sendable, Equatable {
 }
 
 /// The outcome of ``RoutedSession/cancelPrompt(id:)``.
-public enum PromptCancellationResult: Sendable, Equatable {
+enum PromptCancellationResult: Sendable, Equatable {
     /// The prompt was still in the queue and was withdrawn. It never produced a turn.
     case withdrawn
 
@@ -371,7 +371,7 @@ extension RoutedSession {
     /// - Returns: What the fold did.
     /// - Throws: The summarizer's error.
     @discardableResult
-    public func compact() async throws -> CompactionResult {
+    func compact() async throws -> CompactionResult {
         try await compact(prompt: .default, budget: nil)
     }
 
@@ -381,7 +381,7 @@ extension RoutedSession {
     /// - Returns: What the fold did.
     /// - Throws: The summarizer's error.
     @discardableResult
-    public func compact(prompt: CompactionPrompt) async throws -> CompactionResult {
+    func compact(prompt: CompactionPrompt) async throws -> CompactionResult {
         try await compact(prompt: prompt, budget: nil)
     }
 
@@ -391,7 +391,7 @@ extension RoutedSession {
     /// - Returns: What the fold did.
     /// - Throws: The summarizer's error.
     @discardableResult
-    public func compact(budget: TokenBudget?) async throws -> CompactionResult {
+    func compact(budget: TokenBudget?) async throws -> CompactionResult {
         try await compact(prompt: .default, budget: budget)
     }
 
@@ -426,7 +426,7 @@ extension RoutedSession {
     /// - Parameter prompt: The prompt text to stage.
     /// - Returns: The stable id of this queued prompt.
     @discardableResult
-    public func enqueue(prompt: String) async -> SessionOutbox.ItemID {
+    func enqueue(prompt: String) async -> SessionOutbox.ItemID {
         await enqueue(prompt: Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
     }
 
@@ -441,7 +441,7 @@ extension RoutedSession {
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
     /// - Returns: Which of the three ``PromptCancellationResult`` states applied.
     @discardableResult
-    public func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
+    func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
         if await cancel(id: id) == .applied {
             return .withdrawn
         }

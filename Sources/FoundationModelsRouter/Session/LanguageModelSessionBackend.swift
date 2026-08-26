@@ -9,18 +9,18 @@ import FoundationModels
 /// accumulator uses ``restartsResponse`` to drop the superseded text.
 public struct ResponseFragment: Sendable, Equatable {
     /// The new text this fragment adds.
-    public let text: String
+    let text: String
 
     /// `true` when this fragment begins a new response that supersedes every
     /// fragment delivered so far this turn.
-    public let restartsResponse: Bool
+    let restartsResponse: Bool
 
     /// Creates a fragment.
     ///
     /// - Parameters:
     ///   - text: The new text this fragment adds.
     ///   - restartsResponse: Whether this fragment begins a new response. Defaults to `false`.
-    public init(text: String, restartsResponse: Bool = false) {
+    init(text: String, restartsResponse: Bool = false) {
         self.text = text
         self.restartsResponse = restartsResponse
     }

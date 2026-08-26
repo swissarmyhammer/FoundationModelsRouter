@@ -34,7 +34,7 @@ final class OwningProfileBox: @unchecked Sendable {
 /// gains its own methods through container-constrained extensions.
 public final class RoutedModel<Container: Sendable>: Sendable {
     /// The slot this model fills.
-    public let slot: ModelSlot
+    let slot: ModelSlot
 
     /// The chosen model reference.
     public let chosen: ModelRef
@@ -46,25 +46,25 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     public let resolution: SlotResolution
 
     /// The loaded, resident container.
-    public let container: Container
+    let container: Container
 
     /// The recording root id of the router that resolved this model.
-    public let routerId: ULID
+    let routerId: ULID
 
     /// The recorder a vended session or embed call is born holding.
-    public let recorder: any TranscriptRecorder
+    let recorder: any TranscriptRecorder
 
     /// Where this handle's sessions record durably, with the sidecar writer, or
     /// `nil` when recording to memory or none.
-    public let durableRecording: DurableRecording?
+    let durableRecording: DurableRecording?
 
     /// The router's durable transcripts root, or `nil` when recording to
     /// memory or none.
-    public var recordingsRoot: URL? { durableRecording?.root }
+    var recordingsRoot: URL? { durableRecording?.root }
 
     /// The sidecar writer a vended session writes its `session.json` through,
     /// or `nil` when there is no durable transcripts root.
-    public var sessionSidecarWriter: SessionSidecarWriter? { durableRecording?.sidecarWriter }
+    var sessionSidecarWriter: SessionSidecarWriter? { durableRecording?.sidecarWriter }
 
     /// The weak back-reference to the profile that owns this model.
     let owningProfileBox = OwningProfileBox()

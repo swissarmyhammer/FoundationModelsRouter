@@ -21,13 +21,13 @@ public enum GenerationProgressVisibility: Sendable, Equatable {
 /// reports again on each further interval without progress.
 public struct GenerationStall: Sendable, Equatable, CustomStringConvertible {
     /// How long the generation has gone with no observable progress.
-    public let timeWithoutProgress: Duration
+    let timeWithoutProgress: Duration
 
     /// How long this model call has been in flight.
-    public let timeInFlight: Duration
+    let timeInFlight: Duration
 
     /// What the session could observe about this generation's progress.
-    public let visibility: GenerationProgressVisibility
+    let visibility: GenerationProgressVisibility
 
     /// Creates a stall report.
     public init(

@@ -42,7 +42,7 @@ extension PersistableStructuredSegment {
     /// its key order intact, so a live segment and its restored twin compare equal.
     /// An encode failure is logged at fault level and the segment carries
     /// ``encodingFailureContentJSON``, which no `Content` decodes from.
-    public var structuredSegment: Transcript.StructuredSegment {
+    var structuredSegment: Transcript.StructuredSegment {
         Transcript.StructuredSegment(
             id: id,
             schemaName: Self.schemaName,
@@ -51,12 +51,12 @@ extension PersistableStructuredSegment {
     }
 
     /// This value as a `Transcript.Segment`, ready to put in an entry.
-    public var transcriptSegment: Transcript.Segment { .structure(structuredSegment) }
+    var transcriptSegment: Transcript.Segment { .structure(structuredSegment) }
 
     /// Rebuilds this type from a live structured segment.
     /// - Returns: The rebuilt value, or `nil` when the segment carries another type's `schemaName`.
     /// - Throws: ``TranscriptEntryReconstructionError/invalidJSON(context:underlying:)`` when the body does not decode.
-    public init?(structuredSegment: Transcript.StructuredSegment) throws {
+    init?(structuredSegment: Transcript.StructuredSegment) throws {
         guard structuredSegment.schemaName == Self.schemaName else { return nil }
         try self.init(
             id: structuredSegment.id,

@@ -37,7 +37,7 @@ public struct ToolContext: Sendable {
     private let cancellationProbe: @Sendable () -> Bool
 
     /// Whether cancellation has been requested, as reported by the bound probe.
-    public var isCancelled: Bool {
+    var isCancelled: Bool {
         cancellationProbe()
     }
 

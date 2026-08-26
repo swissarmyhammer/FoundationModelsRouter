@@ -8,9 +8,9 @@ import Foundation
 /// A tool that condenses text through an injected ``RoutedLLM``.
 ///
 /// Each ``summarize(text:)`` runs one recorded generation in a fresh session.
-public struct SummarizeTool: Sendable {
+struct SummarizeTool: Sendable {
     /// The injected generation handle.
-    public let model: RoutedLLM
+    let model: RoutedLLM
 
     /// The system instructions each vended session is given.
     private let instructions: String
@@ -20,7 +20,7 @@ public struct SummarizeTool: Sendable {
     /// - Parameters:
     ///   - model: The ``RoutedLLM`` to summarize through.
     ///   - instructions: The system instructions for each summarize session.
-    public init(
+    init(
         model: RoutedLLM,
         instructions: String = "Summarize the following text concisely."
     ) {
@@ -33,33 +33,33 @@ public struct SummarizeTool: Sendable {
     /// - Parameter text: The text to condense.
     /// - Returns: The model's summary.
     /// - Throws: Any error thrown by the generation.
-    public func summarize(text: String) async throws -> String {
+    func summarize(text: String) async throws -> String {
         let session = model.makeSession(instructions: instructions)
         return try await session.respond(to: text)
     }
 }
 
 /// A tool that embeds text through an injected ``RoutedEmbedder``.
-public struct EmbedTool: Sendable {
+struct EmbedTool: Sendable {
     /// The injected embedding handle.
-    public let model: RoutedEmbedder
+    let model: RoutedEmbedder
 
     /// Creates an embedder over a resolved embedding handle.
     ///
     /// - Parameter model: The ``RoutedEmbedder`` to embed through.
-    public init(model: RoutedEmbedder) {
+    init(model: RoutedEmbedder) {
         self.model = model
     }
 
     /// The length of every vector this tool produces.
-    public var dimension: Int { model.dimension }
+    var dimension: Int { model.dimension }
 
     /// Embeds each input string with one recorded call.
     ///
     /// - Parameter texts: The strings to embed.
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the embedder.
-    public func embed(texts: [String]) async throws -> [[Float]] {
+    func embed(texts: [String]) async throws -> [[Float]] {
         try await model.embed(texts: texts)
     }
 }

@@ -5,13 +5,13 @@ import os
 /// The raw bytes of the two Hub artifacts that sizing needs. No weights are downloaded.
 public struct RawRepoMetadata: Sendable {
     /// The bytes of `config.json` at the revision, or `nil` when absent.
-    public let configJSON: Data?
+    let configJSON: Data?
 
     /// The bytes of the repo tree listing JSON (`…/tree/{rev}`).
-    public let treeJSON: Data
+    let treeJSON: Data
 
     /// Creates a raw metadata bundle.
-    public init(configJSON: Data?, treeJSON: Data) {
+    init(configJSON: Data?, treeJSON: Data) {
         self.configJSON = configJSON
         self.treeJSON = treeJSON
     }
@@ -29,7 +29,7 @@ public protocol MetadataSource: Sendable {
 }
 
 /// A failure reading a repo's sizing metadata.
-public enum RepoMetadataError: Error, Equatable {
+enum RepoMetadataError: Error, Equatable {
     /// The repo cannot be sized; the associated value explains why.
     case metadataUnavailable(String)
 }
@@ -38,56 +38,56 @@ public enum RepoMetadataError: Error, Equatable {
 /// bytes and the attention architecture needed for the KV-cache math.
 ///
 /// The GQA and head-dim fallbacks are not applied here; ``Footprint`` applies them.
-public struct RepoMetadata: Sendable, Equatable, Codable {
+struct RepoMetadata: Sendable, Equatable, Codable {
     /// Resident weight bytes — `Σ size(*.safetensors)`.
-    public let weightBytes: Int64
+    let weightBytes: Int64
 
     /// Transformer layer count (`num_hidden_layers`).
-    public let numHiddenLayers: Int
+    let numHiddenLayers: Int
 
     /// Query head count (`num_attention_heads`).
-    public let numAttentionHeads: Int
+    let numAttentionHeads: Int
 
     /// Key/value head count (`num_key_value_heads`); `nil` for multi-head attention.
-    public let numKeyValueHeads: Int?
+    let numKeyValueHeads: Int?
 
     /// Per-head dimension (`head_dim`); `nil` when the config omits it.
-    public let headDim: Int?
+    let headDim: Int?
 
     /// Model hidden size (`hidden_size`); used to derive `headDim` when absent.
-    public let hiddenSize: Int?
+    let hiddenSize: Int?
 
     /// Number of layers whose KV cache grows with context.
     ///
     /// Equal to `numHiddenLayers` unless the config declares `layer_types`; then it
     /// is the count of `"full_attention"` entries.
-    public let numFullAttentionLayers: Int
+    let numFullAttentionLayers: Int
 
     /// The model's native maximum context length, from `max_position_embeddings`,
     /// then `n_positions`, then `max_seq_len`, then `seq_length`.
     ///
     /// Defaults to ``defaultNativeMaxContext`` when none is present. Clamped to
     /// `[nativeMaxContextFloor, nativeMaxContextCap]`.
-    public let nativeMaxContext: Int
+    let nativeMaxContext: Int
 
     /// Why ``nativeMaxContext`` differs from the raw `config.json` value, or `nil`
     /// when it does not.
-    public let nativeMaxContextDiagnostic: String?
+    let nativeMaxContextDiagnostic: String?
 
     /// The ceiling that ``nativeMaxContext`` is capped to.
-    public static let nativeMaxContextCap = 1_048_576
+    static let nativeMaxContextCap = 1_048_576
 
     /// The floor that ``nativeMaxContext`` is raised to.
-    public static let nativeMaxContextFloor = 4096
+    static let nativeMaxContextFloor = 4096
 
     /// The native max context used when `config.json` has no context-length field.
-    public static let defaultNativeMaxContext = 8192
+    static let defaultNativeMaxContext = 8192
 
     /// Creates parsed metadata from already-resolved values.
     ///
     /// `numFullAttentionLayers` defaults to `numHiddenLayers`. `nativeMaxContext`
     /// defaults to ``defaultNativeMaxContext``.
-    public init(
+    init(
         weightBytes: Int64,
         numHiddenLayers: Int,
         numAttentionHeads: Int,
@@ -113,7 +113,7 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
     ///
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when `config.json`
     ///   is absent, does not parse, lacks required fields, or the tree has no `*.safetensors`.
-    public init(raw: RawRepoMetadata) throws {
+    init(raw: RawRepoMetadata) throws {
         guard let configJSON = raw.configJSON else {
             throw RepoMetadataError.metadataUnavailable("config.json is not present in the repo")
         }
@@ -184,7 +184,7 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
 
     /// The memory footprint estimate for this repo. Uses ``numFullAttentionLayers``
     /// as the KV-cache layer count.
-    public var footprint: Footprint {
+    var footprint: Footprint {
         Footprint(
             weightBytes: weightBytes,
             numHiddenLayers: numFullAttentionLayers,
@@ -325,7 +325,7 @@ public struct RepoMetadata: Sendable, Equatable, Codable {
 
 /// Reads ``RepoMetadata`` for a ``ModelRef`` and caches the parsed result per
 /// `(repo, revision)` on disk.
-public struct RepoMetadataReader: Sendable {
+struct RepoMetadataReader: Sendable {
     /// The injected fetch.
     private let source: MetadataSource
 
@@ -337,7 +337,7 @@ public struct RepoMetadataReader: Sendable {
     /// - Parameters:
     ///   - source: The metadata fetch.
     ///   - cacheDir: The cache directory. It is created on demand.
-    public init(source: MetadataSource, cacheDir: URL) {
+    init(source: MetadataSource, cacheDir: URL) {
         self.source = source
         self.cache = RepoMetadataCache(cacheDir: cacheDir)
     }
@@ -346,7 +346,7 @@ public struct RepoMetadataReader: Sendable {
     ///
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the repo
     ///   lacks sizing inputs, or any error from the source or cache I/O.
-    public func metadata(for ref: ModelRef) async throws -> RepoMetadata {
+    func metadata(for ref: ModelRef) async throws -> RepoMetadata {
         if let cached = try cache.load(repo: ref.repo, revision: ref.revision) {
             return cached
         }
@@ -359,7 +359,7 @@ public struct RepoMetadataReader: Sendable {
     /// Returns the memory footprint estimate for a model.
     ///
     /// - Throws: As ``metadata(for:)``.
-    public func footprint(for ref: ModelRef) async throws -> Footprint {
+    func footprint(for ref: ModelRef) async throws -> Footprint {
         try await metadata(for: ref).footprint
     }
 }

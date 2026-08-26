@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 
 /// A decorator that binds a per-call ``ToolContext`` around a non-`String`-output tool and returns its output unchanged. It synthesizes no events.
-public struct ContextBindingTool<
+struct ContextBindingTool<
     Arguments: ConvertibleFromGeneratedContent, Output: PromptRepresentable
 >: Tool {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
@@ -21,19 +21,19 @@ public struct ContextBindingTool<
     private let op: String?
 
     /// The wrapped tool's name.
-    public var name: String { wrapped.name }
+    var name: String { wrapped.name }
 
     /// The wrapped tool's description.
-    public var description: String { wrapped.description }
+    var description: String { wrapped.description }
 
     /// The wrapped tool's parameter schema.
-    public var parameters: GenerationSchema { wrapped.parameters }
+    var parameters: GenerationSchema { wrapped.parameters }
 
     /// Whether the schema is included in the tool's instructions.
-    public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
+    var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
     /// Wraps `wrapped` in the binding-only decorator.
-    public init(
+    init(
         wrapping wrapped: any Tool<Arguments, Output>,
         sessionID: ULID,
         mailbox: SessionMailbox,
@@ -48,7 +48,7 @@ public struct ContextBindingTool<
     }
 
     /// Runs one call under a fresh ``ToolContext`` binding, posts an open and a close ``ToolInvocationRecord`` around it, and rethrows the wrapped tool's error unmodified.
-    public func call(arguments: Arguments) async throws -> Output {
+    func call(arguments: Arguments) async throws -> Output {
         let cancellationFlag = CancellationRequestFlag()
         let context = ToolContext(
             stamping: wrapped,

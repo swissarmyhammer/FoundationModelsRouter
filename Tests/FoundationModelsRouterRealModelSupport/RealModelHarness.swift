@@ -116,7 +116,7 @@ public enum RealModelHarness {
     ///   - recordingsDir: The router's durable transcripts root.
     ///   - routerId: The id of the router that owns `recordingsDir`.
     /// - Returns: The durable recording.
-    public static func makeDurableRecording(
+    package static func makeDurableRecording(
         slot: ModelSlot,
         model: ModelRef,
         context: Int,

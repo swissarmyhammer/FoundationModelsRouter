@@ -9,9 +9,9 @@ import Foundation
 /// maps to its own file, so distinct machines never collide. The cache is
 /// disposable — deleting it only forces a re-measurement, never data loss — and
 /// is separate from the recordings directory.
-public struct HostProfileCache: Sendable {
+struct HostProfileCache: Sendable {
     /// The directory under which profile JSON files are written.
-    public let cacheDir: URL
+    let cacheDir: URL
 
     /// Creates a cache rooted at the given directory.
     ///
@@ -19,7 +19,7 @@ public struct HostProfileCache: Sendable {
     /// exist yet.
     ///
     /// - Parameter cacheDir: The disposable directory to read and write under.
-    public init(cacheDir: URL) {
+    init(cacheDir: URL) {
         self.cacheDir = cacheDir
     }
 
@@ -30,7 +30,7 @@ public struct HostProfileCache: Sendable {
     ///   - totalRAM: The total physical RAM in bytes of the machine.
     /// - Returns: The cached profile, or `nil` when nothing is cached for the key.
     /// - Throws: If a cached file exists but cannot be read or decoded.
-    public func load(chip: String, totalRAM: Int64) throws -> HostProfile? {
+    func load(chip: String, totalRAM: Int64) throws -> HostProfile? {
         let url = fileURL(chip: chip, totalRAM: totalRAM)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
@@ -42,7 +42,7 @@ public struct HostProfileCache: Sendable {
     ///
     /// - Parameter profile: The profile to persist.
     /// - Throws: If the directory cannot be created or the file cannot be written.
-    public func save(_ profile: HostProfile) throws {
+    func save(_ profile: HostProfile) throws {
         try FileManager.default.createDirectory(
             at: cacheDir,
             withIntermediateDirectories: true

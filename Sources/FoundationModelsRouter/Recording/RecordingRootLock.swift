@@ -6,28 +6,28 @@ private let lockLogger = makeModuleLogger(category: "Recording")
 
 /// The lock-marker file name a writer creates inside a recording root it owns.
 /// The marker's payload is one JSON-encoded ``RecordingRootOwner``.
-public let recordingRootLockFileName = "owner.lock"
+let recordingRootLockFileName = "owner.lock"
 
 /// The POSIX permission bits a fresh lock marker is created with.
 private let lockFileMode: mode_t = 0o644
 
 /// The writer that holds a recording root: which process took ownership and when.
 /// It is the lock marker's payload and the owner named by ``RecordingRootLockError/alreadyOwned(root:owner:)``.
-public struct RecordingRootOwner: Codable, Equatable, Sendable {
+struct RecordingRootOwner: Codable, Equatable, Sendable {
     /// The owning process's id.
-    public let processId: Int32
+    let processId: Int32
     /// When the owner took the root.
-    public let acquiredAt: Date
+    let acquiredAt: Date
 
     /// Creates an owner record.
-    public init(processId: Int32, acquiredAt: Date) {
+    init(processId: Int32, acquiredAt: Date) {
         self.processId = processId
         self.acquiredAt = acquiredAt
     }
 }
 
 /// A typed failure taking ownership of a recording root, thrown at open time.
-public enum RecordingRootLockError: Error, Equatable, LocalizedError {
+enum RecordingRootLockError: Error, Equatable, LocalizedError {
     /// Another live writer owns the root.
     case alreadyOwned(root: URL, owner: RecordingRootOwner)
 
@@ -35,7 +35,7 @@ public enum RecordingRootLockError: Error, Equatable, LocalizedError {
     case contested(root: URL)
 
     /// A localized message describing what error occurred.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .alreadyOwned(let root, let owner):
             return

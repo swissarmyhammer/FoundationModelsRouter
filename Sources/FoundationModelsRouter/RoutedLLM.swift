@@ -312,7 +312,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///
     /// - Precondition: The owning ``LanguageModelProfile`` is still alive.
     /// - Returns: A fresh ``RecordingLanguageModel`` handle over this model.
-    public func makeLanguageModel() -> RecordingLanguageModel {
+    func makeLanguageModel() -> RecordingLanguageModel {
         let owningProfile = requireOwningProfile(apiName: "makeLanguageModel")
         let sessionId = ULID.generate()
         return makeRecordingLanguageModelHandle(
@@ -336,7 +336,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - Throws: ``SessionTreeRestorationError/noDurableRecordingsRoot`` when
     ///   this handle has no durable root; ``TranscriptTreeError`` or
     ///   ``TranscriptReconstructionError`` from transcript reconstruction.
-    public func makeLanguageModel(
+    func makeLanguageModel(
         resuming sessionId: ULID
     ) throws -> (handle: RecordingLanguageModel, transcript: Transcript) {
         let owningProfile = requireOwningProfile(apiName: "makeLanguageModel")

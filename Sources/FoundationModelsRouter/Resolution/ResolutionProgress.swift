@@ -3,9 +3,9 @@ import Observation
 
 /// One slot's live progress through a resolution: its state, the candidate
 /// that won it, and its download progress.
-public struct SlotProgress: Sendable, Equatable {
+struct SlotProgress: Sendable, Equatable {
     /// Where a single slot is in the resolution pipeline.
-    public enum State: Sendable, Equatable {
+    enum State: Sendable, Equatable {
         /// Not yet started.
         case pending
         /// Being sized against the budget.
@@ -21,19 +21,19 @@ public struct SlotProgress: Sendable, Equatable {
     }
 
     /// The slot's current state.
-    public var state: State
+    var state: State
 
     /// The candidate that won the slot in joint fit, or `nil` until chosen.
-    public var chosen: ModelRef?
+    var chosen: ModelRef?
 
     /// Bytes of the chosen model's weights downloaded so far.
-    public var bytesDownloaded: Int64
+    var bytesDownloaded: Int64
 
     /// Total bytes of the chosen model's weights, or `0` when not yet known.
-    public var bytesTotal: Int64
+    var bytesTotal: Int64
 
     /// Creates a slot progress value.
-    public init(
+    init(
         state: State = .pending,
         chosen: ModelRef? = nil,
         bytesDownloaded: Int64 = 0,
@@ -88,10 +88,10 @@ public final class ResolutionProgress {
     public var phase: Phase = .sizing
 
     /// The overall progress in `0...1`, driving a `ProgressView`.
-    public var fraction: Double = 0
+    var fraction: Double = 0
 
     /// Per-slot progress, keyed by slot.
-    public var slots: [ModelSlot: SlotProgress] = [:]
+    var slots: [ModelSlot: SlotProgress] = [:]
 
     /// Creates a fresh, empty progress in the ``Phase/sizing`` phase.
     public init() {}

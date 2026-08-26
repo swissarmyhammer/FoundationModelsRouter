@@ -4,21 +4,21 @@ import FoundationModels
 /// A ``PersistableStructuredSegment`` that records one compaction's fold
 /// metadata. It travels as a `Transcript.StructuredSegment` under the schema
 /// name `FoundationModelsRouter.CompactionSegment`.
-public struct CompactionSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
+package struct CompactionSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
     /// One background run's summary (token, op, latest progress) carried
     /// across the compaction boundary. Never a run's output.
-    public struct PendingRunSummary: Codable, Equatable, Sendable {
+    package struct PendingRunSummary: Codable, Equatable, Sendable {
         /// The run's completion token.
-        public let completionToken: String
+        let completionToken: String
 
         /// The canonical `"verb noun"` op string of the background operation.
-        public let op: String
+        let op: String
 
         /// The latest progress detail reported for the run, or `nil`.
-        public let latestProgressDetail: String?
+        let latestProgressDetail: String?
 
         /// Creates one background run's summary.
-        public init(completionToken: String, op: String, latestProgressDetail: String?) {
+        init(completionToken: String, op: String, latestProgressDetail: String?) {
             self.completionToken = completionToken
             self.op = op
             self.latestProgressDetail = latestProgressDetail
@@ -26,33 +26,33 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
     }
 
     /// The fold metadata one compaction's ``CompactionSegment`` carries.
-    public struct Content: Codable, Equatable, Sendable {
+    package struct Content: Codable, Equatable, Sendable {
         /// The ordered entry ids of the compacted live window, including the
         /// summary entry.
-        public var liveWindowEntryIds: [String]
+        var liveWindowEntryIds: [String]
 
         /// The entry ids this fold replaced. The entries stay in the
         /// recorded transcript.
-        public var foldedEntryIds: [String]
+        var foldedEntryIds: [String]
 
         /// The measured transcript size, in tokens, before this fold.
-        public var tokensBefore: Int
+        var tokensBefore: Int
 
         /// The measured transcript size, in tokens, after this fold.
-        public var tokensAfter: Int
+        var tokensAfter: Int
 
         /// The pipeline stages this fold applied, in order.
-        public var stagesApplied: [String]
+        var stagesApplied: [String]
 
         /// The name of the `CompactionPrompt` that produced this fold's summary.
-        public var promptName: String
+        var promptName: String
 
         /// The summaries of the runs still running when this boundary was
         /// written, in tracking order, or `nil` when there were none.
-        public var pendingRuns: [PendingRunSummary]?
+        var pendingRuns: [PendingRunSummary]?
 
         /// Creates fold metadata. `pendingRuns` defaults to `nil`.
-        public init(
+        init(
             liveWindowEntryIds: [String],
             foldedEntryIds: [String],
             tokensBefore: Int,
@@ -72,19 +72,19 @@ public struct CompactionSegment: PersistableStructuredSegment, Equatable, Custom
     }
 
     /// The unique identifier of this segment.
-    public let id: String
+    package let id: String
 
     /// The fold metadata this segment carries.
-    public let content: Content
+    package let content: Content
 
     /// Creates a segment that wraps `content`. `id` defaults to a fresh UUID.
-    public init(id: String = UUID().uuidString, content: Content) {
+    package init(id: String = UUID().uuidString, content: Content) {
         self.id = id
         self.content = content
     }
 
     /// The flat description persisted with this segment's JSON content.
-    public var description: String {
+    package var description: String {
         let pendingRunsSuffix = content.pendingRuns.map { "; pending runs: \($0.count)" } ?? ""
         return "Compaction: \(content.foldedEntryIds.count) entries folded into a "
             + "\(content.liveWindowEntryIds.count)-entry window "

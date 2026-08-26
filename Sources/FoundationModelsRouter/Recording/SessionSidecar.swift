@@ -14,20 +14,20 @@ let sessionSidecarFileName = "session.json"
 public struct SessionSidecar: Codable, Sendable, Equatable {
     /// The concrete models that won each slot on the run that created this
     /// session. Recorded on root sessions only.
-    public struct ResolvedProfile: Codable, Sendable, Equatable {
+    package struct ResolvedProfile: Codable, Sendable, Equatable {
         /// The name of the ``ProfileDefinition`` this was resolved from.
-        public let definitionName: String
+        let definitionName: String
         /// The concrete model chosen for the `.standard` slot.
-        public let standard: ModelRef
+        let standard: ModelRef
         /// The concrete model chosen for the `.flash` slot.
-        public let flash: ModelRef
+        let flash: ModelRef
         /// The concrete model chosen for the `.embedding` slot.
-        public let embedding: ModelRef
+        let embedding: ModelRef
         /// The working context, in tokens, shared by every slot.
-        public let context: Int
+        let context: Int
 
         /// Creates a resolved-profile record.
-        public init(
+        init(
             definitionName: String,
             standard: ModelRef,
             flash: ModelRef,
@@ -57,55 +57,55 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     }
 
     /// The model slot this session runs against.
-    public let slot: ModelSlot
+    let slot: ModelSlot
     /// The concrete model reference this session runs against.
-    public let model: ModelRef
+    let model: ModelRef
     /// The working context, in tokens, ``model`` was resolved at for ``slot``.
-    public let context: Int
+    let context: Int
     /// This session's system instructions, or `nil`.
-    public let instructions: String?
+    let instructions: String?
     /// This session's guided-generation grammar source, or `nil`.
-    public let grammar: String?
+    let grammar: String?
     /// How much of this session's activity is recorded.
-    public let recordingLevel: RecordingLevel
+    let recordingLevel: RecordingLevel
     /// The number of entries the parent's backend transcript held at fork
     /// time, or `nil` for a root session. Readers use it as the fork cut only
     /// when ``forkedAtHistoryOrdinal`` is `nil`.
-    public let forkedAtEntryCount: Int?
+    let forkedAtEntryCount: Int?
 
     /// The fork's cut point in the parent's recorded history, in append-only
     /// coordinates. `nil` for a root session, and for a fork recorded before
     /// this field existed.
-    public let forkedAtHistoryOrdinal: Int?
+    let forkedAtHistoryOrdinal: Int?
     /// The resolved profile of the run that created this session, or `nil`
     /// for a fork.
-    public let profile: ResolvedProfile?
+    let profile: ResolvedProfile?
     /// The number of ``CompactionSegment`` checkpoints in this session's own
     /// recorded transcript, or `nil`. It is never written to disk.
-    public let compactionCount: Int?
+    let compactionCount: Int?
 
     /// This session's own working directory. When a recording has no
     /// `workingDirectory` key, `init(from:)` uses the recording directory.
-    public let workingDirectory: URL
+    let workingDirectory: URL
 
     /// The parent session and tool call that spawned this session, or `nil`.
     /// A fork's is always `nil`.
-    public let agentSpawn: AgentSpawn?
+    let agentSpawn: AgentSpawn?
 
     /// The recording root id of the router that created this session, or
     /// `nil` for a recording made before this field existed.
-    public let routerId: ULID?
+    let routerId: ULID?
 
     /// The recording schema version. A recording with no `schemaVersion` key
     /// decodes as ``RecordingSchemaVersion/implicit``.
-    public let schemaVersion: Int
+    let schemaVersion: Int
 
     /// The configuration envelope this session was vended with, or `nil` for
     /// a recording made before the envelope existed.
-    public let configuration: SessionConfiguration.Persistable?
+    let configuration: SessionConfiguration.Persistable?
 
     /// Creates a session sidecar.
-    public init(
+    init(
         slot: ModelSlot,
         model: ModelRef,
         context: Int,
@@ -225,7 +225,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     ///   - directory: The session's own recording directory.
     /// - Throws: If `directory` cannot be created, `sidecar` cannot be encoded,
     ///   or a `session.json` already exists there.
-    public static func write(_ sidecar: SessionSidecar, to directory: URL) throws {
+    static func write(_ sidecar: SessionSidecar, to directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -244,7 +244,7 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
     /// - Throws: ``RecordingSchemaVersionError`` when ``schemaVersion`` is
     ///   newer than ``RecordingSchemaVersion/current``; otherwise a read or
     ///   decode error.
-    public static func read(in directory: URL) throws -> SessionSidecar? {
+    static func read(in directory: URL) throws -> SessionSidecar? {
         let fileURL = directory.appendingPathComponent(sessionSidecarFileName, isDirectory: false)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let decoder = JSONDecoder()
@@ -263,15 +263,15 @@ public struct SessionSidecar: Codable, Sendable, Equatable {
 
 /// The durable transcripts root of a model handle, paired with the writer
 /// its sessions write their sidecars through.
-public struct DurableRecording: Sendable {
+package struct DurableRecording: Sendable {
     /// The router's durable transcripts root.
-    public let root: URL
+    package let root: URL
 
     /// The writer every session under ``root`` records its sidecar through.
-    public let sidecarWriter: SessionSidecarWriter
+    package let sidecarWriter: SessionSidecarWriter
 
     /// Pairs a durable transcripts root with its sidecar writer.
-    public init(root: URL, sidecarWriter: SessionSidecarWriter) {
+    package init(root: URL, sidecarWriter: SessionSidecarWriter) {
         self.root = root
         self.sidecarWriter = sidecarWriter
     }
@@ -281,7 +281,7 @@ public struct DurableRecording: Sendable {
 /// One writer belongs to one ``RoutedModel`` and carries the handle-level
 /// facts. An ``RecordingLevel/off`` writer writes nothing. A failure is
 /// logged and the sidecar is dropped.
-public struct SessionSidecarWriter: Sendable {
+package struct SessionSidecarWriter: Sendable {
     /// The slot every session written through this writer runs against.
     let slot: ModelSlot
     /// The concrete model every session written through this writer runs against.
@@ -296,7 +296,7 @@ public struct SessionSidecarWriter: Sendable {
     let routerId: ULID
 
     /// Creates a sidecar writer for one resolved model handle.
-    public init(
+    package init(
         slot: ModelSlot,
         model: ModelRef,
         context: Int,

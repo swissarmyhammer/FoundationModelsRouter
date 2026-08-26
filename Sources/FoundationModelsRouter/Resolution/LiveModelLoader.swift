@@ -342,7 +342,7 @@ final class LiveEmbeddingContainer: LoadedEmbeddingContainer, Sendable {
 }
 
 /// A failure constructing or invoking a ``ModelLoader``.
-public enum ModelLoaderError: Error, Equatable {
+enum ModelLoaderError: Error, Equatable {
     /// No real loader was configured. See ``UnconfiguredModelLoader``.
     case notConfigured
 }

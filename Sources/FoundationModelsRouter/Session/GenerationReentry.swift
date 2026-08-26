@@ -10,7 +10,7 @@ import Synchronization
 /// turn and is not lent. A transcript read from inside the session's own tool
 /// call is served without the lock (see
 /// ``RoutedSessionActor/isInsideOwnTurnToolCall``).
-public enum SessionReentryError: Error, Equatable, LocalizedError {
+enum SessionReentryError: Error, Equatable, LocalizedError {
     /// A tool body of `sessionID`'s own turn asked that session for another turn.
     case sameSessionTurnInFlight(sessionID: ULID)
 
@@ -19,7 +19,7 @@ public enum SessionReentryError: Error, Equatable, LocalizedError {
     case forkDuringSameSessionTurn(sessionID: ULID)
 
     /// A localized message that describes the error.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .sameSessionTurnInFlight(let sessionID):
             return """

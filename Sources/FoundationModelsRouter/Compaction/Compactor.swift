@@ -85,13 +85,13 @@ public struct CompactionResult: Sendable, Equatable {
 /// the transcript lands under ``TokenBudget/target``, then falls back to the
 /// model-assisted ``Summarization`` stage when a `summarizer` is supplied.
 /// It reports the shortfall when no stage is enough.
-public enum Compactor {
+package enum Compactor {
     /// The deterministic stages this pipeline runs, in order.
     static let stages: [any CompactionStage] = [ToolOutputElision(), TurnTruncation()]
 
     /// The characters-per-token ratio ``estimatedTokenCount(of:)`` applies to
     /// a transcript's content bytes.
-    static let charsPerTokenEstimate: Double = 4.0
+    package static let charsPerTokenEstimate: Double = 4.0
 
     /// Runs the pipeline over `transcript` and folds it down to at most
     /// `budget.target` of `budget.limit`. The pipeline stops at the first
@@ -109,7 +109,7 @@ public enum Compactor {
     /// - Returns: The folded transcript and a report of what happened.
     /// - Throws: What `summarizer.summarize(_:maxTokens:)` throws, or
     ///   ``SummarizationError/emptySummary`` when the summary holds no text.
-    public static func compact(
+    package static func compact(
         _ transcript: Transcript,
         prompt: CompactionPrompt = .default,
         budget: TokenBudget,

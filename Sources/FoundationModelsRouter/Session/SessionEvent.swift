@@ -97,7 +97,7 @@ public struct TokenUsage: Sendable, Equatable {
     public let contextFill: Double
 
     /// Creates a token usage value.
-    public init(tokensIn: Int, tokensOut: Int, contextFill: Double) {
+    init(tokensIn: Int, tokensOut: Int, contextFill: Double) {
         self.tokensIn = tokensIn
         self.tokensOut = tokensOut
         self.contextFill = contextFill

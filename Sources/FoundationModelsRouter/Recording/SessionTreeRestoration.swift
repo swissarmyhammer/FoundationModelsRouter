@@ -3,7 +3,7 @@ import FoundationModels
 
 /// A failure to restore a session tree from disk via
 /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``.
-public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
+enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     /// The id names a session in the loaded tree that is not a root. Only a
     /// whole tree is restored, from its root id.
     case notARootSession(ULID)
@@ -21,7 +21,7 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
     case modelMismatch(session: ULID, slot: ModelSlot, recorded: ModelRef, resident: ModelRef)
 
     /// A localized message describing what error occurred.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .notARootSession(let id):
             return """
@@ -49,53 +49,53 @@ public enum SessionTreeRestorationError: Error, Equatable, LocalizedError {
 /// could not re-apply from the recorded configuration envelopes. A recording
 /// carries tool names, not tool instances. Every recorded name that no
 /// supplied tool matches is listed in ``missingTools``.
-public struct SessionConfigurationRestorationReport: Sendable, Equatable {
+struct SessionConfigurationRestorationReport: Sendable, Equatable {
     /// One recorded tool name that no supplied tool matched, on one restored
     /// session.
-    public struct MissingTool: Sendable, Equatable {
+    struct MissingTool: Sendable, Equatable {
         /// The restored session whose envelope recorded the name.
-        public let session: ULID
+        let session: ULID
 
         /// The recorded ``FoundationModels/Tool/name`` with no supplied instance.
-        public let toolName: String
+        let toolName: String
     }
 
     /// Every recorded tool name that no supplied tool matched, in walk order
     /// (each parent before its children), or empty.
-    public let missingTools: [MissingTool]
+    let missingTools: [MissingTool]
 
     /// `true` when ``missingTools`` is empty.
-    public var isComplete: Bool { missingTools.isEmpty }
+    var isComplete: Bool { missingTools.isEmpty }
 }
 
 /// A restored fork tree: every session under a router's recorded root,
 /// reconstructed as live ``RoutedSession``s synced with what is on disk.
-public struct RestoredSessionTree: Sendable {
+struct RestoredSessionTree: Sendable {
     /// One restored session whose recorded working context differs from the
     /// context the restoring profile resolved. The session runs against
     /// ``resolved``. This is a warning, not an error, because the same model
     /// can resolve a different context on a different machine.
-    public struct ContextMismatch: Sendable, Equatable {
+    struct ContextMismatch: Sendable, Equatable {
         /// The restored session whose ``SessionSidecar/context`` differs.
-        public let session: ULID
+        let session: ULID
 
         /// The working context, in tokens, the session was recorded at.
-        public let recorded: Int
+        let recorded: Int
 
         /// The working context, in tokens, the restoring profile resolved.
-        public let resolved: Int
+        let resolved: Int
     }
 
     /// The restored root session.
-    public let root: RoutedSession
+    let root: RoutedSession
 
     /// What the restore could not re-apply from the recorded configuration
     /// envelopes.
-    public let configurationReport: SessionConfigurationRestorationReport
+    let configurationReport: SessionConfigurationRestorationReport
 
     /// Every restored session whose recorded working context differs from
     /// the live resolution, in walk order, or empty.
-    public let contextMismatches: [ContextMismatch]
+    let contextMismatches: [ContextMismatch]
 
     /// Every restored session, keyed by id.
     private let sessionsById: [ULID: RoutedSession]
@@ -122,7 +122,7 @@ public struct RestoredSessionTree: Sendable {
     ///
     /// - Parameter id: The session's span id.
     /// - Returns: The restored session, or `nil` if `id` is not in the tree.
-    public func session(_ id: ULID) -> RoutedSession? {
+    func session(_ id: ULID) -> RoutedSession? {
         sessionsById[id]
     }
 
@@ -130,7 +130,7 @@ public struct RestoredSessionTree: Sendable {
     ///
     /// - Parameter id: The parent session's span id.
     /// - Returns: Its restored children, or empty if `id` is unknown or a leaf.
-    public func children(of id: ULID) -> [RoutedSession] {
+    func children(of id: ULID) -> [RoutedSession] {
         tree.children(of: id).compactMap { sessionsById[$0.id] }
     }
 }
@@ -145,7 +145,7 @@ extension RoutedModel {
     /// - Throws: ``SessionTreeRestorationError/noDurableRecordingsRoot`` when
     ///   `recordingRoot` is `nil` and this handle has no durable root;
     ///   ``TranscriptTreeError`` for what ``TranscriptTree/load(under:)`` throws.
-    public func transcriptTree(recordingRoot: URL? = nil) throws -> TranscriptTree {
+    func transcriptTree(recordingRoot: URL? = nil) throws -> TranscriptTree {
         let treeDirectory: URL
         if let recordingRoot {
             treeDirectory = recordingRoot
@@ -192,7 +192,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     ///   failure; ``TranscriptTreeError`` or ``TranscriptReconstructionError``
     ///   for what ``TranscriptTree/load(under:)`` or
     ///   ``TranscriptTree/effectiveTranscript(forSession:view:)`` throws.
-    public func restoreSessionTree(
+    func restoreSessionTree(
         root rootId: ULID,
         recordingRoot: URL? = nil,
         tools: [any Tool] = []

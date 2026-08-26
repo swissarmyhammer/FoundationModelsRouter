@@ -2,21 +2,21 @@ import Foundation
 
 /// The successful result of joint fit: the chosen model for each slot and the
 /// per-slot reasoning.
-public struct JointResolution: Sendable, Equatable {
+struct JointResolution: Sendable, Equatable {
     /// The chosen embedding model.
-    public let embedding: ModelRef
+    let embedding: ModelRef
 
     /// The chosen standard (primary generation) model.
-    public let standard: ModelRef
+    let standard: ModelRef
 
     /// The chosen flash (latency-sensitive generation) model.
-    public let flash: ModelRef
+    let flash: ModelRef
 
     /// Each slot's resolution, in allocation order (embedding, standard, flash).
-    public let slots: [SlotResolution]
+    let slots: [SlotResolution]
 
     /// Creates a joint resolution.
-    public init(embedding: ModelRef, standard: ModelRef, flash: ModelRef, slots: [SlotResolution]) {
+    init(embedding: ModelRef, standard: ModelRef, flash: ModelRef, slots: [SlotResolution]) {
         self.embedding = embedding
         self.standard = standard
         self.flash = flash
@@ -45,7 +45,7 @@ public struct JointResolution: Sendable, Equatable {
 ///
 /// The allocation is pure. Footprints and native max contexts are injected as
 /// closures, so it does no I/O.
-public enum JointFit {
+enum JointFit {
     /// The overhead margin numerator: footprints are scaled by `6 / 5` (`× 1.2`).
     private static let marginNumerator: Int64 = 6
 
@@ -134,7 +134,7 @@ public enum JointFit {
     ///   - nativeMaxContext: The native max context of a candidate. Read only when ``ProfileDefinition/context`` is `nil`.
     /// - Returns: The chosen trio and per-slot reasoning.
     /// - Throws: ``ResolutionFailure`` when any slot has no viable candidate.
-    public static func resolve(
+    static func resolve(
         profile: ProfileDefinition,
         budgetBytes: Int64,
         footprint: (ModelRef, Int) -> Result<Int64, RepoMetadataError>,

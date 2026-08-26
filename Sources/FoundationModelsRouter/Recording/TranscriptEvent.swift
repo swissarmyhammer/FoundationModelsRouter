@@ -54,7 +54,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     }
 
     /// The recording root id — the router instance that owns this transcript.
-    public let routerId: ULID
+    let routerId: ULID
     /// The span id of the session this event belongs to.
     public let sessionId: ULID
     /// The span id of the session that forked this one, or `nil` for a root.
@@ -62,15 +62,15 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// The model slot this event was routed through, when applicable.
     public let slot: ModelSlot?
     /// The concrete model reference involved, when applicable.
-    public let model: ModelRef?
+    let model: ModelRef?
     /// The recorder-assigned monotonic sequence number — the log's total order.
     public let seq: Int
     /// The wall-clock instant the recorder stamped at append.
-    public let ts: Date
+    let ts: Date
     /// What kind of moment this event records.
     public let kind: Kind
     /// The guided-generation grammar in force, when applicable.
-    public let grammar: String?
+    let grammar: String?
     /// The event's body text, when the recording level keeps it. `nil` after
     /// ``RecordingLevel/metadataOnly`` trims it.
     public let text: String?
@@ -86,7 +86,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
 
     /// Creates a fully-stamped event. Callers normally hand a
     /// ``TranscriptEvent/Partial`` to a recorder instead.
-    public init(
+    init(
         routerId: ULID,
         sessionId: ULID,
         parentId: ULID? = nil,
@@ -122,32 +122,32 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     /// recorder assigns both atomically at append.
     public struct Partial: Sendable, Equatable {
         /// The recording root id.
-        public let routerId: ULID
+        let routerId: ULID
         /// The session span id.
-        public let sessionId: ULID
+        let sessionId: ULID
         /// The forking session's span id, or `nil` for a root.
-        public let parentId: ULID?
+        let parentId: ULID?
         /// The routed model slot, or `nil`.
-        public let slot: ModelSlot?
+        let slot: ModelSlot?
         /// The concrete model reference, or `nil`.
-        public let model: ModelRef?
+        let model: ModelRef?
         /// What kind of moment this records.
-        public let kind: Kind
+        let kind: Kind
         /// The guided-generation grammar, or `nil`.
-        public let grammar: String?
+        let grammar: String?
         /// The event's body text, or `nil` when the event carries no body.
-        public let text: String?
+        let text: String?
         /// Input tokens metered, or `nil`.
-        public let tokensIn: Int?
+        let tokensIn: Int?
         /// Output tokens metered, or `nil`.
-        public let tokensOut: Int?
+        let tokensOut: Int?
         /// Duration in milliseconds, or `nil`.
-        public let ms: Int?
+        let ms: Int?
         /// The structural entry payload, or `nil`.
-        public let entry: TranscriptEntryPayload?
+        let entry: TranscriptEntryPayload?
 
         /// Describes an event without its recorder-owned ordering fields.
-        public init(
+        init(
             routerId: ULID,
             sessionId: ULID,
             parentId: ULID? = nil,
@@ -222,7 +222,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         // sah:allow duplication forwards a Partial's fields plus the recorder-stamped seq and ts into a TranscriptEvent's memberwise initializer; withCompactionCount in SessionSidecar.swift copies a SessionSidecar, a different type with a different field list, so the two bodies share shape only and a change to one never applies to the other
         /// Stamps this partial with a recorder-assigned `seq` and `ts`, and
         /// returns the finished ``TranscriptEvent``.
-        public func stamped(seq: Int, ts: Date) -> TranscriptEvent {
+        func stamped(seq: Int, ts: Date) -> TranscriptEvent {
             TranscriptEvent(
                 routerId: routerId,
                 sessionId: sessionId,

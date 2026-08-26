@@ -67,7 +67,7 @@ public struct SessionConfiguration: Sendable {
 
     /// The `Codable` slice of this configuration, persisted in the session sidecar.
     /// ``tools`` is represented by each tool's ``FoundationModels/Tool/name``, in order.
-    public var persistable: Persistable {
+    var persistable: Persistable {
         Persistable(
             instructions: instructions,
             workingDirectory: workingDirectory,
@@ -85,35 +85,35 @@ public struct SessionConfiguration: Sendable {
     /// The `Codable`, `Equatable` snapshot of a ``SessionConfiguration``.
     /// It mirrors the parent value field for field, except ``toolNames``.
     // sah:allow duplication mirrors SessionConfiguration field for field by design; the one difference is toolNames standing in for the tool instances
-    public struct Persistable: Codable, Equatable, Sendable {
+    struct Persistable: Codable, Equatable, Sendable {
         /// The session's system instructions, or `nil`.
-        public let instructions: String?
+        let instructions: String?
 
         /// The working directory override, or `nil`.
-        public let workingDirectory: URL?
+        let workingDirectory: URL?
 
         /// The per-session recording root override, or `nil`.
-        public let recordingRoot: URL?
+        let recordingRoot: URL?
 
         /// The ``FoundationModels/Tool/name`` of each configured tool, in order.
-        public let toolNames: [String]
+        let toolNames: [String]
 
         /// The auto-compaction opt-in, or `nil`.
-        public let budget: TokenBudget?
+        let budget: TokenBudget?
 
         /// The compaction prompt for automatic folds.
-        public let compactionPrompt: CompactionPrompt
+        let compactionPrompt: CompactionPrompt
 
         /// The model-assisted compaction stage.
-        public let summarization: Summarization
+        let summarization: Summarization
 
         /// The spawn context, or `nil`.
-        public let agentSpawn: SessionSidecar.AgentSpawn?
+        let agentSpawn: SessionSidecar.AgentSpawn?
 
         /// The pre-discovery seeding opt-in, or `nil`.
-        public let discoveryPriming: DiscoveryPriming?
+        let discoveryPriming: DiscoveryPriming?
 
         /// The constraining grammar, or `nil`.
-        public let grammar: Grammar?
+        let grammar: Grammar?
     }
 }

@@ -72,7 +72,7 @@ public final class AsyncSemaphore: Sendable {
     /// - Parameter body: The work to run while holding a permit.
     /// - Returns: Whatever `body` returns.
     /// - Throws: Rethrows any error thrown by `body`.
-    public func withPermit<T>(_ body: () async throws -> T) async rethrows -> T {
+    package func withPermit<T>(_ body: () async throws -> T) async rethrows -> T {
         await wait()
         defer { signal() }
         return try await body()

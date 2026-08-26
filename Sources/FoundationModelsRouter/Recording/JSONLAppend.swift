@@ -7,14 +7,14 @@ import os
 let jsonlNewlineByte: UInt8 = 0x0A
 
 /// A failure validating or opening a JSONL sink's append target.
-public enum JSONLAppendError: Error, Equatable, LocalizedError {
+enum JSONLAppendError: Error, Equatable, LocalizedError {
     /// `fileName` is not a plain, single-component file name — it contains a
     /// path separator (`/`) or is a navigation token (`.` or `..`) that would
     /// let the append land outside the intended directory.
     case invalidFileName(String)
 
     /// A localized message describing what error occurred, for `LocalizedError` conformance.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .invalidFileName(let fileName):
             return

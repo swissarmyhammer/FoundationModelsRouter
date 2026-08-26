@@ -18,7 +18,7 @@ private let recordingLanguageModelLogger = makeModuleLogger(category: "Recording
 /// against the last-seen transcript and records what is new. The turn-final
 /// response is not visible at the executor boundary. Call ``sync(_:usage:)``
 /// with `session.transcript` at turn end to record it.
-public struct RecordingLanguageModel: LanguageModel, Sendable {
+struct RecordingLanguageModel: LanguageModel, Sendable {
     /// This handle's per-call mutable state and identity.
     let state: RecordingLanguageModelState
 
@@ -28,11 +28,11 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
     }
 
     /// Passed through unchanged from the wrapped model.
-    public var capabilities: LanguageModelCapabilities { state.wrapped.capabilities }
+    var capabilities: LanguageModelCapabilities { state.wrapped.capabilities }
 
     /// The executor cache key for this handle. It compares by the identity
     /// of this handle's state.
-    public var executorConfiguration: Executor.Configuration {
+    var executorConfiguration: Executor.Configuration {
         Executor.Configuration(state: state)
     }
 
@@ -44,7 +44,7 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
     ///   - transcript: The transcript to sync against the last-seen one.
     ///   - usage: This turn's `(input, output)` token usage, stamped onto the
     ///     diff's turn-final `.response` event, or `nil` to leave it unset.
-    public func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
+    func sync(_ transcript: Transcript, usage: (input: Int, output: Int)? = nil) async {
         await state.sync(transcript, usage: usage)
     }
 
@@ -58,7 +58,7 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
     /// ``noteCompaction(_:result:)`` so the checkpoint reaches disk.
     ///
     /// - Parameter compacted: The transcript compaction produced.
-    public func noteCompaction(_ compacted: Transcript) async {
+    func noteCompaction(_ compacted: Transcript) async {
         _ = await state.noteCompaction(compacted)
     }
 
@@ -75,7 +75,7 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
     ///   - compacted: The transcript compaction produced.
     ///   - result: The report of what the fold did.
     /// - Returns: The transcript to seed the rebuilt session with.
-    public func noteCompaction(_ compacted: Transcript, result: CompactionResult) async -> Transcript {
+    func noteCompaction(_ compacted: Transcript, result: CompactionResult) async -> Transcript {
         await state.noteCompaction(compacted, result: result)
     }
 
@@ -83,25 +83,25 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
     /// ``RecordingLanguageModel`` drives. The SDK caches one executor per
     /// distinct ``Configuration``, so the wrapped executor is built once per
     /// handle.
-    public struct Executor: LanguageModelExecutor {
+    struct Executor: LanguageModelExecutor {
         /// The SDK's executor cache key. It compares by the identity of the
         /// wrapped ``RecordingLanguageModelState``.
-        public struct Configuration: Sendable, Hashable {
+        struct Configuration: Sendable, Hashable {
             let state: RecordingLanguageModelState
 
             /// Identity equality on the wrapped state.
-            public static func == (lhs: Self, rhs: Self) -> Bool {
+            static func == (lhs: Self, rhs: Self) -> Bool {
                 lhs.state === rhs.state
             }
 
             /// Hashes by the wrapped state's `ObjectIdentifier`.
-            public func hash(into hasher: inout Hasher) {
+            func hash(into hasher: inout Hasher) {
                 hasher.combine(ObjectIdentifier(state))
             }
         }
 
         /// The model type this executor serves.
-        public typealias Model = RecordingLanguageModel
+        typealias Model = RecordingLanguageModel
 
         /// This handle's shared per-call state.
         private let state: RecordingLanguageModelState
@@ -112,7 +112,7 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
         ) async throws -> Void
 
         /// Stores `configuration` and builds the wrapped model's executor once.
-        public init(configuration: Configuration) throws {
+        init(configuration: Configuration) throws {
             self.state = configuration.state
             self.innerRespond = try RecordingLanguageModelState.makePassthrough(
                 wrapped: configuration.state.wrapped)
@@ -120,7 +120,7 @@ public struct RecordingLanguageModel: LanguageModel, Sendable {
 
         /// Diffs and records, then passes the request through to the wrapped
         /// executor over the same outer `channel`.
-        public func respond(
+        func respond(
             to request: LanguageModelExecutorGenerationRequest,
             model: RecordingLanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel

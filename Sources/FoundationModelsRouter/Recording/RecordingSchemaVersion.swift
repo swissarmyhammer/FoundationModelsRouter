@@ -6,33 +6,33 @@ import Foundation
 /// ``SessionSidecar/read(in:)`` refuses a version newer than ``current``.
 /// An equal or older version decodes by the additive rule: a field the
 /// version predates decodes as its documented absent-value.
-public enum RecordingSchemaVersion {
+enum RecordingSchemaVersion {
     /// Version 1: flat ``TranscriptEvent`` lines with `text` only and no
     /// ``TranscriptEvent/entry`` payload.
-    public static let v1 = 1
+    static let v1 = 1
 
     /// Version 2: adds ``TranscriptEvent/entry`` (``TranscriptEntryPayload``),
     /// the SDK-mirroring entry kinds, and ``TranscriptEntryPayload/contentRemoved``.
     /// Later optional keys and the `unknown` and `divergence` carriers landed
     /// within v2 by the additive rule.
-    public static let v2 = 2
+    static let v2 = 2
 
     /// The version writers stamp on every new sidecar.
-    public static let current = v2
+    static let current = v2
 
     /// The version a sidecar with no `schemaVersion` key decodes as.
     /// Frozen at ``v2``: a future bump of ``current`` must not move this.
-    public static let implicit = v2
+    static let implicit = v2
 }
 
 /// A recording stamped with a schema version newer than this reader knows.
 /// Thrown by ``SessionSidecar/read(in:)`` and every reader built on it.
-public enum RecordingSchemaVersionError: Error, Equatable, LocalizedError {
+enum RecordingSchemaVersionError: Error, Equatable, LocalizedError {
     /// The sidecar in `directory` carries `version`, newer than `supported`.
     case recordingFromNewerRouter(directory: URL, version: Int, supported: Int)
 
     /// A localized message describing what error occurred.
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .recordingFromNewerRouter(let directory, let version, let supported):
             return """

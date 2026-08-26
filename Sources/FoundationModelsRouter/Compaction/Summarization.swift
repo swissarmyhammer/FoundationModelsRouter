@@ -3,7 +3,7 @@ import FoundationModels
 
 /// A model the ``Summarization`` stage calls to condense text. It is one
 /// stateless text-in, text-out call.
-public protocol CompactionSummarizer: Sendable {
+package protocol CompactionSummarizer: Sendable {
     /// Produces a complete text response to `prompt`. `maxTokens` is a hard
     /// ceiling on the reasoning and the answer together. A conformer must
     /// pass it to its model's output limit unchanged.
@@ -14,11 +14,11 @@ public protocol CompactionSummarizer: Sendable {
 
 /// A failure of the ``Summarization`` stage that the summarizer itself did
 /// not raise.
-public enum SummarizationError: Error, Equatable, LocalizedError {
+enum SummarizationError: Error, Equatable, LocalizedError {
     /// A summarizer call returned empty or whitespace-only text.
     case emptySummary
 
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .emptySummary:
             return "the summarizer returned no text, so the fold has no summary to store"
@@ -58,15 +58,15 @@ public struct Summarization: Sendable, Equatable, Codable {
 
     /// The bytes the whole boundary text must stay under the folded span's
     /// content bytes so that the estimated token count drops by at least one.
-    public static let shrinkMarginBytes = Int(Compactor.charsPerTokenEstimate)
+    static let shrinkMarginBytes = Int(Compactor.charsPerTokenEstimate)
 
     /// The estimated UTF-8 size of one English word with its separator. It
     /// converts a byte budget to the word count stated to the model.
-    public static let summaryBytesPerWordEstimate = 6.0
+    static let summaryBytesPerWordEstimate = 6.0
 
     /// The share of a call's own content that the assembled prompt states as
     /// the size budget. `0.75` is the measured-best value.
-    public static let statedBudgetShareOfContent = 0.75
+    static let statedBudgetShareOfContent = 0.75
 
     /// Creates a summarization stage. Defaults: `keepRecentTurns` 4,
     /// `maxChunkTokens` 2000, `summaryTokenRatio` 0.25, `reasoningTokenHeadroom` 8192.
@@ -83,19 +83,19 @@ public struct Summarization: Sendable, Equatable, Codable {
     }
 
     /// The result of one fold: the folded transcript and the summary text.
-    public struct Folded: Sendable, Equatable {
+    struct Folded: Sendable, Equatable {
         /// The folded transcript: the header, the summary entry, then the
         /// untouched recency window.
-        public let transcript: Transcript
+        let transcript: Transcript
 
         /// The synthesized summary text.
-        public let summary: String
+        let summary: String
 
         /// The summary entry's `Transcript.Entry.id`.
-        public let summaryEntryId: String
+        let summaryEntryId: String
 
         /// Whether the last-resort cut removed text from ``summary``.
-        public let summaryCut: Bool
+        let summaryCut: Bool
     }
 
     /// Folds the old span of `transcript` (everything but the header and the
@@ -111,7 +111,7 @@ public struct Summarization: Sendable, Equatable, Codable {
     /// - Returns: The fold, or `nil` when there is no old span to fold.
     /// - Throws: Whatever `summarizer.summarize(_:maxTokens:)` throws, or
     ///   ``SummarizationError/emptySummary`` when a call returns no text.
-    public func apply(
+    func apply(
         _ transcript: Transcript,
         prompt: CompactionPrompt,
         tokensBefore: Int,

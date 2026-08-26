@@ -28,7 +28,7 @@ private let recordingLogger = makeModuleLogger(category: "Recording")
 /// policy's expected crash artifact, and ``TranscriptTree`` tolerates it on
 /// load by dropping the torn line with a warning. Synchronization is
 /// best-effort like the writes: a failed sync is logged, never thrown.
-public actor JSONLRecorder: TranscriptRecorder {
+package actor JSONLRecorder: TranscriptRecorder {
     /// The default directory `transcript.jsonl` is written into when an append
     /// carries no explicit session directory.
     private let directory: URL
@@ -73,7 +73,7 @@ public actor JSONLRecorder: TranscriptRecorder {
     ///     that carry no explicit session directory; created on demand at first
     ///     append. Per-session appends are written under their own directory.
     ///   - now: The clock used to stamp each event's `ts`.
-    public init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
+    package init(directory: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         self.init(
             directory: directory,
             now: now,
@@ -101,7 +101,7 @@ public actor JSONLRecorder: TranscriptRecorder {
     ///   ``RecordingRootLockError/contested(root:)`` when a stale-lock
     ///   takeover loses its race; otherwise any file-system error creating
     ///   the root or its marker.
-    public init(owningDirectory directory: URL, now: @escaping @Sendable () -> Date = { Date() }) throws {
+    init(owningDirectory directory: URL, now: @escaping @Sendable () -> Date = { Date() }) throws {
         let ownership = try RecordingRootOwnership.acquire(root: directory)
         self.init(
             directory: directory,
@@ -143,7 +143,7 @@ public actor JSONLRecorder: TranscriptRecorder {
     /// while another live writer holds it, the event is logged and dropped
     /// before it is stamped, so no line ever interleaves into a root this
     /// recorder does not own and `seq` spends nothing on refused appends.
-    public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
+    package func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
         guard ensureRootOwnership() else { return }
         let event = partial.stamped(seq: seq, ts: now())
         seq += 1
@@ -236,9 +236,9 @@ public actor JSONLRecorder: TranscriptRecorder {
 /// As an actor it serializes appends, so ``events`` is the stamped log in `seq`
 /// order — contiguous from `0` — regardless of how many tasks append
 /// concurrently. Intended for tests and in-process introspection.
-public actor InMemoryRecorder: TranscriptRecorder {
+actor InMemoryRecorder: TranscriptRecorder {
     /// The stamped events in append (and therefore `seq`) order.
-    public private(set) var events: [TranscriptEvent] = []
+    private(set) var events: [TranscriptEvent] = []
     /// The next sequence number to stamp.
     private var seq = 0
     /// The clock used to stamp each event's `ts`.
@@ -247,13 +247,13 @@ public actor InMemoryRecorder: TranscriptRecorder {
     /// Creates an in-memory recorder.
     ///
     /// - Parameter now: The clock used to stamp each event's `ts`.
-    public init(now: @escaping @Sendable () -> Date = { Date() }) {
+    init(now: @escaping @Sendable () -> Date = { Date() }) {
         self.now = now
     }
 
     /// Stamps and stores an event; the session directory is ignored since this
     /// sink keeps a single in-memory log rather than an on-disk layout.
-    public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
+    func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {
         events.append(partial.stamped(seq: seq, ts: now()))
         seq += 1
     }
@@ -265,10 +265,10 @@ public actor InMemoryRecorder: TranscriptRecorder {
 /// It stores nothing and shares the identical ``append(_:)`` call path, so a
 /// session born with `.none` behaves exactly like one born with a real sink,
 /// only without any record.
-public struct NoneRecorder: TranscriptRecorder {
+struct NoneRecorder: TranscriptRecorder {
     /// Creates the no-op sink.
-    public init() {}
+    init() {}
 
     /// Accepts and discards an event, ignoring the session directory.
-    public func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {}
+    func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async {}
 }

@@ -6,7 +6,7 @@ import os
 private let transcriptEntryMapperLogger = makeModuleLogger(category: "Recording")
 
 /// A failure that occurs when a `Transcript.Entry` is rebuilt from a persisted ``TranscriptEntryPayload``.
-public enum TranscriptEntryReconstructionError: Error, Equatable {
+enum TranscriptEntryReconstructionError: Error, Equatable {
     /// The recording level removed the payload's content.
     case contentRemoved(entryId: String)
 
@@ -34,12 +34,12 @@ enum TranscriptEntryEncodingError: Error, Equatable {
 /// attachment with no URL rebuilds as text; an unknown SDK case records as
 /// the `unknown` carrier and rebuilds as text. An encode failure persists
 /// the empty-string sentinel.
-public enum TranscriptEntryMapper {
+enum TranscriptEntryMapper {
     // MARK: - Encode: Transcript.Entry -> TranscriptEntryPayload
 
     /// Maps a transcript entry to its on-disk payload. Never throws.
     /// - Returns: The event kind, the payload, and the joined `.text` content, or `nil`.
-    public static func event(
+    static func event(
         from entry: Transcript.Entry
     ) -> (kind: TranscriptEvent.Kind, payload: TranscriptEntryPayload, text: String?) {
         switch entry {
@@ -127,7 +127,7 @@ public enum TranscriptEntryMapper {
 
     /// Rebuilds a transcript entry from its on-disk payload.
     /// - Throws: ``TranscriptEntryReconstructionError`` when `payload` cannot be rebuilt.
-    public static func entry(
+    static func entry(
         from payload: TranscriptEntryPayload,
         kind: TranscriptEvent.Kind
     ) throws -> Transcript.Entry {

@@ -17,11 +17,11 @@
 public struct ModelRef: Sendable, Hashable, ExpressibleByStringLiteral, Codable {
     /// The Hugging Face repository id, e.g. `"org/repo"`. Never includes the
     /// revision suffix.
-    public let repo: String
+    let repo: String
 
     /// The pinned revision (commit hash, tag, or branch), or `nil` when the
     /// reference tracks the repository's default revision.
-    public let revision: String?
+    let revision: String?
 
     /// The separator between repository id and revision in the canonical
     /// string form.
@@ -33,7 +33,7 @@ public struct ModelRef: Sendable, Hashable, ExpressibleByStringLiteral, Codable 
     /// - Parameters:
     ///   - repo: The Hugging Face repository id, e.g. `"org/repo"`.
     ///   - revision: The pinned revision, or `nil` to track the default.
-    public init(repo: String, revision: String? = nil) {
+    init(repo: String, revision: String? = nil) {
         self.repo = repo
         self.revision = revision
     }
@@ -45,7 +45,7 @@ public struct ModelRef: Sendable, Hashable, ExpressibleByStringLiteral, Codable 
     /// `revision` is `nil`.
     ///
     /// - Parameter string: The reference, e.g. `"org/repo"` or `"org/repo@rev"`.
-    public init(_ string: String) {
+    init(_ string: String) {
         if let separatorIndex = string.firstIndex(of: Self.revisionSeparator) {
             self.repo = String(string[..<separatorIndex])
             self.revision = String(string[string.index(after: separatorIndex)...])

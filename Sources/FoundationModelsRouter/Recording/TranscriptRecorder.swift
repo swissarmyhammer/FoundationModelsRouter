@@ -52,7 +52,7 @@ extension TranscriptRecorder {
     /// ``append(_:to:)`` with a `nil` directory.
     ///
     /// - Parameter partial: The event to record, minus its `seq` and `ts`.
-    public func append(_ partial: TranscriptEvent.Partial) async {
+    func append(_ partial: TranscriptEvent.Partial) async {
         await append(partial, to: nil)
     }
 }
@@ -67,7 +67,7 @@ extension TranscriptRecorder where Self == JSONLRecorder {
     ///   - now: The clock used to stamp each event's `ts`. Injectable so tests
     ///     can make timestamps deterministic; defaults to the system clock.
     /// - Returns: A new JSONL recorder.
-    public static func jsonl(
+    static func jsonl(
         directory: URL,
         now: @escaping @Sendable () -> Date = { Date() }
     ) -> JSONLRecorder {
@@ -77,14 +77,14 @@ extension TranscriptRecorder where Self == JSONLRecorder {
 
 extension TranscriptRecorder where Self == InMemoryRecorder {
     /// A sink that collects events in memory, for tests and introspection.
-    public static var inMemory: InMemoryRecorder {
+    static var inMemory: InMemoryRecorder {
         InMemoryRecorder()
     }
 }
 
 extension TranscriptRecorder where Self == NoneRecorder {
     /// The no-op sink — recording turned "off" without a `nil` recorder.
-    public static var none: NoneRecorder {
+    static var none: NoneRecorder {
         NoneRecorder()
     }
 }

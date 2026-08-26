@@ -28,7 +28,7 @@ public enum Grammar: Sendable, Equatable, Codable {
     ///
     /// This is also the value stamped onto a guided turn's
     /// ``TranscriptEvent/grammar``.
-    public var source: String {
+    var source: String {
         switch self {
         case .jsonSchema(let source), .ebnf(let source):
             return source

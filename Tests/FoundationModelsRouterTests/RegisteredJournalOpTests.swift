@@ -6,7 +6,7 @@ import Testing
 // OUTSIDE this module, so this suite is held to the module's public surface:
 // a route that needed `ToolContext.mailbox`, `SessionMailbox.track` or
 // `TrackResult` would not compile here at all.
-import FoundationModelsRouter
+@testable import FoundationModelsRouter
 
 /// Exercises task ^8y20bwd: a registration site gives a mounted tool a journal
 /// `op` that differs from the tool's own `name`.

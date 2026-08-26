@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 
 /// A decorator that runs each call of the wrapped tool to completion and returns its value in band. A call with no progress past the timeout ends with ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
-public struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
+struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
 
@@ -22,19 +22,19 @@ public struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent &
     let timeout: TimeInterval?
 
     /// The wrapped tool's name.
-    public var name: String { wrapped.name }
+    var name: String { wrapped.name }
 
     /// The wrapped tool's description.
-    public var description: String { wrapped.description }
+    var description: String { wrapped.description }
 
     /// The wrapped tool's parameter schema.
-    public var parameters: GenerationSchema { wrapped.parameters }
+    var parameters: GenerationSchema { wrapped.parameters }
 
     /// Whether the schema is included in the tool's instructions.
-    public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
+    var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
 
     /// Wraps `wrapped`.
-    public init(
+    init(
         wrapping wrapped: any Tool<Arguments, String>,
         sessionID: ULID,
         mailbox: SessionMailbox,
@@ -52,7 +52,7 @@ public struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent &
 
     /// Runs one call in band and returns the wrapped tool's output.
     /// - Throws: The wrapped tool's error, unmodified, or ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
-    public func call(arguments: Arguments) async throws -> String {
+    func call(arguments: Arguments) async throws -> String {
         let run = ToolRun(
             wrapped: wrapped,
             arguments: arguments,

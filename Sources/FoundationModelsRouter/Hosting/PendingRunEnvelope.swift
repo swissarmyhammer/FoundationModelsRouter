@@ -12,7 +12,7 @@ import Foundation
 /// ``rendered`` is the authoritative wire form.
 public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// Always `true` — the discriminator a reader branches on.
-    public let pending: Bool
+    let pending: Bool
 
     /// The run's completion token: a ULID string that is also the run's
     /// event `correlationID`.
@@ -24,7 +24,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// Creates the envelope for `completionToken` with the default `next` text.
     ///
     /// - Parameter completionToken: The run's completion token.
-    public init(completionToken: String) {
+    init(completionToken: String) {
         self.init(
             completionToken: completionToken,
             next: Self.defaultCollectInstruction(forCompletionToken: completionToken)
@@ -36,7 +36,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     /// - Parameters:
     ///   - completionToken: The run's completion token.
     ///   - next: The collect sentence, as plain prose.
-    public init(completionToken: String, next: String) {
+    init(completionToken: String, next: String) {
         self.pending = true
         self.completionToken = completionToken
         self.next = next
@@ -106,7 +106,7 @@ public struct PendingRunEnvelope: Codable, Sendable, Equatable {
     }
 
     /// The envelope rendered as its JSON wire form.
-    public var rendered: String {
+    var rendered: String {
         Self.rendered(forCompletionToken: completionToken, next: next)
     }
 

@@ -10,42 +10,42 @@ import Foundation
 /// the content. Reconstruction refuses a stripped payload with a typed error.
 public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     /// Apple's own `Transcript.Entry.id` for the mirrored entry.
-    public let entryId: String
+    let entryId: String
 
     /// `true` when ``RecordingLevel/metadataOnly`` stripped the content.
     /// Decodes as `false` when the key is absent.
-    public let contentRemoved: Bool
+    let contentRemoved: Bool
 
     /// The entry's segments, in order. `nil` for `.toolCalls`.
     public let segments: [SegmentPayload]?
 
     /// The tool definitions declared on an `.instructions` entry.
-    public let toolDefinitions: [ToolDefinitionPayload]?
+    let toolDefinitions: [ToolDefinitionPayload]?
 
     /// The tool calls requested by a `.toolCalls` entry.
-    public let toolCalls: [ToolCallPayload]?
+    let toolCalls: [ToolCallPayload]?
 
     /// The tool name a `.toolOutput` entry answers.
-    public let toolName: String?
+    let toolName: String?
 
     /// The asset ids attached to a `.response` entry.
-    public let assetIds: [String]?
+    let assetIds: [String]?
 
     /// The opaque reasoning signature of a `.reasoning` entry.
-    public let signature: Data?
+    let signature: Data?
 
     /// The introspectable slice of a `.prompt` entry's `GenerationOptions`.
-    public let options: GenerationOptionsPayload?
+    let options: GenerationOptionsPayload?
 
     /// The name of a `.prompt` entry's `Transcript.ResponseFormat`.
-    public let responseFormatName: String?
+    let responseFormatName: String?
 
     /// The JSON-encoded `GenerationSchema` of a `.prompt` entry's
     /// `Transcript.ResponseFormat`.
-    public let responseFormatSchemaJSON: String?
+    let responseFormatSchemaJSON: String?
 
     /// Creates an entry payload. Each field not given stays `nil`.
-    public init(
+    init(
         entryId: String,
         contentRemoved: Bool = false,
         segments: [SegmentPayload]? = nil,
@@ -215,16 +215,16 @@ public enum SegmentPayload: Sendable, Codable, Equatable {
 }
 
 /// One tool definition of a `Transcript.Instructions` entry.
-public struct ToolDefinitionPayload: Sendable, Codable, Equatable {
+struct ToolDefinitionPayload: Sendable, Codable, Equatable {
     /// The tool's declared name.
-    public let name: String
+    let name: String
     /// The tool's declared description.
-    public let description: String
+    let description: String
     /// The tool's parameters `GenerationSchema`, encoded to JSON.
-    public let parametersSchemaJSON: String
+    let parametersSchemaJSON: String
 
     /// Creates a tool definition payload.
-    public init(name: String, description: String, parametersSchemaJSON: String) {
+    init(name: String, description: String, parametersSchemaJSON: String) {
         self.name = name
         self.description = description
         self.parametersSchemaJSON = parametersSchemaJSON
@@ -232,16 +232,16 @@ public struct ToolDefinitionPayload: Sendable, Codable, Equatable {
 }
 
 /// One call of a `Transcript.ToolCalls` entry.
-public struct ToolCallPayload: Sendable, Codable, Equatable {
+struct ToolCallPayload: Sendable, Codable, Equatable {
     /// The tool call's own id.
-    public let id: String
+    let id: String
     /// The name of the tool being called.
-    public let toolName: String
+    let toolName: String
     /// The call's arguments, encoded via `GeneratedContent.jsonString`.
-    public let argumentsJSON: String
+    let argumentsJSON: String
 
     /// Creates a tool call payload.
-    public init(id: String, toolName: String, argumentsJSON: String) {
+    init(id: String, toolName: String, argumentsJSON: String) {
         self.id = id
         self.toolName = toolName
         self.argumentsJSON = argumentsJSON
@@ -250,7 +250,7 @@ public struct ToolCallPayload: Sendable, Codable, Equatable {
 
 /// The on-disk mirror of `GenerationOptions.ToolCallingMode.Kind`, carried
 /// as stable strings.
-public enum ToolCallingModePayload: String, Sendable, Codable, Equatable {
+enum ToolCallingModePayload: String, Sendable, Codable, Equatable {
     /// Mirrors `GenerationOptions.ToolCallingMode.Kind.allowed`.
     case allowed
     /// Mirrors `GenerationOptions.ToolCallingMode.Kind.required`.
@@ -262,16 +262,16 @@ public enum ToolCallingModePayload: String, Sendable, Codable, Equatable {
 /// The introspectable slice of a `.prompt` entry's `GenerationOptions`:
 /// `temperature`, `maximumResponseTokens`, and `toolCallingMode`. The schema
 /// has no field for `sampling`.
-public struct GenerationOptionsPayload: Sendable, Codable, Equatable {
+struct GenerationOptionsPayload: Sendable, Codable, Equatable {
     /// The sampling temperature, when set.
-    public let temperature: Double?
+    let temperature: Double?
     /// The maximum number of response tokens, when set.
-    public let maximumResponseTokens: Int?
+    let maximumResponseTokens: Int?
     /// The tool-calling mode, when set. `nil` when absent from the recording.
-    public let toolCallingMode: ToolCallingModePayload?
+    let toolCallingMode: ToolCallingModePayload?
 
     /// Creates a generation options payload.
-    public init(
+    init(
         temperature: Double? = nil,
         maximumResponseTokens: Int? = nil,
         toolCallingMode: ToolCallingModePayload? = nil

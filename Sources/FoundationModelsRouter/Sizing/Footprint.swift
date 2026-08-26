@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The KV cache is fp16 regardless of weight quantization. Overhead is not
 /// modeled here; the fit step applies its own margin.
-public struct Footprint: Sendable, Equatable {
+struct Footprint: Sendable, Equatable {
     /// Bytes per cached element (fp16).
     private static let cacheElementBytes: Int64 = 2
 
@@ -12,19 +12,19 @@ public struct Footprint: Sendable, Equatable {
     private static let keyValueTensors: Int64 = 2
 
     /// Resident weight bytes — `Σ size(*.safetensors)`.
-    public let weightBytes: Int64
+    let weightBytes: Int64
 
     /// Number of transformer layers with a KV cache. Zero for an embedder.
-    public let layers: Int
+    let layers: Int
 
     /// Effective key/value heads, with the GQA fallback applied.
-    public let kvHeads: Int
+    let kvHeads: Int
 
     /// Per-head dimension, with the `head_dim` fallback applied.
-    public let headDim: Int
+    let headDim: Int
 
     /// Creates a footprint from already-resolved architecture values.
-    public init(weightBytes: Int64, layers: Int, kvHeads: Int, headDim: Int) {
+    init(weightBytes: Int64, layers: Int, kvHeads: Int, headDim: Int) {
         self.weightBytes = weightBytes
         self.layers = layers
         self.kvHeads = kvHeads
@@ -35,7 +35,7 @@ public struct Footprint: Sendable, Equatable {
     /// a `nil` `numKeyValueHeads` uses `numAttentionHeads`, and a `nil` `headDim`
     /// is derived as `hiddenSize / numAttentionHeads`. One of `headDim` or
     /// `hiddenSize` is required.
-    public init(
+    init(
         weightBytes: Int64,
         numHiddenLayers: Int,
         numAttentionHeads: Int,
@@ -61,7 +61,7 @@ public struct Footprint: Sendable, Equatable {
     }
 
     /// A footprint for an embedder, which has no KV cache. Its memory is its weights alone.
-    public static func embedder(weightBytes: Int64) -> Footprint {
+    static func embedder(weightBytes: Int64) -> Footprint {
         Footprint(weightBytes: weightBytes, layers: 0, kvHeads: 0, headDim: 0)
     }
 
@@ -69,7 +69,7 @@ public struct Footprint: Sendable, Equatable {
     /// `2 × layers × context × kvHeads × headDim × 2`.
     ///
     /// - Returns: KV cache bytes; `0` for an embedder.
-    public func kvBytes(context: Int) -> Int64 {
+    func kvBytes(context: Int) -> Int64 {
         Self.keyValueTensors
             * Int64(layers)
             * Int64(context)
@@ -79,7 +79,7 @@ public struct Footprint: Sendable, Equatable {
     }
 
     /// The raw resident-memory estimate: `weightBytes + kvBytes(context)`. Overhead is excluded.
-    public func footprint(context: Int) -> Int64 {
+    func footprint(context: Int) -> Int64 {
         weightBytes + kvBytes(context: context)
     }
 }
