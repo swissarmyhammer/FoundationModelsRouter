@@ -189,7 +189,8 @@ extension RoutedSessionActor {
     /// resident container. It takes no permit and returns none, so the gate's
     /// count is untouched by the whole nested turn. See
     /// ``GenerationPermitLoan`` for the two conditions a loan has to meet, and
-    /// for the one window this does not close.
+    /// for the two windows — an in-band tool call, and the life of a declared
+    /// background body — a turn lends across.
     private func admitToGenerationGate() async {
         if let loan = GenerationPermitLoan.current, loan.lends(over: generationGate) {
             borrowsGenerationPermit = true

@@ -70,7 +70,9 @@ public enum PromptCancellationResult: Sendable, Equatable {
 /// (``RoutedSession/awaitingUser(_:)``), and lent to a turn started from inside
 /// one of this turn's own tool calls (``GenerationPermitLoan``). Both keep one
 /// generation at a time, because this turn is suspended for the whole of
-/// either. The generation itself runs
+/// either — with one exception the loan records: a body a declared background
+/// tool started borrows the permit for its whole life, beside the turn that
+/// goes on generating. The generation itself runs
 /// through Apple's own `LanguageModelSession` (`FoundationModels`, macOS 27+),
 /// backed by a resident MLX model conformed to the `LanguageModel` protocol via
 /// `MLXLanguageModel` (`MLXFoundationModels`) — never `MLXLMCommon`'s own
@@ -655,8 +657,9 @@ public protocol RoutedSession: Actor {
     /// **Still for a wait on a person, and on nothing else.** A tool that
     /// generates on the model has its own route and needs nothing from here:
     /// the turn *lends* its permit to a turn started from inside its own tool
-    /// call, rather than handing it back, and lends it only while it is
-    /// suspended in that call (``GenerationPermitLoan``). The two do not
+    /// call, rather than handing it back — while it is suspended in that
+    /// call, or for the life of a body a declared background tool started
+    /// (``GenerationPermitLoan``). The two do not
     /// overlap — a turn whose permit is out on a human wait has none to lend,
     /// and picks lending up again when the wait ends — so this method's
     /// precondition is unchanged: do not reach for it to make room for model

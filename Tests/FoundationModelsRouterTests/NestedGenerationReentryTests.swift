@@ -52,13 +52,37 @@ struct NestedGenerationReentryTests {
         }
     }
 
+    /// The text a backgrounded tool call handed back to the turn that made it,
+    /// recorded the moment the call returned — while that turn is still open.
+    ///
+    /// The `Mutex` is the synchronization the `Sendable` conformance rests on:
+    /// the backend writes the text one time, from inside its model call, and
+    /// the test polls it from outside that call.
+    private final class HandedBackRecord: Sendable {
+        private let storage: Mutex<String?> = Mutex(nil)
+
+        /// Records what the tool call handed back.
+        ///
+        /// - Parameter text: The tool call's output.
+        func set(text: String) {
+            storage.withLock { $0 = text }
+        }
+
+        /// What the tool call handed back, or `nil` while no call has returned.
+        var text: String? {
+            storage.withLock { $0 }
+        }
+    }
+
     /// A tool whose body drives a whole turn on a routed session — the shape a
     /// host has whenever a tool ranks or summarizes with a model.
     ///
-    /// It declares no mount, so the session mounts it run-to-completion: a
-    /// body that suspends stays running in band instead of being handed back
-    /// as a pending envelope, which is exactly what this suite asserts.
-    private struct NestedGeneratingTool: Tool {
+    /// With no ``mount`` it declares nothing, so the session mounts it
+    /// run-to-completion: a body that suspends stays running in band instead
+    /// of being handed back as a pending envelope. With ``backgroundMount``
+    /// it is the agent-tool shape: the call hands back a handle at once and
+    /// the body generates behind the turn that started it.
+    private struct NestedGeneratingTool: Tool, DetachmentParameterProviding {
         let name = "nested-generation-probe"
         let description = "test-only tool that generates on a routed session"
 
@@ -69,9 +93,14 @@ struct NestedGenerationReentryTests {
         /// generations reads as the order its links actually ran in.
         let label: String
 
+        /// The mount this tool declares for itself, or `nil` to declare none.
+        var mount: DetachConfiguration?
+
         /// The output a call produces when no target session was named, so a
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
         static let noTargetOutput = "no target session"
+
+        var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.session else { return Self.noTargetOutput }
@@ -87,13 +116,18 @@ struct NestedGenerationReentryTests {
     /// inside.
     ///
     /// It reports the child's ``RoutedSession/parentId``, so a passing answer
-    /// names the session the fork really came off.
-    private struct ForkingTool: Tool {
+    /// names the session the fork really came off. ``mount`` chooses between
+    /// an in-band body and a declared background one, as on
+    /// ``NestedGeneratingTool``.
+    private struct ForkingTool: Tool, DetachmentParameterProviding {
         let name = "fork-probe"
         let description = "test-only tool that forks a routed session"
 
         /// The session this body forks.
         let target: NestedTarget
+
+        /// The mount this tool declares for itself, or `nil` to declare none.
+        var mount: DetachConfiguration?
 
         /// The output a call produces when no target session was named, so a
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
@@ -101,6 +135,8 @@ struct NestedGenerationReentryTests {
 
         /// The output a call produces when the child it made names no parent.
         static let noParentOutput = "no parent"
+
+        var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.session else { return Self.noTargetOutput }
@@ -113,17 +149,23 @@ struct NestedGenerationReentryTests {
     /// host has whenever a tool asks what has been said so far.
     ///
     /// It reports the entry count, so a passing answer says how much history
-    /// the read actually saw.
-    private struct TranscriptReadingTool: Tool {
+    /// the read actually saw. ``mount`` chooses between an in-band body and a
+    /// declared background one, as on ``NestedGeneratingTool``.
+    private struct TranscriptReadingTool: Tool, DetachmentParameterProviding {
         let name = "transcript-probe"
         let description = "test-only tool that reads a routed session's transcript"
 
         /// The session this body reads.
         let target: NestedTarget
 
+        /// The mount this tool declares for itself, or `nil` to declare none.
+        var mount: DetachConfiguration?
+
         /// The output a call produces when no target session was named, so a
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
         static let noTargetOutput = "no target session"
+
+        var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.session else { return Self.noTargetOutput }
@@ -133,14 +175,16 @@ struct NestedGenerationReentryTests {
 
     // MARK: - Backend
 
-    /// The backend this suite drives: a turn whose session carries the fixture
-    /// tool calls that tool and answers with its output; every other turn
-    /// answers from the prompt it was given.
+    /// The backend this suite drives: the first turn of a session that carries
+    /// the fixture tool calls that tool and answers with its output; every
+    /// other turn — a session with no tool, or a drained continuation turn
+    /// after a background run settled — answers from the prompt it was given.
     ///
     /// `@unchecked Sendable` on the same terms as ``StubSessionBackend``: the
     /// owning session drives one backend method at a time (its turn lock
     /// serializes turns), and the test reads the captures only after the
-    /// driving call returned.
+    /// driving call returned. The one thing a test reads mid-turn is the
+    /// ``HandedBackRecord``, which carries its own lock.
     private final class ToolCallingBackend: LanguageModelSessionBackend, @unchecked Sendable {
         /// The prefix a plain answer opens with, so a test can tell a nested
         /// session's own answer from the tool output that carries it.
@@ -157,20 +201,51 @@ struct NestedGenerationReentryTests {
         /// while it looks at another session.
         private let latch: RunLatch?
 
-        init(tools: [any Tool], latch: RunLatch? = nil) {
+        /// A latch the tool-calling turn waits on after its tool call
+        /// returned and before it answers, or `nil` to answer at once. It is
+        /// how a test keeps the turn that started a background run open —
+        /// still generating, still holding its permit — while the run is
+        /// looked at.
+        private let turnHold: RunLatch?
+
+        /// Where the tool-calling turn records what its tool call handed back,
+        /// or `nil` to record nothing.
+        private let handedBack: HandedBackRecord?
+
+        /// Whether this backend has made its one tool call.
+        private var hasCalledTool = false
+
+        init(
+            tools: [any Tool], latch: RunLatch? = nil, turnHold: RunLatch? = nil,
+            handedBack: HandedBackRecord? = nil
+        ) {
             self.tools = tools
             self.latch = latch
+            self.turnHold = turnHold
+            self.handedBack = handedBack
         }
 
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
             await latch?.waitUntilOpen()
-            for tool in tools {
-                guard let detached = tool as? DetachingTool<ReentryToolArguments> else { continue }
-                return try await detached.call(
-                    arguments: ReentryToolArguments(value: NestedGenerationReentryTests.nestedPrompt))
+            guard !hasCalledTool, let detached = composedFixtureTool else {
+                return Self.answerPrefix + prompt
             }
-            return Self.answerPrefix + prompt
+            hasCalledTool = true
+            let output = try await detached.call(
+                arguments: ReentryToolArguments(value: NestedGenerationReentryTests.nestedPrompt))
+            handedBack?.set(text: output)
+            await turnHold?.waitUntilOpen()
+            return output
+        }
+
+        /// The session's composed fixture tool, or `nil` for a session that
+        /// carries none.
+        private var composedFixtureTool: DetachingTool<ReentryToolArguments>? {
+            for tool in tools {
+                if let detached = tool as? DetachingTool<ReentryToolArguments> { return detached }
+            }
+            return nil
         }
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
@@ -202,12 +277,20 @@ struct NestedGenerationReentryTests {
         /// backends that answer at once.
         var latch: RunLatch?
 
+        /// The latch every backend this container vends holds its tool-calling
+        /// turn open on, or `nil` for backends that answer at once.
+        var turnHold: RunLatch?
+
+        /// Where the backends this container vends record what a tool call
+        /// handed back, or `nil` to record nothing.
+        var handedBack: HandedBackRecord?
+
         func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
             makeSession(instructions: instructions, tools: [])
         }
 
         func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-            ToolCallingBackend(tools: tools, latch: latch)
+            ToolCallingBackend(tools: tools, latch: latch, turnHold: turnHold, handedBack: handedBack)
         }
 
         func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
@@ -240,6 +323,14 @@ struct NestedGenerationReentryTests {
     /// exists so this suite FAILS instead of hanging: ``AsyncSemaphore/wait()``
     /// ignores cancellation, so a suspended turn can never be unwound.
     private static let turnTimeout = Duration.seconds(30)
+
+    /// The upper bound one background run is allowed before it settles — the
+    /// same bound as ``turnTimeout``, in the unit the mailbox's wait takes.
+    private static let runSettlementTimeoutSeconds = TimeInterval(turnTimeout.components.seconds)
+
+    /// The mount a fixture declares to be a background tool: every call hands
+    /// back a handle at once, and the body runs behind the turn that made it.
+    private static let backgroundMount = DetachConfiguration(mode: .background, timeout: nil)
 
     // MARK: - Turn outcome
 
@@ -332,16 +423,14 @@ struct NestedGenerationReentryTests {
         }
     }
 
-    /// Asserts that `outcome` finished with `expected`, naming the defect this
-    /// suite covers when the turn suspended instead.
+    /// The answer `outcome` finished with, or `nil` after recording the defect
+    /// this suite covers when the turn suspended or failed instead.
     ///
     /// - Parameters:
     ///   - outcome: The turn's outcome, or `nil` when the bound won.
-    ///   - expected: The answer the turn has to produce.
     ///   - turn: What the turn is called in the report.
-    private static func expectFinished(
-        _ outcome: TurnOutcome?, is expected: String, describing turn: String
-    ) {
+    /// - Returns: The turn's answer, or `nil` when it produced none.
+    private static func finishedAnswer(_ outcome: TurnOutcome?, describing turn: String) -> String? {
         switch outcome {
         case nil:
             Issue.record(
@@ -352,10 +441,77 @@ struct NestedGenerationReentryTests {
                 call included, so a call that waits on either suspends for as long as the turn \
                 it is part of.
                 """)
+            return nil
         case .failed(_, let description):
             Issue.record("\(turn) failed instead of finishing: \(description)")
+            return nil
         case .finished(let answer):
-            #expect(answer == expected)
+            return answer
+        }
+    }
+
+    /// Asserts that `outcome` finished with `expected`, naming the defect this
+    /// suite covers when the turn suspended instead.
+    ///
+    /// - Parameters:
+    ///   - outcome: The turn's outcome, or `nil` when the bound won.
+    ///   - expected: The answer the turn has to produce.
+    ///   - turn: What the turn is called in the report.
+    private static func expectFinished(
+        _ outcome: TurnOutcome?, is expected: String, describing turn: String
+    ) {
+        guard let answer = finishedAnswer(outcome, describing: turn) else { return }
+        #expect(answer == expected)
+    }
+
+    /// The completion token a backgrounded tool call handed back through
+    /// `record`, once the call has returned — or `nil`, with an issue
+    /// recorded, when no call returned a pending envelope inside the bound.
+    ///
+    /// The turn that made the call is still open when this returns: the
+    /// backend records the handle before it waits on its turn hold.
+    ///
+    /// - Parameter record: Where the backend records what the call handed back.
+    /// - Returns: The token the pending envelope names, or `nil`.
+    private static func handedBackToken(from record: HandedBackRecord) async -> String? {
+        let returned = await BoundedWait.conditionReached(
+            "the backgrounded call handing back its handle"
+        ) {
+            record.text != nil
+        }
+        guard returned, let text = record.text else { return nil }
+        guard
+            let envelope = try? JSONDecoder().decode(PendingRunEnvelope.self, from: Data(text.utf8))
+        else {
+            Issue.record("The tool call handed back \"\(text)\" rather than a pending envelope.")
+            return nil
+        }
+        return envelope.completionToken
+    }
+
+    /// The terminal event `session`'s run `completionToken` settled with, or
+    /// `nil`, with an issue recorded, when it did not settle inside the bound.
+    ///
+    /// - Parameters:
+    ///   - completionToken: The background run's completion token.
+    ///   - session: The session whose mailbox tracks the run.
+    ///   - run: What the run is called in the report.
+    /// - Returns: The run's terminal event, or `nil`.
+    private static func settledTerminal(
+        of completionToken: String, on session: any RoutedSession, describing run: String
+    ) async -> OperationEvent? {
+        let outcome = await session.mailbox.wait(
+            completionToken: completionToken, seconds: runSettlementTimeoutSeconds)
+        switch outcome {
+        case .settled(let terminal):
+            return terminal
+        case .deadlineElapsed, .unknownToken:
+            Issue.record(
+                """
+                \(run) did not settle within \(runSettlementTimeoutSeconds) seconds (\(outcome)). A \
+                background body has to make progress while the turn that started it is still open.
+                """)
+            return nil
         }
     }
 
@@ -567,6 +723,221 @@ struct NestedGenerationReentryTests {
             describing: "The transcript-reading turn")
         Self.expectUntouched(gate)
         withExtendedLifetime(profile) {}
+    }
+
+    // MARK: - A declared background body
+
+    /// The scaffolding one background-body test stands on: a profile whose
+    /// tool-calling turn stays open on ``turnHold`` after its tool call
+    /// returned, and records what that call handed back in ``handedBack``.
+    private struct BackgroundHarness {
+        /// The resolved profile sessions are vended from.
+        let profile: LanguageModelProfile
+
+        /// The latch the tool-calling turn stays open on after its tool call.
+        let turnHold: RunLatch
+
+        /// Where the tool-calling turn records what its tool call handed back.
+        let handedBack: HandedBackRecord
+
+        /// The session the fixture tool's body acts on.
+        let target: NestedTarget
+
+        /// The pool entry's one generation gate.
+        var gate: AsyncSemaphore { profile.standard.generationGate }
+
+        /// Builds the harness over a fresh router that caches under `dir`.
+        ///
+        /// - Parameter dir: The temporary directory the router caches under.
+        /// - Returns: The harness.
+        static func make(dir: URL) async throws -> BackgroundHarness {
+            let turnHold = RunLatch()
+            let handedBack = HandedBackRecord()
+            let profile = try await NestedGenerationReentryTests.makeProfile(
+                container: ToolCallingLLMContainer(turnHold: turnHold, handedBack: handedBack), dir: dir)
+            return BackgroundHarness(
+                profile: profile, turnHold: turnHold, handedBack: handedBack, target: NestedTarget())
+        }
+
+        /// Starts `session`'s tool-calling turn in a task of its own, bounded
+        /// by ``turnTimeout``, so the test can look at the run it starts while
+        /// the turn is still open.
+        ///
+        /// - Parameter session: The session whose turn runs.
+        /// - Returns: The task carrying the turn's outcome.
+        func startTurn(on session: any RoutedSession) -> Task<TurnOutcome?, Never> {
+            Task {
+                await NestedGenerationReentryTests.outcome(
+                    of: { try await session.respond(to: NestedGenerationReentryTests.outerPrompt) },
+                    within: NestedGenerationReentryTests.turnTimeout)
+            }
+        }
+
+        /// Lets the held turn end, and reports what it produced.
+        ///
+        /// - Parameter turn: The task ``startTurn(on:)`` returned.
+        /// - Returns: The turn's outcome, or `nil` when the bound won.
+        func endTurn(_ turn: Task<TurnOutcome?, Never>) async -> TurnOutcome? {
+            await turnHold.open()
+            return await turn.value
+        }
+    }
+
+    @Test("a declared background body generates on a second session while the turn that started it is still open")
+    @MainActor
+    func aBackgroundBodyGeneratesOnASecondSessionWhileItsTurnIsOpen() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let harness = try await BackgroundHarness.make(dir: dir)
+        let caller = harness.profile.standard.makeSession(
+            tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
+        let nested = harness.profile.standard.makeSession()
+        harness.target.set(session: nested)
+
+        let turn = harness.startTurn(on: caller)
+        let token = await Self.handedBackToken(from: harness.handedBack)
+
+        // The turn is still generating, on the container's one permit — and the
+        // run it started settles all the same, on that same permit: it borrows,
+        // it never takes, so the count does not move.
+        #expect(harness.gate.availablePermits == 0)
+        if let token {
+            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The background run")
+            #expect(terminal?.outcome == .succeeded)
+            #expect(terminal?.detail == Self.chainedAnswer(through: ["caller"]))
+        }
+        #expect(harness.gate.availablePermits == 0)
+
+        // The run settled before its turn ended, so the drain found nothing to
+        // wait for and the turn answers with the handle it was handed.
+        Self.expectFinished(
+            await harness.endTurn(turn), is: harness.handedBack.text ?? "", describing: "The outer turn")
+        Self.expectUntouched(harness.gate)
+        withExtendedLifetime(harness) {}
+    }
+
+    @Test("a declared background body that generates on the session that started it is refused, not stalled")
+    @MainActor
+    func aBackgroundBodyThatGeneratesOnItsOwnSessionIsRefused() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let harness = try await BackgroundHarness.make(dir: dir)
+        let caller = harness.profile.standard.makeSession(
+            tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
+        // The body generates on the very session whose turn started it. That
+        // turn holds the turn lock, which is lent to nobody, so the run has to
+        // fail with something a reader can name — while the turn is still open.
+        harness.target.set(session: caller)
+
+        let turn = harness.startTurn(on: caller)
+        if let token = await Self.handedBackToken(from: harness.handedBack) {
+            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The refused run")
+            #expect(terminal?.outcome == .failed)
+            #expect(terminal?.detail.contains(caller.id.description) == true)
+        }
+
+        Self.expectFinished(
+            await harness.endTurn(turn), is: harness.handedBack.text ?? "", describing: "The outer turn")
+        Self.expectUntouched(harness.gate)
+        withExtendedLifetime(harness) {}
+    }
+
+    @Test("a declared background body that forks the session that started it waits for that turn to end, then forks it")
+    @MainActor
+    func aBackgroundBodyThatForksItsOwnSessionWaitsForTheTurnToEnd() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let harness = try await BackgroundHarness.make(dir: dir)
+        let caller = harness.profile.standard.makeSession(
+            tools: [ForkingTool(target: harness.target, mount: Self.backgroundMount)])
+        harness.target.set(session: caller)
+
+        let turn = harness.startTurn(on: caller)
+        let token = await Self.handedBackToken(from: harness.handedBack)
+        // A background body is no tool call the model is suspended in: the turn
+        // that started it is still writing, so the fork waits for the turn lock
+        // like any outside caller rather than being refused or served mid-turn.
+        if let token {
+            #expect(await caller.mailbox.wait(completionToken: token, seconds: 0) == .deadlineElapsed)
+        }
+
+        #expect(Self.finishedAnswer(await harness.endTurn(turn), describing: "The forking turn") != nil)
+        // The child came off the finished turn, and names the session it forked.
+        if let token {
+            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The forking run")
+            #expect(terminal?.outcome == .succeeded)
+            #expect(terminal?.detail == caller.id.description)
+        }
+        Self.expectUntouched(harness.gate)
+        withExtendedLifetime(harness) {}
+    }
+
+    @Test("a declared background body that reads the transcript of the session that started it waits for that turn to end")
+    @MainActor
+    func aBackgroundBodyThatReadsItsOwnSessionsTranscriptWaitsForTheTurnToEnd() async throws {
+        let dir = RouterTestFixtures.makeTempDir(prefix: "NestedGenerationReentryTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let harness = try await BackgroundHarness.make(dir: dir)
+        let caller = harness.profile.standard.makeSession(
+            tools: [TranscriptReadingTool(target: harness.target, mount: Self.backgroundMount)])
+        harness.target.set(session: caller)
+
+        let turn = harness.startTurn(on: caller)
+        let token = await Self.handedBackToken(from: harness.handedBack)
+        // The only writer is not suspended in this body, so the lock-free read
+        // an in-band tool call gets is not on offer: the read waits for the
+        // turn lock.
+        if let token {
+            #expect(await caller.mailbox.wait(completionToken: token, seconds: 0) == .deadlineElapsed)
+        }
+
+        #expect(Self.finishedAnswer(await harness.endTurn(turn), describing: "The reading turn") != nil)
+        // The read saw the finished turn's own history.
+        if let token {
+            let terminal = await Self.settledTerminal(of: token, on: caller, describing: "The reading run")
+            #expect(terminal?.outcome == .succeeded)
+            #expect(terminal?.detail == String(Self.entriesBeforeTheToolCall))
+        }
+        Self.expectUntouched(harness.gate)
+        withExtendedLifetime(harness) {}
+    }
+
+    // MARK: - The loan itself
+
+    @Test("a background-run window lends the permit, and says nothing about the model being suspended")
+    func aBackgroundRunWindowLendsThePermitWithoutClaimingSuspension() async {
+        let gate = AsyncSemaphore(value: 1)
+        let sessionID = ULID.generate()
+        let loan = GenerationPermitLoan(gate: gate, sessionID: sessionID, holdsPermit: true)
+        #expect(!loan.lends(over: gate))
+
+        await GenerationPermitLoan.$current.withValue(loan) {
+            await withGenerationLent(across: .backgroundRun) {
+                #expect(loan.lends(over: gate))
+                #expect(!loan.isSuspendedInToolCall(ofSession: sessionID))
+            }
+        }
+        #expect(!loan.lends(over: gate))
+    }
+
+    @Test("a closed loan lends nothing, whatever window is still open on it")
+    func aClosedLoanLendsNothing() async {
+        let gate = AsyncSemaphore(value: 1)
+        let loan = GenerationPermitLoan(gate: gate, sessionID: ULID.generate(), holdsPermit: true)
+
+        // The turn's model call returns — and closes its loan — while the
+        // background run it started is still going.
+        await GenerationPermitLoan.$current.withValue(loan) {
+            await withGenerationLent(across: .backgroundRun) {
+                loan.close()
+                #expect(!loan.lends(over: gate))
+            }
+        }
+        #expect(!loan.lends(over: gate))
     }
 
     // MARK: - A turn still waiting for a permit

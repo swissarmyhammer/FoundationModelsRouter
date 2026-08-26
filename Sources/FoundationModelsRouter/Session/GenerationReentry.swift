@@ -67,9 +67,11 @@ public enum SessionReentryError: Error, Equatable, LocalizedError {
 /// that generates on a second session over the same resident container used to
 /// wait for a permit that only came back when the outer turn ended, and the
 /// outer turn could not end until the tool returned (task ^1zt7vyg). A nested
-/// generation is not a concurrent generation: the outer turn is suspended in
-/// the tool, so one generation runs at a time, which is the same argument
-/// ``RoutedSession/awaitingUser(_:)`` already makes for a wait on a person.
+/// generation from an in-band tool call is not a concurrent generation: the
+/// outer turn is suspended in the tool, so one generation runs at a time,
+/// which is the same argument ``RoutedSession/awaitingUser(_:)`` already makes
+/// for a wait on a person. A nested generation from a declared background
+/// body is the one case that does overlap — see below.
 ///
 /// The loan is read, never spent. A borrowing turn takes no permit and returns
 /// none — ``RoutedSessionActor/endTurn()`` signals only for a turn that really
@@ -83,24 +85,46 @@ public enum SessionReentryError: Error, Equatable, LocalizedError {
 /// - The lender still **holds** its permit. A turn suspended in
 ///   ``RoutedSession/awaitingUser(_:)`` has handed its permit back, so there is
 ///   nothing to lend and a nested turn queues for one of its own.
-/// - The lender is **inside a tool call it is awaiting**. That is what says the
-///   model is suspended. The tool wrapping layers mark that window (see
-///   ``withGenerationSuspendedForToolCall(_:)``); a run that detaches leaves it,
-///   so background work a tool started cannot borrow a permit and generate
-///   beside the turn that started it.
+/// - The lender has a **window** open on the loan — one of the two
+///   ``Window`` kinds, marked by the tool wrapping layers through
+///   ``withGenerationLent(across:_:)``. A ``Window/toolCall`` is the in-band
+///   await the model is suspended on. A ``Window/backgroundRun`` is the whole
+///   life of a body a declared background tool started: that body hands a
+///   handle back at once and runs behind the turn, so it would otherwise
+///   queue for the very permit the still-open turn holds and make no
+///   progress until that turn ends (task ^6858xas). The rule is that a
+///   background body runs on the permit of the turn that started it, for
+///   as long as that turn holds one.
 ///
-/// The one window this does not close: a background run inherits the turn's
-/// loan as a task local, so a nested generation it starts while that turn is
-/// suspended in a later in-band tool call borrows on that call's window, and
-/// the two can overlap for that stretch. The count stays exact, and the
-/// forfeit is the serialization only — the same trade
-/// ``RoutedSession/awaitingUser(_:)`` records for a wait that overlaps a
-/// turn it is not part of.
+/// A background run overlaps the turn that started it by design: the turn
+/// goes on generating while the run does. The count stays exact — a borrowed
+/// permit is never signalled — and the forfeit is the serialization only, the
+/// same trade ``RoutedSession/awaitingUser(_:)`` records for a wait that
+/// overlaps a turn it is not part of. Once the turn's model call returns the
+/// loan is closed (``close()``), and a run that outlives it takes a permit of
+/// its own like any other caller.
+///
+/// A background window lends the permit and says nothing more. Only a
+/// tool-call window proves that the model is suspended, which is what
+/// ``isSuspendedInToolCall(ofSession:)`` — the lock-free transcript read and
+/// the fork refusal — asks about: a background body's turn is still writing.
 final class GenerationPermitLoan: Sendable {
     /// The loan bound to the current task, or `nil` outside any turn's model
     /// call — including inside a detached task started under one, which does
     /// not inherit task locals.
     @TaskLocal static var current: GenerationPermitLoan?
+
+    /// The two kinds of window a turn opens on its loan, each lending the
+    /// permit for as long as it stays open.
+    enum Window: Sendable {
+        /// An in-band tool call the turn is awaiting: the model is suspended
+        /// for the whole of it.
+        case toolCall
+
+        /// The life of a body a declared background tool started: it runs
+        /// beside the turn, which is not suspended.
+        case backgroundRun
+    }
 
     /// The gate the lending turn's permit came from.
     ///
@@ -121,6 +145,31 @@ final class GenerationPermitLoan: Sendable {
 
         /// How many tool calls the lending turn is awaiting.
         var toolCallDepth: Int
+
+        /// How many background runs the lending turn started are still going.
+        var backgroundRunCount: Int
+
+        /// Whether the loan has been closed: the model call it was published
+        /// to has returned, and nothing borrows on it any more.
+        var isClosed: Bool
+
+        /// Whether any window is open on the loan.
+        var hasOpenWindow: Bool {
+            toolCallDepth > 0 || backgroundRunCount > 0
+        }
+
+        /// Moves the count of open `window`s by `delta`.
+        ///
+        /// - Parameters:
+        ///   - window: The kind of window whose count moves.
+        ///   - delta: How far it moves: one up when a window opens, one down
+        ///     when one closes.
+        mutating func adjustCount(of window: Window, by delta: Int) {
+            switch window {
+            case .toolCall: toolCallDepth += delta
+            case .backgroundRun: backgroundRunCount += delta
+            }
+        }
     }
 
     private let state: Mutex<State>
@@ -137,18 +186,19 @@ final class GenerationPermitLoan: Sendable {
     init(gate: AsyncSemaphore, sessionID: ULID, holdsPermit: Bool) {
         self.gate = gate
         self.sessionID = sessionID
-        self.state = Mutex(State(holdsPermit: holdsPermit, toolCallDepth: 0))
+        self.state = Mutex(
+            State(holdsPermit: holdsPermit, toolCallDepth: 0, backgroundRunCount: 0, isClosed: false))
     }
 
     /// Whether a turn over `gate` may run on this loan's permit instead of
     /// waiting for one of its own.
     ///
     /// - Parameter gate: The gate the asking turn would otherwise wait on.
-    /// - Returns: `true` when this loan covers that gate and the lender is
-    ///   suspended in a tool call while holding its permit.
+    /// - Returns: `true` when this loan covers that gate, is still open, and
+    ///   the lender holds its permit with a window open on it.
     func lends(over gate: AsyncSemaphore) -> Bool {
         guard gate === self.gate else { return false }
-        return state.withLock { $0.holdsPermit && $0.toolCallDepth > 0 }
+        return state.withLock { !$0.isClosed && $0.holdsPermit && $0.hasOpenWindow }
     }
 
     /// Whether the lending turn belongs to `sessionID` and is suspended in a
@@ -160,14 +210,15 @@ final class GenerationPermitLoan: Sendable {
     /// ``RoutedSessionActor/turnLock``, so it still answers `true` here. What
     /// the tool-call depth adds over a bare session match is the proof that
     /// the model call is suspended — a run that detached leaves the window,
-    /// and must not be told that its session's backend is quiet.
+    /// and must not be told that its session's backend is quiet. A
+    /// ``Window/backgroundRun`` counts for nothing here, for the same reason.
     ///
     /// - Parameter sessionID: The session the caller is asking about.
     /// - Returns: `true` when this loan's turn is that session's own and is
     ///   awaiting a tool call.
     func isSuspendedInToolCall(ofSession sessionID: ULID) -> Bool {
         guard sessionID == self.sessionID else { return false }
-        return state.withLock { $0.toolCallDepth > 0 }
+        return state.withLock { !$0.isClosed && $0.toolCallDepth > 0 }
     }
 
     /// Records whether the lending turn holds its permit.
@@ -178,48 +229,60 @@ final class GenerationPermitLoan: Sendable {
         state.withLock { $0.holdsPermit = holdsPermit }
     }
 
-    /// Records that the lending turn has begun awaiting one more tool call.
-    func enterToolCall() {
-        state.withLock { $0.toolCallDepth += 1 }
+    /// Records that the lending turn has opened one more `window`.
+    ///
+    /// - Parameter window: The kind of window that opened.
+    func enter(_ window: Window) {
+        state.withLock { $0.adjustCount(of: window, by: 1) }
     }
 
-    /// Records that one tool call the lending turn was awaiting has ended.
-    func leaveToolCall() {
-        state.withLock { $0.toolCallDepth -= 1 }
+    /// Records that one `window` the lending turn had open has closed.
+    ///
+    /// - Parameter window: The kind of window that closed.
+    func leave(_ window: Window) {
+        state.withLock { $0.adjustCount(of: window, by: -1) }
     }
 
     /// Ends the loan, so nothing that outlives the model call can borrow on it.
     ///
     /// A detached run keeps the task local it inherited long after its turn's
-    /// model call returned. Closing the loan rather than trusting that
-    /// reference to go away is what keeps such a run out of the gate's
-    /// bypass.
+    /// model call returned, and its background window is still open. Closing
+    /// the loan rather than trusting that reference to go away is what keeps
+    /// such a run out of the gate's bypass.
     func close() {
         state.withLock {
             $0.holdsPermit = false
-            $0.toolCallDepth = 0
+            $0.isClosed = true
         }
     }
 }
 
-/// Runs `body` with the enclosing turn's generation permit marked lendable —
-/// the tool-call window ``GenerationPermitLoan`` reads.
+/// Runs `body` with the enclosing turn's generation permit lent across
+/// `window` — the window ``GenerationPermitLoan`` reads.
 ///
-/// The tool wrapping layers call this around the await that actually suspends
-/// the model, and never around work that continues after a call detaches: the
-/// mark says "the model is suspended waiting for this", which stops being true
-/// the moment the wrapper hands a pending envelope back and the turn resumes.
+/// The tool wrapping layers call this in two places. Around the in-band await
+/// that actually suspends the model, as a ``GenerationPermitLoan/Window/toolCall``:
+/// the mark says "the model is suspended waiting for this", which stops being
+/// true the moment the wrapper hands a pending envelope back and the turn
+/// resumes. And around the whole body of a declared background tool, as a
+/// ``GenerationPermitLoan/Window/backgroundRun``: that body runs beside the
+/// turn that started it, on that turn's permit, for as long as the turn holds
+/// one.
 ///
 /// Outside any model call there is no loan to mark, and `body` simply runs.
 ///
-/// - Parameter body: The awaited tool work.
+/// - Parameters:
+///   - window: The kind of window `body` runs inside.
+///   - body: The work the permit is lent across.
 /// - Returns: Whatever `body` returns.
 /// - Throws: Rethrows any error thrown by `body`.
-func withGenerationSuspendedForToolCall<T>(_ body: () async throws -> T) async rethrows -> T {
+func withGenerationLent<T>(
+    across window: GenerationPermitLoan.Window, _ body: () async throws -> T
+) async rethrows -> T {
     guard let loan = GenerationPermitLoan.current else {
         return try await body()
     }
-    loan.enterToolCall()
-    defer { loan.leaveToolCall() }
+    loan.enter(window)
+    defer { loan.leave(window) }
     return try await body()
 }

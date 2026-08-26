@@ -670,16 +670,19 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
 
         let wrapped = self.wrapped
         let sink = self.sink
+        let mode = configuration.mode
         let workTask = Task { () async -> RunSettlement in
             let settlement = await ToolContext.$current.withValue(context) {
-                await Self.settle(
-                    calling: wrapped,
-                    arguments: arguments,
-                    context: context,
-                    funnel: funnel,
-                    timeoutSeconds: timeoutSeconds,
-                    cancellationFlag: cancellationFlag
-                )
+                await Self.lendingAcrossBody(of: mode) {
+                    await Self.settle(
+                        calling: wrapped,
+                        arguments: arguments,
+                        context: context,
+                        funnel: funnel,
+                        timeoutSeconds: timeoutSeconds,
+                        cancellationFlag: cancellationFlag
+                    )
+                }
             }
             // The close record: awaited before this task's value resolves, so
             // an in-band settlement delivers it before `call` returns. A
@@ -692,13 +695,14 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
         // The in-band await the model is genuinely suspended on is marked as
         // a tool-call window, so a turn the body starts on another session over
         // the same resident model may run on this turn's generation permit (see
-        // ``withGenerationSuspendedForToolCall(_:)``). A backgrounded call
-        // marks nothing: the pending envelope goes straight back, the turn
-        // resumes, and its permit is not free to lend.
-        switch configuration.mode {
+        // ``withGenerationLent(across:_:)``). A backgrounded call marks nothing
+        // here: the pending envelope goes straight back and the turn resumes.
+        // Its body carries its own window instead — see
+        // ``lendingAcrossBody(of:_:)``.
+        switch mode {
         case .runToCompletion:
             return try await withTaskCancellationHandler {
-                let settlement = await withGenerationSuspendedForToolCall {
+                let settlement = await withGenerationLent(across: .toolCall) {
                     await workTask.value
                 }
                 return try settlement.result.get()
@@ -836,6 +840,40 @@ public struct DetachingTool<Arguments: ConvertibleFromGeneratedContent & Sendabl
     }
 
     // MARK: - Settlement
+
+    /// Runs `body` — one call's whole run body — inside the window that
+    /// `mode` opens on the enclosing turn's generation permit loan, when it
+    /// opens one.
+    ///
+    /// This is the permit rule for a declared background tool (task
+    /// ^6858xas). A background body hands its handle back at once and runs
+    /// behind the turn that started it, so a turn it starts on another
+    /// session over the same resident model would otherwise queue for the
+    /// permit that still-open turn holds and make no progress until the turn
+    /// ends. Instead the body borrows that permit for its whole life —
+    /// ``GenerationPermitLoan/Window/backgroundRun`` — the same way an
+    /// in-band tool call lends it across the await the model is suspended
+    /// on. The count stays exact: a borrowed permit is never signalled.
+    ///
+    /// An in-band body opens no window of its own. The await that suspends
+    /// the model opens the tool-call window, and a body that outlives that
+    /// await — one the per-call timeout ended — must not go on borrowing a
+    /// permit the resumed turn is using.
+    ///
+    /// - Parameters:
+    ///   - mode: The mount mode the call runs under.
+    ///   - body: The run body.
+    /// - Returns: What `body` settled with.
+    private static func lendingAcrossBody(
+        of mode: DetachConfiguration.Mode, _ body: () async -> RunSettlement
+    ) async -> RunSettlement {
+        switch mode {
+        case .runToCompletion:
+            return await body()
+        case .background:
+            return await withGenerationLent(across: .backgroundRun, body)
+        }
+    }
 
     /// The one run body: calls the wrapped tool raced against its
     /// resettable timeout, funnels the terminal synthesis, and returns both
@@ -1265,10 +1303,9 @@ public struct ContextBindingTool<
             do {
                 // A call here always runs in-band, so the model is suspended on
                 // it for its whole length: the window a turn's generation permit
-                // may be lent across (see
-                // ``withGenerationSuspendedForToolCall(_:)``).
+                // may be lent across (see ``withGenerationLent(across:_:)``).
                 outcome = .success(
-                    try await withGenerationSuspendedForToolCall {
+                    try await withGenerationLent(across: .toolCall) {
                         try await ToolContext.$current.withValue(context) {
                             try await wrapped.call(arguments: arguments)
                         }
