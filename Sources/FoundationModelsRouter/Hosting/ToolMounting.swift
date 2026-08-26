@@ -3,16 +3,16 @@ import FoundationModels
 /// The untyped entry point that mounts a tool for a session: it opens the `any Tool` existential and picks the decorator.
 public enum ToolMounting {
     /// Wraps `tool` on the session plane of `context`, for a binder outside this package that mounts its own inner calls.
-    /// The result is that of ``wrapping(tool:sessionID:mailbox:sink:op:configuration:)``.
+    /// The result is that of ``makeWrapped(tool:sessionID:mailbox:sink:op:configuration:)``.
     /// - Returns: The mounted tool.
-    public static func wrapping(
+    public static func makeWrapped(
         tool: any Tool,
         inheriting context: ToolContext,
         sink: any OperationEventSink,
         op: String? = nil,
         configuration: ToolMount
     ) -> any Tool {
-        wrapping(
+        makeWrapped(
             tool: tool,
             sessionID: context.sessionID,
             mailbox: context.mailbox,
@@ -26,7 +26,7 @@ public enum ToolMounting {
     /// Any other tool becomes a ``ContextBindingTool``.
     /// - Parameter op: The registration site's `"verb noun"` op, or `nil`.
     /// - Returns: The mounted tool.
-    public static func wrapping(
+    public static func makeWrapped(
         tool: any Tool,
         sessionID: ULID,
         mailbox: SessionMailbox,

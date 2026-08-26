@@ -214,7 +214,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// against them.
     ///
     /// Each tool is composed by
-    /// ``ToolMounting/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``.
+    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``.
     /// The outbox and mailbox are fresh per session and never shared.
     ///
     /// - Parameters:
@@ -230,7 +230,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let outbox = SessionOutbox()
         let mailbox = SessionMailbox()
         let instancedTools = tools.map { tool in
-            ToolMounting.sessionMounted(
+            ToolMounting.makeSessionMounted(
                 tool: tool,
                 sessionID: sessionID,
                 mailbox: mailbox,

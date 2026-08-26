@@ -78,7 +78,7 @@ extension RoutedSessionActor {
         // ``LanguageModelSessionBackend/makeFork(tools:)``).
         // Mounting and capping arrive through the shared per-tool
         // composition
-        // ``ToolMounting/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
+        // ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``
         // (tasks ^k4nygqa, 1334fk3): the forked copy is mounted with the
         // child's own identity, mailbox, and outbox — so the fork's background
         // runs live in the fork's own mailbox, never the parent's — and,
@@ -99,7 +99,7 @@ extension RoutedSessionActor {
         let childId = ULID.generate()
         let childTools = originalTools.map { tool -> any Tool in
             let forked = (tool as? any ForkableTool)?.forked() ?? tool
-            return ToolMounting.sessionMounted(
+            return ToolMounting.makeSessionMounted(
                 tool: forked,
                 sessionID: childId,
                 mailbox: childMailbox,

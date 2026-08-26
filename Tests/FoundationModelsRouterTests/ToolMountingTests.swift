@@ -19,10 +19,10 @@ struct ToolMountingTests {
 
     /// Mounts `tool` through the one session-mount composition every
     /// session tool-instancing site shares.
-    private static func sessionMounted(
+    private static func makeSessionMounted(
         _ tool: any Tool, sessionID: ULID, mailbox: SessionMailbox, sink: Fixtures.RecordingSink
     ) -> any Tool {
-        ToolMounting.sessionMounted(
+        ToolMounting.makeSessionMounted(
             tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil
         )
     }
@@ -34,7 +34,7 @@ struct ToolMountingTests {
         let gate = RunLatch()
         let mailbox = SessionMailbox()
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolMounting.wrapping(
+        let wrapped = ToolMounting.makeWrapped(
             tool: Fixtures.GatedTool(gate: gate),
             sessionID: ULID.generate(),
             mailbox: mailbox,
@@ -67,7 +67,7 @@ struct ToolMountingTests {
             completionToken: SessionMailbox.makeCompletionToken(),
             isCancelled: { false }
         )
-        let wrapped = ToolMounting.wrapping(
+        let wrapped = ToolMounting.makeWrapped(
             tool: Fixtures.GatedSessionIdentityTool(gate: gate),
             inheriting: outer,
             sink: sink,
@@ -95,7 +95,7 @@ struct ToolMountingTests {
     @Test("wrapping wraps a non-String-output tool in the binding-only ContextBindingTool")
     func factoryBindsNonStringOutputTool() async throws {
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolMounting.wrapping(
+        let wrapped = ToolMounting.makeWrapped(
             tool: Fixtures.NonStringOutputTool(),
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
@@ -115,7 +115,7 @@ struct ToolMountingTests {
     @Test("a non-String-output tool's ambient posts carry its own tool identity and a fresh per-call correlationID")
     func nonStringOutputToolAmbientPostsCarryPerCallIdentity() async throws {
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolMounting.wrapping(
+        let wrapped = ToolMounting.makeWrapped(
             tool: AmbientNonStringOutputTool(),
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
@@ -148,7 +148,7 @@ struct ToolMountingTests {
             completionToken: "outer-run",
             isCancelled: { false }
         )
-        let wrapped = ToolMounting.wrapping(
+        let wrapped = ToolMounting.makeWrapped(
             tool: AmbientNonStringOutputTool(),
             inheriting: outer,
             sink: sink,
@@ -175,7 +175,7 @@ struct ToolMountingTests {
         let mailbox = SessionMailbox()
         let sink = Fixtures.RecordingSink()
         let mounted = try #require(
-            Self.sessionMounted(
+            Self.makeSessionMounted(
                 Fixtures.GatedTool(gate: gate), sessionID: ULID.generate(), mailbox: mailbox, sink: sink
             ) as? RunToCompletionRunner<MountArguments>
         )
@@ -201,7 +201,7 @@ struct ToolMountingTests {
         let mailbox = SessionMailbox()
         let sink = Fixtures.RecordingSink()
         let mounted = try #require(
-            Self.sessionMounted(
+            Self.makeSessionMounted(
                 Fixtures.DeclaredBackgroundToolRunner(gate: gate), sessionID: ULID.generate(),
                 mailbox: mailbox, sink: sink
             ) as? BackgroundToolRunner<MountArguments>
@@ -224,7 +224,7 @@ struct ToolMountingTests {
         let gate = RunLatch()
         let mailbox = SessionMailbox()
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolMounting.wrapping(
+        let wrapped = ToolMounting.makeWrapped(
             tool: Fixtures.DeclaredRunToCompletionRunner(gate: gate),
             sessionID: ULID.generate(),
             mailbox: mailbox,
@@ -261,13 +261,13 @@ struct ToolMountingTests {
         // Both tools take the one session-mount composition, under one
         // session identity, one mailbox, and one sink.
         let blocking = try #require(
-            Self.sessionMounted(
+            Self.makeSessionMounted(
                 Fixtures.DeclaredRunToCompletionRunner(gate: blockingGate), sessionID: sessionID,
                 mailbox: mailbox, sink: sink
             ) as? RunToCompletionRunner<MountArguments>
         )
         let backgrounding = try #require(
-            Self.sessionMounted(
+            Self.makeSessionMounted(
                 Fixtures.DeclaredBackgroundToolRunner(gate: backgroundingGate), sessionID: sessionID,
                 mailbox: mailbox, sink: sink
             ) as? BackgroundToolRunner<MountArguments>

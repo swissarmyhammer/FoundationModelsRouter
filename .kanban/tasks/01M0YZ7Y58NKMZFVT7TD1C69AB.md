@@ -34,6 +34,26 @@ comments:
     - evidence: Router — `swift build --build-tests` 0 errors, 0 warnings from our code; `swift test` 1058 tests / 104 suites passed (2 known issues) plus 83 tests / 10 suites passed; `rg -i detach Sources Tests` no match. Multitool — `swift build --build-tests` clean; `swift test` 1023 tests / 73 suites passed; `swift build --build-tests --package-path IntegrationTests` clean; `rg -i detach Sources Tests IntegrationTests` no match. Nothing committed, both repos left dirty by design.
     - next: /review
   timestamp: 2026-08-26T12:30:11.663091+00:00
+- actor: claude-code
+  id: 01m0z1srxn38yz3yy7m5dr13fd
+  text: |-
+    ### review — findings
+    - evidence: `review sha HEAD~1..HEAD` (commit dffdebf) — 1 finding: `Sources/FoundationModelsRouter/RoutedLLM.swift:233` `swift/fluent-usage` — rename `sessionMounted` to `makeSessionMounted`. The engine examined 55 files. The engine could not read the sibling Multitool checkout, so commit 74b7f84 in that repository is not in this review.
+    - The engine also reported that 3 hygiene rules could not open 8 files at their old (pre-rename) paths. This is a result of the file renames in this commit, not a finding. The new files at the new paths were in the review set.
+    - Probe check requested by the caller: in `ToolContextTests.nonInheritingWorkSeesNil`, a raw thread sends its result through a checked continuation. A raw thread has no Swift task, so a task-local read gives the default value (`nil`). The test fails only if the context moves from a task-local to a global. This is the same failure class the old `Task.detached` probe caught. The assertion is not weaker.
+    - next: correct the finding, then run `/review d1c69ab` again.
+  timestamp: 2026-08-26T12:47:55.829422+00:00
+- actor: claude-code
+  id: 01m0z239yp5y6fv0eekgtp9mxn
+  text: |-
+    Work on the review finding started. Scope decision, recorded before the tests run:
+
+    - `ToolMounting.sessionMounted` -> `ToolMounting.makeSessionMounted` (the finding). Definition in Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift; call sites and DocC references in RoutedLLM.swift, Session/RoutedSessionActorForking.swift, Tests/ToolMountingTests.swift (the private test helper gets the same name), Tests/SessionOutboxToolWiringTests.swift.
+    - The sibling factory `ToolMounting.wrapping` (both overloads in Hosting/ToolMounting.swift) -> `ToolMounting.makeWrapped`, because it also creates and returns a mounted tool, so the same `make` rule applies. Call sites and prose references in both repositories follow.
+    - `ToolOutputCapping.wrapping(tool:toTokenLimit:)` and `optionallyCapped` stay unchanged: they are on a different type, outside this rename family, and the finding does not name them.
+    - The `wrapping:` initializer argument labels on `BackgroundToolRunner`, `RunToCompletionRunner`, and `ContextBindingTool` stay: they are initializer labels, not factory names.
+    - The sibling checkout FoundationModelsMultitool gets the same updates: `ToolMounting.makeWrapped` in RunBinding.swift, Execute.swift, APISurface.swift, MultiTool+Background.swift, the test files, and the IntegrationTests prose; the RouterSessionMountTests private helper `sessionMounted` -> `makeSessionMounted`.
+  timestamp: 2026-08-26T12:53:08.182742+00:00
 depends_on:
 - 01M0WM6ENYA6YGSTCETVBJA15J
 position_column: doing
@@ -60,3 +80,12 @@ The protocol that marks a `Tool` as long-running still uses the old "detach" voc
 
 ## Workflow
 - Use `/tdd` — run both suites before and after the rename. #long-running #cleanup #api
+
+## Review Findings (2026-08-26 07:32)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 55 file(s) reviewed, 4 not reviewed. Note: the matching Multitool commit 74b7f84 is in the sibling checkout, which this engine cannot read. This review covers the Router range only.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [ ] `Sources/FoundationModelsRouter/RoutedLLM.swift:233` `swift/fluent-usage` — Factory method should begin with `make` prefix. This method creates and returns a mounted tool instance, following the factory pattern, but is named `sessionMounted` instead of `makeSessionMounted`. Rename the method to `makeSessionMounted` to follow Swift factory method naming conventions.

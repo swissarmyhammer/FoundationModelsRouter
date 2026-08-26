@@ -50,7 +50,7 @@ enum ToolOutputCapping {
     ///   - limit: The token limit each call's output is capped to.
     /// - Returns: A capping decorator around `tool` when its `Output` is
     ///   `String`; `tool` itself otherwise.
-    static func wrapping(tool: any Tool, toTokenLimit limit: Int) -> any Tool {
+    static func makeWrapped(tool: any Tool, toTokenLimit limit: Int) -> any Tool {
         func open<T: Tool>(_ tool: T) -> any Tool {
             guard let stringTool = tool as? any Tool<T.Arguments, String> else { return tool }
             return TokenCappingTool(wrapped: stringTool, limit: limit)
@@ -58,7 +58,7 @@ enum ToolOutputCapping {
         return open(tool)
     }
 
-    /// Applies ``wrapping(tool:toTokenLimit:)`` only when a limit is actually
+    /// Applies ``makeWrapped(tool:toTokenLimit:)`` only when a limit is actually
     /// configured — the shared guard-and-wrap both of Router's tool-instancing
     /// seams need (``RoutedModel/makeSession(grammar:instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
     /// for a root session, ``RoutedSessionActor/fork(workingDirectory:)`` for
@@ -71,10 +71,10 @@ enum ToolOutputCapping {
     ///     ``TokenBudget`` configured, or a `TokenBudget` with no
     ///     ``TokenBudget/toolOutputLimit``) to leave `tool` uncapped.
     /// - Returns: `tool` unchanged when `toTokenLimit` is `nil`; otherwise
-    ///   the result of ``wrapping(tool:toTokenLimit:)``.
+    ///   the result of ``makeWrapped(tool:toTokenLimit:)``.
     static func optionallyCapped(tool: any Tool, toTokenLimit limit: Int?) -> any Tool {
         guard let limit else { return tool }
-        return wrapping(tool: tool, toTokenLimit: limit)
+        return makeWrapped(tool: tool, toTokenLimit: limit)
     }
 }
 
@@ -169,14 +169,14 @@ extension ToolMounting {
     ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
     ///     rendered output to, or `nil` for no capping layer.
     /// - Returns: The composed, model-facing tool.
-    static func sessionMounted(
+    static func makeSessionMounted(
         tool: any Tool,
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
         cappedToTokenLimit tokenLimit: Int?
     ) -> any Tool {
-        let mounted = wrapping(
+        let mounted = makeWrapped(
             tool: tool,
             sessionID: sessionID,
             mailbox: mailbox,

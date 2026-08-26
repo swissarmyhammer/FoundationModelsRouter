@@ -36,7 +36,7 @@ struct ToolOutputCappingTests {
         }
     }
 
-    /// A non-`String`-output `Tool` — proves ``ToolOutputCapping/wrapping(tool:toTokenLimit:)``
+    /// A non-`String`-output `Tool` — proves ``ToolOutputCapping/makeWrapped(tool:toTokenLimit:)``
     /// passes a tool through unchanged when its `Output` cannot be
     /// generically recovered and re-truncated as text.
     private struct NonStringOutput: PromptRepresentable, Sendable {
@@ -114,14 +114,14 @@ struct ToolOutputCappingTests {
         #expect(result == "… [truncated: 0 of 10 tokens]")
     }
 
-    // MARK: - ToolOutputCapping.wrapping(tool:toTokenLimit:)
+    // MARK: - ToolOutputCapping.makeWrapped(tool:toTokenLimit:)
 
-    @Test("wrapping(tool:toTokenLimit:) wraps a String-output tool in a TokenCappingTool that caps its call() result")
+    @Test("makeWrapped(tool:toTokenLimit:) wraps a String-output tool in a TokenCappingTool that caps its call() result")
     func wrappingCapsStringOutputToolCallResult() async throws {
         let text = String(repeating: "d", count: 40)
         let tool = StringOutputTool(output: text)
 
-        let wrapped = ToolOutputCapping.wrapping(tool: tool, toTokenLimit: 5)
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 5)
         guard let capping = wrapped as? TokenCappingTool<FakeToolArguments> else {
             Issue.record("expected wrapping(tool:toTokenLimit:) to return a TokenCappingTool")
             return
@@ -134,7 +134,7 @@ struct ToolOutputCappingTests {
     @Test("wrapping(tool:toTokenLimit:) leaves a short String-output tool's result untouched")
     func wrappingLeavesShortStringOutputUnchanged() async throws {
         let tool = StringOutputTool(output: "short")
-        let wrapped = ToolOutputCapping.wrapping(tool: tool, toTokenLimit: 100)
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 100)
 
         guard let capping = wrapped as? TokenCappingTool<FakeToolArguments> else {
             Issue.record("expected wrapping(tool:toTokenLimit:) to return a TokenCappingTool")
@@ -147,7 +147,7 @@ struct ToolOutputCappingTests {
     @Test("wrapping(tool:toTokenLimit:) forwards name/description/parameters/includesSchemaInInstructions to the wrapped tool")
     func wrappingForwardsToolMetadata() {
         let tool = StringOutputTool(output: "x")
-        let wrapped = ToolOutputCapping.wrapping(tool: tool, toTokenLimit: 5)
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 5)
 
         guard let capping = wrapped as? TokenCappingTool<FakeToolArguments> else {
             Issue.record("expected wrapping(tool:toTokenLimit:) to return a TokenCappingTool")
@@ -161,7 +161,7 @@ struct ToolOutputCappingTests {
     @Test("wrapping(tool:toTokenLimit:) passes a non-String-output tool through unchanged")
     func wrappingPassesNonStringOutputToolThroughUnchanged() {
         let tool = NonStringOutputTool()
-        let wrapped = ToolOutputCapping.wrapping(tool: tool, toTokenLimit: 5)
+        let wrapped = ToolOutputCapping.makeWrapped(tool: tool, toTokenLimit: 5)
         #expect(wrapped is NonStringOutputTool)
     }
 

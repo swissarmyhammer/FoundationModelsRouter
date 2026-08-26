@@ -216,7 +216,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolMounting.wrapping(
+    let mounted = ToolMounting.makeWrapped(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
@@ -239,7 +239,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolMounting.wrapping(
+    let mounted = ToolMounting.makeWrapped(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
@@ -266,7 +266,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolMounting.wrapping(
+    let mounted = ToolMounting.makeWrapped(
       tool: tool,
       inheriting: host,
       sink: sink,
@@ -302,7 +302,7 @@ struct RegisteredJournalOpTests {
 
     // The call this suite exists to leave alone: no `op` argument at all, which
     // is every mount that stands today.
-    let mounted = ToolMounting.wrapping(
+    let mounted = ToolMounting.makeWrapped(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
@@ -327,7 +327,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolMounting.wrapping(
+    let mounted = ToolMounting.makeWrapped(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: EnclosingRunSink(enclosing: host, upstream: sink),

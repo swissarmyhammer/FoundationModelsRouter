@@ -1034,7 +1034,7 @@ struct SessionOutboxToolWiringTests {
 
         // Capping requires a String output to truncate, so at every budget
         // level the chain for a non-String-output tool is bind(tool) —
-        // never cap(bind(tool)) (see ``ToolMounting/sessionMounted``).
+        // never cap(bind(tool)) (see ``ToolMounting/makeSessionMounted``).
         // The no-cap check below is type-guaranteed for a non-String
         // output (``TokenCappingTool`` wraps only `Tool<Arguments, String>`)
         // — it documents the shape; the load-bearing chain proof is

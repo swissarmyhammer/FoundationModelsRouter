@@ -175,7 +175,7 @@ enum DiscoveryPrimer {
     /// `Arguments` type is known at the call site — the only way to decode
     /// `arguments` into it and invoke `call(arguments:)` — and requires
     /// `Output == String` by the same runtime existential cast against `Tool`'s
-    /// primary associated types that ``ToolOutputCapping/wrapping(tool:toTokenLimit:)``
+    /// primary associated types that ``ToolOutputCapping/makeWrapped(tool:toTokenLimit:)``
     /// uses.
     ///
     /// - Parameters:
