@@ -38,6 +38,26 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Session/GenerationReentry.swift, Sources/FoundationModelsRouter/Hosting/DetachingTool.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnGating.swift, Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift. Rule: a declared background body borrows the permit of the turn that started it for the whole life of the run, through a `.backgroundRun` window on the loan. `swift build --build-tests`: 0 errors, 0 warnings from our code. `swift test --filter NestedGenerationReentryTests`: 13 tests passed. `swift test`: 1048 tests in 101 suites passed (2 pre-existing known issues), 83 tests in 10 suites passed.
     - next: /review
   timestamp: 2026-08-26T03:09:11.987320+00:00
+- actor: claude-code
+  id: 01m0y1cnf3m9kn5h2yyq48nkva
+  text: |-
+    ### review — findings
+    - evidence: review sha HEAD~1..HEAD (local) — 1 finding, 1 confirmed, 0 refuted — Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift:61
+    - next: make one shared generic thread-safe box for NestedTarget and HandedBackRecord, then run the review again
+  timestamp: 2026-08-26T03:21:31.875786+00:00
+- actor: claude-code
+  id: 01m0y1d7rhgz5ar8035bh47h6v
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 5 files; a background body borrows its parent turn's permit through a `.backgroundRun` loan window
+    - test: green — swift test, 1048 + 83 tests, 0 failed (run inside implement)
+    - commit: a612979
+    - review: findings — Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift:61 (HandedBackRecord duplicates the NestedTarget thread-safe box)
+  timestamp: 2026-08-26T03:21:50.609570+00:00
+- actor: claude-code
+  id: 01m0y1hbz1m0pxqcb3ykrnn0xj
+  text: 'Review finding worked (`NestedGenerationReentryTests.swift:61`, reuse). One generic `ThreadSafeBox<Value: Sendable>: Sendable` now holds the `Mutex<Value?>` with `set(_:)` and `value`. `NestedTarget` is a typealias for `ThreadSafeBox<any RoutedSession>` and `HandedBackRecord` is a typealias for `ThreadSafeBox<String>`, so each name keeps its meaning at the use sites. Use sites changed from `set(session:)`/`set(text:)` to `set(_:)` and from `.session`/`.text` to `.value`. No test was changed or removed. A search of the file found no third copy of the pattern; the only other `Mutex<T?>` in the test target (`TurnCancellationTests.swift`) is a different fixture in a different file and is out of the finding''s scope. Build: 0 errors, 0 warnings from our code. `swift test --filter NestedGenerationReentryTests`: 13 passed. `swift test`: 1048 tests in 101 suites passed (2 known issues, pre-existing), 83 tests in 10 suites passed.'
+  timestamp: 2026-08-26T03:24:05.985189+00:00
 depends_on:
 - 01M0XGQCF19BT6PM14919C9VV4
 position_column: doing
@@ -62,3 +82,12 @@ Today a tool body that generates on a session (the agent-tool shape) gets the tu
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #long-running #bug
+
+## Review Findings (2026-08-25 22:10)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/NestedGenerationReentryTests.swift:61` `reuse/reuse` — HandedBackRecord reimplements the identical thread-safe container pattern already implemented by NestedTarget (line 39). Both classes use a private Mutex<T?> storage with identical set() method and property accessor, differing only in the generic type parameter and property name. This duplicated implementation should reuse a shared generic helper instead. Extract a generic ThreadSafeBox<T> helper class that both NestedTarget and HandedBackRecord can use, or generalize NestedTarget to be parameterized over its stored type, avoiding duplication of the thread-safe container pattern.

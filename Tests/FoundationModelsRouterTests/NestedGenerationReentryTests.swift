@@ -30,49 +30,38 @@ struct NestedGenerationReentryTests {
         let value: String
     }
 
-    /// The session a tool body generates on, set after the session exists.
+    /// One value a fixture writes one time and reads from another task.
     ///
-    /// A tool is threaded into `makeSession` before that call returns a
-    /// session, so the target cannot be an `init` argument. The `Mutex` is the
-    /// synchronization the `Sendable` conformance rests on: the test writes the
-    /// target one time, before any turn starts, and the tool body reads it.
-    private final class NestedTarget: Sendable {
-        private let storage: Mutex<(any RoutedSession)?> = Mutex(nil)
+    /// The `Mutex` is the synchronization the `Sendable` conformance rests on.
+    /// A ``NestedTarget`` holds the session a tool body acts on: a tool is
+    /// threaded into `makeSession` before that call returns a session, so the
+    /// target cannot be an `init` argument, and the test writes it before any
+    /// turn starts. A ``HandedBackRecord`` holds what a backgrounded tool call
+    /// handed back to the turn that made it: the backend writes it from inside
+    /// its model call, and the test polls it while that turn is still open.
+    private final class ThreadSafeBox<Value: Sendable>: Sendable {
+        private let storage: Mutex<Value?> = Mutex(nil)
 
-        /// Names the session a later tool body generates on.
+        /// Stores the one value a later reader sees.
         ///
-        /// - Parameter session: The session the tool body drives.
-        func set(session: any RoutedSession) {
-            storage.withLock { $0 = session }
+        /// - Parameter value: The value to store.
+        func set(_ value: Value) {
+            storage.withLock { $0 = value }
         }
 
-        /// The session a tool body generates on, or `nil` when none was named.
-        var session: (any RoutedSession)? {
+        /// The stored value, or `nil` while nothing was stored.
+        var value: Value? {
             storage.withLock { $0 }
         }
     }
+
+    /// The session a tool body generates on, forks, or reads, set after the
+    /// session exists.
+    private typealias NestedTarget = ThreadSafeBox<any RoutedSession>
 
     /// The text a backgrounded tool call handed back to the turn that made it,
     /// recorded the moment the call returned — while that turn is still open.
-    ///
-    /// The `Mutex` is the synchronization the `Sendable` conformance rests on:
-    /// the backend writes the text one time, from inside its model call, and
-    /// the test polls it from outside that call.
-    private final class HandedBackRecord: Sendable {
-        private let storage: Mutex<String?> = Mutex(nil)
-
-        /// Records what the tool call handed back.
-        ///
-        /// - Parameter text: The tool call's output.
-        func set(text: String) {
-            storage.withLock { $0 = text }
-        }
-
-        /// What the tool call handed back, or `nil` while no call has returned.
-        var text: String? {
-            storage.withLock { $0 }
-        }
-    }
+    private typealias HandedBackRecord = ThreadSafeBox<String>
 
     /// A tool whose body drives a whole turn on a routed session — the shape a
     /// host has whenever a tool ranks or summarizes with a model.
@@ -103,7 +92,7 @@ struct NestedGenerationReentryTests {
         var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
-            guard let session = target.session else { return Self.noTargetOutput }
+            guard let session = target.value else { return Self.noTargetOutput }
             return label + Self.labelSeparator + (try await session.respond(to: arguments.value))
         }
 
@@ -139,7 +128,7 @@ struct NestedGenerationReentryTests {
         var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
-            guard let session = target.session else { return Self.noTargetOutput }
+            guard let session = target.value else { return Self.noTargetOutput }
             let child = try await session.fork(workingDirectory: nil)
             return child.parentId?.description ?? Self.noParentOutput
         }
@@ -168,7 +157,7 @@ struct NestedGenerationReentryTests {
         var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
-            guard let session = target.session else { return Self.noTargetOutput }
+            guard let session = target.value else { return Self.noTargetOutput }
             return String(Array(await session.transcript).count)
         }
     }
@@ -234,7 +223,7 @@ struct NestedGenerationReentryTests {
             hasCalledTool = true
             let output = try await detached.call(
                 arguments: ReentryToolArguments(value: NestedGenerationReentryTests.nestedPrompt))
-            handedBack?.set(text: output)
+            handedBack?.set(output)
             await turnHold?.waitUntilOpen()
             return output
         }
@@ -477,9 +466,9 @@ struct NestedGenerationReentryTests {
         let returned = await BoundedWait.conditionReached(
             "the backgrounded call handing back its handle"
         ) {
-            record.text != nil
+            record.value != nil
         }
-        guard returned, let text = record.text else { return nil }
+        guard returned, let text = record.value else { return nil }
         guard
             let envelope = try? JSONDecoder().decode(PendingRunEnvelope.self, from: Data(text.utf8))
         else {
@@ -570,7 +559,7 @@ struct NestedGenerationReentryTests {
         let caller = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: target, label: "caller")])
         let nested = profile.standard.makeSession()
-        target.set(session: nested)
+        target.set(nested)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -597,8 +586,8 @@ struct NestedGenerationReentryTests {
         let middle = profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: middleTarget, label: "middle")])
         let innermost = profile.standard.makeSession()
-        outerTarget.set(session: middle)
-        middleTarget.set(session: innermost)
+        outerTarget.set(middle)
+        middleTarget.set(innermost)
 
         let outcome = await Self.outcome(
             of: { try await outer.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -630,7 +619,7 @@ struct NestedGenerationReentryTests {
         // The tool generates on the very session whose turn invoked it. The turn
         // lock is the correctness gate and is lent to nobody, so this has to
         // fail — and it has to fail with something a caller can read.
-        target.set(session: caller)
+        target.set(caller)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -658,7 +647,7 @@ struct NestedGenerationReentryTests {
         // The tool forks the very session whose turn invoked it. That turn holds
         // the turn lock a fork reads under, and cannot release it until the tool
         // returns, so this has to fail with something a caller can read.
-        target.set(session: caller)
+        target.set(caller)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -682,7 +671,7 @@ struct NestedGenerationReentryTests {
 
         let caller = profile.standard.makeSession(tools: [ForkingTool(target: target)])
         let forked = profile.standard.makeSession()
-        target.set(session: forked)
+        target.set(forked)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -711,7 +700,7 @@ struct NestedGenerationReentryTests {
         // the turn lock, so a read that waited for it would never come back —
         // and it has nothing to wait for, since the only writer is suspended in
         // this tool.
-        target.set(session: caller)
+        target.set(caller)
 
         let outcome = await Self.outcome(
             of: { try await caller.respond(to: Self.outerPrompt) }, within: Self.turnTimeout)
@@ -793,7 +782,7 @@ struct NestedGenerationReentryTests {
         let caller = harness.profile.standard.makeSession(
             tools: [NestedGeneratingTool(target: harness.target, label: "caller", mount: Self.backgroundMount)])
         let nested = harness.profile.standard.makeSession()
-        harness.target.set(session: nested)
+        harness.target.set(nested)
 
         let turn = harness.startTurn(on: caller)
         let token = await Self.handedBackToken(from: harness.handedBack)
@@ -812,7 +801,7 @@ struct NestedGenerationReentryTests {
         // The run settled before its turn ended, so the drain found nothing to
         // wait for and the turn answers with the handle it was handed.
         Self.expectFinished(
-            await harness.endTurn(turn), is: harness.handedBack.text ?? "", describing: "The outer turn")
+            await harness.endTurn(turn), is: harness.handedBack.value ?? "", describing: "The outer turn")
         Self.expectUntouched(harness.gate)
         withExtendedLifetime(harness) {}
     }
@@ -829,7 +818,7 @@ struct NestedGenerationReentryTests {
         // The body generates on the very session whose turn started it. That
         // turn holds the turn lock, which is lent to nobody, so the run has to
         // fail with something a reader can name — while the turn is still open.
-        harness.target.set(session: caller)
+        harness.target.set(caller)
 
         let turn = harness.startTurn(on: caller)
         if let token = await Self.handedBackToken(from: harness.handedBack) {
@@ -839,7 +828,7 @@ struct NestedGenerationReentryTests {
         }
 
         Self.expectFinished(
-            await harness.endTurn(turn), is: harness.handedBack.text ?? "", describing: "The outer turn")
+            await harness.endTurn(turn), is: harness.handedBack.value ?? "", describing: "The outer turn")
         Self.expectUntouched(harness.gate)
         withExtendedLifetime(harness) {}
     }
@@ -853,7 +842,7 @@ struct NestedGenerationReentryTests {
         let harness = try await BackgroundHarness.make(dir: dir)
         let caller = harness.profile.standard.makeSession(
             tools: [ForkingTool(target: harness.target, mount: Self.backgroundMount)])
-        harness.target.set(session: caller)
+        harness.target.set(caller)
 
         let turn = harness.startTurn(on: caller)
         let token = await Self.handedBackToken(from: harness.handedBack)
@@ -884,7 +873,7 @@ struct NestedGenerationReentryTests {
         let harness = try await BackgroundHarness.make(dir: dir)
         let caller = harness.profile.standard.makeSession(
             tools: [TranscriptReadingTool(target: harness.target, mount: Self.backgroundMount)])
-        harness.target.set(session: caller)
+        harness.target.set(caller)
 
         let turn = harness.startTurn(on: caller)
         let token = await Self.handedBackToken(from: harness.handedBack)
