@@ -1,6 +1,44 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m0zhps73vqaf51f61425cqg6
+  text: |-
+    ### correction — this card's opening claim was wrong
+
+    The card says "The Router side was cut. The Multitool was not." **That is false, and I wrote it without checking.** I then measured the Router, and it is in the same state or worse.
+
+    Router doc lines against total lines, files over 100 lines:
+
+    | Share | Doc / total | File |
+    |---|---|---|
+    | 72% | 324 / 444 | `Session/RoutedSession.swift` |
+    | 66% | 125 / 188 | `Session/ToolOutputCapping.swift` |
+    | 61% | 152 / 249 | `Session/DiscoveryPriming.swift` |
+    | 57% | 98 / 171 | `Session/LanguageModelSessionBackend.swift` |
+    | 57% | 62 / 108 | `Recording/MergedTranscript.swift` |
+    | 56% | 60 / 106 | `Hosting/ToolInvocationRecord.swift` |
+    | 54% | 148 / 274 | `Recording/Sinks.swift` |
+    | 52% | 54 / 103 | `Hosting/OperationOutcome.swift` |
+
+    Twelve Router files over 100 lines are at or above 40% doc.
+
+    **Where my error came from.** Earlier work cut the Router's public SURFACE, from 812 public declarations to 437. That is a different thing from cutting its doc comments, and I let one stand for the other. A smaller public surface can even raise the share, because the doc stays on the symbols that remain.
+
+    **What this means for the work.** The user's complaint was about both sides. `RoutedSession.swift` at 72% is the single worst file in either repository, and it is the type a host uses first.
+
+    This card stays scoped to the Multitool, so that a comment cut is reviewable one repository at a time. A sibling card, ^v5kbqxr, now holds the Router side with the same rule. Neither should be done in bulk.
+  timestamp: 2026-08-26T17:25:55.043506+00:00
+- actor: claude-code
+  id: 01m0zhqefkys8t0wspnsbsrydy
+  text: |-
+    ### correction to the card id in the comment above
+
+    The comment above names the Router sibling card as `^v5kbqxr`. That id does not exist — I wrote it before the card was created, and guessed. The real one is **^yzj5ht0**, "Router: cut the doc comments back to what the code cannot say".
+
+    Ignore `^v5kbqxr`. It refers to nothing.
+  timestamp: 2026-08-26T17:26:16.819423+00:00
 position_column: todo
 position_ordinal: 8d80
 title: 'Multitool: cut the doc comments back to what the code cannot say'
