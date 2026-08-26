@@ -251,6 +251,23 @@ comments:
 
     Two observations recorded earlier are still open and are NOT findings: the garbled sentence at line 49, and doc comments much longer than the code they describe.
   timestamp: 2026-08-26T16:29:29.766638+00:00
+- actor: claude-code
+  id: 01m0zegntv8pwmbq9xfrn7x7nx
+  text: |-
+    ### the refutation is independently confirmed, and it WILL recur
+
+    Session `foundationmodelsmultitool-7b` checked the rebuttal against the source rather than take it on trust, and confirms every point. It adds one fact that settles the matter beyond doubt:
+
+    **`MultiTool+SandboxGlobals.swift:266` is not a Swift declaration at all.** It is a line of TypeScript inside a `SandboxGlobalDoc` string literal: `declare function wait(completionToken: string, seconds: number)`. It is documentation text handed to a JS sandbox. It declares nothing in Swift, so it cannot state the contract of a Swift tool.
+
+    **The engine is stateless, so this finding will come back.** `review` takes a scope, returns counts and findings, and remembers nothing between runs. There is no place to suppress or annotate a finding. A future pass over this file will very likely raise the same one. This card is the durable record. If it becomes noise, the lever is the validator rule `completeness/public-output-contract`, not the run.
+
+    **Name the trap, because it is a property of the design and not a mistake in it.** This package has two `wait` surfaces with one name:
+    1. a mounted TOOL with Optional arguments, which a MODEL calls;
+    2. a JS GLOBAL with required positional arguments, which a SNIPPET calls inside `runCode`.
+
+    A rule that matches a declaration by name will find whichever comes first and then read the other one's contract. Any name-matching rule can make this same error. Whoever meets it next should check WHICH `wait` a finding is talking about before believing it.
+  timestamp: 2026-08-26T16:30:09.243202+00:00
 depends_on:
 - 01M0XGRJD4TZTZAFTCSBZEKMFD
 - 01M0XGRYMR1GPMY1X52FTDMR58

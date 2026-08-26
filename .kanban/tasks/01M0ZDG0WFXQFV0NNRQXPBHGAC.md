@@ -29,6 +29,65 @@ comments:
 
     Write the new text in ASD-STE100 Simplified Technical English.
   timestamp: 2026-08-26T16:20:35.807641+00:00
+- actor: claude-code
+  id: 01m0zeg8aaj7b85qd4hx92xtgp
+  text: |-
+    ### implement — changed
+
+    - evidence: `README.md` only, 10 insertions / 7 deletions, committed in the Multitool as `1c57491` "docs(readme): state how a tool declares the background mount". `rg -n 'DetachConfiguration|nativeSessionMount|detach' README.md` now returns nothing. No Swift file changed, so the suites are unaffected; the Multitool tree is clean and the Router is untouched.
+    - next: /review
+
+    **What changed, and what deliberately did not.**
+
+    The stale sentence said a `RoutedSession` "mounts each vended tool under `DetachConfiguration.nativeSessionMount`". Two errors: the type is `ToolMount` and that member does not exist, and the DIRECTION is backwards. A session no longer applies a configuration to a tool. The tool declares its own mount, and the session reads the declaration.
+
+    The new text says that: `MultiTool` conforms to `BackgroundTool` and gives a `ToolMount`; a `RoutedSession` reads that declaration when it mounts the tool; a slow `runCode` starts a background run and answers at once with a pending envelope.
+
+    The claim about a bare `FoundationModels.LanguageModelSession` is KEPT, because it is still true. Only the Router's mounting path reads the declaration (`ToolMounting.swift:42`, and `:45` wraps it in `BackgroundToolRunner`), so a bare session runs the same tools in band: the snippet blocks, no envelope is written, and `wait` has nothing to join.
+
+    `:129` "never detachment" became "never the background run", and that paragraph was reflowed so no orphan line was left.
+
+    The word "detach" is gone from the file. A background run is in motion.
+  timestamp: 2026-08-26T16:29:55.402304+00:00
+- actor: claude-code
+  id: 01m0zemt506t27xtj539qrg610
+  text: |-
+    ### review — NO COVERAGE, and that is not the same as clean
+
+    `review sha HEAD~1..HEAD` on `1c57491` returned "Nothing in scope to review". counts: findings 0, confirmed 0, refuted 0, **attempted 0**, failed 0, skipped 0. 0 files reviewed, 0 not reviewed.
+
+    **Do not read this as a clean review.** `attempted 0` means not one validator ran. The commit is `README.md` only, and the engine's reviewable set is code; markdown never enters it. `.reviewignore` is not the cause — it holds only `.kanban/`.
+
+    So the engine has no opinion on this change and cannot get one. Any future `review sha` over a markdown-only commit returns exactly this. **This card's prose needs a human read, not this tool.**
+
+    ### The claim was checked by hand instead, and it holds
+
+    Session `foundationmodelsmultitool-7b` read the Router source independently. `Hosting/ToolMounting.swift` at lines 44 and 45:
+
+    ```
+    // The tool's own declaration wins over the site's configuration.
+    let mount = (typed as? any BackgroundTool)?.mount ?? configuration
+    switch mount.mode {
+    case .background:        return BackgroundToolRunner(wrapping: typed, ...)
+    case .runToCompletion:   return RunToCompletionRunner(wrapping: typed, ...)
+    }
+    ```
+
+    Three facts carry the new text:
+    1. The direction is as written: the TOOL declares, the mounting site READS, and the site's own `configuration` is only the fallback for a tool that declares nothing (`?? configuration`).
+    2. `BackgroundToolRunner` and `RunToCompletionRunner` exist only in FoundationModelsRouter. FoundationModels provides neither.
+    3. Only the Router reads a tool's `.mount`. The readers are `ToolMounting.swift`, `ToolRun.swift` and `BackgroundToolRunner.swift`, all in the Router. The Multitool has no reader: `as? any BackgroundTool` appears nowhere in its `Sources`.
+
+    A `BackgroundTool` conformance is therefore inert by itself. It is a declaration that nobody consults unless a Router mounting site consults it.
+
+    ### One more commit, because the first wording promised too much
+
+    The peer noted that "the same tools run in band" is correct about the MOUNTING but could be read as a guarantee that a tool there is synchronous. The code does not guarantee that: a tool may start its own work and return early, and nothing in the mounting path stops it. A README is a contract, so it must not promise more than the code enforces.
+
+    `2347c0c` narrows it to what is enforced: the session applies no background wrapper, so `MultiTool`'s own `call(arguments:)` runs in band.
+
+    Commits for this card: `1c57491` and `2347c0c`. The tree is clean and no Swift file changed.
+  timestamp: 2026-08-26T16:32:24.736958+00:00
 position_column: todo
 position_ordinal: 8a80
 title: 'Multitool: correct the README''s stale mount vocabulary'
