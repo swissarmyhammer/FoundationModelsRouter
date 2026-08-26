@@ -4,13 +4,13 @@ import FoundationModels
 /// The outcome of ``RoutedSession/cancelCurrentTurn()``.
 public enum TurnCancellationResult: Sendable, Equatable {
     /// A turn was in flight, or a ``RoutedSession/respond(to:maxTokens:)`` call
-    /// was draining the run plane, and cancellation was requested of it.
+    /// was draining the run plane.
     ///
     /// Cancellation is cooperative. This reports that the request was recorded,
     /// not that the model or a tool has stopped.
     case requested
 
-    /// Nothing was in flight to cancel, so nothing happened.
+    /// Nothing was in flight to cancel.
     case noTurnInFlight
 }
 
@@ -31,19 +31,16 @@ enum PromptCancellationResult: Sendable, Equatable {
 /// A generation session over a resident model: the recorded surface an
 /// application drives to produce text.
 ///
-/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
-/// It holds the router's recording root (``routerId``), a ``TranscriptRecorder``,
-/// and retains its ``profile`` so the resident models stay loaded.
+/// A session is vended only by ``RoutedModel/makeSession(instructions:workingDirectory:recordingRoot:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``,
+/// and it retains its ``profile`` so the resident models stay loaded. The raw
+/// `LanguageModelSession` is never vended; ``RoutedSession`` is the only
+/// generation surface.
 ///
 /// Every generation method records the turn's new transcript entries, whether
 /// the model returns or throws. One session never has two turns in flight
 /// (``RoutedSessionActor/turnLock``), and model work over one model does not
 /// overlap (``RoutedModel/generationGate``). The generation gate is released
-/// for ``RoutedSession/awaitingUser(_:)`` and lent through
-/// ``GenerationPermitLoan``. The raw `LanguageModelSession` is never vended;
-/// ``RoutedSession`` is the only generation surface.
-///
-/// The identity and directory accessors are `nonisolated` immutables.
+/// for ``awaitingUser(_:)`` and lent through ``GenerationPermitLoan``.
 public protocol RoutedSession: Actor {
     /// The resolved profile this session runs against.
     nonisolated var profile: LanguageModelProfile { get }
@@ -54,8 +51,7 @@ public protocol RoutedSession: Actor {
     /// This session's span id.
     nonisolated var id: ULID { get }
 
-    /// The span id of the session that forked this one, or `nil` for a root
-    /// session.
+    /// The span id of the session that forked this one, or `nil` for a root session.
     nonisolated var parentId: ULID? { get }
 
     /// The directory this session's transcript is recorded under.
@@ -68,45 +64,40 @@ public protocol RoutedSession: Actor {
     /// The grammar that constrains every ``respond(to:)`` on this session, or
     /// `nil` for an unconstrained session.
     ///
-    /// Set by ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``.
-    /// ``fork(workingDirectory:)`` inherits it. ``streamResponse(to:)`` is
-    /// not constrained.
+    /// ``RoutedModel/makeGuidedSession(grammar:instructions:workingDirectory:tools:budget:compactionPrompt:summarization:agentSpawn:discoveryPriming:)``
+    /// sets it, and ``fork(workingDirectory:)`` inherits it.
+    /// ``streamResponse(to:)`` is not constrained.
     nonisolated var grammar: Grammar? { get }
 
     /// Context fill, 0...1: the newest turn's measured `(tokensIn + tokensOut)`
-    /// against the profile's resolved working context.
-    ///
-    /// `0` before the first turn. A restored session reports its last stamped
-    /// `.response` usage, or ``unknownContextFill`` when there is no stamp.
+    /// against the profile's resolved working context. `0` before the first
+    /// turn. A restored session reports its last stamped `.response` usage, or
+    /// ``unknownContextFill`` when there is no stamp.
     var contextFill: Double { get async }
 
     /// The SDK transcript this session has accumulated so far, read under the
-    /// session's turn lock.
-    ///
-    /// A read issued while a turn is in flight waits for that turn. A tool body
-    /// reading its own session's transcript does not wait; it sees the history
-    /// as it stands mid-turn.
+    /// session's turn lock: a read issued while a turn is in flight waits for
+    /// that turn. A tool body reading its own session's transcript does not
+    /// wait; it sees the history as it stands mid-turn.
     var transcript: Transcript { get async }
 
     /// Folds this session's transcript in place: same ``id``, same
     /// ``recordingDirectory``, shorter live window.
     ///
-    /// Runs the deterministic compaction stages first, then the model-assisted
-    /// ``Summarization`` stage only if the transcript is still over target. The
-    /// summarization configuration is the one this session was vended with
-    /// (``RoutedSessionActor/summarization``). When the fold changes anything,
-    /// the summary entry is appended to `transcript.jsonl` and the backend is
-    /// reseeded. When the transcript is already under target, nothing changes.
+    /// The deterministic compaction stages run first, then the model-assisted
+    /// ``Summarization`` stage only if the transcript is still over target,
+    /// with the configuration this session was vended with
+    /// (``RoutedSessionActor/summarization``). A fold that changes anything
+    /// appends the summary entry to `transcript.jsonl` and reseeds the backend.
+    /// A transcript already under target stays as it is.
     ///
     /// A fold holds the turn lock, so ``cancelCurrentTurn()`` can cancel it.
     /// To recover from `LanguageModelError.contextSizeExceeded`, compact with
     /// a lower target and retry once.
     ///
-    /// - Parameters:
-    ///   - prompt: The compaction prompt for the summarizer. Defaults to ``CompactionPrompt/default``.
-    ///   - budget: The token budget to fold against, or `nil` for this session's resolved working context.
-    /// - Returns: What the fold did.
-    /// - Throws: The summarizer's error; `CancellationError` when cancelled; or
+    /// - Parameter budget: The token budget to fold against, or `nil` for this
+    ///   session's resolved working context.
+    /// - Throws: `CancellationError` when cancelled, or
     ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when called
     ///   from a tool of this session's own turn.
     @discardableResult
@@ -117,11 +108,10 @@ public protocol RoutedSession: Actor {
     /// This call drains both planes before it answers. The content plane is
     /// folded into each turn's prompt as a preamble. The run plane is drained
     /// after this call's own turn: every background run is awaited to
-    /// settlement, and a further turn delivers the results to the model. The
-    /// drain runs at most ``RoutedSessionActor/backgroundRunDrainRoundLimit``
-    /// further turns. It does not end background runs; that is ``close()``'s job.
-    ///
-    /// A cancellation ends the drain and returns the last turn's answer. The
+    /// settlement, and a further turn delivers the results to the model, for at
+    /// most ``RoutedSessionActor/backgroundRunDrainRoundLimit`` further turns.
+    /// The drain does not end background runs; that is ``close()``'s job. A
+    /// cancellation ends the drain and returns the last turn's answer, and the
     /// runs it waited on stay running.
     ///
     /// Nothing bounds a decode: there is no timeout. A generation with no
@@ -129,14 +119,11 @@ public protocol RoutedSession: Actor {
     /// ``streamSessionEvents()`` with ``GenerationProgressVisibility/wholeAnswer``
     /// visibility, and one line in this module's log.
     ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the model's default.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
     /// - Returns: The model's complete text response; the last drained turn's
     ///   when this call's own turn backgrounded work.
-    /// - Throws: Any error thrown by the model, or
-    ///   ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when called
-    ///   from a tool of this session's own turn.
+    /// - Throws: ``SessionReentryError/sameSessionTurnInFlight(sessionID:)`` when
+    ///   called from a tool of this session's own turn.
     func respond(to prompt: String, maxTokens: Int?) async throws -> String
 
     /// Streams a text response to a prompt as it is produced, recording the call.
@@ -147,18 +134,11 @@ public protocol RoutedSession: Actor {
     /// reports ``SessionEvent/generationStalled(_:)`` on ``streamSessionEvents()``
     /// with ``GenerationProgressVisibility/fragments(observed:)`` visibility.
     ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the model's default.
-    /// - Returns: A stream of response fragments. It throws if generation fails.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
 
-    /// Streams a rich event sequence for a prompt as it is produced,
-    /// recording the call exactly like ``streamResponse(to:maxTokens:)``.
-    ///
-    /// Where ``streamResponse(to:maxTokens:)`` yields only text fragments, this
-    /// surfaces the turn's tool calls, tool lifecycle, reasoning, and closing
-    /// usage too.
+    /// Streams a rich event sequence for a prompt as it is produced, recording
+    /// the call exactly like ``streamResponse(to:maxTokens:)``.
     ///
     /// Order within one turn: ``SessionEvent/turnStarted(_:)``; then
     /// ``SessionEvent/textDelta(_:)`` fragments; then, after the turn's diff,
@@ -175,10 +155,7 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/runSettled(_:)``; a later one is reported on
     /// ``streamSessionEvents()``.
     ///
-    /// - Parameters:
-    ///   - prompt: The prompt to respond to.
-    ///   - maxTokens: The maximum number of tokens to generate, or `nil` for the model's default.
-    /// - Returns: A stream of session events. It throws if the turn fails.
+    /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
 
     /// Streams the ``SessionEvent``s that belong to this *session* rather than
@@ -190,17 +167,16 @@ public protocol RoutedSession: Actor {
     /// ``SessionEvent/compaction(_:)``, ``SessionEvent/discoveryPrimingFailed(_:)``,
     /// ``SessionEvent/generationStalled(_:)``, and ``SessionEvent/turnEnded(_:)``.
     /// ``SessionEvent/textDelta(_:)`` and ``SessionEvent/textReset`` travel only
-    /// on ``streamEvents(to:maxTokens:)``.
+    /// on ``streamEvents(to:maxTokens:)``. Every event belongs to the turn named
+    /// by the most recent ``SessionEvent/turnStarted(_:)``.
     ///
-    /// Every event belongs to the turn named by the most recent
-    /// ``SessionEvent/turnStarted(_:)``. Each call vends an independent
-    /// subscription, buffered without bound. Ending iteration drops the
-    /// subscription; ``close()`` finishes every outstanding one.
-    ///
-    /// - Returns: A stream of this session's own session-scoped events.
+    /// Each call vends an independent subscription, buffered without bound.
+    /// Ending iteration drops the subscription; ``close()`` finishes every
+    /// outstanding one.
     func streamSessionEvents() -> AsyncStream<SessionEvent>
 
-    /// Cancels the turn currently in flight on this session. Best-effort.
+    /// Cancels the turn currently in flight on this session. Best-effort, and
+    /// safe at any time and any number of times.
     ///
     /// ``cancel(id:)`` withdraws a queued prompt; this reaches a turn already
     /// handed to the model. It cancels the `Task` that runs the model call, so
@@ -220,12 +196,6 @@ public protocol RoutedSession: Actor {
     /// cancelled where it stands; its deterministic stages are not interrupted.
     /// A ``respond(to:maxTokens:)`` draining the run plane stops draining and
     /// returns its last turn's answer; the runs it waited on stay running.
-    ///
-    /// Safe at any time and any number of times.
-    ///
-    /// - Returns: ``TurnCancellationResult/requested`` when a turn or a draining
-    ///   `respond(to:maxTokens:)` was in flight; or
-    ///   ``TurnCancellationResult/noTurnInFlight`` when there was nothing to cancel.
     @discardableResult
     func cancelCurrentTurn() async -> TurnCancellationResult
 
@@ -244,9 +214,6 @@ public protocol RoutedSession: Actor {
     ///
     /// - Precondition: Call this from inside a tool the SDK invoked for this
     ///   session's own in-flight turn, and do not let the wait outlive that tool call.
-    /// - Parameter body: The wait on a person to run with the generation gate released.
-    /// - Returns: Whatever `body` returns.
-    /// - Throws: Rethrows any error thrown by `body`, after re-acquiring.
     func awaitingUser<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T
 
     /// Forks a child session over the same resident model.
@@ -258,24 +225,22 @@ public protocol RoutedSession: Actor {
     /// router's `maxConcurrentForks` forks over one model may be in flight; a
     /// fork past that ceiling awaits a free slot.
     ///
-    /// A tool body cannot fork the session whose turn invoked it.
-    ///
     /// - Parameter workingDirectory: The child's working directory, or `nil` for its recording directory.
-    /// - Returns: The forked child session.
     /// - Throws: ``SessionReentryError/forkDuringSameSessionTurn(sessionID:)``
     ///   when the call comes from inside a tool call of this session's own turn.
     func fork(workingDirectory: URL?) async throws -> RoutedSession
 
     /// Tears the session down: runs ``SessionMailbox/sweep()``, which cancels
     /// every background run and rejects every pending elicitation, and journals
-    /// the resulting terminal events before it returns.
+    /// the resulting terminal events before it returns. It also finishes every
+    /// ``streamSessionEvents()`` subscription.
     ///
     /// Call it where a session's life ends. `deinit` does not run this sweep.
-    /// It also finishes every ``streamSessionEvents()`` subscription. Idempotent.
+    /// Idempotent.
     func close() async
 
     /// Runs the earliest pending prompt in this session's queue as one recorded
-    /// turn, with any pending turn-riding events, and returns the model's response.
+    /// turn, with any pending turn-riding events.
     ///
     /// Nothing in this package drains the queue automatically. A driver waits
     /// on ``awaitQueuedWork()`` and then calls this method. When no prompt is
@@ -290,7 +255,6 @@ public protocol RoutedSession: Actor {
     ///
     /// - Returns: The model's response text, or `nil` if no prompt was queued
     ///   and no run had settled when this call drained the outbox.
-    /// - Throws: Any error thrown by the model.
     func dispatchNextPrompt() async throws -> String?
 
     /// Suspends until this session holds work for a future turn: a queued
@@ -301,7 +265,6 @@ public protocol RoutedSession: Actor {
     /// Stages a queued user prompt for a future turn. Nothing here touches the
     /// recorded transcript.
     ///
-    /// - Parameter prompt: The prompt to stage.
     /// - Returns: The stable id of this queued prompt, usable with
     ///   ``pendingPrompts()``, ``cancel(id:)``, and ``replace(id:prompt:)``.
     @discardableResult
@@ -309,67 +272,47 @@ public protocol RoutedSession: Actor {
 
     /// A snapshot of every prompt currently queued for a future turn, in FIFO
     /// dispatch order.
-    ///
-    /// - Returns: Each queued prompt's stable id with its current content.
     func pendingPrompts() async -> [(id: SessionOutbox.ItemID, prompt: Transcript.Prompt)]
 
     /// Cancels a still-pending queued prompt. See ``cancelCurrentTurn()`` for a
     /// turn already in flight, and ``cancelPrompt(id:)`` for both in one call.
     ///
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
-    /// - Returns: Whether the prompt was removed, or was already drained for
-    ///   dispatch. See ``SessionOutbox/PromptQueueMutationResult``.
     @discardableResult
     func cancel(id: SessionOutbox.ItemID) async -> SessionOutbox.PromptQueueMutationResult
 
     /// Replaces a still-pending queued prompt's content in place. The prompt
     /// keeps its FIFO dispatch position.
     ///
-    /// - Parameters:
-    ///   - id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
-    ///   - prompt: The prompt's new content.
-    /// - Returns: Whether the prompt was updated, or was already drained for
-    ///   dispatch. See ``SessionOutbox/PromptQueueMutationResult``.
+    /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
     @discardableResult
     func replace(id: SessionOutbox.ItemID, prompt: Transcript.Prompt) async -> SessionOutbox.PromptQueueMutationResult
 
     /// How much queued user-prompt work this session carries: the prompts
     /// still waiting and the one whose turn is running.
-    ///
-    /// - Returns: The current ``SessionOutbox/QueueDepth``.
     func promptQueueDepth() async -> SessionOutbox.QueueDepth
 
     /// Delivers the user's answer to a pending elicitation raised by a run on
     /// this session.
     ///
-    /// The answer addresses one elicitation by id. A form-mode `accept` resumes
-    /// the run with its `content`; `decline` and `cancel` resume with those
-    /// actions. A URL-mode `accept` keeps the run running until
-    /// ``complete(elicitationId:)`` arrives. Unknown, malformed, and
-    /// already-answered ids are safe no-ops.
+    /// A form-mode `accept` resumes the run with its `content`; `decline` and
+    /// `cancel` resume with those actions. A URL-mode `accept` keeps the run
+    /// running until ``complete(elicitationId:)`` arrives. Unknown, malformed,
+    /// and already-answered ids are safe no-ops.
     ///
-    /// - Parameters:
-    ///   - elicitationId: The pending elicitation's id, the string form of ``ElicitationRequest/elicitationId``.
-    ///   - response: The user's answer.
-    /// - Returns: The ``SessionMailbox/ElicitationAnswerDelivery``.
+    /// - Parameter elicitationId: The pending elicitation's id, the string form of ``ElicitationRequest/elicitationId``.
     @discardableResult
     func respond(elicitationId: String, response: ElicitationResponse) async -> SessionMailbox.ElicitationAnswerDelivery
 
     /// Signals that an accepted URL-mode elicitation's out-of-band flow
     /// finished, and resumes the run. Unknown, malformed, not-yet-accepted, and
     /// already-completed ids are safe no-ops.
-    ///
-    /// - Parameter elicitationId: The accepted URL-mode elicitation's id.
-    /// - Returns: The ``SessionMailbox/ElicitationCompletionDelivery``.
     @discardableResult
     func complete(elicitationId: String) async -> SessionMailbox.ElicitationCompletionDelivery
 }
 
 extension RoutedSession {
     /// See ``compact(prompt:budget:)``, with both parameters at their defaults.
-    ///
-    /// - Returns: What the fold did.
-    /// - Throws: The summarizer's error.
     @discardableResult
     func compact() async throws -> CompactionResult {
         try await compact(prompt: .default, budget: nil)
@@ -377,44 +320,30 @@ extension RoutedSession {
 
     /// See ``compact(prompt:budget:)``, with `prompt` at ``CompactionPrompt/default``.
     ///
-    /// - Parameter budget: The token budget to fold against, or `nil` for this session's resolved working context.
-    /// - Returns: What the fold did.
-    /// - Throws: The summarizer's error.
+    /// - Parameter budget: The token budget to fold against, or `nil` for this
+    ///   session's resolved working context.
     @discardableResult
     func compact(budget: TokenBudget?) async throws -> CompactionResult {
         try await compact(prompt: .default, budget: budget)
     }
 
     /// See ``respond(to:maxTokens:)``, with the model's default token ceiling.
-    ///
-    /// - Parameter prompt: The prompt to respond to.
-    /// - Returns: The model's complete text response.
-    /// - Throws: Any error thrown by the model.
     public func respond(to prompt: String) async throws -> String {
         try await respond(to: prompt, maxTokens: nil)
     }
 
     /// See ``streamResponse(to:maxTokens:)``, with the model's default token ceiling.
-    ///
-    /// - Parameter prompt: The prompt to respond to.
-    /// - Returns: A stream of response fragments.
     public func streamResponse(to prompt: String) -> AsyncThrowingStream<String, Error> {
         streamResponse(to: prompt, maxTokens: nil)
     }
 
     /// See ``streamEvents(to:maxTokens:)``, with the model's default token ceiling.
-    ///
-    /// - Parameter prompt: The prompt to respond to.
-    /// - Returns: A stream of session events.
     public func streamEvents(to prompt: String) -> AsyncThrowingStream<SessionEvent, Error> {
         streamEvents(to: prompt, maxTokens: nil)
     }
 
     /// Stages a plain-text queued user prompt for a future turn, as one `.text`
     /// segment.
-    ///
-    /// - Parameter prompt: The prompt text to stage.
-    /// - Returns: The stable id of this queued prompt.
     @discardableResult
     func enqueue(prompt: String) async -> SessionOutbox.ItemID {
         await enqueue(prompt: Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
@@ -423,13 +352,12 @@ extension RoutedSession {
     /// Cancels a submitted prompt, whether it is still queued or already
     /// dispatched.
     ///
-    /// A queued prompt is withdrawn through ``cancel(id:)``. A dispatched
-    /// prompt's turn is cancelled through ``cancelCurrentTurn()``, which cancels
-    /// the turn in flight at that moment. ``PromptCancellationResult/turnCancelled``
-    /// reports that the request was recorded, not that the turn failed.
+    /// A dispatched prompt is cancelled through ``cancelCurrentTurn()``, which
+    /// cancels the turn in flight at that moment.
+    /// ``PromptCancellationResult/turnCancelled`` reports that the request was
+    /// recorded, not that the turn failed.
     ///
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
-    /// - Returns: Which of the three ``PromptCancellationResult`` states applied.
     @discardableResult
     func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
         if await cancel(id: id) == .applied {
