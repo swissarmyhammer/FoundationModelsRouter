@@ -1,7 +1,7 @@
 import Foundation
 
 /// One tool call's live lifecycle record: opened when a per-call binding
-/// layer (``RunToCompletionTool`` or ``BackgroundTool`` for `String`-output
+/// layer (``RunToCompletionRunner`` or ``BackgroundToolRunner`` for `String`-output
 /// tools, ``ContextBindingTool`` for the rest) is about to run the wrapped
 /// call, and closed when that call
 /// returns — including when it throws.

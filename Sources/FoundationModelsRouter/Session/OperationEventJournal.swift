@@ -3,7 +3,7 @@
 ///
 /// The outbox stages events for a *future* turn — that is what it is for — so
 /// on its own it can only tell the model, and the transcript, about a
-/// long-running run once some later prompt drains it. A detached run whose
+/// long-running run once some later prompt drains it. A background run whose
 /// work finishes minutes after its turn ended would therefore leave no trace
 /// of finishing until a person happened to say something else. This protocol
 /// is the second, immediate destination that closes that hole: the outbox

@@ -22,11 +22,11 @@ A session has three audiences, and each one gets typed capabilities:
 ## Long-running tools
 
 A tool declares ahead of time that it runs long, through
-``DetachmentParameterProviding/detachmentMount``. Such a tool is mounted as a
-``BackgroundTool``: each call returns a ``PendingRunEnvelope`` handle at once,
+``BackgroundTool/mount``. Such a tool is mounted as a
+``BackgroundToolRunner``: each call returns a ``PendingRunEnvelope`` handle at once,
 and the work goes on behind it. Every other tool is mounted as a
-``RunToCompletionTool`` and returns its result in band;
-``DetachConfiguration/timeout`` bounds the work.
+``RunToCompletionRunner`` and returns its result in band;
+``ToolMount/timeout`` bounds the work.
 
 The session pushes settlement to the model — the model never polls:
 

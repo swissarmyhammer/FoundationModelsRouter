@@ -289,12 +289,12 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // own outbox rather than a sibling or ancestor's, and background
             // runs and pending elicitations never survive a restore (see
             // ``RoutedSessionActor/mailbox``).
-            // This site's chain is detach only, plus capping when the
+            // This site's chain is mount only, plus capping when the
             // node's recorded budget carries a `toolOutputLimit` —
             // deliberately no fork (restoration re-instances from the
             // caller's originals, it never derives one live session from
-            // another) — mirroring the root site's detach → cap; the fork
-            // site is fork → detach → cap (task ^k4nygqa; see
+            // another) — mirroring the root site's mount → cap; the fork
+            // site is fork → mount → cap (task ^k4nygqa; see
             // ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
             // and ``RoutedSessionActor/fork(workingDirectory:)``).
             let (outbox, mailbox, instancedTools) = makeSessionToolWiring(
@@ -374,7 +374,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // above; `originalTools` retains the true, un-instanced
                 // originals (this call's own `tools` parameter) so a later
                 // `fork(workingDirectory:)` off this restored node can still
-                // build its own fork-then-detach composed tool list, exactly
+                // build its own fork-then-mount composed tool list, exactly
                 // as it would from a freshly vended root session.
                 tools: instancedTools,
                 originalTools: tools,

@@ -4,13 +4,13 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises ``RunToCompletionTool``: the in-band result, the per-call
-/// timeout through ``DetachmentParameterProviding``, the timeout that
+/// Exercises ``RunToCompletionRunner``: the in-band result, the per-call
+/// timeout through ``BackgroundTool``, the timeout that
 /// progress resets and an elicitation suspends, the terminal-scoped
 /// synthesis matrix, and exactly one `.completed` on the throw and timeout
 /// paths.
-@Suite("RunToCompletionTool: run the body, return its value")
-struct RunToCompletionToolTests {
+@Suite("RunToCompletionRunner: run the body, return its value")
+struct RunToCompletionRunnerTests {
     private typealias Fixtures = MountFixtures
 
     /// How many heartbeats the progress-resets-timeout tool posts.
@@ -54,7 +54,7 @@ struct RunToCompletionToolTests {
             timeout: Fixtures.generousInterval
         )
 
-        await #expect(throws: DetachingToolError.self) {
+        await #expect(throws: ToolMountError.self) {
             _ = try await harness.mounted.call(arguments: MountArguments(value: "x"))
         }
 
@@ -69,7 +69,7 @@ struct RunToCompletionToolTests {
             wrapping: Fixtures.NilTimeoutTool(), timeout: Fixtures.shortInterval
         )
 
-        await #expect(throws: DetachingToolError.self) {
+        await #expect(throws: ToolMountError.self) {
             _ = try await harness.mounted.call(arguments: MountArguments(value: "x"))
         }
 
@@ -101,7 +101,7 @@ struct RunToCompletionToolTests {
             wrapping: Fixtures.SleepingTool(), timeout: Fixtures.shortInterval
         )
 
-        await #expect(throws: DetachingToolError.self) {
+        await #expect(throws: ToolMountError.self) {
             _ = try await harness.mounted.call(arguments: MountArguments(value: "x"))
         }
 
@@ -118,7 +118,7 @@ struct RunToCompletionToolTests {
             timeout: Fixtures.shortInterval
         )
 
-        await #expect(throws: DetachingToolError.self) {
+        await #expect(throws: ToolMountError.self) {
             _ = try await harness.mounted.call(arguments: MountArguments(value: "x"))
         }
 
@@ -212,7 +212,7 @@ struct RunToCompletionToolTests {
         let elicitationId = try await Fixtures.firstPendingElicitationId(in: harness.mailbox)
         await harness.mailbox.respond(elicitationId: elicitationId, .decline)
 
-        await #expect(throws: DetachingToolError.self) {
+        await #expect(throws: ToolMountError.self) {
             _ = try await calling.deliveredAnswer()
         }
 
@@ -224,20 +224,20 @@ struct RunToCompletionToolTests {
     // MARK: - The clockless mount
 
     @Test("the run-to-completion mount carries no timeout at all")
-    func runToCompletionMountCarriesNoTimeout() {
-        #expect(DetachConfiguration.runToCompletionMount.mode == .runToCompletion)
-        #expect(DetachConfiguration.runToCompletionMount.timeout == nil)
+    func synchronousUnboundedCarriesNoTimeout() {
+        #expect(ToolMount.synchronousUnbounded.mode == .runToCompletion)
+        #expect(ToolMount.synchronousUnbounded.timeout == nil)
     }
 
     @Test("the stock timeout stays a plain TimeInterval, and the native session mount runs to completion under it")
     func stockTimeoutStaysNonOptional() {
         // The binding itself is the assertion about the type: a
         // `TimeInterval?` does not compile here.
-        let stockTimeout: TimeInterval = DetachConfiguration.defaultTimeoutSeconds
+        let stockTimeout: TimeInterval = ToolMount.defaultTimeoutSeconds
 
         #expect(
-            DetachConfiguration.nativeSessionMount
-                == DetachConfiguration(mode: .runToCompletion, timeout: stockTimeout)
+            ToolMount.synchronous
+                == ToolMount(mode: .runToCompletion, timeout: stockTimeout)
         )
     }
 

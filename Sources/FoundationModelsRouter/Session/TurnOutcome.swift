@@ -30,7 +30,7 @@ public struct TurnOutcome: Sendable, Equatable {
     public let toolCalls: [ToolCallEntry]
 
     /// The turn's live ``ToolInvocationRecord``s, in open order, one per run.
-    /// A close record replaces its open record. A run that detached past the turn's end keeps its open record.
+    /// A close record replaces its open record. A run still in the background past the turn's end keeps its open record.
     public let toolInvocations: [ToolInvocationRecord]
 }
 

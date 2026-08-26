@@ -85,7 +85,7 @@ enum ToolOutputCapping {
 /// Forwards `name`/`description`/`parameters`/`includesSchemaInInstructions`
 /// to `wrapped` untouched; only `call(arguments:)`'s return value is capped.
 /// `wrapped` is whatever the tool-instancing pipeline already produced (e.g.
-/// a ``RunToCompletionTool`` or ``BackgroundTool`` wrapper) — this decorator is applied
+/// a ``RunToCompletionRunner`` or ``BackgroundToolRunner`` wrapper) — this decorator is applied
 /// outermost, so the model-facing tool the SDK actually calls is the capped
 /// one: both continued generation and the transcript's own recorded
 /// `.toolOutput` entry (and therefore
@@ -126,25 +126,25 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool {
     }
 }
 
-extension ToolDetachment {
+extension ToolMounting {
     /// The per-tool session-mount composition every session tool-instancing
     /// site shares: mounts `tool` in the run-to-completion or background
     /// layer under the session's own identity, mailbox, and sink with
-    /// ``DetachConfiguration/nativeSessionMount``, then — only when
+    /// ``ToolMount/synchronous``, then — only when
     /// `cappedToTokenLimit` is set — caps the mounted tool outermost via
     /// ``ToolOutputCapping/optionallyCapped(tool:toTokenLimit:)``. A rendered
     /// pending envelope is exempt from capping (see
     /// ``TokenCappingTool/call(arguments:)``).
     ///
     /// The mount is the default for every tool: run to completion, bounded
-    /// by ``DetachConfiguration/defaultTimeoutSeconds``, so a synchronous
+    /// by ``ToolMount/defaultTimeoutSeconds``, so a synchronous
     /// tool that hangs is reported as
-    /// ``DetachingToolError/timedOut(tool:timeoutSeconds:)`` instead of
+    /// ``ToolMountError/timedOut(tool:timeoutSeconds:)`` instead of
     /// holding the turn forever. No timer and no race decide whether a call
     /// goes to the background. A tool that is known ahead of time to run
     /// long — a shell tool, an agent tool — declares
-    /// ``DetachConfiguration/Mode/background`` for itself through
-    /// ``DetachmentParameterProviding/detachmentMount``, and that
+    /// ``ToolMount/Mode/background`` for itself through
+    /// ``BackgroundTool/mount``, and that
     /// declaration wins over this mount. A file edit tool, a skill tool, and
     /// a discovery tool declare nothing and run in band. So this one site
     /// mounts both kinds, and the choice stays with the tool that knows.
@@ -162,8 +162,8 @@ extension ToolDetachment {
     /// - Parameters:
     ///   - tool: The tool to mount for one session.
     ///   - sessionID: The owning session's identity, stamped into each
-    ///     detached run's ``ToolContext``.
-    ///   - mailbox: The owning session's mailbox, which tracks the detached runs.
+    ///     background run's ``ToolContext``.
+    ///   - mailbox: The owning session's mailbox, which tracks the background runs.
     ///   - sink: The upstream sink the run's events are posted to — the
     ///     session's own outbox.
     ///   - tokenLimit: The ``TokenBudget/toolOutputLimit`` to cap
@@ -176,13 +176,13 @@ extension ToolDetachment {
         sink: any OperationEventSink,
         cappedToTokenLimit tokenLimit: Int?
     ) -> any Tool {
-        let detached = wrapping(
+        let mounted = wrapping(
             tool: tool,
             sessionID: sessionID,
             mailbox: mailbox,
             sink: sink,
-            configuration: .nativeSessionMount
+            configuration: .synchronous
         )
-        return ToolOutputCapping.optionallyCapped(tool: detached, toTokenLimit: tokenLimit)
+        return ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit)
     }
 }

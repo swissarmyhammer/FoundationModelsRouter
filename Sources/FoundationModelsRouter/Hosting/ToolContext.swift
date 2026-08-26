@@ -5,8 +5,8 @@ import FoundationModels
 /// `op` stamps.
 ///
 /// The invoker binds the context around each wrapped call with
-/// `ToolContext.$current.withValue(context)`. A detached task does not inherit
-/// task locals, so capture the context one time, at operation start.
+/// `ToolContext.$current.withValue(context)`. A task that inherits no
+/// task locals does not see it, so capture the context one time, at operation start.
 public struct ToolContext: Sendable {
     /// The context bound to the current task, or `nil` outside any binding.
     @TaskLocal public static var current: ToolContext?

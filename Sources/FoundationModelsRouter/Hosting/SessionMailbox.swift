@@ -122,7 +122,7 @@ public actor SessionMailbox {
 
     // MARK: - Background runs
 
-    /// Registers a detached run under `completionToken`.
+    /// Registers a background run under `completionToken`.
     ///
     /// The mailbox observes `settling`: when the run ends, its bounded terminal
     /// event is retained and every waiter on the token resumes with it. A run

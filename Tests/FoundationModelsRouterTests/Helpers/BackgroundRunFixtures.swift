@@ -3,13 +3,13 @@ import Foundation
 @testable import FoundationModelsRouter
 
 /// A latch a fixture body suspends on until a test (or cooperative
-/// cancellation) opens it — the controllable stand-in for a detached run's
+/// cancellation) opens it — the controllable stand-in for a background run's
 /// real work, whether that body is a fake background run or a gated tool's
 /// `call(arguments:)`.
 ///
 /// This is the one gate the test target declares. Every suite that has to
 /// hold a run open — `SessionMailboxTests`, `ToolContextTests`,
-/// `BackgroundToolTests`, `SessionOutboxToolWiringTests`,
+/// `BackgroundToolRunnerTests`, `SessionOutboxToolWiringTests`,
 /// `RoutedSessionCompactTests` — uses it, so the scaffolding lives in exactly
 /// one place and cannot drift copy from copy.
 actor RunLatch {

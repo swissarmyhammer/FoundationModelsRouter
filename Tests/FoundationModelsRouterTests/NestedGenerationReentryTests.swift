@@ -71,7 +71,7 @@ struct NestedGenerationReentryTests {
     /// of being handed back as a pending envelope. With ``backgroundMount``
     /// it is the agent-tool shape: the call hands back a handle at once and
     /// the body generates behind the turn that started it.
-    private struct NestedGeneratingTool: Tool, DetachmentParameterProviding {
+    private struct NestedGeneratingTool: Tool, BackgroundTool {
         let name = "nested-generation-probe"
         let description = "test-only tool that generates on a routed session"
 
@@ -83,13 +83,11 @@ struct NestedGenerationReentryTests {
         let label: String
 
         /// The mount this tool declares for itself, or `nil` to declare none.
-        var mount: DetachConfiguration?
+        var mount: ToolMount?
 
         /// The output a call produces when no target session was named, so a
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
         static let noTargetOutput = "no target session"
-
-        var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.value else { return Self.noTargetOutput }
@@ -108,7 +106,7 @@ struct NestedGenerationReentryTests {
     /// names the session the fork really came off. ``mount`` chooses between
     /// an in-band body and a declared background one, as on
     /// ``NestedGeneratingTool``.
-    private struct ForkingTool: Tool, DetachmentParameterProviding {
+    private struct ForkingTool: Tool, BackgroundTool {
         let name = "fork-probe"
         let description = "test-only tool that forks a routed session"
 
@@ -116,7 +114,7 @@ struct NestedGenerationReentryTests {
         let target: NestedTarget
 
         /// The mount this tool declares for itself, or `nil` to declare none.
-        var mount: DetachConfiguration?
+        var mount: ToolMount?
 
         /// The output a call produces when no target session was named, so a
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
@@ -124,8 +122,6 @@ struct NestedGenerationReentryTests {
 
         /// The output a call produces when the child it made names no parent.
         static let noParentOutput = "no parent"
-
-        var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.value else { return Self.noTargetOutput }
@@ -140,7 +136,7 @@ struct NestedGenerationReentryTests {
     /// It reports the entry count, so a passing answer says how much history
     /// the read actually saw. ``mount`` chooses between an in-band body and a
     /// declared background one, as on ``NestedGeneratingTool``.
-    private struct TranscriptReadingTool: Tool, DetachmentParameterProviding {
+    private struct TranscriptReadingTool: Tool, BackgroundTool {
         let name = "transcript-probe"
         let description = "test-only tool that reads a routed session's transcript"
 
@@ -148,13 +144,11 @@ struct NestedGenerationReentryTests {
         let target: NestedTarget
 
         /// The mount this tool declares for itself, or `nil` to declare none.
-        var mount: DetachConfiguration?
+        var mount: ToolMount?
 
         /// The output a call produces when no target session was named, so a
         /// misbuilt fixture reads as a wrong answer rather than as a pass.
         static let noTargetOutput = "no target session"
-
-        var detachmentMount: DetachConfiguration? { mount }
 
         func call(arguments: ReentryToolArguments) async throws -> String {
             guard let session = target.value else { return Self.noTargetOutput }
@@ -217,24 +211,24 @@ struct NestedGenerationReentryTests {
         func respond(to prompt: String, maxTokens: Int?) async throws -> String {
             _ = try await inner.respond(to: prompt, maxTokens: maxTokens)
             await latch?.waitUntilOpen()
-            guard !hasCalledTool, let detached = composedFixtureTool else {
+            guard !hasCalledTool, let mounted = composedFixtureTool else {
                 return Self.answerPrefix + prompt
             }
             hasCalledTool = true
-            let output = try await detached.call(
+            let output = try await mounted.call(
                 arguments: ReentryToolArguments(value: NestedGenerationReentryTests.nestedPrompt))
             handedBack?.set(output)
             await turnHold?.waitUntilOpen()
             return output
         }
 
-        /// The session's composed fixture tool — a ``BackgroundTool`` when the
-        /// fixture declared background, a ``RunToCompletionTool`` otherwise —
+        /// The session's composed fixture tool — a ``BackgroundToolRunner`` when the
+        /// fixture declared background, a ``RunToCompletionRunner`` otherwise —
         /// or `nil` for a session that carries none.
         private var composedFixtureTool: (any Tool<ReentryToolArguments, String>)? {
             for tool in tools {
-                if let background = tool as? BackgroundTool<ReentryToolArguments> { return background }
-                if let inBand = tool as? RunToCompletionTool<ReentryToolArguments> { return inBand }
+                if let background = tool as? BackgroundToolRunner<ReentryToolArguments> { return background }
+                if let inBand = tool as? RunToCompletionRunner<ReentryToolArguments> { return inBand }
             }
             return nil
         }
@@ -321,7 +315,7 @@ struct NestedGenerationReentryTests {
 
     /// The mount a fixture declares to be a background tool: every call hands
     /// back a handle at once, and the body runs behind the turn that made it.
-    private static let backgroundMount = DetachConfiguration(mode: .background, timeout: nil)
+    private static let backgroundMount = ToolMount(mode: .background, timeout: nil)
 
     // MARK: - Turn outcome
 

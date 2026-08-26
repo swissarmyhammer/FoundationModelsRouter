@@ -176,7 +176,7 @@ public final class SessionProjection {
             tokensIn += usage.tokensIn
             tokensOut += usage.tokensOut
             contextFill = usage.contextFill
-            // A run that detached never closes inside its own turn, so its
+            // A run that went to the background never closes inside its own turn, so its
             // open invocation is cleared here — a stale open must never pin a
             // later turn's phase to ``Phase/runningTool``. Its late close
             // then finds nothing tracked and changes nothing (see

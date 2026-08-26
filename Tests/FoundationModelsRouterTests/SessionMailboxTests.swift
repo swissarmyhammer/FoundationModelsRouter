@@ -4,7 +4,7 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task 3g930c4: the ``SessionMailbox`` actor — tracked detached
+/// Exercises task 3g930c4: the ``SessionMailbox`` actor — tracked background
 /// runs (track/backgroundRuns/wait/cancel), the pending-elicitation registry, and
 /// the ``RoutedSession/close()``-driven teardown sweep that journals exactly
 /// one terminal event per background run.

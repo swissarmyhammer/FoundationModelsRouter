@@ -401,7 +401,7 @@ struct PromptQueueTests {
         let gate = RunLatch()
         let (session, dir) = try await Self.makeSession(
             recorder: recorder, container: container,
-            tools: [LatchedBackgroundTool(name: "job", gate: gate, output: Self.deliveredToolOutput)])
+            tools: [LatchedBackgroundToolRunner(name: "job", gate: gate, output: Self.deliveredToolOutput)])
         defer { try? FileManager.default.removeItem(at: dir) }
         let backend = try #require(container.lastBackend)
 

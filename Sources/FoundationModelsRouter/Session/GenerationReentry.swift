@@ -53,7 +53,7 @@ public enum SessionReentryError: Error, Equatable, LocalizedError {
 /// outlives it takes a permit of its own.
 final class GenerationPermitLoan: Sendable {
     /// The loan bound to the current task, or `nil` outside any turn's model
-    /// call. A detached task does not inherit it.
+    /// call. A task that inherits no task-locals does not see it.
     @TaskLocal static var current: GenerationPermitLoan?
 
     /// The two kinds of window a turn opens on its loan.

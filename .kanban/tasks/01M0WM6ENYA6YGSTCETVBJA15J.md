@@ -37,8 +37,24 @@ comments:
     - not committed.
     - next: `/review`.
   timestamp: 2026-08-26T12:04:33.079497+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m0yzmwyejt3vqkmmdhw97v0r
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (local backend), 0 findings, 7 validators attempted, 0 failed. The two prior fluent-usage findings (`report(outcome:)` and `stopAndSettle(run:)`) are checked.
+    - next: none. The task is in the done column.
+  timestamp: 2026-08-26T12:10:18.958995+00:00
+- actor: claude-code
+  id: 01m0yzna4nj5pbvk4bta60tn33
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — report(outcome:) and stopAndSettle(run:...) labeled; both prior findings checked
+    - test: green — swift test, 1058 + 83 tests, 0 failed
+    - commit: 7fdb364 (fix follows d2a0d57)
+    - review: clean — 0 findings, 7 checks; task moved to done
+  timestamp: 2026-08-26T12:10:32.469343+00:00
+position_column: done
+position_ordinal: fffa80
 title: The natural terminal of a killed process run reports .succeeded
 ---
 ## What

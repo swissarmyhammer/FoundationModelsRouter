@@ -1,8 +1,8 @@
 import Foundation
 import FoundationModels
 
-/// A decorator that runs each call of the wrapped tool to completion and returns its value in band. A call with no progress past the timeout ends with ``DetachingToolError/timedOut(tool:timeoutSeconds:)``.
-public struct RunToCompletionTool<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
+/// A decorator that runs each call of the wrapped tool to completion and returns its value in band. A call with no progress past the timeout ends with ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
+public struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
 
@@ -18,7 +18,7 @@ public struct RunToCompletionTool<Arguments: ConvertibleFromGeneratedContent & S
     /// The registration site's `"verb noun"` op, or `nil` to stamp the wrapped tool's own name.
     private let op: String?
 
-    /// How long a call may run with no progress, or `nil` for no clock. A per-call ``DetachmentParameterProviding/detachmentTimeout(from:)`` overrides it.
+    /// How long a call may run with no progress, or `nil` for no clock. A per-call ``BackgroundTool/timeout(from:)`` overrides it.
     let timeout: TimeInterval?
 
     /// The wrapped tool's name.
@@ -51,7 +51,7 @@ public struct RunToCompletionTool<Arguments: ConvertibleFromGeneratedContent & S
     }
 
     /// Runs one call in band and returns the wrapped tool's output.
-    /// - Throws: The wrapped tool's error, unmodified, or ``DetachingToolError/timedOut(tool:timeoutSeconds:)``.
+    /// - Throws: The wrapped tool's error, unmodified, or ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
     public func call(arguments: Arguments) async throws -> String {
         let run = ToolRun(
             wrapped: wrapped,

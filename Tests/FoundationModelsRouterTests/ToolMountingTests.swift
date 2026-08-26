@@ -4,11 +4,11 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises ``ToolDetachment``: which layer a tool is mounted in — by the
+/// Exercises ``ToolMounting``: which layer a tool is mounted in — by the
 /// mount it declares for itself, or by the site's configuration — and the
 /// binding-only path for a non-`String`-output tool.
-@Suite("ToolDetachment: mount a tool in the layer it declares")
-struct ToolDetachmentTests {
+@Suite("ToolMounting: mount a tool in the layer it declares")
+struct ToolMountingTests {
     private typealias Fixtures = MountFixtures
 
     /// How many ``MountFixtures/shortInterval`` windows a declared
@@ -22,7 +22,7 @@ struct ToolDetachmentTests {
     private static func sessionMounted(
         _ tool: any Tool, sessionID: ULID, mailbox: SessionMailbox, sink: Fixtures.RecordingSink
     ) -> any Tool {
-        ToolDetachment.sessionMounted(
+        ToolMounting.sessionMounted(
             tool: tool, sessionID: sessionID, mailbox: mailbox, sink: sink, cappedToTokenLimit: nil
         )
     }
@@ -34,16 +34,16 @@ struct ToolDetachmentTests {
         let gate = RunLatch()
         let mailbox = SessionMailbox()
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolDetachment.wrapping(
+        let wrapped = ToolMounting.wrapping(
             tool: Fixtures.GatedTool(gate: gate),
             sessionID: ULID.generate(),
             mailbox: mailbox,
             sink: sink,
-            configuration: DetachConfiguration(mode: .background)
+            configuration: ToolMount(mode: .background)
         )
 
-        let mounted = try #require(wrapped as? BackgroundTool<MountArguments>)
-        #expect(mounted.timeout == DetachConfiguration.defaultTimeoutSeconds)
+        let mounted = try #require(wrapped as? BackgroundToolRunner<MountArguments>)
+        #expect(mounted.timeout == ToolMount.defaultTimeoutSeconds)
         let rendered = try await mounted.call(arguments: MountArguments(value: "factory"))
         let envelope = try Fixtures.decodeEnvelope(rendered)
         #expect(envelope.pending)
@@ -67,14 +67,14 @@ struct ToolDetachmentTests {
             completionToken: SessionMailbox.makeCompletionToken(),
             isCancelled: { false }
         )
-        let wrapped = ToolDetachment.wrapping(
+        let wrapped = ToolMounting.wrapping(
             tool: Fixtures.GatedSessionIdentityTool(gate: gate),
             inheriting: outer,
             sink: sink,
-            configuration: DetachConfiguration(mode: .background)
+            configuration: ToolMount(mode: .background)
         )
 
-        let mounted = try #require(wrapped as? BackgroundTool<MountArguments>)
+        let mounted = try #require(wrapped as? BackgroundToolRunner<MountArguments>)
         let rendered = try await mounted.call(arguments: MountArguments(value: "inherited"))
         let envelope = try Fixtures.decodeEnvelope(rendered)
 
@@ -95,12 +95,12 @@ struct ToolDetachmentTests {
     @Test("wrapping wraps a non-String-output tool in the binding-only ContextBindingTool")
     func factoryBindsNonStringOutputTool() async throws {
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolDetachment.wrapping(
+        let wrapped = ToolMounting.wrapping(
             tool: Fixtures.NonStringOutputTool(),
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
             sink: sink,
-            configuration: DetachConfiguration(mode: .background)
+            configuration: ToolMount(mode: .background)
         )
 
         let binding = try #require(wrapped as? ContextBindingTool<MountArguments, NonStringToolOutput>)
@@ -115,12 +115,12 @@ struct ToolDetachmentTests {
     @Test("a non-String-output tool's ambient posts carry its own tool identity and a fresh per-call correlationID")
     func nonStringOutputToolAmbientPostsCarryPerCallIdentity() async throws {
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolDetachment.wrapping(
+        let wrapped = ToolMounting.wrapping(
             tool: AmbientNonStringOutputTool(),
             sessionID: ULID.generate(),
             mailbox: SessionMailbox(),
             sink: sink,
-            configuration: DetachConfiguration(mode: .background)
+            configuration: ToolMount(mode: .background)
         )
 
         let binding = try #require(wrapped as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
@@ -148,11 +148,11 @@ struct ToolDetachmentTests {
             completionToken: "outer-run",
             isCancelled: { false }
         )
-        let wrapped = ToolDetachment.wrapping(
+        let wrapped = ToolMounting.wrapping(
             tool: AmbientNonStringOutputTool(),
             inheriting: outer,
             sink: sink,
-            configuration: DetachConfiguration(mode: .background)
+            configuration: ToolMount(mode: .background)
         )
 
         let binding = try #require(wrapped as? ContextBindingTool<AmbientToolArguments, NonStringToolOutput>)
@@ -177,10 +177,10 @@ struct ToolDetachmentTests {
         let mounted = try #require(
             Self.sessionMounted(
                 Fixtures.GatedTool(gate: gate), sessionID: ULID.generate(), mailbox: mailbox, sink: sink
-            ) as? RunToCompletionTool<MountArguments>
+            ) as? RunToCompletionRunner<MountArguments>
         )
 
-        #expect(mounted.timeout == DetachConfiguration.defaultTimeoutSeconds)
+        #expect(mounted.timeout == ToolMount.defaultTimeoutSeconds)
 
         let calling = Task {
             try await mounted.call(arguments: MountArguments(value: "edit"))
@@ -202,9 +202,9 @@ struct ToolDetachmentTests {
         let sink = Fixtures.RecordingSink()
         let mounted = try #require(
             Self.sessionMounted(
-                Fixtures.DeclaredBackgroundTool(gate: gate), sessionID: ULID.generate(),
+                Fixtures.DeclaredBackgroundToolRunner(gate: gate), sessionID: ULID.generate(),
                 mailbox: mailbox, sink: sink
-            ) as? BackgroundTool<MountArguments>
+            ) as? BackgroundToolRunner<MountArguments>
         )
 
         #expect(mounted.timeout == nil)
@@ -224,15 +224,15 @@ struct ToolDetachmentTests {
         let gate = RunLatch()
         let mailbox = SessionMailbox()
         let sink = Fixtures.RecordingSink()
-        let wrapped = ToolDetachment.wrapping(
-            tool: Fixtures.DeclaredRunToCompletionTool(gate: gate),
+        let wrapped = ToolMounting.wrapping(
+            tool: Fixtures.DeclaredRunToCompletionRunner(gate: gate),
             sessionID: ULID.generate(),
             mailbox: mailbox,
             sink: sink,
-            configuration: DetachConfiguration(mode: .background, timeout: Fixtures.shortInterval)
+            configuration: ToolMount(mode: .background, timeout: Fixtures.shortInterval)
         )
 
-        let mounted = try #require(wrapped as? RunToCompletionTool<MountArguments>)
+        let mounted = try #require(wrapped as? RunToCompletionRunner<MountArguments>)
         #expect(mounted.timeout == nil)
 
         let calling = Task {
@@ -262,15 +262,15 @@ struct ToolDetachmentTests {
         // session identity, one mailbox, and one sink.
         let blocking = try #require(
             Self.sessionMounted(
-                Fixtures.DeclaredRunToCompletionTool(gate: blockingGate), sessionID: sessionID,
+                Fixtures.DeclaredRunToCompletionRunner(gate: blockingGate), sessionID: sessionID,
                 mailbox: mailbox, sink: sink
-            ) as? RunToCompletionTool<MountArguments>
+            ) as? RunToCompletionRunner<MountArguments>
         )
         let backgrounding = try #require(
             Self.sessionMounted(
-                Fixtures.DeclaredBackgroundTool(gate: backgroundingGate), sessionID: sessionID,
+                Fixtures.DeclaredBackgroundToolRunner(gate: backgroundingGate), sessionID: sessionID,
                 mailbox: mailbox, sink: sink
-            ) as? BackgroundTool<MountArguments>
+            ) as? BackgroundToolRunner<MountArguments>
         )
 
         // The tool that declares background is handed back as a token.

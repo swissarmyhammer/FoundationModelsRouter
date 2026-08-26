@@ -7,7 +7,7 @@ import Foundation
 /// The `completionToken` is the run's key in the session's ``SessionMailbox``
 /// and the `correlationID` on every event the run posts. The wrapped tool
 /// owns the `next` sentence through
-/// ``DetachmentParameterProviding/detachmentCollectInstruction(forCompletionToken:)``;
+/// ``BackgroundTool/collectInstruction(forCompletionToken:)``;
 /// a tool that supplies none gets ``defaultCollectInstruction(forCompletionToken:)``.
 /// ``rendered`` is the authoritative wire form.
 public struct PendingRunEnvelope: Codable, Sendable, Equatable {

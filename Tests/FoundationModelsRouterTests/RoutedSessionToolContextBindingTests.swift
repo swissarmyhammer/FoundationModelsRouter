@@ -13,7 +13,7 @@ import Testing
 ///
 /// Whether Apple's runtime propagates the task local into `Tool.call` is the
 /// propagation-probe task's question — the binding here is correct either
-/// way, and ``RunToCompletionTool`` and ``BackgroundTool`` also bind per
+/// way, and ``RunToCompletionRunner`` and ``BackgroundToolRunner`` also bind per
 /// call regardless. These tests
 /// stand a probing backend in for the runtime: it reads
 /// `ToolContext.current` from inside the model call and posts through it.

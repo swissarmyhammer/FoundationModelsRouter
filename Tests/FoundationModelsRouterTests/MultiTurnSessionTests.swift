@@ -121,7 +121,7 @@ struct MultiTurnSessionTests {
     ///
     /// A plain lock-guarded class rather than an actor: ``SuspendableSessionBackend/makeFork()``
     /// is a synchronous, non-async protocol requirement, so it must record
-    /// synchronously — an actor would force it onto a detached `Task`, losing
+    /// synchronously — an actor would force it onto a separate `Task`, losing
     /// the exact ordering this suite needs to observe.
     private final class EventLog: @unchecked Sendable {
         private let lock = NSLock()

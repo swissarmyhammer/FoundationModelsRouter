@@ -128,7 +128,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // Per-session event wiring plus pure per-session instancing, before
         // the backend is ever built — see
         // ``makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
-        // for the fresh outbox/mailbox scope rule and the detach → cap
+        // for the fresh outbox/mailbox scope rule and the mount → cap
         // chain this site applies (task
         // ^k4nygqa; the fork and restore sites each have their own
         // deliberately distinct chain — see
@@ -136,7 +136,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         // `restoreSessionTree`). Because this runs before
         // `container.makeSession` below, the model-facing tool list the
         // backend actually receives is these composed wrappers — each
-        // String-output tool's detachment layer, and each non-String-output
+        // String-output tool's mount layer, and each non-String-output
         // tool's binding-only `ContextBindingTool`, binding the ambient
         // `ToolContext` that posts the tool's events to this session's own
         // `outbox` — not the bare originals.
@@ -168,7 +168,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             grammar: grammar,
             tools: instancedTools,
             // The true originals, retained only so a fork can later build its
-            // own tool list via fork-then-detach composition, sourced from
+            // own tool list via fork-then-mount composition, sourced from
             // these rather than from `instancedTools` (see
             // ``RoutedSessionActor/fork(workingDirectory:)``'s doc comment).
             originalTools: tools,
@@ -214,7 +214,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// against them.
     ///
     /// Each tool is composed by
-    /// ``ToolDetachment/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``.
+    /// ``ToolMounting/sessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``.
     /// The outbox and mailbox are fresh per session and never shared.
     ///
     /// - Parameters:
@@ -230,7 +230,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
         let outbox = SessionOutbox()
         let mailbox = SessionMailbox()
         let instancedTools = tools.map { tool in
-            ToolDetachment.sessionMounted(
+            ToolMounting.sessionMounted(
                 tool: tool,
                 sessionID: sessionID,
                 mailbox: mailbox,

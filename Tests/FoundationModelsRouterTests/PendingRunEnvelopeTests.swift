@@ -85,7 +85,7 @@ struct PendingRunEnvelopeTests {
 
     @Test("the rendered envelope fits the run plane's detail cap, which truncates from the front")
     func renderedEnvelopeFitsTheRunPlaneDetailCap() {
-        // `BackgroundTool` carries the rendered envelope as the synthesized
+        // `BackgroundToolRunner` carries the rendered envelope as the synthesized
         // progress event's `detail`, and the mailbox keeps a detail's
         // TRAILING characters — so an envelope that outgrew the cap would
         // lose the completionToken the model needs.

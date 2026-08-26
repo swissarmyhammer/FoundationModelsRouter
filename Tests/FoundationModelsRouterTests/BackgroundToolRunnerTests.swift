@@ -4,12 +4,12 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises ``BackgroundTool``: the envelope on every call, the mailbox
+/// Exercises ``BackgroundToolRunner``: the envelope on every call, the mailbox
 /// entry, the event sequence, the timeout on a background run, the
 /// canceler, the run-plane snapshot, and exactly one `.completed` across
 /// natural settle, cancel, and timeout.
-@Suite("BackgroundTool: start the body, return the handle at once")
-struct BackgroundToolTests {
+@Suite("BackgroundToolRunner: start the body, return the handle at once")
+struct BackgroundToolRunnerTests {
     private typealias Fixtures = MountFixtures
 
     /// How many heartbeats a beating background run posts after it is handed back.

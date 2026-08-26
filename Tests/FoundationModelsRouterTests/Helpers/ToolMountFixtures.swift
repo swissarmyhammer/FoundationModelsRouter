@@ -10,8 +10,8 @@ struct MountArguments {
     let value: String
 }
 
-/// The fixtures the mount-layer suites share — `RunToCompletionToolTests`,
-/// `BackgroundToolTests`, `ToolDetachmentTests`, and
+/// The fixtures the mount-layer suites share — `RunToCompletionRunnerTests`,
+/// `BackgroundToolRunnerTests`, `ToolMountingTests`, and
 /// `PendingRunEnvelopeTests` — so each tool and helper lives in one place.
 enum MountFixtures {
     // MARK: - Intervals
@@ -55,27 +55,27 @@ enum MountFixtures {
         let mounted: Mounted
     }
 
-    /// Mounts `tool` in a ``BackgroundTool`` over a fresh mailbox and sink.
+    /// Mounts `tool` in a ``BackgroundToolRunner`` over a fresh mailbox and sink.
     static func backgroundHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
-        timeout: TimeInterval? = DetachConfiguration.defaultTimeoutSeconds
-    ) -> Harness<BackgroundTool<Arguments>> {
+        timeout: TimeInterval? = ToolMount.defaultTimeoutSeconds
+    ) -> Harness<BackgroundToolRunner<Arguments>> {
         let mailbox = SessionMailbox()
         let sink = RecordingSink()
-        let mounted = BackgroundTool(
+        let mounted = BackgroundToolRunner(
             wrapping: tool, sessionID: ULID.generate(), mailbox: mailbox, sink: sink, timeout: timeout
         )
         return Harness(mailbox: mailbox, sink: sink, mounted: mounted)
     }
 
-    /// Mounts `tool` in a ``RunToCompletionTool`` over a fresh mailbox and sink.
+    /// Mounts `tool` in a ``RunToCompletionRunner`` over a fresh mailbox and sink.
     static func runToCompletionHarness<Arguments: ConvertibleFromGeneratedContent & Sendable>(
         wrapping tool: any Tool<Arguments, String>,
-        timeout: TimeInterval? = DetachConfiguration.defaultTimeoutSeconds
-    ) -> Harness<RunToCompletionTool<Arguments>> {
+        timeout: TimeInterval? = ToolMount.defaultTimeoutSeconds
+    ) -> Harness<RunToCompletionRunner<Arguments>> {
         let mailbox = SessionMailbox()
         let sink = RecordingSink()
-        let mounted = RunToCompletionTool(
+        let mounted = RunToCompletionRunner(
             wrapping: tool, sessionID: ULID.generate(), mailbox: mailbox, sink: sink, timeout: timeout
         )
         return Harness(mailbox: mailbox, sink: sink, mounted: mounted)
@@ -241,8 +241,8 @@ enum MountFixtures {
     }
 
     /// Sleeps forever and supplies a per-call `timeout` through
-    /// ``DetachmentParameterProviding``.
-    struct PerCallTimeoutTool: Tool, DetachmentParameterProviding {
+    /// ``BackgroundTool``.
+    struct PerCallTimeoutTool: Tool, BackgroundTool {
         let name = "per_call_timeout_tool"
         let description = "supplies a short per-call timeout"
         let timeoutSeconds: TimeInterval
@@ -252,13 +252,13 @@ enum MountFixtures {
             return "never returned"
         }
 
-        func detachmentTimeout(from arguments: GeneratedContent) -> TimeInterval? {
+        func timeout(from arguments: GeneratedContent) -> TimeInterval? {
             timeoutSeconds
         }
     }
 
     /// Sleeps forever and supplies a `nil` per-call timeout.
-    struct NilTimeoutTool: Tool, DetachmentParameterProviding {
+    struct NilTimeoutTool: Tool, BackgroundTool {
         let name = "nil_timeout_tool"
         let description = "supplies no per-call timeout at all"
 
@@ -267,18 +267,18 @@ enum MountFixtures {
             return "never returned"
         }
 
-        func detachmentTimeout(from arguments: GeneratedContent) -> TimeInterval? {
+        func timeout(from arguments: GeneratedContent) -> TimeInterval? {
             nil
         }
     }
 
-    /// Blocks on a gate and declares ``DetachConfiguration/runToCompletionMount``.
-    struct DeclaredRunToCompletionTool: Tool, DetachmentParameterProviding {
+    /// Blocks on a gate and declares ``ToolMount/synchronousUnbounded``.
+    struct DeclaredRunToCompletionRunner: Tool, BackgroundTool {
         let name = "declared_run_to_completion_tool"
         let description = "declares the mount it cannot work without"
         let gate: RunLatch
 
-        var detachmentMount: DetachConfiguration? { .runToCompletionMount }
+        var mount: ToolMount? { .synchronousUnbounded }
 
         func call(arguments: MountArguments) async throws -> String {
             await gate.waitUntilOpen()
@@ -288,13 +288,13 @@ enum MountFixtures {
 
     /// Blocks on a gate and declares background with no timeout — the
     /// shape of a shell tool or an agent tool.
-    struct DeclaredBackgroundTool: Tool, DetachmentParameterProviding {
+    struct DeclaredBackgroundToolRunner: Tool, BackgroundTool {
         let name = "declared_background_tool"
         let description = "declares background and is handed back as a token at once"
         let gate: RunLatch
 
-        var detachmentMount: DetachConfiguration? {
-            DetachConfiguration(mode: .background, timeout: nil)
+        var mount: ToolMount? {
+            ToolMount(mode: .background, timeout: nil)
         }
 
         func call(arguments: MountArguments) async throws -> String {
@@ -304,7 +304,7 @@ enum MountFixtures {
     }
 
     /// Blocks on a gate and supplies its own collect sentence.
-    struct CollectSentenceTool: Tool, DetachmentParameterProviding {
+    struct CollectSentenceTool: Tool, BackgroundTool {
         let name = "collect_sentence_tool"
         let description = "names its own collect step"
         let gate: RunLatch
@@ -319,7 +319,7 @@ enum MountFixtures {
             return "collected: \(arguments.value)"
         }
 
-        func detachmentCollectInstruction(forCompletionToken completionToken: String) -> String {
+        func collectInstruction(forCompletionToken completionToken: String) -> String {
             Self.collectInstruction(forCompletionToken: completionToken)
         }
     }

@@ -1,138 +1,56 @@
 import Foundation
 import FoundationModels
 
-/// A decorator that runs each call of the wrapped tool in the background. Every call posts one progress event, tracks the run in the session's ``SessionMailbox``, and returns the ``PendingRunEnvelope`` at once.
-/// The run settles with exactly one terminal event: on completion, on cancel, or on timeout. Progress resets the timeout and a pending elicitation suspends it.
-public struct BackgroundTool<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
-    /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
-    let wrapped: any Tool<Arguments, String>
+/// The protocol that marks a `Tool` as a background tool.
+/// A conforming tool that returns a background ``mount`` always answers
+/// at once with a completion-token handle; the work goes on behind it.
+/// A plain `Tool` — one that does not conform — runs to completion in band.
+/// Each declaration has a default, so a tool states only the part it needs.
+public protocol BackgroundTool {
+    /// The mount this tool needs, or `nil` to take the composition site's own.
+    /// A declaration wins over the site, timeout included.
+    var mount: ToolMount? { get }
 
-    /// The owning session's identity.
-    private let sessionID: ULID
+    /// Returns the per-call `timeout` encoded in `arguments`, or `nil` to take the mount's own.
+    func timeout(from arguments: GeneratedContent) -> TimeInterval?
 
-    /// The owning session's mailbox, where each run is tracked.
-    private let mailbox: SessionMailbox
+    /// Returns the `next` sentence of the pending envelope a background call hands the model.
+    /// It must name `completionToken` and keep the envelope under ``ToolContext/terminalDetailTailLimit``.
+    /// - Returns: The `next` text as plain prose; the envelope escapes it.
+    func collectInstruction(forCompletionToken completionToken: String) -> String
 
-    /// The upstream sink every run's events funnel into.
-    private let sink: any OperationEventSink
+    /// What kind of work a background call of this tool is.
+    /// A ``RunKind/process`` tool must supply ``canceler(forCompletionToken:)``.
+    var runKind: RunKind { get }
 
-    /// The registration site's `"verb noun"` op, or `nil` to stamp the wrapped tool's own name.
-    private let op: String?
+    /// Returns the canceler for the run backgrounded under `completionToken`,
+    /// or `nil` to take the cooperative one, which reports ``OperationOutcome/cancelled``.
+    func canceler(
+        forCompletionToken completionToken: String
+    ) -> (@Sendable () async -> OperationOutcome)?
+}
 
-    /// How long a run may go with no progress, or `nil` for no clock. A per-call ``DetachmentParameterProviding/detachmentTimeout(from:)`` overrides it.
-    let timeout: TimeInterval?
-
-    /// The wrapped tool's name.
-    public var name: String { wrapped.name }
-
-    /// The wrapped tool's description.
-    public var description: String { wrapped.description }
-
-    /// The wrapped tool's parameter schema.
-    public var parameters: GenerationSchema { wrapped.parameters }
-
-    /// Whether the schema is included in the tool's instructions.
-    public var includesSchemaInInstructions: Bool { wrapped.includesSchemaInInstructions }
-
-    /// Wraps `wrapped`.
-    public init(
-        wrapping wrapped: any Tool<Arguments, String>,
-        sessionID: ULID,
-        mailbox: SessionMailbox,
-        sink: any OperationEventSink,
-        op: String? = nil,
-        timeout: TimeInterval?
-    ) {
-        self.wrapped = wrapped
-        self.sessionID = sessionID
-        self.mailbox = mailbox
-        self.sink = sink
-        self.op = op
-        self.timeout = timeout
+extension BackgroundTool {
+    /// Blanket default: ``PendingRunEnvelope/defaultCollectInstruction(forCompletionToken:)``.
+    public func collectInstruction(forCompletionToken completionToken: String) -> String {
+        PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken)
     }
 
-    /// Starts one call in the background and returns ``PendingRunEnvelope/rendered`` for the run.
-    public func call(arguments: Arguments) async throws -> String {
-        let run = ToolRun(
-            wrapped: wrapped,
-            arguments: arguments,
-            sessionID: sessionID,
-            mailbox: mailbox,
-            sink: sink,
-            op: op,
-            mountTimeout: timeout
-        )
-        let completionToken = run.context.completionToken
-        let envelope = PendingRunEnvelope(
-            completionToken: completionToken,
-            next: collectInstruction(forCompletionToken: completionToken)
-        )
-        await run.open()
-        await run.funnel.post(
-            event: OperationEvent(
-                tool: run.context.tool,
-                op: run.context.op,
-                correlationID: completionToken,
-                kind: .progress,
-                detail: envelope.rendered
-            )
-        )
-        // The body waits on the start gate until the run is tracked, so it
-        // can never settle before the mailbox knows it.
-        let start = RaceGate<Void>()
-        let work = Task {
-            await withCheckedContinuation { start.register(continuation: $0) }
-            return await withGenerationLent(across: .backgroundRun) {
-                await run.execute(arguments: arguments)
-            }
-        }
-        await mailbox.track(
-            tool: run.context.tool,
-            op: run.context.op,
-            kind: runKind,
-            completionToken: completionToken,
-            settling: Task { await work.value.terminal },
-            canceler: canceler(forCompletionToken: completionToken, work: work, run: run)
-        )
-        start.resume(with: ())
-        return envelope.rendered
+    /// Blanket default: no declared mount.
+    public var mount: ToolMount? { nil }
+
+    /// Blanket default: no per-call timeout.
+    public func timeout(from arguments: GeneratedContent) -> TimeInterval? {
+        nil
     }
 
-    /// The wrapped tool as a declarer of its own parameters, or `nil`.
-    private var parameterProvider: (any DetachmentParameterProviding)? {
-        wrapped as? any DetachmentParameterProviding
-    }
+    /// Blanket default: ``RunKind/swiftTask``.
+    public var runKind: RunKind { .swiftTask }
 
-    /// The wrapped tool's own `next` sentence, or the default.
-    private func collectInstruction(forCompletionToken completionToken: String) -> String {
-        guard let provider = parameterProvider else {
-            return PendingRunEnvelope.defaultCollectInstruction(forCompletionToken: completionToken)
-        }
-        return provider.detachmentCollectInstruction(forCompletionToken: completionToken)
-    }
-
-    /// The wrapped tool's declared ``RunKind``, or ``RunKind/swiftTask``.
-    private var runKind: RunKind {
-        parameterProvider?.detachmentRunKind ?? .swiftTask
-    }
-
-    /// The wrapped tool's own canceler, or the cooperative one that requests the run stop and reports ``OperationOutcome/cancelled``.
-    /// A ``RunKind/process`` run's canceler is authoritative: its outcome becomes the run's terminal outcome.
-    private func canceler(
-        forCompletionToken completionToken: String,
-        work: Task<RunSettlement, Never>,
-        run: ToolRun<Arguments>
-    ) -> @Sendable () async -> OperationOutcome {
-        if let supplied = parameterProvider?.detachmentCanceler(forCompletionToken: completionToken) {
-            guard runKind == .process else {
-                return supplied
-            }
-            return { await run.stop(using: supplied) }
-        }
-        return {
-            run.requestCancellation()
-            work.cancel()
-            return .cancelled
-        }
+    /// Blanket default: `nil`, so the cooperative canceler is used.
+    public func canceler(
+        forCompletionToken completionToken: String
+    ) -> (@Sendable () async -> OperationOutcome)? {
+        nil
     }
 }

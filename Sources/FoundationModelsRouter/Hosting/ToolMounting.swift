@@ -1,7 +1,7 @@
 import FoundationModels
 
 /// The untyped entry point that mounts a tool for a session: it opens the `any Tool` existential and picks the decorator.
-public enum ToolDetachment {
+public enum ToolMounting {
     /// Wraps `tool` on the session plane of `context`, for a binder outside this package that mounts its own inner calls.
     /// The result is that of ``wrapping(tool:sessionID:mailbox:sink:op:configuration:)``.
     /// - Returns: The mounted tool.
@@ -10,7 +10,7 @@ public enum ToolDetachment {
         inheriting context: ToolContext,
         sink: any OperationEventSink,
         op: String? = nil,
-        configuration: DetachConfiguration
+        configuration: ToolMount
     ) -> any Tool {
         wrapping(
             tool: tool,
@@ -22,7 +22,7 @@ public enum ToolDetachment {
         )
     }
 
-    /// Mounts `tool`. A `String`-output tool becomes a ``BackgroundTool`` or a ``RunToCompletionTool``, per the mount it declares through ``DetachmentParameterProviding/detachmentMount`` or, when it declares none, per `configuration`.
+    /// Mounts `tool`. A `String`-output tool becomes a ``BackgroundToolRunner`` or a ``RunToCompletionRunner``, per the mount it declares through ``BackgroundTool/mount`` or, when it declares none, per `configuration`.
     /// Any other tool becomes a ``ContextBindingTool``.
     /// - Parameter op: The registration site's `"verb noun"` op, or `nil`.
     /// - Returns: The mounted tool.
@@ -32,22 +32,22 @@ public enum ToolDetachment {
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
         op: String? = nil,
-        configuration: DetachConfiguration
+        configuration: ToolMount
     ) -> any Tool {
         func openArguments<A: ConvertibleFromGeneratedContent & Sendable>(
             _ argumentsType: A.Type, of candidate: any Tool
         ) -> any Tool {
             guard let typed = candidate as? any Tool<A, String> else { return candidate }
             // The tool's own declaration wins over the site's configuration.
-            let mount = (typed as? any DetachmentParameterProviding)?.detachmentMount ?? configuration
+            let mount = (typed as? any BackgroundTool)?.mount ?? configuration
             switch mount.mode {
             case .background:
-                return BackgroundTool(
+                return BackgroundToolRunner(
                     wrapping: typed, sessionID: sessionID, mailbox: mailbox, sink: sink,
                     op: op, timeout: mount.timeout
                 )
             case .runToCompletion:
-                return RunToCompletionTool(
+                return RunToCompletionRunner(
                     wrapping: typed, sessionID: sessionID, mailbox: mailbox, sink: sink,
                     op: op, timeout: mount.timeout
                 )

@@ -62,8 +62,8 @@ extension RoutedSessionActor {
         defer { runPlaneDrainCount -= 1 }
         for _ in 0..<Self.backgroundRunDrainRoundLimit {
             // A cancelled turn is never drained. Cancellation does not always
-            // reach this call as a thrown error: a detached tool call answers
-            // the cancellation by detaching and returning its pending envelope
+            // reach this call as a thrown error: a background tool call answers
+            // the cancellation by going to the background and returning its pending envelope
             // (see ``RoutedSession/cancelCurrentTurn()``), so the turn returns
             // a response and only the count says what happened. Draining then
             // would wait for — and re-prompt the model with — exactly the work

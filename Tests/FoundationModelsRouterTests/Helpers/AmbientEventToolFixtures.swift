@@ -28,7 +28,7 @@ func postAmbientCompletedEvent(detail: String) async {
 /// A reference-typed `FoundationModels.Tool` that posts one `.completed`
 /// event through the ambient ``ToolContext`` while executing — the
 /// composition sites wire no per-tool sink, so the context the
-/// ``RunToCompletionTool`` layer binds around each call is the only event route.
+/// ``RunToCompletionRunner`` layer binds around each call is the only event route.
 ///
 /// Shared by the composition-site wiring suites
 /// (`SessionOutboxToolWiringTests`, `SessionTreeRestorationToolWiringTests`,
@@ -62,7 +62,7 @@ final class AmbientEventPostingTool: Tool, Sendable {
 /// keeps a tool outside the pending-envelope machinery (there is no `String`
 /// wire form for the envelope to replace), so the composition sites wrap its
 /// tool in the binding-only ``ContextBindingTool`` instead of
-/// ``RunToCompletionTool``.
+/// ``RunToCompletionRunner``.
 struct NonStringToolOutput: PromptRepresentable, Sendable {
     /// The text the output renders as. The ambient fixture below returns the
     /// bound run's `completionToken` here, so a test can match each call's
@@ -94,7 +94,7 @@ final class AmbientNonStringOutputTool: Tool, Sendable {
 
 /// A `Tool` that both forks and posts through the ambient ``ToolContext``,
 /// so the fork suites can prove ``ForkableTool/forked()`` runs before the
-/// child's own detachment layer wraps the result. `generation` proves
+/// child's own mount layer wraps the result. `generation` proves
 /// `forked()` is actually invoked (incremented on every fork) rather than
 /// the original being shared unchanged.
 final class ForkableAmbientTool: Tool, ForkableTool, Sendable {

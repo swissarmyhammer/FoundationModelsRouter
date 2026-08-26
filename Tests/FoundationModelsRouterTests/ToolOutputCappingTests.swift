@@ -10,7 +10,7 @@ import Testing
 /// ``RoutedSessionActor/fork(workingDirectory:)``) — ``ToolOutputCapping``'s
 /// truncation rule and dynamic wrapping, plus the wiring that threads a
 /// capped tool to the model-facing container/backend boundary exactly the
-/// way `SessionOutboxToolWiringTests` proves for the detachment layer and
+/// way `SessionOutboxToolWiringTests` proves for the mount layer and
 /// `ForkableTool`.
 ///
 /// Everything runs against stubs — no MLX, no network, no GPU.
@@ -328,16 +328,16 @@ struct ToolOutputCappingTests {
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<FakeToolArguments>,
-            capping.wrapped is RunToCompletionTool<FakeToolArguments>
+            capping.wrapped is RunToCompletionRunner<FakeToolArguments>
         else {
-            Issue.record("expected the container to receive a TokenCappingTool wrapping a RunToCompletionTool")
+            Issue.record("expected the container to receive a TokenCappingTool wrapping a RunToCompletionRunner")
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
         #expect(result == "\(String(repeating: "e", count: 20))… [truncated: 5 of 10 tokens]")
     }
 
-    @Test("makeSession(tools:budget:) with no toolOutputLimit set applies no capping layer — only the detachment layer wraps the tool")
+    @Test("makeSession(tools:budget:) with no toolOutputLimit set applies no capping layer — only the mount layer wraps the tool")
     @MainActor
     func makeSessionWithNoToolOutputLimitLeavesToolUnwrapped() async throws {
         let dir = Self.makeTempDir()
@@ -354,10 +354,10 @@ struct ToolOutputCappingTests {
         )
 
         #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((container.lastTools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((container.lastTools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
-    @Test("makeSession(tools:budget:) with no budget at all applies no capping layer — only the detachment layer wraps the tool")
+    @Test("makeSession(tools:budget:) with no budget at all applies no capping layer — only the mount layer wraps the tool")
     @MainActor
     func makeSessionWithNoBudgetLeavesToolUnwrapped() async throws {
         let dir = Self.makeTempDir()
@@ -371,10 +371,10 @@ struct ToolOutputCappingTests {
         _ = profile.standard.makeSession(tools: [tool])
 
         #expect(!(container.lastTools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((container.lastTools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((container.lastTools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
-    @Test("makeSession(tools:budget:) caps outermost: the detachment layer's ambient event route still reaches the session's outbox through the capped wrapper")
+    @Test("makeSession(tools:budget:) caps outermost: the mount layer's ambient event route still reaches the session's outbox through the capped wrapper")
     @MainActor
     func cappingComposesWithAmbientEventRoute() async throws {
         let dir = Self.makeTempDir()
@@ -392,10 +392,10 @@ struct ToolOutputCappingTests {
         )
 
         guard let capping = container.lastTools.first as? TokenCappingTool<AmbientToolArguments>,
-            let detaching = capping.wrapped as? RunToCompletionTool<AmbientToolArguments>,
-            let inner = detaching.wrapped as? AmbientEventPostingTool
+            let mounting = capping.wrapped as? RunToCompletionRunner<AmbientToolArguments>,
+            let inner = mounting.wrapped as? AmbientEventPostingTool
         else {
-            Issue.record("expected a TokenCappingTool wrapping the detached AmbientEventPostingTool")
+            Issue.record("expected a TokenCappingTool wrapping the mounted AmbientEventPostingTool")
             return
         }
         #expect(inner === tool)
@@ -406,7 +406,7 @@ struct ToolOutputCappingTests {
 
         // ...and the tool's ambient-context post still reached this
         // session's own outbox through the capped wrapper's inner
-        // detachment layer.
+        // mount layer.
         let pending = await session.outbox.pending()
         #expect(pending.events.map(\.event.detail) == ["through-capped-wrapper"])
     }
@@ -433,16 +433,16 @@ struct ToolOutputCappingTests {
 
         guard let childActor = child as? RoutedSessionActor,
             let capping = childActor.tools.first as? TokenCappingTool<FakeToolArguments>,
-            capping.wrapped is RunToCompletionTool<FakeToolArguments>
+            capping.wrapped is RunToCompletionRunner<FakeToolArguments>
         else {
-            Issue.record("expected the fork's own tool list to contain a TokenCappingTool wrapping a RunToCompletionTool")
+            Issue.record("expected the fork's own tool list to contain a TokenCappingTool wrapping a RunToCompletionRunner")
             return
         }
         let result = try await capping.call(arguments: FakeToolArguments(value: "x"))
         #expect(result == "\(String(repeating: "g", count: 20))… [truncated: 5 of 10 tokens]")
     }
 
-    @Test("fork() with an inherited budget but no toolOutputLimit set applies no capping layer to the child's tool list — only the detachment layer wraps it")
+    @Test("fork() with an inherited budget but no toolOutputLimit set applies no capping layer to the child's tool list — only the mount layer wraps it")
     @MainActor
     func forkWithNoToolOutputLimitLeavesChildToolsUnwrapped() async throws {
         let dir = Self.makeTempDir()
@@ -464,10 +464,10 @@ struct ToolOutputCappingTests {
             return
         }
         #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((childActor.tools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((childActor.tools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 
-    @Test("fork() with no budget at all applies no capping layer to the child's tool list — only the detachment layer wraps it")
+    @Test("fork() with no budget at all applies no capping layer to the child's tool list — only the mount layer wraps it")
     @MainActor
     func forkWithNoBudgetLeavesChildToolsUnwrapped() async throws {
         let dir = Self.makeTempDir()
@@ -486,6 +486,6 @@ struct ToolOutputCappingTests {
             return
         }
         #expect(!(childActor.tools.first is TokenCappingTool<FakeToolArguments>))
-        #expect((childActor.tools.first as? RunToCompletionTool<FakeToolArguments>)?.wrapped is StringOutputTool)
+        #expect((childActor.tools.first as? RunToCompletionRunner<FakeToolArguments>)?.wrapped is StringOutputTool)
     }
 }

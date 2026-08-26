@@ -160,13 +160,13 @@ struct ToolInvocationLivenessTests {
         #expect(records.first?.correlationID == records.last?.correlationID)
     }
 
-    @Test("RunToCompletionTool posts open and close records around an in-band call, before the call returns")
+    @Test("RunToCompletionRunner posts open and close records around an in-band call, before the call returns")
     func runToCompletionToolPostsOpenAndCloseForAnInBandCall() async throws {
         let sink = RecordingInvocationSink()
         let wrapped = MarkerEmittingTool()
-        let tool = RunToCompletionTool(
+        let tool = RunToCompletionRunner(
             wrapping: wrapped, sessionID: .generate(), mailbox: SessionMailbox(), sink: sink,
-            timeout: DetachConfiguration.defaultTimeoutSeconds)
+            timeout: ToolMount.defaultTimeoutSeconds)
 
         let output = try await tool.call(arguments: AmbientToolArguments(value: "ONE"))
         #expect(output == ScriptedToolFixture.marker(for: "ONE"))
@@ -334,7 +334,7 @@ struct ToolInvocationLivenessTests {
         #expect(projection.phase == .generating)
     }
 
-    @Test("a detached run's late close does not disturb an idle projection")
+    @Test("a background run's late close does not disturb an idle projection")
     @MainActor
     func lateCloseAfterTurnEndDoesNotDisturbAnIdleProjection() {
         let projection = SessionProjection()
@@ -355,16 +355,16 @@ struct ToolInvocationLivenessTests {
     @MainActor
     func staleOpenFromAPriorTurnDoesNotPinTheNextTurn() {
         let projection = SessionProjection()
-        let detached = ToolInvocationRecord(
-            tool: "search", op: "search", correlationID: "token-detached", sessionID: .generate(),
+        let staleOpen = ToolInvocationRecord(
+            tool: "search", op: "search", correlationID: "token-background", sessionID: .generate(),
             openedAt: Date())
         let quick = ToolInvocationRecord(
             tool: "search", op: "search", correlationID: "token-quick", sessionID: .generate(),
             openedAt: Date())
 
-        // Turn 1 opens a run that detaches: no close arrives this turn.
+        // Turn 1 opens a run that stays in the background: no close arrives this turn.
         projection.apply(.turnStarted(TurnStart(turnId: TurnID(1), promptId: nil)))
-        projection.apply(.toolInvocation(detached))
+        projection.apply(.toolInvocation(staleOpen))
         projection.apply(.turnEnded(TokenUsage(tokensIn: 1, tokensOut: 1, contextFill: 0.1)))
 
         // Turn 2 runs one quick call; its close alone returns the phase to

@@ -342,11 +342,11 @@ extension RoutedSessionActor {
         // call runs under a ``ToolContext`` carrying this session's
         // identity, its mailbox, and its own ``SessionOutbox`` as the
         // upstream sink — so a tool Apple's runtime invokes from inside the
-        // model call sees the same ambient capabilities the detachment
+        // model call sees the same ambient capabilities the mounting
         // engine binds per call. Whether the runtime actually propagates
         // task locals into `Tool.call` is the propagation probe's question;
-        // this binding is correct either way, and ``RunToCompletionTool`` and
-        // ``BackgroundTool`` also bind per call regardless. The
+        // this binding is correct either way, and ``RunToCompletionRunner`` and
+        // ``BackgroundToolRunner`` also bind per call regardless. The
         // `completionToken` is minted fresh
         // per model call — run scope, never session scope — and the
         // cancellation probe mirrors this very model-call task's
@@ -367,7 +367,7 @@ extension RoutedSessionActor {
         // reads it, and a turn that tool starts on *another* session over the
         // same resident container runs on this permit instead of waiting for
         // one that only comes back when this turn ends. Closed in the `defer`
-        // below, so a run that detached and outlived the call cannot borrow on
+        // below, so a run that went to the background and outlived the call cannot borrow on
         // it. See ``GenerationPermitLoan``.
         let permitLoan = GenerationPermitLoan(
             gate: generationGate,

@@ -4,15 +4,15 @@ import Testing
 
 @testable import FoundationModelsRouter
 
-/// Exercises task `^zn8n9md`: a detached run's own events reach the
+/// Exercises task `^zn8n9md`: a background run's own events reach the
 /// transcript when they happen, as real `.toolOutput` entries correlated to
 /// the run by its completion token, instead of only riding the next turn's
 /// prompt as text.
 ///
 /// Everything runs against stubs — a plain ``StubSessionBackend`` and an
 /// ``InMemoryRecorder`` — so the suite needs no network and no GPU.
-@Suite("Detached run journaling: a posted event becomes a correlated transcript entry")
-struct DetachedRunTranscriptTests {
+@Suite("Background run journaling: a posted event becomes a correlated transcript entry")
+struct BackgroundRunTranscriptTests {
     // MARK: - Stub container
 
     private struct BasicLLMContainer: PlainTranscriptStubContainer {
@@ -32,7 +32,7 @@ struct DetachedRunTranscriptTests {
     private static func makeSession(
         recorder: any TranscriptRecorder
     ) async throws -> (session: RoutedSession, dir: URL) {
-        let dir = RouterTestFixtures.makeTempDir(prefix: "DetachedRunTranscriptTests")
+        let dir = RouterTestFixtures.makeTempDir(prefix: "BackgroundRunTranscriptTests")
         let router = RouterTestFixtures.makeRouter(
             cacheDir: dir,
             recorder: recorder,
@@ -44,7 +44,7 @@ struct DetachedRunTranscriptTests {
         return (profile.standard.makeSession(), dir)
     }
 
-    /// Builds a canned ``OperationEvent`` for one detached run.
+    /// Builds a canned ``OperationEvent`` for one background run.
     ///
     /// - Parameters:
     ///   - completionToken: The run's completion token, which is also its

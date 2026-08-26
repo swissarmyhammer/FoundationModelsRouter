@@ -33,7 +33,7 @@ struct RegisteredJournalOpTests {
   /// The mount every tool of this suite is registered under: background, so
   /// a call is handed back as a token at once and no test waits on a wall
   /// clock.
-  private static let backgroundMount = DetachConfiguration(mode: .background)
+  private static let backgroundMount = ToolMount(mode: .background)
 
   // MARK: - Identity fixtures
 
@@ -181,11 +181,11 @@ struct RegisteredJournalOpTests {
   private static func backgroundOneRun(
     _ mounted: any Tool, on host: ToolContext
   ) async throws -> BackgroundRun {
-    let background = try #require(mounted as? BackgroundTool<RegisteredOpArguments>)
+    let background = try #require(mounted as? BackgroundToolRunner<RegisteredOpArguments>)
     let rendered = try await background.call(
       arguments: RegisteredOpArguments(value: "long job")
     )
-    // The call really detached: the model was handed a pending envelope rather
+    // The call really went to the background: the model was handed a pending envelope rather
     // than a result.
     #expect(PendingRunEnvelope.isRendered(text: rendered))
     let runs = await host.backgroundRuns()
@@ -193,7 +193,7 @@ struct RegisteredJournalOpTests {
     return try #require(runs.first)
   }
 
-  /// Lets a background run's body end, so a test leaves no detached work behind.
+  /// Lets a background run's body end, so a test leaves no background work behind.
   ///
   /// - Parameters:
   ///   - run: The run to settle.
@@ -216,7 +216,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolDetachment.wrapping(
+    let mounted = ToolMounting.wrapping(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
@@ -239,7 +239,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolDetachment.wrapping(
+    let mounted = ToolMounting.wrapping(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
@@ -266,7 +266,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolDetachment.wrapping(
+    let mounted = ToolMounting.wrapping(
       tool: tool,
       inheriting: host,
       sink: sink,
@@ -302,7 +302,7 @@ struct RegisteredJournalOpTests {
 
     // The call this suite exists to leave alone: no `op` argument at all, which
     // is every mount that stands today.
-    let mounted = ToolDetachment.wrapping(
+    let mounted = ToolMounting.wrapping(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: sink,
@@ -327,7 +327,7 @@ struct RegisteredJournalOpTests {
     let sink = RecordingSink()
     let host = Self.makeEnclosingContext(mailbox: SessionMailbox(), sink: sink)
 
-    let mounted = ToolDetachment.wrapping(
+    let mounted = ToolMounting.wrapping(
       tool: GatedVerbTool(gate: gate),
       inheriting: host,
       sink: EnclosingRunSink(enclosing: host, upstream: sink),

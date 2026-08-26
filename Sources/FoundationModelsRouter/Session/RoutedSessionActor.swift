@@ -139,7 +139,7 @@ actor RoutedSessionActor: RoutedSession {
     /// The staging area for tool events and queued prompts. Fresh per session.
     nonisolated let outbox: SessionOutbox
 
-    /// The registry of tracked detached runs and pending elicitations. Fresh
+    /// The registry of tracked background runs and pending elicitations. Fresh
     /// per session.
     nonisolated let mailbox: SessionMailbox
 
@@ -235,7 +235,7 @@ actor RoutedSessionActor: RoutedSession {
     var generationStallReportInterval: Duration = RoutedSessionActor
         .defaultGenerationStallReportInterval
 
-    /// The `correlationID` of every detached run whose ending this session has
+    /// The `correlationID` of every background run whose ending this session has
     /// already journaled. A second write for one run is a no-op. See
     /// ``claimJournalWrite(for:)``.
     var journaledTerminalCorrelationIDs: Set<String> = []

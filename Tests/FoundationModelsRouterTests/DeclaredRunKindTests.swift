@@ -6,7 +6,7 @@ import Testing
 
 /// Exercises task ^7mxhb39: a tool declares the ``RunKind`` its own work is
 /// and supplies the canceler that work needs, both through the public
-/// ``DetachmentParameterProviding`` seam.
+/// ``BackgroundTool`` seam.
 ///
 /// The point is honesty about authority. A capability that owns an OS process
 /// group ends it with `killpg(SIGKILL)`, which is authoritative, so its
@@ -65,7 +65,7 @@ struct DeclaredRunKindTests {
   /// certainly over. It signals nothing itself, exactly as the real one
   /// would not: the signal belongs to the capability, and the body's wait on
   /// the group is `gate`, which each test opens for itself.
-  private struct DeclaredProcessTool: Tool, DetachmentParameterProviding {
+  private struct DeclaredProcessTool: Tool, BackgroundTool {
     let name = "declared_process_tool"
     let description = "is backgrounded at once as a process run and kills its own group"
 
@@ -80,9 +80,9 @@ struct DeclaredRunKindTests {
       return "process: \(arguments.value)"
     }
 
-    var detachmentRunKind: RunKind { .process }
+    var runKind: RunKind { .process }
 
-    func detachmentCanceler(
+    func canceler(
       forCompletionToken completionToken: String
     ) -> (@Sendable () async -> OperationOutcome)? {
       let witness = witness
@@ -98,7 +98,7 @@ struct DeclaredRunKindTests {
   /// under the engine's own cooperative canceler with no edit of its own.
   private struct UndeclaredKindTool: Tool {
     let name = "undeclared_kind_tool"
-    let description = "sleeps until cancelled and declares no detachment parameters"
+    let description = "sleeps until cancelled and declares no mount parameters"
 
     func call(arguments: DeclaredRunKindArguments) async throws -> String {
       try await Task.sleep(nanoseconds: DeclaredRunKindTests.unendingSleepNanoseconds)
@@ -123,7 +123,7 @@ struct DeclaredRunKindTests {
 
     /// The background-mounted engine under test: every call is handed
     /// back as a token at once, so no test waits on a wall clock.
-    let background: BackgroundTool<DeclaredRunKindArguments>
+    let background: BackgroundToolRunner<DeclaredRunKindArguments>
   }
 
   /// The tool identity the harness's host-side context is stamped with.
@@ -132,7 +132,7 @@ struct DeclaredRunKindTests {
   /// The op string the harness's host-side context is stamped with.
   private static let hostOp = "read runs"
 
-  /// Wraps `tool` in a ``BackgroundTool`` over a fresh mailbox, beside a
+  /// Wraps `tool` in a ``BackgroundToolRunner`` over a fresh mailbox, beside a
   /// host-side context bound to that same mailbox.
   ///
   /// - Parameter tool: The tool to wrap.
@@ -143,12 +143,12 @@ struct DeclaredRunKindTests {
     let mailbox = SessionMailbox()
     let sessionID = ULID.generate()
     let sink = MountFixtures.RecordingSink()
-    let background = BackgroundTool(
+    let background = BackgroundToolRunner(
       wrapping: tool,
       sessionID: sessionID,
       mailbox: mailbox,
       sink: sink,
-      timeout: DetachConfiguration.defaultTimeoutSeconds
+      timeout: ToolMount.defaultTimeoutSeconds
     )
     let context = ToolContext(
       sessionID: sessionID,
@@ -171,7 +171,7 @@ struct DeclaredRunKindTests {
     let rendered = try await harness.background.call(
       arguments: DeclaredRunKindArguments(value: "long job")
     )
-    // The call really detached: the model was handed a pending envelope
+    // The call really went to the background: the model was handed a pending envelope
     // rather than a result.
     #expect(PendingRunEnvelope.isRendered(text: rendered))
     let runs = await harness.context.backgroundRuns()
@@ -194,7 +194,7 @@ struct DeclaredRunKindTests {
 
     #expect(run.kind == .process)
 
-    // Let the run's body end, so the test leaves no detached work behind.
+    // Let the run's body end, so the test leaves no background work behind.
     await gate.open()
     _ = await harness.context.wait(
       completionToken: run.completionToken, seconds: Self.settlementDeadline

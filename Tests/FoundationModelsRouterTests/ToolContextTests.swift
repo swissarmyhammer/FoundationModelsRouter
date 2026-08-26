@@ -6,7 +6,7 @@ import Testing
 
 /// Exercises the ambient ``ToolContext`` task local (task ^b3arjr3): binding
 /// visibility through `ToolContext.$current.withValue`, the capture-at-start
-/// rule (a detached task sees `nil`), nil-safe no-op posting, the phase-1
+/// rule (work that inherits no task-locals sees `nil`), nil-safe no-op posting, the phase-1
 /// tool/op stamping rule for a plain wrapped `Tool`, correlation stamping on
 /// `post(_:)`/`progress(_:)`, and the `elicit(_:)` round trip through a real
 /// ``SessionMailbox`` — accept with content, decline, cancel, and two
@@ -156,16 +156,20 @@ struct ToolContextTests {
         #expect(ToolContext.current == nil)
     }
 
-    @Test("a detached task inside the binding does not inherit the context")
-    func detachedTaskSeesNil() async throws {
+    @Test("work that inherits no task-locals, started inside the binding, does not see the context")
+    func nonInheritingWorkSeesNil() async throws {
         let context = Self.makeContext(sink: RecordingSink())
 
         await ToolContext.$current.withValue(context) {
             #expect(ToolContext.current != nil)
-            let detachedSawContext = await Task.detached {
-                ToolContext.current != nil
-            }.value
-            #expect(!detachedSawContext)
+            // A raw thread inherits no task-locals, so the probe reads the
+            // context the way any non-inheriting work would.
+            let probeSawContext = await withCheckedContinuation { continuation in
+                Thread {
+                    continuation.resume(returning: ToolContext.current != nil)
+                }.start()
+            }
+            #expect(!probeSawContext)
         }
     }
 

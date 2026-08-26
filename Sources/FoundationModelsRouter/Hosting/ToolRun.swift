@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 import Synchronization
 
-/// One call's correlation and body, shared by ``RunToCompletionTool`` and ``BackgroundTool``.
+/// One call's correlation and body, shared by ``RunToCompletionRunner`` and ``BackgroundToolRunner``.
 struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable {
     private let wrapped: any Tool<Arguments, String>
 
@@ -64,12 +64,12 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
         of wrapped: any Tool<Arguments, String>, from arguments: Arguments
     ) -> TimeInterval? {
         guard
-            let provider = wrapped as? any DetachmentParameterProviding,
+            let provider = wrapped as? any BackgroundTool,
             let convertible = arguments as? any ConvertibleToGeneratedContent
         else {
             return nil
         }
-        return provider.detachmentTimeout(from: convertible.generatedContent)
+        return provider.timeout(from: convertible.generatedContent)
     }
 
     /// Posts the open invocation record and awaits its delivery.
@@ -125,7 +125,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
     }
 
     /// Races `inner` against the resettable timeout. Expiry cancels `inner`
-    /// and resolves as ``DetachingToolError/timedOut(tool:timeoutSeconds:)``.
+    /// and resolves as ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
     private func raceAgainstTimeout(inner: Task<String, any Error>) async -> Result<String, any Error> {
         guard let timeoutSeconds else {
             return await inner.result
@@ -148,7 +148,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
             cancellationFlag.request()
             inner.cancel()
             return .failure(
-                DetachingToolError.timedOut(tool: context.tool, timeoutSeconds: timeoutSeconds)
+                ToolMountError.timedOut(tool: context.tool, timeoutSeconds: timeoutSeconds)
             )
         }
     }
@@ -199,7 +199,7 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
             if error is CancellationError {
                 return (.cancelled, String(describing: error))
             }
-            if case DetachingToolError.timedOut = error {
+            if case ToolMountError.timedOut = error {
                 return (.timedOut, String(describing: error))
             }
             return (.failed, String(describing: error))

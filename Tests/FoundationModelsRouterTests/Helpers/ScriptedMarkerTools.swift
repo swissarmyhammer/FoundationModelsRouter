@@ -198,9 +198,9 @@ final class StructuredMarkerTool: MarkerRecordingTool, Sendable {
 /// A `FoundationModels.Tool` whose `Output` is not `String`, carrying the same
 /// marker ``MarkerEmittingTool`` does.
 ///
-/// ``ToolDetachment/wrapping(tool:sessionID:mailbox:sink:op:configuration:)`` sends a
+/// ``ToolMounting/wrapping(tool:sessionID:mailbox:sink:op:configuration:)`` sends a
 /// non-`String`-output tool down its other path — the binding-only
-/// ``ContextBindingTool`` rather than ``RunToCompletionTool`` — so a turn calling this
+/// ``ContextBindingTool`` rather than ``RunToCompletionRunner`` — so a turn calling this
 /// tool exercises a mounting route the `String`-output fixtures never reach.
 final class NonStringMarkerTool: MarkerRecordingTool, Sendable {
     /// The model-facing tool name a scripted call names to reach this tool.

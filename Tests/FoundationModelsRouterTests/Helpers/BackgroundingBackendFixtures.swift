@@ -10,7 +10,7 @@ struct BackgroundFixtureArguments {
     let value: String
 }
 
-/// The failure a ``LatchedBackgroundTool`` built with `fails: true` throws
+/// The failure a ``LatchedBackgroundToolRunner`` built with `fails: true` throws
 /// once its latch opens.
 struct LatchedToolFailure: Error {}
 
@@ -18,7 +18,7 @@ struct LatchedToolFailure: Error {}
 /// ``RunLatch`` until a test opens it, and then settles the way the test
 /// chose: with `output`, with a thrown ``LatchedToolFailure``, or — when a
 /// `timeout` is set and the latch stays shut — by that timeout.
-struct LatchedBackgroundTool: Tool, DetachmentParameterProviding {
+struct LatchedBackgroundToolRunner: Tool, BackgroundTool {
     let name: String
     let description = "test-only slow tool that declares background"
 
@@ -34,8 +34,8 @@ struct LatchedBackgroundTool: Tool, DetachmentParameterProviding {
     /// The run's no-progress timeout, or `nil` for none.
     var timeout: TimeInterval? = nil
 
-    var detachmentMount: DetachConfiguration? {
-        DetachConfiguration(mode: .background, timeout: timeout)
+    var mount: ToolMount? {
+        ToolMount(mode: .background, timeout: timeout)
     }
 
     func call(arguments: BackgroundFixtureArguments) async throws -> String {
@@ -46,7 +46,7 @@ struct LatchedBackgroundTool: Tool, DetachmentParameterProviding {
 }
 
 /// The backend the background-run suites drive: its first turn calls every
-/// composed ``LatchedBackgroundTool`` — each of which backgrounds its call —
+/// composed ``LatchedBackgroundToolRunner`` — each of which backgrounds its call —
 /// and answers with the last pending envelope; every later turn answers
 /// ``answerPrefix`` plus the prompt it was given, so an answer grounded in
 /// drained results is provable by reading the answer.
@@ -98,9 +98,9 @@ final class BackgroundingBackend: LanguageModelSessionBackend, @unchecked Sendab
         }
         var rendered = ""
         for tool in tools {
-            guard let detached = tool as? BackgroundTool<BackgroundFixtureArguments> else { continue }
+            guard let mounted = tool as? BackgroundToolRunner<BackgroundFixtureArguments> else { continue }
             toolCallCount += 1
-            rendered = try await detached.call(arguments: BackgroundFixtureArguments(value: prompt))
+            rendered = try await mounted.call(arguments: BackgroundFixtureArguments(value: prompt))
             toolOutputs.append(rendered)
         }
         await holdFirstTurn?.waitUntilOpen()

@@ -185,7 +185,7 @@ struct RespondRunPlaneDrainTests {
     }
 
     /// Opens `gates` and waits for every run tracked on `session` to settle, so
-    /// no detached work outlives a test.
+    /// no background work outlives a test.
     ///
     /// - Parameters:
     ///   - session: The session whose mailbox is drained.
@@ -248,7 +248,7 @@ struct RespondRunPlaneDrainTests {
     ///   - dir: The temporary directory the router caches and records under.
     /// - Returns: The answer `respond` returned and the run's terminal event.
     private static func drainedAnswer(
-        over tool: LatchedBackgroundTool, gate: RunLatch, opening: Bool, dir: URL
+        over tool: LatchedBackgroundToolRunner, gate: RunLatch, opening: Bool, dir: URL
     ) async throws -> (answer: String, terminal: OperationEvent) {
         let container = BackgroundingLLMContainer()
         let profile = try await makeProfile(container: container, dir: dir)
@@ -280,8 +280,8 @@ struct RespondRunPlaneDrainTests {
         let firstGate = RunLatch()
         let secondGate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            LatchedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
-            LatchedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
+            LatchedBackgroundToolRunner(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
+            LatchedBackgroundToolRunner(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
         ])
         let backend = try #require(container.lastBackend)
 
@@ -323,7 +323,7 @@ struct RespondRunPlaneDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let gate = RunLatch()
-        let tool = LatchedBackgroundTool(name: "finishing-job", gate: gate, output: Self.firstToolOutput)
+        let tool = LatchedBackgroundToolRunner(name: "finishing-job", gate: gate, output: Self.firstToolOutput)
         let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: true, dir: dir)
 
         #expect(terminal.outcome == .succeeded)
@@ -338,7 +338,7 @@ struct RespondRunPlaneDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let gate = RunLatch()
-        let tool = LatchedBackgroundTool(name: "failing-job", gate: gate, output: Self.firstToolOutput, fails: true)
+        let tool = LatchedBackgroundToolRunner(name: "failing-job", gate: gate, output: Self.firstToolOutput, fails: true)
         let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: true, dir: dir)
 
         #expect(terminal.outcome == .failed)
@@ -352,7 +352,7 @@ struct RespondRunPlaneDrainTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let gate = RunLatch()
-        let tool = LatchedBackgroundTool(
+        let tool = LatchedBackgroundToolRunner(
             name: "hanging-job", gate: gate, output: Self.firstToolOutput, timeout: Self.fixtureTimeoutSeconds)
         let (answer, terminal) = try await Self.drainedAnswer(over: tool, gate: gate, opening: false, dir: dir)
 
@@ -398,7 +398,7 @@ struct RespondRunPlaneDrainTests {
         #expect(answer == AlwaysSuspendingBackend.answerText)
         #expect(backend.receivedPrompts.count == 1 + RoutedSessionActor.backgroundRunDrainRoundLimit)
 
-        // Nothing detached outlives the test.
+        // No background run outlives the test.
         await backend.releaser.releaseAll()
     }
 
@@ -415,8 +415,8 @@ struct RespondRunPlaneDrainTests {
         let firstGate = RunLatch()
         let secondGate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            LatchedBackgroundTool(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
-            LatchedBackgroundTool(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
+            LatchedBackgroundToolRunner(name: "first-job", gate: firstGate, output: Self.firstToolOutput),
+            LatchedBackgroundToolRunner(name: "second-job", gate: secondGate, output: Self.secondToolOutput),
         ])
         let backend = try #require(container.lastBackend)
 
@@ -427,7 +427,7 @@ struct RespondRunPlaneDrainTests {
         #expect(await session.mailbox.backgroundRuns().count == 2)
         #expect(backend.receivedPrompts.count == 1)
 
-        // Settle the background runs so no detached work outlives the test.
+        // Settle the background runs so no background work outlives the test.
         let tokens: [String] = await session.mailbox.backgroundRuns().map(\.completionToken)
         await firstGate.open()
         await secondGate.open()
@@ -450,7 +450,7 @@ struct RespondRunPlaneDrainTests {
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            LatchedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+            LatchedBackgroundToolRunner(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
 
         let collecting = Task { () -> [SessionEvent] in
@@ -484,7 +484,7 @@ struct RespondRunPlaneDrainTests {
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            LatchedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+            LatchedBackgroundToolRunner(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
         let backend = try #require(container.lastBackend)
 
@@ -505,7 +505,7 @@ struct RespondRunPlaneDrainTests {
 
         // A cancelled drain answers with the last turn's answer rather than
         // throwing: here that is this call's own turn's answer, the pending
-        // envelope the detaching tool returned. No drained continuation turn
+        // envelope the backgrounding tool returned. No drained continuation turn
         // ran.
         #expect(!answer.hasPrefix(BackgroundingBackend.answerPrefix))
         #expect(backend.receivedPrompts.count == 1)
@@ -527,7 +527,7 @@ struct RespondRunPlaneDrainTests {
         let profile = try await Self.makeProfile(container: container, dir: dir)
         let gate = RunLatch()
         let session = profile.standard.makeSession(tools: [
-            LatchedBackgroundTool(name: "first-job", gate: gate, output: Self.firstToolOutput)
+            LatchedBackgroundToolRunner(name: "first-job", gate: gate, output: Self.firstToolOutput)
         ])
         let backend = try #require(container.lastBackend)
 
