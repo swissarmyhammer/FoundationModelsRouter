@@ -27,6 +27,10 @@ import Foundation
 /// explicitly — the live record identifies the run (``correlationID``,
 /// ``tool``, open order inside the turn frame) and the diff's `.toolCall`
 /// identifies the SDK call — and neither id may be stamped into the other.
+///
+/// `Codable` despite being delivery-only: a turn's records are surfaced
+/// directly through ``TurnOutcome/toolInvocations``, so a host can persist or
+/// send them without going through the event stream.
 public struct ToolInvocationRecord: Sendable, Equatable, Codable {
     /// The session-visible tool identity the run's ``ToolContext`` stamps on
     /// every event it posts — never empty.

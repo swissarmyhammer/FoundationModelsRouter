@@ -80,10 +80,15 @@ package actor JSONLRecorder: TranscriptRecorder {
     /// logged warning. The root is released when this recorder deallocates:
     /// the marker is removed and the root is immediately claimable again.
     ///
+    /// Unlike its sibling, this initializer touches the disk: it creates the
+    /// root and writes the lock marker.
+    ///
     /// - Throws: ``RecordingRootLockError/alreadyOwned(root:owner:)`` when a
     ///   live writer already owns the root, naming that owner, or
     ///   ``RecordingRootLockError/contested(root:)`` when a stale-lock takeover
-    ///   loses its race.
+    ///   loses its race; otherwise any file-system error from creating the root
+    ///   or its marker, which is untyped. A `catch` over the typed cases alone
+    ///   is not exhaustive.
     init(owningDirectory directory: URL, now: @escaping @Sendable () -> Date = { Date() }) throws {
         let ownership = try RecordingRootOwnership.acquire(root: directory)
         self.init(

@@ -50,7 +50,9 @@ public enum MergedTranscript {
     ///   file holds a corrupt line before its last one, or
     ///   ``RecordingSchemaVersionError/recordingFromNewerRouter(directory:version:supported:)``
     ///   when a session's sidecar names a schema version newer than
-    ///   ``RecordingSchemaVersion/current``.
+    ///   ``RecordingSchemaVersion/current``; otherwise if a transcript file
+    ///   cannot be read at all, which aborts the whole merge. That is the one
+    ///   place this type does not tolerate a bad file.
     public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
         var events: [TranscriptEvent] = []
         // Discovery is shared with ``TranscriptTree`` through
