@@ -7,7 +7,7 @@ private let transcriptEntryMapperLogger = makeModuleLogger(category: "Recording"
 
 /// A failure that occurs when a `Transcript.Entry` is rebuilt from a persisted ``TranscriptEntryPayload``.
 enum TranscriptEntryReconstructionError: Error, Equatable {
-    /// The recording level removed the payload's content.
+    /// A former recording level removed the payload's content.
     case contentRemoved(entryId: String)
 
     /// The payload does not have a field that `kind` requires.

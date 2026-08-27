@@ -346,10 +346,9 @@ struct TranscriptEventSchemaTests {
         try assertRoundTrips(payload)
     }
 
-    @Test("the unknown segment carrier strips and redacts its description as content")
-    func unknownSegmentCarrierStripsAndRedacts() {
+    @Test("the unknown segment carrier redacts its description as content")
+    func unknownSegmentCarrierRedactsItsDescriptionAsContent() {
         let segment = SegmentPayload.unknown(id: "s1", description: "secret future content")
-        #expect(segment.strippingContent() == .unknown(id: "s1", description: ""))
         #expect(segment.redacted(with: { _ in "[gone]" }) == .unknown(id: "s1", description: "[gone]"))
     }
 

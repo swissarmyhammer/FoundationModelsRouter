@@ -71,7 +71,8 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let kind: Kind
     /// The guided-generation grammar in force, when applicable.
     let grammar: String?
-    /// The event's body text, when the event carries one.
+    /// The event's body text. `nil` when the event carries no body, which is
+    /// the case for router-only kinds.
     public let text: String?
     /// Prompt/input tokens metered for this event, when applicable.
     public let tokensIn: Int?

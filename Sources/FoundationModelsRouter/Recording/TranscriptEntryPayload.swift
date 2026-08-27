@@ -6,14 +6,15 @@ import Foundation
 /// of a given ``TranscriptEvent/Kind`` sets only the fields its entry kind
 /// uses and leaves the rest `nil`.
 ///
-/// `contentRemoved` is `true` when the content was stripped at recording
-/// time. Reconstruction refuses a stripped payload with a typed error.
+/// `contentRemoved` is `true` in recordings that a former recording level
+/// wrote with the content stripped; reconstruction refuses such a payload
+/// with a typed error.
 public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     /// Apple's own `Transcript.Entry.id` for the mirrored entry.
     let entryId: String
 
-    /// `true` when the content was stripped at recording time.
-    /// Decodes as `false` when the key is absent.
+    /// `true` in recordings that a former recording level wrote with the
+    /// content stripped. Decodes as `false` when the key is absent.
     let contentRemoved: Bool
 
     /// The entry's segments, in order. `nil` for `.toolCalls`.
@@ -342,29 +343,10 @@ extension ToolCallPayload {
     }
 }
 
-// MARK: - Gating: content stripping and full-level redaction
+// MARK: - Gating: full-level redaction
 
-/// Content stripping and ``RecordingLevel/full`` redaction.
+/// ``RecordingLevel/full`` redaction.
 extension TranscriptEntryPayload {
-    /// Returns a copy with every content field emptied. Ids, case tags,
-    /// array counts, ``toolName``, ``options``, and ``responseFormatName``
-    /// stay. Sets ``contentRemoved`` to `true`.
-    func strippingContent() -> TranscriptEntryPayload {
-        TranscriptEntryPayload(
-            entryId: entryId,
-            contentRemoved: true,
-            segments: segments?.map { $0.strippingContent() },
-            toolDefinitions: toolDefinitions?.map { $0.strippingContent() },
-            toolCalls: toolCalls?.map { $0.strippingContent() },
-            toolName: toolName,
-            assetIds: assetIds.map { ids in Array(repeating: "", count: ids.count) },
-            signature: nil,
-            options: options,
-            responseFormatName: responseFormatName,
-            responseFormatSchemaJSON: responseFormatSchemaJSON.map { _ in "" }
-        )
-    }
-
     /// Returns a copy with `transform` applied to each segment text site and
     /// each tool-call `argumentsJSON`. JSON sites are transformed as opaque
     /// strings. Tool definitions, the schema, `signature`, and attachment
@@ -419,23 +401,6 @@ extension SegmentPayload {
         }
     }
 
-    /// Returns a copy with the content emptied. The `id`, case, and
-    /// `typeDiscriminator` stay.
-    func strippingContent() -> SegmentPayload {
-        switch self {
-        case .text(let id, _):
-            return .text(id: id, content: "")
-        case .structure(let id, let schemaName, _):
-            return .structure(id: id, schemaName: schemaName, contentJSON: "")
-        case .attachment(let id, _, _):
-            return .attachment(id: id, label: nil, url: nil)
-        case .custom(let id, let typeDiscriminator, _, _):
-            return .custom(id: id, typeDiscriminator: typeDiscriminator, contentJSON: "", description: nil)
-        case .unknown(let id, _):
-            return .unknown(id: id, description: "")
-        }
-    }
-
     /// Returns a copy with `transform` applied to each text site. An
     /// attachment `url` is not transformed.
     func redacted(with transform: (String) -> String) -> SegmentPayload {
@@ -459,19 +424,7 @@ extension SegmentPayload {
     }
 }
 
-extension ToolDefinitionPayload {
-    /// Returns a copy with `description` and `parametersSchemaJSON` emptied.
-    func strippingContent() -> ToolDefinitionPayload {
-        ToolDefinitionPayload(name: name, description: "", parametersSchemaJSON: "")
-    }
-}
-
 extension ToolCallPayload {
-    /// Returns a copy with `argumentsJSON` emptied.
-    func strippingContent() -> ToolCallPayload {
-        ToolCallPayload(id: id, toolName: toolName, argumentsJSON: "")
-    }
-
     /// Returns a copy with `transform` applied to `argumentsJSON` as an
     /// opaque string.
     func redacted(with transform: (String) -> String) -> ToolCallPayload {

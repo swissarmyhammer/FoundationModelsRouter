@@ -30,8 +30,25 @@ comments:
     - `grep -rn "metadataOnly" Sources Tests --include=*.swift` returns only the one permitted exception: the guard test name and its `rawValue: "metadataOnly"` assertion in MergedAndRedactionTests.swift.
     - next: ready for review.
   timestamp: 2026-08-27T14:27:19.048852+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m11t4604c5vmx1s76vwzxe1v
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 8b9dca1); counts: 0 findings, 0 confirmed, 0 refuted; 9 files reviewed; 14 files not reviewed (`.kanban/` — .reviewignore rule)
+    - next: task moved to done; the removal of `strippingContent()` continues in ^zgn3z1h
+  timestamp: 2026-08-27T14:31:31.588115+00:00
+- actor: claude-code
+  id: 01m11t4swbt0b0j5w3hn4zbwd0
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 9 files (Router.swift, GatingRecorder.swift, TranscriptReconstruction.swift, TranscriptEvent.swift, TranscriptEntryPayload.swift, and 4 test files)
+    - test: green — swift build --build-tests exit 0 with zero warnings from this package; swift test x3, 1052 tests/104 suites + 83 tests/10 suites pass, 2 pre-existing known issues (RealModelHarness.swift:72, BoundedWait.swift:114)
+    - commit: 8b9dca1 — 23 files changed, 480 insertions, 361 deletions (local only, no push)
+    - review: clean — zero new findings, scope HEAD~1..HEAD, 9 files reviewed
+    - next: task is in done. Continue to ^zgn3z1h.
+  timestamp: 2026-08-27T14:31:51.947403+00:00
+position_column: done
+position_ordinal: ffff8a80
 title: 'Remove RecordingLevel.metadataOnly: a transcript is full content or off'
 ---
 ## What
