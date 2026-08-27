@@ -52,8 +52,25 @@ comments:
 
     next: hand off to review.
   timestamp: 2026-08-27T16:29:19.373908+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m12127nkwqwpey5k1j0ny4fk
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 3fa06a7) — 0 findings, 0 confirmed, 0 refuted, 7 validator runs attempted, 0 failed. 3 files reviewed. No prior review section, and all subtasks and acceptance items are checked.
+    - next: task moved to done.
+  timestamp: 2026-08-27T16:32:47.795696+00:00
+- actor: claude-code
+  id: 01m1212xnnmphgv25xjjtrwm1c
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files (LanguageModelProfile.swift, RoutedLLM.swift, OwningProfileTests.swift new). The new suite was written first and failed to build with "value of type 'RoutedLLM' has no member 'owningProfile'". The release test depends on no clock: deinit clears the weak slot as the profile is deallocated, and the Task it starts captures only the router and the token.
+    - test: green — swift build --build-tests forced recompile, zero warnings from this package's own sources; swift test x2, identical both runs: 1065 tests/108 suites + 83 tests/10 suites pass, 0 failures, 0 skipped, 2 pre-existing known issues (RealModelHarness.swift:72, BoundedWait.swift:114). Count rose from 1062 by the 3 new tests. The lifetime-critical suites were checked by name — ProfileLifecycleTests, HumanWaitGateTests, TurnCancellationTests, GenerationStallDiagnosticTests, BoundedWait — because a retain cycle here would stop LanguageModelProfile.deinit from releasing residency. All green in both runs.
+    - commit: 3fa06a7 — 7 files changed, 277 insertions, 56 deletions (local only, no push)
+    - review: clean — zero new findings, scope HEAD~1..HEAD, 3 files reviewed, 7 validators, 0 failed
+    - next: task is in done. The batch is complete.
+  timestamp: 2026-08-27T16:33:10.325654+00:00
+position_column: done
+position_ordinal: ffff8f80
 title: Replace OwningProfileBox with a Mutex-guarded weak owningProfile on RoutedModel
 ---
 ## What
