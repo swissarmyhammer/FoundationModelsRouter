@@ -4,7 +4,7 @@ import FoundationModels
 /// A decorator that binds a per-call ``ToolContext`` around a non-`String`-output tool and returns its output unchanged. It synthesizes no events.
 struct ContextBindingTool<
     Arguments: ConvertibleFromGeneratedContent, Output: PromptRepresentable
->: Tool {
+>: Tool, TurnBoundaryTool, ToolDecorator {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, Output>
 

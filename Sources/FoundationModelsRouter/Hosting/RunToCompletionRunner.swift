@@ -2,7 +2,9 @@ import Foundation
 import FoundationModels
 
 /// A decorator that runs each call of the wrapped tool to completion and returns its value in band. A call with no progress past the timeout ends with ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
-struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
+struct RunToCompletionRunner<
+    Arguments: ConvertibleFromGeneratedContent & Sendable
+>: Tool, TurnBoundaryTool, ToolDecorator {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
 

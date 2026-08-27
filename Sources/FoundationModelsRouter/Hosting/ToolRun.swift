@@ -202,6 +202,9 @@ struct ToolRun<Arguments: ConvertibleFromGeneratedContent & Sendable>: Sendable 
             if case ToolMountError.timedOut = error {
                 return (.timedOut, String(describing: error))
             }
+            if error is any LostRunError {
+                return (.lost, String(describing: error))
+            }
             return (.failed, String(describing: error))
         }
     }
