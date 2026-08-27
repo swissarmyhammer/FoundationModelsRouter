@@ -25,4 +25,15 @@ struct BootstrapTests {
     func moduleAndMLXProductsImport() {
         #expect(FoundationModelsRouter.moduleName == "FoundationModelsRouter")
     }
+
+    /// ``FoundationModelsRouter/moduleName`` names the module the compiler
+    /// compiled this target as.
+    ///
+    /// The expected value is read off a router symbol rather than written out,
+    /// so a target rename moves both sides of the comparison together and this
+    /// test keeps checking the derivation rather than a copy of the old name.
+    @Test("moduleName matches the compiler's module name")
+    func moduleNameMatchesCompilerModule() {
+        #expect(moduleName == String(String(reflecting: Router.self).prefix { $0 != "." }))
+    }
 }
