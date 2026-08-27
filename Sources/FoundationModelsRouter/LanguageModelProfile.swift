@@ -1,31 +1,12 @@
 import Foundation
+import Synchronization
 import Tracing
 
-/// A lock-guarded, weak holder for a routed model's owning ``LanguageModelProfile``.
-///
-/// The reference is weak to avoid a retain cycle with the profile. A vended
-/// session reads the profile here and retains it for the session's lifetime.
-final class OwningProfileBox: @unchecked Sendable {
-    /// Serializes the registration against later reads.
-    private let lock = NSLock()
-
-    /// The owning profile, weakly held, or `nil`.
-    private weak var stored: LanguageModelProfile?
-
-    /// Creates an empty box, filled later by ``register(profile:)``.
-    init() {}
-
-    /// Records the owning profile. Called once from the profile's initializer.
-    ///
-    /// - Parameter profile: The profile that owns the model holding this box.
-    func register(profile: LanguageModelProfile) {
-        lock.withLock { stored = profile }
-    }
-
-    /// The owning profile if it is still alive, else `nil`.
-    var current: LanguageModelProfile? {
-        lock.withLock { stored }
-    }
+/// A weak reference to a ``LanguageModelProfile`` in a `Sendable` shape, so a
+/// `Mutex` can hold it.
+private struct WeakProfile: Sendable {
+    /// The owning profile, weakly held, or `nil` once it is released.
+    weak var profile: LanguageModelProfile?
 }
 
 /// A resolved, resident model: the storage a profile exposes for one slot,
@@ -75,8 +56,34 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// or `nil` when there is no durable transcripts root.
     var sessionSidecarWriter: SessionSidecarWriter? { durableRecording?.sidecarWriter }
 
-    /// The weak back-reference to the profile that owns this model.
-    let owningProfileBox = OwningProfileBox()
+    /// The weak back-reference to the profile that owns this model, guarded
+    /// for the readers that race the one registration.
+    ///
+    /// The slot is filled after this handle's initializer, and not by it,
+    /// because ``Router/resolve(profile:reporting:)`` builds the three handles
+    /// first and passes them into the profile's initializer afterwards. The
+    /// profile does not exist while a handle is initialized.
+    ///
+    /// The reference is weak because the profile holds its three handles
+    /// strongly. A strong back-reference would make a cycle, and
+    /// ``LanguageModelProfile``'s `deinit`, which gives the residency back to
+    /// the router, would never run. A vended session reads the profile out of
+    /// this slot and retains it for the session's lifetime, which is what
+    /// keeps the resident models alive while a session runs.
+    private let owningProfileSlot = Mutex(WeakProfile())
+
+    /// The owning profile if it is still alive, else `nil`.
+    var owningProfile: LanguageModelProfile? {
+        owningProfileSlot.withLock { $0.profile }
+    }
+
+    /// Records the owning profile. Called once, from
+    /// ``LanguageModelProfile``'s initializer.
+    ///
+    /// - Parameter profile: The profile that owns this handle.
+    func registerOwningProfile(_ profile: LanguageModelProfile) {
+        owningProfileSlot.withLock { $0.profile = profile }
+    }
 
     /// The per-model generation gate, a fair FIFO ``AsyncSemaphore`` at value
     /// `1`. Every session vended from this handle shares it, so generations
@@ -189,9 +196,9 @@ public final class LanguageModelProfile: Sendable {
         // Register the weak back-reference now that `self` is fully initialized,
         // so a session vended from any of these handles can retain this profile
         // and keep the resident models alive for its lifetime.
-        standard.owningProfileBox.register(profile: self)
-        flash.owningProfileBox.register(profile: self)
-        embedding.owningProfileBox.register(profile: self)
+        standard.registerOwningProfile(self)
+        flash.registerOwningProfile(self)
+        embedding.registerOwningProfile(self)
     }
 
     /// Decrements this profile's reference on each resident model and evicts

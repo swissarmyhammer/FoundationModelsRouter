@@ -26,7 +26,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - Parameter apiName: The calling entry point's name for the trap message.
     /// - Returns: The live owning profile.
     func requireOwningProfile(apiName: String) -> LanguageModelProfile {
-        guard let owningProfile = owningProfileBox.current else {
+        guard let owningProfile else {
             preconditionFailure("\(apiName) \(missingOwningProfileMessageSuffix)")
         }
         return owningProfile

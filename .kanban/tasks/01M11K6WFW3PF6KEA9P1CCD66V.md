@@ -73,8 +73,25 @@ comments:
     - `mcp__sah__diagnostics check working` — 0 errors, 0 warnings.
     - No changes required; build was already clean.
   timestamp: 2026-08-27T16:11:30.263552+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m11zzwqwb8gvmmb1mrcn22wt
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit f6f6703) — 0 findings, 0 confirmed, 0 refuted, 7 validator passes attempted, 0 failed. 2 source files reviewed: Sources/FoundationModelsRouter/FoundationModelsRouter.swift, Tests/FoundationModelsRouterTests/BootstrapTests.swift. The 2 .kanban files are excluded by .reviewignore.
+    - next: none. All subtasks, acceptance criteria and test items are checked. The task moves to done.
+  timestamp: 2026-08-27T16:14:02.492553+00:00
+- actor: claude-code
+  id: 01m1200h898vgkasf5fa2vsypy
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 files (FoundationModelsRouter.swift, BootstrapTests.swift). The new test cannot fail against the old code, because the literal and the derived name are the same string, so the red step was made by staging a wrong name (`StaleOldTargetName`) first and confirming the test failed for the correct reason. The card's cited line for the cache directory in Router.swift had moved from 963 to 975; the code there is unchanged.
+    - test: green — swift build --build-tests 0 errors, zero warnings from this package's own sources; swift test x2 (cold and warm) 1062 tests/107 suites + 83 tests/10 suites pass, 0 failures, 0 skipped, 2 pre-existing known issues (RealModelHarness.swift:72, BoundedWait.swift:114). Count rose from 1061 by the one new test. The os.Logger subsystem is this value, so the gate also confirmed assertLogged(containing:since:) still finds entries for its three caller suites.
+    - commit: f6f6703 — 4 files changed, 107 insertions, 12 deletions (local only, no push)
+    - review: clean — zero new findings, scope HEAD~1..HEAD, 2 source files reviewed, 7 validators, 0 failed
+    - next: task is in done. Continue the batch with ^p47wfxt.
+  timestamp: 2026-08-27T16:14:23.497147+00:00
+position_column: done
+position_ordinal: ffff8e80
 title: Derive moduleName from the compiler; remove the duplicated "FoundationModelsRouter" literal
 ---
 ## What
