@@ -14,9 +14,9 @@ import Testing
 /// 2. ``GatingRecorder`` — enforcing the ``RecordingLevel`` and the ``Router``'s
 ///    `redact` hook: `off` records nothing, `full` keeps bodies, and `redact`
 ///    transforms recorded text before it is written. The gate is wired through
-///    the recorder the router hands down, so both the session chokepoint and
-///    ``RoutedModel/embed(texts:)`` honor it, and a sink write failure stays
-///    best-effort (logged, swallowed) under gating.
+///    the recorder the router hands down, so the session chokepoint honors it,
+///    and a sink write failure stays best-effort (logged, swallowed) under
+///    gating.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader``, a canned LLM
 /// container, a stub embedder, and either a ``JSONLRecorder`` in a temp
@@ -150,7 +150,7 @@ struct MergedAndRedactionTests {
         let inner: InMemoryRecorder = .inMemory
         let recorder: any TranscriptRecorder = GatingRecorder(level: .off, redact: nil, wrapping: inner)
         for kind in [TranscriptEvent.Kind.session, .prompt, .response] {
-            await recorder.append(samplePartial(kind: kind, text: "body"))
+            await recorder.append(samplePartial(kind: kind, text: "body"), to: nil)
         }
         #expect(await inner.events.isEmpty)
     }
@@ -182,7 +182,7 @@ struct MergedAndRedactionTests {
     func levelFullWritesBody() async throws {
         let inner: InMemoryRecorder = .inMemory
         let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: nil, wrapping: inner)
-        await recorder.append(samplePartial(kind: .prompt, text: "verbatim body"))
+        await recorder.append(samplePartial(kind: .prompt, text: "verbatim body"), to: nil)
 
         let events = await inner.events
         #expect(events.first?.text == "verbatim body")
@@ -195,7 +195,7 @@ struct MergedAndRedactionTests {
         let inner: InMemoryRecorder = .inMemory
         let redact: @Sendable (String) -> String = { $0.replacingOccurrences(of: "secret", with: "***") }
         let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: redact, wrapping: inner)
-        await recorder.append(samplePartial(kind: .prompt, text: "top secret plan"))
+        await recorder.append(samplePartial(kind: .prompt, text: "top secret plan"), to: nil)
 
         #expect(await inner.events.first?.text == "top *** plan")
     }
@@ -209,7 +209,7 @@ struct MergedAndRedactionTests {
         let caseSensitive: @Sendable (String) -> String = { $0.replacingOccurrences(of: "secret", with: "***") }
         let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: caseSensitive, wrapping: inner)
 
-        await recorder.append(samplePartial(kind: .prompt, text: "Secret and SECRET and secret"))
+        await recorder.append(samplePartial(kind: .prompt, text: "Secret and SECRET and secret"), to: nil)
 
         // Only the exact-case token is replaced; "Secret"/"SECRET" pass through.
         #expect(await inner.events.first?.text == "Secret and SECRET and ***")
@@ -225,7 +225,7 @@ struct MergedAndRedactionTests {
         }
         let recorder: any TranscriptRecorder = GatingRecorder(level: .full, redact: caseInsensitive, wrapping: inner)
 
-        await recorder.append(samplePartial(kind: .prompt, text: "Secret and SECRET and secret"))
+        await recorder.append(samplePartial(kind: .prompt, text: "Secret and SECRET and secret"), to: nil)
 
         #expect(await inner.events.first?.text == "*** and *** and ***")
     }
@@ -281,7 +281,7 @@ struct MergedAndRedactionTests {
             text: "a secret flattened body",
             entry: payload
         )
-        await recorder.append(partial)
+        await recorder.append(partial, to: nil)
 
         let events = await inner.events
         let event = try #require(events.first)
@@ -357,7 +357,7 @@ struct MergedAndRedactionTests {
             text: "a secret flattened body",
             entry: payload
         )
-        await recorder.append(partial)
+        await recorder.append(partial, to: nil)
 
         let merged = try MergedTranscript.merged(under: dir)
         let event = try #require(merged.first)
@@ -408,7 +408,7 @@ struct MergedAndRedactionTests {
 
     // MARK: - Wiring through the router (session + embed)
 
-    @Test("redact wired through the router transforms session turn and embedding text")
+    @Test("redact wired through the router transforms session turn text, and an embed records nothing")
     @MainActor
     func redactWiredThroughRouter() async throws {
         let cacheDir = Self.makeTempDir()
@@ -439,9 +439,8 @@ struct MergedAndRedactionTests {
         // The prompt body is present but redacted.
         let prompt = try #require(events.first { $0.kind == .prompt })
         #expect(prompt.text == "a *** prompt")
-        // The embedding body is present but redacted.
-        let embedding = try #require(events.first { $0.kind == .embedding })
-        #expect(embedding.text == "another ***")
+        // The embed call recorded nothing, so there is no embedding body at all.
+        #expect(!events.contains { $0.kind == .embedding })
     }
 
     // MARK: - Best-effort preserved under gating
@@ -451,8 +450,8 @@ struct MergedAndRedactionTests {
     func sinkFailureSwallowedUnderGating() async throws {
         let cacheDir = Self.makeTempDir()
         // A regular file standing where the recordings root should be: every
-        // directory-create under it fails, so both session and embed writes are
-        // swallowed.
+        // directory-create under it fails, so every session write is swallowed.
+        // An embed writes nothing at all.
         let blocker = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: false)
         try Data().write(to: blocker)

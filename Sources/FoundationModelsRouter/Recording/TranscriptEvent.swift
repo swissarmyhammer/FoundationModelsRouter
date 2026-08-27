@@ -27,7 +27,9 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
         case response
         /// A `.reasoning` entry was appended to the SDK's own transcript.
         case reasoning
-        /// An embedding was produced.
+        /// An embedding was produced. No longer written: an embed call is no
+        /// part of any session's conversation. Kept so recordings made before
+        /// that change still decode.
         case embedding
         /// The backend's transcript changed in a non-append way against the
         /// recorded baseline (see ``TranscriptDiffer/divergence(from:in:)``).

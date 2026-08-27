@@ -46,7 +46,7 @@ struct RecorderTests {
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<n {
                 group.addTask {
-                    await recorder.append(self.samplePartial(kind: .prompt))
+                    await recorder.append(self.samplePartial(kind: .prompt), to: nil)
                 }
             }
         }
@@ -68,7 +68,7 @@ struct RecorderTests {
             now: { Self.fixedInstant }
         )
         for kind in [TranscriptEvent.Kind.session, .prompt, .response] {
-            await recorder.append(samplePartial(kind: kind))
+            await recorder.append(samplePartial(kind: kind), to: nil)
         }
 
         let fileURL = dir.appendingPathComponent("transcript.jsonl", isDirectory: false)
@@ -95,8 +95,8 @@ struct RecorderTests {
 
         let recorder: JSONLRecorder = .jsonl(directory: blocker)
         // Must return normally (non-throwing) and never crash.
-        await recorder.append(samplePartial(kind: .prompt))
-        await recorder.append(samplePartial(kind: .response))
+        await recorder.append(samplePartial(kind: .prompt), to: nil)
+        await recorder.append(samplePartial(kind: .response), to: nil)
 
         // The blocking file is untouched: nothing was written through it.
         let attributes = try FileManager.default.attributesOfItem(atPath: blocker.path)
@@ -110,7 +110,7 @@ struct RecorderTests {
         // `TranscriptRecorder` call path, not NoneRecorder's concrete type.
         let recorder: any TranscriptRecorder = NoneRecorder.none
         for partial in [samplePartial(kind: .prompt), samplePartial(kind: .response)] {
-            await recorder.append(partial)
+            await recorder.append(partial, to: nil)
         }
         // A no-op sink keeps no state; the call simply completes.
     }

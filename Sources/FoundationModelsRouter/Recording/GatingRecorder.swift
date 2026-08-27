@@ -5,8 +5,7 @@ import Foundation
 ///
 /// It is the one place the recording level and redaction are applied, wrapping
 /// whichever concrete sink the router hands down (``JSONLRecorder``,
-/// ``InMemoryRecorder``, or ``NoneRecorder``). Because every event source —
-/// the session ``generate`` chokepoint and ``RoutedModel/embed(texts:)`` alike —
+/// ``InMemoryRecorder``, or ``NoneRecorder``). Because every event source
 /// records through the recorder the router threaded to it, wrapping that one
 /// recorder makes all of them honor the level and hook without each having to
 /// know about gating:
@@ -28,7 +27,7 @@ import Foundation
 /// Gating changes only *what* an event carries (or whether it is forwarded at
 /// all); the inner sink still owns `seq`/`ts` stamping and the best-effort
 /// swallow of any write failure, so a failed sink write under gating is logged
-/// and dropped, never surfaced into generation or embedding.
+/// and dropped, never surfaced into generation.
 struct GatingRecorder: TranscriptRecorder {
     /// How much of each event to record.
     private let level: RecordingLevel

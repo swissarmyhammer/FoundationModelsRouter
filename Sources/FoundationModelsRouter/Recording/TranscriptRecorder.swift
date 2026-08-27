@@ -4,12 +4,12 @@ import Foundation
 ///
 /// A session is *born holding* a recorder — there is no public way to skip
 /// recording, because "off" is the no-op ``NoneRecorder`` sink, not `nil`. Every
-/// conforming sink shares one call path: ``append(_:)`` takes a
+/// conforming sink shares one call path: ``append(_:to:)`` takes a
 /// ``TranscriptEvent/Partial`` and the recorder — an actor — stamps `seq` and
 /// `ts` atomically as it appends, so concurrent appends from forked sessions
 /// collapse into a single totally-ordered log.
 ///
-/// Recording is best-effort: ``append(_:)`` is non-throwing, so a sink that
+/// Recording is best-effort: ``append(_:to:)`` is non-throwing, so a sink that
 /// fails to persist an event logs and drops it rather than surfacing the failure
 /// into the generation path.
 ///
@@ -42,19 +42,6 @@ public protocol TranscriptRecorder: Sendable {
     ///   - directory: The session directory to persist the event under, or `nil`
     ///     to use the recorder's own default location.
     func append(_ partial: TranscriptEvent.Partial, to directory: URL?) async
-}
-
-extension TranscriptRecorder {
-    /// Records an event into the recorder's default location.
-    ///
-    /// The convenience for callers with no per-session directory — notably the
-    /// embedding path, whose events are not tied to a session — forwarding to
-    /// ``append(_:to:)`` with a `nil` directory.
-    ///
-    /// - Parameter partial: The event to record, minus its `seq` and `ts`.
-    func append(_ partial: TranscriptEvent.Partial) async {
-        await append(partial, to: nil)
-    }
 }
 
 extension TranscriptRecorder where Self == JSONLRecorder {

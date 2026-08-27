@@ -6,14 +6,14 @@ import Testing
 
 /// Exercises milestone 5a: a resolved profile's residency lifecycle
 /// (``LanguageModelProfile/release()`` + the ``Router``'s one-active-profile
-/// rule) and the recorded embedding access surface
-/// (``RoutedModel/embed(texts:)`` + `dimension`).
+/// rule) and the embedding access surface (``RoutedModel/embed(texts:)`` +
+/// `dimension`), which writes nothing to the transcript.
 ///
 /// Everything runs against stubs — a stub ``ModelLoader`` with an eviction spy,
 /// a stub embedding container, and an ``InMemoryRecorder`` — so the suite needs
 /// no network and no GPU. Real embedding vectors and real MLX unload are gated
 /// to the milestone 7 integration suite.
-@Suite("Profile lifecycle + recorded embedding")
+@Suite("Profile lifecycle + embedding access")
 struct ProfileLifecycleTests {
     // MARK: - Stub containers
 
@@ -224,7 +224,7 @@ struct ProfileLifecycleTests {
         #expect(await spy.count == 6)
     }
 
-    // MARK: - Recorded embedding access
+    // MARK: - Embedding access
 
     @Test("embed returns vectors of length dimension from the stub embedder")
     @MainActor
@@ -243,9 +243,9 @@ struct ProfileLifecycleTests {
         #expect(vectors.allSatisfy { $0.count == Self.stubDimension })
     }
 
-    @Test("embed emits exactly one embedding event with correct provenance")
+    @Test("embed records nothing to the transcript and still returns its vectors")
     @MainActor
-    func embedRecordsOneEmbeddingEvent() async throws {
+    func embedRecordsNothing() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -254,40 +254,11 @@ struct ProfileLifecycleTests {
         let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
         let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        _ = try await profile.embedding.embed(texts: ["a", "b"])
-
-        let events = await recorder.events
-        #expect(events.count == 1)
-        let event = try #require(events.first)
-        #expect(event.kind == .embedding)
-        #expect(event.routerId == router.id)
-        #expect(event.slot == .embedding)
-        #expect(event.model == profile.embedding.chosen)
-    }
-
-    @Test("embed swallows a forced sink failure and still returns its vectors")
-    @MainActor
-    func embedSwallowsSinkFailure() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        // A regular file standing where the recorder's directory should be makes
-        // every append's directory-create fail, so the write is swallowed.
-        let blocker = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: false)
-        try Data().write(to: blocker)
-        defer { try? FileManager.default.removeItem(at: blocker) }
-
-        let spy = EvictionSpy()
-        let recorder: JSONLRecorder = .jsonl(directory: blocker)
-        let router = Self.makeRouter(spy: spy, recorder: recorder, cacheDir: dir)
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
         let vectors = try await profile.embedding.embed(texts: ["a", "b"])
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == Self.stubDimension })
 
-        // The blocking file is untouched: nothing was written through it.
-        #expect(try Data(contentsOf: blocker).isEmpty)
+        let events = await recorder.events
+        #expect(events.isEmpty)
     }
 }

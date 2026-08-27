@@ -11,9 +11,10 @@ import Testing
 /// The example tools (``SummarizeTool``, ``EmbedTool``) hold the injected slot
 /// handle and drive it (`makeSession`/`respond`, `embed`). These tests prove
 /// that constructing tools from the same resolved handle shares the identical
-/// resident model — no second load through the loader — that a tool's call flows
-/// through the recorded chokepoint, and that constructing tools does not disturb
-/// the router's one-active-profile residency.
+/// resident model — no second load through the loader — that a generation
+/// tool's call flows through the recorded chokepoint while an embed tool's call
+/// records nothing, and that constructing tools does not disturb the router's
+/// one-active-profile residency.
 ///
 /// Everything runs against stubs — a load-counting stub ``ModelLoader``, a
 /// canned LLM container that returns fixed text, a stub embedding container, and
@@ -224,9 +225,9 @@ struct ToolSharedProfileTests {
         #expect(events.allSatisfy { $0.model == profile.flash.chosen })
     }
 
-    @Test("an embed tool's call flows through the recorded embedding chokepoint")
+    @Test("an embed tool's call returns its vectors and records nothing")
     @MainActor
-    func embedToolCallRecordsAnEvent() async throws {
+    func embedToolCallRecordsNothing() async throws {
         let dir = Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -240,15 +241,10 @@ struct ToolSharedProfileTests {
         #expect(vectors.count == 2)
         #expect(vectors.allSatisfy { $0.count == Self.stubDimension })
 
-        // The embedding ran through the recorded chokepoint: exactly one
-        // embedding event stamped with the embedding slot's provenance.
+        // An embed call is no part of any session's conversation, so it writes
+        // nothing to the transcript.
         let events = await recorder.events
-        #expect(events.count == 1)
-        let event = try #require(events.first)
-        #expect(event.kind == .embedding)
-        #expect(event.routerId == router.id)
-        #expect(event.slot == .embedding)
-        #expect(event.model == profile.embedding.chosen)
+        #expect(events.isEmpty)
     }
 
     // MARK: - Residency unchanged
