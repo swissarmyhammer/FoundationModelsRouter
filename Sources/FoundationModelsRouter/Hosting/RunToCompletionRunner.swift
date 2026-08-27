@@ -2,7 +2,9 @@ import Foundation
 import FoundationModels
 
 /// A decorator that runs each call of the wrapped tool to completion and returns its value in band. A call with no progress past the timeout ends with ``ToolMountError/timedOut(tool:timeoutSeconds:)``.
-struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool, TurnBoundaryTool {
+struct RunToCompletionRunner<
+    Arguments: ConvertibleFromGeneratedContent & Sendable
+>: Tool, TurnBoundaryTool, ToolDecorator {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
 
@@ -69,15 +71,5 @@ struct RunToCompletionRunner<Arguments: ConvertibleFromGeneratedContent & Sendab
             await run.execute(arguments: arguments)
         }
         return try settlement.result.get()
-    }
-
-    /// Forwards to the wrapped tool when it conforms, or does nothing —
-    /// mirrors how ``BackgroundToolRunner``'s `parameterProvider` discovers
-    /// ``BackgroundTool`` on the wrapped tool. Composition through this
-    /// decorator would otherwise hide a ``TurnBoundaryTool`` conformer from
-    /// the session's own turn-boundary cast, since the session's mounted
-    /// tool list holds this wrapper, never the bare original.
-    func turnWillBegin() async {
-        await (wrapped as? any TurnBoundaryTool)?.turnWillBegin()
     }
 }

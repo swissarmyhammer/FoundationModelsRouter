@@ -56,7 +56,9 @@ enum ToolOutputCapping {
 /// continued generation and the transcript's own recorded `.toolOutput` entry
 /// — and therefore ``SessionEvent/toolStatus(id:status:summary:output:)``'s
 /// `summary` — see the capped text, never the oversized original.
-struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool, TurnBoundaryTool {
+struct TokenCappingTool<
+    Arguments: ConvertibleFromGeneratedContent
+>: Tool, TurnBoundaryTool, ToolDecorator {
     let wrapped: any Tool<Arguments, String>
 
     let limit: Int
@@ -82,15 +84,6 @@ struct TokenCappingTool<Arguments: ConvertibleFromGeneratedContent>: Tool, TurnB
             return output
         }
         return ToolOutputCapping.capped(text: output, toTokenLimit: limit)
-    }
-
-    /// Forwards to the wrapped tool when it conforms, or does nothing.
-    /// Applied outermost, this keeps the forwarding chain intact through a
-    /// capped tool: ``wrapped`` here is itself the mount layer's own
-    /// ``RunToCompletionRunner``/``BackgroundToolRunner``, which forwards in
-    /// turn to the bare original.
-    func turnWillBegin() async {
-        await (wrapped as? any TurnBoundaryTool)?.turnWillBegin()
     }
 }
 

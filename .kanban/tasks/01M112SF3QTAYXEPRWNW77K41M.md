@@ -24,6 +24,47 @@ comments:
     - files: Sources/FoundationModelsRouter/Hosting/TurnBoundaryTool.swift (new), Sources/FoundationModelsRouter/Hosting/RunToCompletionRunner.swift, Sources/FoundationModelsRouter/Hosting/BackgroundToolRunner.swift, Sources/FoundationModelsRouter/Hosting/ContextBindingTool.swift, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Tests/FoundationModelsRouterTests/TurnBoundaryToolTests.swift (new)
     - next: ready for /review
   timestamp: 2026-08-27T08:07:27.440185+00:00
+- actor: claude-code
+  id: 01m116t2seezv328fgh2pw4cte
+  text: |-
+    ### review — findings
+    - evidence: 2 findings (2 confirmed, 2 refuted) on `review sha HEAD~1..HEAD` — Sources/FoundationModelsRouter/Hosting/RunToCompletionRunner.swift:80, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift:92
+    - next: remove the duplicated `turnWillBegin()` forwarding from all four decorators — put one shared default in place of the copies. Then run the review again.
+  timestamp: 2026-08-27T08:53:57.678298+00:00
+- actor: claude-code
+  id: 01m116tewpxj3se10kyan992w1
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 7 files (TurnBoundaryTool.swift new, TurnBoundaryToolTests.swift new, two call sites, four wrapper conformances)
+    - test: green — swift test, EXIT=0, 1061 tests in 105 suites + 83 tests in 10 suites, 0 failures
+    - commit: de26d62
+    - review: findings — Sources/FoundationModelsRouter/Hosting/RunToCompletionRunner.swift:80, Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift:92
+    - next: implement, to work the unchecked Review Findings items
+  timestamp: 2026-08-27T08:54:10.070007+00:00
+- actor: claude-code
+  id: 01m1175hark8qmd4nzjgzy021x
+  text: |-
+    Both duplication findings are answered by one shared default, not by an edit of the two named lines.
+
+    New file `Sources/FoundationModelsRouter/Hosting/ToolDecorator.swift` holds an internal `ToolDecorator` protocol with one requirement, `var wrapped: Wrapped { get }`, over an unconstrained `associatedtype Wrapped`. The associated type is what makes one protocol fit all four decorators: three of them store `any Tool<Arguments, String>` and `ContextBindingTool` stores `any Tool<Arguments, Output>`. A property witness cannot widen its type in Swift, so a requirement written as `var wrapped: any Tool { get }` would have forced a per-decorator computed accessor — that is, the same copy in a new place. The associated type lets each existing stored `let wrapped` satisfy the requirement as it stands, with no added member.
+
+    The one body now lives in `extension TurnBoundaryTool where Self: ToolDecorator`. It is the witness for the protocol requirement, so a call through an `any TurnBoundaryTool` existential still dispatches to it.
+
+    `RunToCompletionRunner`, `BackgroundToolRunner`, `ContextBindingTool` and `TokenCappingTool` each add `ToolDecorator` to the conformance list and lose their `turnWillBegin()` body and its doc comment. `grep turnWillBegin Sources/` now answers 3 sites: the protocol requirement, the shared default, and the session's call site.
+
+    Access control: `ToolDecorator` is internal, since every conformer is internal and no other module names it. The constrained extension of the public `TurnBoundaryTool` is internal for the same reason, which the compiler accepts because each conformance is internal too.
+
+    Declarations of three of the decorators go over the line width with the added conformance, so they take the wrapped-generic-clause shape `ContextBindingTool` already used in this same family of files. No formatter was run.
+
+    Evidence: `swift build` clean; `swift test --filter TurnBoundaryToolTests` 3/3 pass; full `swift test` 1061 tests in 105 suites pass with the 2 pre-existing known issues (RealModelHarness embedding slot, BoundedWait), plus 83 tests in 10 suites in the eval-support target. EXIT=0.
+  timestamp: 2026-08-27T09:00:13.016077+00:00
+- actor: claude-code
+  id: 01m1175p3j1zp6p90803zyy0k6
+  text: |-
+    ### implement — changed
+    - evidence: 5 files — Sources/FoundationModelsRouter/Hosting/ToolDecorator.swift (new), Hosting/RunToCompletionRunner.swift, Hosting/BackgroundToolRunner.swift, Hosting/ContextBindingTool.swift, Session/ToolOutputCapping.swift. Both Review Findings items are checked. `swift build` clean; `swift test` 1061 tests/105 suites + 83 tests/10 suites, EXIT=0, 2 pre-existing known issues.
+    - next: ready for /review
+  timestamp: 2026-08-27T09:00:17.906073+00:00
 position_column: doing
 position_ordinal: '80'
 title: Add a turn-boundary hook for mounted tools (TurnBoundaryTool)
@@ -46,7 +87,7 @@ The hook has no arguments and no return value. It is not an event route. It is a
 
 The consumer is on the FoundationModelsMultitool board: task "Swap the Registry in MultiTool at the turn boundary" (`01M112FH3741JEQ7QN97C5E13R`).
 
-**Implementation note (see comments for detail):** the session's mounted `tools` list is always wrapped by one of four decorators (`RunToCompletionRunner`, `BackgroundToolRunner`, `ContextBindingTool`, `TokenCappingTool`) — the bare cast the card describes would never reach a real tool through the normal `makeSession(tools:)` path. Each decorator now conforms to `TurnBoundaryTool`, forwarding to its wrapped tool when it conforms, so the hook actually reaches a tool mounted the normal way.
+**Implementation note (see comments for detail):** the session's mounted `tools` list is always wrapped by one of four decorators (`RunToCompletionRunner`, `BackgroundToolRunner`, `ContextBindingTool`, `TokenCappingTool`) — the bare cast the card describes would never reach a real tool through the normal `makeSession(tools:)` path. Each decorator conforms to `TurnBoundaryTool` through the shared `ToolDecorator` protocol, whose one default forwards to the wrapped tool when it conforms, so the hook actually reaches a tool mounted the normal way.
 
 ## Acceptance Criteria
 - [x] `TurnBoundaryTool` is public in `Hosting/`, and a tool that does not conform is unchanged.
@@ -61,3 +102,13 @@ The consumer is on the FoundationModelsMultitool board: task "Swap the Registry 
 
 ## Workflow
 - Use `/tdd` — write the probe test first, then add the protocol and the two call sites. #eventplan #multitool-phase-4
+
+## Review Findings (2026-08-27 03:49)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 7 file(s) reviewed, 4 not reviewed.
+
+> 4 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 4 file(s)
+
+- [x] `Sources/FoundationModelsRouter/Hosting/RunToCompletionRunner.swift:80` `duplication/duplication` — Verbatim copy of `turnWillBegin()` implementation found in four decorator types (BackgroundToolRunner, ContextBindingTool, TokenCappingTool). Identical one-liner forwarding to wrapped tool should be extracted to a shared protocol extension or helper to prevent drift and reduce maintenance surface. Extract `turnWillBegin()` into a shared protocol extension default implementation on a common `ToolDecorator` protocol or helper, or use a protocol extension on `TurnBoundaryTool` if the protocol can be extended to require a `wrapped` property accessor.
+- [x] `Sources/FoundationModelsRouter/Session/ToolOutputCapping.swift:92` `duplication/duplication` — Verbatim copy of `turnWillBegin()` implementation found in four decorator types (BackgroundToolRunner, ContextBindingTool, RunToCompletionRunner). Identical one-liner forwarding to wrapped tool should be extracted to a shared protocol extension or helper to prevent drift and reduce maintenance surface. Extract `turnWillBegin()` into a shared protocol extension default implementation on a common `ToolDecorator` protocol or helper, or use a protocol extension on `TurnBoundaryTool` if the protocol can be extended to require a `wrapped` property accessor.
