@@ -39,8 +39,25 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Hosting/LostRunError.swift (new), Sources/FoundationModelsRouter/Hosting/ToolRun.swift (one `.lost` branch in `inBandFacts(for:)`), Tests/FoundationModelsRouterTests/LostRunErrorTests.swift (new, 4 tests). `swift build` succeeds; `swift test --filter LostRunErrorTests` passes 4 of 4.
     - next: review. One open item stands on the card: the full `swift test` carries a pre-existing flake in `GenerationStallDiagnosticTests`, reproduced on the unmodified tree.
   timestamp: 2026-08-27T12:18:58.239252+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m11jqg3tmse1nx9vjb30wact
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit a83f3b2) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 3 files reviewed; 4 `.kanban/` files excluded by `.reviewignore`.
+    - next: no prior `## Review Findings` sections to clear, so the task moves to `done`.
+  timestamp: 2026-08-27T12:22:15.930004+00:00
+- actor: claude-code
+  id: 01m11jremht0054v82ypg210nk
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files; Sources/FoundationModelsRouter/Hosting/LostRunError.swift (new public marker protocol), Sources/FoundationModelsRouter/Hosting/ToolRun.swift (one .lost branch in inBandFacts, above the .failed fallback), Tests/FoundationModelsRouterTests/LostRunErrorTests.swift (new, 4 tests)
+    - test: green — swift test, EXIT=0, 1065 tests in 106 suites + 83 tests in 10 suites, 0 failures. The orchestrator ran this after the commit. The GenerationStallDiagnosticTests failure the implement pass saw did not come back, so the last Tests box is now checked.
+    - commit: a83f3b2
+    - review: clean — zero new findings, 7 validators attempted, 0 failed
+    - next: the task is in done
+  timestamp: 2026-08-27T12:22:47.185180+00:00
+position_column: done
+position_ordinal: ffff8b80
 title: Map a transport-drop error to OperationOutcome.lost (LostRunError)
 ---
 ## What
@@ -64,7 +81,7 @@ In `ToolRun.swift`, add one branch before the `.failed` fallback: `if error is a
 ## Tests
 - [x] Add `Tests/FoundationModelsRouterTests/LostRunErrorTests.swift`: a probe tool throws a `LostRunError`; the mailbox's terminal event is `.lost`. A second case throws a plain error and settles `.failed`. A third throws `CancellationError` and settles `.cancelled`.
 - [x] `swift test --filter LostRunErrorTests` passes.
-- [ ] Full `swift test` in Router passes. One test fails: `GenerationStallDiagnosticTests` "a streaming turn reports the stall against the fragments it counted". It fails the same way on the unmodified tree, so it is not this change. See the comments.
+- [x] Full `swift test` in Router passes. Verified after the commit: 1065 tests in 106 suites and 83 tests in 10 suites, EXIT=0. The `GenerationStallDiagnosticTests` failure seen during the work is a load-sensitive flake; it did not come back.
 
 ## Workflow
 - Use `/tdd` — write the three-outcome test first, then add the protocol and the branch. #eventplan #multitool-phase-4
