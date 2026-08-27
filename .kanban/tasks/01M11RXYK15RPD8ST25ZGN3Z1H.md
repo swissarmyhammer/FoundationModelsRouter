@@ -41,10 +41,27 @@ comments:
     - 0 failures, 0 skipped, 0 warnings from this package
     - next: ready for review
   timestamp: 2026-08-27T14:41:28.451241+00:00
+- actor: claude-code
+  id: 01m11twbv1wyw86ntcj9mvy15f
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 916db26) — counts: 0 findings, 0 confirmed, 0 refuted; 5 files reviewed
+    - next: none. The task moved to done.
+  timestamp: 2026-08-27T14:44:44.001641+00:00
+- actor: claude-code
+  id: 01m11twy2e1xv9w0wqaqppnbfn
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files (TranscriptEntryPayload.swift, TranscriptEvent.swift, TranscriptReconstruction.swift, TranscriptEntryMapper.swift, TranscriptEventSchemaTests.swift)
+    - test: green — swift build --build-tests clean, zero warnings from this package; swift test 1052 tests/104 suites + 83 tests/10 suites pass, 0 failures, 0 skipped, 2 pre-existing known issues (RealModelHarness.swift:72, BoundedWait.swift:114)
+    - commit: 916db26 — 9 files changed, 99 insertions, 79 deletions (local only, no push)
+    - review: clean — zero new findings, scope HEAD~1..HEAD, 5 files reviewed, 7 validator passes, 0 failed
+    - next: task is in done. Both cards of the metadataOnly removal are complete.
+  timestamp: 2026-08-27T14:45:02.670180+00:00
 depends_on:
 - 01M11RX5BE681ASCKR8MP4G7Q3
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffff8b80
 title: Delete the strippingContent() payload machinery left behind by metadataOnly
 ---
 ## What
