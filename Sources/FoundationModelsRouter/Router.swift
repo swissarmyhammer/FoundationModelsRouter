@@ -1,4 +1,5 @@
 import Foundation
+import Tracing
 
 /// The default in-flight fork-session ceiling per resolved profile. It is
 /// `public` because a `public` initializer uses it as a default argument.
@@ -125,6 +126,11 @@ public actor Router {
     /// How much of a session's activity is recorded, enforced through ``recorder``.
     let recordingLevel: RecordingLevel
 
+    /// The tracer every vended handle opens its embed span through, or `nil`
+    /// to read `InstrumentationSystem.tracer` at call time. See
+    /// ``RoutedModel/tracer``.
+    let tracer: (any Tracer)?
+
     /// The machine probe behind the budget.
     private let probe: any MachineProbe
 
@@ -163,6 +169,10 @@ public actor Router {
     ///   - recorder: The recorder, or `nil` for a JSONL recorder under `recordingsDir` or ``NoneRecorder``.
     ///   - recordingLevel: How much to record.
     ///   - redact: An optional redaction hook applied to recorded text.
+    ///   - tracer: The tracer every vended handle opens its embed span
+    ///     through, or `nil` (the default) to read
+    ///     `InstrumentationSystem.tracer` at call time. See
+    ///     ``RoutedModel/tracer``.
     ///   - probe: The machine probe behind the budget.
     ///   - metadataSource: The metadata fetch behind sizing.
     ///   - loader: The download and load step. Pass a configured ``LiveModelLoader`` for real loading.
@@ -175,6 +185,7 @@ public actor Router {
         recorder: (any TranscriptRecorder)? = nil,
         recordingLevel: RecordingLevel = .full,
         redact: (@Sendable (String) -> String)? = nil,
+        tracer: (any Tracer)? = nil,
         probe: any MachineProbe = SystemMachineProbe(),
         metadataSource: any MetadataSource = HuggingFaceMetadataSource(),
         loader: any ModelLoader = UnconfiguredModelLoader()
@@ -196,6 +207,7 @@ public actor Router {
             self.recorder = GatingRecorder(level: recordingLevel, redact: redact, wrapping: baseRecorder)
         }
         self.recordingLevel = recordingLevel
+        self.tracer = tracer
         self.probe = probe
         self.hostProfileCache = HostProfileCache(cacheDir: resolvedCacheDir)
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
@@ -734,7 +746,8 @@ public actor Router {
     }
 
     /// Builds a routed model handle for `slot` from its pooled entry, with
-    /// this router's id, recorder, transcripts root, and the entry's gates.
+    /// this router's id, recorder, tracer, transcripts root, and the entry's
+    /// gates.
     ///
     /// - Parameters:
     ///   - slot: The slot this handle fills.
@@ -771,7 +784,8 @@ public actor Router {
                 resolution: resolution,
                 resolvedProfile: resolvedProfile
             ),
-            gates: entry.gates
+            gates: entry.gates,
+            tracer: tracer
         )
     }
 

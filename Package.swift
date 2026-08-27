@@ -9,6 +9,14 @@ let mlxPackage = "mlx-swift-lm"
 let ulidPackage = "ULID.swift"
 let packageName = "FoundationModelsRouter"
 
+// Apple's Swift community tracing abstraction, NOT an OpenTelemetry SDK. The
+// library calls `withSpan` through `InstrumentationSystem.tracer`, which is a
+// no-op until a host application bootstraps a backend (swift-otel, for
+// example), so an application that does not trace pays nothing and takes on no
+// exporter dependency. The test target links the package's `InMemoryTracing`
+// product to read the finished spans back.
+let tracingPackage = "swift-distributed-tracing"
+
 // Hugging Face Hub client and tokenizer packages. The `mlx-foundationmodels`
 // fork bundles no default Hub client: its `MLXHuggingFace` macros
 // (`#hubDownloader()` / `#huggingFaceTokenizerLoader()`) expand to code that
@@ -49,6 +57,12 @@ let mlxProducts: [Target.Dependency] = [
 // re-exports this module and adds a thin compatibility shim, so the router's
 // `ULID` API surface stays the same while correctness lives in the library.
 let ulidProduct: Target.Dependency = .product(name: "ULID", package: ulidPackage)
+
+// The tracing abstraction the library target calls `withSpan` through, and the
+// in-memory tracer the unit test target reads the finished spans back from.
+let tracingProduct: Target.Dependency = .product(name: "Tracing", package: tracingPackage)
+let inMemoryTracingProduct: Target.Dependency = .product(
+    name: "InMemoryTracing", package: tracingPackage)
 
 // The Hub client + tokenizer products a live `LiveModelLoader` is constructed
 // from (via the `MLXHuggingFace` macros). The RealModelSupport target, the
@@ -105,11 +119,15 @@ let package = Package(
             url: "https://github.com/huggingface/\(transformersPackage)",
             from: "1.3.0"
         ),
+        .package(
+            url: "https://github.com/apple/\(tracingPackage).git",
+            from: "1.4.1"
+        ),
     ],
     targets: [
         .target(
             name: packageName,
-            dependencies: mlxProducts + [ulidProduct],
+            dependencies: mlxProducts + [ulidProduct, tracingProduct],
             path: "Sources/\(packageName)",
             // The DocC catalog (task ^j0pp9yp) is documentation input for
             // `docc`, not build input; the Swift Build backend does not
@@ -126,6 +144,7 @@ let package = Package(
             dependencies: [
                 .target(name: packageName), .target(name: "\(packageName)TestSupport"),
                 .target(name: "\(packageName)RealModelSupport"),
+                inMemoryTracingProduct,
             ] + mlxProducts,
             path: "Tests/\(packageName)Tests"
         ),

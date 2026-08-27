@@ -1,4 +1,5 @@
 import Foundation
+import Tracing
 
 /// A lock-guarded, weak holder for a routed model's owning ``LanguageModelProfile``.
 ///
@@ -54,6 +55,14 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     /// The recorder a vended session or embed call is born holding.
     let recorder: any TranscriptRecorder
 
+    /// The tracer an embed call opens its span through, or `nil` to read
+    /// `InstrumentationSystem.tracer` at call time.
+    ///
+    /// `nil` is the resolve-late shape, and it is the default: an application
+    /// that bootstraps a tracing backend *after* it constructs its ``Router``
+    /// still traces, because nothing is captured until the call itself.
+    let tracer: (any Tracer)?
+
     /// Where this handle's sessions record durably, with the sidecar writer, or
     /// `nil` when recording to memory or none.
     let durableRecording: DurableRecording?
@@ -91,6 +100,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     ///   - recorder: The recorder a vended session or embed call is born holding.
     ///   - durableRecording: The durable recording root and sidecar writer, or `nil`.
     ///   - gates: The gates `container` carries.
+    ///   - tracer: The tracer an embed call opens its span through, or `nil`
+    ///     (the default) to read `InstrumentationSystem.tracer` at call time.
     package init(
         slot: ModelSlot,
         chosen: ModelRef,
@@ -100,7 +111,8 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         routerId: ULID,
         recorder: any TranscriptRecorder,
         durableRecording: DurableRecording? = nil,
-        gates: ResidentModelGates
+        gates: ResidentModelGates,
+        tracer: (any Tracer)? = nil
     ) {
         self.slot = slot
         self.chosen = chosen
@@ -109,6 +121,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
         self.container = container
         self.routerId = routerId
         self.recorder = recorder
+        self.tracer = tracer
         self.durableRecording = durableRecording
         generationGate = gates.generation
         forkAdmissionGate = gates.forkAdmission

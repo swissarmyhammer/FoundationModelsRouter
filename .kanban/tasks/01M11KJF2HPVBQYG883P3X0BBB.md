@@ -84,8 +84,25 @@ comments:
     - evidence: `swift build --build-tests 2>&1` — exit 0, no compiler warnings from this package (only the pre-existing vendored `mlx-swift_Cmlx.bundle` build-system warning). `swift test` (full suite, no `--filter`) — exit 0, 1058 tests in 106 suites passed with 2 known issues, plus 83 tests in 10 suites passed. Known-issue locations match the documented pre-existing pair exactly: `RealModelHarness.swift:72` and `BoundedWait.swift:114`. No failures, no skipped tests.
     - next: ready for review.
   timestamp: 2026-08-27T15:16:08.995432+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m11ww8z497rpj8yx6dcqfw73
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit a66e1e5) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 8 files reviewed; 2 `.kanban/` files excluded by `.reviewignore`.
+    - next: task moved to done. No open findings. The dependent card ^026kke5 moves the embed timing and provenance to OpenTelemetry.
+  timestamp: 2026-08-27T15:19:38.212597+00:00
+- actor: claude-code
+  id: 01m11wwv3cdm9401vxf3n6tq9y
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 8 files (RoutedEmbedder.swift, TranscriptRecorder.swift, GatingRecorder.swift, TranscriptEvent.swift, and 4 test files). Two card statements were wrong because three commits landed after the card was written: the cited test `metadataOnlyWiredThroughRouter` no longer exists (^mp4g7q3 deleted it), and `append(_:)` had 12 test call sites, not only the embed path. Both are recorded on the card.
+    - test: green — swift build --build-tests exit 0, zero warnings from this package; swift test 1058 tests/106 suites + 83 tests/10 suites pass, 0 failures, 0 skipped, 2 pre-existing known issues (RealModelHarness.swift:72, BoundedWait.swift:114). The count fell from 1059 to 1058 because embedSwallowsSinkFailure was deliberately deleted.
+    - commit: a66e1e5 — 10 files changed, 157 insertions, 141 deletions (local only, no push)
+    - review: clean — zero new findings, scope HEAD~1..HEAD, 8 files reviewed, 7 validators, 0 failed
+    - next: task is in done. ^026kke5 (OpenTelemetry span for embed) is now unblocked.
+  timestamp: 2026-08-27T15:19:56.780268+00:00
+position_column: done
+position_ordinal: ffff8c80
 title: 'Remove embed(texts:) from the transcript: drop the .embedding recording path'
 ---
 ## What

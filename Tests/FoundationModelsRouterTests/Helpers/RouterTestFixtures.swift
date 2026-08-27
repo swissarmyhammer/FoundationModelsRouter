@@ -1,4 +1,5 @@
 import Foundation
+import Tracing
 
 @testable import FoundationModelsRouter
 
@@ -142,19 +143,24 @@ enum RouterTestFixtures {
     ///   - recorder: The transcript recorder. Defaults to a fresh
     ///     ``InMemoryRecorder``.
     ///   - loader: The model loader vending the test's stub containers.
+    ///   - tracer: The tracer every vended handle opens its embed span
+    ///     through, or `nil` (the default) to read
+    ///     `InstrumentationSystem.tracer` at call time.
     /// - Returns: The router.
     static func makeRouter(
         id: ULID = .generate(),
         cacheDir: URL,
         recordingsDir: URL? = nil,
         recorder: any TranscriptRecorder = InMemoryRecorder(),
-        loader: any ModelLoader
+        loader: any ModelLoader,
+        tracer: (any Tracer)? = nil
     ) -> Router {
         Router(
             id: id,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder,
+            tracer: tracer,
             probe: stubProbe,
             metadataSource: StubMetadataSource(raw: rawMetadata),
             loader: loader

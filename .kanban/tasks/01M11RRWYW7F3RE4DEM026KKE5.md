@@ -1,10 +1,66 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m11xsp2gnd4kwejdatgd7d69
+  text: |-
+    Research, before the code.
+
+    Line numbers on the card are stale (four commits landed after it was written). Every site was found by symbol name and read again:
+
+    - `RoutedEmbedder.swift` was already down to the one line `try await container.embed(texts: texts)`, with no `import Foundation` and no recorder or timing code. The wrap keeps that shape: no recorder came back, and no `started`/`ms` timing.
+    - `RoutedModel` is in `LanguageModelProfile.swift`; its `package init` ends with `gates:`, so `tracer:` was added after it.
+    - `Router.init` carries `recorder:`, `recordingLevel:` and `redact:` together; `tracer:` was put beside them, after `redact:`.
+    - `makeRoutedModel` is the one place a `RoutedModel` is built from the pool, so one pass-through covers all three slots.
+
+    Facts read from the checked-out package, not assumed:
+
+    - `InstrumentationSystem.tracer` is `any Tracer`, and `Instrument: Sendable`, so `let tracer: (any Tracer)?` is legal in the `Sendable` `RoutedModel`.
+    - `Tracer.withSpan` is callable on the `any Tracer` existential.
+    - `SpanAttributes.get(_:)` reads an attribute back, and `Int.toSpanAttribute()` answers `.int64` on this machine, so the tests compare against `.int64`.
+    - `InMemoryTracer` is a struct over a locked box, so a copy shares the finished-span list.
+
+    Test scaffolding: the suite drives `UndrivenLanguageModelContainer` from `Helpers/UndrivenLanguageModel.swift` rather than a new stub LLM container, because the suite never generates and that helper already exists.
+  timestamp: 2026-08-27T15:35:41.904144+00:00
+- actor: claude-code
+  id: 01m11xv0z5grd792t6rjmcbsd2
+  text: |-
+    TDD record, and two facts the next agent will want.
+
+    RED: `EmbedTracingTests.swift` was written first and `swift build --build-tests` refused it three times over — `extra argument 'tracer' in call` at the `RouterTestFixtures.makeRouter` call in the shared helper, at the second `makeRouter` call, and at the `RoutedEmbedder(...)` construction. That is the failure the card predicted, and no other error stood beside it.
+
+    GREEN: after the thread-through and the `withSpan` wrap, the three tests pass.
+
+    Two facts:
+
+    - `swift package resolve` DROPPED a stale `FoundationModelsOperationTool` entry from `Package.resolved` on the way in. `Package.resolved` is untracked in this repository, so nothing of that reaches the diff; the entry belonged to no dependency of `Package.swift`.
+    - The build writes one warning on every run: `missing creator for mutated node: (.build/out/Products/Debug/mlx-swift_Cmlx.bundle/Contents/MacOS)`. It names an mlx-swift product bundle, and this card adds no target and no resource, so it is not ours.
+
+    The first full `swift test` reported 2 issues in `Generation stall diagnostic` beside the 2 known issues. That suite is the timing-sensitive one the card warns about; the re-run answered 1061 tests in 107 suites passed with the 2 known issues alone, and 83 tests in 10 suites passed.
+  timestamp: 2026-08-27T15:36:25.829620+00:00
+- actor: claude-code
+  id: 01m11xv6pmqtaamd8cqt6sd7tb
+  text: |-
+    ### implement — changed
+    - evidence: 6 files — Package.swift, Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/LanguageModelProfile.swift, Sources/FoundationModelsRouter/RoutedEmbedder.swift, Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift, Tests/FoundationModelsRouterTests/EmbedTracingTests.swift (new). `swift build --build-tests` after touching every Swift source of the package: exit 0, zero warnings of ours. `swift test`: 1061 tests in 107 suites passed with the 2 known issues, and 83 tests in 10 suites passed.
+    - next: /review
+  timestamp: 2026-08-27T15:36:31.700387+00:00
+- actor: claude-code
+  id: 01m11xyx7cy8kcpcha0s3dtc9e
+  text: |-
+    ### test — green
+    - evidence: `swift build --build-tests 2>&1` clean, no warnings from this package (only the pre-existing mlx-swift `missing creator for mutated node` warning).
+    - evidence: `swift test` run 1 showed a false red: "Test run with 1061 tests in 107 suites failed after 5.851 seconds with 4 issues (including 2 known issues)" — the 2 extra issues were both in `GenerationStallDiagnosticTests.swift:292` / `BoundedWait.swift:114`, the documented timing-sensitive flake.
+    - evidence: re-run 2 was clean — `Test run with 1061 tests in 107 suites passed after 5.019 seconds with 2 known issues` (the expected pre-existing known issues at `RealModelHarness.swift:72` and `BoundedWait.swift:114`) and `Test run with 83 tests in 10 suites passed after 0.176 seconds`. Counts match the expected 1061/107 plus 83/10.
+    - evidence: new suite "Embed tracing" (`Tests/FoundationModelsRouterTests/EmbedTracingTests.swift`, 3 `@Test` cases) passed — accounts for the 3-test increase from 1058/106.
+    - No skipped tests found (word "skipped" only appears inside two unrelated test names, both passing).
+    - No new warnings from this package.
+  timestamp: 2026-08-27T15:38:33.068950+00:00
 depends_on:
 - 01M11KJF2HPVBQYG883P3X0BBB
-position_column: todo
-position_ordinal: '8380'
+position_column: doing
+position_ordinal: '80'
 title: Emit an OpenTelemetry span for every embed(texts:) call via swift-distributed-tracing
 ---
 ## What
@@ -58,28 +114,28 @@ Attribute names are stable API: document them in the `embed` doc comment. Never 
 
 Subtasks:
 
-- [ ] Add the package dependency and the two product links in `Package.swift`; `swift build` resolves and compiles.
-- [ ] Write `Tests/FoundationModelsRouterTests/EmbedTracingTests.swift` (see Tests) — fails to compile until `tracer:` exists on `Router.init` and `RouterTestFixtures.makeRouter`.
-- [ ] Thread `tracer` through `Router.init` → `makeRoutedModel` → `RoutedModel.init`; add `tracer: (any Tracer)? = nil` to `RouterTestFixtures.makeRouter` (`Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:146`).
-- [ ] Wrap `embed(texts:)` in `withSpan` with the four attributes; update its doc comment.
-- [ ] Clean build with zero warnings, full `swift test` green.
+- [x] Add the package dependency and the two product links in `Package.swift`; `swift build` resolves and compiles.
+- [x] Write `Tests/FoundationModelsRouterTests/EmbedTracingTests.swift` (see Tests) — fails to compile until `tracer:` exists on `Router.init` and `RouterTestFixtures.makeRouter`.
+- [x] Thread `tracer` through `Router.init` → `makeRoutedModel` → `RoutedModel.init`; add `tracer: (any Tracer)? = nil` to `RouterTestFixtures.makeRouter` (`Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift:146`).
+- [x] Wrap `embed(texts:)` in `withSpan` with the four attributes; update its doc comment.
+- [x] Clean build with zero warnings, full `swift test` green.
 
 ## Acceptance Criteria
 
-- [ ] `Package.resolved` lists `swift-distributed-tracing` and `swift-service-context`; no `swift-otel` package is added to this library.
-- [ ] With `Router(tracer: InMemoryTracer())`, one `embed(texts: ["a", "b"])` produces exactly one finished span named `"FoundationModelsRouter.embed"`, kind `.client`, with attributes `router.id == router.id.description`, `model.ref == profile.embedding.chosen.stringValue`, `embedding.input_count == 2`, `embedding.dimension == RouterTestFixtures.stubDimension`, and `errors.isEmpty`.
-- [ ] When the embedding container throws, `embed` rethrows the same error and the single finished span has `errors.count == 1`.
-- [ ] With `tracer: nil` and no bootstrap, `embed` still returns its vectors (the no-op default tracer) — `ProfileLifecycleTests.embedRecordsNothing` from ^p3x0bbb passes unchanged.
-- [ ] The span carries no attribute whose value contains any input text.
+- [x] `Package.resolved` lists `swift-distributed-tracing` and `swift-service-context`; no `swift-otel` package is added to this library.
+- [x] With `Router(tracer: InMemoryTracer())`, one `embed(texts: ["a", "b"])` produces exactly one finished span named `"FoundationModelsRouter.embed"`, kind `.client`, with attributes `router.id == router.id.description`, `model.ref == profile.embedding.chosen.stringValue`, `embedding.input_count == 2`, `embedding.dimension == RouterTestFixtures.stubDimension`, and `errors.isEmpty`.
+- [x] When the embedding container throws, `embed` rethrows the same error and the single finished span has `errors.count == 1`.
+- [x] With `tracer: nil` and no bootstrap, `embed` still returns its vectors (the no-op default tracer) — `ProfileLifecycleTests.embedRecordsNothing` from ^p3x0bbb passes unchanged.
+- [x] The span carries no attribute whose value contains any input text.
 
 ## Tests
 
-- [ ] New `Tests/FoundationModelsRouterTests/EmbedTracingTests.swift`, `@Suite("Embed tracing")`, `import InMemoryTracing`, `import Tracing`, `@testable import FoundationModelsRouter`. Build the router as `SharedGenerationGateContentionTests.swift:213-222` does (`RouterTestFixtures.makeTempDir`, `StubModelLoader(container:dimension:)`, `RouterTestFixtures.makeRouter(cacheDir:loader:tracer:)`), resolve with `router.resolve(profile:reporting:)` as `ProfileLifecycleTests.swift:255` does:
+- [x] New `Tests/FoundationModelsRouterTests/EmbedTracingTests.swift`, `@Suite("Embed tracing")`, `import InMemoryTracing`, `import Tracing`, `@testable import FoundationModelsRouter`. Build the router as `SharedGenerationGateContentionTests.swift:213-222` does (`RouterTestFixtures.makeTempDir`, `StubModelLoader(container:dimension:)`, `RouterTestFixtures.makeRouter(cacheDir:loader:tracer:)`), resolve with `router.resolve(profile:reporting:)` as `ProfileLifecycleTests.swift:255` does:
   - `embedEmitsOneClientSpanWithAttributes` — assert name, kind, the four attributes, `errors.isEmpty`.
   - `embedFailureIsRecordedOnTheSpan` — define a local `struct ThrowingEmbeddingContainer: LoadedEmbeddingContainer` with the same conformance shape as `StubEmbeddingContainer` (`Helpers/RouterTestFixtures.swift:25-27`) but whose `embed(texts:)` throws. `HandBuiltProfileFixtures.makeProfile` always wraps a `StubEmbeddingContainer`, so do not use it here; construct the handle directly: `RoutedEmbedder(slot: .embedding, chosen:, footprintBytes: 0, resolution: SlotResolution(slot: .embedding, remainingBudgetBytes: 0, chosen:, considered: []), container: ThrowingEmbeddingContainer(), routerId:, recorder: InMemoryRecorder(), gates: ResidentModelGates(maxConcurrentForks: defaultMaxConcurrentForks), tracer: tracer)` (the same call `HandBuiltProfileFixtures.swift:69-78` makes, plus `tracer:`). Then `await #expect(throws: ThrowingEmbeddingContainer.Failure.self) { try await embedder.embed(texts: ["a"]) }`, `finishedSpans.count == 1`, `finishedSpans[0].errors.count == 1`.
   - `embedAttributesNeverCarryInputText` — embed `["needle-7f3a"]`, assert no attribute's `.string` value contains `"needle-7f3a"`.
-- [ ] Run `swift build 2>&1` — expected: exit 0, zero warnings (clean build; a cache-hit build hides warnings).
-- [ ] Run `swift test` — expected: all tests pass. Do not use a display-name `--filter`; it matches nothing and exits 0.
+- [x] Run `swift build 2>&1` — expected: exit 0, zero warnings (clean build; a cache-hit build hides warnings).
+- [x] Run `swift test` — expected: all tests pass. Do not use a display-name `--filter`; it matches nothing and exits 0.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass.
