@@ -60,9 +60,26 @@ extension RoutedSessionActor {
         // attaches nothing below — byte-identical to a session that never
         // used an outbox.
         let pendingEvents = await outbox.drainPendingEvents().map(\.event)
+        await notifyTurnBoundaryTools()
         return try await runTurn(
             grammar: grammar, turnId: turnId, promptId: nil, pendingEvents: pendingEvents,
             ownPrompt: prompt, onEvent: onEvent, body)
+    }
+
+    /// Calls ``TurnBoundaryTool/turnWillBegin()`` once on every mounted tool
+    /// that conforms, in mount order — the clock tick a tool uses to apply a
+    /// change it prepared at the side (task w77k41m).
+    ///
+    /// Runs at both drain sites (this turn's own ``outbox`` drain in
+    /// ``generate(grammar:prompt:onEvent:_:)`` and ``dispatchNextPrompt()``'s),
+    /// after the drain and before the model call of the turn — so a turn that
+    /// fails before the model call still made the hook call, and a fork's
+    /// hook fires only on the fork's own tools (``ForkableTool`` composition).
+    private func notifyTurnBoundaryTools() async {
+        for tool in tools {
+            guard let boundaryTool = tool as? any TurnBoundaryTool else { continue }
+            await boundaryTool.turnWillBegin()
+        }
     }
 
     /// Composes a turn's own event sink with the session-scoped fan-out.
@@ -472,6 +489,7 @@ extension RoutedSessionActor {
 
         let drained = await outbox.drainForDispatch()
         let pendingEvents = drained.events.map(\.event)
+        await notifyTurnBoundaryTools()
         guard let queued = drained.prompt else {
             return try await deliverSettledRunsIfAny(turnId: turnId, pendingEvents: pendingEvents)
         }

@@ -3,7 +3,7 @@ import FoundationModels
 
 /// A decorator that runs each call of the wrapped tool in the background. Every call posts one progress event, tracks the run in the session's ``SessionMailbox``, and returns the ``PendingRunEnvelope`` at once.
 /// The run settles with exactly one terminal event: on completion, on cancel, or on timeout. Progress resets the timeout and a pending elicitation suspends it.
-struct BackgroundToolRunner<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool {
+struct BackgroundToolRunner<Arguments: ConvertibleFromGeneratedContent & Sendable>: Tool, TurnBoundaryTool {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, String>
 
@@ -134,5 +134,11 @@ struct BackgroundToolRunner<Arguments: ConvertibleFromGeneratedContent & Sendabl
             work.cancel()
             return .cancelled
         }
+    }
+
+    /// Forwards to the wrapped tool when it conforms, or does nothing — the
+    /// background counterpart of ``RunToCompletionRunner/turnWillBegin()``.
+    func turnWillBegin() async {
+        await (wrapped as? any TurnBoundaryTool)?.turnWillBegin()
     }
 }

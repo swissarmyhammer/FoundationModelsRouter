@@ -4,7 +4,7 @@ import FoundationModels
 /// A decorator that binds a per-call ``ToolContext`` around a non-`String`-output tool and returns its output unchanged. It synthesizes no events.
 struct ContextBindingTool<
     Arguments: ConvertibleFromGeneratedContent, Output: PromptRepresentable
->: Tool {
+>: Tool, TurnBoundaryTool {
     /// The wrapped tool. Internal so wiring tests can assert the decorator chain.
     let wrapped: any Tool<Arguments, Output>
 
@@ -86,5 +86,11 @@ struct ContextBindingTool<
         } onCancel: {
             cancellationFlag.request()
         }
+    }
+
+    /// Forwards to the wrapped tool when it conforms, or does nothing — the
+    /// binding-only counterpart of ``RunToCompletionRunner/turnWillBegin()``.
+    func turnWillBegin() async {
+        await (wrapped as? any TurnBoundaryTool)?.turnWillBegin()
     }
 }
