@@ -65,8 +65,25 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Hosting/ToolDecorator.swift (new), Hosting/RunToCompletionRunner.swift, Hosting/BackgroundToolRunner.swift, Hosting/ContextBindingTool.swift, Session/ToolOutputCapping.swift. Both Review Findings items are checked. `swift build` clean; `swift test` 1061 tests/105 suites + 83 tests/10 suites, EXIT=0, 2 pre-existing known issues.
     - next: ready for /review
   timestamp: 2026-08-27T09:00:17.906073+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m117cw9wtbaz1jz5dcz2jknq
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 52614a9) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. Both prior findings of 2026-08-27 03:49 are answered: the four copies of `turnWillBegin()` are removed, and one shared default is in `Sources/FoundationModelsRouter/Hosting/ToolDecorator.swift`.
+    - next: none — task moved to done.
+  timestamp: 2026-08-27T09:04:13.628665+00:00
+- actor: claude-code
+  id: 01m117ddy0rd8sn2xj3dz62drw
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 5 files; new Sources/FoundationModelsRouter/Hosting/ToolDecorator.swift holds one shared turnWillBegin default, and the four copies are deleted from RunToCompletionRunner.swift, BackgroundToolRunner.swift, ContextBindingTool.swift and Session/ToolOutputCapping.swift
+    - test: green — swift test, EXIT=0, 1061 tests in 105 suites + 83 tests in 10 suites, 0 failures
+    - commit: 52614a9
+    - review: clean — zero new findings, 7 validators attempted, 0 failed; both prior findings confirmed answered
+    - next: the task is in done
+  timestamp: 2026-08-27T09:04:31.680381+00:00
+position_column: done
+position_ordinal: ffff8a80
 title: Add a turn-boundary hook for mounted tools (TurnBoundaryTool)
 ---
 ## What
