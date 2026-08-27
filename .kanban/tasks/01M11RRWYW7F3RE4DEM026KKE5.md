@@ -57,10 +57,27 @@ comments:
     - No skipped tests found (word "skipped" only appears inside two unrelated test names, both passing).
     - No new warnings from this package.
   timestamp: 2026-08-27T15:38:33.068950+00:00
+- actor: claude-code
+  id: 01m11y7207qmnsr4a9zkwh3tqt
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit dc902e6) — 0 findings, 0 confirmed, 0 refuted, 7 validator runs attempted, 0 failed. 6 files reviewed; 4 `.kanban/` files excluded by `.reviewignore`.
+    - next: task moved to done. No open findings.
+  timestamp: 2026-08-27T15:43:00.103055+00:00
+- actor: claude-code
+  id: 01m11y7ngmtrr57p342xycy2hg
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 6 files (Package.swift, Router.swift, LanguageModelProfile.swift, RoutedEmbedder.swift, RouterTestFixtures.swift, EmbedTracingTests.swift new). The new suite was written first and failed to compile with "extra argument 'tracer' in call" at three sites — the red state the card predicted.
+    - test: green — swift build --build-tests clean, zero warnings from this package; swift test 1061 tests/107 suites + 83 tests/10 suites pass, 0 failures, 0 skipped, 2 pre-existing known issues (RealModelHarness.swift:72, BoundedWait.swift:114). Count rose from 1058 because the Embed tracing suite adds 3 tests. Run 1 flaked in GenerationStallDiagnosticTests and BoundedWait under contention; the re-run was clean.
+    - commit: dc902e6 — 10 files changed, 341 insertions, 23 deletions (local only, no push). Package.resolved is untracked and gitignored in this repo, so the new dependency pins do not reach the diff.
+    - review: clean — zero new findings, scope HEAD~1..HEAD, 6 files reviewed, 7 validators, 0 failed
+    - next: task is in done. The embed telemetry thread (^p3x0bbb then this card) is complete.
+  timestamp: 2026-08-27T15:43:20.084768+00:00
 depends_on:
 - 01M11KJF2HPVBQYG883P3X0BBB
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffff8d80
 title: Emit an OpenTelemetry span for every embed(texts:) call via swift-distributed-tracing
 ---
 ## What
