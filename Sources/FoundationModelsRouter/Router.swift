@@ -7,12 +7,10 @@ public let defaultMaxConcurrentForks = 4
 /// The default headroom reserved out of the machine budget for OS and app use.
 public let defaultHeadroomReserveBytes: Int64 = 4 << 30
 
-/// How much of a session's activity is recorded.
-public enum RecordingLevel: String, Sendable, Codable, Equatable {
+/// Whether a session's activity is recorded: `off` or `full`.
+public enum RecordingLevel: String, Sendable, Codable, Equatable, CaseIterable {
     /// Record nothing.
     case off
-    /// Record event metadata (slots, models, metering) but not prompt/response text.
-    case metadataOnly
     /// Record everything, including prompt and response text.
     case full
 }
@@ -190,8 +188,8 @@ public actor Router {
         // Verbatim recording — `.full` with no `redact` hook — needs no gate, so
         // the base sink is threaded down directly; this keeps a session and embed
         // call *born holding the router's recorder itself* in the common case. Any
-        // trimming (`.metadataOnly`, `.off`) or redaction wraps the base sink so
-        // every event source honors it.
+        // trimming (`.off`) or redaction wraps the base sink so every event
+        // source honors it.
         if recordingLevel == .full, redact == nil {
             self.recorder = baseRecorder
         } else {

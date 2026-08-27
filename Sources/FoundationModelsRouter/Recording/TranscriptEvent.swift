@@ -71,8 +71,7 @@ public struct TranscriptEvent: Sendable, Codable, Equatable {
     public let kind: Kind
     /// The guided-generation grammar in force, when applicable.
     let grammar: String?
-    /// The event's body text, when the recording level keeps it. `nil` after
-    /// ``RecordingLevel/metadataOnly`` trims it.
+    /// The event's body text, when the event carries one.
     public let text: String?
     /// Prompt/input tokens metered for this event, when applicable.
     public let tokensIn: Int?

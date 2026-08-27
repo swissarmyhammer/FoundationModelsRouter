@@ -558,35 +558,6 @@ struct RecordingLanguageModelTests {
         #expect(events.isEmpty)
     }
 
-    @Test("RecordingLevel.metadataOnly strips body text but keeps kinds and provenance")
-    @MainActor
-    func levelMetadataOnlyStripsBodies() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let recorder = InMemoryRecorder()
-        let transcripts = RecordedTranscripts()
-        let model = StubUnderlyingModel(cannedResponseText: "a secret reply", transcripts: transcripts)
-        let router = Self.makeRouter(
-            container: StubLanguageModelContainer(model: model),
-            recorder: recorder,
-            recordingLevel: .metadataOnly,
-            cacheDir: dir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let handle = profile.standard.makeLanguageModel()
-        let session = LanguageModelSession(model: handle, tools: [], instructions: "be terse")
-        _ = try await session.respond(to: "a secret prompt")
-        await handle.sync(session.transcript)
-
-        let events = await recorder.events
-        #expect(events.contains { $0.kind == .prompt })
-        #expect(events.contains { $0.kind == .response })
-        #expect(events.allSatisfy { $0.text == nil })
-        #expect(events.allSatisfy { $0.routerId == router.id })
-    }
-
     // MARK: - Redaction
 
     @Test("the redact hook transforms recorded prompt and response text")

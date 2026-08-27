@@ -162,7 +162,7 @@ struct SessionSidecarTests {
             context: 8_192,
             instructions: "You are terse.",
             grammar: #"{"type":"object"}"#,
-            recordingLevel: .metadataOnly,
+            recordingLevel: .full,
             forkedAtEntryCount: forkedAtEntryCount,
             profile: SessionSidecar.ResolvedProfile(
                 definitionName: "coding",
@@ -871,37 +871,6 @@ struct SessionSidecarTests {
         #expect(!FileManager.default.fileExists(atPath: routerDir.path))
         _ = root
         _ = fork
-    }
-
-    @Test("RecordingLevel.metadataOnly still writes sidecars — only turn content is trimmed")
-    @MainActor
-    func metadataOnlyStillWritesSidecars() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let router = Self.makeRouter(
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir,
-            recordingLevel: .metadataOnly
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let root = profile.standard.makeSession()
-        let fork = try await root.fork(workingDirectory: nil)
-
-        let rootDir =
-            recordingsDir
-            .appendingPathComponent(router.id.description, isDirectory: true)
-            .appendingPathComponent(root.id.description, isDirectory: true)
-        let forkDir = rootDir.appendingPathComponent(fork.id.description, isDirectory: true)
-
-        #expect(try SessionSidecar.read(in: rootDir)?.recordingLevel == .metadataOnly)
-        #expect(try SessionSidecar.read(in: forkDir)?.recordingLevel == .metadataOnly)
     }
 
     // MARK: - Best-effort write failure

@@ -503,42 +503,37 @@ struct TranscriptReconstructionTests {
         #expect(structured.schemaName == NoteSegment.schemaName)
     }
 
-    // MARK: - metadataOnly and v1 legacy: distinct typed errors
+    // MARK: - Pre-existing stripped payloads and v1 legacy: distinct typed errors
 
-    @Test("reconstruction of a metadataOnly-stripped payload throws the contentRemoved error")
-    @MainActor
-    func metadataOnlyContentRemovedThrows() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
+    @Test("a pre-existing recording line whose payload carries contentRemoved still decodes and throws the contentRemoved error")
+    func preExistingContentRemovedPayloadStillThrows() throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
 
-        let registry = BackendRegistry()
-        let container = TrackedLLMContainer(text: Self.cannedText, registry: registry)
-        let router = Self.makeRouter(
-            container: container,
-            recorder: JSONLRecorder(directory: recordingsDir),
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir,
-            recordingLevel: .metadataOnly
+        // No live recording level can write this line any more; recordings
+        // made before content stripping was removed can still carry it, and
+        // the reader must keep decoding it and refusing it honestly.
+        let sessionId = ULID.generate()
+        let sessionDir = try Self.makeSessionDir(
+            dir.appendingPathComponent(sessionId.description, isDirectory: true))
+        let json = """
+            {"routerId":"\(ULID.generate().description)","sessionId":"\(sessionId.description)","seq":0,"ts":0,"kind":"prompt","entry":{"entryId":"e1","contentRemoved":true}}
+            """
+        try json.write(
+            to: sessionDir.appendingPathComponent("transcript.jsonl", isDirectory: false),
+            atomically: true,
+            encoding: .utf8
         )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
 
-        let root = profile.standard.makeSession()
-        _ = try await root.respond(to: "turn 1")
-
-        let tree = try TranscriptTree.load(
-            under: RouterTestFixtures.routerDirectory(routerId: router.id, recordingsDir: recordingsDir))
-        let events = try tree.events(forSession: root.id)
+        let tree = try TranscriptTree.load(under: dir)
+        let events = try tree.events(forSession: sessionId)
         let promptEvent = try #require(events.first { $0.kind == .prompt })
         #expect(promptEvent.entry?.contentRemoved == true)
 
         #expect(
-            throws: TranscriptReconstructionError.contentRemoved(session: root.id, seq: promptEvent.seq)
+            throws: TranscriptReconstructionError.contentRemoved(session: sessionId, seq: promptEvent.seq)
         ) {
-            _ = try tree.effectiveTranscript(forSession: root.id)
+            _ = try tree.effectiveTranscript(forSession: sessionId)
         }
     }
 
@@ -570,8 +565,8 @@ struct TranscriptReconstructionTests {
     @Test("a fabricated v1 turn (prompt then response, both entry-less, response shaped exactly like the router's synthetic close) throws on the prompt event, never silently skipping the response as if it were a failed-turn close")
     func v1TurnWithResponseShapedLikeBodylessCloseThrowsOnThePromptFirst() throws {
         // This pins down the reasoning in `isFailedTurnBodylessClose`'s doc
-        // comment: a genuine v1 `.response` event recorded at `metadataOnly`
-        // decodes with the exact same shape as the router's v2 synthetic
+        // comment: a genuine v1 `.response` event recorded with its body
+        // stripped decodes with the exact same shape as the router's v2 synthetic
         // bodyless close (`entry == nil`, `text == nil`, `ms` set) — the two
         // are not distinguishable from that one event's fields alone. What
         // makes this safe is that the turn's own `.prompt` event (also
@@ -587,8 +582,8 @@ struct TranscriptReconstructionTests {
         let sessionDir = try Self.makeSessionDir(
             dir.appendingPathComponent(sessionId.description, isDirectory: true))
         let routerId = ULID.generate().description
-        // Line 1: a v1 `.prompt` (no `entry` key, `text` stripped by
-        // metadataOnly, no `ms` — v1's bracket never stamped `ms` on prompt
+        // Line 1: a v1 `.prompt` (no `entry` key, `text` stripped at
+        // recording time, no `ms` — v1's bracket never stamped `ms` on prompt
         // events). Line 2: a v1 `.response` shaped exactly like the router's
         // v2 synthetic bodyless close.
         let lines = [

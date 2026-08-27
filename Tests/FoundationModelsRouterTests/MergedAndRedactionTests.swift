@@ -12,8 +12,7 @@ import Testing
 ///    even when concurrent generation across sessions/forks interleaves the
 ///    per-file appends.
 /// 2. ``GatingRecorder`` — enforcing the ``RecordingLevel`` and the ``Router``'s
-///    `redact` hook: `off` records nothing, `metadataOnly` drops the body text
-///    but keeps counts/kinds/provenance, `full` keeps bodies, and `redact`
+///    `redact` hook: `off` records nothing, `full` keeps bodies, and `redact`
 ///    transforms recorded text before it is written. The gate is wired through
 ///    the recorder the router hands down, so both the session chokepoint and
 ///    ``RoutedModel/embed(texts:)`` honor it, and a sink write failure stays
@@ -173,23 +172,10 @@ struct MergedAndRedactionTests {
         #expect(!FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    @Test("level metadataOnly omits the body but keeps counts and kinds")
-    func levelMetadataOnlyOmitsBody() async throws {
-        let inner: InMemoryRecorder = .inMemory
-        let recorder: any TranscriptRecorder = GatingRecorder(level: .metadataOnly, redact: nil, wrapping: inner)
-        await recorder.append(samplePartial(kind: .prompt, text: "sensitive body"))
-
-        let events = await inner.events
-        #expect(events.count == 1)
-        let event = try #require(events.first)
-        // Body dropped, everything else preserved.
-        #expect(event.text == nil)
-        #expect(event.kind == .prompt)
-        #expect(event.tokensIn == 3)
-        #expect(event.tokensOut == 5)
-        #expect(event.ms == 7)
-        #expect(event.slot == .standard)
-        #expect(event.grammar == "json")
+    @Test("RecordingLevel has exactly two cases, off and full, and no metadataOnly")
+    func recordingLevelHasNoMetadataOnlyCase() {
+        #expect(RecordingLevel(rawValue: "metadataOnly") == nil)
+        #expect(Set(RecordingLevel.allCases) == [.off, .full])
     }
 
     @Test("level full writes the body verbatim")
@@ -247,8 +233,7 @@ struct MergedAndRedactionTests {
     // MARK: - Structured entry payload gating (unit)
 
     /// Builds a payload exercising every segment kind, tool definitions, tool
-    /// calls, and every other field the metadataOnly-stripping and
-    /// full-redaction paths must handle.
+    /// calls, and every other field the full-redaction path must handle.
     private func richEntryPayload() -> TranscriptEntryPayload {
         TranscriptEntryPayload(
             entryId: "entry-1",
@@ -281,84 +266,6 @@ struct MergedAndRedactionTests {
             responseFormatName: "Weather",
             responseFormatSchemaJSON: #"{"secret":"format"}"#
         )
-    }
-
-    @Test("metadataOnly strips entry payload content but keeps shape")
-    func metadataOnlyStripsEntryPayloadContent() async throws {
-        let inner: InMemoryRecorder = .inMemory
-        let recorder: any TranscriptRecorder = GatingRecorder(level: .metadataOnly, redact: nil, wrapping: inner)
-        let payload = richEntryPayload()
-        let partial = TranscriptEvent.Partial(
-            routerId: .generate(),
-            sessionId: .generate(),
-            kind: .instructions,
-            text: "sensitive flattened body",
-            entry: payload
-        )
-        await recorder.append(partial)
-
-        let events = await inner.events
-        let event = try #require(events.first)
-        #expect(event.text == nil)
-
-        let entry = try #require(event.entry)
-        #expect(entry.contentRemoved == true)
-        #expect(entry.entryId == "entry-1")
-
-        let segments = try #require(entry.segments)
-        #expect(segments.count == 4)
-
-        guard case .text(let id, let content) = segments[0] else {
-            Issue.record("expected a text segment")
-            return
-        }
-        #expect(id == "seg-text")
-        #expect(content.isEmpty)
-
-        guard case .structure(let structureId, let schemaName, let contentJSON) = segments[1] else {
-            Issue.record("expected a structure segment")
-            return
-        }
-        #expect(structureId == "seg-structure")
-        #expect(schemaName == "Weather")
-        #expect(contentJSON.isEmpty)
-
-        guard case .attachment(let attachmentId, let label, let url) = segments[2] else {
-            Issue.record("expected an attachment segment")
-            return
-        }
-        #expect(attachmentId == "seg-attachment")
-        #expect(label == nil)
-        #expect(url == nil)
-
-        guard case .custom(let customId, let typeDiscriminator, let contentJSON, let description) = segments[3] else {
-            Issue.record("expected a custom segment")
-            return
-        }
-        #expect(customId == "seg-custom")
-        #expect(typeDiscriminator == "com.example.MySegment")
-        #expect(contentJSON.isEmpty)
-        #expect(description == nil)
-
-        let toolDefinitions = try #require(entry.toolDefinitions)
-        #expect(toolDefinitions.count == 1)
-        #expect(toolDefinitions[0].name == "search")
-        #expect(toolDefinitions[0].description.isEmpty)
-        #expect(toolDefinitions[0].parametersSchemaJSON.isEmpty)
-
-        let toolCalls = try #require(entry.toolCalls)
-        #expect(toolCalls.count == 1)
-        #expect(toolCalls[0].id == "call-1")
-        #expect(toolCalls[0].toolName == "search")
-        #expect(toolCalls[0].argumentsJSON.isEmpty)
-
-        #expect(entry.toolName == "search")
-        #expect(entry.assetIds?.count == 2)
-        #expect(entry.assetIds == ["", ""])
-        #expect(entry.signature == nil)
-        #expect(entry.options == payload.options)
-        #expect(entry.responseFormatName == "Weather")
-        #expect(entry.responseFormatSchemaJSON?.isEmpty == true)
     }
 
     @Test("full + redact hook transforms every textual content site in the entry payload")
@@ -421,113 +328,16 @@ struct MergedAndRedactionTests {
         #expect(entry.responseFormatSchemaJSON == #"{"secret":"format"}"#)
     }
 
-    @Test("metadataOnly with no entry payload still nils text and writes no entry content")
-    func metadataOnlyWithNilEntryPayload() async throws {
-        let inner: InMemoryRecorder = .inMemory
-        let recorder: any TranscriptRecorder = GatingRecorder(level: .metadataOnly, redact: nil, wrapping: inner)
-        await recorder.append(samplePartial(kind: .prompt, text: "sensitive body"))
-
-        let events = await inner.events
-        let event = try #require(events.first)
-        #expect(event.text == nil)
-        #expect(event.entry == nil)
-    }
-
     // MARK: - Structured entry payload gating (real JSONL round-trip)
 
-    /// The in-memory tests above (`metadataOnlyStripsEntryPayloadContent`,
-    /// `redactTransformsEntryPayloadContentSites`) only prove the transform
-    /// GatingRecorder applies before handing the event to its inner sink; they
-    /// never prove the stripped/redacted payload survives being encoded to a
-    /// JSON line, written to disk, and decoded back. These two tests close that
-    /// gap: a real `JSONLRecorder` writes into a temp directory and
-    /// `MergedTranscript.merged(under:)` reads the file back, so every
-    /// assertion here is against a value that actually round-tripped through
-    /// `Codable` and disk I/O, not the in-memory transform result.
-    @Test("metadataOnly-stripped entry payload survives a real JSONL write/read round trip")
-    func metadataOnlyEntryPayloadSurvivesJSONLRoundTrip() async throws {
-        let dir = Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let recorder: any TranscriptRecorder = GatingRecorder(
-            level: .metadataOnly,
-            redact: nil,
-            wrapping: JSONLRecorder(directory: dir)
-        )
-        let payload = richEntryPayload()
-        let partial = TranscriptEvent.Partial(
-            routerId: .generate(),
-            sessionId: .generate(),
-            kind: .instructions,
-            text: "sensitive flattened body",
-            entry: payload
-        )
-        await recorder.append(partial)
-
-        let merged = try MergedTranscript.merged(under: dir)
-        let event = try #require(merged.first)
-        #expect(event.text == nil)
-
-        let entry = try #require(event.entry)
-        #expect(entry.contentRemoved == true)
-        #expect(entry.entryId == "entry-1")
-
-        let segments = try #require(entry.segments)
-        #expect(segments.count == 4)
-
-        guard case .text(let id, let content) = segments[0] else {
-            Issue.record("expected a text segment")
-            return
-        }
-        #expect(id == "seg-text")
-        #expect(content.isEmpty)
-
-        guard case .structure(let structureId, let schemaName, let contentJSON) = segments[1] else {
-            Issue.record("expected a structure segment")
-            return
-        }
-        #expect(structureId == "seg-structure")
-        #expect(schemaName == "Weather")
-        #expect(contentJSON.isEmpty)
-
-        guard case .attachment(let attachmentId, let label, let url) = segments[2] else {
-            Issue.record("expected an attachment segment")
-            return
-        }
-        #expect(attachmentId == "seg-attachment")
-        #expect(label == nil)
-        #expect(url == nil)
-
-        guard case .custom(let customId, let typeDiscriminator, let contentJSON, let description) = segments[3] else {
-            Issue.record("expected a custom segment")
-            return
-        }
-        #expect(customId == "seg-custom")
-        #expect(typeDiscriminator == "com.example.MySegment")
-        #expect(contentJSON.isEmpty)
-        #expect(description == nil)
-
-        let toolDefinitions = try #require(entry.toolDefinitions)
-        #expect(toolDefinitions.count == 1)
-        #expect(toolDefinitions[0].name == "search")
-        #expect(toolDefinitions[0].description.isEmpty)
-        #expect(toolDefinitions[0].parametersSchemaJSON.isEmpty)
-
-        let toolCalls = try #require(entry.toolCalls)
-        #expect(toolCalls.count == 1)
-        #expect(toolCalls[0].id == "call-1")
-        #expect(toolCalls[0].toolName == "search")
-        #expect(toolCalls[0].argumentsJSON.isEmpty)
-
-        #expect(entry.toolName == "search")
-        #expect(entry.assetIds?.count == 2)
-        #expect(entry.assetIds == ["", ""])
-        #expect(entry.signature == nil)
-        #expect(entry.options == payload.options)
-        #expect(entry.responseFormatName == "Weather")
-        #expect(entry.responseFormatSchemaJSON?.isEmpty == true)
-    }
-
+    /// The in-memory test above (`redactTransformsEntryPayloadContentSites`)
+    /// only proves the transform GatingRecorder applies before handing the
+    /// event to its inner sink; it never proves the redacted payload survives
+    /// being encoded to a JSON line, written to disk, and decoded back. This
+    /// test closes that gap: a real `JSONLRecorder` writes into a temp
+    /// directory and `MergedTranscript.merged(under:)` reads the file back, so
+    /// every assertion here is against a value that actually round-tripped
+    /// through `Codable` and disk I/O, not the in-memory transform result.
     @Test("full + redact hook entry payload survives a real JSONL write/read round trip")
     func redactEntryPayloadSurvivesJSONLRoundTrip() async throws {
         let dir = Self.makeTempDir()
@@ -597,39 +407,6 @@ struct MergedAndRedactionTests {
     }
 
     // MARK: - Wiring through the router (session + embed)
-
-    @Test("metadataOnly wired through the router drops bodies on both session turns and embeddings")
-    @MainActor
-    func metadataOnlyWiredThroughRouter() async throws {
-        let cacheDir = Self.makeTempDir()
-        let recordingsDir = Self.makeTempDir()
-        defer {
-            try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: recordingsDir)
-        }
-
-        let recorder = InMemoryRecorder()
-        let router = Self.makeRouter(
-            recorder: recorder,
-            recordingLevel: .metadataOnly,
-            redact: nil,
-            cacheDir: cacheDir,
-            recordingsDir: recordingsDir
-        )
-        let profile = try await router.resolve(profile: Self.profile, reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession()
-        _ = try await session.respond(to: "a secret prompt")
-        _ = try await profile.embedding.embed(texts: ["a secret document"])
-
-        let events = await recorder.events
-        // Both the session turn and the embedding honored the level: bodies gone.
-        #expect(events.allSatisfy { $0.text == nil })
-        // But the events themselves — kinds and metering — are still recorded.
-        #expect(events.contains { $0.kind == .prompt })
-        #expect(events.contains { $0.kind == .response })
-        #expect(events.contains { $0.kind == .embedding })
-    }
 
     @Test("redact wired through the router transforms session turn and embedding text")
     @MainActor

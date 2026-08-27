@@ -6,13 +6,13 @@ import Foundation
 /// of a given ``TranscriptEvent/Kind`` sets only the fields its entry kind
 /// uses and leaves the rest `nil`.
 ///
-/// `contentRemoved` is `true` when ``RecordingLevel/metadataOnly`` stripped
-/// the content. Reconstruction refuses a stripped payload with a typed error.
+/// `contentRemoved` is `true` when the content was stripped at recording
+/// time. Reconstruction refuses a stripped payload with a typed error.
 public struct TranscriptEntryPayload: Sendable, Codable, Equatable {
     /// Apple's own `Transcript.Entry.id` for the mirrored entry.
     let entryId: String
 
-    /// `true` when ``RecordingLevel/metadataOnly`` stripped the content.
+    /// `true` when the content was stripped at recording time.
     /// Decodes as `false` when the key is absent.
     let contentRemoved: Bool
 
@@ -342,9 +342,9 @@ extension ToolCallPayload {
     }
 }
 
-// MARK: - Gating: metadataOnly stripping and full-level redaction
+// MARK: - Gating: content stripping and full-level redaction
 
-/// Content gating for ``RecordingLevel/metadataOnly`` and ``RecordingLevel/full``.
+/// Content stripping and ``RecordingLevel/full`` redaction.
 extension TranscriptEntryPayload {
     /// Returns a copy with every content field emptied. Ids, case tags,
     /// array counts, ``toolName``, ``options``, and ``responseFormatName``

@@ -12,7 +12,7 @@ enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
     /// Reconstruction refuses it.
     case legacyEventMissingPayload(session: ULID, seq: Int)
 
-    /// An event whose payload ``RecordingLevel/metadataOnly`` stripped
+    /// An event whose payload had its content stripped when it was recorded
     /// (``TranscriptEntryPayload/contentRemoved`` is `true`).
     case contentRemoved(session: ULID, seq: Int)
 
@@ -35,8 +35,8 @@ enum TranscriptReconstructionError: Error, Equatable, LocalizedError {
                 """
         case .contentRemoved(let session, let seq):
             return """
-                Session \(session.description) event #\(seq)'s content was stripped by the recording \
-                level (metadataOnly), so it cannot be honestly reconstructed into a Transcript.Entry.
+                Session \(session.description) event #\(seq)'s content was stripped when it was \
+                recorded, so it cannot be honestly reconstructed into a Transcript.Entry.
                 """
         case .entryReconstructionFailed(let session, let seq, let underlying):
             return """
