@@ -43,8 +43,27 @@ comments:
     - Nothing else was touched. No `package` was used, so no consumer forced a wider level than `internal`.
     - next: ready for `/review`.
   timestamp: 2026-08-28T14:54:41.692765+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m14e2s03ka5316yfb6dg7ex6
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 267994d) — 0 findings, 0 confirmed, 0 refuted, 7 validator runs, 0 failed. 4 files reviewed; 2 `.kanban/` files excluded by `.reviewignore`.
+    - next: none. The task moves to `done`.
+  timestamp: 2026-08-28T14:58:45.891751+00:00
+- actor: claude-code
+  id: 01m14e399an1e516rrxa4wx667
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files (Session/SessionOutbox.swift, Session/OperationEventSegment.swift, Recording/PersistableStructuredSegment.swift, Recording/MergedTranscript.swift); 12 `public` keywords removed
+    - test: green — swift test, 1072 tests in 110 suites passed with 2 known issues, plus 83 eval tests. `swift build --package-path IntegrationTests --build-tests` also completed.
+    - commit: 267994d
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - next: none — the task is in done
+
+    Note: the two `post` witnesses could narrow only because `OperationEventSink` became internal in task ^8sdfy7a. A public protocol's witness cannot narrow. The order of these two tasks was therefore load-bearing, not arbitrary.
+  timestamp: 2026-08-28T14:59:02.570577+00:00
+position_column: done
+position_ordinal: ffff9680
 title: Demote the mistakenly public Session and Recording plumbing
 ---
 ## What
