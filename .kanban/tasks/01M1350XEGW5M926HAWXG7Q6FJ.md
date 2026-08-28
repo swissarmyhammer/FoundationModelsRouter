@@ -70,8 +70,25 @@ comments:
     - evidence: 3 files — Sources/FoundationModelsRouter/Resolution/SlotResolution.swift, Sources/FoundationModelsRouter/LanguageModelProfile.swift, Tests/FoundationModelsRouterRealModelSupport/RealModelHarness.swift. Eight `public` to `package`. `swift build` exit 0; `swift test` exit 0 with 1065 tests in 108 suites plus 83 tests in 10 suites; `swift build --package-path IntegrationTests` exit 0; `swift build --package-path IntegrationTests --build-tests` exit 0; periphery scan 0 findings.
     - next: /review
   timestamp: 2026-08-28T03:16:30.245548+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m1363c8m5ryh2d5fh8a9r25r
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 7217de7) — 0 findings, 0 confirmed, 0 refuted, 7 validator runs attempted, 0 failed. 3 files reviewed. 2 `.kanban/` files not reviewed, because a `.reviewignore` rule excludes them.
+    - next: the task moves to `done`. All acceptance criteria and test items are checked.
+  timestamp: 2026-08-28T03:20:02.580850+00:00
+- actor: claude-code
+  id: 01m1363ykmr9sqxs1xg5k9gpdq
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files (SlotResolution.swift, LanguageModelProfile.swift, RealModelHarness.swift)
+    - test: green — swift test, 1065 tests in 108 suites passed, plus 83 tests in 10 suites
+    - commit: 7217de7
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - next: none — the task is in done
+  timestamp: 2026-08-28T03:20:21.364179+00:00
+position_column: done
+position_ordinal: ffff9080
 title: Demote SlotResolution and CandidateReport to package
 ---
 ## What
