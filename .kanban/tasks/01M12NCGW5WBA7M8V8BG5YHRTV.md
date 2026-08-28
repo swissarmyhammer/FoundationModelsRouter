@@ -45,8 +45,25 @@ comments:
     - evidence: 2 files — Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift, Tests/FoundationModelsRouterTests/RepoMetadataTests.swift. `swift build` complete. `swift test`: 1069 tests in 108 suites passed with the 2 known issues the baseline also has, plus 83 eval tests passed. The baseline on a stashed tree is 1065 tests, 2 known issues, 83 eval tests, so there is no new failure.
     - next: /review
   timestamp: 2026-08-28T03:32:37.560449+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m13735ywkya8mz5v20tef9yk
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit aec0218). 0 findings from 7 validator runs, 0 failed. 2 files reviewed: Sources/FoundationModelsRouter/Sizing/RepoMetadata.swift and Tests/FoundationModelsRouterTests/RepoMetadataTests.swift. All items in the description are marked done.
+    - next: none. The task moved to the done column.
+  timestamp: 2026-08-28T03:37:24.700647+00:00
+- actor: claude-code
+  id: 01m1373p9aeaaxzhxa7naazr9e
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 files (Sizing/RepoMetadata.swift, RepoMetadataTests.swift)
+    - test: green — swift test, 1069 tests in 108 suites passed, plus 83 eval tests; baseline was 1065 with the same 2 known issues
+    - commit: aec0218
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - next: none — the task is in done
+  timestamp: 2026-08-28T03:37:41.418839+00:00
+position_column: done
+position_ordinal: ffff9180
 title: Stop RepoMetadataCache from serving stale metadata for moving revisions
 ---
 ## What
