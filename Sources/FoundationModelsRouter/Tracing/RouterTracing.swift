@@ -56,13 +56,9 @@ enum RouterTracing {
 
         /// One ``Router/resolve(profile:reporting:)`` call: the whole joint
         /// fit and the loads under it.
-        // No caller until the dependent tracing cards open this span.
-        // periphery:ignore
         static let resolve = prefix + "resolve"
 
         /// One model load into residency, inside a resolve.
-        // No caller until the dependent tracing cards open this span.
-        // periphery:ignore
         static let load = prefix + "load"
 
         /// One ``RoutedSession/fork(workingDirectory:)`` call.
@@ -86,6 +82,25 @@ enum RouterTracing {
 
         /// The chosen model reference, in canonical string form.
         static let modelRef = "model.ref"
+
+        /// The name of the authored ``ProfileDefinition`` a resolve ran.
+        static let profileDefinitionName = "profile.definition_name"
+
+        /// The key that names the model one slot chose, on a span that reports
+        /// every slot at once.
+        ///
+        /// A load span speaks for one slot, so it names its model under
+        /// ``modelRef`` and its slot under ``slot``. A resolve span speaks for
+        /// all three slots at once, and one key cannot hold three answers
+        /// without losing which answer belongs to which slot — so the resolve
+        /// span writes one key for each: `model.ref.standard`,
+        /// `model.ref.flash` and `model.ref.embedding`.
+        ///
+        /// - Parameter slot: The slot whose chosen model the key names.
+        /// - Returns: The attribute key for that slot.
+        static func chosenModelRef(slot: ModelSlot) -> String {
+            "\(modelRef).\(slot.rawValue)"
+        }
 
         /// The span id of the session the work runs on.
         ///
@@ -114,18 +129,12 @@ enum RouterTracing {
         static let toolName = "tool.name"
 
         /// The ``ModelSlot`` the model fills.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let slot = "slot"
 
         /// The chosen candidate's footprint estimate, in bytes.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let footprintBytes = "footprint.bytes"
 
         /// The budget the fit ran against, in bytes.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let budgetBytes = "budget.bytes"
 
         /// How many tokens went into the model call.

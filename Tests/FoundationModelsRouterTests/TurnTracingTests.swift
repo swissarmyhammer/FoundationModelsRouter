@@ -126,13 +126,18 @@ struct TurnTracingTests {
             directory: directory)
     }
 
-    /// The one span a driven turn opened.
+    /// The one turn span a driven turn opened.
+    ///
+    /// Filtered by name rather than counted over the whole tracer: the
+    /// fixture's own ``Router/resolve(profile:reporting:)`` reports to the
+    /// same tracer, and it opens a resolve span with one load span under it
+    /// for each slot it loads.
     ///
     /// - Parameter tracer: The tracer the turn reported to.
-    /// - Returns: The single finished span.
-    /// - Throws: When the tracer holds no span, or more than one.
+    /// - Returns: The single finished turn span.
+    /// - Throws: When the tracer holds no turn span, or more than one.
     private static func singleSpan(reportedTo tracer: InMemoryTracer) throws -> FinishedInMemorySpan {
-        let spans = tracer.finishedSpans
+        let spans = tracer.finishedSpans.filter { $0.operationName == spanName }
         try #require(spans.count == 1)
         return try #require(spans.first)
     }

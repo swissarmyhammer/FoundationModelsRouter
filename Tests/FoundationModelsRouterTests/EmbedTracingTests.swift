@@ -48,6 +48,21 @@ struct EmbedTracingTests {
         }
     }
 
+    /// The embed spans `tracer` holds that have finished, in the order they
+    /// finished.
+    ///
+    /// Filtered by name rather than counted over the whole tracer: a test that
+    /// resolves its profile through the same tracer also gets that resolve's
+    /// own span, with one load span under it for each slot it loaded.
+    ///
+    /// - Parameter tracer: The tracer the driven work reported to.
+    /// - Returns: Every finished embed span.
+    private static func finishedEmbedSpans(
+        reportedTo tracer: InMemoryTracer
+    ) -> [FinishedInMemorySpan] {
+        tracer.finishedSpans.filter { $0.operationName == spanName }
+    }
+
     /// Resolves the shared test profile over a stub loader and the supplied
     /// tracer.
     ///
@@ -83,7 +98,7 @@ struct EmbedTracingTests {
         let vectors = try await profile.embedding.embed(texts: ["a", "b"])
         #expect(vectors.count == 2)
 
-        let spans = tracer.finishedSpans
+        let spans = Self.finishedEmbedSpans(reportedTo: tracer)
         try #require(spans.count == 1)
         let span = try #require(spans.first)
         #expect(span.operationName == Self.spanName)
@@ -129,7 +144,7 @@ struct EmbedTracingTests {
             _ = try await embedder.embed(texts: ["a"])
         }
 
-        let spans = tracer.finishedSpans
+        let spans = Self.finishedEmbedSpans(reportedTo: tracer)
         try #require(spans.count == 1)
         #expect(spans[0].errors.count == 1)
     }
@@ -145,7 +160,7 @@ struct EmbedTracingTests {
 
         _ = try await profile.embedding.embed(texts: [needle])
 
-        let span = try #require(tracer.finishedSpans.first)
+        let span = try #require(Self.finishedEmbedSpans(reportedTo: tracer).first)
         var rendered: [String] = []
         span.attributes.forEach { _, value in rendered.append(String(describing: value)) }
         #expect(rendered.allSatisfy { !$0.contains(needle) })

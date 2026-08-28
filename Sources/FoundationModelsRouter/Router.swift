@@ -229,6 +229,33 @@ public actor Router {
         profile def: ProfileDefinition,
         reporting progress: ResolutionProgress
     ) async throws -> LanguageModelProfile {
+        // Resolution is the slowest thing the library does, so the whole call
+        // — the lock wait included — is one span, and each model this resolve
+        // has to fetch opens a child span under it. `withSpan` records a
+        // thrown error on the span and raises it again.
+        try await RouterTracing.tracer(explicit: tracer)
+            .withSpan(RouterTracing.SpanName.resolve, ofKind: .client) { span in
+                span.attributes[RouterTracing.AttributeKey.routerId] = id.description
+                span.attributes[RouterTracing.AttributeKey.profileDefinitionName] = def.name
+                return try await runResolve(profile: def, reporting: progress, span: span)
+            }
+    }
+
+    /// The body of ``resolve(profile:reporting:)``, running inside its span.
+    ///
+    /// - Parameters:
+    ///   - def: The authored profile to resolve.
+    ///   - progress: The UI-bindable progress to drive, mutated on the main actor.
+    ///   - span: The resolve span, which takes the budget this attempt priced
+    ///     against and, on success, the model each slot chose.
+    /// - Returns: The resolved, resident profile.
+    /// - Throws: ``ResolutionFailure`` when no trio fits the effective budget,
+    ///   or any download or load error from the ``ModelLoader``.
+    private func runResolve(
+        profile def: ProfileDefinition,
+        reporting progress: ResolutionProgress,
+        span: any Span
+    ) async throws -> LanguageModelProfile {
         await poolLock.wait()
         defer { poolLock.signal() }
 
@@ -236,6 +263,7 @@ public actor Router {
         let totalBudget = hostBudget()
         let residentFootprint = pool.values.reduce(Int64(0)) { $0 + $1.footprintBytes }
         let effectiveBudget = totalBudget - residentFootprint
+        span.attributes[RouterTracing.AttributeKey.budgetBytes] = effectiveBudget
         let metadataByRef = await sizeCandidates(profile: def)
         let residentKeys = Set(pool.keys)
 
@@ -328,6 +356,7 @@ public actor Router {
                 residencyToken: residencyToken
             )
             residentProfiles[residencyToken] = Array(slotHolds.values)
+            Self.recordChosenModels(resolution: resolution, on: span)
             return profile
         } catch {
             // Give back everything this attempt already acquired — a fresh
@@ -341,6 +370,26 @@ public actor Router {
             // `.failed` so a UI does not hang mid-pipeline, then rethrow.
             await recordLoadFailure(error: error, progress: progress)
             throw error
+        }
+    }
+
+    /// Names the model each slot chose on the resolve span.
+    ///
+    /// Written only once the whole resolve succeeded, so the span of a resolve
+    /// that threw carries the budget and the error but names no winner.
+    ///
+    /// - Parameters:
+    ///   - resolution: The joint fit this resolve applied.
+    ///   - span: The resolve span to write the three keys on.
+    private static func recordChosenModels(resolution: JointResolution, on span: any Span) {
+        let chosenBySlot: [ModelSlot: ModelRef] = [
+            .standard: resolution.standard,
+            .flash: resolution.flash,
+            .embedding: resolution.embedding,
+        ]
+        for (slot, chosen) in chosenBySlot {
+            span.attributes[RouterTracing.AttributeKey.chosenModelRef(slot: slot)] =
+                chosen.stringValue
         }
     }
 
@@ -380,7 +429,14 @@ public actor Router {
             await setSlotState(slot, to: .ready, progress: progress)
             return key
         }
-        let container = try await download(ref: chosen, slot: slot, progress: progress, load: load)
+        // Below the early return above, so a slot the pool already held opens
+        // no load span at all: a trace therefore shows a fresh resolve's loads
+        // and a later resolve's reuse as two different shapes.
+        let container = try await withLoadSpan(
+            chosen: chosen, slot: slot, footprintBytes: footprintBytes
+        ) {
+            try await download(ref: chosen, slot: slot, progress: progress, load: load)
+        }
         pool[key] = PoolEntry(
             refcount: 1,
             baseFootprintBytes: footprintBytes,
@@ -640,6 +696,38 @@ public actor Router {
     }
 
     // MARK: - Download & load
+
+    /// Opens one load span and runs `body` — the fetch and load of one slot's
+    /// model — inside it.
+    ///
+    /// The caller is ``acquireModel(key:chosen:slot:footprintBytes:chargedBytes:newKeys:progress:load:wrap:)``,
+    /// past the point where an already-resident model returns, so only a model
+    /// this resolve really fetches opens a span here. The span is a child of
+    /// the resolve span, because the resolve span is the current one for the
+    /// whole call. `withSpan` records a thrown error on the span and raises it
+    /// again.
+    ///
+    /// - Parameters:
+    ///   - chosen: The model reference being loaded.
+    ///   - slot: The slot the model fills.
+    ///   - footprintBytes: The chosen candidate's whole margined footprint.
+    ///   - body: The load work the span measures.
+    /// - Returns: Whatever `body` produced.
+    /// - Throws: Whatever `body` throws.
+    private func withLoadSpan<Loaded>(
+        chosen: ModelRef,
+        slot: ModelSlot,
+        footprintBytes: Int64,
+        _ body: () async throws -> Loaded
+    ) async throws -> Loaded {
+        try await RouterTracing.tracer(explicit: tracer)
+            .withSpan(RouterTracing.SpanName.load, ofKind: .client) { span in
+                span.attributes[RouterTracing.AttributeKey.modelRef] = chosen.stringValue
+                span.attributes[RouterTracing.AttributeKey.slot] = slot.rawValue
+                span.attributes[RouterTracing.AttributeKey.footprintBytes] = footprintBytes
+                return try await body()
+            }
+    }
 
     /// Marks a slot downloading, then loads its chosen model through `load`,
     /// which receives the ref, slot, and a download-progress reporter.
