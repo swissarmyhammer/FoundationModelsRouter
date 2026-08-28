@@ -55,6 +55,62 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Tracing/RouterTracing.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorCompaction.swift, Tests/FoundationModelsRouterTests/CompactionTracingTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift (new), Tests/FoundationModelsRouterTests/AutoCompactionTests.swift. `swift build` complete; `swift test` 1086 tests in 112 suites passed with 2 known issues, plus 83 eval tests; `swift build --package-path IntegrationTests --build-tests` complete.
     - next: /review
   timestamp: 2026-08-28T15:57:19.335920+00:00
+- actor: claude-code
+  id: 01m14hqjqqmz2xrap880exp3v5
+  text: |-
+    ### review — findings
+    - evidence: 2 findings, 2 confirmed, 0 refuted over `review sha HEAD~1..HEAD` — Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift:136, Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift:182
+    - both findings are `code-hygiene/magic-numbers-swift` on text moved from AutoCompactionTests.swift (line 142 and line 189 at HEAD~1); give the repeat count 60 and the trigger 0.8 a name, as the other constants in that file have
+    - the span site at the two entry points is correct: a span inside `fold(...)` would make two or three spans for one automatic fold and would show a degrade as a failed span, which the card forbids
+    - the tier derivation is correct: the automatic path's last tier is `fold(summarizer: nil, ...)`, which does not throw, so the span records no error on a degrade; the caller path has no catch, so `withSpan` records the summarizer error and raises it again
+    - next: name the two constants, then run the review again
+  timestamp: 2026-08-28T16:02:33.335931+00:00
+- actor: claude-code
+  id: 01m14hre6m2dvrjbx2mqa5rhap
+  text: |-
+    ### finish iteration 1 — findings
+    - implement: changed — 5 files; RouterTracing.swift, RoutedSessionActorCompaction.swift, new CompactionTracingTests.swift, new Helpers/AutoCompactionFixtures.swift, AutoCompactionTests.swift
+    - test: green — swift test, 1086 tests in 112 suites passed with 2 known issues, plus 83 eval tests. Baseline was 1078 in 111 suites, so the difference is exactly the new suite. `swift build --package-path IntegrationTests --build-tests` also completed.
+    - commit: f82dcd9
+    - review: findings — Helpers/AutoCompactionFixtures.swift:136, Helpers/AutoCompactionFixtures.swift:182, both code-hygiene/magic-numbers-swift
+    - next: name the two constants, then review again
+
+    The reviewer held the two design decisions to be correct, and gave the reason. The card wrote the `fold(...)` span site as a preference and not a rule, and two of the card's own acceptance criteria forbid that site: `foldThroughTiers` calls `fold(...)` up to three times as it degrades, so a span there would make two or three spans for one automatic fold, and the degrade would read as a failed span. The chosen site satisfies the criteria.
+
+    The two findings are magic numbers in text that moved verbatim from `AutoCompactionTests.swift`; only the access level changed in the move. The file already names its other constants, so the fix follows the pattern the file sets.
+  timestamp: 2026-08-28T16:03:01.460111+00:00
+- actor: claude-code
+  id: 01m14hyx4bm31qfqsjrj0sn0mf
+  text: |-
+    Both review findings are corrected in `Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift`.
+
+    - The repeat count `60` in `cannedText` is now `private static let cannedTextRepeatCount = 60`.
+    - The trigger fraction `0.8` in `fixedBudget` is now `private static let fixedBudgetTriggerFraction = 0.8`.
+
+    Each new constant has a doc comment that tells what the number is for. Both use the same `private static let` shape as `warmUpUsageStepTokens` and `belowRecencyFloorDivisor`, which the file already had.
+
+    The whole file was read for other literals of the same class. `dump validators` gives the rule as swiftlint `no_magic_numbers` with `allowed_numbers: [0, 1, -1, 100]`, and the rule reports nothing for a declaration that names its value (a `var`, a stored property, a `static let`, an enumeration raw value, or a default parameter). Against that rule the file now holds no other unnamed literal:
+
+    - `DownloadProgress(bytesDownloaded: 1, bytesTotal: 1)`, in both loader methods, uses `1`, which the allow-list carries.
+    - `(turn + 1) * warmUpUsageStepTokens` uses `1`, which the allow-list carries.
+    - `turnCount`, `warmUpContextTokens`, `warmUpUsageStepTokens` and `belowRecencyFloorDivisor` are `static let` declarations that name their own values.
+
+    Three doc comments said `0.8` in prose beside the literal. They now name `fixedBudgetTriggerFraction` instead, so the value has one home: the documentation of `warmUpUsageStepTokens`, of `fixedBudget`, and of `makeTriggeredSession(budget:tools:summarization:tracer:tempDirPrefix:)`.
+
+    Verification, all three green:
+    - `swift build` — Build complete.
+    - `swift test` — 1086 tests in 112 suites passed with 2 known issues, plus 83 eval tests. The count is the same as the baseline, as a naming change must be. The 2 known issues are the documented `RealModelHarness` embedding-slot one and the `BoundedWait` wall-clock one.
+    - `swift build --package-path IntegrationTests --build-tests` — Build complete.
+
+    No new warning. The one warning in each build log is the pre-existing build-system message about the `mlx-swift_Cmlx.bundle` node.
+  timestamp: 2026-08-28T16:06:33.355987+00:00
+- actor: claude-code
+  id: 01m14hz1j1qebkbezbga1ab4mb
+  text: |-
+    ### implement — changed
+    - evidence: 1 file — Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift. `swift build` complete; `swift test` 1086 tests in 112 suites passed with 2 known issues, plus 83 eval tests (same as the baseline); `swift build --package-path IntegrationTests --build-tests` complete. Both `## Review Findings` items are now `- [x]`.
+    - next: /review
+  timestamp: 2026-08-28T16:06:37.889354+00:00
 depends_on:
 - 01M12MM3EH1SBD3677NZGWMHD0
 position_column: doing
@@ -84,3 +140,51 @@ Wrap each compaction fold in one span, for the caller-driven path and the automa
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #tracing #router #compaction
+
+## Review Findings (2026-08-28 10:58)
+
+> Scope: `review sha HEAD~1..HEAD` — reviewed the diffs only — lines this change added or modified. 5 file(s) reviewed, 2 not reviewed.
+
+> 2 file(s) not reviewed — excluded by an ignore rule:
+> - `.kanban/ (from .reviewignore)` — 2 file(s)
+
+- [x] `Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift:136` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+- [x] `Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift:182` `code-hygiene/magic-numbers-swift` — Magic numbers should be replaced by named constants.
+
+### Notes on the two findings
+
+Both lines come from the earlier file `AutoCompactionTests.swift` (line 142 and
+line 189 at HEAD~1). This change moved them into the new fixtures file without a
+change to the text. Only the access level changed, from `private static` to
+`static`. The diff scope thus shows them as new lines.
+
+- Line 136 is the repeat count `60` in `cannedText`.
+- Line 182 is the trigger fraction `0.8` in `fixedBudget`.
+
+The neighbour constants in the same file (`turnCount`, `warmUpContextTokens`,
+`warmUpUsageStepTokens`, `belowRecencyFloorDivisor`) show the pattern this file
+already follows. Give each of the two numbers a name in the same way.
+
+Both findings are corrected. The repeat count is now
+`private static let cannedTextRepeatCount = 60` and the trigger fraction is now
+`private static let fixedBudgetTriggerFraction = 0.8`. Each has a doc comment
+that tells what the number is for, in the same shape as the neighbour
+constants.
+
+### Two design points, examined and correct
+
+- The span sits at the two entry points, not inside `fold(...)`. The card gave
+  the `fold(...)` site as a preference, not as a rule. The card also requires
+  that one automatic fold makes one span, and that a degrade shows as the tier
+  attribute and not as a failed span. `performAutoCompaction` calls `fold(...)`
+  up to three times as it degrades, so a span inside `fold(...)` would break
+  both of those requirements. The chosen site is correct.
+- The tier is `result.summarizerModel == nil ? .deterministic : tier`. On the
+  automatic path, `foldThroughTiers` catches each model-assisted tier failure
+  and degrades. The last tier calls `fold(summarizer: nil, ...)`, which does not
+  throw. The span body thus completes, and the span records no error. On the
+  caller path, `compact` puts `fold(...)` in the span body with no catch, so a
+  summarizer failure leaves the body and `withSpan` records the error and raises
+  it again. Both claims hold. The one error the automatic span records is the
+  `CancellationError` from `abandonFoldIfCancelled`, which is a stop and not a
+  degrade.

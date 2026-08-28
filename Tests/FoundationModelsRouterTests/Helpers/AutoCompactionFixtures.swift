@@ -133,7 +133,14 @@ enum AutoCompactionFixtures {
     /// was a 5% shrink and no ceiling could sit between it and the blocked
     /// attempt's own fill.
     static let cannedText = String(
-        repeating: "The quick brown fox jumps over the lazy dog. ", count: 60)
+        repeating: "The quick brown fox jumps over the lazy dog. ", count: cannedTextRepeatCount)
+
+    /// The number of times ``cannedText`` repeats its sentence.
+    ///
+    /// Keep this count large. Each fold must make the transcript much smaller
+    /// than the cost of the summary entry's own manifest. The documentation of
+    /// ``cannedText`` gives the measurements that set this number.
+    private static let cannedTextRepeatCount = 60
 
     /// How many warm-up turns
     /// ``makeTriggeredSession(budget:tools:summarization:tracer:tempDirPrefix:)``
@@ -155,8 +162,8 @@ enum AutoCompactionFixtures {
 
     /// The fraction of ``warmUpContextTokens`` the escalating warm-up adds to
     /// measured usage on its first turn, growing by the same step each turn —
-    /// 15% a turn over ``turnCount`` turns reaches 90%, so the fixed budget's
-    /// `0.8` trigger is crossed only on the final warm-up turn.
+    /// 15% a turn over ``turnCount`` turns reaches 90%, so the warm-up crosses
+    /// ``fixedBudgetTriggerFraction`` only on the final warm-up turn.
     private static let warmUpUsageStepTokens = 15_000
 
     /// The divisor that puts ``fixedBudget``'s target at half the warm-up
@@ -165,12 +172,18 @@ enum AutoCompactionFixtures {
     /// ``Summarization`` stage and really calls a summarizer.
     private static let belowRecencyFloorDivisor = 2
 
+    /// The fraction of ``fixedBudget``'s limit at which auto-compaction starts.
+    ///
+    /// This value is the same as ``TokenBudget``'s own default trigger. The
+    /// escalating warm-up crosses it only on the last warm-up turn.
+    private static let fixedBudgetTriggerFraction = 0.8
+
     /// A budget whose target sits strictly below the warm-up transcript's own
     /// recency-window floor — forcing every fold it drives to need the
     /// model-assisted ``Summarization`` stage (and so to actually call a
     /// summarizer), the same ratio
     /// `RoutedSessionCompactTests.compactIsAppendOnlyAndPreservesIdentity()`
-    /// uses. `trigger: 0.8` matches ``TokenBudget``'s own default, and `limit`
+    /// uses. The trigger is ``fixedBudgetTriggerFraction``, and `limit`
     /// is ``warmUpContextTokens`` so the trigger fires exactly where the
     /// escalating warm-up's own `contextFill` readings say it does; `target` is
     /// expressed as the fraction of that limit which lands on half the recency
@@ -179,7 +192,7 @@ enum AutoCompactionFixtures {
         let recencyOnly = recencyWindowOnlyEstimate(expectedWarmUpEntries())
         return TokenBudget(
             limit: warmUpContextTokens,
-            trigger: 0.8,
+            trigger: fixedBudgetTriggerFraction,
             target: Double(recencyOnly / belowRecencyFloorDivisor) / Double(warmUpContextTokens)
         )
     }()
@@ -205,7 +218,7 @@ enum AutoCompactionFixtures {
     /// Vends a `profile.standard` session with `budget` and drives
     /// ``turnCount`` warm-up turns whose per-turn measured usage escalates
     /// (30% of the profile's 100,000-token context on the last turn: 90%),
-    /// crossing the fixed budget's `0.8` trigger only on the final warm-up
+    /// crossing ``fixedBudgetTriggerFraction`` only on the final warm-up
     /// turn — mirrors `ExamplesTests.proactiveCompactionBetweenTurns()`'s
     /// own escalating-usage pattern. By the time this returns, the session's
     /// measured `contextFill` is `0.9`, its backend holds ``turnCount``
