@@ -44,10 +44,11 @@ extension RoutedSessionActor {
         // the plain path. Both funnel through the same chokepoint, which stamps
         // the grammar (or `nil`) onto each event and composes `prompt` with
         // whatever the outbox drains for this turn (see
-        // ``generate(grammar:prompt:onEvent:_:)``).
+        // ``generate(grammar:entryPoint:prompt:onEvent:_:)``).
         let cancellationsBefore = cancelRequestCount
         var answer = try await generate(
-            grammar: grammar, prompt: prompt, respondBody(grammar: grammar, maxTokens: maxTokens))
+            grammar: grammar, entryPoint: .respond, prompt: prompt,
+            respondBody(grammar: grammar, maxTokens: maxTokens))
 
         // The run-plane drain. Each round runs outside the turn lock — the
         // chokepoint released it on its way out — so the background runs, and any
@@ -71,7 +72,7 @@ extension RoutedSessionActor {
             guard cancelRequestCount == cancellationsBefore, !Task.isCancelled else { break }
             guard await settleBackgroundRuns(cancellationsBefore: cancellationsBefore) else { break }
             answer = try await generate(
-                grammar: grammar, prompt: Self.drainedRunContinuationPrompt,
+                grammar: grammar, entryPoint: .respond, prompt: Self.drainedRunContinuationPrompt,
                 respondBody(grammar: grammar, maxTokens: maxTokens))
         }
         return answer
@@ -254,7 +255,7 @@ extension RoutedSessionActor {
         // Accumulate the streamed chunks so the close event can carry the full
         // response body; the accumulated text is the recorded response, while the
         // caller has already received each chunk through the continuation.
-        _ = try await generate(prompt: prompt) { composedPrompt in
+        _ = try await generate(entryPoint: .stream, prompt: prompt) { composedPrompt in
             try await self.streamGeneratingBody(
                 composedPrompt: composedPrompt,
                 maxTokens: maxTokens,
@@ -356,13 +357,15 @@ extension RoutedSessionActor {
         // `onEvent` forwards the chokepoint's own diff-derived events (tool
         // calls/status, reasoning, the closing usage) to this same
         // continuation once the turn's diff runs — see
-        // `generate(grammar:prompt:onEvent:_:)`. The live text itself goes
+        // `generate(grammar:entryPoint:prompt:onEvent:_:)`. The live text itself goes
         // through the same accumulate-and-forward loop
         // `streamGenerating(prompt:maxTokens:into:)` uses, via
         // ``streamGeneratingBody(composedPrompt:maxTokens:into:wrapChunk:)``,
         // wrapping each chunk as a ``SessionEvent/textDelta(_:)`` instead of
         // yielding it verbatim.
-        _ = try await generate(prompt: prompt, onEvent: { continuation.yield($0) }) { composedPrompt in
+        _ = try await generate(
+            entryPoint: .stream, prompt: prompt, onEvent: { continuation.yield($0) }
+        ) { composedPrompt in
             try await self.streamGeneratingBody(
                 composedPrompt: composedPrompt,
                 maxTokens: maxTokens,

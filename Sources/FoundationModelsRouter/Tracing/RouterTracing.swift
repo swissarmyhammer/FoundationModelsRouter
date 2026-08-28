@@ -43,8 +43,6 @@ enum RouterTracing {
 
         /// One whole turn on a session: the prompt in, the answer out, and
         /// every tool call between the two.
-        // No caller until the dependent tracing cards open this span.
-        // periphery:ignore
         static let turn = prefix + "turn"
 
         /// One tool call inside a turn.
@@ -94,14 +92,13 @@ enum RouterTracing {
         static let modelRef = "model.ref"
 
         /// The span id of the session the work runs on.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let sessionId = "session.id"
 
         /// The id of the turn the work belongs to, unique inside its session.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let turnId = "turn.id"
+
+        /// The surface that started the turn. See ``RouterTracing/TurnEntryPoint``.
+        static let turnEntryPoint = "turn.entry_point"
 
         /// The model-facing name of the called tool.
         // No caller until the dependent tracing cards write this attribute.
@@ -124,13 +121,9 @@ enum RouterTracing {
         static let budgetBytes = "budget.bytes"
 
         /// How many tokens went into the model call.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let tokensIn = "tokens.in"
 
         /// How many tokens came out of the model call.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let tokensOut = "tokens.out"
 
         /// How many strings one embed call embeds.
@@ -138,6 +131,27 @@ enum RouterTracing {
 
         /// The length of each vector an embed call produces.
         static let embeddingDimension = "embedding.dimension"
+    }
+
+    /// The value ``AttributeKey/turnEntryPoint`` carries: the surface a turn
+    /// was started through.
+    ///
+    /// Every turn runs through one chokepoint, so the span alone cannot say
+    /// which surface asked for it. This attribute says so, and it lets a query
+    /// separate the turns a caller drove from the turns a queue driver
+    /// dispatched.
+    enum TurnEntryPoint: String {
+        /// ``RoutedSession/respond(to:maxTokens:)``, and each further turn its
+        /// run-plane drain runs.
+        case respond
+
+        /// ``RoutedSession/streamResponse(to:maxTokens:)`` or
+        /// ``RoutedSession/streamEvents(to:maxTokens:)``.
+        case stream
+
+        /// ``RoutedSession/dispatchNextPrompt()``: a queued prompt, or a
+        /// settled run's delivery turn.
+        case dispatch
     }
 
     /// The tracer a call opens its span through.

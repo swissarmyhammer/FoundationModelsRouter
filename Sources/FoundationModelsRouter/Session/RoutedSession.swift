@@ -122,6 +122,32 @@ public protocol RoutedSession: Actor {
     /// ``streamSessionEvents()`` with ``GenerationProgressVisibility/wholeAnswer``
     /// visibility, and one line in this module's log.
     ///
+    /// Every turn this call runs — its own turn, and each further turn of the
+    /// run-plane drain — opens one OpenTelemetry span named
+    /// ``RouterTracing/SpanName/turn``, of kind `client`, through the tracer
+    /// ``RouterTracing/tracer(explicit:)`` resolves from the handle this
+    /// session came off. Unbootstrapped, that resolves to a no-op tracer, so an
+    /// application that does not trace pays nothing. `withSpan` records a
+    /// thrown error on the span and raises it again, and a cancelled turn
+    /// records `CancellationError`.
+    ///
+    /// The span carries these attributes, and their names are stable API:
+    ///
+    /// | Attribute | Value |
+    /// |---|---|
+    /// | `router.id` | The resolving router's recording root id. |
+    /// | `session.id` | This session's span id. |
+    /// | `model.ref` | The model the turn ran on, in canonical string form. |
+    /// | `turn.id` | The turn's own id, unique inside this session. |
+    /// | `turn.entry_point` | `respond` for this surface. |
+    /// | `tokens.in` | The turn's measured input tokens, on a metered turn. |
+    /// | `tokens.out` | The turn's measured output tokens, on a metered turn. |
+    ///
+    /// A turn the backend could not meter carries neither token attribute. No
+    /// prompt text and no response text ever reaches the span: a span leaves
+    /// the process through whatever backend the host application bootstrapped,
+    /// so the payload stays free of the caller's own content.
+    ///
     /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
     /// - Returns: The model's complete text response; the last drained turn's
     ///   when this call's own turn backgrounded work.
@@ -136,6 +162,9 @@ public protocol RoutedSession: Actor {
     /// run plane; it finishes while a backgrounded run is in flight. A stall
     /// reports ``SessionEvent/generationStalled(_:)`` on ``streamSessionEvents()``
     /// with ``GenerationProgressVisibility/fragments(observed:)`` visibility.
+    ///
+    /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
+    /// with `turn.entry_point` reading `stream`.
     ///
     /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
     func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error>
@@ -157,6 +186,9 @@ public protocol RoutedSession: Actor {
     /// run plane. A run that settles before the stream ends is reported as
     /// ``SessionEvent/runSettled(_:)``; a later one is reported on
     /// ``streamSessionEvents()``.
+    ///
+    /// The turn opens one span, exactly as ``respond(to:maxTokens:)`` states,
+    /// with `turn.entry_point` reading `stream`.
     ///
     /// - Parameter maxTokens: The token ceiling, or `nil` for the model's default.
     func streamEvents(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<SessionEvent, Error>
@@ -255,6 +287,10 @@ public protocol RoutedSession: Actor {
     /// client that needs one sequences the calls itself. The turn lock is a
     /// strict FIFO ``AsyncSemaphore``, and a cancelled caller keeps its place
     /// in line.
+    ///
+    /// A turn this call runs opens one span, exactly as
+    /// ``respond(to:maxTokens:)`` states, with `turn.entry_point` reading
+    /// `dispatch`. A call that runs no turn opens no span.
     ///
     /// - Returns: The model's response text, or `nil` if no prompt was queued
     ///   and no run had settled when this call drained the outbox.

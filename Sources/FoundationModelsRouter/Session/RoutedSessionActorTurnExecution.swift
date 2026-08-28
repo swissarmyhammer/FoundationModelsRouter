@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import Synchronization
+import Tracing
 import os
 
 /// The logger for a turn's failed pre-discovery seeding.
@@ -26,10 +27,19 @@ extension RoutedSessionActor {
     /// The bracket holds ``turnLock`` and a ``RoutedModel/generationGate`` permit. It drains
     /// pending events from ``outbox`` into the prompt, runs `body`, then records the transcript delta.
     ///
+    /// - Parameters:
+    ///   - grammar: The grammar in force for this turn, or `nil`.
+    ///   - entryPoint: The surface this turn was started through, which the
+    ///     turn's span reports. Every caller states it, because the chokepoint
+    ///     cannot tell one surface from another.
+    ///   - prompt: This turn's own prompt text.
+    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, after the turn is recorded.
     func generate(
         grammar: Grammar? = nil,
+        entryPoint: RouterTracing.TurnEntryPoint,
         prompt: String,
         onEvent: ((SessionEvent) -> Void)? = nil,
         _ body: @escaping @Sendable (String) async throws -> String
@@ -62,8 +72,8 @@ extension RoutedSessionActor {
         let pendingEvents = await outbox.drainPendingEvents().map(\.event)
         await notifyTurnBoundaryTools()
         return try await runTurn(
-            grammar: grammar, turnId: turnId, promptId: nil, pendingEvents: pendingEvents,
-            ownPrompt: prompt, onEvent: onEvent, body)
+            grammar: grammar, turnId: turnId, entryPoint: entryPoint, promptId: nil,
+            pendingEvents: pendingEvents, ownPrompt: prompt, onEvent: onEvent, body)
     }
 
     /// Calls ``TurnBoundaryTool/turnWillBegin()`` once on every mounted tool
@@ -71,7 +81,7 @@ extension RoutedSessionActor {
     /// change it prepared at the side (task w77k41m).
     ///
     /// Runs at both drain sites (this turn's own ``outbox`` drain in
-    /// ``generate(grammar:prompt:onEvent:_:)`` and ``dispatchNextPrompt()``'s),
+    /// ``generate(grammar:entryPoint:prompt:onEvent:_:)`` and ``dispatchNextPrompt()``'s),
     /// after the drain and before the model call of the turn — so a turn that
     /// fails before the model call still made the hook call, and a fork's
     /// hook fires only on the fork's own tools (``ForkableTool`` composition).
@@ -92,15 +102,83 @@ extension RoutedSessionActor {
         }
     }
 
+    /// Runs one turn inside that turn's own span. The caller must hold both turn gates.
+    ///
+    /// Every generation surface reaches this one method, so the span it opens
+    /// covers all of them: ``RoutedSession/respond(to:maxTokens:)``,
+    /// ``RoutedSession/streamResponse(to:maxTokens:)``,
+    /// ``RoutedSession/streamEvents(to:maxTokens:)`` and
+    /// ``RoutedSession/dispatchNextPrompt()``. Those methods state the span
+    /// contract; ``RouterTracing`` states the rule that keeps content off it.
+    ///
+    /// - Parameters:
+    ///   - grammar: The grammar in force for this turn.
+    ///   - turnId: This turn's identity, minted by ``beginTurn()``.
+    ///   - entryPoint: The surface this turn was started through.
+    ///   - promptId: The queued prompt this turn dispatched, or `nil`.
+    ///   - pendingEvents: The events this turn drained from ``outbox``.
+    ///   - ownPrompt: This turn's own prompt text.
+    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - body: The model work to run.
+    /// - Returns: The response text `body` produced.
+    /// - Throws: Whatever `body` throws, or `CancellationError` from the fold.
+    ///   `withSpan` records the error on the span and raises it again.
+    private func runTurn(
+        grammar: Grammar?,
+        turnId: TurnID,
+        entryPoint: RouterTracing.TurnEntryPoint,
+        promptId: SessionOutbox.ItemID?,
+        pendingEvents: [OperationEvent],
+        ownPrompt: String,
+        onEvent: ((SessionEvent) -> Void)? = nil,
+        _ body: @escaping @Sendable (String) async throws -> String
+    ) async throws -> String {
+        try await RouterTracing.tracer(explicit: tracer)
+            .withSpan(RouterTracing.SpanName.turn, ofKind: .client) { span in
+                span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
+                span.attributes[RouterTracing.AttributeKey.sessionId] = id.description
+                span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
+                span.attributes[RouterTracing.AttributeKey.turnId] = turnId.description
+                span.attributes[RouterTracing.AttributeKey.turnEntryPoint] = entryPoint.rawValue
+                let response = try await runTurnWork(
+                    grammar: grammar, turnId: turnId, promptId: promptId,
+                    pendingEvents: pendingEvents, ownPrompt: ownPrompt, onEvent: onEvent, body)
+                recordMeasuredTokens(on: span)
+                return response
+            }
+    }
+
+    /// Writes this turn's measured token counts onto `span`.
+    ///
+    /// A turn whose diff carried a `.response` entry leaves ``usageState``
+    /// measured, and those two numbers are what the span reports. A turn the
+    /// backend could not meter leaves the state unmeasured, and the span then
+    /// carries no token attribute at all rather than a guess.
+    ///
+    /// - Parameter span: This turn's span.
+    private func recordMeasuredTokens(on span: any Span) {
+        guard case .measured(let input, let output) = usageState else { return }
+        span.attributes[RouterTracing.AttributeKey.tokensIn] = input
+        span.attributes[RouterTracing.AttributeKey.tokensOut] = output
+    }
+
     /// Runs one turn's model work and recording. The caller must hold both turn gates.
     ///
     /// When ``autoCompactionBudget`` is set and measured usage has reached
     /// ``TokenBudget/triggerTokens``, the turn folds first. A fold that throws
     /// is recorded as a failed turn.
     ///
+    /// - Parameters:
+    ///   - grammar: The grammar in force for this turn.
+    ///   - turnId: This turn's identity, minted by ``beginTurn()``.
+    ///   - promptId: The queued prompt this turn dispatched, or `nil`.
+    ///   - pendingEvents: The events this turn drained from ``outbox``.
+    ///   - ownPrompt: This turn's own prompt text.
+    ///   - onEvent: A sink for this turn's ``SessionEvent``s, or `nil`.
+    ///   - body: The model work to run.
     /// - Returns: The response text `body` produced.
     /// - Throws: Whatever `body` throws, or `CancellationError` from the fold.
-    private func runTurn(
+    private func runTurnWork(
         grammar: Grammar?,
         turnId: TurnID,
         promptId: SessionOutbox.ItemID?,
@@ -474,7 +552,7 @@ extension RoutedSessionActor {
     ///
     /// Dequeues the front prompt and any pending events in one atomic
     /// ``SessionOutbox/drainForDispatch()`` call, inside the same two gates
-    /// ``generate(grammar:prompt:onEvent:_:)`` uses. Honors ``grammar``. The
+    /// ``generate(grammar:entryPoint:prompt:onEvent:_:)`` uses. Honors ``grammar``. The
     /// prompt's id is reported in ``SessionEvent/turnStarted(_:)``.
     ///
     /// A drain that finds no queued prompt but holds a settled run's terminal runs
@@ -538,8 +616,9 @@ extension RoutedSessionActor {
         do {
             outcome = .success(
                 try await runTurn(
-                    grammar: grammar, turnId: turnId, promptId: promptId, pendingEvents: pendingEvents,
-                    ownPrompt: ownPrompt, respondBody(grammar: grammar, maxTokens: nil)
+                    grammar: grammar, turnId: turnId, entryPoint: .dispatch, promptId: promptId,
+                    pendingEvents: pendingEvents, ownPrompt: ownPrompt,
+                    respondBody(grammar: grammar, maxTokens: nil)
                 ))
         } catch {
             outcome = .failure(error)
