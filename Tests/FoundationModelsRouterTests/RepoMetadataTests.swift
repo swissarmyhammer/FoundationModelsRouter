@@ -5,6 +5,10 @@ import Testing
 
 @Suite("RepoMetadata")
 struct RepoMetadataTests {
+    /// The transport failure a stub source raises. It stands in for a machine
+    /// that has lost the network.
+    private struct StubFetchFailure: Error, Equatable {}
+
     /// A `MetadataSource` returning fixed canned bytes and counting how many
     /// times the network-shaped fetch was invoked, so cache behavior is testable
     /// without any I/O.
@@ -12,15 +16,35 @@ struct RepoMetadataTests {
         let raw: RawRepoMetadata
         private(set) var fetchCount = 0
 
+        /// The error thrown in place of ``raw``, or `nil` while the fetch succeeds.
+        private var failure: Error?
+
         init(raw: RawRepoMetadata) {
             self.raw = raw
         }
 
+        /// Makes every later fetch throw, and count.
+        ///
+        /// - Parameter error: The error each later fetch throws.
+        func failEveryFetch(with error: Error) {
+            failure = error
+        }
+
         func fetchRawMetadata(repo: String, revision: String?) async throws -> RawRepoMetadata {
             fetchCount += 1
+            if let failure {
+                throw failure
+            }
             return raw
         }
     }
+
+    /// A full 40-character lowercase hex commit id. It is the only revision form
+    /// the Hub cannot move, so it is the only one a cache may serve unrefreshed.
+    private static let commitHash = "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+
+    /// A second commit id, distinct from ``commitHash``, for cache-key tests.
+    private static let otherCommitHash = "112233445566778899aabbccddeeff0011223344"
 
     /// A canned `config.json` with all architecture fields present.
     private static let fullConfigJSON = Data("""
@@ -624,14 +648,14 @@ struct RepoMetadataTests {
         #expect(decoded.nativeMaxContextDiagnostic == "some diagnostic")
     }
 
-    @Test("a second read of the same (repo, revision) hits the cache; fetch runs once")
-    func cacheHitFetchesOnce() async throws {
+    @Test("a reference pinned to a commit hash never refetches after the first fetch")
+    func commitPinnedReferenceFetchesOnce() async throws {
         let (reader, dir, source) = Self.makeReader(
             raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
         )
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let ref: ModelRef = "org/model@abc123"
+        let ref = ModelRef(repo: "org/model", revision: Self.commitHash)
         let first = try await reader.metadata(for: ref)
         let second = try await reader.metadata(for: ref)
 
@@ -646,10 +670,102 @@ struct RepoMetadataTests {
         )
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        _ = try await reader.metadata(for: "org/model@rev1")
-        _ = try await reader.metadata(for: "org/model@rev2")
+        _ = try await reader.metadata(for: ModelRef(repo: "org/model", revision: Self.commitHash))
+        _ = try await reader.metadata(for: ModelRef(repo: "org/model", revision: Self.otherCommitHash))
 
         #expect(await source.fetchCount == 2)
+    }
+
+    @Test(
+        "a reference with a nil, branch, or tag revision fetches on each call",
+        // A `nil` revision tracks the default branch; `main` is a branch; `v1.0`
+        // is a tag; `0f1e2d3c` is an abbreviation, not a full commit id; and the
+        // last is a full commit id in uppercase, which is not the hex form a
+        // commit id takes. Every one of them can point at new content later.
+        arguments: [
+            nil,
+            "main",
+            "v1.0",
+            "0f1e2d3c",
+            "0F1E2D3C4B5A69788796A5B4C3D2E1F009182736",
+        ] as [String?]
+    )
+    func movingRevisionFetchesOnEachCall(revision: String?) async throws {
+        let (reader, dir, source) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ref = ModelRef(repo: "org/model", revision: revision)
+
+        let first = try await reader.metadata(for: ref)
+        let second = try await reader.metadata(for: ref)
+
+        #expect(first == second)
+        #expect(await source.fetchCount == 2)
+    }
+
+    /// A cache entry from before the branch it is keyed by moved. It is written
+    /// in the current schema, so it decodes and only the read order can reject
+    /// it, and its `weightBytes` differs from ``expectedWeightBytes``, so a
+    /// stale read and a fresh read are told apart.
+    private static let movedPastCacheJSON = Data("""
+        {
+            "weightBytes": 999999,
+            "numHiddenLayers": 4,
+            "numAttentionHeads": 32,
+            "numKeyValueHeads": 8,
+            "headDim": 128,
+            "hiddenSize": 4096,
+            "numFullAttentionLayers": 4,
+            "nativeMaxContext": 8192
+        }
+        """.utf8)
+
+    @Test("a read at a moving revision replaces a cache entry the revision moved past")
+    func movingRevisionUpdatesTheCache() async throws {
+        let (reader, dir, _) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ref = ModelRef(repo: "org/model", revision: "main")
+        let cache = RepoMetadataCache(cacheDir: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Self.movedPastCacheJSON.write(to: cache.fileURL(repo: ref.repo, revision: ref.revision))
+
+        let metadata = try await reader.metadata(for: ref)
+
+        #expect(metadata.weightBytes == Self.expectedWeightBytes)
+        #expect(try cache.load(repo: ref.repo, revision: ref.revision) == metadata)
+    }
+
+    @Test("a failed fetch at a moving revision returns the cached entry")
+    func movingRevisionFetchFailureFallsBackToCache() async throws {
+        let (reader, dir, source) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ref = ModelRef(repo: "org/model", revision: "main")
+        // The machine resolves once while it has the network, then loses it.
+        let online = try await reader.metadata(for: ref)
+        await source.failEveryFetch(with: StubFetchFailure())
+
+        let offline = try await reader.metadata(for: ref)
+
+        #expect(offline == online)
+        #expect(await source.fetchCount == 2)
+    }
+
+    @Test("a failed fetch at a moving revision with nothing cached throws the fetch error")
+    func movingRevisionFetchFailureWithoutCacheThrows() async throws {
+        let (reader, dir, source) = Self.makeReader(
+            raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await source.failEveryFetch(with: StubFetchFailure())
+
+        await #expect(throws: StubFetchFailure.self) {
+            _ = try await reader.metadata(for: ModelRef(repo: "org/model", revision: "main"))
+        }
     }
 
     /// A cache entry written in the pre-fix schema, before `numFullAttentionLayers`
@@ -685,7 +801,9 @@ struct RepoMetadataTests {
             raw: RawRepoMetadata(configJSON: Self.fullConfigJSON, treeJSON: Self.weightTreeJSON)
         )
         defer { try? FileManager.default.removeItem(at: dir) }
-        let ref: ModelRef = "org/model@abc123"
+        // A commit hash, so the reader reads the cache first and the stale entry
+        // is what it finds there.
+        let ref = ModelRef(repo: "org/model", revision: Self.commitHash)
         let cache = RepoMetadataCache(cacheDir: dir)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Self.staleSchemaCacheJSON.write(to: cache.fileURL(repo: ref.repo, revision: ref.revision))

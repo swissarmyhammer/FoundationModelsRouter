@@ -323,8 +323,21 @@ struct RepoMetadata: Sendable, Equatable, Codable {
     }
 }
 
+/// The logger for the fallback to a cached entry after a failed fetch.
+private let repoMetadataReaderLogger = makeModuleLogger(category: "RepoMetadataReader")
+
 /// Reads ``RepoMetadata`` for a ``ModelRef`` and caches the parsed result per
 /// `(repo, revision)` on disk.
+///
+/// The revision decides which of the two is read first, because only a full
+/// commit hash names a fixed point in the repo history:
+///
+/// - A **commit hash** cannot move, so its cached entry stays correct forever.
+///   The cache is read first, and the source is read only on a miss.
+/// - A **`nil` revision, a branch, or a tag** all move on the Hub, so a cached
+///   entry can hold metadata for content the reference no longer names. The
+///   source is read first, and the cache is a fallback for a failed fetch — the
+///   read that keeps a machine with no network working.
 struct RepoMetadataReader: Sendable {
     /// The injected fetch.
     private let source: MetadataSource
@@ -342,18 +355,19 @@ struct RepoMetadataReader: Sendable {
         self.cache = RepoMetadataCache(cacheDir: cacheDir)
     }
 
-    /// Returns the parsed metadata for a model. Fetches and caches on a miss.
+    /// Returns the parsed metadata for a model.
+    ///
+    /// A commit-pinned reference is read from the cache first and fetched only on
+    /// a miss. A reference whose revision can move is fetched first, and its
+    /// cached entry is read only when the fetch fails.
     ///
     /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the repo
     ///   lacks sizing inputs, or any error from the source or cache I/O.
     func metadata(for ref: ModelRef) async throws -> RepoMetadata {
-        if let cached = try cache.load(repo: ref.repo, revision: ref.revision) {
-            return cached
+        if Self.revisionCanMove(ref.revision) {
+            return try await refreshedMetadata(for: ref)
         }
-        let raw = try await source.fetchRawMetadata(repo: ref.repo, revision: ref.revision)
-        let parsed = try RepoMetadata(raw: raw)
-        try cache.save(parsed, repo: ref.repo, revision: ref.revision)
-        return parsed
+        return try await pinnedMetadata(for: ref)
     }
 
     /// Returns the memory footprint estimate for a model.
@@ -362,6 +376,76 @@ struct RepoMetadataReader: Sendable {
     func footprint(for ref: ModelRef) async throws -> Footprint {
         try await metadata(for: ref).footprint
     }
+
+    /// Returns the metadata for a reference whose revision cannot move.
+    ///
+    /// - Throws: As ``metadata(for:)``.
+    private func pinnedMetadata(for ref: ModelRef) async throws -> RepoMetadata {
+        if let cached = try cache.load(repo: ref.repo, revision: ref.revision) {
+            return cached
+        }
+        let raw = try await source.fetchRawMetadata(repo: ref.repo, revision: ref.revision)
+        return try parseAndCache(raw, for: ref)
+    }
+
+    /// Returns the metadata for a reference whose revision can move.
+    ///
+    /// The source is read on every call, so the entry the cache holds is
+    /// replaced rather than trusted. When the fetch fails and the cache holds an
+    /// entry, that entry is returned instead — the read that keeps a machine
+    /// that has lost the network working.
+    ///
+    /// - Throws: The fetch error when the fetch fails and the cache holds no
+    ///   entry, or as ``metadata(for:)`` otherwise.
+    private func refreshedMetadata(for ref: ModelRef) async throws -> RepoMetadata {
+        let raw: RawRepoMetadata
+        do {
+            raw = try await source.fetchRawMetadata(repo: ref.repo, revision: ref.revision)
+        } catch {
+            guard let cached = try? cache.load(repo: ref.repo, revision: ref.revision) else {
+                throw error
+            }
+            repoMetadataReaderLogger.notice(
+                """
+                repo metadata fetch for \(ref.stringValue, privacy: .public) failed; \
+                using the cached entry, which this revision can have moved past: \
+                \(error.localizedDescription, privacy: .public)
+                """
+            )
+            return cached
+        }
+        return try parseAndCache(raw, for: ref)
+    }
+
+    /// Parses raw artifacts and writes the result to the cache under the
+    /// reference's key, replacing any entry already there.
+    ///
+    /// - Throws: ``RepoMetadataError/metadataUnavailable(_:)`` when the raw
+    ///   artifacts lack sizing inputs, or any error from the cache write.
+    private func parseAndCache(_ raw: RawRepoMetadata, for ref: ModelRef) throws -> RepoMetadata {
+        let parsed = try RepoMetadata(raw: raw)
+        try cache.save(parsed, repo: ref.repo, revision: ref.revision)
+        return parsed
+    }
+
+    /// The character count of a Git commit id written in full.
+    private static let commitHashLength = 40
+
+    /// The characters a commit id written in lowercase hex is made of.
+    private static let commitHashCharacters = Set("0123456789abcdef")
+
+    /// Tells whether a revision can come to name different content on the Hub.
+    ///
+    /// Only a commit id written in full, in lowercase hex, names a fixed point in
+    /// the repo history. A `nil` revision tracks the default branch, and a branch
+    /// and a tag both move, so each of them can name new content later.
+    ///
+    /// - Parameter revision: The pinned revision, or `nil` for the default revision.
+    /// - Returns: `true` unless the revision is a commit id written in full.
+    private static func revisionCanMove(_ revision: String?) -> Bool {
+        guard let revision, revision.count == commitHashLength else { return true }
+        return !revision.allSatisfy(commitHashCharacters.contains)
+    }
 }
 
 /// The logger for cache decode failures.
@@ -369,6 +453,12 @@ private let repoMetadataCacheLogger = makeModuleLogger(category: "RepoMetadataCa
 
 /// A disposable on-disk cache of parsed ``RepoMetadata``, keyed by `(repo, revision)`.
 /// Each key maps to its own JSON file.
+///
+/// An entry stays correct only while its revision names the same content, and
+/// only a full commit hash gives that. ``RepoMetadataReader`` applies the rule:
+/// it trusts an entry keyed by a commit hash, and it refreshes an entry keyed by
+/// a `nil` revision, a branch, or a tag. This type keeps no such rule of its own
+/// — it stores what it is given and returns what it holds.
 struct RepoMetadataCache: Sendable {
     /// The directory under which metadata JSON files are written.
     let cacheDir: URL
