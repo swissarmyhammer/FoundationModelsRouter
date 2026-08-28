@@ -118,7 +118,10 @@ struct TranscriptReconstructionIntegrationTests {
             // as `makeSession` names it: this session writes its own sidecar
             // before it can record anything — which `TranscriptTree.load` below
             // requires — and so does any fork taken from it.
-            sidecarOrigin: .new(under: standard.durableRecording)
+            sidecarOrigin: .new(under: standard.durableRecording),
+            // The handle's own tracer, exactly as `makeSession` hands it on: a
+            // session reports to the same backend as the handle it came off.
+            tracer: standard.tracer
         )
 
         return Harness(
