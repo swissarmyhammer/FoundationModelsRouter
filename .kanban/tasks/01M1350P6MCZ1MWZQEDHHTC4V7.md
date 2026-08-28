@@ -76,8 +76,33 @@ comments:
     - gap: acceptance criterion 1 is not met. `RoutedSession.md` still links four internal members of the unmarked `extension RoutedSession` at RoutedSession.swift:317 (`compact()`, `compact(budget:)`, `cancelPrompt(id:)`, `enqueue(prompt:)-(String)`), and one link, `compact(prompt:)`, names a method that does not exist.
     - next: a person answers the question in the BLOCKER comment — make the extension `public` in a new task, or delete the four entries from the Topics list.
   timestamp: 2026-08-28T14:13:24.098484+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m14bpaf1tjbfpvvbqdgjms9f
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit d7cae11) gives 0 findings, 0 confirmed, 0 refuted. The engine has no validator for a `.md` file, thus it read no line of the changed file. The driver made these checks instead:
+      - `RoutedSession.md` has no symbol link to ``BackgroundToolRunner``, ``RunToCompletionRunner`` or ``ToolContext/isCancelled``. The one remaining `isCancelled` is plain code text in single backticks, not a link.
+      - The two new links point to public symbols: `ToolMount` and its nested `Mode` are `public`, with the cases `background` and `runToCompletion` (Sources/FoundationModelsRouter/Hosting/ToolMount.swift:5-12). Thus these links resolve and add no warning.
+      - The commit changes one source file, `RoutedSession.md`. The other six files are `.kanban` records. No access level changed.
+      - `swift build` gives exit code 0. Build complete.
+    - The implementer measured the DocC warnings: 110 before, 107 after — exactly the three named links, with none added.
+    - Four further broken links in the same file stay open. They are out of the scope of this task. Task ^hdabs7j owns the `extension RoutedSession` access modifier that causes them.
+    - next: none. The task moves to `done`.
+  timestamp: 2026-08-28T14:17:00.641759+00:00
+- actor: claude-code
+  id: 01m14bptrzxhtr2jy4b3xtfrqx
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 1 file (FoundationModelsRouter.docc/RoutedSession.md). The first attempt reported stuck, because the original acceptance criterion asked for no internal symbol link at all, and four further links in the file need an access change that this task forbids. The task was narrowed to the three named links, and the cause of the other four became task ^hdabs7j.
+    - test: green — DocC warnings fell from 110 to 107, exactly the three named links, with none added. `swift build` exit 0.
+    - commit: d7cae11
+    - review: clean — review sha HEAD~1..HEAD, 0 findings
+    - next: none — the task is in done
+
+    The package holds no DocC plugin. The check that works is the symbol-graph route: build with `-emit-symbol-graph`, then `xcrun docc convert` over the catalog with `--additional-symbol-graph-dir`.
+  timestamp: 2026-08-28T14:17:17.343641+00:00
+position_column: done
+position_ordinal: ffff9480
 title: Repair the DocC links that point at internal symbols
 ---
 ## What
@@ -93,13 +118,13 @@ Rewrite each as plain text, or link a public symbol that carries the same meanin
 Scope note: this task covers ONLY the three links above. `RoutedSession.md` holds four further broken links — `compact()`, `compact(prompt:)`, `compact(budget:)`, `cancelPrompt(id:)`, and a disambiguation warning on `enqueue(prompt:)`. Their cause is a separate defect: `extension RoutedSession` (Sources/FoundationModelsRouter/Session/RoutedSession.swift:317) carries no access modifier, so those convenience members are internal. Task ^hdabs7j fixes that, and it repairs those links. A `## Topics` list accepts a symbol link and not plain text, so those entries cannot be repaired here without deleting them.
 
 ## Acceptance Criteria
-- [ ] `RoutedSession.md` has no symbol link to ``BackgroundToolRunner``, ``RunToCompletionRunner``, or ``ToolContext/isCancelled``.
-- [ ] No source file changed access level for this task.
-- [ ] The DocC warning count falls by exactly those three, with no new warning.
+- [x] `RoutedSession.md` has no symbol link to ``BackgroundToolRunner``, ``RunToCompletionRunner``, or ``ToolContext/isCancelled``.
+- [x] No source file changed access level for this task.
+- [x] The DocC warning count falls by exactly those three, with no new warning.
 
 ## Tests
-- [ ] Build the documentation and compare the warning list before and after. The package has no DocC plugin, so use the symbol-graph route: `swift build --target FoundationModelsRouter -Xswiftc -emit-symbol-graph -Xswiftc -emit-symbol-graph-dir -Xswiftc <dir>`, then `xcrun docc convert` over the catalog with `--additional-symbol-graph-dir`.
-- [ ] Run `swift build`. It succeeds.
+- [x] Build the documentation and compare the warning list before and after. The package has no DocC plugin, so use the symbol-graph route: `swift build --target FoundationModelsRouter -Xswiftc -emit-symbol-graph -Xswiftc -emit-symbol-graph-dir -Xswiftc <dir>`, then `xcrun docc convert` over the catalog with `--additional-symbol-graph-dir`.
+- [x] Run `swift build`. It succeeds.
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #docs #router
