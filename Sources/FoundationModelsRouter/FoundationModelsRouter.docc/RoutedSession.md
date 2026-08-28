@@ -11,8 +11,9 @@ A session has three audiences, and each one gets typed capabilities:
   `SessionOutbox` and `SessionMailbox` instances are internal wiring.
 - **Tools** do not use this protocol at all. A running tool reads the
   ambient ``ToolContext`` and uses its capabilities:
-  ``ToolContext/post(_:)``, ``ToolContext/progress(_:)``,
-  ``ToolContext/elicit(_:)``, and ``ToolContext/isCancelled``.
+  ``ToolContext/post(_:)``, ``ToolContext/progress(_:)``, and
+  ``ToolContext/elicit(_:)``. Its `isCancelled` property is internal, so only a
+  tool in this package reads it.
 - **Tool hosts** — a tool that shows the run plane to a model — read that
   plane through the same ambient context, never through a mailbox:
   ``ToolContext/backgroundRuns()``,
@@ -22,10 +23,10 @@ A session has three audiences, and each one gets typed capabilities:
 ## Long-running tools
 
 A tool declares ahead of time that it runs long, through
-``BackgroundTool/mount``. Such a tool is mounted as a
-``BackgroundToolRunner``: each call returns a ``PendingRunEnvelope`` handle at once,
-and the work goes on behind it. Every other tool is mounted as a
-``RunToCompletionRunner`` and returns its result in band;
+``BackgroundTool/mount``. Such a tool is mounted in
+``ToolMount/Mode/background`` mode: each call returns a ``PendingRunEnvelope``
+handle at once, and the work goes on behind it. Every other tool is mounted in
+``ToolMount/Mode/runToCompletion`` mode and returns its result in band;
 ``ToolMount/timeout`` bounds the work.
 
 The session pushes settlement to the model — the model never polls:
