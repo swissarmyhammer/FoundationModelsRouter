@@ -40,10 +40,35 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Tracing/RouterTracing.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorTurnExecution.swift, Sources/FoundationModelsRouter/Session/RoutedSessionActorGeneration.swift, Sources/FoundationModelsRouter/Session/RoutedSession.swift, Tests/FoundationModelsRouterTests/TurnTracingTests.swift (new). `swift build` clean. `swift test` 1078 tests in 111 suites passed with the 2 known issues, plus 83 eval tests — 1072/110 before, so +6 tests and +1 suite, which is exactly the new suite. `swift build --package-path IntegrationTests --build-tests` Build complete.
     - next: ready for /review
   timestamp: 2026-08-28T15:32:28.028644+00:00
+- actor: claude-code
+  id: 01m14gaxc93av7bqpsydjk1kkf
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit e05cd55), 5 files reviewed, 7 validators attempted, 0 failed. counts: 0 findings, 0 confirmed, 0 refuted. All acceptance and test items in the description are checked, and there is no earlier `## Review Findings` section.
+    - The two decisions of the implementer were examined:
+      1. `TurnEntryPoint` value enum in `RouterTracing` — CORRECT. The header of the file makes the vocabulary "one home for the vocabulary, so a name is written once and read everywhere", and it says a name there is part of the observable surface of the router. A string literal at the call site breaks that rule. The enum also agrees with the `SpanName` and `AttributeKey` pattern next to it, and it gives the compiler the three permitted values. `generate(...)` takes `entryPoint` with no default value, so each of the four call sites must state its surface.
+      2. `SpanContentSafetyTests` left untouched — the claim is TRUE, and it is now measured, not only stated. Proof: the suite makes its fixture with `tracer: tracer` (SpanContentSafetyTests.swift:64); `ScriptedSessionFixture.make` gives that tracer to the `Router` (ScriptedSessionFixture.swift:79), and each handle of the resolved profile carries it, so `RouterTracing.tracer(explicit: tracer)` in `runTurn` resolves to the `InMemoryTracer`. The suite then drives real turns — `respond(to:)` at SpanContentSafetyTests.swift:70, more turns at :76, a fold at :80 — and `renderedAttributes` (:39-47) reads every attribute of every span in `finishedSpans` with no filter by span name. The needles at :87 hold the prompt, the answer, the tool output and the embed input, and `#expect(!rendered.isEmpty)` at :92 stops a suite that measures nothing from passing in silence. The new turn span is therefore inside what the suite measures. No finding.
+    - The span wrapper itself is a pure wrapper: `runTurnWork` holds the moved work unchanged, `recordMeasuredTokens(on:)` writes `tokens.in`/`tokens.out` only for a `.measured` usage state and writes nothing for a turn the backend could not meter, which is better than a guess. `withSpan` records a thrown error and raises it again.
+    - next: none. Task moved to `done`.
+  timestamp: 2026-08-28T15:38:09.673251+00:00
+- actor: claude-code
+  id: 01m14gbxkhx6fya69ycyd7611j
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files; RouterTracing.swift, RoutedSessionActorTurnExecution.swift, RoutedSessionActorGeneration.swift, RoutedSession.swift, and the new TurnTracingTests.swift
+    - test: green — swift test, 1078 tests in 111 suites passed with 2 known issues, plus 83 eval tests. The baseline was 1072 in 110 suites, so the difference is exactly the new suite. `swift build --package-path IntegrationTests --build-tests` also completed.
+    - commit: e05cd55
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - next: none — the task is in done
+
+    The reviewer made a good observation about the two test suites together. `SpanContentSafetyTests` proves that no attribute carries the caller's content, but it cannot prove a turn span reached the tracer: if the turn span were dropped, that suite alone would still pass. `TurnTracingTests` closes the gap, because each case demands one finished span with the matching operation name.
+
+    Two flaky wall-clock tests were seen again, both at BoundedWait.swift:114: `GenerationStallDiagnosticTests` and `HumanWaitGateTests`. Each passed on a re-run, and two later full runs were clean.
+  timestamp: 2026-08-28T15:38:42.673242+00:00
 depends_on:
 - 01M12MM3EH1SBD3677NZGWMHD0
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffff9780
 title: Open one span for each generation turn
 ---
 ## What
