@@ -43,8 +43,25 @@ comments:
     - evidence: 5 files — Sources/FoundationModelsRouter/Router.swift, Sources/FoundationModelsRouter/Sizing/HostProfile.swift, Sources/FoundationModelsRouter/Sizing/HostProfileCache.swift (deleted), Tests/FoundationModelsRouterTests/HostProfileTests.swift, Tests/FoundationModelsRouterTests/ResolveTests.swift (+144 / -156). `swift build` complete, exit 0. `swift test` exit 0: 1068 tests in 108 suites passed with 2 known issues, plus 83 eval tests in 10 suites passed. Zero failures. The count moved 1069 -> 1068 exactly: 3 cache tests removed, 2 regression tests added. `swift build --package-path IntegrationTests --build-tests` complete, exit 0.
     - next: /review
   timestamp: 2026-08-28T03:46:42.669243+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m137t6z25y3vkwywf7bfn4e4
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit a673b60) — 0 findings, 0 confirmed, 0 refuted, 7 rules attempted, 0 failed. 5 files reviewed. Three code-hygiene rules declined the deleted file `Sources/FoundationModelsRouter/Sizing/HostProfileCache.swift`, because the file is no longer on disk. This is correct for a deletion.
+    - next: no work is open. The task moves to `done`.
+  timestamp: 2026-08-28T03:49:59.394386+00:00
+- actor: claude-code
+  id: 01m137tjcy9rmf0d356vgwq1es
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 5 files; HostProfileCache.swift deleted, Router.swift, HostProfile.swift, HostProfileTests.swift, ResolveTests.swift
+    - test: green — swift test, 1068 tests in 108 suites passed, plus 83 eval tests. That is 1069 less the 3 cache tests plus the 2 new regression tests.
+    - commit: a673b60
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - next: none — the task is in done
+  timestamp: 2026-08-28T03:50:11.102930+00:00
+position_column: done
+position_ordinal: ffff9280
 title: Remove HostProfileCache and probe the host on each resolve
 ---
 ## What
