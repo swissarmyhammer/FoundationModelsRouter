@@ -4,8 +4,54 @@ import FoundationModels
 /// ``RoutedSessionActor``'s session-lifetime boundaries: forking a child session
 /// over the same resident model, and closing a session down.
 extension RoutedSessionActor {
-    /// Forks a child session over the same resident model. See
-    /// ``RoutedSession/fork(workingDirectory:)`` for the full contract.
+    /// Forks a child session over the same resident model, inside one
+    /// ``RouterTracing/SpanName/fork`` span. See
+    /// ``RoutedSession/fork(workingDirectory:)`` for the full contract,
+    /// ``withForkSpan(_:)`` for what the span covers, and
+    /// ``performFork(workingDirectory:)`` for the mechanics.
+    ///
+    /// - Parameter workingDirectory: The child's working directory, or `nil` to
+    ///   default to its recording directory.
+    /// - Returns: The forked child session.
+    /// - Throws: Whatever ``performFork(workingDirectory:)`` throws, with the
+    ///   error recorded on the span.
+    func fork(workingDirectory: URL?) async throws -> RoutedSession {
+        try await withForkSpan {
+            try await performFork(workingDirectory: workingDirectory)
+        }
+    }
+
+    /// Opens one ``RouterTracing/SpanName/fork`` span around a whole fork and
+    /// writes the child it produced onto it.
+    ///
+    /// The span opens before `body` runs, so it covers every part of the call
+    /// that can refuse or suspend: the reentry guard, which throws before any
+    /// gate is touched, and ``forkAdmissionGate``'s wait for a free slot. A
+    /// refused fork therefore still leaves a span carrying its refusal, and a
+    /// queued fork's wait for a slot is time its own span covers.
+    ///
+    /// The child's id is written only once the child exists, so a fork that
+    /// threw names no child.
+    ///
+    /// - Parameter body: The fork work, producing the child session.
+    /// - Returns: The forked child session.
+    /// - Throws: Whatever `body` throws. `withSpan` records the error on the
+    ///   span and raises it again.
+    private func withForkSpan(
+        _ body: () async throws -> RoutedSession
+    ) async throws -> RoutedSession {
+        try await RouterTracing.tracer(explicit: tracer)
+            .withSpan(RouterTracing.SpanName.fork, ofKind: .internal) { span in
+                span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
+                span.attributes[RouterTracing.AttributeKey.sessionId] = id.description
+                span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
+                let child = try await body()
+                span.attributes[RouterTracing.AttributeKey.forkChildSessionId] = child.id.description
+                return child
+            }
+    }
+
+    /// The fork mechanics ``fork(workingDirectory:)`` opens its span around.
     ///
     /// Waits on ``forkAdmissionGate`` for a free slot, then builds the child's
     /// tools from ``originalTools`` (never this session's own already-instanced
@@ -37,8 +83,9 @@ extension RoutedSessionActor {
     ///   turn — refused before any gate is touched, so nothing is acquired and
     ///   nothing has to be unwound. Otherwise nothing — see the protocol doc's
     ///   ``RoutedSession/fork(workingDirectory:)`` `Throws:` note.
-    func fork(workingDirectory: URL?) async throws -> RoutedSession {
-        // Before the admission gate, so a refused fork takes no slot.
+    private func performFork(workingDirectory: URL?) async throws -> RoutedSession {
+        // Before the admission gate, so a refused fork takes no slot. The span
+        // is already open around this, so the refusal is recorded on it.
         guard !isInsideOwnTurnToolCall else {
             throw SessionReentryError.forkDuringSameSessionTurn(sessionID: id)
         }

@@ -137,6 +137,8 @@ enum RouterTestFixtures {
     ///   - id: The router's recording root id. Pass a prior router's `id` to
     ///     simulate a fresh process continuing the same recording root.
     ///     Defaults to a fresh ULID.
+    ///   - maxConcurrentForks: The in-flight fork ceiling each resolved
+    ///     profile admits. Lower it to make a fork wait for a free slot.
     ///   - cacheDir: The router's cache directory (a per-test temp dir).
     ///   - recordingsDir: The durable transcripts root, or `nil` (the
     ///     default) for a router with no durable root.
@@ -149,6 +151,7 @@ enum RouterTestFixtures {
     /// - Returns: The router.
     static func makeRouter(
         id: ULID = .generate(),
+        maxConcurrentForks: Int = defaultMaxConcurrentForks,
         cacheDir: URL,
         recordingsDir: URL? = nil,
         recorder: any TranscriptRecorder = InMemoryRecorder(),
@@ -157,6 +160,7 @@ enum RouterTestFixtures {
     ) -> Router {
         Router(
             id: id,
+            maxConcurrentForks: maxConcurrentForks,
             cacheDir: cacheDir,
             recordingsDir: recordingsDir,
             recorder: recorder,

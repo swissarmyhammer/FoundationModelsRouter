@@ -66,8 +66,6 @@ enum RouterTracing {
         static let load = prefix + "load"
 
         /// One ``RoutedSession/fork(workingDirectory:)`` call.
-        // No caller until the dependent tracing cards open this span.
-        // periphery:ignore
         static let fork = prefix + "fork"
 
         /// The whole life of one session, from the handle that vends it to
@@ -90,7 +88,19 @@ enum RouterTracing {
         static let modelRef = "model.ref"
 
         /// The span id of the session the work runs on.
+        ///
+        /// On a fork span this names the *parent* — the session the fork was
+        /// asked of. The child the fork produced is named by
+        /// ``forkChildSessionId``.
         static let sessionId = "session.id"
+
+        /// The span id of the child session one fork produced.
+        ///
+        /// Written only once the child exists, so a fork that was refused or
+        /// that failed carries no such key. Read beside ``sessionId``, the two
+        /// keys of a fork span say which session was forked and which session
+        /// came out of it.
+        static let forkChildSessionId = "fork.child_session_id"
 
         /// The id of the turn the work belongs to, unique inside its session.
         static let turnId = "turn.id"
