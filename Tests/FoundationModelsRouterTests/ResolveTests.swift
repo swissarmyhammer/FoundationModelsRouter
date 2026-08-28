@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Synchronization
 import Testing
 
 @testable import FoundationModelsRouter
@@ -45,6 +46,39 @@ struct ResolveTests {
         let chip: String
         let totalRAM: Int64
         let recommendedMaxWorkingSetSize: Int64
+    }
+
+    /// A ``MachineProbe`` whose GPU working set the test can change between two
+    /// reads, as an OS update changes it on one machine.
+    ///
+    /// This is a reference type on purpose: the test and the router under test
+    /// must read one shared probe, so the value the test writes is the value the
+    /// next resolve reads. The chip and the RAM stay fixed, because an OS update
+    /// does not change them. The ``Mutex`` guards the one mutable value, which
+    /// makes the probe safe to read from the router's actor.
+    private final class ChangingWorkingSetProbe: MachineProbe {
+        let chip: String
+        let totalRAM: Int64
+        private let workingSet: Mutex<Int64>
+
+        /// Creates a probe whose working set the test can replace later.
+        ///
+        /// - Parameters:
+        ///   - chip: The chip / machine identifier.
+        ///   - totalRAM: Total physical RAM in bytes.
+        ///   - recommendedMaxWorkingSetSize: The GPU working set to report first.
+        init(chip: String, totalRAM: Int64, recommendedMaxWorkingSetSize: Int64) {
+            self.chip = chip
+            self.totalRAM = totalRAM
+            self.workingSet = Mutex(recommendedMaxWorkingSetSize)
+        }
+
+        /// The GPU working set in bytes. A write replaces what every later read
+        /// reports.
+        var recommendedMaxWorkingSetSize: Int64 {
+            get { workingSet.withLock { $0 } }
+            set { workingSet.withLock { $0 = newValue } }
+        }
     }
 
     // MARK: - Stub metadata source
@@ -313,6 +347,99 @@ struct ResolveTests {
         }
         // The loader was never asked to download anything on the failure path.
         #expect(await loader.observedLoadPhases.isEmpty)
+    }
+
+    // MARK: - Host budget freshness
+
+    /// The GPU working set the host reports before an OS update. It is far too
+    /// small for any candidate, so the resolve fails and its
+    /// ``ResolutionFailure`` states the budget the attempt used.
+    private static let workingSetBeforeOSUpdate: Int64 = 1_000
+
+    /// The GPU working set the same host reports after an OS update.
+    private static let workingSetAfterOSUpdate: Int64 = 2_000
+
+    /// Resolves a profile that cannot fit, and gives back the failure it threw.
+    ///
+    /// - Parameters:
+    ///   - router: The router to resolve against.
+    ///   - definition: The authored profile to resolve.
+    ///   - progress: The progress the resolve reports through.
+    /// - Returns: The thrown failure, which carries the budget the attempt used.
+    /// - Throws: When the resolve did not throw a ``ResolutionFailure``.
+    @MainActor
+    private static func resolutionFailure(
+        router: Router,
+        definition: ProfileDefinition,
+        progress: ResolutionProgress
+    ) async throws -> ResolutionFailure {
+        var caught: ResolutionFailure?
+        do {
+            _ = try await router.resolve(profile: definition, reporting: progress)
+        } catch let failure as ResolutionFailure {
+            caught = failure
+        }
+        return try #require(caught)
+    }
+
+    @Test("a later resolve prices against the host's new working set, not the one the first resolve read")
+    @MainActor
+    func eachResolveReadsTheHostBudgetAfresh() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let progress = ResolutionProgress()
+        let source = StubMetadataSource(raw: Self.rawMetadata, progress: progress)
+        let loader = StubModelLoader(progress: progress)
+        // Only the working set moves between the two resolves — the chip and the
+        // RAM stay put, exactly as an OS update leaves them. A profile keyed on
+        // that pair therefore cannot tell the two hosts apart, so a budget the
+        // router remembers from the first resolve stays stale for the second.
+        let probe = ChangingWorkingSetProbe(
+            chip: "Apple Test",
+            totalRAM: 64 << 30,
+            recommendedMaxWorkingSetSize: Self.workingSetBeforeOSUpdate
+        )
+        let router = Router(
+            headroomReserve: 0,
+            cacheDir: dir,
+            probe: probe,
+            metadataSource: source,
+            loader: loader
+        )
+
+        let before = try await Self.resolutionFailure(
+            router: router, definition: Self.profile, progress: progress)
+        #expect(before.budgetBytes == Self.workingSetBeforeOSUpdate)
+
+        probe.recommendedMaxWorkingSetSize = Self.workingSetAfterOSUpdate
+
+        let after = try await Self.resolutionFailure(
+            router: router, definition: Self.profile, progress: progress)
+        #expect(after.budgetBytes == Self.workingSetAfterOSUpdate)
+    }
+
+    @Test("resolve leaves no host-profile file in the cache directory")
+    @MainActor
+    func resolveWritesNoHostProfileFile() async throws {
+        let dir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let progress = ResolutionProgress()
+        let source = StubMetadataSource(raw: Self.rawMetadata, progress: progress)
+        let loader = StubModelLoader(progress: progress)
+        let router = Router(
+            cacheDir: dir,
+            probe: StubProbe(chip: "Apple Test", totalRAM: 64 << 30, recommendedMaxWorkingSetSize: 48 << 30),
+            metadataSource: source,
+            loader: loader
+        )
+
+        _ = try await router.resolve(profile: Self.profile, reporting: progress)
+
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let hostProfileFiles = names.filter { $0.hasPrefix("host-profile-") && $0.hasSuffix(".json") }
+        #expect(hostProfileFiles.isEmpty)
     }
 
     // MARK: - Identity

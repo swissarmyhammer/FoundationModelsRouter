@@ -19,13 +19,14 @@ public protocol MachineProbe: Sendable {
     var recommendedMaxWorkingSetSize: Int64 { get }
 }
 
-/// A one-time measurement of the host machine, used to compute the RAM budget a
-/// resolved profile must fit within.
+/// A measurement of the host machine, used to compute the RAM budget a resolved
+/// profile must fit within.
 ///
-/// The profile is measured once at startup and cached to disk keyed by
-/// `(chip, totalRAM)` (see ``HostProfileCache``). Every value is a byte count;
-/// the type is pure data — `Sendable` and `Codable` — with no dependency on the
-/// hardware it describes, so it serializes and round-trips cleanly.
+/// The profile is measured on each read, so a value the OS changes — the GPU
+/// working set after an OS update, for example — reaches the next budget. Every
+/// value is a byte count; the type is pure data — `Sendable` and `Codable` —
+/// with no dependency on the hardware it describes, so it serializes and
+/// round-trips cleanly.
 struct HostProfile: Sendable, Codable, Equatable {
     /// The chip / machine identifier.
     let chip: String

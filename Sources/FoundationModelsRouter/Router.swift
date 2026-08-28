@@ -97,9 +97,10 @@ private struct ResidencyHold: Sendable {
 /// ``ProfileDefinition``s into resident ``LanguageModelProfile``s for this
 /// machine, reporting UI-bindable progress.
 ///
-/// The router holds the host-profile and repo-metadata caches and the
-/// injected seams: a ``MachineProbe`` for the budget, a ``MetadataSource``
-/// for sizing, and a ``ModelLoader`` for the download and load.
+/// The router holds the repo-metadata cache and the injected seams: a
+/// ``MachineProbe`` for the budget, a ``MetadataSource`` for sizing, and a
+/// ``ModelLoader`` for the download and load. The host itself is probed on
+/// each resolve, so no host measurement is kept.
 ///
 /// A router admits several resident profiles at one time. It prices the
 /// union of every resident model against one shared budget. Residency is
@@ -133,9 +134,6 @@ public actor Router {
 
     /// The machine probe behind the budget.
     private let probe: any MachineProbe
-
-    /// The disposable host-profile cache.
-    private let hostProfileCache: HostProfileCache
 
     /// The repo-metadata reader (fetch + parse + cache) behind sizing.
     private let metadataReader: RepoMetadataReader
@@ -209,7 +207,6 @@ public actor Router {
         self.recordingLevel = recordingLevel
         self.tracer = tracer
         self.probe = probe
-        self.hostProfileCache = HostProfileCache(cacheDir: resolvedCacheDir)
         self.metadataReader = RepoMetadataReader(source: metadataSource, cacheDir: resolvedCacheDir)
         self.loader = loader
     }
@@ -468,18 +465,13 @@ public actor Router {
 
     // MARK: - Budget
 
-    /// The RAM budget for this machine, measuring and caching the host profile.
+    /// The RAM budget for this machine, measured from a fresh probe read.
+    ///
+    /// The three reads are cheap, so each resolve takes them again rather than
+    /// remember an earlier answer. A value the OS changes — the GPU working set
+    /// after an OS update — therefore reaches the very next budget.
     private func hostBudget() -> Int64 {
-        let chip = probe.chip
-        let ram = probe.totalRAM
-        let profile: HostProfile
-        if let cached = try? hostProfileCache.load(chip: chip, totalRAM: ram) {
-            profile = cached
-        } else {
-            profile = HostProfile(probe: probe)
-            try? hostProfileCache.save(profile)
-        }
-        return profile.budget(headroomReserve: headroomReserve)
+        HostProfile(probe: probe).budget(headroomReserve: headroomReserve)
     }
 
     // MARK: - Sizing
