@@ -21,10 +21,33 @@ comments:
     - evidence: 4 files — Sources/FoundationModelsRouter/Session/RoutedSessionActorForking.swift, Sources/FoundationModelsRouter/Tracing/RouterTracing.swift, Tests/FoundationModelsRouterTests/ForkTracingTests.swift (new), Tests/FoundationModelsRouterTests/Helpers/RouterTestFixtures.swift. TDD: the 3 new span tests failed first with 9 issues (no fork span existed), then passed. `swift build` complete. `swift test` = 1090 tests in 113 suites passed with the 2 known issues, plus 83 eval tests passed; baseline was 1086 in 112 suites, so the difference is exactly the new 4-test `Fork tracing` suite. `swift build --package-path IntegrationTests --build-tests` complete.
     - next: /review
   timestamp: 2026-08-28T16:21:52.122867+00:00
+- actor: claude-code
+  id: 01m14k1vfz27ce496hd62rzwyc
+  text: |
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit 9883cf6) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 4 files reviewed.
+    - checked by hand: the span opens before the reentry guard and before `forkAdmissionGate.wait()` — `fork(workingDirectory:)` calls `withForkSpan { performFork(...) }`, and `performFork` puts the guard first, then the gate wait, so a refused fork keeps a span with its error.
+    - checked by hand: no assertion in `ForkTracingTests.swift` reads an elapsed time. The ceiling test reads `activeSpans`, `availablePermits`, `waiterCount` and span counts, and it waits with `BoundedWait.conditionReached`.
+    - next: none. All acceptance and test items are marked. Task moved to `done`.
+  timestamp: 2026-08-28T16:25:38.559596+00:00
+- actor: claude-code
+  id: 01m14k2gxz1y6fmt1g72yhesz4
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 4 files; RoutedSessionActorForking.swift, RouterTracing.swift, new ForkTracingTests.swift, Helpers/RouterTestFixtures.swift
+    - test: green — swift test, 1090 tests in 113 suites passed with 2 known issues, plus 83 eval tests. Baseline was 1086 in 112 suites, so the difference is exactly the new 4-test suite. `swift build --package-path IntegrationTests --build-tests` also completed.
+    - commit: 9883cf6
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed
+    - next: none — the task is in done
+
+    The reviewer read the statement order and confirmed the span opens before the reentry guard and before `forkAdmissionGate.wait()`. A refused fork therefore keeps a span with its error, and a queued fork's wait for a slot is time inside its own span. The child session id is written only after the body returns, so a fork that throws names no child.
+
+    The reviewer also confirmed the new suite reads state only: the gate's permits and waiter count, the open spans, and the finished-span counts. No clock and no elapsed-time expression appears in it, so it does not carry the pattern that makes the two known flaky suites unstable.
+  timestamp: 2026-08-28T16:26:00.511302+00:00
 depends_on:
 - 01M12MM3EH1SBD3677NZGWMHD0
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffff9980
 title: Open one span for each session fork
 ---
 ## What
