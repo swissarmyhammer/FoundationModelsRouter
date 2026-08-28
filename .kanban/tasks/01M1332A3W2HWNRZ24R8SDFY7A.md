@@ -14,12 +14,12 @@ The audit found Hosting members that are public but have no consumer outside the
 - The two `ToolContext` initializers (Sources/FoundationModelsRouter/Hosting/ToolContext.swift:65, 104). The `ToolContext` type stays public; it is documented tool-authoring surface.
 - `SessionMailbox.makeCompletionToken()` (Sources/FoundationModelsRouter/Hosting/SessionMailbox.swift:60) and `SessionMailbox.init()` (line 121). The actor stays public for now; a later task hoists its nested types and demotes it.
 
-Also repair the three DocC links in Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md that point at internal symbols and cannot resolve: ``BackgroundToolRunner``, ``RunToCompletionRunner``, and ``ToolContext/isCancelled``. Rewrite each as plain text or link a public symbol instead.
+The DocC link repair that was in this task is now its own task, because four tasks touch that one catalog file.
 
 ## Acceptance Criteria
 - [ ] Each listed member is `internal`.
 - [ ] `ToolContext` and `SessionMailbox` types are still public.
-- [ ] `RoutedSession.md` has no symbol link to an internal symbol.
+- [ ] No public signature in the module names `OperationEventSink` or `ToolMounting`.
 
 ## Tests
 - [ ] Run `swift build` and `swift test` at the root. All targets build and all tests pass; the plain-import support, example, and tool targets prove no demoted member was load-bearing.
