@@ -111,10 +111,27 @@ comments:
     - evidence: 1 file — Tests/FoundationModelsRouterTests/Helpers/AutoCompactionFixtures.swift. `swift build` complete; `swift test` 1086 tests in 112 suites passed with 2 known issues, plus 83 eval tests (same as the baseline); `swift build --package-path IntegrationTests --build-tests` complete. Both `## Review Findings` items are now `- [x]`.
     - next: /review
   timestamp: 2026-08-28T16:06:37.889354+00:00
+- actor: claude-code
+  id: 01m14j6sym1f19tf9xs0h6met7
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (local backend), 7 validator runs, 0 findings. The two earlier `code-hygiene/magic-numbers-swift` findings are corrected and their items are marked. `AutoCompactionFixtures.swift` now has `private static let cannedTextRepeatCount = 60` and `private static let fixedBudgetTriggerFraction = 0.8`, and the three doc comments point to the names.
+    - next: none. The task moves to `done`.
+  timestamp: 2026-08-28T16:10:52.244959+00:00
+- actor: claude-code
+  id: 01m14j77kfrdxm5hwkypeev9s4
+  text: |-
+    ### finish iteration 2 — clean
+    - implement: changed — 1 file (Helpers/AutoCompactionFixtures.swift); the two constants are named, and three doc comments name the constant instead of repeating the value
+    - test: green — swift test, 1086 tests in 112 suites passed with 2 known issues, plus 83 eval tests. The count did not change, which is correct for a naming fix.
+    - commit: 42bdf4c
+    - review: clean — review sha HEAD~1..HEAD, 0 findings, 7 validators attempted, 0 failed; both prior findings checked
+    - next: none — the task is in done
+  timestamp: 2026-08-28T16:11:06.223382+00:00
 depends_on:
 - 01M12MM3EH1SBD3677NZGWMHD0
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: ffff9880
 title: Open one span for each compaction fold
 ---
 ## What
