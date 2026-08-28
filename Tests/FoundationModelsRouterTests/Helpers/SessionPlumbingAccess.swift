@@ -1,3 +1,5 @@
+import Tracing
+
 @testable import FoundationModelsRouter
 
 /// Test-only reach into a session's internal plumbing (task ^j0pp9yp).
@@ -15,6 +17,10 @@ extension RoutedSession {
 
     /// The session's internal ``SessionMailbox``.
     nonisolated var mailbox: SessionMailbox { (self as! RoutedSessionActor).mailbox }
+
+    /// The tracer the session opens its spans through, or `nil` when it holds
+    /// none — see ``RoutedSessionActor/tracer``.
+    nonisolated var sessionTracer: (any Tracer)? { (self as! RoutedSessionActor).tracer }
 
     /// Whether a ``RoutedSession/respond(to:maxTokens:)`` call on this session
     /// is suspended on a wait of its own run plane — see

@@ -632,7 +632,8 @@ struct SessionSidecarTests {
             holdsAdmissionPermit: false,
             persistedEntryCount: 0,
             historyOrdinal: 0,
-            sidecarOrigin: .new(under: standard.durableRecording)
+            sidecarOrigin: .new(under: standard.durableRecording),
+            tracer: standard.tracer
         )
         #expect(session.recordingDirectory == recordingDirectory)
 

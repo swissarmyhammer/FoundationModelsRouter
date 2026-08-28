@@ -19,11 +19,11 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// propagates to the caller.
     ///
     /// Every call opens one OpenTelemetry span named
-    /// `FoundationModelsRouter.embed`, of kind `client`, through
-    /// ``RoutedModel/tracer`` — or through `InstrumentationSystem.tracer` when
-    /// that is `nil`. Unbootstrapped, that resolves to a no-op tracer, so an
-    /// application that does not trace pays nothing. `withSpan` records a
-    /// thrown error on the span and rethrows it.
+    /// ``RouterTracing/SpanName/embed``, of kind `client`, through the tracer
+    /// ``RouterTracing/tracer(explicit:)`` resolves from ``RoutedModel/tracer``.
+    /// Unbootstrapped, that resolves to a no-op tracer, so an application that
+    /// does not trace pays nothing. `withSpan` records a thrown error on the
+    /// span and rethrows it.
     ///
     /// The span carries four attributes, and their names are stable API:
     ///
@@ -42,12 +42,12 @@ extension RoutedModel where Container == any LoadedEmbeddingContainer {
     /// - Returns: One ``dimension``-length vector per input, in order.
     /// - Throws: Any error thrown by the embedder container.
     public func embed(texts: [String]) async throws -> [[Float]] {
-        try await (tracer ?? InstrumentationSystem.tracer)
-            .withSpan("FoundationModelsRouter.embed", ofKind: .client) { span in
-                span.attributes["router.id"] = routerId.description
-                span.attributes["model.ref"] = chosen.stringValue
-                span.attributes["embedding.input_count"] = texts.count
-                span.attributes["embedding.dimension"] = dimension
+        try await RouterTracing.tracer(explicit: tracer)
+            .withSpan(RouterTracing.SpanName.embed, ofKind: .client) { span in
+                span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
+                span.attributes[RouterTracing.AttributeKey.modelRef] = chosen.stringValue
+                span.attributes[RouterTracing.AttributeKey.embeddingInputCount] = texts.count
+                span.attributes[RouterTracing.AttributeKey.embeddingDimension] = dimension
                 return try await container.embed(texts: texts)
             }
     }

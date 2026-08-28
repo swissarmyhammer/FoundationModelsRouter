@@ -1,8 +1,14 @@
 import Foundation
 import FoundationModels
+import Tracing
 
 /// Builds a ``RoutedSessionActor``. Each parameter forwards unchanged to the
 /// ``RoutedSessionActor`` initializer.
+///
+/// Every session comes into existence through this one factory — vended,
+/// forked, or restored from disk — so a parameter added here reaches all three
+/// shapes at once. `tracer` carries no default for that reason: a site that
+/// forgot it would leave its sessions silent, and the compiler says so.
 ///
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -35,7 +41,8 @@ func makeRoutedSessionActor(
     summarization: Summarization = Summarization(),
     agentSpawn: SessionSidecar.AgentSpawn? = nil,
     discoveryPriming: DiscoveryPriming? = nil,
-    recordingRoot: URL? = nil
+    recordingRoot: URL? = nil,
+    tracer: (any Tracer)?
 ) -> RoutedSessionActor {
     RoutedSessionActor(
         profile: profile,
@@ -67,7 +74,8 @@ func makeRoutedSessionActor(
         summarization: summarization,
         agentSpawn: agentSpawn,
         discoveryPriming: discoveryPriming,
-        recordingRoot: recordingRoot
+        recordingRoot: recordingRoot,
+        tracer: tracer
     )
 }
 
@@ -121,6 +129,16 @@ actor RoutedSessionActor: RoutedSession {
 
     /// The non-optional recorder every generation brackets through.
     nonisolated let recorder: any TranscriptRecorder
+
+    /// The tracer this session opens its spans through, or `nil` to read
+    /// `InstrumentationSystem.tracer` at call time.
+    ///
+    /// Carried from the ``RoutedModel`` the session came off, and handed on to
+    /// every fork this session takes, so a fork and a restored node report to
+    /// the same backend as the handle that owns them. See
+    /// ``RouterTracing/tracer(explicit:)`` for the resolution rule, and
+    /// ``RouterTracing`` for the rule that keeps content off a span.
+    nonisolated let tracer: (any Tracer)?
 
     /// The session's system instructions. A forked child inherits them.
     nonisolated let instructions: String?
@@ -334,7 +352,8 @@ actor RoutedSessionActor: RoutedSession {
         summarization: Summarization = Summarization(),
         agentSpawn: SessionSidecar.AgentSpawn? = nil,
         discoveryPriming: DiscoveryPriming? = nil,
-        recordingRoot: URL? = nil
+        recordingRoot: URL? = nil,
+        tracer: (any Tracer)?
     ) {
         self.profile = profile
         self.routerId = routerId
@@ -364,6 +383,7 @@ actor RoutedSessionActor: RoutedSession {
         self.autoCompactionPrompt = autoCompactionPrompt
         self.summarization = summarization
         self.discoveryPriming = discoveryPriming
+        self.tracer = tracer
 
         // The session's own directory is brought into existence here, by its
         // write-once sidecar, before the session exists to record anything into

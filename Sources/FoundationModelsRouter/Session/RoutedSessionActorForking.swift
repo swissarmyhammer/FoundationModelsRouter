@@ -202,7 +202,11 @@ extension RoutedSessionActor {
             // Priming travels with the session for the same reason the
             // auto-compaction opt-in does: a fork continues its parent's
             // conversation, so it primes its turns exactly like its parent.
-            discoveryPriming: discoveryPriming
+            discoveryPriming: discoveryPriming,
+            // The parent's own tracer: a fork continues its parent's
+            // conversation, so its spans belong in the same trace and must
+            // reach the same backend.
+            tracer: tracer
         )
     }
 

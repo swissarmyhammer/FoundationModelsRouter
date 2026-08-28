@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Tracing
 
 @testable import FoundationModelsRouter
 
@@ -28,6 +29,10 @@ struct ScriptedSessionFixture {
     /// into, so a test can assert on exactly what a turn recorded.
     let recorder: InMemoryRecorder
 
+    /// The resolved profile the session was vended from, retained so a test
+    /// can reach the other two slots — the embedding handle above all.
+    let profile: LanguageModelProfile
+
     /// The SDK's own transcript for this fixture's session, in order.
     ///
     /// Read off the vended backend, so it is the same transcript the turn
@@ -49,13 +54,17 @@ struct ScriptedSessionFixture {
     ///   - tools: The tools to mount on the vended session.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
+    ///   - tracer: The tracer every handle of the resolved profile carries, or
+    ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
+    ///     time.
     /// - Returns: The vended session, its scripted model's log, and the temp
     ///   directory the caller must remove.
     /// - Throws: Whatever profile resolution throws.
     static func make(
         playing script: ScriptedTurnScript,
         mounting tools: [any Tool],
-        tempDirPrefix: String
+        tempDirPrefix: String,
+        tracer: (any Tracer)? = nil
     ) async throws -> ScriptedSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
         let log = ScriptedTurnLog()
@@ -66,7 +75,8 @@ struct ScriptedSessionFixture {
             cacheDir: directory,
             recorder: recorder,
             loader: StubModelLoader(
-                container: container, dimension: RouterTestFixtures.stubDimension)
+                container: container, dimension: RouterTestFixtures.stubDimension),
+            tracer: tracer
         )
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
@@ -75,6 +85,7 @@ struct ScriptedSessionFixture {
             log: log,
             directory: directory,
             vendedBackends: container.vendedBackends,
-            recorder: recorder)
+            recorder: recorder,
+            profile: profile)
     }
 }

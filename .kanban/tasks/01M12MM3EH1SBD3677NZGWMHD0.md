@@ -1,7 +1,22 @@
 ---
 assignees:
 - claude-code
-position_column: todo
+comments:
+- actor: claude-code
+  id: 01m1389he5n9gkndj72gsv4j9b
+  text: |-
+    Picked up. Research done before any edit.
+
+    Facts found:
+    - `RoutedModel.tracer` is `let tracer: (any Tracer)?` in `Sources/FoundationModelsRouter/LanguageModelProfile.swift`. `Router.tracer` hands it to every vended handle.
+    - The three `makeRoutedSessionActor` call sites are confirmed: `RoutedLLM.swift` (`makeSession(grammar:...)`, has `self.tracer`), `Recording/SessionTreeRestoration.swift` (`restoreSessionTree`, has `routedLLM.tracer`), `Session/RoutedSessionActorForking.swift` (`fork(workingDirectory:)`, an extension on the actor, so it forwards its own stored `tracer`).
+    - `InMemoryTracer` is a **struct** over shared locked storage, not a class. So `===` cannot prove "the session holds that tracer". The wiring test therefore opens a probe span through the session's stored tracer and looks for it in the fixture tracer's `finishedSpans`; two copies of one `InMemoryTracer` share one span log, so a probe that lands proves the wiring.
+    - Test-only reach onto the actor follows the existing `Tests/.../Helpers/SessionPlumbingAccess.swift` pattern (`outbox`, `mailbox` accessors that force-cast `RoutedSession` to `RoutedSessionActor`).
+    - The scripted turn plus tool call already has a fixture: `Helpers/ScriptedSessionFixture.swift` over `ScriptedToolCallingModel` and `MarkerEmittingTool`. It does not take a tracer and does not expose the profile, so it needs both added.
+    - Restore needs two routers that share one id and one `recordingsDir`, as in `SessionTreeRestorationToolWiringTests`.
+    - Most span names and attribute keys the card lists have no consumer until the five dependent cards land. They carry `// periphery:ignore` with a note, the convention this repository already uses (`Router.swift`, `Resolution/JointFit.swift`).
+  timestamp: 2026-08-28T03:58:21.637243+00:00
+position_column: doing
 position_ordinal: '80'
 title: Add shared tracing support and give the session its tracer
 ---

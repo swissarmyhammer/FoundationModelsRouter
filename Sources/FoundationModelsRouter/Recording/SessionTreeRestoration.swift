@@ -419,7 +419,11 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 autoCompactionBudget: configuration?.budget,
                 autoCompactionPrompt: configuration?.compactionPrompt ?? .default,
                 summarization: configuration?.summarization ?? Summarization(),
-                discoveryPriming: configuration?.discoveryPriming
+                discoveryPriming: configuration?.discoveryPriming,
+                // The restoring handle's own tracer, exactly as a freshly
+                // vended session takes it: a restored node reports where the
+                // live router reports.
+                tracer: routedLLM.tracer
             )
             sessionsById[node.id] = session
             for child in node.children {

@@ -206,7 +206,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // Threaded only into the sidecar's configuration envelope (task
             // ^ne5g9jn), so the recorded configuration names the recording
             // root the session was actually vended with.
-            recordingRoot: recordingRoot
+            recordingRoot: recordingRoot,
+            // This handle's own tracer, so every span the session opens
+            // reports to the backend the router was constructed with.
+            tracer: tracer
         )
     }
 
