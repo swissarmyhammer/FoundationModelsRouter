@@ -48,159 +48,27 @@ struct AutoCompactionTests {
         func call(arguments: SampleToolArguments) async throws -> String { throw Failure.boom }
     }
 
-    // MARK: - Stub containers
-
-    /// Vends a single, test-retained ``StubSessionBackend`` per session, with
-    /// a container-level `shouldThrow` a test can flip before a fold to make
-    /// every backend this container vends from then on fail its summarizer
-    /// call.
-    private final class ConfiguredLLMContainer: LoadedLLMContainer, @unchecked Sendable {
-        let responseText: String
-        var shouldThrow: Bool
-
-        /// The shared log every backend this container vends records into —
-        /// including the blank-slate clone a fold's summarizer builds through
-        /// `replacingTranscript(_:)`. On the `flash` container this holds an
-        /// automatic fold's own summarizer calls and nothing else, since a
-        /// warm-up turn never reaches the flash slot.
-        let generationLog = StubGenerationLog()
-
-        private(set) var lastBackend: StubSessionBackend?
-
-        init(responseText: String, shouldThrow: Bool = false) {
-            self.responseText = responseText
-            self.shouldThrow = shouldThrow
-        }
-
-        func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
-            let backend = StubSessionBackend(
-                responseText: responseText, shouldThrow: shouldThrow, instructions: instructions,
-                generationLog: generationLog)
-            lastBackend = backend
-            return backend
-        }
-
-        func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
-            StubSessionBackend(
-                responseText: responseText, shouldThrow: shouldThrow, entries: Array(transcript),
-                generationLog: generationLog)
-        }
-    }
-
-    /// Vends `standard` for the `.standard` slot and `flash` for the `.flash`
-    /// slot, so a test can distinguish which slot's model auto-compaction
-    /// actually asked to summarize.
-    private struct PerSlotModelLoader: ModelLoader {
-        let standard: any LoadedLLMContainer
-        let flash: any LoadedLLMContainer
-        let dimension: Int
-
-        func loadLLM(
-            ref: ModelRef,
-            slot: ModelSlot,
-            context: Int,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedLLMContainer {
-            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return slot == .flash ? flash : standard
-        }
-
-        func loadEmbedder(
-            ref: ModelRef,
-            slot: ModelSlot,
-            reporting: @escaping @Sendable (DownloadProgress) -> Void
-        ) async throws -> any LoadedEmbeddingContainer {
-            reporting(DownloadProgress(bytesDownloaded: 1, bytesTotal: 1))
-            return StubEmbeddingContainer(dimension: dimension)
-        }
-
-        func preload(container: any LoadedModelContainer) async throws {}
-    }
-
     // MARK: - Fixture content
 
     /// The suite's temp-directory prefix, handed to
     /// ``RouterTestFixtures/makeTempDir(prefix:)``.
     private static let tempDirPrefix = "AutoCompactionTests"
 
-    /// A long canned response repeated across every warm-up turn, so a handful
-    /// of turns' worth of transcript already carries a real, non-trivial
-    /// byte-size estimate — mirrors `RoutedSessionCompactTests.cannedText`.
-    ///
-    /// The length is load-bearing for the hard-ceiling recovery test below,
-    /// which needs the retry's fold to shrink the transcript by enough that
-    /// the retry's own pre-check clears a ceiling the blocked attempt tripped.
-    /// A fold replaces the old span with one synthesized summary entry, and
-    /// that entry costs its summary text plus its `CompactionSegment`'s own
-    /// live-window/folded entry-id manifest — a fixed cost of roughly 175
-    /// estimated tokens with these fixtures' UUID entry ids. At 12 repetitions
-    /// the whole warm-up transcript estimated 819 tokens and a fold left 776:
-    /// the manifest ate two thirds of the old span it replaced, so the fold
-    /// was a 5% shrink and no ceiling could sit between it and the blocked
-    /// attempt's own fill.
-    private static let cannedText = String(
-        repeating: "The quick brown fox jumps over the lazy dog. ", count: 60)
+    /// The canned response every warm-up turn answers with. See
+    /// ``AutoCompactionFixtures/cannedText``.
+    private static let cannedText = AutoCompactionFixtures.cannedText
 
-    /// How many warm-up turns ``makeTriggeredSession(budget:tools:summarization:)`` drives —
-    /// past ``TurnTruncation``'s default 4-turn recency window, so folding
-    /// has real old-span content to work with.
-    private static let turnCount = 6
+    /// How many warm-up turns each triggered session drives. See
+    /// ``AutoCompactionFixtures/turnCount``.
+    private static let turnCount = AutoCompactionFixtures.turnCount
 
-    /// The exact entries ``makeTriggeredSession(budget:tools:summarization:)``'s warm-up turns
-    /// produce, computed without ever running a session — prompt/response
-    /// text is fixed regardless of the escalating `usageIncrement` those
-    /// turns are driven with, so ``fixedBudget`` can be sized once, up
-    /// front, from this alone.
-    private static func expectedWarmUpEntries() -> [Transcript.Entry] {
-        (0..<turnCount).flatMap { index -> [Transcript.Entry] in
-            [
-                .prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: "turn \(index)"))])),
-                .response(
-                    Transcript.Response(segments: [.text(Transcript.TextSegment(content: cannedText))])),
-            ]
-        }
-    }
+    /// The budget every fold this suite drives runs against. See
+    /// ``AutoCompactionFixtures/fixedBudget``.
+    private static let fixedBudget = AutoCompactionFixtures.fixedBudget
 
-    /// The working context every session this suite vends resolves at — the
-    /// denominator of both ``RoutedSession/contextFill`` and, deliberately,
-    /// ``fixedBudget``'s own ``TokenBudget/limit``.
-    ///
-    /// The two must be the same number for this suite's escalating warm-up to
-    /// mean what its assertions say: `contextFill` always divides by the
-    /// session's resolved context, while ``TokenBudget/triggerTokens`` resolves
-    /// against the budget's `limit`, so a budget whose limit is *smaller* than
-    /// this would fire its trigger far earlier than any `contextFill` reading
-    /// suggests (see ``TokenBudget/triggerTokens``).
-    private static let warmUpContextTokens = 100_000
-
-    /// A budget whose target sits strictly below the warm-up transcript's
-    /// own recency-window floor — forcing every fold this suite drives to
-    /// need the model-assisted ``Summarization`` stage (and so to actually
-    /// call a summarizer), the same ratio `RoutedSessionCompactTests.compactIsAppendOnlyAndPreservesIdentity()`
-    /// uses. `trigger: 0.8` matches ``TokenBudget``'s own default, and `limit`
-    /// is ``warmUpContextTokens`` so the trigger fires exactly where the
-    /// escalating warm-up's own `contextFill` readings say it does; `target` is
-    /// expressed as the fraction of that limit which lands on half the recency
-    /// floor.
-    private static let fixedBudget: TokenBudget = {
-        let recencyOnly = recencyWindowOnlyEstimate(expectedWarmUpEntries())
-        return TokenBudget(
-            limit: warmUpContextTokens,
-            trigger: 0.8,
-            target: Double(recencyOnly / 2) / Double(warmUpContextTokens)
-        )
-    }()
-
-    /// Vends a `profile.standard` session with `budget` and drives
-    /// ``turnCount`` warm-up turns whose per-turn measured usage escalates
-    /// (30% of the profile's 100,000-token context on the last turn: 90%),
-    /// crossing the fixed budget's `0.8` trigger only on the final warm-up
-    /// turn — mirrors `ExamplesTests.proactiveCompactionBetweenTurns()`'s
-    /// own escalating-usage pattern. By the time this returns, the session's
-    /// measured `contextFill` is `0.9`, its backend holds ``turnCount``
-    /// turns of real content, and no fold has happened yet — a caller then
-    /// drives one more turn (typically via `streamEvents`) to observe the
-    /// proactive auto-fold this triggers.
+    /// Vends the shared triggered session under this suite's own temp-directory
+    /// prefix. See
+    /// ``AutoCompactionFixtures/makeTriggeredSession(budget:tools:summarization:tracer:tempDirPrefix:)``.
     ///
     /// - Parameters:
     ///   - budget: The auto-compaction opt-in to vend the session with, or
@@ -215,30 +83,14 @@ struct AutoCompactionTests {
     /// - Returns: The session plus its `standard`/`flash` containers, so a
     ///   test can configure `shouldThrow` on either before driving the
     ///   triggering turn.
+    /// - Throws: Whatever profile resolution or a warm-up turn throws.
     private static func makeTriggeredSession(
         budget: TokenBudget?,
         tools: [any Tool] = [],
         summarization: Summarization = Summarization()
     ) async throws -> (session: RoutedSession, standard: ConfiguredLLMContainer, flash: ConfiguredLLMContainer) {
-        let dir = RouterTestFixtures.makeTempDir(prefix: Self.tempDirPrefix)
-        let recorder = InMemoryRecorder()
-        let standardContainer = ConfiguredLLMContainer(responseText: Self.cannedText)
-        let flashContainer = ConfiguredLLMContainer(responseText: "FLASH-SUMMARY")
-        let loader = PerSlotModelLoader(standard: standardContainer, flash: flashContainer, dimension: RouterTestFixtures.stubDimension)
-        let router = RouterTestFixtures.makeRouter(cacheDir: dir, recorder: recorder, loader: loader)
-        let profile = try await router.resolve(
-            profile: RouterTestFixtures.profile(context: Self.warmUpContextTokens), reporting: ResolutionProgress())
-
-        let session = profile.standard.makeSession(
-            tools: tools, budget: budget, summarization: summarization)
-        let backend = try #require(standardContainer.lastBackend)
-
-        for turn in 0..<Self.turnCount {
-            backend.usageIncrement = (input: (turn + 1) * 15_000, output: 0)
-            _ = try await session.respond(to: "turn \(turn)")
-        }
-
-        return (session, standardContainer, flashContainer)
+        try await AutoCompactionFixtures.makeTriggeredSession(
+            budget: budget, tools: tools, summarization: summarization, tempDirPrefix: tempDirPrefix)
     }
 
     /// Derives a working context tight enough that the reactive retry's own

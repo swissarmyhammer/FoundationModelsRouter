@@ -52,8 +52,6 @@ enum RouterTracing {
 
         /// One fold of a session's transcript, driven by a caller or by the
         /// auto-compaction budget.
-        // No caller until the dependent tracing cards open this span.
-        // periphery:ignore
         static let compact = prefix + "compact"
 
         /// One ``Router/resolve(profile:reporting:)`` call: the whole joint
@@ -126,6 +124,24 @@ enum RouterTracing {
         /// How many tokens came out of the model call.
         static let tokensOut = "tokens.out"
 
+        /// The transcript's estimated size, in tokens, before a fold ran.
+        static let tokensBefore = "tokens.before"
+
+        /// The transcript's estimated size, in tokens, after a fold ran.
+        static let tokensAfter = "tokens.after"
+
+        /// What asked for the fold. See ``RouterTracing/CompactionTrigger``.
+        static let compactionTrigger = "compaction.trigger"
+
+        /// The summarizer tier that wrote the fold's applied summary: `flash`
+        /// for the profile's flash slot, `own-model` for the session's own
+        /// model, or `deterministic` when no summarizer wrote one at all.
+        ///
+        /// The automatic fold degrades from tier to tier without throwing, so
+        /// this key, and never an error record, is what says a degrade
+        /// happened.
+        static let compactionTier = "compaction.tier"
+
         /// How many strings one embed call embeds.
         static let embeddingInputCount = "embedding.input_count"
 
@@ -152,6 +168,22 @@ enum RouterTracing {
         /// ``RoutedSession/dispatchNextPrompt()``: a queued prompt, or a
         /// settled run's delivery turn.
         case dispatch
+    }
+
+    /// The value ``AttributeKey/compactionTrigger`` carries: what asked for a
+    /// fold.
+    ///
+    /// Both fold paths run the same mechanics and open the same span, so the
+    /// span alone cannot say which of the two opened it. This attribute says
+    /// so, and it lets a query separate the folds a caller drove from the
+    /// folds the auto-compaction budget drove.
+    enum CompactionTrigger: String {
+        /// ``RoutedSession/compact(prompt:budget:)``.
+        case caller
+
+        /// The auto-compaction budget: the proactive fold before a turn, and
+        /// the reactive fold after a context overflow.
+        case auto
     }
 
     /// The tracer a call opens its span through.

@@ -71,7 +71,11 @@ extension RoutedSessionActor {
     ///
     /// Summarizes with a fresh backend over this session's own model. Takes the
     /// turn lock and a generation permit for the duration (``beginTurn()``),
-    /// then runs ``fold(prompt:budget:summarizer:summarizerModel:)``.
+    /// then runs ``fold(prompt:budget:summarizer:summarizerModel:)`` inside the
+    /// span ``withCompactionSpan(trigger:_:)`` opens.
+    ///
+    /// Unlike the automatic fold, this one has no next tier to degrade to, so a
+    /// summarizer failure reaches the caller — and the span records it.
     @discardableResult
     func compact(
         prompt: CompactionPrompt = .default,
@@ -79,9 +83,12 @@ extension RoutedSessionActor {
     ) async throws -> CompactionResult {
         try await beginTurn()
         defer { endTurn() }
-        return try await fold(
-            prompt: prompt, budget: budget,
-            summarizer: BackendCompactionSummarizer(backend: backend), summarizerModel: model)
+        return try await withCompactionSpan(trigger: .caller) {
+            let result = try await fold(
+                prompt: prompt, budget: budget,
+                summarizer: BackendCompactionSummarizer(backend: backend), summarizerModel: model)
+            return (result, .ownModel)
+        }
     }
 
     /// Auto-compaction's fold entry point. The caller must already hold
@@ -93,6 +100,11 @@ extension RoutedSessionActor {
     /// flash slot), then this session's own model, then the deterministic-only
     /// pipeline, which never throws. The flash slot must hold a model that can
     /// summarize; the fold applies no quality check on the summary text.
+    ///
+    /// The whole degrade runs inside one span
+    /// (``withCompactionSpan(trigger:_:)``), so a fold that fell back reports
+    /// the tier it settled on rather than a failure — see
+    /// ``RouterTracing/AttributeKey/compactionTier``.
     ///
     /// - Parameters:
     ///   - prompt: The compaction prompt sent to the summarizer tier that runs.
@@ -108,38 +120,101 @@ extension RoutedSessionActor {
         prompt: CompactionPrompt,
         budget: TokenBudget
     ) async throws -> CompactionResult {
+        try await withCompactionSpan(trigger: .auto) {
+            try await foldThroughTiers(prompt: prompt, budget: budget)
+        }
+    }
+
+    /// Runs ``performAutoCompaction(prompt:budget:)``'s tier ladder and reports
+    /// which rung answered.
+    ///
+    /// - Parameters:
+    ///   - prompt: The compaction prompt sent to the summarizer tier that runs.
+    ///   - budget: The token budget to fold against.
+    /// - Returns: What the fold did, and the tier that ran it.
+    /// - Throws: `CancellationError` when a tier fails and a cancellation is
+    ///   outstanding against this turn.
+    private func foldThroughTiers(
+        prompt: CompactionPrompt,
+        budget: TokenBudget
+    ) async throws -> (result: CompactionResult, tier: FoldSummarizerTier) {
         if slot != .flash {
             do {
-                return try await fold(
+                let result = try await fold(
                     prompt: prompt, budget: budget,
                     summarizer: BackendCompactionSummarizer(backend: profile.flash.container.makeSession(instructions: nil)),
                     summarizerModel: profile.flash.chosen
                 )
+                return (result, .flash)
             } catch {
                 try abandonFoldIfCancelled(discarding: error, tier: .flash)
                 // Fall through to the own-model tier below.
             }
         }
         do {
-            return try await fold(
+            let result = try await fold(
                 prompt: prompt, budget: budget,
                 summarizer: BackendCompactionSummarizer(backend: backend), summarizerModel: model)
+            return (result, .ownModel)
         } catch {
             // The *only* abandon guard on this path for a session that already is the
             // flash slot and so skipped the tier above.
             try abandonFoldIfCancelled(discarding: error, tier: .ownModel)
-            return try await fold(prompt: prompt, budget: budget, summarizer: nil, summarizerModel: nil)
+            let result = try await fold(prompt: prompt, budget: budget, summarizer: nil, summarizerModel: nil)
+            return (result, .deterministic)
         }
     }
 
-    /// Which of ``performAutoCompaction(prompt:budget:)``'s model-assisted
-    /// tiers a fold ran on.
+    /// Which summarizer tier a fold ran on — the value
+    /// ``RouterTracing/AttributeKey/compactionTier`` carries.
     private enum FoldSummarizerTier: String {
         /// The profile's ``LanguageModelProfile/flash`` slot.
         case flash
 
         /// This session's own model.
         case ownModel = "own-model"
+
+        /// No summarizer at all: the deterministic-only pipeline, which is
+        /// what ``performAutoCompaction(prompt:budget:)`` degrades to once
+        /// both model-assisted tiers have failed, and what any fold the
+        /// deterministic stages landed on their own reports.
+        case deterministic
+    }
+
+    /// Opens one ``RouterTracing/SpanName/compact`` span around a whole
+    /// compaction and writes what the fold did onto it.
+    ///
+    /// The one span site both fold paths share. It wraps the *whole*
+    /// compaction rather than a single ``fold(prompt:budget:summarizer:summarizerModel:)``
+    /// call, because ``performAutoCompaction(prompt:budget:)`` runs that call
+    /// once per tier as it degrades and one compaction must still be one span.
+    ///
+    /// The tier written is the tier that actually summarized: a result naming
+    /// no summarizer model had no summarizer write its summary, however many
+    /// tiers were offered, so it reports ``FoldSummarizerTier/deterministic``.
+    ///
+    /// - Parameters:
+    ///   - trigger: What asked for this fold.
+    ///   - body: The fold work, reporting what it did and the tier it ran on.
+    /// - Returns: What the fold did.
+    /// - Throws: Whatever `body` throws. `withSpan` records the error on the
+    ///   span and raises it again.
+    private func withCompactionSpan(
+        trigger: RouterTracing.CompactionTrigger,
+        _ body: () async throws -> (result: CompactionResult, tier: FoldSummarizerTier)
+    ) async throws -> CompactionResult {
+        try await RouterTracing.tracer(explicit: tracer)
+            .withSpan(RouterTracing.SpanName.compact, ofKind: .internal) { span in
+                span.attributes[RouterTracing.AttributeKey.sessionId] = id.description
+                span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
+                span.attributes[RouterTracing.AttributeKey.compactionTrigger] = trigger.rawValue
+                let (result, tier) = try await body()
+                let appliedTier: FoldSummarizerTier = result.summarizerModel == nil ? .deterministic : tier
+                span.attributes[RouterTracing.AttributeKey.compactionTier] = appliedTier.rawValue
+                span.attributes[RouterTracing.AttributeKey.tokensBefore] = result.tokensBefore
+                span.attributes[RouterTracing.AttributeKey.tokensAfter] = result.tokensAfter
+                return result
+            }
     }
 
     /// Abandons the fold a model-assisted tier just failed when a stop is
