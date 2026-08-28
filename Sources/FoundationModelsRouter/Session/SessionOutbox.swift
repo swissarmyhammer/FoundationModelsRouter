@@ -17,10 +17,13 @@ import FoundationModels
 /// Every item gets a stable ``ItemID`` at enqueue. ``drainForDispatch()`` is
 /// the commit boundary. ``nextEvent()`` suspends while the outbox is empty.
 ///
-/// The public surface is the vocabulary (``ItemID``,
-/// ``PromptQueueMutationResult``, ``QueueDepth``) plus the
-/// ``OperationEventSink`` conformance. An app drives the queue through
-/// ``RoutedSession``'s methods; a session never exposes its outbox.
+/// The public surface is the vocabulary alone (``ItemID``,
+/// ``PromptQueueMutationResult``, ``QueueDepth``), because
+/// ``RoutedSession``'s own public methods carry those three types in their
+/// signatures. Every method of this actor is internal, the
+/// ``OperationEventSink`` conformance included, since that protocol is
+/// internal too. An app drives the queue through ``RoutedSession``'s methods;
+/// a session never exposes its outbox.
 public actor SessionOutbox: OperationEventSink {
     /// A stable identifier the outbox assigns to a pending item at enqueue.
     ///
@@ -104,7 +107,7 @@ public actor SessionOutbox: OperationEventSink {
     /// and recorded uncoalesced in the attached journal, in post order.
     ///
     /// - Parameter event: The event to post.
-    public func post(event: OperationEvent) async {
+    func post(event: OperationEvent) async {
         // Enqueued before the staging decision and before any suspension, so
         // the journal's order is exactly this outbox's post order.
         let journalWrite = enqueueJournalWrite(event: event)
@@ -173,7 +176,7 @@ public actor SessionOutbox: OperationEventSink {
     /// attached, the record is dropped.
     ///
     /// - Parameter record: The record to forward.
-    public func post(invocation record: ToolInvocationRecord) async {
+    func post(invocation record: ToolInvocationRecord) async {
         await invocationObserver?.deliver(invocation: record)
     }
 
@@ -314,7 +317,7 @@ public actor SessionOutbox: OperationEventSink {
         /// - Parameters:
         ///   - queued: How many prompts are still waiting.
         ///   - dispatched: The dispatched prompt's id, or `nil`.
-        public init(queued: Int, dispatched: ItemID?) {
+        init(queued: Int, dispatched: ItemID?) {
             self.queued = queued
             self.dispatched = dispatched
         }

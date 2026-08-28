@@ -35,7 +35,7 @@ enum MergedTranscriptError: Error, Equatable, LocalizedError {
 /// primary key and `seq` — globally monotonic across every session and fork the
 /// recorder served — is the tiebreaker, so events sharing an instant still fall
 /// into their exact recorded order even under concurrent generation.
-public enum MergedTranscript {
+enum MergedTranscript {
     /// Merges every nested `transcript.jsonl` under `routerDirectory` into one
     /// stream.
     ///
@@ -52,7 +52,7 @@ public enum MergedTranscript {
     ///   when a session's sidecar names a schema version newer than
     ///   ``RecordingSchemaVersion/current``; otherwise if a transcript file
     ///   cannot be read, which aborts the whole merge.
-    public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
+    static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
         var events: [TranscriptEvent] = []
         // Discovery is shared with ``TranscriptTree`` through
         // ``TranscriptFileDiscovery``; the files come back in no particular

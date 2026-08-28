@@ -13,7 +13,7 @@ private let structuredSegmentLogger = makeModuleLogger(category: "Recording")
 /// The router conforms ``CompactionSegment`` and ``OperationEventSegment``.
 /// A legacy ``SegmentPayload/custom(id:typeDiscriminator:contentJSON:description:)``
 /// carrier reads back as a structured segment.
-public protocol PersistableStructuredSegment: Sendable {
+protocol PersistableStructuredSegment: Sendable {
     /// The typed body this segment carries, persisted as JSON.
     associatedtype Content: Codable & Sendable & Equatable
 
@@ -34,7 +34,7 @@ public protocol PersistableStructuredSegment: Sendable {
 
 extension PersistableStructuredSegment {
     /// The default schema name: this type's fully-qualified name.
-    public static var schemaName: String { String(reflecting: Self.self) }
+    static var schemaName: String { String(reflecting: Self.self) }
 
     /// This value as the SDK structured segment that carries it.
     ///
@@ -70,7 +70,7 @@ extension PersistableStructuredSegment {
     /// Rebuilds this type from a persisted schema name and body JSON.
     /// - Returns: The rebuilt value, or `nil` when `schemaName` names another type.
     /// - Throws: ``TranscriptEntryReconstructionError/invalidJSON(context:underlying:)`` when the body does not decode.
-    public init?(schemaName: String, contentJSON: String, id: String) throws {
+    init?(schemaName: String, contentJSON: String, id: String) throws {
         guard schemaName == Self.schemaName else { return nil }
         try self.init(id: id, content: Self.decodedContent(json: contentJSON, id: id))
     }

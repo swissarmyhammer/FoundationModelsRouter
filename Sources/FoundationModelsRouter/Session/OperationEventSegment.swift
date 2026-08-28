@@ -23,12 +23,12 @@ import FoundationModels
 /// schema name `FoundationModelsRouter.OperationEventSegment`, and it
 /// round-trips through ``TranscriptEntryMapper/entry(from:kind:)`` with zero
 /// caller setup, exactly as ``CompactionSegment`` does.
-public struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
+struct OperationEventSegment: PersistableStructuredSegment, Equatable, CustomStringConvertible, Sendable {
     /// A unique identifier for this segment — a fresh UUID for an event newly drained from the outbox, or the persisted id when rebuilding from disk.
-    public let id: String
+    let id: String
 
     /// The drained ``OperationEvent`` this segment durably records.
-    public let content: OperationEvent
+    let content: OperationEvent
 
     /// Creates a segment wrapping `content`.
     ///
@@ -39,7 +39,7 @@ public struct OperationEventSegment: PersistableStructuredSegment, Equatable, Cu
     ///     `init(id:content:) throws` requirement: a non-throwing
     ///     implementation is a valid conformance for a throwing requirement).
     ///   - content: The wrapped event.
-    public init(id: String = UUID().uuidString, content: OperationEvent) {
+    init(id: String = UUID().uuidString, content: OperationEvent) {
         self.id = id
         self.content = content
     }
@@ -49,7 +49,7 @@ public struct OperationEventSegment: PersistableStructuredSegment, Equatable, Cu
     /// This is the same rendered line the turn's preamble carries for this
     /// event (see ``renderedLine(for:)``), so the two textual views of one
     /// drained event never drift apart.
-    public var description: String { Self.renderedLine(for: content) }
+    var description: String { Self.renderedLine(for: content) }
 
     /// Renders one ``OperationEvent`` as a single model-legible text line.
     ///
