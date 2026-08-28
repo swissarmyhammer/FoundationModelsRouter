@@ -1,7 +1,7 @@
 /// A destination `OperationEvent`s are posted to.
 ///
-/// A session host implements this once. The per-call binding layers post every event a tool emits through the ambient `ToolContext`; tools never wire a sink themselves. The package guarantees only that the host eventually observes each event.
-public protocol OperationEventSink: Sendable {
+/// The package implements this one time, in ``SessionOutbox``. The per-call binding layers post every event a tool emits through the ambient `ToolContext`; tools never wire a sink themselves. The package guarantees only that the host eventually observes each event.
+protocol OperationEventSink: Sendable {
     /// Receives one posted event.
     func post(event: OperationEvent) async
 
@@ -13,5 +13,5 @@ public protocol OperationEventSink: Sendable {
 
 extension OperationEventSink {
     /// Blanket default: ignores the record.
-    public func post(invocation record: ToolInvocationRecord) async {}
+    func post(invocation record: ToolInvocationRecord) async {}
 }

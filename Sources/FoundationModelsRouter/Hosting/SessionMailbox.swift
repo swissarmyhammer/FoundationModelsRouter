@@ -8,9 +8,9 @@ import Foundation
 /// A background run is keyed by its completion token: a ULID string that is
 /// also the run's event `correlationID` (see ``makeCompletionToken()``).
 ///
-/// The public surface is what a host that binds its own ``ToolContext`` needs:
-/// ``init()``, ``makeCompletionToken()``, ``respond(elicitationId:_:)`` and
-/// ``complete(elicitationId:)``. The run-plane members are internal; a tool
+/// The public surface is the elicitation reply route a host drives:
+/// ``respond(elicitationId:_:)`` and ``complete(elicitationId:)``. The router
+/// makes each mailbox itself. The run-plane members are internal; a tool
 /// reaches them through ``ToolContext``.
 public actor SessionMailbox {
     // MARK: - Vocabulary
@@ -57,7 +57,7 @@ public actor SessionMailbox {
     // MARK: - Token minting
 
     /// Mints a fresh completion token: a ULID string that is also the run's event `correlationID`.
-    public static func makeCompletionToken() -> String {
+    static func makeCompletionToken() -> String {
         ULID.generate().description
     }
 
@@ -118,7 +118,7 @@ public actor SessionMailbox {
     private var elicitationOrder: [ULID] = []
 
     /// Creates an empty mailbox.
-    public init() {}
+    init() {}
 
     // MARK: - Background runs
 

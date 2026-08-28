@@ -62,7 +62,7 @@ public struct ToolContext: Sendable {
     ///   - op: The op stamp. Must not be empty (precondition).
     ///   - completionToken: The run's completion token.
     ///   - isCancelled: Reports whether cancellation has been requested.
-    public init(
+    init(
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
@@ -101,7 +101,7 @@ public struct ToolContext: Sendable {
     ///   - sink: The upstream sink capabilities post through.
     ///   - completionToken: The run's completion token.
     ///   - isCancelled: Reports whether cancellation has been requested.
-    public init(
+    init(
         stamping tool: any Tool,
         op: String? = nil,
         sessionID: ULID,

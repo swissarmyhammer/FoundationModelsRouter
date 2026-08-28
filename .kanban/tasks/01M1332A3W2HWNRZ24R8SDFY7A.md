@@ -1,8 +1,8 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8880'
+position_column: doing
+position_ordinal: '80'
 title: Demote the mistakenly public Hosting plumbing to internal
 ---
 ## What
