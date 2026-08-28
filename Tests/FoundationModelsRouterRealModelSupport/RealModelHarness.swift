@@ -89,7 +89,7 @@ public enum RealModelHarness {
     ///   - model: The model reference to stamp it with.
     ///   - context: The working context, in tokens, the model was loaded at.
     /// - Returns: The resolution.
-    public static func makeResolution(slot: ModelSlot, model: ModelRef, context: Int) -> SlotResolution {
+    package static func makeResolution(slot: ModelSlot, model: ModelRef, context: Int) -> SlotResolution {
         SlotResolution(
             slot: slot,
             remainingBudgetBytes: 0,

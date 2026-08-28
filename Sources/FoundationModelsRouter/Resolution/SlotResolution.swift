@@ -48,9 +48,9 @@ struct LadderAttempt: Sendable, Equatable {
 /// One candidate's contribution to a slot's resolution: the reference, its
 /// cost, and the verdict. The byte figures are `nil` when the candidate was
 /// not sized.
-public struct CandidateReport: Sendable, Equatable {
+package struct CandidateReport: Sendable, Equatable {
     /// The candidate model reference.
-    public let ref: ModelRef
+    package let ref: ModelRef
 
     /// The candidate's whole resident footprint with the `× 1.2` margin
     /// applied, or `nil` when the candidate was not sized.
@@ -59,7 +59,7 @@ public struct CandidateReport: Sendable, Equatable {
     /// The bytes this candidate charged the shared budget, with the `× 1.2`
     /// margin applied, or `nil` when not sized. Smaller than
     /// ``estimatedFootprintBytes`` when an earlier slot reserved the same container.
-    public let chargedBytes: Int64?
+    package let chargedBytes: Int64?
 
     /// Why this candidate was or was not chosen.
     let verdict: Verdict
@@ -86,7 +86,7 @@ public struct CandidateReport: Sendable, Equatable {
 
 /// The resolution of one slot during joint fit: the winning candidate, the
 /// budget available, the working context, and the per-candidate reasoning.
-public struct SlotResolution: Sendable, Equatable {
+package struct SlotResolution: Sendable, Equatable {
     /// The slot this resolution is for.
     let slot: ModelSlot
 
@@ -97,11 +97,11 @@ public struct SlotResolution: Sendable, Equatable {
     let chosen: ModelRef?
 
     /// Every candidate considered, in author preference order, with its verdict.
-    public let considered: [CandidateReport]
+    package let considered: [CandidateReport]
 
     /// The working context, in tokens, this slot's candidates were sized at.
     /// Every slot in one ``JointResolution`` shares the same value.
-    public let contextTokens: Int
+    package let contextTokens: Int
 
     /// Creates a slot resolution.
     package init(

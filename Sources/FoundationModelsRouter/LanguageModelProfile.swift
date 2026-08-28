@@ -25,7 +25,7 @@ public final class RoutedModel<Container: Sendable>: Sendable {
     public let footprintBytes: Int64
 
     /// Why this model won its slot, and what was skipped or rejected.
-    public let resolution: SlotResolution
+    package let resolution: SlotResolution
 
     /// The loaded, resident container.
     let container: Container
