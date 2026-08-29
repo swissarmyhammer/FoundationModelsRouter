@@ -193,6 +193,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // session's behalf, so a root actor built anywhere cannot come into
             // existence without one (see ``SessionSidecarOrigin``).
             sidecarOrigin: .new(under: durableRecording),
+            // Vended over a resident model, so the session span this factory
+            // opens reports the cost of vending rather than of a restore or a
+            // fork (see ``RouterTracing/SessionOrigin``).
+            origin: .new,
             // This slot's resolved working context — ``contextFill``'s
             // denominator (compaction_plan.md §1.5). A brand-new root has
             // sent nothing yet, so its fill state starts at ``.none``.

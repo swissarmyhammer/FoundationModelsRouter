@@ -230,6 +230,11 @@ extension RoutedSessionActor {
             // A fork is a brand-new session wherever its parent could record
             // one — including a fork of a restored session.
             sidecarOrigin: sidecarOrigin.forFork,
+            // Taken from a live session, so the child's own session span says
+            // `forked` and names this session as its parent. That span nests
+            // inside the fork span opened above, so the two never read as two
+            // costs (see `makeRoutedSessionActor`).
+            origin: .forked,
             // Same profile/slot, so the same resolved context; the child's
             // backend is seeded from this session's accumulated transcript
             // (``LanguageModelSessionBackend/makeFork(tools:)``), so it also

@@ -266,6 +266,44 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 )
             }
 
+            // This node's span opens here, before the transcript read below,
+            // rather than around the construction alone: `effectiveTranscript`
+            // and `effectiveEntryEvents` re-read this node's own and every
+            // ancestor's `transcript.jsonl` from disk, and that read is what a
+            // restore really costs. See `withRestoredSessionSpan`, which also
+            // says why the factory below opens no span of its own here.
+            let session = try await withRestoredSessionSpan(
+                routerId: routedLLM.routerId,
+                sessionId: node.id,
+                parentId: node.parentId,
+                model: model,
+                tracer: routedLLM.tracer
+            ) {
+                try await rebuild(node, on: routedLLM)
+            }
+            sessionsById[node.id] = session
+            for child in node.children {
+                _ = try await restore(child)
+            }
+            return session
+        }
+
+        /// Rebuilds one restored node from what is on disk, inside the span
+        /// ``restore(_:)`` opened around it.
+        ///
+        /// - Parameters:
+        ///   - node: The loaded node to rebuild.
+        ///   - routedLLM: The generation handle its recorded slot resolved to.
+        /// - Returns: The restored session.
+        /// - Throws: ``TranscriptTreeError`` or ``TranscriptReconstructionError``
+        ///   for what the transcript read throws.
+        func rebuild(_ node: SessionNode, on routedLLM: RoutedLLM) async throws -> RoutedSession {
+            // Read again from the node's own sidecar rather than handed down:
+            // `restore(_:)` already checked both against `routedLLM`, so these
+            // two are the recorded facts this node is rebuilt with.
+            let slot = node.sidecar.slot
+            let model = node.sidecar.model
+
             // The restored session runs against the live resolution's
             // context — the physical window `routedLLM`'s backend was
             // actually loaded with — never the recorded figure. A recorded
@@ -365,7 +403,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 await outbox.post(event: lostEvent)
             }
 
-            let session = makeRoutedSessionActor(
+            return makeRoutedSessionActor(
                 profile: owningProfile,
                 routerId: routedLLM.routerId,
                 id: node.id,
@@ -409,6 +447,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // read from disk just above, never rewritten. The writer travels
                 // only for forks taken from the restored session.
                 sidecarOrigin: SessionSidecarOrigin.restored(under: routedLLM.durableRecording),
+                // Rebuilt from disk, so this node's span is the one
+                // `restore(_:)` opened around the read above rather than one
+                // this factory opens. See `withRestoredSessionSpan`.
+                origin: .restored,
                 contextTokens: resolvedContextTokens,
                 usageState: usageState,
                 // The recorded configuration envelope re-applied (task
@@ -425,11 +467,6 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 // live router reports.
                 tracer: routedLLM.tracer
             )
-            sessionsById[node.id] = session
-            for child in node.children {
-                _ = try await restore(child)
-            }
-            return session
         }
 
         let root = try await restore(rootNode)

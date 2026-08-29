@@ -2,13 +2,105 @@ import Foundation
 import FoundationModels
 import Tracing
 
-/// Builds a ``RoutedSessionActor``. Each parameter forwards unchanged to the
-/// ``RoutedSessionActor`` initializer.
+/// Writes one session's identity onto its ``RouterTracing/SpanName/session``
+/// span.
+///
+/// One writer for all three shapes, so every session span carries the same
+/// keys however the session was made. The parent key is written only when
+/// there is a parent, so a vended root names none.
+///
+/// - Parameters:
+///   - span: The open session span.
+///   - origin: How the session came into existence.
+///   - routerId: The recording root id of the router the session belongs to.
+///   - sessionId: The new session's own span id.
+///   - parentId: The id of the session it came from, or `nil` for a root.
+///   - model: The model the session runs against.
+private func describeSession(
+    on span: any Span,
+    origin: RouterTracing.SessionOrigin,
+    routerId: ULID,
+    sessionId: ULID,
+    parentId: ULID?,
+    model: ModelRef
+) {
+    span.attributes[RouterTracing.AttributeKey.routerId] = routerId.description
+    span.attributes[RouterTracing.AttributeKey.modelRef] = model.stringValue
+    span.attributes[RouterTracing.AttributeKey.sessionId] = sessionId.description
+    span.attributes[RouterTracing.AttributeKey.sessionOrigin] = origin.rawValue
+    if let parentId {
+        span.attributes[RouterTracing.AttributeKey.parentSessionId] = parentId.description
+    }
+}
+
+/// Opens one ``RouterTracing/SpanName/session`` span around work that ends in
+/// a restored session.
+///
+/// A restored node is the one shape whose cost is not the construction: before
+/// it can build anything it re-reads its own and its ancestors' transcript
+/// files from disk (``TranscriptTree/effectiveTranscript(forSession:view:)``),
+/// which is exactly the work this card set out to make visible. So the restore
+/// path opens the span here, around that read *and* the rebuild that follows
+/// it, and `makeRoutedSessionActor` opens no second span for a
+/// ``RouterTracing/SessionOrigin/restored`` session. The other two shapes have
+/// nothing to measure before the construction, so the factory opens their span
+/// itself.
+///
+/// - Parameters:
+///   - routerId: The recording root id of the restoring router.
+///   - sessionId: The restored node's own span id.
+///   - parentId: The id of the session it was forked from, or `nil` for a root.
+///   - model: The model the restored node runs against.
+///   - tracer: The restoring handle's tracer, or `nil` to read
+///     `InstrumentationSystem.tracer` at call time.
+///   - rebuild: The read and the construction the span measures.
+/// - Returns: Whatever `rebuild` returns.
+/// - Throws: Whatever `rebuild` throws. `withSpan` records the error on the
+///   span and raises it again.
+func withRestoredSessionSpan<Result>(
+    routerId: ULID,
+    sessionId: ULID,
+    parentId: ULID?,
+    model: ModelRef,
+    tracer: (any Tracer)?,
+    _ rebuild: () async throws -> Result
+) async rethrows -> Result {
+    try await RouterTracing.tracer(explicit: tracer)
+        .withSpan(RouterTracing.SpanName.session, ofKind: .internal) { span in
+            describeSession(
+                on: span,
+                origin: .restored,
+                routerId: routerId,
+                sessionId: sessionId,
+                parentId: parentId,
+                model: model
+            )
+            return try await rebuild()
+        }
+}
+
+/// Builds a ``RoutedSessionActor`` inside its own
+/// ``RouterTracing/SpanName/session`` span. Each parameter but `origin`
+/// forwards unchanged to the ``RoutedSessionActor`` initializer.
 ///
 /// Every session comes into existence through this one factory — vended,
 /// forked, or restored from disk — so a parameter added here reaches all three
 /// shapes at once. `tracer` carries no default for that reason: a site that
 /// forgot it would leave its sessions silent, and the compiler says so.
+/// `origin` carries none for the same reason: a shape that cannot say how it
+/// was made would leave its span unreadable.
+///
+/// **A forked child carries two spans, and they are not two costs.** The
+/// enclosing ``RouterTracing/SpanName/fork`` span measures the whole fork,
+/// including the wait for a free admission slot; the session span opened here
+/// measures only the construction inside it. The session span is a child of
+/// the fork span — the fork opened its own before it reached this factory, and
+/// the task-local `ServiceContext` carries it here — so a reader sees one
+/// nested inside the other and never adds the two together.
+///
+/// A ``RouterTracing/SessionOrigin/restored`` session gets no span from this
+/// factory: its span is already open around the transcript read that precedes
+/// this call. See ``withRestoredSessionSpan(routerId:sessionId:parentId:model:tracer:_:)``.
 ///
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -34,6 +126,7 @@ func makeRoutedSessionActor(
     persistedEntryCount: Int,
     historyOrdinal: Int,
     sidecarOrigin: SessionSidecarOrigin,
+    origin: RouterTracing.SessionOrigin,
     contextTokens: Int = ProfileDefinition.defaultContext,
     usageState: ContextUsageState = .none,
     autoCompactionBudget: TokenBudget? = nil,
@@ -44,39 +137,59 @@ func makeRoutedSessionActor(
     recordingRoot: URL? = nil,
     tracer: (any Tracer)?
 ) -> RoutedSessionActor {
-    RoutedSessionActor(
-        profile: profile,
-        routerId: routerId,
-        id: id,
-        parentId: parentId,
-        recordingDirectory: recordingDirectory,
-        workingDirectory: workingDirectory,
-        backend: backend,
-        slot: slot,
-        model: model,
-        recorder: recorder,
-        instructions: instructions,
-        grammar: grammar,
-        tools: tools,
-        originalTools: originalTools,
-        outbox: outbox,
-        mailbox: mailbox,
-        generationGate: generationGate,
-        forkAdmissionGate: forkAdmissionGate,
-        holdsAdmissionPermit: holdsAdmissionPermit,
-        persistedEntryCount: persistedEntryCount,
-        historyOrdinal: historyOrdinal,
-        sidecarOrigin: sidecarOrigin,
-        contextTokens: contextTokens,
-        usageState: usageState,
-        autoCompactionBudget: autoCompactionBudget,
-        autoCompactionPrompt: autoCompactionPrompt,
-        summarization: summarization,
-        agentSpawn: agentSpawn,
-        discoveryPriming: discoveryPriming,
-        recordingRoot: recordingRoot,
-        tracer: tracer
-    )
+    // The construction itself, so the one parameter list below is written once
+    // whether or not this factory is the site that opens the session's span.
+    let construct = {
+        RoutedSessionActor(
+            profile: profile,
+            routerId: routerId,
+            id: id,
+            parentId: parentId,
+            recordingDirectory: recordingDirectory,
+            workingDirectory: workingDirectory,
+            backend: backend,
+            slot: slot,
+            model: model,
+            recorder: recorder,
+            instructions: instructions,
+            grammar: grammar,
+            tools: tools,
+            originalTools: originalTools,
+            outbox: outbox,
+            mailbox: mailbox,
+            generationGate: generationGate,
+            forkAdmissionGate: forkAdmissionGate,
+            holdsAdmissionPermit: holdsAdmissionPermit,
+            persistedEntryCount: persistedEntryCount,
+            historyOrdinal: historyOrdinal,
+            sidecarOrigin: sidecarOrigin,
+            contextTokens: contextTokens,
+            usageState: usageState,
+            autoCompactionBudget: autoCompactionBudget,
+            autoCompactionPrompt: autoCompactionPrompt,
+            summarization: summarization,
+            agentSpawn: agentSpawn,
+            discoveryPriming: discoveryPriming,
+            recordingRoot: recordingRoot,
+            tracer: tracer
+        )
+    }
+    // A restored node's span is already open around the transcript read that
+    // runs before this call, so it gets no second span here. See this
+    // function's own doc comment.
+    guard origin != .restored else { return construct() }
+    return RouterTracing.tracer(explicit: tracer)
+        .withSpan(RouterTracing.SpanName.session, ofKind: .internal) { span in
+            describeSession(
+                on: span,
+                origin: origin,
+                routerId: routerId,
+                sessionId: id,
+                parentId: parentId,
+                model: model
+            )
+            return construct()
+        }
 }
 
 /// The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``.

@@ -64,10 +64,15 @@ enum RouterTracing {
         /// One ``RoutedSession/fork(workingDirectory:)`` call.
         static let fork = prefix + "fork"
 
-        /// The whole life of one session, from the handle that vends it to
-        /// ``RoutedSession/close()``.
-        // No caller until the dependent tracing cards open this span.
-        // periphery:ignore
+        /// One session coming into existence: a session vended over a
+        /// resident model, a session restored from disk, or a forked child.
+        ///
+        /// The span covers the construction, and on the restore path the
+        /// transcript-tree read the construction is built from. What the
+        /// session then goes on to do is measured by its own ``turn``,
+        /// ``compact`` and ``fork`` spans. Which of the three shapes made the
+        /// session is written on the span as
+        /// ``RouterTracing/AttributeKey/sessionOrigin``.
         static let session = prefix + "session"
     }
 
@@ -116,6 +121,22 @@ enum RouterTracing {
         /// keys of a fork span say which session was forked and which session
         /// came out of it.
         static let forkChildSessionId = "fork.child_session_id"
+
+        /// The span id of the session a new session was made from, on the
+        /// session span of the new session.
+        ///
+        /// Written only when there is a parent, so a vended root names none.
+        /// Read beside ``sessionId``, the two keys of a session span say which
+        /// session was made and which session it came out of.
+        ///
+        /// Distinct from ``forkChildSessionId`` because the two look at one
+        /// fork from opposite ends: the fork span names the child it produced,
+        /// and the child's own session span names the parent it came from.
+        static let parentSessionId = "session.parent_id"
+
+        /// How the session came into existence. See
+        /// ``RouterTracing/SessionOrigin``.
+        static let sessionOrigin = "session.origin"
 
         /// The id of the turn the work belongs to, unique inside its session.
         static let turnId = "turn.id"
@@ -203,6 +224,28 @@ enum RouterTracing {
         /// The auto-compaction budget: the proactive fold before a turn, and
         /// the reactive fold after a context overflow.
         case auto
+    }
+
+    /// The value ``AttributeKey/sessionOrigin`` carries: how a session came
+    /// into existence.
+    ///
+    /// All three shapes are built by one factory and open one span, so the
+    /// span alone cannot say which shape opened it. This attribute says so,
+    /// and it lets a query separate the cost of reassembling a session from
+    /// disk from the cost of vending a fresh one.
+    enum SessionOrigin: String {
+        /// A root session vended over a resident model, through
+        /// ``RoutedLLM/makeSession(configuration:)`` or the surfaces that
+        /// reach it.
+        case new
+
+        /// One node of a tree rebuilt from what is on disk, through
+        /// ``RoutedModel/restoreSessionTree(root:recordingRoot:tools:)``.
+        case restored
+
+        /// A child taken from a live session, through
+        /// ``RoutedSession/fork(workingDirectory:)``.
+        case forked
     }
 
     /// The tracer a call opens its span through.
