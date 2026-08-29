@@ -15,7 +15,7 @@ public enum TurnCancellationResult: Sendable, Equatable {
 }
 
 /// The outcome of ``RoutedSession/cancelPrompt(id:)``.
-enum PromptCancellationResult: Sendable, Equatable {
+public enum PromptCancellationResult: Sendable, Equatable {
     /// The prompt was still in the queue and was withdrawn. It never produced a turn.
     case withdrawn
 
@@ -353,7 +353,7 @@ public protocol RoutedSession: Actor {
 extension RoutedSession {
     /// See ``compact(prompt:budget:)``, with both parameters at their defaults.
     @discardableResult
-    func compact() async throws -> CompactionResult {
+    public func compact() async throws -> CompactionResult {
         try await compact(prompt: .default, budget: nil)
     }
 
@@ -362,7 +362,7 @@ extension RoutedSession {
     /// - Parameter budget: The token budget to fold against, or `nil` for this
     ///   session's resolved working context.
     @discardableResult
-    func compact(budget: TokenBudget?) async throws -> CompactionResult {
+    public func compact(budget: TokenBudget?) async throws -> CompactionResult {
         try await compact(prompt: .default, budget: budget)
     }
 
@@ -384,7 +384,7 @@ extension RoutedSession {
     /// Stages a plain-text queued user prompt for a future turn, as one `.text`
     /// segment.
     @discardableResult
-    func enqueue(prompt: String) async -> SessionOutbox.ItemID {
+    public func enqueue(prompt: String) async -> SessionOutbox.ItemID {
         await enqueue(prompt: Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))]))
     }
 
@@ -398,7 +398,7 @@ extension RoutedSession {
     ///
     /// - Parameter id: The id ``enqueue(prompt:)-(Transcript.Prompt)`` returned.
     @discardableResult
-    func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
+    public func cancelPrompt(id: SessionOutbox.ItemID) async -> PromptCancellationResult {
         if await cancel(id: id) == .applied {
             return .withdrawn
         }

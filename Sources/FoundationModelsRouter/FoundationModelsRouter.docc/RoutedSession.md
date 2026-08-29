@@ -89,7 +89,6 @@ The session pushes settlement to the model — the model never polls:
 
 - ``contextFill``
 - ``compact()``
-- ``compact(prompt:)``
 - ``compact(budget:)``
 - ``compact(prompt:budget:)``
 
