@@ -270,13 +270,15 @@ extension RoutedModel where Container == any LoadedLLMContainer {
             // rather than around the construction alone: `effectiveTranscript`
             // and `effectiveEntryEvents` re-read this node's own and every
             // ancestor's `transcript.jsonl` from disk, and that read is what a
-            // restore really costs. See `withRestoredSessionSpan`, which also
-            // says why the factory below opens no span of its own here.
-            let session = try await withRestoredSessionSpan(
+            // restore really costs. `withSessionSpan` is the one helper all
+            // three shapes open their span through, and its own doc comment
+            // says why the factory below opens no span here.
+            let session = try await withSessionSpan(
                 routerId: routedLLM.routerId,
                 sessionId: node.id,
                 parentId: node.parentId,
                 model: model,
+                origin: .restored,
                 tracer: routedLLM.tracer
             ) {
                 try await rebuild(node, on: routedLLM)
@@ -449,7 +451,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 sidecarOrigin: SessionSidecarOrigin.restored(under: routedLLM.durableRecording),
                 // Rebuilt from disk, so this node's span is the one
                 // `restore(_:)` opened around the read above rather than one
-                // this factory opens. See `withRestoredSessionSpan`.
+                // this factory opens. See `withSessionSpan`.
                 origin: .restored,
                 contextTokens: resolvedContextTokens,
                 usageState: usageState,

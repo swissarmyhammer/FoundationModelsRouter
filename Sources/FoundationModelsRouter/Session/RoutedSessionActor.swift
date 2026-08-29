@@ -33,49 +33,113 @@ private func describeSession(
     }
 }
 
-/// Opens one ``RouterTracing/SpanName/session`` span around work that ends in
-/// a restored session.
+/// The kind every ``RouterTracing/SpanName/session`` span opens under.
 ///
-/// A restored node is the one shape whose cost is not the construction: before
-/// it can build anything it re-reads its own and its ancestors' transcript
-/// files from disk (``TranscriptTree/effectiveTranscript(forSession:view:)``),
-/// which is exactly the work this card set out to make visible. So the restore
-/// path opens the span here, around that read *and* the rebuild that follows
+/// Written here, and nowhere else, so the two `withSessionSpan` forms below
+/// cannot drift apart on it. With the span's name and the one attribute writer
+/// above, it leaves those two forms naming no value of their own: they carry a
+/// different effect, and nothing else.
+private let sessionSpanKind: SpanKind = .internal
+
+/// Opens one ``RouterTracing/SpanName/session`` span around the work that
+/// brings a session into existence, and writes that session's identity onto
+/// it.
+///
+/// Every session span the package opens comes from here — the vended root, the
+/// forked child and the restored node alike — so the span's name, its kind and
+/// its attributes are written in one place and all three shapes report the
+/// same way.
+///
+/// Which of the three calls this helper, and when, follows from where the cost
+/// sits. A restored node is the one shape whose cost is not the construction:
+/// before it can build anything it re-reads its own and its ancestors'
+/// transcript files from disk
+/// (``TranscriptTree/effectiveTranscript(forSession:view:)``), which is
+/// exactly the work this span was added to make visible. So the restore path
+/// calls this helper itself, around that read *and* the rebuild that follows
 /// it, and `makeRoutedSessionActor` opens no second span for a
 /// ``RouterTracing/SessionOrigin/restored`` session. The other two shapes have
-/// nothing to measure before the construction, so the factory opens their span
-/// itself.
+/// nothing to measure before the construction, so the factory calls this
+/// helper for them.
 ///
 /// - Parameters:
-///   - routerId: The recording root id of the restoring router.
-///   - sessionId: The restored node's own span id.
-///   - parentId: The id of the session it was forked from, or `nil` for a root.
-///   - model: The model the restored node runs against.
-///   - tracer: The restoring handle's tracer, or `nil` to read
+///   - routerId: The recording root id of the router the session belongs to.
+///   - sessionId: The new session's own span id.
+///   - parentId: The id of the session it came from, or `nil` for a root.
+///   - model: The model the session runs against.
+///   - origin: How the session came into existence.
+///   - tracer: The owning handle's tracer, or `nil` to read
 ///     `InstrumentationSystem.tracer` at call time.
-///   - rebuild: The read and the construction the span measures.
-/// - Returns: Whatever `rebuild` returns.
-/// - Throws: Whatever `rebuild` throws. `withSpan` records the error on the
-///   span and raises it again.
-func withRestoredSessionSpan<Result>(
+///   - work: The work the span measures.
+/// - Returns: Whatever `work` returns.
+/// - Throws: Whatever `work` throws. `withSpan` records the error on the span
+///   and raises it again.
+func withSessionSpan<Result>(
     routerId: ULID,
     sessionId: ULID,
     parentId: ULID?,
     model: ModelRef,
+    origin: RouterTracing.SessionOrigin,
     tracer: (any Tracer)?,
-    _ rebuild: () async throws -> Result
-) async rethrows -> Result {
-    try await RouterTracing.tracer(explicit: tracer)
-        .withSpan(RouterTracing.SpanName.session, ofKind: .internal) { span in
+    _ work: () throws -> Result
+) rethrows -> Result {
+    try RouterTracing.tracer(explicit: tracer)
+        .withSpan(RouterTracing.SpanName.session, ofKind: sessionSpanKind) { span in
             describeSession(
                 on: span,
-                origin: .restored,
+                origin: origin,
                 routerId: routerId,
                 sessionId: sessionId,
                 parentId: parentId,
                 model: model
             )
-            return try await rebuild()
+            return try work()
+        }
+}
+
+/// The suspending form of the session span, for a caller whose work awaits.
+///
+/// Swift carries no effect polymorphism: one function cannot be `async` for an
+/// `async` caller and synchronous for a synchronous one, and `withSpan` itself
+/// is a pair of overloads for the same reason. So this helper is a pair too.
+/// The two forms are one helper in every respect a reader cares about — the
+/// same span name, the same kind, and the same attributes through the same one
+/// writer — and they differ only in the effect they carry, so the restore path
+/// can suspend inside its span while the synchronous factory can still open
+/// one. Read the synchronous form above for which shape opens its span where.
+///
+/// - Parameters:
+///   - routerId: The recording root id of the router the session belongs to.
+///   - sessionId: The new session's own span id.
+///   - parentId: The id of the session it came from, or `nil` for a root.
+///   - model: The model the session runs against.
+///   - origin: How the session came into existence.
+///   - tracer: The owning handle's tracer, or `nil` to read
+///     `InstrumentationSystem.tracer` at call time.
+///   - work: The work the span measures.
+/// - Returns: Whatever `work` returns.
+/// - Throws: Whatever `work` throws. `withSpan` records the error on the span
+///   and raises it again.
+func withSessionSpan<Result>(
+    routerId: ULID,
+    sessionId: ULID,
+    parentId: ULID?,
+    model: ModelRef,
+    origin: RouterTracing.SessionOrigin,
+    tracer: (any Tracer)?,
+    _ work: () async throws -> Result
+) async rethrows -> Result {
+    try await RouterTracing.tracer(explicit: tracer)
+        .withSpan(RouterTracing.SpanName.session, ofKind: sessionSpanKind) { span in
+            describeSession(
+                on: span,
+                origin: origin,
+                routerId: routerId,
+                sessionId: sessionId,
+                parentId: parentId,
+                model: model
+            )
+            return try await work()
         }
 }
 
@@ -100,7 +164,8 @@ func withRestoredSessionSpan<Result>(
 ///
 /// A ``RouterTracing/SessionOrigin/restored`` session gets no span from this
 /// factory: its span is already open around the transcript read that precedes
-/// this call. See ``withRestoredSessionSpan(routerId:sessionId:parentId:model:tracer:_:)``.
+/// this call. See `withSessionSpan`, the one helper both paths open their span
+/// through.
 ///
 /// - Returns: The constructed session actor.
 func makeRoutedSessionActor(
@@ -178,18 +243,15 @@ func makeRoutedSessionActor(
     // runs before this call, so it gets no second span here. See this
     // function's own doc comment.
     guard origin != .restored else { return construct() }
-    return RouterTracing.tracer(explicit: tracer)
-        .withSpan(RouterTracing.SpanName.session, ofKind: .internal) { span in
-            describeSession(
-                on: span,
-                origin: origin,
-                routerId: routerId,
-                sessionId: id,
-                parentId: parentId,
-                model: model
-            )
-            return construct()
-        }
+    return withSessionSpan(
+        routerId: routerId,
+        sessionId: id,
+        parentId: parentId,
+        model: model,
+        origin: origin,
+        tracer: tracer,
+        construct
+    )
 }
 
 /// The concrete ``RoutedSession``, backed by a ``LanguageModelSessionBackend``.
