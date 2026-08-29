@@ -3,7 +3,7 @@ import FoundationModels
 /// The untyped entry point that mounts a tool for a session: it opens the `any Tool` existential and picks the decorator.
 enum ToolMounting {
     /// Wraps `tool` on the session plane of `context`, for a binder that mounts its own inner calls.
-    /// The result is that of ``makeWrapped(tool:sessionID:mailbox:sink:op:configuration:)``.
+    /// The result is that of `makeWrapped(tool:sessionID:mailbox:sink:op:configuration:)`.
     /// - Returns: The mounted tool.
     static func makeWrapped(
         tool: any Tool,
@@ -22,8 +22,8 @@ enum ToolMounting {
         )
     }
 
-    /// Mounts `tool`. A `String`-output tool becomes a ``BackgroundToolRunner`` or a ``RunToCompletionRunner``, per the mount it declares through ``BackgroundTool/mount`` or, when it declares none, per `configuration`.
-    /// Any other tool becomes a ``ContextBindingTool``.
+    /// Mounts `tool`. A `String`-output tool becomes the internal `BackgroundToolRunner` or `RunToCompletionRunner`, per the mount it declares through ``BackgroundTool/mount`` or, when it declares none, per `configuration`.
+    /// Any other tool becomes the internal `ContextBindingTool`.
     /// - Parameter op: The registration site's `"verb noun"` op, or `nil`.
     /// - Returns: The mounted tool.
     static func makeWrapped(

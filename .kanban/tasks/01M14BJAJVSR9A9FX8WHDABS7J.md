@@ -79,8 +79,31 @@ comments:
     - Verified the diff scope with `git diff --stat`: only `Sources/FoundationModelsRouter/Session/RoutedSession.swift` (the `public` additions), `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/RoutedSession.md` (the removed `compact(prompt:)` Topics entry, which names no existing symbol), and the new test file.
     - next: ready for review.
   timestamp: 2026-08-29T13:43:06.863164+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m16w60xk3t4x0tk74jp9g14y
+  text: |-
+    ### commit — changed
+    - evidence: ea78b34e2c15f927fe2fed15cc229a1729d7d751, 7 files changed, 246 insertions(+), 17 deletions(-)
+    - next: none
+  timestamp: 2026-08-29T13:43:41.235904+00:00
+- actor: claude-code
+  id: 01m16wc4jtdfbfcj4mspk4s8ff
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (commit ea78b34) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. No prior findings open.
+    - next: task moved to done.
+  timestamp: 2026-08-29T13:47:01.594036+00:00
+- actor: claude-code
+  id: 01m16wcknsf4n2e8cd577wpmbc
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 3 files; DocC warnings 91 before, 85 after, 0 added
+    - test: green — swift test, 1103 tests in 116 suites plus 83 in 10 suites, 0 failures, 0 skipped
+    - commit: ea78b34 — 7 files
+    - review: clean — zero findings; task moved to done
+  timestamp: 2026-08-29T13:47:17.049523+00:00
+position_column: done
+position_ordinal: ffff9c80
 title: Publish the RoutedSession convenience extension members
 ---
 ## What
