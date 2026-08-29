@@ -114,7 +114,7 @@ extension LanguageModelSessionBackend {
     /// The stream is pull-based. A relay `Task` would be a second cancellable
     /// consumer, and a propagated cancellation could drop a chunk it had
     /// already received. Pulling from the iterator directly removes that race.
-    func streamResponseFragments(
+    public func streamResponseFragments(
         to prompt: String,
         maxTokens: Int?
     ) -> AsyncThrowingStream<ResponseFragment, Error> {
@@ -127,13 +127,15 @@ extension LanguageModelSessionBackend {
 
     /// Default ``makeFork(tools:)``: ignores `tools` and forwards to
     /// ``makeFork()``.
-    func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
+    public func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeFork()
     }
 
     /// Default ``replacingTranscript(_:)``: ignores `transcript` and forwards
     /// to ``makeFork()``.
-    func replacingTranscript(_ transcript: FoundationModels.Transcript) -> any LanguageModelSessionBackend {
+    public func replacingTranscript(
+        _ transcript: FoundationModels.Transcript
+    ) -> any LanguageModelSessionBackend {
         makeFork()
     }
 }

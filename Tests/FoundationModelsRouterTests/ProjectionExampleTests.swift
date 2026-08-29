@@ -36,7 +36,9 @@ import FoundationModelsRouter
 /// file names is public, so an application outside this package can write the
 /// same code. That includes the two conformances in
 /// ``ProjectionExampleHarness`` — a plain-import consumer really can supply its
-/// own ``LoadedLLMContainer`` and ``LanguageModelSessionBackend``.
+/// own ``LoadedLLMContainer`` and ``LanguageModelSessionBackend``. Each
+/// conformance writes only the members its protocol still requires: the rest
+/// come from the `public` defaults the two protocols supply.
 ///
 /// The example runs offline in the normal unit-test target. No network, no GPU,
 /// and no download. The only code that departs from an application is
@@ -115,27 +117,26 @@ struct ProjectionExampleTests {
                 return answer
             }
 
+            /// Records the turn, then streams one chunk for each fragment of
+            /// ``answerFragments``.
+            ///
+            /// The session reads a streaming turn through
+            /// `streamResponseFragments(to:maxTokens:)`, whose `public` default
+            /// carries each chunk this stream yields. That is why the harness
+            /// writes no fragment method of its own.
             func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-                streamTurn(prompt: prompt) { $0 }
-            }
-
-            func streamResponseFragments(
-                to prompt: String,
-                maxTokens: Int?
-            ) -> AsyncThrowingStream<ResponseFragment, Error> {
-                streamTurn(prompt: prompt) { ResponseFragment(text: $0) }
+                recordTurn(prompt: prompt)
+                let fragments = answerFragments
+                return AsyncThrowingStream { continuation in
+                    for fragment in fragments {
+                        continuation.yield(fragment)
+                    }
+                    continuation.finish()
+                }
             }
 
             func makeFork() -> any LanguageModelSessionBackend {
                 ScriptedBackend(entries: entries)
-            }
-
-            func makeFork(tools: [any Tool]) -> any LanguageModelSessionBackend {
-                makeFork()
-            }
-
-            func replacingTranscript(_ transcript: Transcript) -> any LanguageModelSessionBackend {
-                ScriptedBackend(entries: Array(transcript))
             }
 
             func transcriptEntries() -> [Transcript.Entry] {
@@ -144,30 +145,6 @@ struct ProjectionExampleTests {
 
             func usageTokenCounts() -> (input: Int, output: Int)? {
                 usage
-            }
-
-            /// Records the turn, then streams one element for each fragment of
-            /// ``answerFragments``.
-            ///
-            /// One implementation behind both streaming entry points, which
-            /// differ only in the element they carry.
-            ///
-            /// - Parameters:
-            ///   - prompt: The prompt this turn answers.
-            ///   - element: Makes one stream element out of one fragment.
-            /// - Returns: The stream of elements, in fragment order.
-            private func streamTurn<Element: Sendable>(
-                prompt: String,
-                element: @escaping @Sendable (String) -> Element
-            ) -> AsyncThrowingStream<Element, Error> {
-                recordTurn(prompt: prompt)
-                let fragments = answerFragments
-                return AsyncThrowingStream { continuation in
-                    for fragment in fragments {
-                        continuation.yield(element(fragment))
-                    }
-                    continuation.finish()
-                }
             }
 
             /// Appends the prompt and the answer of one turn to the transcript,
@@ -184,28 +161,19 @@ struct ProjectionExampleTests {
 
         /// A resident generation model that vends a ``ScriptedBackend`` for
         /// every session.
+        ///
+        /// The two factories below are the whole conformance. The tool-carrying
+        /// variants and `languageModel` come from the `public` defaults
+        /// ``LoadedLLMContainer`` supplies, and the default `languageModel`
+        /// traps — which is the honest answer for a container that holds a
+        /// script instead of a model.
         private struct ScriptedContainer: LoadedLLMContainer {
             func makeSession(instructions: String?) -> any LanguageModelSessionBackend {
                 ScriptedBackend()
             }
 
-            func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
-                makeSession(instructions: instructions)
-            }
-
             func makeSession(transcript: Transcript) -> any LanguageModelSessionBackend {
                 ScriptedBackend(entries: Array(transcript))
-            }
-
-            func makeSession(transcript: Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
-                makeSession(transcript: transcript)
-            }
-
-            /// Traps. This container holds a script, not a model, so it has no
-            /// `LanguageModel` to give. Asking one for it is a programmer
-            /// error, and the example never asks.
-            var languageModel: any FoundationModels.LanguageModel {
-                preconditionFailure("the scripted example container wraps no LanguageModel")
             }
         }
 

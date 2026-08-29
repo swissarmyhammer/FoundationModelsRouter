@@ -1,6 +1,16 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m170xcag6wkvt3dj0g8jb26x
+  text: |-
+    Archived as a duplicate of ^3t0mbb1.
+
+    Two agents in the same /finish batch found the same defect from two sides: this card from ^jp93e7c, and ^3t0mbb1 from ^tf6dwx1. ^3t0mbb1 is the wider card — it holds `LanguageModelSessionBackend` as well as `LoadedLLMContainer`.
+
+    The content of this card is merged into ^3t0mbb1: the sibling protocols named here (`LoadedModelContainer`, `LoadedEmbeddingContainer`, `ModelLoader`) are now a stated acceptance item there, and the `GuidedPublicSurfaceTests.swift` test this card asked for is a test item there. Nothing is lost. Do the work on ^3t0mbb1.
+  timestamp: 2026-08-29T15:06:20.880319+00:00
 position_column: todo
 position_ordinal: 8d80
 title: A consumer outside the module cannot conform to LoadedLLMContainer

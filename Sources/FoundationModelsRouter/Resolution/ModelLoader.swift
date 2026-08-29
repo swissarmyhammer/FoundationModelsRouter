@@ -52,19 +52,21 @@ public protocol LoadedLLMContainer: LoadedModelContainer {
 
 extension LoadedLLMContainer {
     /// Traps. See ``LoadedLLMContainer/languageModel``.
-    var languageModel: any FoundationModels.LanguageModel {
+    public var languageModel: any FoundationModels.LanguageModel {
         preconditionFailure(
             "this LoadedLLMContainer does not expose a languageModel; RoutedModel.makeLanguageModel() is unavailable for it"
         )
     }
 
     /// Ignores `tools` and forwards to ``makeSession(instructions:)``.
-    func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
+    public func makeSession(instructions: String?, tools: [any Tool]) -> any LanguageModelSessionBackend {
         makeSession(instructions: instructions)
     }
 
     /// Ignores `tools` and forwards to ``makeSession(transcript:)``.
-    func makeSession(transcript: FoundationModels.Transcript, tools: [any Tool]) -> any LanguageModelSessionBackend {
+    public func makeSession(
+        transcript: FoundationModels.Transcript, tools: [any Tool]
+    ) -> any LanguageModelSessionBackend {
         makeSession(transcript: transcript)
     }
 }
