@@ -4,7 +4,7 @@ import Foundation
 ///
 /// xgrammar accepts only a subset of JSON Schema. A grammar outside that
 /// subset fails here, so a caller can correct the schema.
-enum GuidedRequestError: Error, Equatable {
+public enum GuidedRequestError: Error, Equatable {
     /// The JSON-schema grammar used unsupported keywords (a sorted subset of
     /// `$ref`, `allOf`, `format`).
     case unsupportedSchemaConstructs([String])
@@ -206,7 +206,7 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// - Returns: The schema-valid output parsed into a ``JSONValue``.
     /// - Throws: ``GuidedRequestError`` for a rejected schema or unparseable
     ///   output, or a model error.
-    func respond(
+    public func respond(
         to prompt: String,
         matching jsonSchema: String,
         maxTokens: Int? = nil
