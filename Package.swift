@@ -123,11 +123,24 @@ let package = Package(
             url: "https://github.com/apple/\(tracingPackage).git",
             from: "1.4.1"
         ),
+        // The operation-event vocabulary (`OperationEvent`,
+        // `OperationOutcome`, `OperationEventSink`, `ToolInvocationRecord`,
+        // the `Elicitation` family, `ForkableTool`) moved to the Extras
+        // package's core module (decision 2026-08-29).
+        // `Hosting/OperationVocabulary.swift` re-exports those types under
+        // this module.
+        .package(
+            url: "git@github.com:swissarmyhammer/FoundationModelsExtras.git",
+            branch: "main"
+        ),
     ],
     targets: [
         .target(
             name: packageName,
-            dependencies: mlxProducts + [ulidProduct, tracingProduct],
+            dependencies: mlxProducts + [
+                ulidProduct, tracingProduct,
+                .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
+            ],
             path: "Sources/\(packageName)",
             // The DocC catalog (task ^j0pp9yp) is documentation input for
             // `docc`, not build input; the Swift Build backend does not

@@ -17,13 +17,13 @@ import FoundationModels
 /// Every item gets a stable ``ItemID`` at enqueue. ``drainForDispatch()`` is
 /// the commit boundary. ``nextEvent()`` suspends while the outbox is empty.
 ///
-/// The public surface is the vocabulary alone (``ItemID``,
+/// The public surface is the vocabulary (``ItemID``,
 /// ``PromptQueueMutationResult``, ``QueueDepth``), because
 /// ``RoutedSession``'s own public methods carry those three types in their
-/// signatures. Every method of this actor is internal, the
-/// ``OperationEventSink`` conformance included, since that protocol is
-/// internal too. An app drives the queue through ``RoutedSession``'s methods;
-/// a session never exposes its outbox.
+/// signatures, plus the two `post` witnesses, which must be public because
+/// the ``OperationEventSink`` protocol is public in FoundationModelsExtras.
+/// Every other method of this actor is internal. An app drives the queue
+/// through ``RoutedSession``'s methods; a session never exposes its outbox.
 public actor SessionOutbox: OperationEventSink {
     /// A stable identifier the outbox assigns to a pending item at enqueue.
     ///
@@ -107,7 +107,7 @@ public actor SessionOutbox: OperationEventSink {
     /// and recorded uncoalesced in the attached journal, in post order.
     ///
     /// - Parameter event: The event to post.
-    func post(event: OperationEvent) async {
+    public func post(event: OperationEvent) async {
         // Enqueued before the staging decision and before any suspension, so
         // the journal's order is exactly this outbox's post order.
         let journalWrite = enqueueJournalWrite(event: event)
@@ -176,7 +176,7 @@ public actor SessionOutbox: OperationEventSink {
     /// attached, the record is dropped.
     ///
     /// - Parameter record: The record to forward.
-    func post(invocation record: ToolInvocationRecord) async {
+    public func post(invocation record: ToolInvocationRecord) async {
         await invocationObserver?.deliver(invocation: record)
     }
 
