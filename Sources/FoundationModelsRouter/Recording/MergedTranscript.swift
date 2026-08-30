@@ -35,6 +35,9 @@ enum MergedTranscriptError: Error, Equatable, LocalizedError {
 /// primary key and `seq` — globally monotonic across every session and fork the
 /// recorder served — is the tiebreaker, so events sharing an instant still fall
 /// into their exact recorded order even under concurrent generation.
+///
+/// The type is internal. ``TranscriptEvent/merged(under:)`` is the public entry
+/// point a package outside this one reads a merged transcript through.
 enum MergedTranscript {
     /// Merges every nested `transcript.jsonl` under `routerDirectory` into one
     /// stream.
@@ -92,5 +95,34 @@ enum MergedTranscript {
             // for that file rather than adopting TranscriptTree's loud
             // corruption reporting.
         }
+    }
+}
+
+extension TranscriptEvent {
+    /// Reads a merged transcript from disk. This is the supported way to do it.
+    ///
+    /// Merges every nested `transcript.jsonl` under `routerDirectory` into one
+    /// event stream, totally ordered by `(ts, seq)`. Each session, and each
+    /// fork, records into its own lineage-nested `transcript.jsonl`, so no one
+    /// file holds a whole run; this reads the whole run back.
+    ///
+    /// The entry point sits on ``TranscriptEvent`` — the element type of the
+    /// result — because the merge itself, the internal `MergedTranscript`, is
+    /// not part of this package's public surface.
+    ///
+    /// - Parameter routerDirectory: The router's recording root —
+    ///   `recordings/<routerId>/` — under which the session transcript files
+    ///   are nested.
+    /// - Returns: Every recorded event under `routerDirectory`, ordered by
+    ///   `(ts, seq)`.
+    /// - Throws: The internal `MergedTranscriptError.transcriptLineCorrupt`
+    ///   when a file holds a corrupt line before its last one, the internal
+    ///   `RecordingSchemaVersionError.recordingFromNewerRouter` when a session's
+    ///   sidecar names a schema version newer than this build supports, or
+    ///   whatever reading a transcript file throws, which aborts the whole
+    ///   merge. Both error types stay internal, because a Swift error is
+    ///   untyped and every one of them reaches the caller as `any Error`.
+    public static func merged(under routerDirectory: URL) throws -> [TranscriptEvent] {
+        try MergedTranscript.merged(under: routerDirectory)
     }
 }

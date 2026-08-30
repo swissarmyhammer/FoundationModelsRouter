@@ -1,0 +1,1 @@
+{"id":"01M19GCB1DVG53WYHRQ7F338KN","timestamp":"2026-08-30T14:15:08.589172Z","op":"create","item_id":"01M19GCB1DKE0J2Z5PSAYTH09G","forward_patch":"--- original\n+++ modified\n@@ -0,0 +1,2 @@\n+color: e4e669\n+tag_name: recording\n","reverse_patch":"--- original\n+++ modified\n@@ -1,2 +0,0 @@\n-color: e4e669\n-tag_name: recording\n","transaction_id":null}

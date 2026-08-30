@@ -95,6 +95,34 @@ struct MergedAndRedactionTests {
         #expect(merged.allSatisfy { $0.text == "body" })
     }
 
+    @Test("the public TranscriptEvent.merged(under:) returns exactly what the internal merge returns")
+    func publicEntryPointMatchesTheInternalMerge() async throws {
+        let routerDir = Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: routerDir) }
+
+        // One event in each of two sibling session directories, so the two
+        // readers are compared over a merge that really spans more than one
+        // file.
+        let recordedKinds: [TranscriptEvent.Kind] = [.prompt, .response]
+        let recorder: JSONLRecorder = .jsonl(directory: routerDir, now: { Self.fixedInstant })
+        for kind in recordedKinds {
+            let sessionDir = routerDir.appendingPathComponent(
+                ULID.generate().description,
+                isDirectory: true
+            )
+            await recorder.append(samplePartial(kind: kind, text: "body"), to: sessionDir)
+        }
+
+        // The public entry point forwards to the internal merge and adds
+        // nothing: same events, same order.
+        let overThePublicSurface = try TranscriptEvent.merged(under: routerDir)
+        let overTheInternalMerge = try MergedTranscript.merged(under: routerDir)
+        #expect(overThePublicSurface == overTheInternalMerge)
+        // Two equal empty arrays would satisfy the line above and prove
+        // nothing, so the recorded events must really be there.
+        #expect(overThePublicSurface.count == recordedKinds.count)
+    }
+
     @Test(
         "the merge refuses a session whose sidecar carries a future schema version, with the typed newer-router error"
     )

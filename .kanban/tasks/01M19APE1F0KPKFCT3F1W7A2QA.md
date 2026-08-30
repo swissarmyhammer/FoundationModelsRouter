@@ -1,9 +1,66 @@
 ---
 assignees:
 - claude-code
+comments:
+- actor: claude-code
+  id: 01m19g81p8gydjag85tbfaye9d
+  text: |-
+    ### Closed as a duplicate of ^zgzyhsj
+
+    This card and ^zgzyhsj ask for the same thing. ^zgzyhsj is done, in commit 799c308.
+    This card was written by an agent during a different card's run, while the same
+    request was already being answered. No work is lost, and none is repeated.
+
+    The answer is the second of the two choices in "What to do": a smaller facade.
+
+    ```swift
+    extension ToolContext {
+        public func mount<T: Tool>(
+            _ tool: T,
+            op: String? = nil,
+            as configuration: ToolMount = .synchronous
+        ) -> any Tool<T.Arguments, T.Output>
+    }
+    ```
+
+    `ToolMounting.makeWrapped` stays internal. The facade calls it with `self`, so all
+    seven behaviours in this card hold, and behaviour 1, the mount arbitration, is
+    covered by a test.
+
+    Each acceptance item of this card:
+
+    - An outside package can mount a tool with a public API, and the API has a
+      documentation comment that says so — yes, `ToolContext.mount(_:op:as:)`.
+    - The API keeps the seven behaviours — yes. It is one call to
+      `makeWrapped(tool:inheriting:...)`.
+    - `swift build` and `swift test` stay clean — yes. 1122 tests in 121 suites plus
+      83 tests in 10 suites, 0 failed.
+    - The tracing card is not blocked — correct. ^fypc46z is done, in commit 0f3fc7b.
+
+    Each test item of this card:
+
+    - A mount through the public API that keeps `Arguments` and `Output` — covered in
+      Tests/FoundationModelsRouterTests/ToolContextMountTests.swift. A probe that
+      imports the package without `@testable` type-checks, so the caller needs no cast.
+    - A declared `.background` mount that beats a `.runToCompletion` call site —
+      covered in the same file.
+    - `swift test` passes.
+
+    Two notes this card gets right, and one it does not:
+
+    - Right: the `OperationEventSink` typealias needs no change here. It stays
+      internal. The consumer conforms to `FoundationModelsExtras.OperationEventSink`.
+    - Right: the demotion was a breaking change that was not seen.
+    - Not right: the card assumes the fix must expose the mounting machinery. It does
+      not. The consumer already holds a `ToolContext`, so the mount belongs on that
+      type, and the public surface grows by one symbol: 619 to 620.
+
+    One thing the consumer no longer needs: its own `AmbientUpstreamSink`. The router
+    supplies that sink, as a private `MountedRunUpstreamSink`.
+  timestamp: 2026-08-30T14:12:47.944544+00:00
 depends_on: []
-position_column: todo
-position_ordinal: '8b80'
+position_column: done
+position_ordinal: ffffa580
 title: Publish a supported mount entry point again — the demotion of ToolMounting broke an outside consumer
 ---
 ## What
