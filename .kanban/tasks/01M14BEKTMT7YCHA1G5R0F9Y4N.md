@@ -66,8 +66,32 @@ comments:
     - evidence: `swift build --build-tests` — Build complete, 0 errors, 0 warnings in Sources/ and Tests/ (the one build-log warning is from the mlx-swift resource plugin bundle, not project code). `swift test` — two test-run reports, both pass: 1103 tests in 116 suites passed with 2 known issues (pre-existing, intentional `withKnownIssue` checks in RealModelHarness.swift and BoundedWait.swift, unrelated to this task's scope); 83 tests in 10 suites passed. 0 failures, 0 skipped tests across both runs.
     - next: none. The working tree still holds the doc-comment-only change to `Sources/FoundationModelsRouter/Hosting/ToolMounting.swift` for this task. No test was changed or weakened.
   timestamp: 2026-08-29T14:03:38.803731+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m16xdezfra1ekxya2pexg6zw
+  text: |-
+    ### commit — changed
+    - evidence: 5379087 fix(hosting): repair DocC links to internal runners in doc comments, 5 files changed
+    - next: none
+  timestamp: 2026-08-29T14:05:13.583154+00:00
+- actor: claude-code
+  id: 01m16xjj0bwptx79va1cv6fyy7
+  text: |-
+    ### review — clean
+    - evidence: `review sha 5379087~1..5379087` — 0 findings, 0 confirmed, 0 refuted, 7 validator runs attempted, 0 failed. 1 source file reviewed: Sources/FoundationModelsRouter/Hosting/ToolMounting.swift. The 4 `.kanban/` files in the commit are excluded by `.reviewignore`. No prior `## Review Findings` section is on the card, and each acceptance and test item is checked.
+    - note: the card names two files. Commit b26ee0f, from a different session, deleted `Sources/FoundationModelsRouter/Hosting/ToolInvocationRecord.swift` while this task ran. Its replacement, `Sources/FoundationModelsRouter/Hosting/OperationVocabulary.swift`, uses plain code text and holds no link to an internal symbol. Thus that half of the defect is gone, not open.
+    - next: none. The card moves to `done`.
+  timestamp: 2026-08-29T14:08:00.523917+00:00
+- actor: claude-code
+  id: 01m16xk16zq1k8gg99svct83ze
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 files; DocC warnings 85 before, 80 after, 0 added
+    - test: green — swift test, 1103 tests in 116 suites plus 83 in 10 suites, 0 failures, 0 skipped
+    - commit: 5379087 — 5 files, staged by path only because another session was committing to the same tree
+    - review: clean — zero findings; task moved to done
+  timestamp: 2026-08-29T14:08:16.095802+00:00
+position_column: done
+position_ordinal: ffff9d80
 title: Repair the DocC links to internal runners in the Hosting doc comments
 ---
 ## What

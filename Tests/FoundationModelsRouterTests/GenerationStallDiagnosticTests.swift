@@ -34,8 +34,13 @@ struct GenerationStallDiagnosticTests {
         /// backend only has to model the stall.
         private let inner = StubSessionBackend()
 
-        /// Signalled once the model call has suspended, so a test knows the stall
-        /// has begun rather than guessing at it.
+        /// Signalled once the whole-answer model call has suspended, so a test
+        /// knows the stall has begun rather than guessing at it.
+        ///
+        /// The streaming call signals nothing of the kind. What a streaming test
+        /// is about is what the *session* observed, and the session's own
+        /// ``SessionEvent/textDelta(_:)`` says that; a backend-side flag says
+        /// only that a chunk was written into a buffer nobody has read yet.
         let suspended = AsyncSemaphore(value: 0)
 
         /// Awaited by the suspended model call; signalling it lets the turn finish.
@@ -61,14 +66,12 @@ struct GenerationStallDiagnosticTests {
 
         func streamResponse(to prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
             let fragmentsBeforeStall = fragmentsBeforeStall
-            let suspended = suspended
             let release = release
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     for index in 0..<fragmentsBeforeStall {
                         continuation.yield("chunk-\(index) ")
                     }
-                    suspended.signal()
                     await release.wait()
                     continuation.finish()
                 }
@@ -266,7 +269,9 @@ struct GenerationStallDiagnosticTests {
 
     // MARK: - The signal a streaming caller can see
 
-    @Test("a streaming turn reports the stall against the fragments it counted")
+    @Test(
+        "a streaming turn reports the stall against the fragments it counted",
+        .timeLimit(.minutes(1)))
     @MainActor
     func streamingTurnReportsTheStallAgainstCountedFragments() async throws {
         let producedFragments = 2
@@ -274,24 +279,39 @@ struct GenerationStallDiagnosticTests {
             fragmentsBeforeStall: producedFragments)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let log = EventLog()
+        // Read the turn's own stream here, rather than drain it into a log this
+        // test then polls: each element is a suspension the turn itself resumes,
+        // so a loaded machine makes this test slower and never red.
+        //
+        // Which report the test takes is the whole claim. The session counts a
+        // fragment before it publishes the matching ``SessionEvent/textDelta(_:)``
+        // — see ``RoutedSessionActor``'s streaming body — so a
+        // ``SessionEvent/generationStalled(_:)`` seen *after* every `.textDelta`
+        // was measured against every fragment the turn produced. A report the
+        // session made while a chunk was still unread counts fewer, honestly, and
+        // is a different report; a stalled generation reports again on each
+        // further interval, so the one this test is about always follows.
+        var countedFragments = 0
+        var stall: GenerationStall?
         let stream = await session.streamEvents(to: Self.prompt)
-        let drain = Task {
-            for try await event in stream {
-                await log.append(event)
+        for try await event in stream {
+            switch event {
+            case .textDelta:
+                countedFragments += 1
+            case .generationStalled(let reported)
+            where stall == nil && countedFragments == producedFragments:
+                stall = reported
+                // Only now may the model call end: the report this test is about
+                // has been made, and it is a report about a call still in flight.
+                backend.release.signal()
+            default:
+                continue
             }
         }
-        try await BoundedWait.awaitSignal(backend.suspended, named: "the model call suspended")
 
-        let reported = await BoundedWait.conditionReached("a stall report") {
-            await !log.stalls.isEmpty
-        }
-        backend.release.signal()
-        _ = try? await drain.value
-
-        #expect(reported)
-        let stall = try #require(await log.stalls.first)
-        #expect(stall.visibility == .fragments(observed: producedFragments))
+        #expect(countedFragments == producedFragments)
+        let reported = try #require(stall)
+        #expect(reported.visibility == .fragments(observed: producedFragments))
     }
 
     // MARK: - A healthy turn reports nothing

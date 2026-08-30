@@ -83,8 +83,31 @@ comments:
     - scope confirmed: only two new files present for task ^tf6dwx1 — `Tests/FoundationModelsRouterTests/ProjectionExampleTests.swift` (plain `import FoundationModelsRouter`, confirmed) and `Sources/FoundationModelsRouter/FoundationModelsRouter.docc/SessionProjection.md`. No test was edited or deleted.
     - next: none — suite is clean.
   timestamp: 2026-08-29T15:01:26.303931+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m170p0z7p5smmdngzh6nmjkf
+  text: |-
+    ### commit — changed
+    - evidence: 6dc1eee test(projection): add an example that binds SessionProjection (8 files changed, 614 insertions, 7 deletions)
+    - next: none
+  timestamp: 2026-08-29T15:02:19.879749+00:00
+- actor: claude-code
+  id: 01m170vcgr7tn9y34n4myedg1c
+  text: |-
+    ### review — clean
+    - evidence: review sha 6dc1eee~1..6dc1eee — 0 findings, 0 confirmed, 0 refuted. 1 file reviewed (Tests/FoundationModelsRouterTests/ProjectionExampleTests.swift). 6 .kanban files excluded by .reviewignore; SessionProjection.md matched no validator.
+    - next: task moved to done.
+  timestamp: 2026-08-29T15:05:15.544275+00:00
+- actor: claude-code
+  id: 01m170vxbrtqt5na4hhv8vyf9w
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — 2 new files, 614 insertions; filed follow-up cards ^3t0mbb1 and ^q8cnmb2
+    - test: green — swift test, 1106 tests in 118 suites plus 83 in 10 suites, 0 failures, 0 skipped
+    - commit: 6dc1eee — 8 files, staged by path only because another session was committing to the same tree
+    - review: clean — zero findings; task moved to done
+  timestamp: 2026-08-29T15:05:32.792547+00:00
+position_column: done
+position_ordinal: ffff9f80
 title: Add an example that binds SessionProjection
 ---
 ## What
