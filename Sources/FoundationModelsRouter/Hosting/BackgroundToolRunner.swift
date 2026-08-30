@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Tracing
 
 /// A decorator that runs each call of the wrapped tool in the background. Every call posts one progress event, tracks the run in the session's ``SessionMailbox``, and returns the ``PendingRunEnvelope`` at once.
 /// The run settles with exactly one terminal event: on completion, on cancel, or on timeout. Progress resets the timeout and a pending elicitation suspends it.
@@ -24,6 +25,9 @@ struct BackgroundToolRunner<
     /// How long a run may go with no progress, or `nil` for no clock. A per-call ``BackgroundTool/timeout(from:)`` overrides it.
     let timeout: TimeInterval?
 
+    /// The owning session's tracer, or `nil` to read the bootstrapped tracer at call time.
+    private let tracer: (any Tracer)?
+
     /// The wrapped tool's name.
     var name: String { wrapped.name }
 
@@ -43,7 +47,8 @@ struct BackgroundToolRunner<
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
         op: String? = nil,
-        timeout: TimeInterval?
+        timeout: TimeInterval?,
+        tracer: (any Tracer)? = nil
     ) {
         self.wrapped = wrapped
         self.sessionID = sessionID
@@ -51,10 +56,34 @@ struct BackgroundToolRunner<
         self.sink = sink
         self.op = op
         self.timeout = timeout
+        self.tracer = tracer
     }
 
     /// Starts one call in the background and returns ``PendingRunEnvelope/rendered`` for the run.
+    ///
+    /// The call runs inside one ``RouterTracing/SpanName/tool`` span, nested in
+    /// the turn's span, reporting ``RouterTracing/ToolRunKind/background``. That
+    /// span covers the accept-and-launch step the model sees and ends with the
+    /// envelope; the run itself settles later, in ``mailbox``, and is measured
+    /// by the run plane rather than by this span.
+    ///
+    /// - Throws: Nothing — the launch cannot fail; `throws` comes from the `Tool` requirement.
     func call(arguments: Arguments) async throws -> String {
+        try await ToolCallSpan.withSpan(
+            tracer: tracer, toolName: wrapped.name, sessionID: sessionID, runKind: .background
+        ) { span in
+            let rendered = await launch(arguments: arguments)
+            ToolCallSpan.record(outcome: .succeeded, on: span)
+            return rendered
+        }
+    }
+
+    /// Opens one run, hands its body to a background task, tracks it in
+    /// ``mailbox``, and returns the envelope the model is handed in its place.
+    ///
+    /// - Parameter arguments: The call's decoded arguments.
+    /// - Returns: ``PendingRunEnvelope/rendered`` for the launched run.
+    private func launch(arguments: Arguments) async -> String {
         let run = ToolRun(
             wrapped: wrapped,
             arguments: arguments,

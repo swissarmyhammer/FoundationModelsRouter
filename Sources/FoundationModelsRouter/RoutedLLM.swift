@@ -221,7 +221,10 @@ extension RoutedModel where Container == any LoadedLLMContainer {
     /// against them.
     ///
     /// Each tool is composed by
-    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:)``.
+    /// ``ToolMounting/makeSessionMounted(tool:sessionID:mailbox:sink:cappedToTokenLimit:tracer:)``,
+    /// carrying this handle's own tracer, so each mounted call opens its
+    /// ``RouterTracing/SpanName/tool`` span against the backend the router was
+    /// constructed with.
     /// The outbox and mailbox are fresh per session and never shared.
     ///
     /// - Parameters:
@@ -242,7 +245,8 @@ extension RoutedModel where Container == any LoadedLLMContainer {
                 sessionID: sessionID,
                 mailbox: mailbox,
                 sink: outbox,
-                cappedToTokenLimit: tokenLimit
+                cappedToTokenLimit: tokenLimit,
+                tracer: tracer
             )
         }
         return (outbox, mailbox, instancedTools)

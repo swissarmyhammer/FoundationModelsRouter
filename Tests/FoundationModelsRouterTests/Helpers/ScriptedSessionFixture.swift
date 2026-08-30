@@ -54,6 +54,8 @@ struct ScriptedSessionFixture {
     ///   - tools: The tools to mount on the vended session.
     ///   - tempDirPrefix: The calling suite's name, so a leaked temp directory
     ///     is attributable.
+    ///   - budget: The auto-compaction opt-in the vended session carries, or
+    ///     `nil` (the default) for manual compaction and no tool-output cap.
     ///   - tracer: The tracer every handle of the resolved profile carries, or
     ///     `nil` (the default) to read `InstrumentationSystem.tracer` at call
     ///     time.
@@ -64,6 +66,7 @@ struct ScriptedSessionFixture {
         playing script: ScriptedTurnScript,
         mounting tools: [any Tool],
         tempDirPrefix: String,
+        budget: TokenBudget? = nil,
         tracer: (any Tracer)? = nil
     ) async throws -> ScriptedSessionFixture {
         let directory = RouterTestFixtures.makeTempDir(prefix: tempDirPrefix)
@@ -81,7 +84,7 @@ struct ScriptedSessionFixture {
         let profile = try await router.resolve(
             profile: RouterTestFixtures.profile(), reporting: ResolutionProgress())
         return ScriptedSessionFixture(
-            session: profile.standard.makeSession(tools: tools),
+            session: profile.standard.makeSession(tools: tools, budget: budget),
             log: log,
             directory: directory,
             vendedBackends: container.vendedBackends,

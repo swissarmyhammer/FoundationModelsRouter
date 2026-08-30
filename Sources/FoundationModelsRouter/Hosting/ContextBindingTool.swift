@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Tracing
 
 /// A decorator that binds a per-call ``ToolContext`` around a non-`String`-output tool and returns its output unchanged. It synthesizes no events.
 struct ContextBindingTool<
@@ -20,6 +21,9 @@ struct ContextBindingTool<
     /// The registration site's `"verb noun"` op, or `nil` to stamp the wrapped tool's own name.
     private let op: String?
 
+    /// The owning session's tracer, or `nil` to read the bootstrapped tracer at call time.
+    private let tracer: (any Tracer)?
+
     /// The wrapped tool's name.
     var name: String { wrapped.name }
 
@@ -38,17 +42,40 @@ struct ContextBindingTool<
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
-        op: String? = nil
+        op: String? = nil,
+        tracer: (any Tracer)? = nil
     ) {
         self.wrapped = wrapped
         self.sessionID = sessionID
         self.mailbox = mailbox
         self.sink = sink
         self.op = op
+        self.tracer = tracer
     }
 
     /// Runs one call under a fresh ``ToolContext`` binding, posts an open and a close ``ToolInvocationRecord`` around it, and rethrows the wrapped tool's error unmodified.
+    ///
+    /// The call runs inside one ``RouterTracing/SpanName/tool`` span, nested in
+    /// the turn's span, reporting ``RouterTracing/ToolRunKind/foreground``.
+    ///
+    /// - Throws: The wrapped tool's error, unmodified. `withSpan` records it on the span and raises it again.
     func call(arguments: Arguments) async throws -> Output {
+        try await ToolCallSpan.withSpan(
+            tracer: tracer, toolName: wrapped.name, sessionID: sessionID, runKind: .foreground
+        ) { span in
+            try await bind(arguments: arguments, reportingTo: span)
+        }
+    }
+
+    /// The bound call itself: the per-call ``ToolContext``, the pair of
+    /// ``ToolInvocationRecord``s around it, and the outcome written onto `span`.
+    ///
+    /// - Parameters:
+    ///   - arguments: The call's decoded arguments.
+    ///   - span: This call's own tool span.
+    /// - Returns: The wrapped tool's output, unchanged.
+    /// - Throws: The wrapped tool's error, unmodified.
+    private func bind(arguments: Arguments, reportingTo span: any Span) async throws -> Output {
         let cancellationFlag = CancellationRequestFlag()
         let context = ToolContext(
             stamping: wrapped,
@@ -82,6 +109,12 @@ struct ContextBindingTool<
                 outcome = .failure(error)
             }
             await sink.post(invocation: openRecord.closed(at: Date()))
+            let recorded: OperationOutcome =
+                switch outcome {
+                case .success: .succeeded
+                case .failure: .failed
+                }
+            ToolCallSpan.record(outcome: recorded, on: span)
             return try outcome.get()
         } onCancel: {
             cancellationFlag.request()

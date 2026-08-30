@@ -46,8 +46,6 @@ enum RouterTracing {
         static let turn = prefix + "turn"
 
         /// One tool call inside a turn.
-        // No caller until the dependent tracing cards open this span.
-        // periphery:ignore
         static let tool = prefix + "tool"
 
         /// One fold of a session's transcript, driven by a caller or by the
@@ -145,9 +143,15 @@ enum RouterTracing {
         static let turnEntryPoint = "turn.entry_point"
 
         /// The model-facing name of the called tool.
-        // No caller until the dependent tracing cards write this attribute.
-        // periphery:ignore
         static let toolName = "tool.name"
+
+        /// Which mount the tool call ran under. See
+        /// ``RouterTracing/ToolRunKind``.
+        static let toolRunKind = "tool.run_kind"
+
+        /// How the step a tool span covers ended, in the module's own
+        /// ``OperationOutcome`` vocabulary.
+        static let toolOutcome = "tool.outcome"
 
         /// The ``ModelSlot`` the model fills.
         static let slot = "slot"
@@ -208,6 +212,27 @@ enum RouterTracing {
         /// ``RoutedSession/dispatchNextPrompt()``: a queued prompt, or a
         /// settled run's delivery turn.
         case dispatch
+    }
+
+    /// The value ``AttributeKey/toolRunKind`` carries: which mount a tool call
+    /// ran under.
+    ///
+    /// Three decorators open the tool span, and the span alone cannot say which
+    /// of the three opened it. This attribute says so, and it is what tells a
+    /// reader how much of the call the span measured.
+    ///
+    /// Distinct from ``RunKind``, which says how a background run is *driven*
+    /// once it has been launched.
+    enum ToolRunKind: String {
+        /// The call ran in band, under ``RunToCompletionRunner`` or
+        /// ``ContextBindingTool``, so the span covers the whole call.
+        case foreground
+
+        /// The call was handed to the background by ``BackgroundToolRunner``,
+        /// so the span covers only the accept-and-launch step the model saw. It
+        /// ends when the pending envelope is returned; the run itself settles
+        /// later, in the session's ``SessionMailbox``.
+        case background
     }
 
     /// The value ``AttributeKey/compactionTrigger`` carries: what asked for a

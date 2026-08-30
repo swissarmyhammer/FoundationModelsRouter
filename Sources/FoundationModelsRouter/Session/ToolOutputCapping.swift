@@ -1,4 +1,5 @@
 import FoundationModels
+import Tracing
 
 /// Caps a tool's own output to ``TokenBudget/toolOutputLimit`` tokens before
 /// the model — or the transcript's own recorded `.toolOutput` entry — ever
@@ -113,19 +114,26 @@ extension ToolMounting {
     /// hands the forked copy here;
     /// ``RoutedModel/makeSessionToolWiring(_:sessionID:cappedToTokenLimit:)``
     /// is the root and restore site.
+    ///
+    /// - Parameter tracer: The owning session's tracer, which the mounted
+    ///   decorator opens each call's span through, or `nil` to read
+    ///   `InstrumentationSystem.tracer` at call time. The capping layer opens no
+    ///   span of its own — see ``ToolCallSpan``.
     static func makeSessionMounted(
         tool: any Tool,
         sessionID: ULID,
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
-        cappedToTokenLimit tokenLimit: Int?
+        cappedToTokenLimit tokenLimit: Int?,
+        tracer: (any Tracer)? = nil
     ) -> any Tool {
         let mounted = makeWrapped(
             tool: tool,
             sessionID: sessionID,
             mailbox: mailbox,
             sink: sink,
-            configuration: .synchronous
+            configuration: .synchronous,
+            tracer: tracer
         )
         return ToolOutputCapping.optionallyCapped(tool: mounted, toTokenLimit: tokenLimit)
     }

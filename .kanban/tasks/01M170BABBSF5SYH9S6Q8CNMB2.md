@@ -40,8 +40,24 @@ comments:
     - evidence: 4 files — Tests/FoundationModelsRouterTests/Helpers/AwaitedEvent.swift (new), Tests/FoundationModelsRouterTests/AwaitedEventTests.swift (new), Tests/FoundationModelsRouterTests/GenerationStallDiagnosticTests.swift, Tests/FoundationModelsRouterTests/HumanWaitGateTests.swift. Quiet: `swift test` — 1110 tests in 119 suites passed after 5.075 seconds with 2 known issues; 83 tests in 10 suites passed. Loaded: 1024 busy shell loops on 32 cores, load average 954 to 1022; 12 full `swift test` runs in two rounds of 6, every run 1110 tests in 119 suites passed, 27.4 to 33.9 seconds each. The same load reproduced the card's failure twice before the fix.
     - next: /review
   timestamp: 2026-08-29T17:17:09.386215+00:00
-position_column: doing
-position_ordinal: '80'
+- actor: claude-code
+  id: 01m19a4tbkam0ry4w9mj4ykyxv
+  text: |-
+    ### review — clean
+    - evidence: `review sha HEAD~1..HEAD` (dfb1da8) — 0 findings, 0 confirmed, 0 refuted, 7 validators attempted, 0 failed. 4 source files reviewed; 10 `.kanban/` files excluded by `.reviewignore`.
+    - next: task moved to done. No open findings.
+  timestamp: 2026-08-30T12:26:10.675145+00:00
+- actor: claude-code
+  id: 01m19a5cd806s395y9ve1fvet3
+  text: |-
+    ### finish iteration 1 — clean
+    - implement: changed — done in an earlier session; 4 files, uncommitted in the tree when this loop started
+    - test: green — `swift test`, pass 1: 1110 tests in 119 suites, pass 2: 83 tests in 10 suites, 0 failed, 0 skipped
+    - commit: dfb1da8 — test(router): wait on the event, not the clock, in two flaky suites
+    - review: clean — 0 findings, 7 validators, task moved to done
+  timestamp: 2026-08-30T12:26:29.160693+00:00
+position_column: done
+position_ordinal: ffffa180
 title: Two wall-clock test suites fail when the machine is under load
 ---
 ## What

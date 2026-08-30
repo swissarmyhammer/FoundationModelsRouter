@@ -1,16 +1,18 @@
 import FoundationModels
+import Tracing
 
 /// The untyped entry point that mounts a tool for a session: it opens the `any Tool` existential and picks the decorator.
 enum ToolMounting {
     /// Wraps `tool` on the session plane of `context`, for a binder that mounts its own inner calls.
-    /// The result is that of `makeWrapped(tool:sessionID:mailbox:sink:op:configuration:)`.
+    /// The result is that of `makeWrapped(tool:sessionID:mailbox:sink:op:configuration:tracer:)`.
     /// - Returns: The mounted tool.
     static func makeWrapped(
         tool: any Tool,
         inheriting context: ToolContext,
         sink: any OperationEventSink,
         op: String? = nil,
-        configuration: ToolMount
+        configuration: ToolMount,
+        tracer: (any Tracer)? = nil
     ) -> any Tool {
         makeWrapped(
             tool: tool,
@@ -18,13 +20,15 @@ enum ToolMounting {
             mailbox: context.mailbox,
             sink: sink,
             op: op,
-            configuration: configuration
+            configuration: configuration,
+            tracer: tracer
         )
     }
 
     /// Mounts `tool`. A `String`-output tool becomes the internal `BackgroundToolRunner` or `RunToCompletionRunner`, per the mount it declares through ``BackgroundTool/mount`` or, when it declares none, per `configuration`.
     /// Any other tool becomes the internal `ContextBindingTool`.
     /// - Parameter op: The registration site's `"verb noun"` op, or `nil`.
+    /// - Parameter tracer: The owning session's tracer, which each decorator opens its per-call span through, or `nil` to read `InstrumentationSystem.tracer` at call time.
     /// - Returns: The mounted tool.
     static func makeWrapped(
         tool: any Tool,
@@ -32,7 +36,8 @@ enum ToolMounting {
         mailbox: SessionMailbox,
         sink: any OperationEventSink,
         op: String? = nil,
-        configuration: ToolMount
+        configuration: ToolMount,
+        tracer: (any Tracer)? = nil
     ) -> any Tool {
         func openArguments<A: ConvertibleFromGeneratedContent & Sendable>(
             _ argumentsType: A.Type, of candidate: any Tool
@@ -44,12 +49,12 @@ enum ToolMounting {
             case .background:
                 return BackgroundToolRunner(
                     wrapping: typed, sessionID: sessionID, mailbox: mailbox, sink: sink,
-                    op: op, timeout: mount.timeout
+                    op: op, timeout: mount.timeout, tracer: tracer
                 )
             case .runToCompletion:
                 return RunToCompletionRunner(
                     wrapping: typed, sessionID: sessionID, mailbox: mailbox, sink: sink,
-                    op: op, timeout: mount.timeout
+                    op: op, timeout: mount.timeout, tracer: tracer
                 )
             }
         }
@@ -60,7 +65,8 @@ enum ToolMounting {
                     sessionID: sessionID,
                     mailbox: mailbox,
                     sink: sink,
-                    op: op
+                    op: op,
+                    tracer: tracer
                 )
             }
             // A type-system bridge: `Tool` conformance already guarantees
